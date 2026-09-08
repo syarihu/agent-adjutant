@@ -1,0 +1,769 @@
+//! The subcommands. This is the only layer allowed to know about more than one of the
+//! others: everything below is a leaf that answers one question, and joining them up is
+//! what a command is.
+
+use serde_json::{Value, json};
+use std::io::Read;
+
+use crate::config::{self, Settings};
+use crate::ide;
+use crate::messaging::{self, Message};
+use crate::notify;
+use crate::repo::{self, RepoInfo};
+use crate::runner;
+use crate::terminal::{self, SpawnRequest};
+
+/// Everything a command needs to know about where it is. Resolved once, at the top, because
+/// two commands disagreeing about which repo they are in is the failure that loses reports.
+pub struct Context {
+    pub repo: RepoInfo,
+    pub settings: Settings,
+    pub resolved: config::Resolved,
+}
+
+pub fn context(repo_arg: Option<&str>) -> Result<Context, String> {
+    let repo = repo::resolve(repo_arg)?;
+    let resolved = config::resolve_config(&repo.nwo)?;
+    Ok(Context {
+        settings: resolved.settings.clone(),
+        repo,
+        resolved,
+    })
+}
+
+// ── hub-name ─────────────────────────────────────────────────────────
+
+pub fn hub_name(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
+    let info = repo::resolve(repo_arg)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "main": info.main,
+                "nwo": info.nwo,
+                "repo": info.repo,
+                "slug": info.slug,
+                "hubName": info.hub_name,
+                "nwoSource": info.nwo_source,
+            }))
+            .unwrap_or_default()
+        );
+        return Ok(());
+    }
+    if info.nwo_source == "dirname" {
+        eprintln!(
+            "adjutant: origin gave no repository name, using the directory name {}",
+            info.nwo
+        );
+    }
+    println!("{}", info.hub_name);
+    Ok(())
+}
+
+// ── config ───────────────────────────────────────────────────────────
+
+pub fn show_config(repo_arg: Option<&str>) -> Result<(), String> {
+    let ctx = context(repo_arg)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "repo": ctx.repo.nwo,
+            "main": ctx.repo.main,
+            "hubName": ctx.repo.hub_name,
+            "registered": ctx.resolved.registered,
+            "configPath": ctx.resolved.config_path,
+            "warnings": ctx.resolved.warnings,
+            "settings": ctx.settings,
+            "config": ctx.resolved.config,
+        }))
+        .unwrap_or_default()
+    );
+    Ok(())
+}
+
+// ── pending ──────────────────────────────────────────────────────────
+
+pub struct PendingArgs<'a> {
+    pub repo: Option<&'a str>,
+    pub path_only: bool,
+    pub limit: usize,
+    pub as_json: bool,
+    pub read: Option<&'a str>,
+    pub ack: Option<&'a str>,
+}
+
+pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
+    let info = repo::resolve(args.repo)?;
+    let dir = messaging::inbox_dir(&info.slug);
+    if args.path_only {
+        // A caller asking for the path is about to write into it, so hand back a directory
+        // that exists.
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        println!("{}", dir.display());
+        return Ok(());
+    }
+    if let Some(name) = args.read {
+        print!("{}", messaging::read(&info.slug, name)?);
+        return Ok(());
+    }
+    if let Some(name) = args.ack {
+        let moved = messaging::ack(&info.slug, name)?;
+        println!("filed {} ({})", name, moved.display());
+        return Ok(());
+    }
+
+    let entries = messaging::list(&info.slug);
+    if args.as_json {
+        let items: Vec<Value> = entries
+            .iter()
+            .map(|e| json!({"name": e.name, "from": e.from, "kind": e.kind, "subject": e.subject}))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "hubName": info.hub_name,
+                "dir": dir.to_string_lossy(),
+                "count": items.len(),
+                "messages": items,
+            }))
+            .unwrap_or_default()
+        );
+        return Ok(());
+    }
+    // The path is printed even when nothing is waiting: an empty listing is the common case,
+    // and it is also the one where the reader would otherwise have to guess the location.
+    println!("dir: {}", dir.display());
+    if entries.is_empty() {
+        println!("(empty)");
+        return Ok(());
+    }
+    for entry in entries.iter().take(args.limit) {
+        println!(
+            "{}  [{}] {} — {}",
+            entry.name, entry.kind, entry.from, entry.subject
+        );
+    }
+    if entries.len() > args.limit {
+        println!("... and {} more", entries.len() - args.limit);
+    }
+    Ok(())
+}
+
+// ── send ─────────────────────────────────────────────────────────────
+
+pub struct SendArgs<'a> {
+    pub repo: Option<&'a str>,
+    pub from: Option<&'a str>,
+    pub kind: &'a str,
+    pub subject: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub quiet: bool,
+}
+
+pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
+    let ctx = context(args.repo)?;
+    let body = read_body(args.body)?;
+    let message = Message {
+        from: args.from.unwrap_or("unknown").to_string(),
+        kind: args.kind.to_string(),
+        subject: args.subject.unwrap_or("").to_string(),
+        body,
+    };
+    let subject = messaging::header_value(&messaging::render_message(&message), "subject")
+        .unwrap_or_default();
+    let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, &message)?;
+
+    // A file appearing in a directory wakes nobody, so delivery has two follow-ups: poke the
+    // hub if it is actually sitting there, and tell the person either way.
+    let woken = match (
+        delivery.present,
+        messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
+    ) {
+        (true, Some(pid)) => terminal::wake(
+            &ctx.settings.hub_wake,
+            pid,
+            &subject,
+            terminal::HUB_WAKE_LINE,
+            false,
+        )
+        .map(|done| done.ran)
+        .unwrap_or(false),
+        _ => false,
+    };
+    // Unconditionally, unlike `tell`, and the difference is the direction rather than an
+    // oversight. This is a worker reporting to the hub, and the hub is the unattended half
+    // — nobody is watching that tab, which is the premise the whole design rests on. A
+    // report is also the thing a person most wants to hear about, so it is announced
+    // whether or not the hub was poked. `tell` runs the other way, hub to worker: a worker
+    // that was successfully woken needs no human, so there the notification is what happens
+    // when waking did not.
+    if let Some(command) = notify::command(
+        &ctx.settings.notification,
+        &format!("adjutant / {}", ctx.repo.repo),
+        &subject,
+    ) {
+        let _ = terminal::run_shell(&command);
+    }
+
+    if args.quiet {
+        return Ok(());
+    }
+    println!(
+        "delivered to {}: {}",
+        ctx.repo.hub_name,
+        delivery.path.display()
+    );
+    match (delivery.present, woken) {
+        (true, true) => println!("Woke the hub; it will pick this up."),
+        (true, false) => {
+            println!("The hub is running; it will pick this up the next time it checks its inbox.")
+        }
+        (false, _) => {
+            println!(
+                "The hub is not running. Left in its inbox; it will be picked up the next time it starts."
+            )
+        }
+    }
+    Ok(())
+}
+
+// ── spawn / focus / work / ide ───────────────────────────────────────
+
+/// The command that names a new tab from inside it, if one should.
+///
+/// A tab names itself rather than being named by the terminal's API, so that whatever
+/// `terminal.title` is set to governs every tab the same way. `terminal::spawn` decides
+/// whether it can be used at all: only a terminal taking a shell line can run it.
+fn title_command(settings: &Settings, title: &str) -> Option<String> {
+    if settings.terminal.title.is_off() || title.trim().is_empty() {
+        return None;
+    }
+    Some(crate::template::sh_join(&[
+        exe_path(),
+        "title".to_string(),
+        "--title".to_string(),
+        title.to_string(),
+    ]))
+}
+
+pub fn spawn(
+    repo_arg: Option<&str>,
+    cwd: &str,
+    title: &str,
+    command: &[String],
+    dry_run: bool,
+) -> Result<(), String> {
+    if command.is_empty() {
+        return Err("pass the command to run after --".to_string());
+    }
+    let settings = settings_for(repo_arg);
+    let name_it = title_command(&settings, title);
+    let done = terminal::spawn(
+        settings.terminal.spawn.as_deref(),
+        &SpawnRequest {
+            cwd: &config::expand_home(cwd).to_string_lossy(),
+            title,
+            command: &crate::template::sh_join(command),
+            title_command: name_it.as_deref(),
+        },
+        dry_run,
+    )?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(())
+}
+
+/// Open a tab and start a worker agent in it. One command rather than two so the runner
+/// template is read in exactly one place.
+pub fn work(
+    repo_arg: Option<&str>,
+    worktree: &str,
+    title: &str,
+    prompt: &str,
+    dry_run: bool,
+) -> Result<(), String> {
+    let ctx = context(repo_arg)?;
+    let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+    // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
+    // process that has already written down its own PID and then `exec`s itself away, which
+    // is the only way anyone later gets to ask "is that worker still there".
+    let mut parts = vec![
+        exe_path(),
+        "worker".to_string(),
+        "--worktree".to_string(),
+        worktree.clone(),
+        "--title".to_string(),
+        title.to_string(),
+        "--prompt".to_string(),
+        prompt.to_string(),
+    ];
+    if let Some(repo) = repo_arg {
+        parts.push("--repo".to_string());
+        parts.push(repo.to_string());
+    }
+    let name_it = title_command(&ctx.settings, title);
+    let done = terminal::spawn(
+        ctx.settings.terminal.spawn.as_deref(),
+        &SpawnRequest {
+            cwd: &worktree,
+            title,
+            command: &crate::template::sh_join(&parts),
+            title_command: name_it.as_deref(),
+        },
+        dry_run,
+    )?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(())
+}
+
+pub fn focus(repo_arg: Option<&str>, quiet: bool, dry_run: bool) -> Result<bool, String> {
+    let ctx = context(repo_arg)?;
+    let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
+    let Some(pid) = status.pid.filter(|_| status.present) else {
+        if !quiet {
+            println!("{} is not running", ctx.repo.hub_name);
+        }
+        return Ok(false);
+    };
+    let done = terminal::focus(
+        ctx.settings.terminal.focus.as_deref(),
+        pid,
+        &ctx.repo.hub_name,
+        dry_run,
+    )?;
+    if dry_run {
+        println!("{}", done.script);
+    } else if !quiet {
+        println!("{} is already running (pid {pid})", ctx.repo.hub_name);
+        if !done.ran {
+            println!("({})", done.description);
+        }
+    }
+    Ok(true)
+}
+
+pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result<(), String> {
+    let ctx = context(repo_arg)?;
+    let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+    let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {
+        return Err("ide is not set: put your editor command in the config's ide key".to_string());
+    };
+    if dry_run {
+        println!("{command}");
+        return Ok(());
+    }
+    terminal::run_shell(&command)?;
+    println!("opened {worktree}");
+    Ok(())
+}
+
+/// Name the tab this process is sitting in. The hub calls it on itself at startup; nothing
+/// else needs it, because a spawned tab is named at spawn time.
+pub fn set_title(repo_arg: Option<&str>, title: &str, dry_run: bool) -> Result<(), String> {
+    let settings = settings_for(repo_arg);
+    let done = terminal::set_title(&settings.terminal.title, title, dry_run)?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(())
+}
+
+pub fn notify_user(
+    repo_arg: Option<&str>,
+    title: &str,
+    message: &str,
+    dry_run: bool,
+) -> Result<(), String> {
+    let settings = settings_for(repo_arg);
+    let Some(command) = notify::command(&settings.notification, title, message) else {
+        // No notifier is a fact about the machine, not a failure of the thing being
+        // announced. Say it on stderr and carry on.
+        eprintln!("adjutant: no notifier is configured ({title}: {message})");
+        return Ok(());
+    };
+    if dry_run {
+        println!("{command}");
+        return Ok(());
+    }
+    terminal::run_shell(&command)?;
+    Ok(())
+}
+
+// ── worktree ─────────────────────────────────────────────────────────
+
+pub struct WorktreeArgs<'a> {
+    pub repo: Option<&'a str>,
+    /// A branch you already know. Answers the path only.
+    pub branch: Option<&'a str>,
+    /// A task name (`app-1234`). Answers the branch *and* the path, as JSON — the two are
+    /// always needed together, and deriving them in two places is how they drift apart.
+    pub name: Option<&'a str>,
+    pub user: Option<&'a str>,
+    /// The selected task source's `branchPattern`, when it has one.
+    pub pattern: Option<&'a str>,
+}
+
+pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
+    let ctx = context(args.repo)?;
+    let layout = ctx
+        .settings
+        .worktree_pattern
+        .as_deref()
+        .unwrap_or(repo::DEFAULT_WORKTREE_PATTERN);
+
+    if let Some(branch) = args.branch {
+        println!(
+            "{}",
+            repo::worktree_fallback(layout, &ctx.repo.main, branch)?
+        );
+        return Ok(());
+    }
+    let Some(name) = args.name else {
+        return Err("pass either --branch or --name".to_string());
+    };
+    let user = match args.user {
+        Some(user) => user.to_string(),
+        // Not guessed from the remote: the branch prefix people use is their forge login,
+        // which is not always the local account name — so the caller passes it, and this is
+        // only the last resort.
+        None => std::env::var("USER").unwrap_or_else(|_| "worker".to_string()),
+    };
+    let branch = repo::branch_fallback(
+        args.pattern.unwrap_or(repo::DEFAULT_BRANCH_PATTERN),
+        &user,
+        name,
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "branch": branch,
+            "path": repo::worktree_fallback(layout, &ctx.repo.main, &branch)?,
+            // Named for what it is: the checkout to run `git worktree add` *in*. It was
+            // called `base`, and the procedure duly passed it where git wants a commit-ish
+            // — which is a path, so every worktree creation failed with `fatal: invalid
+            // reference`. What to branch *from* is the `baseBranch` rule, and that is a
+            // question about the repository's branches rather than about this path.
+            "main": ctx.repo.main,
+        }))
+        .unwrap_or_default()
+    );
+    Ok(())
+}
+
+// ── hub (the launcher) ─────────────────────────────────────────
+
+/// Start this repository's hub, here, once.
+///
+/// Say that the hub is already up, and bring it forward. The answer to both "someone got
+/// here first" and "it was already running when we looked".
+fn go_to_running_hub(
+    ctx: &Context,
+    status: &messaging::HubStatus,
+    dry_run: bool,
+) -> Result<(), String> {
+    println!(
+        "{} is already running (pid {})",
+        ctx.repo.hub_name,
+        status.pid.unwrap_or(0)
+    );
+    if let Some(pid) = status.pid {
+        let _ = terminal::focus(
+            ctx.settings.terminal.focus.as_deref(),
+            pid,
+            &ctx.repo.hub_name,
+            dry_run,
+        );
+    }
+    Ok(())
+}
+
+/// Three things go wrong when a person types the agent command by hand, and this exists to
+/// take all three away: the session name has to match what a worker will look for, the hub
+/// has to run in the main checkout or it cannot cut worktrees, and a second hub for the same
+/// repo makes it luck which one a report reaches.
+///
+/// The process registers itself and then *replaces* itself with the agent, so the recorded
+/// PID belongs to the live agent rather than to a launcher that has already exited.
+pub fn hub(repo_arg: Option<&str>, extra: &[String], dry_run: bool) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
+    let ctx = context(repo_arg)?;
+    if ctx.repo.nwo_source == "dirname" {
+        eprintln!(
+            "adjutant: origin gave no repository name, using the directory name {}",
+            ctx.repo.nwo
+        );
+    }
+    // Asked before the command is even built, so the common "it is already up" case costs
+    // nothing. It is not what *enforces* one hub per repository — the claim below is.
+    let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
+    if status.present {
+        return go_to_running_hub(&ctx, &status, dry_run);
+    }
+    let mut command = runner::hub_command(
+        ctx.settings.hub_runner.as_deref(),
+        &ctx.settings.agent_env,
+        &ctx.repo.hub_name,
+        runner::HUB_STARTUP_PROMPT,
+    );
+    if !extra.is_empty() {
+        command = format!("{command} {}", crate::template::sh_join(extra));
+    }
+    if dry_run {
+        println!("cd {}", crate::template::sh_quote(&ctx.repo.main));
+        println!("{command}");
+        return Ok(());
+    }
+
+    // Only past the dry run: claiming the record is a write, and a dry run that cleared a
+    // live hub's registration would make that hub permanently unreachable — nothing then
+    // reports it as present, and every later launch starts another one beside it.
+    //
+    // Two launches can reach this line at the same time (a person and a wake-up, two tabs).
+    // The claim is what decides between them; the loser is told who won, exactly as if it
+    // had arrived a second later.
+    // Whether the *rendered* command carries the name, not whether the template has a
+    // `{name}` in it: a template that hardcodes the name works, and one that renders it
+    // away does not, and only the finished line knows which.
+    // The directory move comes first, and not only because the hub has to run there: a
+    // relative `ADJUTANT_STATE_DIR` is resolved against the working directory, so claiming
+    // before moving wrote the record under wherever `adj hub` happened to be typed, and the
+    // hub then went looking for it somewhere else. Nothing has been written at this point,
+    // so a failure here has nothing to undo.
+    std::env::set_current_dir(&ctx.repo.main)
+        .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
+
+    let named = command.contains(&ctx.repo.hub_name);
+    match messaging::claim_hub(&ctx.repo.slug, &ctx.repo.hub_name, &ctx.repo.main, named)? {
+        messaging::Claim::Ours => {}
+        messaging::Claim::Taken(status) => return go_to_running_hub(&ctx, &status, dry_run),
+    }
+    println!("starting {} in {}", ctx.repo.hub_name, ctx.repo.main);
+
+    // `exec` keeps the PID, which is the whole point: the record written a line ago has to
+    // name the process a worker will later check for.
+    let error = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .exec();
+    // Only reachable if exec failed — otherwise this process no longer exists.
+    let _ = messaging::unregister_hub(&ctx.repo.slug);
+    Err(format!("cannot start the hub: {error}"))
+}
+
+/// Start the worker agent in the tab `work` just opened.
+///
+/// The mirror image of `hub`: write down who we are, then become the agent. Running the
+/// agent as a child instead would record a PID that exits the moment the agent does
+/// anything, and waking a dead launcher wakes nobody.
+pub fn worker(
+    repo_arg: Option<&str>,
+    worktree: &str,
+    title: &str,
+    prompt: &str,
+    dry_run: bool,
+) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
+    let worktree = config::expand_home(worktree);
+    if !worktree.is_dir() {
+        return Err(format!("no such worktree: {}", worktree.display()));
+    }
+    let ctx = context(repo_arg)?;
+    let status = messaging::worker_status(&worktree);
+    if status.present {
+        println!(
+            "a worker is already running in this worktree (pid {})",
+            status.pid.unwrap_or(0)
+        );
+        return Ok(());
+    }
+
+    let command = runner::worker_command(
+        ctx.settings.agent_runner.as_deref(),
+        &ctx.settings.agent_env,
+        prompt,
+        &worktree.to_string_lossy(),
+        title,
+    );
+    if dry_run {
+        println!(
+            "cd {}",
+            crate::template::sh_quote(&worktree.to_string_lossy())
+        );
+        println!("{command}");
+        return Ok(());
+    }
+
+    std::env::set_current_dir(&worktree)
+        .map_err(|e| format!("cannot change directory to {}: {e}", worktree.display()))?;
+    messaging::register_worker(&worktree, title)?;
+
+    let error = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .exec();
+    let _ = messaging::unregister_worker(&worktree);
+    Err(format!("cannot start the worker: {error}"))
+}
+
+/// Leave a message for the worker in a worktree, and poke it if it is sitting there.
+pub fn tell(
+    repo_arg: Option<&str>,
+    worktree: &str,
+    subject: &str,
+    body: Option<&str>,
+    from: Option<&str>,
+    quiet: bool,
+) -> Result<(), String> {
+    let ctx = context(repo_arg)?;
+    let worktree = config::expand_home(worktree);
+    if !worktree.is_dir() {
+        return Err(format!("no such worktree: {}", worktree.display()));
+    }
+    let body = read_body(body)?;
+    let from = from.unwrap_or(&ctx.repo.hub_name).to_string();
+    let path = messaging::tell(&worktree, &from, subject, &body)?;
+
+    let status = messaging::worker_status(&worktree);
+    let woken = match (status.present, status.pid) {
+        (true, Some(pid)) => terminal::wake(
+            &ctx.settings.worker_wake,
+            pid,
+            subject,
+            terminal::WORKER_WAKE_LINE,
+            false,
+        )
+        .map(|done| done.ran)
+        .unwrap_or(false),
+        _ => false,
+    };
+    if !woken
+        && let Some(command) = notify::command(
+            &ctx.settings.notification,
+            &format!("adjutant / {}", ctx.repo.repo),
+            subject,
+        )
+    {
+        let _ = terminal::run_shell(&command);
+    }
+    if quiet {
+        return Ok(());
+    }
+    println!("wrote {}", path.display());
+    match (status.present, woken) {
+        (true, true) => println!("Woke the worker."),
+        (true, false) => {
+            println!("The worker is running; it will read this the next time it checks its outbox.")
+        }
+        (false, _) => {
+            println!("The worker is not running; it will read this the next time it starts.")
+        }
+    }
+    Ok(())
+}
+
+/// Print one of the procedures.
+///
+/// The same text the MCP prompt and `adjutant_skill` serve. It exists as a subcommand
+/// because a shell command is the one way in that every agent has: MCP prompt support
+/// differs between agents, and a tool has to be loaded before it can be called — a woken
+/// session that cannot reach its procedure is a session that does nothing.
+pub fn skill(name: &str, arguments: &str) -> Result<(), String> {
+    let prompt = crate::prompts::find(name).ok_or_else(|| {
+        format!(
+            "no such procedure: {name} ({})",
+            crate::prompts::PROMPTS
+                .iter()
+                .map(|p| p.name)
+                .collect::<Vec<_>>()
+                .join(" / ")
+        )
+    })?;
+    print!("{}", crate::prompts::render(prompt, arguments));
+    Ok(())
+}
+
+/// What the hub has left for the worker in this worktree.
+pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {
+    let worktree = match worktree {
+        Some(path) => config::expand_home(path),
+        None => std::env::current_dir()
+            .map_err(|e| format!("cannot determine the current directory: {e}"))?,
+    };
+    if clear {
+        messaging::clear_outbox(&worktree)?;
+        println!("cleared the outbox");
+        return Ok(());
+    }
+    let text = messaging::read_outbox(&worktree);
+    if text.trim().is_empty() {
+        println!("(empty)");
+        return Ok(());
+    }
+    print!("{text}");
+    Ok(())
+}
+
+/// Remove this repo's hub record. For a hub shutting down cleanly, and for clearing a record
+/// left behind by one that did not.
+pub fn hub_stop(repo_arg: Option<&str>) -> Result<(), String> {
+    let info = repo::resolve(repo_arg)?;
+    messaging::unregister_hub(&info.slug)?;
+    println!("unregistered {}", info.hub_name);
+    Ok(())
+}
+
+// ── shared ───────────────────────────────────────────────────────────
+
+/// The message body, from the flag or from stdin. Long reports do not belong on a command
+/// line, and the two ways in should behave identically.
+fn read_body(body: Option<&str>) -> Result<String, String> {
+    let body = match body {
+        Some(body) => body.to_string(),
+        None => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| format!("cannot read stdin: {e}"))?;
+            buf
+        }
+    };
+    if body.trim().is_empty() {
+        return Err("the body is empty: pass it with --body or on stdin".to_string());
+    }
+    Ok(body)
+}
+
+/// This binary, for commands that have to name themselves in a command line handed to a
+/// terminal. The absolute path rather than `adjutant`, so a new tab whose PATH is not yet
+/// loaded still finds it.
+fn exe_path() -> String {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "adjutant".to_string())
+}
+
+/// Settings without insisting on a resolvable repository.
+///
+/// `spawn` and `notify` are useful from anywhere, including outside a checkout, and failing
+/// them because `git` had nothing to say would be answering a question nobody asked.
+fn settings_for(repo_arg: Option<&str>) -> Settings {
+    let nwo = match repo_arg {
+        Some(arg) => arg.to_string(),
+        None => repo::resolve(None).map(|i| i.nwo).unwrap_or_default(),
+    };
+    config::resolve_config(&nwo)
+        .map(|r| r.settings)
+        .unwrap_or_default()
+}

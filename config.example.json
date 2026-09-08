@@ -1,0 +1,142 @@
+{
+  "//": "Copy to ~/.config/adjutant/config.json (or point ADJUTANT_CONFIG at it). Keys under `repos` are `owner/name` as the repository's origin remote reports it. A repo entry holds `taskSources` (an array — one code repo often takes work from several trackers, each with its own issueKey and branch prefix); a single-source repo may use the flat shorthand instead. `issueKey` must be unique within an entry. Anything omitted falls back to `defaults`, then to adjutant's own built-in defaults. `//` keys anywhere in this file are documentation and are stripped before the config reaches a session.",
+
+  "//templates": "Every escape hatch below is a command template. Placeholders are substituted ALREADY SHELL-QUOTED, so do not put quotes around them: write -n {title}, not -n '{title}'. Omit a key to get the built-in; set it to false to turn the behaviour off entirely (which is a different answer from omitting it). For anything longer than one command, point at a script (\"hubWake\": \"~/bin/wake.sh {pid} {line}\") rather than wrapping it in sh -c '…' — a substituted value brings its own quoting and would end the wrapper's quoted string early.",
+
+  "//terminal": "spawn: open a tab. focus: raise one. title: name a tab. Used both by a session naming itself (the hub calls `adjutant title` at startup) and by every tab `spawn` opens, whose shell calls the same thing — one setting, every tab. Placeholders: spawn {cwd} {title} {command}, focus {pid} {tty} {title}, title {title}. A spawn template containing {cwd} is trusted to change directory itself; one without gets a `cd` prepended. Defaults are iTerm2 for spawn/focus and an OSC escape written to this process's tty for title.",
+  "terminal": {
+    "//spawn": "tmux new-window -c {cwd} -n {title} {command} | ghostty --working-directory={cwd} -e {command} | wezterm cli spawn --cwd {cwd} -- {command}",
+    "//focus": "wezterm cli activate-pane --pane-id {pid} | tmux select-window -t {tty}",
+    "//title": "A tmux rename, a wrapper of your own, anything: tmux rename-window {title}. Note that an iTerm2 profile whose title format is driven by user variables ignores the built-in escape sequence — on such a machine this key is what makes titles work at all."
+  },
+
+  "//wake": "How to get a RUNNING session's attention once a message has landed in its box. A file appearing in a directory wakes nobody, so this is what closes the loop; it runs only when the session is actually up, and a failure never fails the delivery. Placeholders: {pid} {tty} {subject} {line}. Default: iTerm2 `write text` into the session on that tty, which reaches an interactive agent exactly as if the person had typed it. Examples: tmux send-keys -t {tty} {line} Enter | wezterm cli send-text --pane-id {pid} {line}. Set it to false to never wake anything.",
+
+  "//hubWake": "Overrides `wake` for the hub direction only. The long form {\"command\": …, \"line\": …} lets you change one half: `command` is a property of the terminal, `line` is the sentence typed at the woken session and is a property of the AGENT — the built-in names MCP tools (adjutant_pending), which is the wrong instruction for an agent that only has the CLI or one that wants a slash command. Omit `command` to keep the machine's mechanism and change only what is said.",
+
+  "//workerWake": "The same for the worker direction. Two directions rather than one because the hub and its workers are not always the same agent: `\"agentRunner\": \"codex exec {prompt}\"` with a claude hub is exactly the case where the two need different sentences. Built-in line names adjutant_outbox.",
+
+  "//notification": "How to interrupt the human. Placeholders: {title} {message}. Default: macOS notification with a sound. Examples: printf '\\a' | curl -s -X POST -d {message} https://hooks.example.invalid/… | ntfy publish mytopic {message}",
+
+  "//defaults": "Everything here is inherited by every repo entry, and an entry's own key wins. A task source is the one thing that is NOT inherited: merged into an entry that already declares its own, a default source adds a phantom with no issueRepo behind it. Writing `taskSource` here is ignored and reported in `warnings`.",
+  "defaults": {
+    "//ide": "Editor for `adj ide --worktree <path>`. A preset name (code, cursor, idea, subl) or a command template containing {worktree}. No built-in: guessing puts you in the wrong editor, so leaving it out is reported in `warnings` and the prompts ask.",
+    "ide": "code",
+    "//baseBranch": "What a new worktree branches from. \"auto\" means the newest `origin/release/*` if the repo has any, otherwise the default branch. A branch name here instead pins it.",
+    "baseBranch": "auto",
+    "//reviewBots": "Review accounts whose comments a worker waits for before calling a round done. Exactly as GitHub spells them, `[bot]` suffix included.",
+    "reviewBots": ["copilot-pull-request-reviewer[bot]"],
+    "//selfReviewRounds": "How many self-review rounds a worker runs before handing over. The cap, not a target: it stops when a round finds nothing.",
+    "selfReviewRounds": 5,
+    "//reviewEffort": "How hard the review engine is asked to look: low | medium | high | xhigh | max.",
+    "reviewEffort": "high",
+    "//reviewEngine": "Who reviews: \"auto\" alternates so that a later round is read by a different model than wrote the code, which is the whole point — a reviewer that knows why the code is the way it is confirms rather than reviews. \"claude\" or \"codex\" pins one.",
+    "reviewEngine": "auto",
+    "//draftPr": "Open pull requests as drafts. The worker marks one ready only once its own review rounds have converged.",
+    "draftPr": true,
+
+    "//agentRunner": "Command that starts a worker. Default: claude --permission-mode auto {prompt}. Placeholders: {prompt} {worktree} {title}. Examples: codex exec {prompt} | agy run {prompt}",
+    "//hubRunner": "Command that starts the hub itself. Default: claude -n {name} --permission-mode auto {prompt}. The session has to be named — the name is the address a report is sent to — and it starts unattended, because a hub waiting for approval is a hub not reading its inbox and nobody is watching that tab. Drop the mode here if you would rather it asked; you will then want a tool allowlist in the agent's own settings. **Keep {name}**: it is the hub's address and the thing that makes an agent resume that session rather than open a new one, and without it the session is nameless in every listing a person reads. A template without it is reported in `warnings`. Whether the hub is *running* does not depend on it — that rests on the recorded start time, which `exec` preserves and a recycled pid cannot match.",
+    "//worktreePattern": "Where a worktree goes when no convention tool answers. Default: .claude/worktrees/{name} — the same shape such a tool uses, on purpose: two answers for where a worktree lives is worse than either. Placeholders: {repo} {branch} {name}. **{name} here is the branch with its slashes flattened** (`someone/app-1234` -> `someone-app-1234`), which is not the {name} in a branchPattern — that one is the task's own name (`app-1234`). Two different values with one spelling, so read each pattern's own list. The branch shape has its own fallback ({user}/{name}); override it per task source with that source's branchPattern. A {branch} containing `..` is refused rather than resolved: it would name a path outside the checkout.",
+
+    "//skills": "Named procedures the prompts hand off to, if this machine has them. Omit any of them and the prompts skip that step.",
+    "skills": {
+      "prStyle": "",
+      "commentStyle": "",
+      "createPr": "",
+      "commit": ""
+    }
+  },
+
+  "repos": {
+    "example/android-app": {
+      "//": "One code repo drawing from two Project v2 boards. `issueKeys` maps each issue repo to its key: a board holds issues from several repos, so the key is a property of the issue, not of the source. No branchPattern/worktreeName below — the worktree convention supplies the shape, adjutant passes `{issueKey}-{issue}`, and worktreeName defaults to `{issuekey-lowercase}-{issue}`. Set them per source only for a tracker that has no convention.",
+      "issueKeys": {
+        "example/team-app": "ALPHA",
+        "example/team-seasonal": "BETA",
+        "example/team": "GAMMA"
+      },
+      "issueCreate": {
+        "//": "How the hub files a newly reported bug. Point `command` at the repo's own issue-creation procedure instead of hand-rolling `gh issue create` — templates, labels and board registration live there. Omit the whole key and the hub asks once, then offers to write it here. `notes` carries that procedure's quirks, which the generic prompt cannot know: whether it is interactive, which questions it asks, whether the body can be intercepted before posting, what checks it already runs, and what has to be done afterwards. Repo-wide rules (AGENTS.md / CLAUDE.md) do NOT belong here — the hub runs in that repo's checkout and already loads them.",
+        "command": "example:create-issue",
+        "//notes": "One line per quirk, in the order the hub will hit them. These are made up; write what your own command actually does.",
+        "notes": [
+          "Interactive: asks for template kind, parent issue, title and detail in one prompt.",
+          "Posts without showing a draft first, so the body cannot be intercepted.",
+          "Already runs its own secret and personal-data check; do not run one around it.",
+          "Does not register the issue on the board — do that afterwards."
+        ]
+      },
+      "taskSources": [
+        {
+          "type": "github-project",
+          "projectOwner": "example",
+          "projectNumber": 9,
+          "projectFields": {
+            "//": "Fixed ids for this board's Status field, so the hub does not look them up on every run. projectId: `gh project view <n> --owner <o> --format json --jq .id`. statusFieldId and the option ids: `gh project field-list <n> --owner <o> --format json`, then read the Status field.",
+            "projectId": "PVT_xxxxxxxxxxxx",
+            "statusFieldId": "PVTSSF_xxxxxxxxxxxx",
+            "inProgressOptionId": "00000000",
+            "inReviewOptionId": "00000000"
+          }
+        },
+        {
+          "//": "Seasonal board. Its Status column has no In Progress at all, so projectFields is omitted and the hub only assigns. Issues from example/team-seasonal show up on both boards; the hub dedupes by owner/repo#number.",
+          "type": "github-project",
+          "projectOwner": "example",
+          "projectNumber": 28
+        }
+      ],
+      "ide": "studio",
+      "baseBranch": "auto",
+      "//agentEnv": "Environment the hub and its workers are both started with. For a repo that runs under a separate agent profile: if the hub and its workers land in different config directories, their MCP servers, auth and history disagree. Keys have to be variable names — letters, digits and underscore, not starting with a digit — because these are assembled into an `env K=V …` command line; anything else is dropped and reported in `warnings`. Do not write `~`: which side expands it varies.",
+      "agentEnv": {
+        "CLAUDE_CONFIG_DIR": "/absolute/path/to/config-dir"
+      },
+      "//postCreate": "Commands run once, in the main checkout, right after a worktree is created — `{worktree}` is its absolute path. This is where gitignored files a build needs (signing certs, local.properties) get carried across, since nothing else copies them.",
+      "postCreate": ["cp -r cert/ {worktree}/cert/"],
+      "//verify": "What a worker runs to prove its change works before handing over. Written here rather than guessed, because the wrong build command reads as a broken change.",
+      "verify": [
+        "./gradlew :app:assembleDebug",
+        "./gradlew testDebugUnitTest"
+      ],
+      "//onWorktreeRemove": "Commands run just before a worktree is removed, with `{worktree}` substituted — for anything living outside it that would otherwise be left behind (a container, a simulator, a registered device).",
+      "onWorktreeRemove": [
+        "sed -i '' '/<entry key=\".*worktrees\\/{name}.*\">/,/<\\/entry>/d' ~/Library/Application\\ Support/JetBrains*/options/recentProjects.xml"
+      ]
+    },
+
+    "example/web": {
+      "//": "Plain GitHub Issues in the same repo. Single source, so the flat shorthand: a top-level `taskSource` is read as a `taskSources` of one. issueKeys still lives at the entry level, even with one entry in it.",
+      "issueKeys": { "example/web": "WEB" },
+      "taskSource": "github",
+      "issueRepo": "example/web",
+      "ide": "code",
+      "verify": ["npm run build", "npm test"]
+    },
+
+    "example/service": {
+      "//": "Linear. `team` is the key prefix, e.g. XYZ-4902.",
+      "taskSource": "linear",
+      "linear": {
+        "team": "XYZ",
+        "inProgressState": "In Progress"
+      },
+      "ide": "emacsclient -n {worktree}",
+      "verify": ["./gradlew build"]
+    },
+
+    "example/legacy": {
+      "//": "Jira. cloudId comes from the tracker's own resource list.",
+      "taskSource": "jira",
+      "jira": {
+        "project": "ABC",
+        "cloudId": "00000000-0000-0000-0000-000000000000",
+        "inProgressStatus": "In Progress"
+      },
+      "ide": "idea",
+      "agentRunner": "codex exec {prompt}",
+      "verify": ["make test"]
+    }
+  }
+}

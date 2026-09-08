@@ -1,0 +1,17 @@
+/target
+/.idea
+
+# Config
+config.json
+
+# OS / Editor
+.DS_Store
+.vscode/
+
+# Logs / Environment
+*.log
+.env
+*.env
+
+# Agent worktrees / directories
+.claude/
