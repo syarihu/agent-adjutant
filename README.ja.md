@@ -179,7 +179,7 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings
 
 ## 任意の連携ツール
 
-`proctor`（worktree 規約、セッション台帳、タブ着色）や `lk`（ローカルナレッジベース）が PATH 上にあれば自動で連携し、なければスキップします。
+[`proctor`](https://github.com/syarihu/agent-proctor)（worktree 規約、セッション台帳、タブ着色）や [`lk`](https://github.com/syarihu/local-knowledge-cli)（ローカルナレッジベース）が PATH 上にあれば自動で連携し、なければスキップします。
 
 どちらも必須ではありません。worktree の配置や命名規約は `adjutant worktree-path --name`（ブランチ: `{user}/{name}`、パス: `<main>/.claude/worktrees/{name}`）が同等の形式を標準で提供します。また、リポジトリごとの追加ファイル配置は、本ツールの設定にある `postCreate` フックで対応できます。
 

@@ -259,7 +259,7 @@ Anything that would open a window, start an agent or notify a human runs under `
 
 ## Optional neighbours
 
-`proctor` (worktree conventions, session ledger, tab colours) and `lk` (the local knowledge
+[`proctor`](https://github.com/syarihu/agent-proctor) (worktree conventions, session ledger, tab colours) and [`lk`](https://github.com/syarihu/local-knowledge-cli) (the local knowledge
 base) are used when they are on PATH and skipped when they are not.
 
 Neither is needed. A convention tool does not *create* worktrees — it answers where they go
