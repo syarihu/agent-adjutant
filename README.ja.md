@@ -20,14 +20,22 @@
 
 ## インストール
 
+Homebrew の場合:
+
+```bash
+brew install syarihu/tap/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
+adjutant install-mcp                   # Claude Code に MCP サーバーを登録（user スコープ）
+adjutant install-mcp --target json          # 他のクライアント向けに設定用 JSON を出力
+```
+
+Cargo の場合:
+
 ```bash
 cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
 # またはローカルチェックアウトから:
 #   cargo install --path .
 # または cargo install を使わない場合:
 #   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
-adjutant install-mcp            # Claude Code に MCP サーバーを登録（user スコープ）
-adjutant install-mcp --target json   # 他のクライアント向けに設定用 JSON を出力
 ```
 
 `install-mcp` は `claude mcp add` を直接実行して Claude Code に登録します。他のクライアントを使う場合は `--target json` で設定 JSON を出力して手動登録できます。

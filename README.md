@@ -26,14 +26,22 @@ versions. They are commands now, and the procedures call them.
 
 ## Install
 
+Via Homebrew:
+
+```bash
+brew install syarihu/tap/agent-adjutant # both binaries: `adjutant` and the short `adj`
+adjutant install-mcp                   # registers the MCP server with Claude Code (user scope)
+adjutant install-mcp --target json          # or print the JSON for another client
+```
+
+Via Cargo:
+
 ```bash
 cargo install --git https://github.com/syarihu/agent-adjutant # both binaries: `adjutant` and the short `adj`
 # or from a local checkout:
 #   cargo install --path .
 # or without cargo install:
 #   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
-adjutant install-mcp            # registers the MCP server with Claude Code (user scope)
-adjutant install-mcp --target json   # or print the JSON for another client
 ```
 
 `install-mcp` performs the registration rather than printing instructions for someone to
