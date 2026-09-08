@@ -6,6 +6,8 @@ English | [日本語](README.ja.md)
 
 A task hub for coding agents, as one binary.
 
+![agent-adjutant demo](docs/images/demo.gif)
+
 `adjutant` is a repository's 副官 — its adjutant: it hands work out to workers and takes
 their reports back in. The hub picks a task, cuts a worktree, writes a brief and starts a
 worker in a new tab; a worker that trips over an unrelated bug hands it back rather than
