@@ -8,80 +8,79 @@
 
 コーディングエージェントのためのタスク hub を、1つのバイナリで。
 
-`adjutant` はリポジトリの副官です。仕事を worker に配り、その報告を受け取ります。hub はタスクを選び、worktree を切り、指示書を書いて、新しいタブで worker を起動します。worker が自分のタスクと無関係なバグを踏んだときは、自分で直したり自分で issue を立てたりせず、hub に差し戻します。この両方が手順書として定められており、その手順書はバイナリの中に同梱されています。
+`adjutant` はリポジトリの「副官」として、タスクを worker に割り振り、その報告を受け取ります。hub がタスクを選定して worktree を作成し、指示書を用意して別タブで worker を起動します。worker が作業中に関係のないバグを見つけた場合は、自ら修正や Issue 起票を行わずに hub へ差し戻します。これら一連のワークフローは手順書（プロンプト）としてバイナリに同梱されています。
 
 ## なぜプロンプトを配信するバイナリなのか
 
-手順書は以前、各エージェントのコマンドディレクトリにコピーする markdown ファイルでした。コピーはずれていきます。ツールを更新してもコピーは古いまま取り残され、設定ディレクトリごとに1つずつ、どれも微妙に違うものが残ります。MCP 経由で配信すれば、手順書は実体ではなくポインタになります。1回の更新がすべての呼び出し元に反映されます。
+従来、エージェントへの手順書は各エージェントのコマンドディレクトリに Markdown ファイルとして配置していました。しかし、ツールのアップデートに伴いファイルが乖離し、環境ごとに古い手順書が残り続ける問題がありました。MCP 経由でバイナリから配信することで、エージェントは常に単一の最新手順を参照できます。
 
-機械的な処理（hub 名の導出、設定の解決、タブを開く、メッセージを運ぶ）も、以前は3つの手順書ファイルに同じ文章として書き写されていました。これは1つのルールに3つのバージョンがあるのと同じです。今はそれらがコマンドになっており、手順書はそのコマンドを呼び出します。
+また、hub 名の解決や設定の読み込み、タブ操作、メッセージの受け渡しといった機械的な処理も、以前は複数の手順書に重複して記載されていました。これらを CLI コマンドとして切り出し、手順書からはそのコマンドを呼び出す構成に整理しています。
 
 ## インストール
 
 ```bash
-cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と短い `adj` の両方が入ります
+cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
 # またはローカルチェックアウトから:
 #   cargo install --path .
 # または cargo install を使わない場合:
 #   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
-adjutant install-mcp            # MCP サーバーを Claude Code に登録（user スコープ）
-adjutant install-mcp --target json   # 他のクライアント向けに JSON を出力する場合
+adjutant install-mcp            # Claude Code に MCP サーバーを登録（user スコープ）
+adjutant install-mcp --target json   # 他のクライアント向けに設定用 JSON を出力
 ```
 
-`install-mcp` は、誰かが手で追う手順を表示するのではなく、登録そのものを実行します。中で `claude mcp add` を実行します。設定ファイルの持ち主であるツールが、そのファイルを書くべきだからです。`json` ターゲットは、このツールが知らないクライアント向けの逃げ道であり、貼り付け作業をお願いする唯一の経路です。
+`install-mcp` は `claude mcp add` を直接実行して Claude Code に登録します。他のクライアントを使う場合は `--target json` で設定 JSON を出力して手動登録できます。
 
-**登録の前にインストールしてください。** 登録処理は、実行したバイナリが PATH ですでに解決できる場合は `adjutant` と記録し、そうでない場合はその絶対パスを記録します。つまりビルドディレクトリの中から `install-mcp` を実行すると、そのビルドが恒久的に固定されてしまい、`cargo clean` した時点でサーバーが壊れます。
+**登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
 
-**`adj` は同じプログラムの短い名前です。** 両方のバイナリがインストールされ、以下の例はどちらの名前でも動きます。`adj work` は worker のタブを `adj worker` として起動します。自分自身の名前を書き出すコマンドは、呼ばれたときの名前をそのまま使うためです。
+**`adj` は `adjutant` の短縮名です。** どちらを実行しても同じように動作します。`adj work` から起動された worker タブも `adj worker` として立ち上がります。
 
 ## 2つのモード
 
-シェル側。エージェントが存在する*前*に動く場所のためのものです。ランチャー、フック、手順書自身の `Bash` ステップなど（好みに応じて、すべて `adj` に置き換えられます）：
+シェル側（エージェント起動前のランチャーやフック、手順書内の `Bash` ステップ向け。すべて `adj` でも実行可能）：
 
-| | |
+| コマンド | 説明 |
 | --- | --- |
-| `adjutant hub` | このリポジトリの hub を、メインチェックアウトで、1つだけ起動する |
-| `adjutant hub-name [--json]` | hub のセッション名 — 報告の宛先になるアドレス |
-| `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力する |
-| `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛に待っているもの |
-| `adjutant send --subject … --body …` | hub にメッセージを渡す（本文は stdin からでもよい） |
-| `adjutant work --worktree … --title …` | タブを開いて、そこで worker を起動する |
-| `adjutant worker --worktree …` | 自分が worker になる（`work` がタブを開いて実行するもの） |
-| `adjutant tell --worktree … --subject …` | その worktree の worker にメッセージを置く |
-| `adjutant outbox [--clear]` | hub がここの worker に残したもの |
-| `adjutant spawn --cwd … -- cmd …` | タブを開いて、その中で何かを実行する |
-| `adjutant focus` | 動いている hub のタブを前面に出す。なければ exit 1 |
+| `adjutant hub` | このリポジトリの hub をメインチェックアウトで1つ起動 |
+| `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
+| `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
+| `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
+| `adjutant send --subject … --body …` | hub にメッセージを送信（本文は stdin 可） |
+| `adjutant work --worktree … --title …` | 新しいタブを開いて worker を起動 |
+| `adjutant worker --worktree …` | 自身を worker として起動（`work` のタブ内で実行されるコマンド） |
+| `adjutant tell --worktree … --subject …` | 指定 worktree の worker にメッセージを送信 |
+| `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
+| `adjutant spawn --cwd … -- cmd …` | 新しいタブを開いてコマンドを実行 |
+| `adjutant focus` | 実行中の hub タブをアクティブにする（なければ exit 1） |
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
-| `adjutant title --title …` | このプロセスがいるタブに名前を付ける（hub は自分で自分に付ける） |
-| `adjutant notify --message …` | 何かが起きたことを人間に伝える |
-| `adjutant worktree-path --name …` | タスクの worktree のブランチ・パス・ベース |
-| `adjutant hub-stop` | このリポジトリの hub の記録を消す |
+| `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
+| `adjutant notify --message …` | 人間にデスクトップ通知を送る |
+| `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パス・ベースを出力 |
+| `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 
-エージェント側（`adjutant mcp`）。同じ仕組みを、7つのツールと3つのプロンプトとして提供します：
+エージェント側（`adjutant mcp`）：7つのツールと3つのプロンプトを提供します。
 
-- **プロンプト** — `adj-hub`（hub を動かす）、`adj-worker`（指示書から引き渡しまでタスクを進める）、`adj-report`（見つけたバグを hub に渡す）。Claude Code ではこれらが `/mcp__adjutant__adj-hub` のように公開されます。
+- **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスクの着手から完了引き渡しまで）、`adj-report`（作業中に発見したバグを hub に報告）。Claude Code では `/mcp__adjutant__adj-hub` のように呼び出せます。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_skill`。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。
 
-- **ツール** — `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_skill`。最後のものは、プロンプトと同じ手順書のテキストを返します。MCP のプロンプト対応はエージェントによってばらつきがあり、誰も取得できない手順書は誰も従わない手順書だからです。
+名前の使い分けとして、人間が入力する CLI コマンドやプロンプトは短く（`adj`, `adj-…`）、システムが参照する MCP サーバー名やツール名は長めに（`adjutant`, `adjutant_…`）揃えています。
 
-名前は、人間が打つところでは短く、何かが読み返すところでは長くしています。コマンドラインでは `adj`、プロンプトは `adj-…`、対して MCP サーバーは `adjutant`、ツールは `adjutant_…` です。`adjutant` と書かれた登録内容や解決済みの設定は、1年後に見ても何のものか分かります。
+リポジトリ固有の情報を扱うコマンドは `--repo owner/name` を受け取ります。省略した場合は、カレントディレクトリ（worktree 含む）の git origin リモートからリポジトリを自動判定します。
 
-リポジトリについて答えるコマンドはすべて `--repo owner/name` を受け取ります（`outbox` / `mcp` / `install-mcp` はリポジトリの話ではないので取りません）。指定しない場合は、いま自分が立っているチェックアウト（worktree も含む）の origin リモートからリポジトリを読み取ります。
-
-`instructions` は5行です。1500行ある手順書が意味を持つのは hub か worker が動いている間だけで、どちらも必要になった時点で自分から取得します。常時コンテキストに載せる価値があるのは1点だけ、worker は直しに来たわけではないバグを報告してよいということです。
+MCP の `instructions` は約5行の最小限に抑えています。1500行を超える詳細な手順書は、hub や worker が必要になったタイミングでオンデマンドに取得するため、常時コンテキストを圧迫しません。
 
 ## 権限
 
-MCP 経由で配信される手順書は、ツールの許可リストを持てません。スラッシュコマンドのファイルなら frontmatter の `allowed-tools:` で持てました。手順書をバイナリに取り込んで失ったのは、この1点だけです。
+MCP 経由で配信される手順書からは、個別ツールの許可リスト（`allowed-tools`）を指定できません。
 
-そのため、**hub も worker も、既定では承認を求めずに起動します**。worker が止まってはいけないのは、終わらせるべきビルドがあるからです。hub が止まってはいけないのは、承認を待っている hub は受信箱を読んでいない hub であり、しかもそのタブは誰も見ていないからです。誰も見ていないことがこの仕組みの前提そのものです。これは重要な問いかけを消すものではありません。手順書自身が持つ `AskUserQuestion` のチェックポイント（この issue を立てるか？ 着手するか？）はそのままです。なくなるのは、`gh issue view` を実行してよいかを尋ねられることです。
+そのため、**hub も worker も既定では自動実行モード（unattended）で起動します**。worker のビルドや hub の受信箱監視が確認ダイアログで止まるのを防ぐためです。ただし、Issue の起票確認やタスクの着手確認など、人による判断が必要なチェックポイント（`AskUserQuestion`）は手順書側で維持されます。スキップされるのは `gh issue view` などの日常的なコマンド実行確認です。
 
-hub に尋ねさせたい場合は、このモードを設定から外します。
+都度確認を挟みたい場合は、設定で `hubRunner` を変更してください：
 
 ```jsonc
 "hubRunner": "claude -n {name} {prompt}"
 ```
 
-そのうえで、手順書が使うものを `~/.claude/settings.json` で事前に許可しておきます。ただしこの許可リストはある時点のスナップショットです。手順書が新しいものを使い始めた瞬間にずれ、その症状は hub が黙り込むという形で現れます。
+その場合、hub が停止しないよう `~/.claude/settings.json` で必要なツールを事前に許可しておく必要があります：
 
 ```jsonc
 "permissions": { "allow": [
@@ -98,81 +97,91 @@ hub に尋ねさせたい場合は、このモードを設定から外します�
 ]}
 ```
 
-hub はメインチェックアウトで動くため、承認を求めずに動く hub はそのワーキングツリーに触れられます。手順書はそこで何かを実装することを禁じており、作業はすべて自分の worktree を持つ worker に出されますが、それは文章で書かれたルールであって、サンドボックスではありません。
+hub はメインチェックアウトで動作します。手順書によってメイン側での直接実装は禁止され、作業は必ず worktree 上の worker に委任されますが、これは手順書による制約であり、OS レベルのサンドボックスではない点に留意してください。
 
 ## 設定
 
-`~/.config/adjutant/config.json`（`$XDG_CONFIG_HOME` と `ADJUTANT_CONFIG` はどちらも尊重されます）。**`config.example.json`** を参照してください。その `//` で始まるキーがスキーマのドキュメントで、セッションに渡る前にすべて取り除かれます。
+設定ファイルは `~/.config/adjutant/config.json` です（`$XDG_CONFIG_HOME` および `ADJUTANT_CONFIG` に対応）。詳細は **`config.example.json`** を参照してください。`//` で始まるキーはスキーマ説明用で、実行時に自動で除去されます。
 
-より具体的な指定が勝ちます。リポジトリ単位のエントリ、次に `defaults`、次にトップレベル、最後に組み込みの既定値の順です。設定が壊れていても解決処理は失敗しません。`warnings` を返し、どこがおかしいかは hub が説明します。
+設定は「リポジトリ固有エントリ > `defaults` > トップレベル > 組み込みの既定値」の順に優先されます。設定内容に不備があってもエラー終了はせず、`warnings` を含んだ上で hub が警告を通知します。
 
-マシン固有のことは何一つハードコードされていません。以下はどれもコマンドテンプレートで、プレースホルダは**シェルのクォートを済ませた状態で**展開されます。したがって、プレースホルダを引用符で囲まないでください：
+各設定項目はコマンドテンプレートになっており、プレースホルダは**シェルクォートされた状態で**展開されます。テンプレート側でプレースホルダを引用符で囲まないでください：
 
 | キー | プレースホルダ | 既定値 |
 | --- | --- | --- |
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
-| `terminal.title` | `{title}` | このプロセスの tty に書き込む OSC エスケープ |
-| | | *`spawn` が開くすべてのタブにも名前を付ける* |
-| `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` でそのセッションに送る |
-| `hubWake` / `workerWake` | 同じもの | 片方向だけ `wake` を上書きする |
+| `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
+| `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
+| `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |
 | `agentRunner` | `{prompt}` `{worktree}` `{title}` | `claude --permission-mode auto {prompt}` |
 | `hubRunner` | `{name}` `{prompt}` | `claude -n {name} --permission-mode auto {prompt}` |
-| | | *`{name}` を外すと、人が読むどの一覧でもそのセッションが無名になる* |
-| `notification` | `{title}` `{message}` | 音付きの macOS 通知 |
-| `ide` | `{worktree}` | なし — 手順書は推測せずに尋ねる |
+| `notification` | `{title}` `{message}` | サウンド付き macOS 通知 |
+| `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
 
-キーを省略すると組み込みの既定値になります。`false` を設定するとその挙動が無効になり、これは省略とは別の答えです。`terminal` と `wake` 系はキー単位でマージされるので、リポジトリごとに片方だけ変えても、もう片方を書き直す必要はありません。型の違う設定は無視されますが、同時に `warnings` に出ます — 何かが黙って効かないときは `adj config` を見てください。
+キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
 
-`wake` は、設定の他の項目にはない切れ目で分かれています。セッションを**どうつつくか**はターミナルの性質で、つついた後に**何と言うか**はエージェントの性質です。そのため `hubWake` / `workerWake` は、どちらの半分だけでも上書きできる長い形式を受け取ります。
+### wake の詳細設定
+`wake`（セッションへの入力通知）は、「ターミナルにどう入力するか」と「エージェントに何を伝えるか」に分かれています。そのため、`hubWake` / `workerWake` ではオブジェクト形式で個別に上書きできます：
 
 ```jsonc
-"wake": "tmux send-keys -t {tty} {line} Enter",   // マシン側
-"workerWake": { "line": "check `adj outbox`" }     // このエージェントは MCP を持たない
+"wake": "tmux send-keys -t {tty} {line} Enter",   // ターミナル側の操作
+"workerWake": { "line": "check `adj outbox`" }     // エージェント側の入力文言
 ```
 
-これは、hub が片方のエージェント、worker が別のエージェントというリポジトリに必要な形です。組み込みの文言は MCP ツール（`adjutant_pending`、`adjutant_outbox`）を名指ししており、方向ごとに受信箱と送信箱をそれぞれ指しています。1コマンドを超えるものを書きたいときは、`sh -c '…'` で包むのではなくスクリプトを指してください。展開された値は自分のクォートを伴って届くため、包んでいる側の引用符付き文字列を途中で終わらせてしまいます。`{cwd}` を含む `spawn` テンプレートは、自分でディレクトリを移動するものとして信頼されます。含まないものには `cd` が先頭に付けられます。新しいタブの名前は、ターミナル自身の API ではなく、そのタブの中のシェルが `adjutant title` を呼ぶことで付けられます。`set name of session` は唯一一般化できない仕組みで、タイトル書式をユーザー変数で駆動しているプロファイルではこれが無視され、タブは間違った名前のまま黙って残ります。`agentEnv` は、hub とその worker の両方を起動するときに渡す環境変数のオブジェクトで、別のエージェントプロファイルの下で動かすリポジトリのためのものです。
+- **複数コマンドの実行**: `sh -c '…'` で囲むとクォートの二重展開で壊れる可能性があるため、シェルスクリプトを用意してそれを呼び出してください。
+- **カレントディレクトリ**: `spawn` テンプレートに `{cwd}` が含まれている場合はそのコマンド自身でディレクトリ移動を行うものとみなし、含まれていない場合は先頭に `cd` が付与されます。
+- **タブ名**: 新規タブの名前はターミナル API ではなく、タブ内で実行されるシェルが `adjutant title` を呼ぶことで設定されます。
+- **環境変数**: `agentEnv` で、hub および worker の起動時に渡す環境変数を設定できます。別プロファイルでエージェントを動かしたい場合に便利です。
 
 ## 両者はどうやって連絡を取り合うか
 
-宛先は hub 名です。両者はそれぞれルールを書き写すのではなく、同じ方法（`adjutant hub-name`）で導出します。中身は `owner/name` を読める形に潰したものと、小文字化した元の名前のダイジェストです。小文字化するのは、設定の引き当てが大文字小文字を区別しないためで、宛先だけ区別すると1つのリポジトリが2つに割れます。潰した側だけでは一意になりません（`acme/foo-bar` と `acme/foo_bar` と `acme-foo/bar` は同じ形に潰れます）し、宛先を共有する2つのリポジトリは受信箱を共有してしまいます。**名前を手で組み立てないでください** — 1文字違えば別の箱で、ダイジェストは当てられません。
+### アドレス体系（hub 名）
+宛先アドレスとなる hub 名は、両セッションともに `adjutant hub-name` で自動算出します。リポジトリの `owner/name` を正規化した文字列と、小文字化ハッシュの組み合わせで構成され、リポジトリ間での受信箱の衝突を防ぎます。手動で組み立てず、必ずコマンドから取得してください。
 
-**worker → hub** はファイルです。`adjutant send`（または `adjutant_send` ツール）が `~/.local/state/adjutant/inbox/<slug>/` に書き込み、`adjutant pending` がそれを読みます。受け手がいないせいで配送が失敗することはありません。hub が動いていなければメッセージはそのまま待つだけで、そのどちらが起きたのかは応答が伝えます。`adjutant hub-stop` と、記録された PID に対する `kill -0` およびコマンドラインの照合が、終了済みの hub が動いているように見えるのを防いでいます。
+### メッセージ配送の仕組み
+- **worker → hub**:
+  - `adjutant send`（または `adjutant_send` ツール）が `~/.local/state/adjutant/inbox/<slug>/` にファイルを書き込み、`adjutant pending` が読み出します。
+  - hub が停止中でもメッセージは保持されます。
+  - hub の生存確認は、記録された PID への `kill -0` およびプロセス引数の照合で行われます。
+- **hub → worker**:
+  - 宛先はセッションではなく worktree です。`adjutant tell` が `{worktree}/.claude/adjutant-outbox.md` に追記し、`adjutant outbox` が読み出します。
+  - worker 起動時に `adjutant worker` ランチャーが自身の PID を記録し、そのプロセス上でエージェントを `exec` することで、`workerWake` による入力通知を可能にしています。
 
-**hub → worker** もファイルですが、宛先はセッションではなく worktree です。`adjutant tell` が `{worktree}/.claude/adjutant-outbox.md` に `##` のセクションを追記し、`adjutant outbox` がそれを読みます。worker 自身の記録はその隣に置かれ、書くのは `adjutant worker` です。これはタブが実際に実行するランチャーで、自分の PID を記録したうえで、自分自身の上にエージェントを `exec` します。`adjutant hub` が hub に対して行うのと全く同じです。この記録があるおかげで `workerWake` が成立します。PID がなければ、つつく相手がいません。
+### wake（起こす処理）と通知
+ファイル書き込みだけではエージェントが気づかないため、相手が起動中の場合は **`hubWake`** / **`workerWake`**（既定では iTerm2 へのキー入力）を実行して受信箱の確認を促します。
+- `send` は常にデスクトップ通知（`notification`）を発火します。
+- `tell` は worker を wake できなかった場合のみデスクトップ通知を発火します（wake できた場合は worker が自律して読むため）。
+- wake 処理はベストエフォートであり、失敗してもメッセージ送信自体は成功します。
 
-worker のコマンドラインには特徴がありません（設定が名指ししたエージェントそのものです）。そのため記録はプロセスの開始時刻に紐づけられています。`exec` は開始時刻を保つので、ランチャーが書いた記録が、自分と入れ替わったエージェントを今も特定できます。
-
-ディレクトリにファイルが現れても誰にも通知は届かないため、配送には両方向とも後半があります。相手が起動していれば、`send` は **`hubWake`** を、`tell` は **`workerWake`** を実行します。既定ではその tty のセッションに対する iTerm2 の `write text` で、対話中のエージェントには人間が打ち込んだのと全く同じように届きます。打ち込まれる1行は報告の内容を繰り返さず受信箱を指すだけなので、本文の置き場所は1箇所だけになります。`send` はどちらの場合でも `notification` を発火します。`tell` が発火するのは worker を起こせなかったときだけです。起こされた worker は誰の手も借りずにメッセージを読むからです。どちらの応答も、`present` / `woken` のどちらが起きたのかを伝えます。起こす処理は仕組みからしてベストエフォートです。フックが動く前にメッセージはすでに配送されているので、つつくのに失敗しても send が失敗することはありません。そもそも hub は決まった3箇所で受信箱を読み直します。
-
-これらすべてをテンプレート経由にしている理由は、そうすればこの通信路がどのターミナルのどのエージェントからでも機能するからです。以前のバージョンは、あるコーディングエージェント固有のセッション一覧とセッション間メッセージの上に作られており、それ以外の場所では動きませんでした。
+これらをテンプレート経由で抽象化しているため、ターミナルやエージェントの種類を問わず柔軟に連携できます。
 
 ## レイヤ構成
 
 ```
-repo  config  template  prompts        葉 — stdlib と自分への入力だけ、他には触らない
-terminal  runner  notify  ide  messaging   下には手を伸ばせる、横には伸ばせない
-cmd/  mcp                                  それらを繋ぐ唯一の層
+repo  config  template  prompts        末端（標準ライブラリと自身の入力のみ）
+terminal  runner  notify  ide  messaging   下位層のみ参照可能（横の参照は不可）
+cmd/  mcp                                  各モジュールを結合する最上位層
 ```
 
-`scripts/check-layering.sh` がこの矢印を強制し、CI がそれを実行します。これはスタックではなく扇形なので、Cargo のワークスペースに分割すると、実体のある2つの層の間に何もしない中継層が生えてしまいます。チェックが通っている限り、後から分割することは機械的な作業のままです。
+モジュール間の依存方向は `scripts/check-layering.sh` で強制され、CI でも検証されます。
 
 ## 開発
 
 ```bash
-cargo test                    # ユニットテスト + エンドツーエンドテスト
-./scripts/check-layering.sh
+cargo test                    # 単体テスト + CLI テスト
+./scripts/check-layering.sh   # レイヤリング検証
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
 ```
 
-テストは外部から隔離されています。`ADJUTANT_CONFIG` と `ADJUTANT_STATE_DIR` は一時ディレクトリを指すため、どのテストもあなたの設定を読むことはなく、本当に動いている hub にテスト用の報告を投げ込むこともありません。ウィンドウを開く・エージェントを起動する・人間に通知する処理は、すべて `--dry-run` の下で動きます。
+テストはすべて環境から隔離されています。`ADJUTANT_CONFIG` と `ADJUTANT_STATE_DIR` が一時ディレクトリに向けられるため、ローカルの設定や実行中の hub に影響を与えることはありません。外部プロセスを起動する処理も `--dry-run` 下で実行されます。
 
-## 任意の隣接ツール
+## 任意の連携ツール
 
-`proctor`（worktree の規約、セッション台帳、タブの色）と `lk`（ローカルナレッジベース）は、PATH 上にあれば使い、なければ飛ばします。
+`proctor`（worktree 規約、セッション台帳、タブ着色）や `lk`（ローカルナレッジベース）が PATH 上にあれば自動で連携し、なければスキップします。
 
-どちらも必須ではありません。規約ツールは worktree を*作る*わけではありません。worktree をどこに置き、どのブランチに乗せるかを答えるだけで、`git worktree add` はどちらにしても自分で打ちます。つまり規約ツールがないときに欠けるのは規約そのもので、それは `adjutant worktree-path --name` が供給します。ブランチは `{user}/{name}`、パスは `<main>/.claude/worktrees/{name}` で、対抗する2つ目の規約を作るのではなく、規約ツールが使うのと意図的に同じ形にしてあります。唯一代わりがないのは、リポジトリごとの `copyFiles` です。それはこの設定の `postCreate` に書くもので、`postCreate` はどちらの場合でも実行されます。
+どちらも必須ではありません。worktree の配置や命名規約は `adjutant worktree-path --name`（ブランチ: `{user}/{name}`、パス: `<main>/.claude/worktrees/{name}`）が同等の形式を標準で提供します。また、リポジトリごとの追加ファイル配置は、本ツールの設定にある `postCreate` フックで対応できます。
 
 ## ライセンス
 
