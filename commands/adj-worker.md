@@ -58,8 +58,7 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
 
 ### 使っていい道具
 
-- **`task-researcher`** — チケット本文とコメント、既存ナレッジ、先行実装をまとめて1つの調査結果に
-  して返す読み取り専用エージェント。数十ファイルの探索が自分の文脈に入らずに済む。返ってきたら:
+- **調査特化エージェント（または `general-purpose`）** — `Agent` ツールの説明文を確認し、調査や先行実装の探索に特化した読み取り専用サブエージェント（description に「調査」「探索」「research」等が含まれるもの、あるいは `task-researcher` など）が存在していればそれを選ぶ。見当たらなければ `subagent_type: "general-purpose"` を選び、「コードは変更せず、調査レポートのみ返すこと」を指示して実行する。チケット本文とコメント、既存ナレッジ、先行実装をまとめて1つの調査結果にして返させる。数十ファイルの探索が自分の文脈に入らない。返ってきたら:
   1. `## 要件` と `## 受け入れ条件` を数行にしてユーザーに見せる。
   2. `## 未確定事項` が空でなければ、**ここでユーザーに聞く**（`AskUserQuestion`）。エージェントは
      聞けない。未解決のまま計画に持ち込まない。
@@ -152,9 +151,7 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 1. Find the PR: `gh pr list -R <codeRepo> --head <branch> --json number,url`. If none, say
    so and return.
-2. Launch the **`review-triage`** agent with `owner/repo`, the PR number, and `.` as the
-   working directory. It fetches every comment, checks each against the current source, groups
-   duplicates, and returns them classified as 未対応 / 対応済み / 却下済み / outdated.
+2. `Agent` ツールの説明文を確認し、レビューコメントの収集・トリアージに特化したエージェント（description に「triage」「トリアージ」等が含まれるもの、あるいは `review-triage` など）が存在すればそれを起動する。見当たらなければ `subagent_type: "general-purpose"` を選び、コメント収集と分類のみを行うよう指示して起動する。対象は `owner/repo`、PR 番号、作業ディレクトリ `.`。コメントを全件取得し、現在のコードと突き合わせて重複をまとめ、未対応 / 対応済み / 却下済み / outdated に分類して返させる。
 3. Show the 未対応 list and ask which to address with `AskUserQuestion` (default: all
    `must`). Include the items the agent flagged as **誤検知の疑い** but mark them — Copilot
    is confidently wrong often enough that auto-fixing its findings is how a clean file
@@ -207,11 +204,11 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 | 役 | 実体 | なぜそこに置くか |
 | --- | --- | --- |
-| 情報収集 | `task-researcher` | 数十ファイルの探索が自分の文脈に入らない。読み取り専用 |
+| 情報収集 | 調査特化エージェント（無ければ `general-purpose`） | 数十ファイルの探索が自分の文脈に入らない。読み取り専用 |
 | 実装計画 | 組み込み `Plan` | 読み取り専用。計画は人が承認するのでこのセッションに返す必要がある |
 | 実装 | **自分** | すでに作業すべき場所に立っている。機械的な大量置換と、ツール出力を自分の文脈に入れたくない調査にだけサブエージェントを使う |
-| セルフレビュー | `self-reviewer` / codex | 実装の理屈を知らない別個体でないと追認になる。`fork` は不可 |
-| レビュー対応 | `review-triage` → 自分 | 収集と分類は定型作業、採否の判断は人が要る |
+| セルフレビュー | レビュー特化エージェント（無ければ `general-purpose`） / codex | 実装の理屈を知らない別個体でないと追認になる。`fork` は不可 |
+| レビュー対応 | トリアージ特化エージェント（無ければ `general-purpose`） → 自分 | 収集と分類は定型作業、採否の判断は人が要る |
 | ユーザーとの対話 | **このセッション** | サブエージェントは質問できない |
 
 ---
@@ -223,7 +220,7 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 ### 深刻度の語彙（両エンジン共通）
 
-`self-reviewer` が返すのと同じ3段階に統一する。codex に回すラウンドでも**この語彙で報告させる**
+深刻度は以下の3段階に統一する。Claude・codex のどちらに回すラウンドでも**この語彙で報告させる**
 （プロンプトに明記する）。エンジンごとに語彙が変わると、下の収束判定がどちらかの側で空振りする。
 
 - **must** — マージしたら欠陥。誤った挙動・クラッシュ・データ損失・セキュリティ。
@@ -334,8 +331,8 @@ gh pr view <n> -R <codeRepo> --json reviews \
      明記する（上の「深刻度の語彙」）。終わったら念のため worktree が変わっていないことを
      確認する（`git status --short`）。
      一度だけ、引っかかった枠と**その枠自身の** `resets_at` を挙げて言う（両方引っかかったら 5h を
-     挙げる）: 「{5h|7d}が{pct}%なのでレビューはcodexに切り替えるのだ（リセット {resets_at}）」
-   - どちらも引っかからない → **Claude**: `self-reviewer` エージェント（`reviewEffort` を渡す）。
+     挙げる）: 「{5h|7d}が{pct}%なのでレビューをcodexに切り替えます（リセット {resets_at}）」
+   - どちらも引っかからない → **Claude**: `Agent` ツールの説明文を確認し、コードレビュー・差分検証に特化したエージェント（description に「レビュー」「review」等が含まれるもの、あるいは `self-reviewer` など）が存在すればそれを選び、無ければ `subagent_type: "general-purpose"` を選んで「コードは変更せずレビュー報告のみ行うこと」を指示して実行する（`reviewEffort` を渡す）。
    - 2つのキーは**独立に**評価する。`seven_day` が無くても 5h の判定は止めないし、逆も同じ。
    - キャッシュが無い / 壊れている / **両方**のキーが無い / `captured_at` が15分より古い → 不明。
      Claude のまま続け、使用量チェックを飛ばしたことをユーザーに伝える。
