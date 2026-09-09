@@ -1,6 +1,6 @@
 [package]
 name = "adjutant"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Agent task orchestrator: hands work out to workers, takes their reports back in"
 license = "MIT"
