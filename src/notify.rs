@@ -138,20 +138,58 @@ mod tests {
         );
     }
 
+    /// The recommended shape: a script that gets the three values as arguments and decides
+    /// for itself what to run on a click. Deliberately not the `-execute '… {nwo}'` form —
+    /// the README steers away from nesting a quoted command inside a template, so a test has
+    /// no business pinning it as the normal way to write one.
     #[test]
     fn a_template_can_ask_which_repository_the_message_is_about() {
         assert_eq!(
             command(
-                &Hook::Command(
-                    "terminal-notifier -message {message} -execute 'adj focus --repo {nwo}'".into()
-                ),
+                &Hook::Command("adj-notify {title} {message} {nwo}".into()),
                 "acme/widget",
                 "adjutant / widget",
                 "done"
             )
             .unwrap(),
-            "terminal-notifier -message done -execute 'adj focus --repo acme/widget'"
+            "adj-notify 'adjutant / widget' done acme/widget"
         );
+    }
+
+    /// Whatever the values are, they arrive as exactly three arguments. A repository with no
+    /// usable remote is named after its directory, so spaces and quotes in `{nwo}` are not
+    /// hypothetical, and the message is written by whoever sent the report.
+    #[test]
+    fn the_three_values_stay_three_arguments_through_a_real_shell() {
+        for (nwo, title, message) in [
+            ("", "adjutant", "done"),
+            ("/src/my repo", "adjutant / my repo", "it's done"),
+            (
+                "acme/widget",
+                "adjutant / widget",
+                "subject: {nwo} $(echo pwned)",
+            ),
+        ] {
+            let rendered = command(
+                &Hook::Command("printf '%s\\n' {title} {message} {nwo}".into()),
+                nwo,
+                title,
+                message,
+            )
+            .unwrap();
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&rendered)
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .collect::<Vec<_>>(),
+                [title, message, nwo],
+                "{rendered}"
+            );
+        }
     }
 
     #[test]

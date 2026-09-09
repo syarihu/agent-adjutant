@@ -191,7 +191,8 @@ clicking it opens an empty Script Editor rather than the session that wanted you
 ```
 
 — a click that raises the terminal. `{nwo}` is there to go one better: it is the repository the
-message is about, in the `owner/name` form `--repo` takes, so a notifier that runs
+message is about, the same value `--repo` takes — `owner/name`, or the checkout's own directory
+name when it has no usable remote — so a notifier that runs
 `adj focus --repo {nwo}` on click lands on *that repository's hub tab*. Point the key at a script
 rather than nesting a quoted command in the template, for the quoting reason the `wake` note below
 gives. `{nwo}` is empty when `adjutant notify` runs outside a repository, and says so on stderr
