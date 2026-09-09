@@ -292,11 +292,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .unwrap_or(false),
                 _ => false,
             };
-            if let Some(command) = notify::command(
-                &settings.notification,
-                &format!("adjutant / {}", info.repo),
-                &subject,
-            ) {
+            if let Some(command) = notify::repo_command(&settings.notification, &info, &subject) {
                 let _ = terminal::run_shell(&command);
             }
             Ok(json!({
@@ -371,11 +367,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             // Only fall back to interrupting the human when the worker itself could not be
             // reached; a woken worker is about to read it without anyone's help.
             if !woken
-                && let Some(command) = notify::command(
-                    &settings.notification,
-                    &format!("adjutant / {}", info.repo),
-                    subject,
-                )
+                && let Some(command) = notify::repo_command(&settings.notification, &info, subject)
             {
                 let _ = terminal::run_shell(&command);
             }

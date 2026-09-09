@@ -43,26 +43,54 @@ pub fn contains_placeholder(template: &str, key: &str) -> bool {
     template.contains(&format!("{{{key}}}"))
 }
 
+/// One pass over the template: a value that has been substituted is never read again.
+///
+/// Replacing key by key across the whole string re-read what the previous key had written, so
+/// a message containing the literal `{nwo}` got the repository spliced into the middle of its
+/// own quoted argument — splitting one argument into two, and, when the repository name had a
+/// `$(…)` in it, leaving that outside the quotes that were supposed to contain it.
 pub fn render(template: &str, subs: &[(&str, Sub<'_>)]) -> String {
-    let mut out = template.to_string();
-    for (key, sub) in subs {
-        let bare = format!("{{{key}}}");
-        match sub {
-            Sub::Quoted(v) => {
-                let value = sh_quote(v);
-                // The quoted forms go first: replacing `{title}` inside `'{title}'` would
-                // leave the template's own quotes wrapped around an already-quoted value.
-                out = out.replace(&format!("'{bare}'"), &value);
-                out = out.replace(&format!("\"{bare}\""), &value);
-                out = out.replace(&bare, &value);
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(at) = rest.find('{') {
+        let Some(end) = rest[at..].find('}').map(|n| at + n) else {
+            break;
+        };
+        let Some((_, sub)) = subs.iter().find(|(key, _)| *key == &rest[at + 1..end]) else {
+            // Not a placeholder this call answers for, so it is left alone rather than
+            // blanked: `-n {title}` emptied would swallow the next argument.
+            out.push_str(&rest[..=at]);
+            rest = &rest[at + 1..];
+            continue;
+        };
+        match *sub {
+            Sub::Quoted(value) => {
+                // A value arrives already quoted, so quotes the template wrapped around the
+                // placeholder are dropped rather than nested. Both sides have to agree —
+                // `"{title}'` is two literal quotes around a value, not a wrapper.
+                let wrapped = matches!(
+                    (
+                        rest[..at].chars().next_back(),
+                        rest[end + 1..].chars().next()
+                    ),
+                    (Some('\''), Some('\'')) | (Some('"'), Some('"'))
+                );
+                out.push_str(&rest[..at - usize::from(wrapped)]);
+                out.push_str(&sh_quote(value));
+                rest = &rest[end + 1 + usize::from(wrapped)..];
             }
             // A raw value is not quoted, so quotes the template put around it are the
             // template author's own and mean something — `sh -c '{command}'` needs them.
             // Stripping them turned that into `sh -c cd`, which silently ran the command in
             // the launcher's directory instead of opening a tab.
-            Sub::Raw(v) => out = out.replace(&bare, v),
+            Sub::Raw(value) => {
+                out.push_str(&rest[..at]);
+                out.push_str(value);
+                rest = &rest[end + 1..];
+            }
         }
     }
+    out.push_str(rest);
     out
 }
 
@@ -160,6 +188,53 @@ mod tests {
     fn placeholders_are_detectable_so_callers_can_fall_back() {
         assert!(contains_placeholder("a {command} b", "command"));
         assert!(!contains_placeholder("a {commands} b", "command"));
+    }
+
+    /// A substituted value is data, not more template. The notification hook is where this
+    /// bites: the message is written by whoever sent the report, and the repository name is
+    /// substituted after it, so a report whose subject mentioned `{nwo}` used to have the
+    /// repository spliced into the middle of its own argument.
+    #[test]
+    fn a_value_that_looks_like_a_placeholder_is_not_substituted_again() {
+        assert_eq!(
+            render(
+                "notify {message} {nwo}",
+                &[
+                    ("message", Sub::Quoted("repo: {nwo}")),
+                    ("nwo", Sub::Quoted("my repo")),
+                ]
+            ),
+            "notify 'repo: {nwo}' 'my repo'"
+        );
+    }
+
+    /// The same, proven where it matters: through a real shell, counting the arguments that
+    /// come out the other side. String equality alone would not catch a `$(…)` that ends up
+    /// outside the quotes meant to contain it.
+    #[test]
+    fn an_injected_value_cannot_add_an_argument_or_run_a_command() {
+        let rendered = render(
+            "printf '%s\\n' {message} {nwo}",
+            &[
+                ("message", Sub::Quoted("subject: {nwo} {message}")),
+                ("nwo", Sub::Quoted("$(echo pwned)/a repo")),
+            ],
+        );
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&rendered)
+            .output()
+            .unwrap();
+        // Two arguments, both verbatim. Substituted again, the repository name would have
+        // landed inside the message's quotes and split it in two, and its `$(…)` would have
+        // been outside them — the shell would have printed `pwned/a repo`.
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .collect::<Vec<_>>(),
+            ["subject: {nwo} {message}", "$(echo pwned)/a repo"],
+            "{rendered}"
+        );
     }
 
     #[test]
