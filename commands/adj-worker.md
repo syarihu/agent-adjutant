@@ -58,7 +58,7 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
 
 ### 使っていい道具
 
-- **調査特化エージェント（または組み込み `Explore` / `general-purpose`）** — `Agent` ツールの説明文を確認し、`general-purpose` 以外の調査や先行実装の探索に特化した読み取り専用サブエージェント（description に「調査」「探索」「research」等が含まれるもの、あるいは `task-researcher` など）が存在していればそれを選ぶ。見当たらなければ組み込みの読み取り専用エージェント（`Explore`）または `subagent_type: "general-purpose"` を選ぶ。いずれの場合も「Write / Edit などのファイル変更ツールは一切使用せず、コードベースの探索（Read / Grep / Glob）やチケット・既存ナレッジの読み取り取得（`gh`、`lk`、チケット MCP などの読み取りコマンド・ツール）による調査レポートのみ返すこと」を指示して実行する。チケット本文とコメント、既存ナレッジ、先行実装をまとめて1つの調査結果にして返させる。数十ファイルの探索が自分の文脈に入らない。返ってきたら:
+- **調査特化エージェント（または組み込み `Explore` / `general-purpose`）** — `Agent` ツールの説明文を確認し、`general-purpose` 以外の調査や先行実装の探索に特化した読み取り専用サブエージェント（description に「調査」「探索」「research」等が含まれるもの、あるいは `task-researcher` など）が存在していればそれを選ぶ。見当たらなければ組み込みの読み取り専用エージェント（`Explore`）または `subagent_type: "general-purpose"` を選ぶ。いずれの場合も「Write / Edit などのファイル変更ツールやリダイレクト等の Bash によるファイル変更は一切使用せず、コードベースの探索（Read / Grep / Glob）やチケット・既存ナレッジの読み取り取得（`gh`、`lk`、チケット MCP などの読み取りコマンド・ツール）による調査レポートのみ返すこと」を指示して実行する。チケット本文とコメント、既存ナレッジ、先行実装をまとめて1つの調査結果にして返させる。数十ファイルの探索が自分の文脈に入らない。返ってきたら:
   1. `## 要件` と `## 受け入れ条件` を数行にしてユーザーに見せる。
   2. `## 未確定事項` が空でなければ、**ここでユーザーに聞く**（`AskUserQuestion`）。エージェントは
      聞けない。未解決のまま計画に持ち込まない。
@@ -151,7 +151,7 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 1. Find the PR: `gh pr list -R <codeRepo> --head <branch> --json number,url`. If none, say
    so and return.
-2. `Agent` ツールの説明文を確認し、`general-purpose` 以外のレビューコメントの収集・トリアージに特化したエージェント（description に「triage」「トリアージ」等が含まれるもの、あるいは `review-triage` など）が存在すればそれを起動する。見当たらなければ `subagent_type: "general-purpose"` を選ぶ。いずれの場合も「Write / Edit などのファイル変更ツールや PR への書き込みツール・コマンド（コメント投稿、レビュー返信、マージ等）は一切使用せず、PR コメントの読み取り取得（`gh` 読み取りコマンド等）とローカルコードの参照・突合による分類のみを行うこと」を指示して起動する。対象は `owner/repo`、PR 番号、作業ディレクトリ `.`。コメントを全件取得し、現在のコードと突き合わせて重複をまとめ、未対応 / 対応済み / 却下済み / outdated に分類して返させる。
+2. `Agent` ツールの説明文を確認し、`general-purpose` 以外のレビューコメントの収集・トリアージに特化したエージェント（description に「triage」「トリアージ」等が含まれるもの、あるいは `review-triage` など）が存在すればそれを起動する。見当たらなければ `subagent_type: "general-purpose"` を選ぶ。いずれの場合も「Write / Edit などのファイル変更ツール、リダイレクト等の Bash によるファイル変更、および PR への書き込みツール・コマンド（コメント投稿、レビュー返信、マージ等）は一切使用せず、PR コメントの読み取り取得（`gh` 読み取りコマンド等）とローカルコードの参照・突合による分類のみを行うこと」を指示して起動する。対象は `owner/repo`、PR 番号、作業ディレクトリ `.`。コメントを全件取得し、現在のコードと突き合わせて重複をまとめ、未対応 / 対応済み / 却下済み / outdated に分類して返させる。
 3. Show the 未対応 list and ask which to address with `AskUserQuestion` (default: all
    `must`). Include the items the agent flagged as **誤検知の疑い** but mark them — Copilot
    is confidently wrong often enough that auto-fixing its findings is how a clean file
@@ -204,7 +204,7 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 | 役 | 実体 | なぜそこに置くか |
 | --- | --- | --- |
-| 情報収集 | 調査特化エージェント（無ければ `general-purpose`） | 数十ファイルの探索が自分の文脈に入らない。読み取り専用 |
+| 情報収集 | 調査特化エージェント（無ければ組み込み `Explore` / `general-purpose`） | 数十ファイルの探索が自分の文脈に入らない。読み取り専用 |
 | 実装計画 | 組み込み `Plan` | 読み取り専用。計画は人が承認するのでこのセッションに返す必要がある |
 | 実装 | **自分** | すでに作業すべき場所に立っている。機械的な大量置換と、ツール出力を自分の文脈に入れたくない調査にだけサブエージェントを使う |
 | セルフレビュー | レビュー特化エージェント（無ければ `general-purpose`） / codex | 実装の理屈を知らない別個体でないと追認になる。`fork` は不可 |
@@ -344,6 +344,6 @@ codex exec --sandbox read-only --cd . --add-dir ~/.config/lk - < {プロンプ�
 #### Claude レビュー実行手順
 
 `Agent` ツールの説明文を確認し、`general-purpose` やトリアージ用（description や名前に「triage」「トリアージ」等が含まれるもの）を除外した上で、コードレビュー・差分検証に特化したエージェント（description に「差分」「diff」「セルフレビュー」「code review」が含まれるもの、あるいは `self-reviewer` など）が存在すればそれを選ぶ。見当たらなければ `subagent_type: "general-purpose"` を選ぶ。
-いずれの場合も「Write / Edit などのファイル変更ツールは一切使用せず、Read / Grep / Glob による差分検証とレビュー報告のみ行うこと」「深刻度は必ず must / want / scope で返すこと」を指示して実行する（`reviewEffort` を渡す）。
+いずれの場合も「Write / Edit / Bash などのファイル変更・コマンド実行ツールは一切使用せず、Read / Grep / Glob による差分検証とレビュー報告のみ行うこと」「深刻度は必ず must / want / scope で返すこと」を指示して実行する（`reviewEffort` を渡す）。
 - どちらのエンジンがレビューしても、**トリアージ・スイープ・収束判定・修正は自分に残る**。
   エンジンの選択は「誰が差分を読むか」だけを変える。
