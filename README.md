@@ -267,6 +267,16 @@ The tests are hermetic: `ADJUTANT_CONFIG` and `ADJUTANT_STATE_DIR` point into te
 test can read your config or drop a fixture report into a hub you actually have running.
 Anything that would open a window, start an agent or notify a human runs under `--dry-run`.
 
+## Subagents
+
+Workers make use of specialized subagents during a task if your environment defines them:
+
+- **Research**: An agent specialized in exploring the codebase and reading issues/docs (e.g. `task-researcher` or an agent whose description mentions research/exploration). If none is available, the worker falls back to `general-purpose` with explicit read-only instructions.
+- **Review triage**: An agent that fetches and groups PR review comments (e.g. `review-triage` or triage-focused). Falls back to `general-purpose`.
+- **Self-review**: An agent dedicated to independent diff verification (e.g. `self-reviewer` or review-focused). Falls back to `general-purpose` (or codex when configured).
+
+Custom subagents are defined on the agent client side (such as `~/.claude/agents/*.md` in Claude Code). You do not need to define them to use `agent-adjutant`; a clean environment with only `general-purpose` works out of the box.
+
 ## Optional neighbours
 
 [`proctor`](https://github.com/syarihu/agent-proctor) (worktree conventions, session ledger, tab colours) and [`lk`](https://github.com/syarihu/local-knowledge-cli) (the local knowledge
