@@ -271,7 +271,7 @@ Anything that would open a window, start an agent or notify a human runs under `
 
 Workers make use of specialized subagents during a task if your environment defines them:
 
-- **Research**: An agent specialized in exploring the codebase and reading issues/docs (e.g. `task-researcher` or an agent whose description mentions research/exploration). If none is available, the worker falls back to `general-purpose` with explicit read-only instructions.
+- **Research**: An agent specialized in exploring the codebase and reading issues/docs (e.g. `task-researcher` or an agent whose description mentions research/exploration). If none is available, the worker falls back to the built-in `Explore` agent or `general-purpose` with explicit read-only instructions.
 - **Review triage**: An agent that fetches and groups PR review comments (e.g. `review-triage` or triage-focused). Falls back to `general-purpose`.
 - **Self-review**: An agent dedicated to independent diff verification (e.g. `self-reviewer` or review-focused). Falls back to `general-purpose` (or codex when configured).
 
