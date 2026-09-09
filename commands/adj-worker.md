@@ -151,7 +151,7 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 1. Find the PR: `gh pr list -R <codeRepo> --head <branch> --json number,url`. If none, say
    so and return.
-2. `Agent` ツールの説明文を確認し、レビューコメントの収集・トリアージに特化したエージェント（description に「triage」「トリアージ」等が含まれるもの、あるいは `review-triage` など）が存在すればそれを起動する。見当たらなければ `subagent_type: "general-purpose"` を選び、コメント収集と分類のみを行うよう指示して起動する。対象は `owner/repo`、PR 番号、作業ディレクトリ `.`。コメントを全件取得し、現在のコードと突き合わせて重複をまとめ、未対応 / 対応済み / 却下済み / outdated に分類して返させる。
+2. `Agent` ツールの説明文を確認し、レビューコメントの収集・トリアージに特化したエージェント（description に「triage」「トリアージ」等が含まれるもの、あるいは `review-triage` など）が存在すればそれを起動する。見当たらなければ `subagent_type: "general-purpose"` を選び、「コードや worktree の変更、PR への書き込みは一切行わず、コメント収集と分類のみを行うこと」を指示して起動する。対象は `owner/repo`、PR 番号、作業ディレクトリ `.`。コメントを全件取得し、現在のコードと突き合わせて重複をまとめ、未対応 / 対応済み / 却下済み / outdated に分類して返させる。
 3. Show the 未対応 list and ask which to address with `AskUserQuestion` (default: all
    `must`). Include the items the agent flagged as **誤検知の疑い** but mark them — Copilot
    is confidently wrong often enough that auto-fixing its findings is how a clean file
