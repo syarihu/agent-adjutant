@@ -171,7 +171,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `agentRunner` | `{prompt}` `{worktree}` `{title}` | `claude --permission-mode auto {prompt}` |
 | `hubRunner` | `{name}` `{prompt}` | `claude -n {name} --permission-mode auto {prompt}` |
 | | | *drop `{name}` and the session is nameless in every listing* |
-| `notification` | `{title}` `{message}` | macOS notification with a sound |
+| `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
 
@@ -179,6 +179,29 @@ Omitting a key gets the built-in; setting it to `false` turns the behaviour off,
 different answer. `terminal` and the `wake` family merge key by key, so a repository can
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
+
+The built-in `notification` prefers [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
+and falls back to `osascript`, and the order is not a taste: macOS credits a notification posted by
+command-line `osascript` to **Script Editor**, so the banner arrives from an app nobody asked for and
+clicking it opens an empty Script Editor rather than the session that wanted you. With
+`brew install terminal-notifier` on the machine the built-in becomes —
+
+```jsonc
+"terminal-notifier -title {title} -message {message} -sound Glass -activate com.googlecode.iterm2"
+```
+
+— a click that raises the terminal. `{nwo}` is there to go one better: it is the repository the
+message is about, in the `owner/name` form `--repo` takes, so a notifier that runs
+`adj focus --repo {nwo}` on click lands on *that repository's hub tab*. Point the key at a script
+rather than nesting a quoted command in the template, for the quoting reason the `wake` note below
+gives. `{nwo}` is empty when `adjutant notify` runs outside a repository, and says so on stderr
+rather than silently.
+
+There is no built-in off macOS, where a missing notifier is silence rather than an error, so a Linux
+hub needs the key set (`"notify-send {title} {message}"`). And when something already watches the
+sessions — proctor's sidebar, a tmux status line — `false` is the honest answer rather than a second
+banner. `adjutant notify --message … --dry-run` prints the command a template resolves to without
+sending anything.
 
 `wake` splits along the line the rest of the config does not: **how** to poke a session is a
 property of the terminal, and **what to say** once poked is a property of the agent. So
@@ -279,6 +302,10 @@ missing without one is a convention, which `adjutant worktree-path --name` suppl
 convention tool uses rather than a second competing one. The one thing with no equivalent is
 its per-repo `copyFiles`; that belongs in this config's `postCreate`, which runs in both
 cases.
+
+[`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is the third of these, and
+the only one a built-in reaches for by itself: with it installed a notification comes from a
+notifier whose click can be aimed, without it from `osascript` and therefore from Script Editor.
 
 ## License
 

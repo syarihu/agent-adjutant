@@ -16,7 +16,7 @@
 
   "//workerWake": "The same for the worker direction. Two directions rather than one because the hub and its workers are not always the same agent: `\"agentRunner\": \"codex exec {prompt}\"` with a claude hub is exactly the case where the two need different sentences. Built-in line names adjutant_outbox.",
 
-  "//notification": "How to interrupt the human. Placeholders: {title} {message}. Default: macOS notification with a sound. Examples: printf '\\a' | curl -s -X POST -d {message} https://hooks.example.invalid/… | ntfy publish mytopic {message}",
+  "//notification": "How to interrupt the human. Placeholders: {title} {message} {nwo} ({nwo} is owner/name, the form --repo takes). Default: terminal-notifier if installed, else osascript — a notification osascript posts is credited to Script Editor and clicking it opens an empty Script Editor. No default off macOS: set this or a Linux hub notifies nobody. Examples: notify-send {title} {message} | printf '\\a' | curl -s -X POST -d {message} https://hooks.example.invalid/… | ntfy publish mytopic {message}",
 
   "//defaults": "Everything here is inherited by every repo entry, and an entry's own key wins. A task source is the one thing that is NOT inherited: merged into an entry that already declares its own, a default source adds a phantom with no issueRepo behind it. Writing `taskSource` here is ignored and reported in `warnings`.",
   "defaults": {

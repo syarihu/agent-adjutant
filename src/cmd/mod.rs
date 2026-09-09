@@ -198,11 +198,7 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     // whether or not the hub was poked. `tell` runs the other way, hub to worker: a worker
     // that was successfully woken needs no human, so there the notification is what happens
     // when waking did not.
-    if let Some(command) = notify::command(
-        &ctx.settings.notification,
-        &format!("adjutant / {}", ctx.repo.repo),
-        &subject,
-    ) {
+    if let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject) {
         let _ = terminal::run_shell(&command);
     }
 
@@ -384,8 +380,25 @@ pub fn notify_user(
     message: &str,
     dry_run: bool,
 ) -> Result<(), String> {
-    let settings = settings_for(repo_arg);
-    let Some(command) = notify::command(&settings.notification, title, message) else {
+    // Resolved once rather than left to `settings_for`, because a `{nwo}` template needs the
+    // same answer the config was picked with — and because this command is the one that can
+    // legitimately be run from outside a repository, where there is no answer at all.
+    let nwo = match repo_arg {
+        Some(arg) => Some(arg.to_string()),
+        None => repo::resolve(None).ok().map(|info| info.nwo),
+    };
+    let settings = settings_for(nwo.as_deref());
+    if nwo.is_none() && notify::needs_repo(&settings.notification) {
+        eprintln!(
+            "adjutant: the notification template asks for {{nwo}} but this is not a repository — pass --repo owner/name"
+        );
+    }
+    let Some(command) = notify::command(
+        &settings.notification,
+        nwo.as_deref().unwrap_or_default(),
+        title,
+        message,
+    ) else {
         // No notifier is a fact about the machine, not a failure of the thing being
         // announced. Say it on stderr and carry on.
         eprintln!("adjutant: no notifier is configured ({title}: {message})");
@@ -649,11 +662,7 @@ pub fn tell(
         _ => false,
     };
     if !woken
-        && let Some(command) = notify::command(
-            &ctx.settings.notification,
-            &format!("adjutant / {}", ctx.repo.repo),
-            subject,
-        )
+        && let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, subject)
     {
         let _ = terminal::run_shell(&command);
     }
