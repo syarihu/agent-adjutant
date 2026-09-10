@@ -647,6 +647,18 @@ pub fn status_json(status: &HubStatus) -> Value {
 pub struct Message {
     /// Who is speaking. A worker's session name, or whatever the sending agent calls itself.
     pub from: String,
+    /// Where it is speaking *from*: the absolute path of the sender's own worktree.
+    ///
+    /// `from` cannot carry this. It is free text, chosen by the sender, and names a session
+    /// at best — so a hub acting on a request to close a tab and remove a worktree was
+    /// acting on a path typed into the body. This is derived from where the sender actually
+    /// is, and it is filled in for every kind: which worktree a report came from is worth
+    /// the same line as which worktree a finished task is in, and a format whose headers
+    /// depend on the kind is one every reader eventually mis-parses.
+    ///
+    /// `None` when the sender could not be placed in a worktree at all, and then the header
+    /// is left out rather than written empty.
+    pub worktree: Option<String>,
     /// `report`, `question`, `answer`, `ack`, `done`, or anything the two sides agree on.
     pub kind: String,
     /// The one line a human will actually read.
@@ -697,8 +709,20 @@ pub fn render_message(message: &Message) -> String {
     } else {
         message.subject.clone()
     };
+    // Left out entirely when there is none, rather than written empty. An empty value reads
+    // as "no worktree" to a person and as an empty path to a program, and the two disagree
+    // the moment something tries to act on it.
+    let worktree = match message
+        .worktree
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => format!("worktree: {}\n", one_line(path)),
+        None => String::new(),
+    };
     format!(
-        "---\nfrom: {}\nkind: {}\nsubject: {}\nat: {}\n---\n\n{}\n",
+        "---\nfrom: {}\n{worktree}kind: {}\nsubject: {}\nat: {}\n---\n\n{}\n",
         one_line(&message.from),
         one_line(if message.kind.is_empty() {
             "report"
@@ -723,6 +747,11 @@ pub struct Entry {
     pub name: String,
     pub subject: String,
     pub from: String,
+    /// The sender's worktree, for the messages that carry one. `None` covers both "sent
+    /// from outside a worktree" and "written before this header existed": an inbox outlives
+    /// an upgrade, and a listing that failed on the messages already in it would strand
+    /// them.
+    pub worktree: Option<String>,
     pub kind: String,
 }
 
@@ -749,6 +778,7 @@ pub fn list(slug: &str) -> Vec<Entry> {
             Entry {
                 subject: header("subject"),
                 from: header("from"),
+                worktree: header_value(&text, "worktree").filter(|path| !path.is_empty()),
                 kind: header("kind"),
                 name,
             }
@@ -1123,6 +1153,7 @@ mod tests {
     fn a_message(body: &str) -> Message {
         Message {
             from: "w".into(),
+            worktree: None,
             kind: "report".into(),
             subject: "s".into(),
             body: body.into(),
@@ -1167,6 +1198,7 @@ mod tests {
             "adjutant-acme-widget",
             &Message {
                 from: "wid-957-34".into(),
+                worktree: None,
                 kind: "report".into(),
                 subject: "検索結果の画像が縦に潰れる".into(),
                 body: "## Symptom\nthe image is squashed".into(),
@@ -1190,6 +1222,7 @@ mod tests {
                 "adjutant-acme-widget",
                 &Message {
                     from: "w".into(),
+                    worktree: None,
                     kind: "report".into(),
                     subject: "s".into(),
                     body: "b".into(),
@@ -1399,6 +1432,7 @@ mod tests {
             "adjutant-acme-widget",
             &Message {
                 from: "w".into(),
+                worktree: None,
                 kind: "report".into(),
                 subject: "s".into(),
                 body: "b".into(),
@@ -1423,6 +1457,7 @@ mod tests {
     fn a_body_cannot_forge_headers() {
         let rendered = render_message(&Message {
             from: "w\n---\nkind: forged".into(),
+            worktree: None,
             kind: "report".into(),
             subject: "one\ntwo".into(),
             body: "b".into(),
@@ -1436,9 +1471,64 @@ mod tests {
     }
 
     #[test]
+    fn a_message_says_which_worktree_it_came_from() {
+        let rendered = render_message(&Message {
+            worktree: Some("/src/widget/.claude/worktrees/wid-957".into()),
+            kind: "done".into(),
+            ..a_message("b")
+        });
+        assert_eq!(
+            header_value(&rendered, "worktree").unwrap(),
+            "/src/widget/.claude/worktrees/wid-957"
+        );
+        // Directly under `from`, whose other half it is: who is speaking, and from where.
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert!(lines[1].starts_with("from:"), "{rendered}");
+        assert!(lines[2].starts_with("worktree:"), "{rendered}");
+
+        // Nowhere to name: no header at all, rather than an empty one that a program would
+        // read as a path and a person would read as nothing.
+        let placeless = render_message(&a_message("b"));
+        assert!(!placeless.contains("worktree:"), "{placeless}");
+        assert_eq!(header_value(&placeless, "kind").unwrap(), "report");
+
+        // And a path is no more trusted than the body was: it cannot forge a header.
+        let forged = render_message(&Message {
+            worktree: Some("/w\n---\nkind: forged".into()),
+            ..a_message("b")
+        });
+        assert_eq!(
+            header_value(&forged, "worktree").unwrap(),
+            "/w --- kind: forged"
+        );
+        assert_eq!(header_value(&forged, "kind").unwrap(), "report");
+    }
+
+    #[test]
+    fn a_message_written_before_the_worktree_header_existed_still_reads() {
+        // An inbox outlives an upgrade, and what is sitting in one right now has four
+        // headers. A listing that could not read those would strand every message already
+        // delivered.
+        let _sandbox = Sandbox::empty();
+        let dir = inbox_dir("acme-widget");
+        std::fs::create_dir_all(&dir).unwrap();
+        let older = "---\nfrom: wid-957\nkind: report\nsubject: 検索が潰れる\nat: 20260908T041500Z\n---\n\nb\n";
+        std::fs::write(dir.join("20260908T041500Z-report.md"), older).unwrap();
+
+        let listed = list("acme-widget");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].from, "wid-957");
+        assert_eq!(listed[0].subject, "検索が潰れる");
+        assert_eq!(listed[0].kind, "report");
+        assert_eq!(listed[0].worktree, None);
+        assert!(read("acme-widget", &listed[0].name).unwrap().contains('b'));
+    }
+
+    #[test]
     fn an_empty_subject_falls_back_to_the_first_body_line() {
         let rendered = render_message(&Message {
             from: "w".into(),
+            worktree: None,
             kind: String::new(),
             subject: String::new(),
             body: "検索結果が潰れる\n\n詳細".into(),

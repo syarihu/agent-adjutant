@@ -251,7 +251,11 @@ different box, and the digest is not guessable.
 `~/.local/state/adjutant/inbox/<slug>/`, and `adjutant pending` reads it. Delivery never
 fails for want of a listener: if the hub is not running the message simply waits, and the
 reply says which of the two happened. `adjutant hub-stop`, and a `kill -0` plus a command-line
-check against the recorded PID, keep an exited hub from looking present.
+check against the recorded PID, keep an exited hub from looking present. Every message also
+carries a `worktree:` header — the absolute path the sender was standing in, derived rather
+than typed — so a hub acting on one has an address it did not have to take from the body.
+It is left out when git cannot place the sender in a worktree, and messages written before
+it existed still read.
 
 **Hub → worker** is also a file, but addressed by worktree rather than by session:
 `adjutant tell` appends a `##` section to `{worktree}/.claude/adjutant-outbox.md`, and

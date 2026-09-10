@@ -211,6 +211,135 @@ fn a_report_survives_an_absent_hub_and_can_be_read_back_and_filed() {
 }
 
 #[test]
+fn a_report_says_which_worktree_it_came_from_not_which_repository() {
+    // The address a `done` request acts on. `from` is free text — the sender picks it — so
+    // a hub asked to close a tab and remove a worktree was acting on a path typed into the
+    // body of the message. This header is derived from where the sender actually is.
+    let fixture = Fixture::new(QUIET);
+    let worktree = fixture.repo.parent().unwrap().join("widget-wid-1");
+    let added = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wid-1",
+            worktree.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let sent = Command::new(BIN)
+        .args([
+            "send",
+            "--kind",
+            "done",
+            "--subject",
+            "終わったのだ",
+            "--body",
+            "b",
+        ])
+        .current_dir(&worktree)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .output()
+        .unwrap();
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+
+    let listed = fixture.json(&["pending", "--json"]);
+    let message = &listed["messages"][0];
+    // The worktree it was sent from, and specifically not the main checkout: answering with
+    // the checkout would identify the repository, which the inbox already knew.
+    assert_eq!(message["worktree"], worktree.to_string_lossy().to_string());
+    assert_ne!(
+        message["worktree"],
+        fixture.repo.to_string_lossy().to_string()
+    );
+    assert_eq!(message["kind"], "done");
+
+    let name = message["name"].as_str().unwrap().to_string();
+    let read = fixture.ok(&["pending", "--read", &name]);
+    assert!(
+        read.contains(&format!("worktree: {}", worktree.display())),
+        "{read}"
+    );
+
+    // A sender git cannot place in a worktree still gets its message delivered, and the
+    // header is simply absent. A bare clone is the case that reaches this: `git worktree
+    // list` answers there — so the repository, and with it the inbox, is found — while
+    // `rev-parse --show-toplevel` has nothing to say.
+    let bare = fixture.repo.parent().unwrap().join("bare.git");
+    for args in [
+        vec!["init", "-q", "--bare", bare.to_str().unwrap()],
+        vec![
+            "-C",
+            bare.to_str().unwrap(),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/widget.git",
+        ],
+    ] {
+        assert!(
+            Command::new("git")
+                .args(&args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let placeless_send = Command::new(BIN)
+        .args(["send", "--subject", "s2", "--body", "b2"])
+        .current_dir(&bare)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .output()
+        .unwrap();
+    assert!(
+        placeless_send.status.success(),
+        "{}",
+        String::from_utf8_lossy(&placeless_send.stderr)
+    );
+    let listed = fixture.json(&["pending", "--json"]);
+    let placeless = listed["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["subject"] == "s2")
+        .unwrap();
+    assert_eq!(placeless["worktree"], serde_json::Value::Null);
+    let read = fixture.ok(&["pending", "--read", placeless["name"].as_str().unwrap()]);
+    assert!(!read.contains("worktree:"), "{read}");
+
+    // And an inbox that already held four-header messages when this shipped keeps working.
+    let older =
+        "---\nfrom: wid-2\nkind: report\nsubject: 前からあるやつ\nat: 20260908T041500Z\n---\n\nb\n";
+    let dir = fixture.state.join("inbox").join(SLUG);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("20260908T041500Z-report.md"), older).unwrap();
+    let listed = fixture.json(&["pending", "--json"]);
+    let old = listed["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["subject"] == "前からあるやつ")
+        .unwrap();
+    assert_eq!(old["worktree"], serde_json::Value::Null);
+    assert_eq!(old["from"], "wid-2");
+}
+
+#[test]
 fn a_body_can_arrive_on_stdin_so_a_long_report_never_touches_the_command_line() {
     let fixture = Fixture::new(QUIET);
     let mut child = Command::new(BIN)
@@ -1234,6 +1363,55 @@ fn a_report_sent_through_the_server_lands_where_the_cli_looks_for_it() {
         listed["messages"][0]["subject"],
         "検索結果の画像が縦に潰れる"
     );
+    // With no `cwd` given, the sender is where the server is standing.
+    assert_eq!(
+        listed["messages"][0]["worktree"],
+        fixture.repo.to_string_lossy().to_string()
+    );
+
+    // And with one, it is where the *caller* is standing. This is the case that matters:
+    // one server is started per session and then asked about whichever worktree the worker
+    // is working in, so the server's own directory is nobody's address.
+    let worktree = fixture.repo.parent().unwrap().join("widget-wid-2");
+    let added = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wid-2",
+            worktree.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({"name": "adjutant_send", "arguments": {
+                "from": "wid-2-worker",
+                "kind": "done",
+                "subject": "終わったのだ",
+                "body": "b",
+                "cwd": worktree.to_string_lossy(),
+            }}),
+        )],
+    );
+    let listed = fixture.json(&["pending", "--json"]);
+    let done = listed["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["kind"] == "done")
+        .unwrap();
+    assert_eq!(done["worktree"], worktree.to_string_lossy().to_string());
 }
 
 #[test]

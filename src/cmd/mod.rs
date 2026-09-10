@@ -118,7 +118,10 @@ pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
     if args.as_json {
         let items: Vec<Value> = entries
             .iter()
-            .map(|e| json!({"name": e.name, "from": e.from, "kind": e.kind, "subject": e.subject}))
+            .map(|e| {
+                json!({"name": e.name, "from": e.from, "worktree": e.worktree,
+                       "kind": e.kind, "subject": e.subject})
+            })
             .collect();
         println!(
             "{}",
@@ -167,6 +170,9 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     let body = read_body(args.body)?;
     let message = Message {
         from: args.from.unwrap_or("unknown").to_string(),
+        // Where this is being sent from, taken from the same directory the repository was
+        // resolved in rather than from anything the sender says about itself.
+        worktree: repo::current_worktree(None),
         kind: args.kind.to_string(),
         subject: args.subject.unwrap_or("").to_string(),
         body,
