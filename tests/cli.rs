@@ -589,16 +589,13 @@ fn closing_a_worktree_nobody_is_working_in_succeeds_and_says_so() {
 fn closing_a_running_worker_shows_the_command_first_and_takes_the_record_with_it() {
     // The close template stands in for whatever disposes of a tab, the way the wake tests
     // stand in for whatever pokes one.
-    // The fixture first: nothing about the stand-in depends on being started early, and
-    // the reading order is setup, then the thing under test.
     let fixture = Fixture::new(&closing_with("true --pid {pid} --tty {tty}"));
     let worker = Sleeper::new();
     let worktree = fixture.repo.to_str().unwrap().to_string();
     let record = forge_worker_record(&fixture.repo, worker.pid());
 
-    // A dry run shows the command and runs nothing — and still answers about the worktree,
-    // because the procedures chain this into `&& git worktree remove`: "safe to remove"
-    // from a run that closed nothing is how a live worker's checkout gets deleted.
+    // A dry run shows the command and runs nothing, and still answers about the worktree:
+    // the procedures chain this into `&& git worktree remove`.
     let planned = fixture.cmd(&["close", "--worktree", &worktree, "--dry-run"]);
     let planned_out = String::from_utf8_lossy(&planned.stdout).to_string();
     assert!(
@@ -639,12 +636,9 @@ fn closing_a_running_worker_shows_the_command_first_and_takes_the_record_with_it
 
 #[test]
 fn a_close_that_leaves_the_worker_running_clears_nothing_and_says_so() {
-    // What the close command reports is not what the caller needs to know. iTerm2 can be
-    // set to ask before closing a session that still has a process in it, and cancelling
-    // that dialog is not an AppleScript error — the script goes on to report a close. A
-    // template is worse: it is answered for by its exit status alone, so one that resolved
-    // `{pid}` to the wrong pane exits 0 having closed a stranger's tab. Here `true` is
-    // exactly that: a close command that succeeds and disposes of nothing.
+    // What the close command reports is not what the caller needs to know: a cancelled
+    // confirmation dialog and a template resolved to the wrong pane both report a close
+    // having disposed of nothing. `true` is exactly that command.
     let fixture = Fixture::new(&closing_with("true"));
     let worker = Sleeper::new();
     let worktree = fixture.repo.to_str().unwrap().to_string();
@@ -670,9 +664,8 @@ fn a_close_that_leaves_the_worker_running_clears_nothing_and_says_so() {
 #[test]
 fn a_record_that_vanished_is_not_evidence_the_worker_died() {
     // The record is a note about a process, not the process. This close command removes the
-    // note and leaves the worker alone — which is what a template pointed at the wrong
-    // thing does from here, and what an earlier version of this command read as success,
-    // because it asked the record whether the worker was gone and the record was gone.
+    // note and leaves the worker alone, which is what a template pointed at the wrong thing
+    // does from here. Ask the *record* whether the worker went, and it answers "gone".
     let fixture = Fixture::new(QUIET);
     let worker = Sleeper::new();
     let worktree = fixture.repo.to_str().unwrap().to_string();

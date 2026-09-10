@@ -384,10 +384,9 @@ fn settled(
 
 /// Why a record was left where it was, said the way a person reads it.
 ///
-/// `None` when it was cleared. The two reasons are told apart rather than folded into one
-/// sentence because they are different news: somebody else is working here, against a file
-/// that cannot be read. Announcing the first for the second sends a person looking for a
-/// worker who was never there.
+/// `None` when it was cleared. The two reasons get a sentence each: announcing "somebody
+/// else is working here" for a file that cannot be read sends a person looking for a worker
+/// who was never there.
 fn left_alone(cleared: &messaging::Cleared, worktree: &std::path::Path) -> Option<String> {
     match cleared {
         messaging::Cleared::Yes => None,
@@ -523,13 +522,10 @@ pub fn close(
         }
         return Ok(false);
     }
-    // What the close command reported is not the question, and neither is what the record
-    // says afterwards. iTerm2 can be set to ask before closing a session that still has a
-    // process in it, and cancelling that dialog is not an AppleScript error — the script
-    // goes on to report a close either way. A template is answered for by its exit status
-    // alone, so one that resolved `{pid}` or `{tty}` to the wrong pane exits 0 having closed
-    // a tab nobody asked about, and one that removed the record instead of the tab would
-    // leave a worktree that *looks* free. Only the worker's own absence settles it.
+    // What the close command reported is not the question — `terminal::close` says what
+    // little `ran` can mean. Neither is what the record says afterwards: a close command
+    // that removed the record instead of the tab would leave a worktree that *looks* free.
+    // Only the worker's own absence settles it.
     match settled(
         || messaging::worker_liveness(&worker),
         std::thread::sleep,
@@ -1020,10 +1016,8 @@ mod tests {
         }
     }
 
-    /// The finding this shape exists for: `terminal::close` can only report what the close
-    /// command told it, and a confirmation dialog the person cancelled is not an error — the
-    /// script goes on to say it closed something. So what `close` acts on is the worker's
-    /// own absence, and waiting for that has to be bounded, must not read "cannot tell" as
+    /// What `close` acts on is the worker's own absence rather than anything the close
+    /// command said. Waiting for that has to be bounded, must not read "cannot tell" as
     /// "gone", and must not cost a real two seconds every time it is tested.
     #[test]
     fn waiting_for_a_worker_to_go_looks_again_but_not_forever() {

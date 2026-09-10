@@ -1249,7 +1249,7 @@ mod tests {
             // Not JSON at all.
             "{ this is not json".to_string(),
             // Parseable, and naming nobody. `holder` calls this `Gone` for the hub's
-            // question; for this one it is the fail-open that was found twice.
+            // question; for this one it is a fail-open.
             "{}".to_string(),
             json!({"pid": null}).to_string(),
             json!({"pid": "1234"}).to_string(),

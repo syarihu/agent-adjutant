@@ -646,10 +646,8 @@ fn iterm_focus_script(tty: &str) -> String {
 /// The same walk as `iterm_focus_script`, with `close` where that one selects: a tty is the
 /// only handle anyone has on which of a dozen tabs belongs to the pid they know.
 ///
-/// The marker is the point of the shape. It is printed on the one path that closed
-/// something, and the fall-through returns nothing — a session in another terminal, or in
-/// none, walks every window, matches nothing and exits 0, which is indistinguishable from
-/// success to anyone reading only the exit status.
+/// The marker's placement is the point of the shape: inside the branch that matched the
+/// tty, with the fall-through returning nothing.
 ///
 /// No `activate` here. `focus` raises iTerm2 because being raised is what was asked for;
 /// pulling the whole app forward in order to dispose of a tab takes the person's attention
@@ -911,7 +909,6 @@ mod tests {
     fn a_process_with_no_terminal_is_recognised_on_either_system() {
         // The spelling is the system's, not the process's: macOS prints `??` where Linux
         // prints `?`, and whichever machine this is running on can only show one of them.
-        // Read as a tty name, either would be handed to a terminal as `/dev/?`.
         assert_eq!(tty_in("??\n"), None);
         assert_eq!(tty_in("?\n"), None);
         assert_eq!(tty_in(""), None);
@@ -965,8 +962,6 @@ mod tests {
     /// `ran` has to mean "the command reported reaching a session", and a walk that matched
     /// nothing has to be `false`.
     ///
-    /// It does not mean the tab is gone: a cancelled confirmation dialog reports a close
-    /// like any other. That question belongs to `cmd::close`, which asks the process.
     /// Driven through `close_with` rather than through the helper, so the branch that reads
     /// the answer cannot be deleted with this test still passing.
     #[test]
@@ -997,8 +992,7 @@ mod tests {
         .unwrap();
         assert!(done.ran, "{done:?}");
 
-        // A configured template is answered for by its exit status: it is someone else's
-        // command and only it knows what success means there.
+        // A configured template is answered for by its exit status alone.
         let template = close_with(
             |_| Ok(String::new()),
             None,
@@ -1010,8 +1004,7 @@ mod tests {
         .unwrap();
         assert!(template.ran, "{template:?}");
 
-        // A command that failed is not a closed tab, and unlike `wake` it is not swallowed:
-        // the caller is about to remove the worktree on the strength of this answer.
+        // A command that failed is not a closed tab, and unlike `wake` it is not swallowed.
         let failed = close_with(
             |_| Err("no iTerm2 window is open".to_string()),
             Some("ttys004".to_string()),
