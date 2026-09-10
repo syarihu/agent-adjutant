@@ -195,6 +195,25 @@ fn cannot_tell(path: &Path) -> String {
     )
 }
 
+/// The start time a record offers as an anchor, or `None` when what it offers cannot be one.
+///
+/// Four readers compare this against what `ps` says now, and a value that can match nothing
+/// is worse than a missing one: blank, the comparison fails against every live process, and
+/// each of them concludes "not the process I recorded". That is `Gone` at a hub's claim,
+/// absent at either presence check, and a live worker's worktree offered up for deletion.
+///
+/// `ps_started` never writes a blank one, so this is about records written or edited by
+/// something else. Interpreted here, once, so that an anchor which cannot anchor is the
+/// same answer everywhere as no anchor at all — and each reader then falls back to whatever
+/// it uses when a record has none, rather than asserting an absence it never established.
+fn recorded_anchor(record: &Value) -> Option<&str> {
+    record
+        .get("psStarted")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|started| !started.is_empty())
+}
+
 /// Whether the process a record names is still there — with "cannot tell" kept separate.
 ///
 /// Start time and pid only, never the name in the command line: a record is written by a
@@ -213,13 +232,22 @@ fn holder(path: &Path) -> Liveness {
         return Liveness::Gone;
     };
     let pid = pid as u32;
-    let recorded = record.get("psStarted").and_then(Value::as_str);
+    let recorded = recorded_anchor(&record);
     match ps_answer(pid, "lstart") {
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match recorded {
             // Same pid, different start time: the pid was recycled onto something else.
             Some(recorded) if started != recorded => Liveness::Gone,
+            // Nothing to compare, so nothing here says this pid was recycled — and this
+            // answer is the one that decides whether a name is free to take. The trade is
+            // deliberate: an anchorless record over a pid that is alive but unrelated makes
+            // the name look taken for as long as that process lives, and `adj hub-stop`
+            // clears it. Read the other way, a running hub loses its name to the next
+            // launcher and both then answer to the same address, which is the one failure
+            // this protocol exists to prevent. It is the same trade `close` makes on the
+            // worker side: what cannot be established is left alone, and a person finishes
+            // the job.
             _ => Liveness::Alive,
         },
     }
@@ -332,7 +360,7 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
         .get("startedAt")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let ps_started = record.get("psStarted").and_then(Value::as_str);
+    let ps_started = recorded_anchor(&record);
     // Looking for the hub's name in its command line is the stronger of the two anchors,
     // but it only works if the name is *there* — a `hubRunner` with no `{name}` in it, or
     // one that `exec`s something that keeps none of its arguments, produces a live hub that
@@ -419,8 +447,9 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         .and_then(Value::as_str)
         .map(str::to_string);
     // A worker's command line carries nothing distinctive — it is whatever agent the config
-    // names — so the start time is the only anchor available here.
-    let ps_started = record.get("psStarted").and_then(Value::as_str);
+    // names — so the start time is the only anchor available here, and with none the
+    // question narrows to whether that pid is there at all.
+    let ps_started = recorded_anchor(&record);
     match status.pid {
         Some(pid) if process_matches(pid, None, ps_started) => status.present = true,
         _ => status.stale = true,
@@ -497,17 +526,10 @@ pub fn read_worker(worktree: &Path) -> WorkerRecord {
     };
     WorkerRecord::Named(WorkerIdentity {
         pid,
-        // Blank counts as absent. `ps_started` never writes one, but a record that carries
-        // it would otherwise match no live process at all: the equality check below would
-        // read every pid as recycled, call the worker gone, and hand a live worker's
-        // worktree to whoever asked whether it could be deleted. An anchor that cannot
-        // anchor is `None`, which is answered with `CannotTell`.
-        started: record
-            .get("psStarted")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|started| !started.is_empty())
-            .map(str::to_string),
+        // Blank counts as absent, like everywhere else. Here the fallback for a record
+        // with no anchor is `CannotTell`, which is what stops a worktree being deleted on
+        // the strength of a pid number alone.
+        started: recorded_anchor(&record).map(str::to_string),
         title: record
             .get("title")
             .and_then(Value::as_str)
@@ -1290,6 +1312,60 @@ mod tests {
 
     /// What `close` is allowed to conclude about a worktree, and every reading that used to
     /// let it conclude "free" without evidence.
+    /// A start time that cannot anchor anything has to be the same answer as none at all,
+    /// in every one of the four places a record is read. Blank, the comparison each of them
+    /// makes fails against every live process, and "not the process I recorded" means
+    /// `Gone` at a hub's claim — a live hub's name handed to the next launcher — absent at
+    /// either presence check, and a live worker's worktree offered up for deletion.
+    /// `ps_started` never writes one; anything else that writes the file can.
+    #[test]
+    fn a_blank_start_time_is_no_anchor_in_any_of_the_four_readers() {
+        let _sandbox = Sandbox::empty();
+        let ours = std::process::id();
+        let name = this_process_name();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+
+        for blank in ["", "   "] {
+            write_json(
+                &hub_record_path("acme-widget"),
+                &json!({"pid": ours, "hubName": name, "cwd": "/", "psStarted": blank}),
+            )
+            .unwrap();
+            // The claim: with nothing saying this pid was recycled, the name stays taken.
+            assert!(
+                matches!(holder(&hub_record_path("acme-widget")), Liveness::Alive),
+                "{blank:?}"
+            );
+            match claim_hub("acme-widget", &name, "/", true).unwrap() {
+                Claim::Taken(_) => {}
+                Claim::Ours => panic!("{blank:?}: a live hub's name was taken away"),
+            }
+
+            // The presence check falls through to its other anchor — the name in the
+            // command line — instead of reporting a running hub as gone.
+            let status = hub_status("acme-widget", &name);
+            assert!(status.present, "{blank:?}: {status:?}");
+            assert!(!status.stale, "{blank:?}: {status:?}");
+
+            // A worker has no second anchor, so what is left is whether the pid is there.
+            write_json(
+                &worker_record_path(worktree),
+                &json!({"pid": ours, "title": "WID-957", "psStarted": blank}),
+            )
+            .unwrap();
+            assert!(worker_status(worktree).present, "{blank:?}");
+
+            // And the reader that is about to delete something wants more than a pid that
+            // exists: with no anchor it declines to act at all.
+            let WorkerRecord::Named(worker) = read_worker(worktree) else {
+                panic!("{blank:?} still names a pid and should be read as naming one");
+            };
+            assert_eq!(worker.started, None, "{blank:?}");
+            assert_eq!(worker_liveness(&worker), Liveness::CannotTell, "{blank:?}");
+        }
+    }
+
     #[test]
     fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
         let dir = tempfile::tempdir().unwrap();
