@@ -115,7 +115,7 @@ enum Commands {
         /// Who is sending: your session or worktree name
         #[arg(long)]
         from: Option<String>,
-        /// report | question | answer | ack | needs-user
+        /// report | question | answer | ack | done | needs-user
         #[arg(long, default_value = "report")]
         kind: String,
         /// One line stating the conclusion

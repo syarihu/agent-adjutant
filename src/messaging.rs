@@ -634,7 +634,7 @@ pub fn status_json(status: &HubStatus) -> Value {
 pub struct Message {
     /// Who is speaking. A worker's session name, or whatever the sending agent calls itself.
     pub from: String,
-    /// `report`, `question`, `answer`, `ack`, or anything the two sides agree on.
+    /// `report`, `question`, `answer`, `ack`, `done`, or anything the two sides agree on.
     pub kind: String,
     /// The one line a human will actually read.
     pub subject: String,

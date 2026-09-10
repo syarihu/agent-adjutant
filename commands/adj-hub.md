@@ -182,6 +182,7 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
    | `answer` | worker（hub の聞き返しへの答え） | `subject` 先頭の識別子で対になる `question` を探し、Step 2 から再開する |
    | `question` | hub 自身（聞き返して答えを待っている報告の控え） | 対になる `answer` が来ていれば再開。無ければ ack せずに置いておく |
    | `needs-user` | hub 自身（ユーザーの判断待ち） | 人がこのタブに居るときに中身を見せて聞く |
+   | `done` | worker（タスクが終わったので片付けてほしい） | Dashboard の Step 1 の「1件だけの片付け」 |
 
    **対応付けは `subject` の先頭に置いた識別子でやる。** hub が聞き返すときは
    `subject` を `[質問 {YYYYMMDD-HHMMSS}] …` の形にして、同じ文字列を `question` の控えにも書く。
@@ -313,6 +314,51 @@ Then run the repo's `onWorktreeRemove` commands from the config, substituting `{
 (full path) and `{name}` (directory name). That hook is where editor-specific cleanup lives
 (e.g. dropping the entry from Android Studio's `recentProjects.xml`) — adjutant itself knows
 nothing about any editor.
+
+#### 1件だけの片付け（worker からの依頼）
+
+受信箱に `kind: done` が届いたときは、その1件だけをここで片付ける。要るのは worktree の絶対パス /
+ブランチ / ベースブランチ / 成果 / 未コミット・未 push の有無 / 親タスク（worker 側の手順が
+そう書かせている）。**依頼を鵜呑みにしない** — 消える成果は worker のもので、確認は独立にやる:
+
+1. **まず宛先を実在確認する。** 本文の worktree パスは worker が手で書いた文字列で、`kind: done`
+   のヘッダには入っていない。`git worktree list` に**そのパスとそのブランチの組**が載っていることを
+   確かめてから使う。載っていなければ消しに行かず、`adjutant_tell` で聞き返す — `adjutant close`
+   は存在しないパスに対して「worker は居ない」と答えて成功する（冪等であるための設計）ので、
+   間違ったパスを渡しても止まらない。
+2. **安全確認。** 見るのは**未コミット変更と未 push コミットだけ**。`proctor worktree ls --json` の
+   その行の `diff` が全部 0（かつ `diffKnown: true`）と `isLocked: false`。**`isRemovable` と
+   `sessions` は見ない** — あれは「誰も作業していない」を含む判定で、依頼を出した worker はまだ
+   生きているので必ず false になる。proctor が無ければ hub は worktree の外に居るので
+   `git -C <worktree> status --porcelain`。**未 push コミットは proctor が答えないので、
+   どちらの場合も** `git -C <worktree> log --branches --not --remotes --oneline` で見る。
+3. **全部緑なら、タブを先に閉じてから worktree を消す。** 生きている worker はその worktree を
+   掴んでいるので、閉じないと `git worktree remove` が失敗する:
+
+   ```bash
+   adjutant close --worktree <path> && git worktree remove <path>
+   ```
+
+   **`&&` で繋ぐ。** `adjutant close` の終了コードが「worktree を消して良いか」の答えで、
+   worker が居なかった / 閉じて実際に消えたことを確認できた なら 0。**それ以外は全部 1**
+   （閉じられなかった / 閉じたのにまだ生きている＝確認ダイアログ待ち / 生死を確認できなかった）。
+   改行で並べるとその答えを踏み越えて、生きている worker の足元を消してしまう。
+   1 で止まったら 4 に進む。**`--dry-run` も同じ答えを返す**ので（実行しないのは close だけ）、
+   様子見のために付けても消える方向には倒れない。
+
+   **ブランチを消すかは別の判断**（push 済みならリモートに残るので、worktree を消すことの
+   条件ではない）。`merged` が true なら `git branch -D <branch>`、コミットが 0 件
+   （`git log <base>..<branch>` が空。調査だけの依頼はこれ）なら残す意味が無いので同じく消す。
+   それ以外は残す。**この判定は hub のメインチェックアウトから打つ** — worktree を消したあとに
+   `git -C <worktree>` は使えない。そのあと config の `onWorktreeRemove`（上と同じ）。
+4. **1つでも引っかかったら消さない。** worker はまだ生きているので、`adjutant_tell` で
+   「何が引っかかったか」を返して worktree を残す。片付けるかどうかは worker 側で決め直す。
+5. **タブを閉じたあとに `adjutant_tell` を送らない。** 読む相手が居ない。伝えることがあれば
+   ユーザーに出す。
+6. **依頼と安全確認が全部緑なら `AskUserQuestion` を開かずに実行していい。** worker 側で人が
+   すでに承認しているし、hub のタブに人が居るとは限らない。代わりに「同時に何件も来たとき」の
+   処理ログに1行残す。
+7. 済んだら `adjutant_pending` の `action: ack`。
 
 ### Step 2: Collect
 
@@ -840,6 +886,7 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
 14:32  alpha-957-34 → ALPHA-1234 起票 / {user}/ALPHA-1234 で着手
 14:51  alpha-700-a6 → ALPHA-1180 に追記（重複）
 15:20  abc-819-c1 → ABC-921 起票（着手はまだ）
+15:34  alpha-957 → 片付け依頼（PR #1234）: タブを閉じて worktree とブランチを削除
 ```
 
 ユーザーがこのタブを見たとき、何を捌いたのかが分かる状態にしておく。
@@ -1103,9 +1150,9 @@ worker はそれを引きに行って空振りする。**ここで起票はし�
   （hub がユーザーから受けた依頼をそのまま書くのだ。「PR作成まで」でなければ PR は作らないのだ。
   「調査だけ」なら実装もコミットも Issue の起票・更新もしないのだ）
 - 報告先: **このタブのユーザー**なのだ。成果を hub に送らないのだ — hub は振り分け役で、
-  受け取っても読ませる先が無いのだ。hub に自分から送るのは `adj-report` の手順で投げる
-  **別件の**不具合だけなのだ。
-  （hub から `[質問]` で聞かれたときに答えるのは、それとは別で続けてよいのだ）
+  受け取っても読ませる先が無いのだ。hub に自分から送るのはこの2つだけなのだ:
+  (a) `adj-report` の手順で投げる**別件の**不具合、(b) 作業が終わったあとの片付け依頼。
+  （hub から `[質問]` で聞かれたときに答えるのは、このどちらでもなく続けてよいのだ）
 - 検証コマンド: {verify}
   （config の `verify` は配列。1行に詰めず、そのまま箇条書きで並べるのだ）
 
