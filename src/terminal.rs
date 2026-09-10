@@ -276,17 +276,26 @@ fn close_with(
     })
 }
 
-/// The controlling terminal of a process, as `ttys004`. `??` means it has none.
+/// The controlling terminal of a process, as `ttys004`. `None` means it has none.
 pub fn tty_of(pid: u32) -> Option<String> {
     let out = Command::new("ps")
         .args(["-o", "tty=", "-p", &pid.to_string()])
         .output()
         .ok()?;
-    let tty = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if tty.is_empty() || tty == "??" {
-        None
-    } else {
-        Some(tty)
+    tty_in(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The tty in what `ps -o tty=` printed, if it named one.
+///
+/// Split out because the two systems this runs on spell "none" differently — `??` on macOS,
+/// `?` on Linux — and a machine only ever demonstrates its own. Taken for a tty name, either
+/// one sends every caller looking through a terminal's tabs for `/dev/?`, which no session
+/// can be sitting on: `close` would then report having closed nothing, and say so as a
+/// failure the cleanup stops on.
+fn tty_in(printed: &str) -> Option<String> {
+    match printed.trim() {
+        "" | "?" | "??" => None,
+        tty => Some(tty.to_string()),
     }
 }
 
@@ -896,6 +905,18 @@ mod tests {
         // pid 1 has no controlling terminal on macOS or Linux.
         let out = focus(None, 1, "hub", true).unwrap();
         assert!(!out.ran);
+    }
+
+    #[test]
+    fn a_process_with_no_terminal_is_recognised_on_either_system() {
+        // The spelling is the system's, not the process's: macOS prints `??` where Linux
+        // prints `?`, and whichever machine this is running on can only show one of them.
+        // Read as a tty name, either would be handed to a terminal as `/dev/?`.
+        assert_eq!(tty_in("??\n"), None);
+        assert_eq!(tty_in("?\n"), None);
+        assert_eq!(tty_in(""), None);
+        assert_eq!(tty_in("ttys004\n"), Some("ttys004".into()));
+        assert_eq!(tty_in(" pts/3 \n"), Some("pts/3".into()));
     }
 
     #[test]
