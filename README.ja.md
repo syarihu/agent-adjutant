@@ -122,7 +122,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 | --- | --- | --- |
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
-| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 |
+| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2（`false` でタブを一切閉じない。その場合 `adjutant close` は何もせず exit 1） |
 | `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
 | `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |

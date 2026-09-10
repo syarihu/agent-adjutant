@@ -432,10 +432,10 @@ fn a_running_worker_gets_woken_the_same_way_a_hub_does() {
 /// Assembled with `json!` rather than pasted into a literal: these templates carry paths,
 /// and a path with a quote or a backslash in it turns a hand-escaped config file into a
 /// test that fails for a reason it is not about.
-fn closing_with(command: &str) -> String {
+fn closing_with(close: impl Into<serde_json::Value>) -> String {
     serde_json::json!({
         "notification": "true",
-        "terminal": { "close": command },
+        "terminal": { "close": close.into() },
         "repos": { "acme/widget": {
             "taskSource": "github", "issueRepo": "acme/widget",
             "issueKeys": { "acme/widget": "WID" }, "ide": "code"
@@ -672,10 +672,7 @@ fn a_record_that_vanished_is_not_evidence_the_worker_died() {
     let record = forge_worker_record(&fixture.repo, worker.pid());
     std::fs::write(
         &fixture.config,
-        closing_with(&format!(
-            "rm -f {}",
-            shell_quoted(&record.to_string_lossy())
-        )),
+        closing_with(format!("rm -f {}", shell_quoted(&record.to_string_lossy()))),
     )
     .unwrap();
 
@@ -703,6 +700,63 @@ fn a_record_that_vanished_is_not_evidence_the_worker_died() {
 }
 
 #[test]
+fn a_record_with_no_start_time_is_not_acted_on() {
+    // `register_worker` writes `psStarted: null` when `ps` would not answer at that moment.
+    // Without it there is nothing to tell this worker from the next process to be handed
+    // that pid — and a tab is closed on the answer, so "the number is in use, close it" is
+    // not good enough.
+    let fixture = Fixture::new(&closing_with("true"));
+    let worker = Sleeper::new();
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+    let record = fixture.repo.join(".claude").join("adjutant-worker.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    for named in [
+        serde_json::json!({"pid": worker.pid(), "title": "WID-957", "psStarted": null}),
+        serde_json::json!({"pid": worker.pid(), "title": "WID-957"}),
+    ] {
+        std::fs::write(&record, named.to_string()).unwrap();
+        let out = fixture.cmd(&["close", "--worktree", &worktree]);
+        let said = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(!out.status.success(), "{named} was acted on: {said}");
+        assert!(
+            said.contains(&format!("cannot tell whether pid {}", worker.pid())),
+            "{said}"
+        );
+        assert!(record.exists(), "{named} was cleared away");
+    }
+}
+
+#[test]
+fn closing_can_be_turned_off_and_then_nothing_is_cleared() {
+    // The config's promise for every one of these keys is that `false` turns the behaviour
+    // off, which is a different answer from leaving it out. Read as unset, `"close": false`
+    // would reach the built-in closer and dispose of the tab it was meant to protect.
+    //
+    // And with nothing closing tabs, nothing may report a worktree as finished with: the
+    // person who turned this off is doing the closing by hand.
+    let fixture = Fixture::new(&closing_with(false));
+    let worker = Sleeper::new();
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+    let record = forge_worker_record(&fixture.repo, worker.pid());
+
+    let out = fixture.cmd(&["close", "--worktree", &worktree]);
+    let said = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        !out.status.success(),
+        "a worktree nobody closed was called free: {said}"
+    );
+    assert!(said.contains("turned off"), "{said}");
+    assert!(
+        record.exists(),
+        "the record was cleared without a tab being closed"
+    );
+    assert!(
+        !ps_started(worker.pid()).is_empty(),
+        "the worker was closed anyway"
+    );
+}
+
+#[test]
 fn a_record_naming_another_worker_is_left_where_it_is() {
     // The window between seeing a worker go and clearing its record: a new worker registers
     // in the same worktree in between. Clearing the record then reports a free worktree
@@ -722,7 +776,7 @@ fn a_record_naming_another_worker_is_left_where_it_is() {
     .to_string();
     std::fs::write(
         &fixture.config,
-        closing_with(&format!(
+        closing_with(format!(
             "kill {{pid}} && printf %s {} > {}",
             shell_quoted(&newcomer),
             shell_quoted(&record.to_string_lossy())

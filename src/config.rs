@@ -154,7 +154,9 @@ fn check_shapes(place: &str, map: &Map<String, Value>, warnings: &mut Vec<String
     for (key, accepted) in [
         ("spawn", &["a string"][..]),
         ("focus", &["a string"][..]),
-        ("close", &["a string"][..]),
+        // `false` as well as a string, unlike its neighbours: `close` is the one of these
+        // that destroys something, so "do not do this at all" has to be sayable.
+        ("close", &["a string", "false"][..]),
         ("title", &["a string", "false"][..]),
     ] {
         let Some(value) = terminal.get(key) else {
@@ -415,8 +417,12 @@ pub struct TerminalSettings {
     /// Close a worker's tab once its task is over. Separate from `focus` because raising a
     /// tab and disposing of one are different verbs in every terminal, and a machine that
     /// can do one cannot be assumed to do the other with the same command line.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub close: Option<String>,
+    ///
+    /// A `Hook` rather than a plain template, which `spawn` and `focus` get away with: the
+    /// documented promise is that any of these can be turned off with `false`, and a
+    /// `false` read as a string reads as "unset" — so `"close": false` would fall through
+    /// to the built-in closer and dispose of the tab somebody had just said not to touch.
+    pub close: Hook,
     /// Name the tab this process is running in. Distinct from `spawn`'s title, which names
     /// a tab being created.
     pub title: Hook,
@@ -616,7 +622,7 @@ fn resolve_settings(
         terminal: TerminalSettings {
             spawn: str_field(&terminal, "spawn"),
             focus: str_field(&terminal, "focus"),
-            close: str_field(&terminal, "close"),
+            close: Hook::read(terminal.get("close").cloned()),
             title: Hook::read(terminal.get("title").cloned()),
         },
         notification: match pick("notification") {
@@ -1342,7 +1348,15 @@ mod tests {
             a_repo(json!({"terminal": {"close": "close-tab {tty}"}})),
             "acme/app",
         );
-        assert_eq!(settings.terminal.close.as_deref(), Some("close-tab {tty}"));
+        assert_eq!(settings.terminal.close.template(), Some("close-tab {tty}"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // And off is its own answer rather than a missing one: read as unset, `false`
+        // would hand the tab to the built-in closer, which is the opposite of what it says.
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"terminal": {"close": false}})), "acme/app");
+        assert!(settings.terminal.close.is_off());
+        assert_eq!(settings.terminal.close.template(), None);
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
@@ -1421,7 +1435,7 @@ mod tests {
             Some("tmux new-window -c {cwd} {command}")
         );
         assert_eq!(settings.terminal.focus.as_deref(), Some("raise {pid}"));
-        assert_eq!(settings.terminal.close.as_deref(), Some("close-tab {tty}"));
+        assert_eq!(settings.terminal.close.template(), Some("close-tab {tty}"));
         assert_eq!(
             settings.terminal.title.template(),
             Some("tmux rename-window {title}")

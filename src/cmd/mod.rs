@@ -484,7 +484,7 @@ pub fn close(
         messaging::Liveness::Alive => {}
     }
     let done = terminal::close(
-        settings.terminal.close.as_deref(),
+        &settings.terminal.close,
         pid,
         // The name the tab actually carries: `spawn` put the record's title through
         // `sanitise_title` with the directory name behind it, and a template that matches

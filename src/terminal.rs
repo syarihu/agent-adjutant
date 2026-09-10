@@ -201,13 +201,8 @@ fn reported_closing(built_in: bool, output: &str) -> bool {
 /// tab is gone. Nothing at this layer can establish the second: a confirmation dialog and a
 /// template pointed at the wrong pane both produce a perfectly successful close command. A
 /// caller that is about to delete something has to ask the process itself.
-pub fn close(
-    template: Option<&str>,
-    pid: u32,
-    title: &str,
-    dry_run: bool,
-) -> Result<Performed, String> {
-    close_with(run_shell, tty_of(pid), template, pid, title, dry_run)
+pub fn close(hook: &Hook, pid: u32, title: &str, dry_run: bool) -> Result<Performed, String> {
+    close_with(run_shell, tty_of(pid), hook, pid, title, dry_run)
 }
 
 /// The same, with the thing that runs the command handed in.
@@ -218,13 +213,23 @@ pub fn close(
 fn close_with(
     run: impl Fn(&str) -> Result<String, String>,
     tty: Option<String>,
-    template: Option<&str>,
+    hook: &Hook,
     pid: u32,
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
+    if hook.is_off() {
+        // Off is an answer, not an absence: somebody said not to close tabs here, and the
+        // built-in would otherwise close one. `ran` stays false, which is what stops the
+        // caller from treating the worktree as finished with.
+        return Ok(Performed {
+            description: "closing tabs is turned off; the tab was left open".to_string(),
+            script: String::new(),
+            ran: false,
+        });
+    }
     let mut built_in = false;
-    let command = match template {
+    let command = match hook.template() {
         Some(template) => render(
             template,
             &[
@@ -920,10 +925,30 @@ mod tests {
     fn closing_without_a_template_on_a_pid_with_no_terminal_is_a_quiet_no_op() {
         // Same shape as `focus`: pid 1 has no controlling terminal, and there is no tab to
         // dispose of for a session nobody can locate.
-        let out = close(None, 1, "WID-957", true).unwrap();
+        let out = close(&Hook::BuiltIn, 1, "WID-957", true).unwrap();
         assert!(!out.ran);
         assert!(out.description.contains("not closing"), "{out:?}");
         assert!(out.script.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn closing_can_be_turned_off_and_then_reaches_nothing() {
+        // `false` is a different answer from an absent key, and the difference is the whole
+        // point here: read as unset, the built-in would dispose of the very tab somebody
+        // had just declared off limits. `ran` has to stay false too, or the caller reads
+        // "turned off" as "the tab is gone" and carries on removing the worktree.
+        let done = close_with(
+            |_| panic!("a close that is turned off ran a command"),
+            Some("ttys004".to_string()),
+            &Hook::Off,
+            std::process::id(),
+            "WID-957",
+            false,
+        )
+        .unwrap();
+        assert!(!done.ran, "{done:?}");
+        assert!(done.script.is_empty(), "{done:?}");
+        assert!(done.description.contains("turned off"), "{done:?}");
     }
 
     #[test]
@@ -937,7 +962,8 @@ mod tests {
             sh_quote(&marker.to_string_lossy())
         );
 
-        let planned = close(Some(&template), 4321, "WID-957", true).unwrap();
+        let template = Hook::Command(template);
+        let planned = close(&template, 4321, "WID-957", true).unwrap();
         assert!(!planned.ran);
         assert!(planned.script.contains("4321"), "{}", planned.script);
         // A pid with no terminal still substitutes, as the empty string. Left standing, the
@@ -946,7 +972,7 @@ mod tests {
         assert!(!marker.exists(), "a dry run ran the template");
 
         let ours = std::process::id();
-        let done = close(Some(&template), ours, "WID-957", false).unwrap();
+        let done = close(&template, ours, "WID-957", false).unwrap();
         assert!(done.ran);
         let recorded = std::fs::read_to_string(&marker).unwrap();
         let (pid, tty) = recorded.split_once('|').unwrap();
@@ -971,7 +997,7 @@ mod tests {
         let quiet = close_with(
             |_| Ok(String::new()),
             Some("ttys004".to_string()),
-            None,
+            &Hook::BuiltIn,
             ours,
             "WID-957",
             false,
@@ -984,7 +1010,7 @@ mod tests {
         let done = close_with(
             |_| Ok(CLOSED_MARKER.to_string()),
             Some("ttys004".to_string()),
-            None,
+            &Hook::BuiltIn,
             ours,
             "WID-957",
             false,
@@ -996,7 +1022,7 @@ mod tests {
         let template = close_with(
             |_| Ok(String::new()),
             None,
-            Some("close-tab --pid {pid}"),
+            &Hook::Command("close-tab --pid {pid}".to_string()),
             ours,
             "WID-957",
             false,
@@ -1008,7 +1034,7 @@ mod tests {
         let failed = close_with(
             |_| Err("no iTerm2 window is open".to_string()),
             Some("ttys004".to_string()),
-            None,
+            &Hook::BuiltIn,
             ours,
             "WID-957",
             false,

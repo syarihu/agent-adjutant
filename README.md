@@ -166,6 +166,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
 | `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 |
+| | | *`false` closes no tabs: `adjutant close` then exits 1 and clears nothing* |
 | `terminal.title` | `{title}` | OSC escape written to this process's tty |
 | | | *also names every tab `spawn` opens* |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session |
