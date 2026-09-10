@@ -439,8 +439,14 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
 pub struct WorkerIdentity {
     pub pid: u32,
     /// What `ps` said about when that pid started, as the record has it. The anchor that
-    /// tells this worker from whatever the system later hands that pid to. `None` in a
-    /// record written on a machine where `ps` would not answer at registration time.
+    /// tells this worker from whatever the system later hands that pid to.
+    ///
+    /// `None` in a record written at a moment when `ps` would not answer, and that record
+    /// can never be acted on destructively: with no anchor there is nothing to tell this
+    /// worker from the next owner of the pid, so `worker_liveness` answers `CannotTell`
+    /// and the caller stops. Little is lost by it — a machine where `ps` cannot answer at
+    /// registration time is one where it cannot answer at the check either, and that was
+    /// already `CannotTell`; what closes is the narrow window where it failed only once.
     pub started: Option<String>,
     pub title: Option<String>,
 }
@@ -516,10 +522,17 @@ pub fn worker_liveness(worker: &WorkerIdentity) -> Liveness {
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match &worker.started {
+            Some(recorded) if &started == recorded => Liveness::Alive,
             // Same pid, another start time: the pid has been handed to something else, and
             // the worker that recorded it is gone.
-            Some(recorded) if &started != recorded => Liveness::Gone,
-            _ => Liveness::Alive,
+            Some(_) => Liveness::Gone,
+            // Something is running under that pid and nothing says it is this worker. The
+            // pid alone would answer `Alive` for whatever inherited the number, and this
+            // answer is what closes a tab and clears a worktree — so it is the same
+            // reading every other unanswerable question here gets. `holder` says `Alive`
+            // to the same record on purpose: the question there is whether a hub's name is
+            // free to take, and the cost of its two mistakes runs the other way.
+            None => Liveness::CannotTell,
         },
     }
 }
@@ -1285,6 +1298,30 @@ mod tests {
             ..worker.clone()
         };
         assert_eq!(worker_liveness(&recycled), Liveness::Gone);
+
+        // And a record with no start time in it — which `register_worker` writes when `ps`
+        // would not answer at that moment — anchors nothing. The pid is in use; nothing
+        // says it is still this worker's, and a tab is about to be closed on the answer.
+        let unanchored = WorkerIdentity {
+            started: None,
+            ..worker.clone()
+        };
+        assert_eq!(worker_liveness(&unanchored), Liveness::CannotTell);
+        for content in [
+            json!({"pid": std::process::id(), "psStarted": null}).to_string(),
+            json!({"pid": std::process::id()}).to_string(),
+        ] {
+            std::fs::write(&record, &content).unwrap();
+            let WorkerRecord::Named(read_back) = read_worker(worktree) else {
+                panic!("{content} names a pid and should be read as naming one");
+            };
+            assert_eq!(read_back.started, None);
+            assert_eq!(
+                worker_liveness(&read_back),
+                Liveness::CannotTell,
+                "{content}"
+            );
+        }
     }
 
     #[test]
