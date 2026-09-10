@@ -243,17 +243,30 @@ worktree** なので、そのタブが何で走っていても届く。
 
 ## 人間に話しかけられたら
 
-やることを1つに絞って、終わったら待機に戻る。自然文で来たら、この5つのどれかに寄せる:
+やることを1つに絞って、終わったら待機に戻る。自然文で来たら、この6つのどれかに寄せる:
 
 ```
   1. 一覧            - タスク・PR・worktree の状況（Dashboard）
   2. タスクに着手     - タスクを選んで worktree を作り、worker に渡す
   3. 起票して着手     - まだ issue が無いものを起票してから 2 に流す（「依頼が届いたら」と同じ手順）
-  4. worktree を操作  - 既存の worktree に worker を立てる / IDE で開く / PR を開く
-  5. 片付け          - 終わった worktree を消す（Dashboard の Step 1）
+  4. 調査だけ頼む     - Issue の有無に関わらず、報告だけで終わる依頼（「これ現状調査して」）
+  5. worktree を操作  - 既存の worktree に worker を立てる / IDE で開く / PR を開く
+  6. 片付け          - 終わった worktree を消す（Dashboard の Step 1）
 ```
 
 どれか分からないときだけ `AskUserQuestion` で聞く。
+
+**4 がやるのは「タスクに着手させる」の 3・4手だけ**（worktree を作る → worker を起動する）。
+
+- **「2. 着手を宣言する」は飛ばす。** assign も In Progress も動かさない。報告で終わる依頼は
+  ボード上の「誰かが始めた」ではないので、動かすと戻す人がいない。
+- **Issue が無い依頼では起票しない。** 起票は 3 の仕事で、調査の結果として起票するかは
+  ユーザーが決める。指示書の書き方は「Appendix — worker への指示書」（`{task_id}` は `-`）。
+- 指示書の完了条件は「調査だけ（報告して終わり）」。成果の報告先は worker のタブのユーザーで、
+  hub には返ってこない（返させると報告が二重になる）。
+- **Issue が無いと worktree 名の素が無い。** キーから作れないので、依頼内容の短い小文字 slug
+  （`login-crash` のような）を `AskUserQuestion` で提案して決め、それを `{worktreeName}` として
+  「3. worktree を作る」に渡す（ブランチはいつもどおり `{user}/{name}`）。黙って即興しない。
 
 ---
 
@@ -397,6 +410,8 @@ Then ask how far to go:
 Claim it before any work starts, so the board shows who has it and 「既存の worktree に手を入れ
 たいと言われたら」 can find it again. Every step here is idempotent, and **none of them is fatal**: if one cannot
 complete, say so and continue to the worktree step rather than aborting.
+
+**調査だけの依頼ではこの節をまるごと飛ばす**（「人間に話しかけられたら」の 4）。
 
 Everything here uses **the selected task's own source**, not the repo's first one.
 
@@ -549,9 +564,12 @@ inflates the hub transcript for every task it dispatches.
 - Hand off through a **file**, not a long initial prompt. The brief runs to dozens of lines
   and is full of backticks and quotes; pushing that through AppleScript *and* zsh quoting is
   fragile.
-- Fill the brief's 完了条件 line from what the user actually asked for — 「PR作成まで」 or
-  「動作確認待ちで引き渡しまで」. worker はそれ以外に知る手立てが無く、`adj-worker` の §5 が
-  その行を読んで PR を出すかどうかを決める。
+- Fill the brief's 完了条件 line from what the user actually asked for — 「PR作成まで」 /
+  「動作確認待ちで引き渡しまで」 / 「調査だけ（報告して終わり）」の3択。worker はそれ以外に知る
+  手立てが無く、`adj-worker` はその行で通る道を決める（§5 が PR を出すかどうか、§8 が実装を
+  飛ばして報告だけで終わるかどうか）。
+- **「調査だけ」のときは PR も Issue 更新もさせない。** 成果はそのタブのユーザーに出させる
+  （指示書の「報告先」がそう書いてある）。ここで自分に報告させると、報告が二重になる。
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
   it is; if it is not, write the brief outside the worktree instead — and then **change the
   path in Step 3's prompt to match**, because that prompt names `.claude/task-brief.md`
@@ -1069,6 +1087,11 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
 そのまま書く。worker はこれでチケットを読みに行く道具を決めるので、**落とさない** — URL から
 推測させると、Jira のチケットを `gh issue view` で引きに行って空振りする。
 
+**Issue の無い依頼（調査だけ）では `{task_id}` と `{tracker}` を `-` にする。** `{task_url}` の
+代わりに、ユーザーの依頼文をそのまま「作業対象」に置く。チケットが無いのに URL の形を作ると、
+worker はそれを引きに行って空振りする。**ここで起票はしない**（「人間に話しかけられたら」の
+「調査だけ頼む」）。
+
 ```
 あなたはこの worktree の作業担当なのだ。hub（タスクを振り分ける側）ではないのだ。
 
@@ -1076,8 +1099,13 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
   {task_url}
 - 作業場所: いまの cwd がその worktree なのだ（ブランチ {branch}）
 - ベースブランチ: {base_branch}
-- 完了条件: {PR作成まで / 動作確認待ちで引き渡しまで}
-  （hub がユーザーから受けた依頼をそのまま書くのだ。「PR作成まで」でなければ PR は作らないのだ）
+- 完了条件: {PR作成まで / 動作確認待ちで引き渡しまで / 調査だけ（報告して終わり）}
+  （hub がユーザーから受けた依頼をそのまま書くのだ。「PR作成まで」でなければ PR は作らないのだ。
+  「調査だけ」なら実装もコミットも Issue の起票・更新もしないのだ）
+- 報告先: **このタブのユーザー**なのだ。成果を hub に送らないのだ — hub は振り分け役で、
+  受け取っても読ませる先が無いのだ。hub に自分から送るのは `adj-report` の手順で投げる
+  **別件の**不具合だけなのだ。
+  （hub から `[質問]` で聞かれたときに答えるのは、それとは別で続けてよいのだ）
 - 検証コマンド: {verify}
   （config の `verify` は配列。1行に詰めず、そのまま箇条書きで並べるのだ）
 
@@ -1089,7 +1117,8 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
 3. `git -C <worktree_path>` も worktree の絶対パス指定も要らないのだ。素の `git` と
    相対パスでいいのだ。
 4. レビュー担当（サブエージェント / codex）の作業ディレクトリも、いまの cwd なのだ。
-5. hub に実装を戻そうとしないのだ。hub は振り分けしかしないのだ。完了報告まで自分でやるのだ。
+5. hub に実装を戻そうとしないのだ。hub は振り分けしかしないのだ。完了報告まで自分でやって、
+   **その報告はこのタブのユーザーに出すのだ**（上の「報告先」。hub に送り直さないのだ）。
 6. 作業中に「いまのタスクとは別の不具合」を見つけても、**自分で直さないのだ**。
    無関係な修正が混ざった diff はレビューもリバートもできなくなるのだ。
    `adj skill adj-report`（または `adjutant_skill` の `name=adj-report`）の手順に従って
