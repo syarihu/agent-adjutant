@@ -75,6 +75,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant outbox [--clear]` | what the hub has left for the worker here |
 | `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
 | `adjutant focus` | raise the running hub's tab; exit 1 if there is none |
+| `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
@@ -164,6 +165,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | --- | --- | --- |
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
+| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 |
 | `terminal.title` | `{title}` | OSC escape written to this process's tty |
 | | | *also names every tab `spawn` opens* |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session |
@@ -179,6 +181,15 @@ Omitting a key gets the built-in; setting it to `false` turns the behaviour off,
 different answer. `terminal` and the `wake` family merge key by key, so a repository can
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
+
+`{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
+terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A
+`focus`, `close` or `wake` template has to look that handle up before it acts: handing `{pid}` to
+something expecting a pane id addresses a different number space and lands on whichever pane
+happens to hold that number, so point those keys at a wrapper that does the lookup. `close`
+is checked rather than believed for the same reason — a template is judged by its exit status
+alone, so the worker's record is cleared only once that worker is actually gone, and
+`adjutant close` exits 1 when it is still there.
 
 The built-in `notification` prefers [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
 and falls back to `osascript`, and the order is not a taste: macOS credits a notification posted by
@@ -209,7 +220,7 @@ property of the terminal, and **what to say** once poked is a property of the ag
 `hubWake` / `workerWake` take a long form that overrides either half —
 
 ```jsonc
-"wake": "tmux send-keys -t {tty} {line} Enter",   // the machine
+"wake": "wake-tab {tty} {line}",                  // the machine
 "workerWake": { "line": "check `adj outbox`" }     // this agent has no MCP
 ```
 

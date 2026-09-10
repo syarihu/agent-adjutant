@@ -220,6 +220,18 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
+    Close {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        worktree: String,
+        /// Say nothing, use the exit code
+        #[arg(long)]
+        quiet: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Start this repository's hub, in the main checkout, once
     Hub {
         #[arg(long)]
@@ -387,6 +399,14 @@ pub fn run() -> ! {
             quiet,
             dry_run,
         } => cmd::focus(repo.as_deref(), *quiet, *dry_run).map(|found| i32::from(!found)),
+        Commands::Close {
+            repo,
+            worktree,
+            quiet,
+            dry_run,
+        } => {
+            cmd::close(repo.as_deref(), worktree, *quiet, *dry_run).map(|closed| i32::from(!closed))
+        }
         Commands::Hub {
             repo,
             dry_run,

@@ -225,7 +225,10 @@ fn holder(path: &Path) -> Liveness {
     }
 }
 
-enum Liveness {
+/// Public because `close` needs the same three answers about a worker that `claim_hub`
+/// needs about a hub, and for the same reason: it acts destructively on them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
     Alive,
     Gone,
     /// `ps` could not be run, or the record could not be read. Not evidence of anything.
@@ -423,6 +426,146 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         _ => status.stale = true,
     }
     status
+}
+
+/// The worker a record names, as an individual rather than as a file.
+///
+/// Read once and then carried, because everything a caller does about a worker has to be
+/// about *one* process: a record re-read between asking whether the worker is alive and
+/// acting on the answer can have been rewritten by the next worker registering in the same
+/// worktree, and then one worker's registration is answering a question asked about
+/// another one's pid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerIdentity {
+    pub pid: u32,
+    /// What `ps` said about when that pid started, as the record has it. The anchor that
+    /// tells this worker from whatever the system later hands that pid to. `None` in a
+    /// record written on a machine where `ps` would not answer at registration time.
+    pub started: Option<String>,
+    pub title: Option<String>,
+}
+
+/// What a worktree's record says, for a caller that is going to act destructively on it.
+pub enum WorkerRecord {
+    /// No record at all. Nobody registered here, or it has already been cleared.
+    ///
+    /// The hole this leaves, and it is a real one: a worker started by hand rather than
+    /// through `adj work` never wrote a record, so it reads as free too. Nothing here can
+    /// see such a process — a caller's own check for uncommitted and unpushed work is the
+    /// only net under it.
+    Absent,
+    Named(WorkerIdentity),
+    /// A record is there and cannot be read as naming a worker — unparseable, or parseable
+    /// with no usable pid in it.
+    ///
+    /// `holder` reads a pid-less record as naming nobody, and that is the right reading of
+    /// the question *it* asks: whether a hub's name is free to take. It is the wrong
+    /// reading of "may this worktree be deleted", so the strict one lives here, beside the
+    /// caller that needs it, and `holder` is left as it is.
+    Unreadable,
+}
+
+/// Read a worktree's worker record once.
+pub fn read_worker(worktree: &Path) -> WorkerRecord {
+    let path = worker_record_path(worktree);
+    // `try_exists` rather than `exists`, which answers "no" to every error it meets. It is
+    // still not perfect — a symlink pointing nowhere is `Ok(false)` here — and the
+    // difference has no way of arising for a file this tool writes itself.
+    match path.try_exists() {
+        Ok(false) => return WorkerRecord::Absent,
+        Err(_) => return WorkerRecord::Unreadable,
+        Ok(true) => {}
+    }
+    let Some(record) = read_json(&path) else {
+        return WorkerRecord::Unreadable;
+    };
+    // Out of range as well as absent or the wrong type: `as u32` on a number this large
+    // silently truncates, and a truncated pid names a live process that nobody asked about.
+    let Some(pid) = record
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid > 0)
+    else {
+        return WorkerRecord::Unreadable;
+    };
+    WorkerRecord::Named(WorkerIdentity {
+        pid,
+        started: record
+            .get("psStarted")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        title: record
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+/// Is this exact process still there, with "cannot tell" kept apart from "no"?
+///
+/// The question is asked of the individual, never of the record: a record that has been
+/// removed says nothing about whether the process it named is still running, and reading it
+/// as death is how a worktree gets deleted under a live worker.
+///
+/// `worker_status` answers the delivery version of this question and folds "cannot tell"
+/// into "nobody there", which is the safe reading when being wrong costs a message that
+/// waits in a file until somebody reads it. Here it is the unsafe one.
+pub fn worker_liveness(worker: &WorkerIdentity) -> Liveness {
+    match ps_answer(worker.pid, "lstart") {
+        Answer::NoSuchProcess => Liveness::Gone,
+        Answer::CannotTell => Liveness::CannotTell,
+        Answer::Said(started) => match &worker.started {
+            // Same pid, another start time: the pid has been handed to something else, and
+            // the worker that recorded it is gone.
+            Some(recorded) if &started != recorded => Liveness::Gone,
+            _ => Liveness::Alive,
+        },
+    }
+}
+
+/// What clearing a record came to.
+pub enum Cleared {
+    /// The record named this worker and is gone now — or was already gone, which is the
+    /// same end state.
+    Yes,
+    /// It names another worker, one that registered in this worktree since.
+    AnotherWorker,
+    /// It cannot be read as naming anybody, so it is nobody's to remove.
+    Unreadable,
+}
+
+/// Clear a worktree's record, but only while it still names `worker`.
+///
+/// Anything but `Yes` means the record was left alone, and the caller has something to say
+/// about a worktree it was about to call free. The three answers are kept apart because two
+/// of them are different sentences to a person: "somebody else is working here" and "this
+/// file cannot be read" are not the same news.
+///
+/// **`Yes` is not evidence that `worker` is dead.** This removes a note about a process; it
+/// never looks at the process. Establishing the death is `worker_liveness`'s job and the
+/// caller's responsibility, and doing it in the other order — clear the record, then read
+/// the record to see whether the worker is gone — is the mistake this pair is shaped to
+/// prevent. The order is not enforced by the types: these are `pub` inside a private
+/// module, reachable only from this crate's own commands, and a token type bought here
+/// would be a ceremony with no outside caller to protect.
+///
+/// Read-then-remove, so a registration landing in the gap between the two still loses its
+/// record. The gap is left open on purpose: closing it means a lock on a path the hub's own
+/// claim protocol writes, which is the one piece of concurrency here that has been argued
+/// over and settled. What the gap costs is a record, which the next worker's launcher
+/// rewrites; what a lock would cost is that settlement.
+pub fn unregister_worker_if(worktree: &Path, worker: &WorkerIdentity) -> Result<Cleared, String> {
+    match read_worker(worktree) {
+        WorkerRecord::Named(named) if &named == worker => {
+            unregister_worker(worktree)?;
+            Ok(Cleared::Yes)
+        }
+        // Already gone: whoever removed it wanted what this call wanted.
+        WorkerRecord::Absent => Ok(Cleared::Yes),
+        WorkerRecord::Named(_) => Ok(Cleared::AnotherWorker),
+        WorkerRecord::Unreadable => Ok(Cleared::Unreadable),
+    }
 }
 
 /// Append one entry to the worker's outbox.
@@ -1090,6 +1233,115 @@ mod tests {
         assert!(!status.present);
         assert!(!status.stale);
         assert_eq!(status.pid, None);
+    }
+
+    /// What `close` is allowed to conclude about a worktree, and every reading that used to
+    /// let it conclude "free" without evidence.
+    #[test]
+    fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        assert!(matches!(read_worker(worktree), WorkerRecord::Absent));
+
+        let record = worker_record_path(worktree);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        for content in [
+            // Not JSON at all.
+            "{ this is not json".to_string(),
+            // Parseable, and naming nobody. `holder` calls this `Gone` for the hub's
+            // question; for this one it is the fail-open that was found twice.
+            "{}".to_string(),
+            json!({"pid": null}).to_string(),
+            json!({"pid": "1234"}).to_string(),
+            json!({"pid": 0}).to_string(),
+            // `as u32` would truncate this to 1 and go looking at init.
+            json!({"pid": 4294967297u64}).to_string(),
+        ] {
+            std::fs::write(&record, &content).unwrap();
+            assert!(
+                matches!(read_worker(worktree), WorkerRecord::Unreadable),
+                "{content} was read as an answer"
+            );
+        }
+
+        register_worker(worktree, "WID-957").unwrap();
+        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+            panic!("a record this process just wrote does not name it");
+        };
+        assert_eq!(worker.pid, std::process::id());
+        assert_eq!(worker.title.as_deref(), Some("WID-957"));
+        assert_eq!(worker_liveness(&worker), Liveness::Alive);
+
+        // The record going away says nothing about the process. This is the one that
+        // matters: it is what a `close` command that removed the record rather than the tab
+        // looks like, and reading it as death deletes a live worker's worktree.
+        unregister_worker(worktree).unwrap();
+        assert_eq!(worker_liveness(&worker), Liveness::Alive);
+
+        // A pid that is alive but started at another moment is a recycled pid, which is
+        // gone in the only sense that matters.
+        let recycled = WorkerIdentity {
+            started: Some("Thu Jan  1 00:00:00 1970".to_string()),
+            ..worker.clone()
+        };
+        assert_eq!(worker_liveness(&recycled), Liveness::Gone);
+    }
+
+    #[test]
+    fn a_record_is_only_cleared_while_it_still_names_the_worker_it_was_read_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957").unwrap();
+        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+            panic!("a record this process just wrote does not name it");
+        };
+
+        // The window this closes: a worker whose tab was closed is observed gone, and a new
+        // worker registers in the same worktree before the record is cleared. Clearing it
+        // then reports a free worktree, and the next caller finds no record and agrees.
+        register_worker_as(worktree, 4321, "WID-958");
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::AnotherWorker
+        ));
+        assert!(
+            worker_record_path(worktree).exists(),
+            "another worker's record was cleared"
+        );
+
+        // Its own record it may clear, and a record already gone is the outcome it wanted.
+        register_worker(worktree, "WID-957").unwrap();
+        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+            panic!("a record this process just wrote does not name it");
+        };
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::Yes
+        ));
+        assert!(!worker_record_path(worktree).exists());
+        // A record already gone is the end state this was asking for.
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::Yes
+        ));
+
+        // A record that cannot be read as anybody's is not anybody's to delete either, and
+        // says so in its own words rather than borrowing the newcomer's.
+        std::fs::write(worker_record_path(worktree), "{}").unwrap();
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::Unreadable
+        ));
+        assert!(worker_record_path(worktree).exists());
+    }
+
+    /// A record for a worker that is not this process, which `register_worker` cannot write.
+    fn register_worker_as(worktree: &Path, pid: u32, title: &str) {
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": pid, "title": title, "psStarted": "Thu Jan  1 00:00:00 1970"}),
+        )
+        .unwrap();
     }
 
     #[test]
