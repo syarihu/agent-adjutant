@@ -195,6 +195,25 @@ fn cannot_tell(path: &Path) -> String {
     )
 }
 
+/// The start time a record offers as an anchor, or `None` when what it offers cannot be one.
+///
+/// Four readers compare this against what `ps` says now, and a value that can match nothing
+/// is worse than a missing one: blank, the comparison fails against every live process, and
+/// each of them concludes "not the process I recorded". That is `Gone` at a hub's claim,
+/// absent at either presence check, and a live worker's worktree offered up for deletion.
+///
+/// `ps_started` never writes a blank one, so this is about records written or edited by
+/// something else. Interpreted here, once, so that an anchor which cannot anchor is the
+/// same answer everywhere as no anchor at all — and each reader then falls back to whatever
+/// it uses when a record has none, rather than asserting an absence it never established.
+fn recorded_anchor(record: &Value) -> Option<&str> {
+    record
+        .get("psStarted")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|started| !started.is_empty())
+}
+
 /// Whether the process a record names is still there — with "cannot tell" kept separate.
 ///
 /// Start time and pid only, never the name in the command line: a record is written by a
@@ -213,19 +232,31 @@ fn holder(path: &Path) -> Liveness {
         return Liveness::Gone;
     };
     let pid = pid as u32;
-    let recorded = record.get("psStarted").and_then(Value::as_str);
+    let recorded = recorded_anchor(&record);
     match ps_answer(pid, "lstart") {
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match recorded {
             // Same pid, different start time: the pid was recycled onto something else.
             Some(recorded) if started != recorded => Liveness::Gone,
+            // Nothing to compare, so nothing here says this pid was recycled — and this
+            // answer is the one that decides whether a name is free to take. The trade is
+            // deliberate: an anchorless record over a pid that is alive but unrelated makes
+            // the name look taken for as long as that process lives, and `adj hub-stop`
+            // clears it. Read the other way, a running hub loses its name to the next
+            // launcher and both then answer to the same address, which is the one failure
+            // this protocol exists to prevent. It is the same trade `close` makes on the
+            // worker side: what cannot be established is left alone, and a person finishes
+            // the job.
             _ => Liveness::Alive,
         },
     }
 }
 
-enum Liveness {
+/// Public because `close` needs the same three answers about a worker that `claim_hub`
+/// needs about a hub, and for the same reason: it acts destructively on them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
     Alive,
     Gone,
     /// `ps` could not be run, or the record could not be read. Not evidence of anything.
@@ -329,7 +360,7 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
         .get("startedAt")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let ps_started = record.get("psStarted").and_then(Value::as_str);
+    let ps_started = recorded_anchor(&record);
     // Looking for the hub's name in its command line is the stronger of the two anchors,
     // but it only works if the name is *there* — a `hubRunner` with no `{name}` in it, or
     // one that `exec`s something that keeps none of its arguments, produces a live hub that
@@ -416,13 +447,167 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         .and_then(Value::as_str)
         .map(str::to_string);
     // A worker's command line carries nothing distinctive — it is whatever agent the config
-    // names — so the start time is the only anchor available here.
-    let ps_started = record.get("psStarted").and_then(Value::as_str);
+    // names — so the start time is the only anchor available here, and with none the
+    // question narrows to whether that pid is there at all.
+    let ps_started = recorded_anchor(&record);
     match status.pid {
         Some(pid) if process_matches(pid, None, ps_started) => status.present = true,
         _ => status.stale = true,
     }
     status
+}
+
+/// The worker a record names, as an individual rather than as a file.
+///
+/// Read once and then carried, because everything a caller does about a worker has to be
+/// about *one* process: a record re-read between asking whether the worker is alive and
+/// acting on the answer can have been rewritten by the next worker registering in the same
+/// worktree, and then one worker's registration is answering a question asked about
+/// another one's pid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerIdentity {
+    pub pid: u32,
+    /// What `ps` said about when that pid started, as the record has it. The anchor that
+    /// tells this worker from whatever the system later hands that pid to.
+    ///
+    /// `None` in a record written at a moment when `ps` would not answer, and that record
+    /// can never be acted on destructively: with no anchor there is nothing to tell this
+    /// worker from the next owner of the pid, so `worker_liveness` answers `CannotTell`
+    /// and the caller stops. Little is lost by it — a machine where `ps` cannot answer at
+    /// registration time is one where it cannot answer at the check either, and that was
+    /// already `CannotTell`; what closes is the narrow window where it failed only once.
+    pub started: Option<String>,
+    pub title: Option<String>,
+}
+
+/// What a worktree's record says, for a caller that is going to act destructively on it.
+pub enum WorkerRecord {
+    /// No record at all. Nobody registered here, or it has already been cleared.
+    ///
+    /// The hole this leaves, and it is a real one: a worker started by hand rather than
+    /// through `adj work` never wrote a record, so it reads as free too. Nothing here can
+    /// see such a process — a caller's own check for uncommitted and unpushed work is the
+    /// only net under it.
+    Absent,
+    Named(WorkerIdentity),
+    /// A record is there and cannot be read as naming a worker — unparseable, or parseable
+    /// with no usable pid in it.
+    ///
+    /// `holder` reads a pid-less record as naming nobody, and that is the right reading of
+    /// the question *it* asks: whether a hub's name is free to take. It is the wrong
+    /// reading of "may this worktree be deleted", so the strict one lives here, beside the
+    /// caller that needs it, and `holder` is left as it is.
+    Unreadable,
+}
+
+/// Read a worktree's worker record once.
+pub fn read_worker(worktree: &Path) -> WorkerRecord {
+    let path = worker_record_path(worktree);
+    // `try_exists` rather than `exists`, which answers "no" to every error it meets. It is
+    // still not perfect — a symlink pointing nowhere is `Ok(false)` here — and the
+    // difference has no way of arising for a file this tool writes itself.
+    match path.try_exists() {
+        Ok(false) => return WorkerRecord::Absent,
+        Err(_) => return WorkerRecord::Unreadable,
+        Ok(true) => {}
+    }
+    let Some(record) = read_json(&path) else {
+        return WorkerRecord::Unreadable;
+    };
+    // Out of range as well as absent or the wrong type: `as u32` on a number this large
+    // silently truncates, and a truncated pid names a live process that nobody asked about.
+    let Some(pid) = record
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid > 0)
+    else {
+        return WorkerRecord::Unreadable;
+    };
+    WorkerRecord::Named(WorkerIdentity {
+        pid,
+        // Blank counts as absent, like everywhere else. Here the fallback for a record
+        // with no anchor is `CannotTell`, which is what stops a worktree being deleted on
+        // the strength of a pid number alone.
+        started: recorded_anchor(&record).map(str::to_string),
+        title: record
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+/// Is this exact process still there, with "cannot tell" kept apart from "no"?
+///
+/// The question is asked of the individual, never of the record: a record that has been
+/// removed says nothing about whether the process it named is still running, and reading it
+/// as death is how a worktree gets deleted under a live worker.
+///
+/// `worker_status` answers the delivery version of this question and folds "cannot tell"
+/// into "nobody there", which is the safe reading when being wrong costs a message that
+/// waits in a file until somebody reads it. Here it is the unsafe one.
+pub fn worker_liveness(worker: &WorkerIdentity) -> Liveness {
+    match ps_answer(worker.pid, "lstart") {
+        Answer::NoSuchProcess => Liveness::Gone,
+        Answer::CannotTell => Liveness::CannotTell,
+        Answer::Said(started) => match &worker.started {
+            Some(recorded) if &started == recorded => Liveness::Alive,
+            // Same pid, another start time: the pid has been handed to something else, and
+            // the worker that recorded it is gone.
+            Some(_) => Liveness::Gone,
+            // Something is running under that pid and nothing says it is this worker. The
+            // pid alone would answer `Alive` for whatever inherited the number, and this
+            // answer is what closes a tab and clears a worktree — so it is the same
+            // reading every other unanswerable question here gets. `holder` says `Alive`
+            // to the same record on purpose: the question there is whether a hub's name is
+            // free to take, and the cost of its two mistakes runs the other way.
+            None => Liveness::CannotTell,
+        },
+    }
+}
+
+/// What clearing a record came to.
+pub enum Cleared {
+    /// The record named this worker and is gone now — or was already gone, which is the
+    /// same end state.
+    Yes,
+    /// It names another worker, one that registered in this worktree since.
+    AnotherWorker,
+    /// It cannot be read as naming anybody, so it is nobody's to remove.
+    Unreadable,
+}
+
+/// Clear a worktree's record, but only while it still names `worker`.
+///
+/// Anything but `Yes` means the record was left alone, and the caller has something to say
+/// about a worktree it was about to call free. The three answers are kept apart because two
+/// of them are different sentences to a person: "somebody else is working here" and "this
+/// file cannot be read" are not the same news.
+///
+/// **`Yes` is not evidence that `worker` is dead.** This removes a note about a process; it
+/// never looks at the process. Establishing the death is `worker_liveness`'s job and the
+/// caller's responsibility, and doing it in the other order — clear the record, then read
+/// the record to see whether the worker is gone — is the mistake this pair is shaped to
+/// prevent. The order is not enforced by the types: these are `pub` inside a private
+/// module, reachable only from this crate's own commands, and a token type bought here
+/// would be a ceremony with no outside caller to protect.
+///
+/// Read-then-remove, so a registration landing in the gap between the two still loses its
+/// record. The gap is left open on purpose: closing it means a lock on a path the hub's own
+/// claim protocol writes, which is the one piece of concurrency here that has been argued
+/// over and settled. What the gap costs is a record, which the next worker's launcher
+/// rewrites; what a lock would cost is that settlement.
+pub fn unregister_worker_if(worktree: &Path, worker: &WorkerIdentity) -> Result<Cleared, String> {
+    match read_worker(worktree) {
+        WorkerRecord::Named(named) if &named == worker => {
+            unregister_worker(worktree)?;
+            Ok(Cleared::Yes)
+        }
+        // Already gone: whoever removed it wanted what this call wanted.
+        WorkerRecord::Absent => Ok(Cleared::Yes),
+        WorkerRecord::Named(_) => Ok(Cleared::AnotherWorker),
+        WorkerRecord::Unreadable => Ok(Cleared::Unreadable),
+    }
 }
 
 /// Append one entry to the worker's outbox.
@@ -491,7 +676,19 @@ pub fn status_json(status: &HubStatus) -> Value {
 pub struct Message {
     /// Who is speaking. A worker's session name, or whatever the sending agent calls itself.
     pub from: String,
-    /// `report`, `question`, `answer`, `ack`, or anything the two sides agree on.
+    /// Where it is speaking *from*: the absolute path of the sender's own worktree.
+    ///
+    /// `from` cannot carry this. It is free text, chosen by the sender, and names a session
+    /// at best — so a hub acting on a request to close a tab and remove a worktree was
+    /// acting on a path typed into the body. This is derived from where the sender actually
+    /// is, and it is filled in for every kind: which worktree a report came from is worth
+    /// the same line as which worktree a finished task is in, and a format whose headers
+    /// depend on the kind is one every reader eventually mis-parses.
+    ///
+    /// `None` when the sender could not be placed in a worktree at all, and then the header
+    /// is left out rather than written empty.
+    pub worktree: Option<String>,
+    /// `report`, `question`, `answer`, `ack`, `done`, or anything the two sides agree on.
     pub kind: String,
     /// The one line a human will actually read.
     pub subject: String,
@@ -541,8 +738,20 @@ pub fn render_message(message: &Message) -> String {
     } else {
         message.subject.clone()
     };
+    // Left out entirely when there is none, rather than written empty. An empty value reads
+    // as "no worktree" to a person and as an empty path to a program, and the two disagree
+    // the moment something tries to act on it.
+    let worktree = match message
+        .worktree
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => format!("worktree: {}\n", one_line(path)),
+        None => String::new(),
+    };
     format!(
-        "---\nfrom: {}\nkind: {}\nsubject: {}\nat: {}\n---\n\n{}\n",
+        "---\nfrom: {}\n{worktree}kind: {}\nsubject: {}\nat: {}\n---\n\n{}\n",
         one_line(&message.from),
         one_line(if message.kind.is_empty() {
             "report"
@@ -567,6 +776,11 @@ pub struct Entry {
     pub name: String,
     pub subject: String,
     pub from: String,
+    /// The sender's worktree, for the messages that carry one. `None` covers both "sent
+    /// from outside a worktree" and "written before this header existed": an inbox outlives
+    /// an upgrade, and a listing that failed on the messages already in it would strand
+    /// them.
+    pub worktree: Option<String>,
     pub kind: String,
 }
 
@@ -593,6 +807,7 @@ pub fn list(slug: &str) -> Vec<Entry> {
             Entry {
                 subject: header("subject"),
                 from: header("from"),
+                worktree: header_value(&text, "worktree").filter(|path| !path.is_empty()),
                 kind: header("kind"),
                 name,
             }
@@ -967,6 +1182,7 @@ mod tests {
     fn a_message(body: &str) -> Message {
         Message {
             from: "w".into(),
+            worktree: None,
             kind: "report".into(),
             subject: "s".into(),
             body: body.into(),
@@ -1011,6 +1227,7 @@ mod tests {
             "adjutant-acme-widget",
             &Message {
                 from: "wid-957-34".into(),
+                worktree: None,
                 kind: "report".into(),
                 subject: "検索結果の画像が縦に潰れる".into(),
                 body: "## Symptom\nthe image is squashed".into(),
@@ -1034,6 +1251,7 @@ mod tests {
                 "adjutant-acme-widget",
                 &Message {
                     from: "w".into(),
+                    worktree: None,
                     kind: "report".into(),
                     subject: "s".into(),
                     body: "b".into(),
@@ -1092,6 +1310,199 @@ mod tests {
         assert_eq!(status.pid, None);
     }
 
+    /// What `close` is allowed to conclude about a worktree, and every reading that used to
+    /// let it conclude "free" without evidence.
+    /// A start time that cannot anchor anything has to be the same answer as none at all,
+    /// in every one of the four places a record is read. Blank, the comparison each of them
+    /// makes fails against every live process, and "not the process I recorded" means
+    /// `Gone` at a hub's claim — a live hub's name handed to the next launcher — absent at
+    /// either presence check, and a live worker's worktree offered up for deletion.
+    /// `ps_started` never writes one; anything else that writes the file can.
+    #[test]
+    fn a_blank_start_time_is_no_anchor_in_any_of_the_four_readers() {
+        let _sandbox = Sandbox::empty();
+        let ours = std::process::id();
+        let name = this_process_name();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+
+        for blank in ["", "   "] {
+            write_json(
+                &hub_record_path("acme-widget"),
+                &json!({"pid": ours, "hubName": name, "cwd": "/", "psStarted": blank}),
+            )
+            .unwrap();
+            // The claim: with nothing saying this pid was recycled, the name stays taken.
+            assert!(
+                matches!(holder(&hub_record_path("acme-widget")), Liveness::Alive),
+                "{blank:?}"
+            );
+            match claim_hub("acme-widget", &name, "/", true).unwrap() {
+                Claim::Taken(_) => {}
+                Claim::Ours => panic!("{blank:?}: a live hub's name was taken away"),
+            }
+
+            // The presence check falls through to its other anchor — the name in the
+            // command line — instead of reporting a running hub as gone.
+            let status = hub_status("acme-widget", &name);
+            assert!(status.present, "{blank:?}: {status:?}");
+            assert!(!status.stale, "{blank:?}: {status:?}");
+
+            // A worker has no second anchor, so what is left is whether the pid is there.
+            write_json(
+                &worker_record_path(worktree),
+                &json!({"pid": ours, "title": "WID-957", "psStarted": blank}),
+            )
+            .unwrap();
+            assert!(worker_status(worktree).present, "{blank:?}");
+
+            // And the reader that is about to delete something wants more than a pid that
+            // exists: with no anchor it declines to act at all.
+            let WorkerRecord::Named(worker) = read_worker(worktree) else {
+                panic!("{blank:?} still names a pid and should be read as naming one");
+            };
+            assert_eq!(worker.started, None, "{blank:?}");
+            assert_eq!(worker_liveness(&worker), Liveness::CannotTell, "{blank:?}");
+        }
+    }
+
+    #[test]
+    fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        assert!(matches!(read_worker(worktree), WorkerRecord::Absent));
+
+        let record = worker_record_path(worktree);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        for content in [
+            // Not JSON at all.
+            "{ this is not json".to_string(),
+            // Parseable, and naming nobody. `holder` calls this `Gone` for the hub's
+            // question; for this one it is a fail-open.
+            "{}".to_string(),
+            json!({"pid": null}).to_string(),
+            json!({"pid": "1234"}).to_string(),
+            json!({"pid": 0}).to_string(),
+            // `as u32` would truncate this to 1 and go looking at init.
+            json!({"pid": 4294967297u64}).to_string(),
+        ] {
+            std::fs::write(&record, &content).unwrap();
+            assert!(
+                matches!(read_worker(worktree), WorkerRecord::Unreadable),
+                "{content} was read as an answer"
+            );
+        }
+
+        register_worker(worktree, "WID-957").unwrap();
+        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+            panic!("a record this process just wrote does not name it");
+        };
+        assert_eq!(worker.pid, std::process::id());
+        assert_eq!(worker.title.as_deref(), Some("WID-957"));
+        assert_eq!(worker_liveness(&worker), Liveness::Alive);
+
+        // The record going away says nothing about the process. This is the one that
+        // matters: it is what a `close` command that removed the record rather than the tab
+        // looks like, and reading it as death deletes a live worker's worktree.
+        unregister_worker(worktree).unwrap();
+        assert_eq!(worker_liveness(&worker), Liveness::Alive);
+
+        // A pid that is alive but started at another moment is a recycled pid, which is
+        // gone in the only sense that matters.
+        let recycled = WorkerIdentity {
+            started: Some("Thu Jan  1 00:00:00 1970".to_string()),
+            ..worker.clone()
+        };
+        assert_eq!(worker_liveness(&recycled), Liveness::Gone);
+
+        // And a record with no start time in it — which `register_worker` writes when `ps`
+        // would not answer at that moment — anchors nothing. The pid is in use; nothing
+        // says it is still this worker's, and a tab is about to be closed on the answer.
+        let unanchored = WorkerIdentity {
+            started: None,
+            ..worker.clone()
+        };
+        assert_eq!(worker_liveness(&unanchored), Liveness::CannotTell);
+        // A blank one belongs with those two rather than with the real ones: compared as a
+        // start time it matches no process alive, which would read as a recycled pid and
+        // call this worker gone — the answer that clears the record and says the worktree
+        // is free to delete.
+        for content in [
+            json!({"pid": std::process::id(), "psStarted": null}).to_string(),
+            json!({"pid": std::process::id()}).to_string(),
+            json!({"pid": std::process::id(), "psStarted": ""}).to_string(),
+            json!({"pid": std::process::id(), "psStarted": "   "}).to_string(),
+        ] {
+            std::fs::write(&record, &content).unwrap();
+            let WorkerRecord::Named(read_back) = read_worker(worktree) else {
+                panic!("{content} names a pid and should be read as naming one");
+            };
+            assert_eq!(read_back.started, None);
+            assert_eq!(
+                worker_liveness(&read_back),
+                Liveness::CannotTell,
+                "{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_record_is_only_cleared_while_it_still_names_the_worker_it_was_read_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957").unwrap();
+        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+            panic!("a record this process just wrote does not name it");
+        };
+
+        // The window this closes: a worker whose tab was closed is observed gone, and a new
+        // worker registers in the same worktree before the record is cleared. Clearing it
+        // then reports a free worktree, and the next caller finds no record and agrees.
+        register_worker_as(worktree, 4321, "WID-958");
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::AnotherWorker
+        ));
+        assert!(
+            worker_record_path(worktree).exists(),
+            "another worker's record was cleared"
+        );
+
+        // Its own record it may clear, and a record already gone is the outcome it wanted.
+        register_worker(worktree, "WID-957").unwrap();
+        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+            panic!("a record this process just wrote does not name it");
+        };
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::Yes
+        ));
+        assert!(!worker_record_path(worktree).exists());
+        // A record already gone is the end state this was asking for.
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::Yes
+        ));
+
+        // A record that cannot be read as anybody's is not anybody's to delete either, and
+        // says so in its own words rather than borrowing the newcomer's.
+        std::fs::write(worker_record_path(worktree), "{}").unwrap();
+        assert!(matches!(
+            unregister_worker_if(worktree, &worker).unwrap(),
+            Cleared::Unreadable
+        ));
+        assert!(worker_record_path(worktree).exists());
+    }
+
+    /// A record for a worker that is not this process, which `register_worker` cannot write.
+    fn register_worker_as(worktree: &Path, pid: u32, title: &str) {
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": pid, "title": title, "psStarted": "Thu Jan  1 00:00:00 1970"}),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn unregister_is_idempotent() {
         let _sandbox = Sandbox::empty();
@@ -1110,6 +1521,7 @@ mod tests {
             "adjutant-acme-widget",
             &Message {
                 from: "w".into(),
+                worktree: None,
                 kind: "report".into(),
                 subject: "s".into(),
                 body: "b".into(),
@@ -1134,6 +1546,7 @@ mod tests {
     fn a_body_cannot_forge_headers() {
         let rendered = render_message(&Message {
             from: "w\n---\nkind: forged".into(),
+            worktree: None,
             kind: "report".into(),
             subject: "one\ntwo".into(),
             body: "b".into(),
@@ -1147,9 +1560,64 @@ mod tests {
     }
 
     #[test]
+    fn a_message_says_which_worktree_it_came_from() {
+        let rendered = render_message(&Message {
+            worktree: Some("/src/widget/.claude/worktrees/wid-957".into()),
+            kind: "done".into(),
+            ..a_message("b")
+        });
+        assert_eq!(
+            header_value(&rendered, "worktree").unwrap(),
+            "/src/widget/.claude/worktrees/wid-957"
+        );
+        // Directly under `from`, whose other half it is: who is speaking, and from where.
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert!(lines[1].starts_with("from:"), "{rendered}");
+        assert!(lines[2].starts_with("worktree:"), "{rendered}");
+
+        // Nowhere to name: no header at all, rather than an empty one that a program would
+        // read as a path and a person would read as nothing.
+        let placeless = render_message(&a_message("b"));
+        assert!(!placeless.contains("worktree:"), "{placeless}");
+        assert_eq!(header_value(&placeless, "kind").unwrap(), "report");
+
+        // And a path is no more trusted than the body was: it cannot forge a header.
+        let forged = render_message(&Message {
+            worktree: Some("/w\n---\nkind: forged".into()),
+            ..a_message("b")
+        });
+        assert_eq!(
+            header_value(&forged, "worktree").unwrap(),
+            "/w --- kind: forged"
+        );
+        assert_eq!(header_value(&forged, "kind").unwrap(), "report");
+    }
+
+    #[test]
+    fn a_message_written_before_the_worktree_header_existed_still_reads() {
+        // An inbox outlives an upgrade, and what is sitting in one right now has four
+        // headers. A listing that could not read those would strand every message already
+        // delivered.
+        let _sandbox = Sandbox::empty();
+        let dir = inbox_dir("acme-widget");
+        std::fs::create_dir_all(&dir).unwrap();
+        let older = "---\nfrom: wid-957\nkind: report\nsubject: 検索が潰れる\nat: 20260908T041500Z\n---\n\nb\n";
+        std::fs::write(dir.join("20260908T041500Z-report.md"), older).unwrap();
+
+        let listed = list("acme-widget");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].from, "wid-957");
+        assert_eq!(listed[0].subject, "検索が潰れる");
+        assert_eq!(listed[0].kind, "report");
+        assert_eq!(listed[0].worktree, None);
+        assert!(read("acme-widget", &listed[0].name).unwrap().contains('b'));
+    }
+
+    #[test]
     fn an_empty_subject_falls_back_to_the_first_body_line() {
         let rendered = render_message(&Message {
             from: "w".into(),
+            worktree: None,
             kind: String::new(),
             subject: String::new(),
             body: "検索結果が潰れる\n\n詳細".into(),

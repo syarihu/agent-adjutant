@@ -61,6 +61,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
 | `adjutant spawn --cwd … -- cmd …` | 新しいタブを開いてコマンドを実行 |
 | `adjutant focus` | 実行中の hub タブをアクティブにする（なければ exit 1） |
+| `adjutant close --worktree …` | 指定 worktree の worker が座っているタブを閉じる（閉じられなければ exit 1） |
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
 | `adjutant notify --message …` | 人間にデスクトップ通知を送る |
@@ -121,6 +122,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 | --- | --- | --- |
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
+| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2（`false` でタブを一切閉じない。その場合 `adjutant close` は何もせず exit 1） |
 | `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
 | `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |
@@ -131,6 +133,8 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
 
 キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
+
+`{pid}` と `{tty}` は OS 側から見たセッションの名前（プロセスIDと、そのセッションが載っている端末デバイス `ttys004`）であって、**ターミナル自身の pane / window の id ではありません**。そのため `focus` / `close` / `wake` のテンプレートは、動く前にその id を自分で引き当てる必要があります。`{pid}` を pane id を期待する引数（`--pane-id` など）に渡すと別の番号空間を指すことになり、その番号を持っていた無関係な pane に対して動作します。id 解決を行うラッパースクリプトを指定してください。`close` を「実行できたら成功」とみなさないのも同じ理由です。テンプレートは終了コードだけで判断されるため、adjutant は close 後に**その worker が実際に居なくなったこと**を確認してから記録を消し、居たままなら exit 1 を返します。
 
 ### 通知の詳細設定
 組み込みの通知は `terminal-notifier` があればそれを使い、無ければ `osascript` にフォールバックします。この優先順位には理由があります。コマンドラインの `osascript` が出した通知は macOS が**スクリプトエディタ**からのものとして扱うため、通知バナーの送り主が意図しないアプリになり、クリックしても空のスクリプトエディタが起動するだけで、呼び出し元のセッションには戻れません。[`terminal-notifier`](https://github.com/julienXX/terminal-notifier)（`brew install terminal-notifier`）が入っている場合、組み込みの通知は次のコマンドになります：
@@ -149,7 +153,7 @@ macOS 以外には組み込みの通知手段がなく、通知できないこ�
 `wake`（セッションへの入力通知）は、「ターミナルにどう入力するか」と「エージェントに何を伝えるか」に分かれています。そのため、`hubWake` / `workerWake` ではオブジェクト形式で個別に上書きできます：
 
 ```jsonc
-"wake": "tmux send-keys -t {tty} {line} Enter",   // ターミナル側の操作
+"wake": "wake-tab {tty} {line}",                  // ターミナル側の操作
 "workerWake": { "line": "check `adj outbox`" }     // エージェント側の入力文言
 ```
 
@@ -168,6 +172,7 @@ macOS 以外には組み込みの通知手段がなく、通知できないこ�
   - `adjutant send`（または `adjutant_send` ツール）が `~/.local/state/adjutant/inbox/<slug>/` にファイルを書き込み、`adjutant pending` が読み出します。
   - hub が停止中でもメッセージは保持されます。
   - hub の生存確認は、記録された PID への `kill -0` およびプロセス引数の照合で行われます。
+  - すべてのメッセージに `worktree:` ヘッダが付きます。送信元が実際に居た worktree の絶対パスを（本文への手書きではなく）導出したもので、hub が `done` 依頼などを処理するときの宛先になります。git が worktree を特定できない場合はヘッダごと省略され、このヘッダが無い既存のメッセージもそのまま読めます。
 - **hub → worker**:
   - 宛先はセッションではなく worktree です。`adjutant tell` が `{worktree}/.claude/adjutant-outbox.md` に追記し、`adjutant outbox` が読み出します。
   - worker 起動時に `adjutant worker` ランチャーが自身の PID を記録し、そのプロセス上でエージェントを `exec` することで、`workerWake` による入力通知を可能にしています。

@@ -36,6 +36,26 @@ fn git(args: &[&str], cwd: Option<&Path>) -> Result<std::process::Output, String
     cmd.output().map_err(|e| format!("cannot run git: {e}"))
 }
 
+/// The worktree this command is being run in — the linked one, not the main checkout.
+///
+/// The other half of `main_worktree`, and the two are wanted for opposite reasons.
+/// A hub launched anywhere in a repository has to land in the main checkout, so that
+/// answers with the main one. A message has to say where it came *from*, and "the main
+/// checkout" is the one answer that never identifies a worker.
+///
+/// `None` rather than an error: this is asked on the way to sending a message, and a
+/// message sent from outside a repository is still a message. What it costs is the header,
+/// and the reader can see it is missing.
+pub fn current_worktree(start: Option<&Path>) -> Option<String> {
+    let out = git(&["rev-parse", "--show-toplevel"], start).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // A bare repository answers with nothing at all rather than failing.
+    (!path.is_empty()).then_some(path)
+}
+
 /// The main checkout. `git worktree list` always prints it first, so this answers the same
 /// way from inside a worktree — which is where the hub is usually launched from.
 pub fn main_worktree(start: Option<&Path>) -> Result<String, String> {

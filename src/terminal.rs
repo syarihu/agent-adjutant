@@ -1,4 +1,5 @@
-//! Opening a tab somewhere and bringing one to the front.
+//! Opening a tab somewhere, bringing one to the front, and closing one when its work is
+//! over.
 //!
 //! iTerm2 is the built-in because it needs no setup on the machine this grew up on, but it
 //! is only a default: `terminal.spawn` / `terminal.focus` in the config replace it with any
@@ -7,7 +8,9 @@
 //!
 //! `focus`, `title` and `wake` are optional in a way `spawn` is not. Failing to open a tab
 //! loses the work; failing to raise a window, name it or poke it loses nothing, so an
-//! unsupported one is a quiet no-op rather than an error.
+//! unsupported one is a quiet no-op rather than an error. `close` belongs with `spawn`
+//! rather than with those: whoever asked for it is about to remove the worktree that tab is
+//! sitting in, so a failure nobody was told about is a worker killed by the cleanup.
 
 use std::process::Command;
 
@@ -169,17 +172,135 @@ pub fn focus(
     })
 }
 
-/// The controlling terminal of a process, as `ttys004`. `??` means it has none.
+/// What the built-in close prints when it found the tab and asked it to close.
+///
+/// The same device `wake` uses, for the same reason: walking every window and matching no
+/// tty is a script that ran to the end and exited 0, indistinguishable from the one that
+/// reached a session — so the one path that reached a session says so out loud.
+///
+/// What it does *not* say is that the tab is gone. iTerm2 can be set to confirm closing a
+/// session with a process still in it, and cancelling that dialog is not an AppleScript
+/// error: the script goes on and prints this. So the marker rules out "there was no such
+/// tab", and nothing more. Whether the worker actually died is a question about the
+/// process, and it is asked one layer up, by the caller that acts on the answer.
+const CLOSED_MARKER: &str = "adjutant:closed";
+
+/// Did the command report that it closed something? A template answers for itself with its
+/// exit status — it is someone else's command and only it knows what success means there.
+/// The built-in knows more about itself than an exit status can carry, and prints it.
+fn reported_closing(built_in: bool, output: &str) -> bool {
+    !built_in || output.contains(CLOSED_MARKER)
+}
+
+/// Close the tab a session is sitting in.
+///
+/// The end of a task rather than a courtesy: closing the tab hangs up the session, which is
+/// what the caller is after before it removes the worktree underneath.
+///
+/// `ran` means the close command reported doing something — not that the process in that
+/// tab is gone. Nothing at this layer can establish the second: a confirmation dialog and a
+/// template pointed at the wrong pane both produce a perfectly successful close command. A
+/// caller that is about to delete something has to ask the process itself.
+pub fn close(hook: &Hook, pid: u32, title: &str, dry_run: bool) -> Result<Performed, String> {
+    close_with(run_shell, tty_of(pid), hook, pid, title, dry_run)
+}
+
+/// The same, with the thing that runs the command handed in.
+///
+/// Split out for the reason `wake_with` is: the decision about whether a tab was actually
+/// closed cannot be reached by a test, which has no iTerm2 session of its own to lose — and
+/// that decision is the whole defect this shape exists to prevent.
+fn close_with(
+    run: impl Fn(&str) -> Result<String, String>,
+    tty: Option<String>,
+    hook: &Hook,
+    pid: u32,
+    title: &str,
+    dry_run: bool,
+) -> Result<Performed, String> {
+    if hook.is_off() {
+        // Off is an answer, not an absence: somebody said not to close tabs here, and the
+        // built-in would otherwise close one. `ran` stays false, which is what stops the
+        // caller from treating the worktree as finished with.
+        return Ok(Performed {
+            description: "closing tabs is turned off; the tab was left open".to_string(),
+            script: String::new(),
+            ran: false,
+        });
+    }
+    let mut built_in = false;
+    let command = match hook.template() {
+        Some(template) => render(
+            template,
+            &[
+                ("pid", Sub::Quoted(&pid.to_string())),
+                ("tty", Sub::Quoted(tty.as_deref().unwrap_or(""))),
+                ("title", Sub::Quoted(title)),
+            ],
+        ),
+        None => match tty.as_deref() {
+            Some(tty) => {
+                built_in = true;
+                // Through a shell line rather than `osascript`'s stdin, the way `wake` goes:
+                // what the script prints is the answer here, and one runner for both paths
+                // is what lets a test supply that answer.
+                format!("osascript -e {}", sh_quote(&iterm_close_script(tty)))
+            }
+            None => {
+                return Ok(Performed {
+                    description: format!("no terminal found for pid {pid}; not closing"),
+                    script: String::new(),
+                    ran: false,
+                });
+            }
+        },
+    };
+    if dry_run {
+        return Ok(Performed {
+            description: format!("will close the tab (pid {pid})"),
+            script: command,
+            ran: false,
+        });
+    }
+    // Not swallowed the way `focus` and `wake` swallow their own failures. A window that
+    // would not come forward costs a person one click, and a bell that did not ring loses
+    // nothing that was not already delivered; a tab that would not close is a live worker in
+    // a worktree the caller is about to delete, so the caller has to hear about it.
+    let out = run(&command)?;
+    if !reported_closing(built_in, &out) {
+        return Ok(Performed {
+            description: format!("no tab of this terminal is running pid {pid}; nothing closed"),
+            script: command,
+            ran: false,
+        });
+    }
+    Ok(Performed {
+        description: format!("closed the tab (pid {pid})"),
+        script: command,
+        ran: true,
+    })
+}
+
+/// The controlling terminal of a process, as `ttys004`. `None` means it has none.
 pub fn tty_of(pid: u32) -> Option<String> {
     let out = Command::new("ps")
         .args(["-o", "tty=", "-p", &pid.to_string()])
         .output()
         .ok()?;
-    let tty = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if tty.is_empty() || tty == "??" {
-        None
-    } else {
-        Some(tty)
+    tty_in(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The tty in what `ps -o tty=` printed, if it named one.
+///
+/// Split out because the two systems this runs on spell "none" differently — `??` on macOS,
+/// `?` on Linux — and a machine only ever demonstrates its own. Taken for a tty name, either
+/// one sends every caller looking through a terminal's tabs for `/dev/?`, which no session
+/// can be sitting on: `close` would then report having closed nothing, and say so as a
+/// failure the cleanup stops on.
+fn tty_in(printed: &str) -> Option<String> {
+    match printed.trim() {
+        "" | "?" | "??" => None,
+        tty => Some(tty.to_string()),
     }
 }
 
@@ -527,6 +648,34 @@ fn iterm_focus_script(tty: &str) -> String {
     )
 }
 
+/// The same walk as `iterm_focus_script`, with `close` where that one selects: a tty is the
+/// only handle anyone has on which of a dozen tabs belongs to the pid they know.
+///
+/// The marker's placement is the point of the shape: inside the branch that matched the
+/// tty, with the fall-through returning nothing.
+///
+/// No `activate` here. `focus` raises iTerm2 because being raised is what was asked for;
+/// pulling the whole app forward in order to dispose of a tab takes the person's attention
+/// for something they will not be looking at.
+fn iterm_close_script(tty: &str) -> String {
+    format!(
+        "tell application \"iTerm2\"\n  \
+           repeat with w in windows\n    \
+             repeat with t in tabs of w\n      \
+               repeat with s in sessions of t\n        \
+                 if tty of s is \"/dev/{}\" then\n          \
+                   close s\n          \
+                   return \"{CLOSED_MARKER}\"\n        \
+                 end if\n      \
+               end repeat\n    \
+             end repeat\n  \
+           end repeat\n\
+         end tell\n\
+         return \"\"",
+        applescript_literal(tty)
+    )
+}
+
 fn osascript(script: &str) -> Result<String, String> {
     use std::io::Write;
     let mut child = Command::new("osascript")
@@ -762,6 +911,154 @@ mod tests {
     }
 
     #[test]
+    fn a_process_with_no_terminal_is_recognised_on_either_system() {
+        // The spelling is the system's, not the process's: macOS prints `??` where Linux
+        // prints `?`, and whichever machine this is running on can only show one of them.
+        assert_eq!(tty_in("??\n"), None);
+        assert_eq!(tty_in("?\n"), None);
+        assert_eq!(tty_in(""), None);
+        assert_eq!(tty_in("ttys004\n"), Some("ttys004".into()));
+        assert_eq!(tty_in(" pts/3 \n"), Some("pts/3".into()));
+    }
+
+    #[test]
+    fn closing_without_a_template_on_a_pid_with_no_terminal_is_a_quiet_no_op() {
+        // Same shape as `focus`: pid 1 has no controlling terminal, and there is no tab to
+        // dispose of for a session nobody can locate.
+        let out = close(&Hook::BuiltIn, 1, "WID-957", true).unwrap();
+        assert!(!out.ran);
+        assert!(out.description.contains("not closing"), "{out:?}");
+        assert!(out.script.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn closing_can_be_turned_off_and_then_reaches_nothing() {
+        // `false` is a different answer from an absent key, and the difference is the whole
+        // point here: read as unset, the built-in would dispose of the very tab somebody
+        // had just declared off limits. `ran` has to stay false too, or the caller reads
+        // "turned off" as "the tab is gone" and carries on removing the worktree.
+        let done = close_with(
+            |_| panic!("a close that is turned off ran a command"),
+            Some("ttys004".to_string()),
+            &Hook::Off,
+            std::process::id(),
+            "WID-957",
+            false,
+        )
+        .unwrap();
+        assert!(!done.ran, "{done:?}");
+        assert!(done.script.is_empty(), "{done:?}");
+        assert!(done.description.contains("turned off"), "{done:?}");
+    }
+
+    #[test]
+    fn a_close_template_is_handed_the_pid_and_the_tty_and_runs_only_for_real() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("closed");
+        // Quoted, because a `TMPDIR` with a space in it is the machine's business and not a
+        // defect in what is under test — unquoted, this test failed on a correct `close`.
+        let template = format!(
+            "printf '%s|%s' {{pid}} {{tty}} > {}",
+            sh_quote(&marker.to_string_lossy())
+        );
+
+        let template = Hook::Command(template);
+        let planned = close(&template, 4321, "WID-957", true).unwrap();
+        assert!(!planned.ran);
+        assert!(planned.script.contains("4321"), "{}", planned.script);
+        // A pid with no terminal still substitutes, as the empty string. Left standing, the
+        // literal `{tty}` would be handed to a shell as an argument.
+        assert!(!planned.script.contains("{tty}"), "{}", planned.script);
+        assert!(!marker.exists(), "a dry run ran the template");
+
+        let ours = std::process::id();
+        let done = close(&template, ours, "WID-957", false).unwrap();
+        assert!(done.ran);
+        let recorded = std::fs::read_to_string(&marker).unwrap();
+        let (pid, tty) = recorded.split_once('|').unwrap();
+        assert_eq!(pid, ours.to_string());
+        // Whatever this test is running under — a terminal or a pipe with no tty at all —
+        // the template is given the answer for the pid it was asked about.
+        assert_eq!(tty, tty_of(ours).unwrap_or_default());
+    }
+
+    /// The finding, one command over from where it was found the first time: the built-in
+    /// walks every iTerm2 window and, having matched no tty, runs to the end and exits 0 —
+    /// which is what a worker in any other terminal, in tmux, or over ssh looks like. So
+    /// `ran` has to mean "the command reported reaching a session", and a walk that matched
+    /// nothing has to be `false`.
+    ///
+    /// Driven through `close_with` rather than through the helper, so the branch that reads
+    /// the answer cannot be deleted with this test still passing.
+    #[test]
+    fn the_builtin_close_only_reports_success_when_it_reached_a_session() {
+        let ours = std::process::id();
+
+        let quiet = close_with(
+            |_| Ok(String::new()),
+            Some("ttys004".to_string()),
+            &Hook::BuiltIn,
+            ours,
+            "WID-957",
+            false,
+        )
+        .unwrap();
+        assert!(!quiet.ran, "{quiet:?}");
+        assert!(quiet.description.contains("nothing closed"), "{quiet:?}");
+
+        // The same command, having closed a session, says so.
+        let done = close_with(
+            |_| Ok(CLOSED_MARKER.to_string()),
+            Some("ttys004".to_string()),
+            &Hook::BuiltIn,
+            ours,
+            "WID-957",
+            false,
+        )
+        .unwrap();
+        assert!(done.ran, "{done:?}");
+
+        // A configured template is answered for by its exit status alone.
+        let template = close_with(
+            |_| Ok(String::new()),
+            None,
+            &Hook::Command("close-tab --pid {pid}".to_string()),
+            ours,
+            "WID-957",
+            false,
+        )
+        .unwrap();
+        assert!(template.ran, "{template:?}");
+
+        // A command that failed is not a closed tab, and unlike `wake` it is not swallowed.
+        let failed = close_with(
+            |_| Err("no iTerm2 window is open".to_string()),
+            Some("ttys004".to_string()),
+            &Hook::BuiltIn,
+            ours,
+            "WID-957",
+            false,
+        );
+        assert!(failed.is_err(), "{failed:?}");
+
+        // The contract the two halves share, checked where it can actually break: the
+        // marker has to sit *inside* the branch that matched the tty. Hoisted out of that
+        // branch it would be printed by a walk that closed nothing — which is the defect
+        // itself — and an assertion that only knew the marker came after `close s` would
+        // have passed anyway.
+        let script = iterm_close_script("ttys004");
+        let matched = script.find("if tty of s is \"/dev/ttys004\" then").unwrap();
+        let closes = script.find("close s").unwrap();
+        let marked = script.find(CLOSED_MARKER).unwrap();
+        let branch_ends = script.find("end if").unwrap();
+        assert!(matched < closes, "{script}");
+        assert!(closes < marked, "{script}");
+        assert!(marked < branch_ends, "{script}");
+        // And the walk that matched nothing has to fall out saying nothing.
+        assert!(script.trim_end().ends_with("return \"\""), "{script}");
+    }
+
+    #[test]
     fn naming_this_tab_is_a_template_like_everything_else() {
         let done = set_title(
             &Hook::Command("tmux rename-window {title}".into()),
@@ -870,14 +1167,8 @@ mod tests {
 
     #[test]
     fn a_focus_template_gets_the_pid() {
-        let out = focus(
-            Some("wezterm cli activate-pane --pane-id {pid}"),
-            4321,
-            "hub",
-            true,
-        )
-        .unwrap();
-        assert_eq!(out.script, "wezterm cli activate-pane --pane-id 4321");
+        let out = focus(Some("raise-tab --pid {pid}"), 4321, "hub", true).unwrap();
+        assert_eq!(out.script, "raise-tab --pid 4321");
     }
 
     /// The finding: a worker in any terminal other than iTerm2 was told it had been woken,

@@ -115,7 +115,7 @@ enum Commands {
         /// Who is sending: your session or worktree name
         #[arg(long)]
         from: Option<String>,
-        /// report | question | answer | ack | needs-user
+        /// report | question | answer | ack | done | needs-user
         #[arg(long, default_value = "report")]
         kind: String,
         /// One line stating the conclusion
@@ -214,6 +214,18 @@ enum Commands {
     Focus {
         #[arg(long)]
         repo: Option<String>,
+        /// Say nothing, use the exit code
+        #[arg(long)]
+        quiet: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
+    Close {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        worktree: String,
         /// Say nothing, use the exit code
         #[arg(long)]
         quiet: bool,
@@ -387,6 +399,14 @@ pub fn run() -> ! {
             quiet,
             dry_run,
         } => cmd::focus(repo.as_deref(), *quiet, *dry_run).map(|found| i32::from(!found)),
+        Commands::Close {
+            repo,
+            worktree,
+            quiet,
+            dry_run,
+        } => {
+            cmd::close(repo.as_deref(), worktree, *quiet, *dry_run).map(|closed| i32::from(!closed))
+        }
         Commands::Hub {
             repo,
             dry_run,

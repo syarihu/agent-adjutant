@@ -34,7 +34,7 @@ pub const PROMPTS: [PromptDef; 3] = [
 /// fetch them on purpose. This is the exception: a worker cannot ask for the report
 /// procedure unless it already knows that reporting is a thing it is allowed to do.
 pub const INSTRUCTIONS: &str = "\
-adjutant hands work out to a repository's workers and takes their reports back in.
+adjutant hands work out to workers and takes their bug reports back in.
 While you are working a task, a bug you find OUTSIDE that task is not yours to fix and not
 yours to file: an unrelated fix pollutes this task's diff, and a diff nobody can review is a
 diff nobody can revert. Hand it over instead — `adj skill adj-report` (or adjutant_skill,
