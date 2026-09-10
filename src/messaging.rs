@@ -497,9 +497,16 @@ pub fn read_worker(worktree: &Path) -> WorkerRecord {
     };
     WorkerRecord::Named(WorkerIdentity {
         pid,
+        // Blank counts as absent. `ps_started` never writes one, but a record that carries
+        // it would otherwise match no live process at all: the equality check below would
+        // read every pid as recycled, call the worker gone, and hand a live worker's
+        // worktree to whoever asked whether it could be deleted. An anchor that cannot
+        // anchor is `None`, which is answered with `CannotTell`.
         started: record
             .get("psStarted")
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|started| !started.is_empty())
             .map(str::to_string),
         title: record
             .get("title")
@@ -1340,9 +1347,15 @@ mod tests {
             ..worker.clone()
         };
         assert_eq!(worker_liveness(&unanchored), Liveness::CannotTell);
+        // A blank one belongs with those two rather than with the real ones: compared as a
+        // start time it matches no process alive, which would read as a recycled pid and
+        // call this worker gone — the answer that clears the record and says the worktree
+        // is free to delete.
         for content in [
             json!({"pid": std::process::id(), "psStarted": null}).to_string(),
             json!({"pid": std::process::id()}).to_string(),
+            json!({"pid": std::process::id(), "psStarted": ""}).to_string(),
+            json!({"pid": std::process::id(), "psStarted": "   "}).to_string(),
         ] {
             std::fs::write(&record, &content).unwrap();
             let WorkerRecord::Named(read_back) = read_worker(worktree) else {
