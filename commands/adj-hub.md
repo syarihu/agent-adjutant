@@ -559,11 +559,12 @@ proctor's pattern for this repo bakes in one source's key, stop and settle it wi
 「proctor との境界」 in Config says how that is normally resolved.
 
 **Base branch** — `baseBranch: "auto"` なら、リリースブランチがある repo は一番新しいものを、
-無ければ既定ブランチを使う。
+無ければ既定ブランチを使う。`--format` は要る。既定の出力は現在ブランチのマーカー用に2桁
+インデントされていて、そのまま commit-ish に渡すと `fatal: invalid reference` になる。
 
 ```bash
 git fetch origin
-git branch -r --list 'origin/release/*' --sort=-version:refname | head -1
+git branch -r --list 'origin/release/*' --format='%(refname:short)' --sort=-version:refname | head -1
 ```
 
 そのうえで worktree を作る。`{base}` は**いま決めたブランチ**（`origin/main` や
