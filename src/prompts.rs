@@ -138,6 +138,94 @@ mod tests {
         assert!(body.starts_with("---"));
     }
 
+    /// The one line the brief carries about where the branch came from has to be read back.
+    ///
+    /// The hub decides the base with its `baseBranch` rule and writes the answer into the
+    /// brief; nothing else records it. §5 had no step that read it, so every PR fell through
+    /// to a bare `gh pr create` — which targets the repository's default branch. A task
+    /// branched off a release branch then opened a PR carrying every commit the release
+    /// branch has and the default branch does not, and merging it put the release into the
+    /// default branch.
+    #[test]
+    fn the_pr_step_takes_its_base_from_the_brief() {
+        let worker = section(find("adj-worker").unwrap().raw_content, "## 5. ");
+        assert!(
+            worker.contains("--base"),
+            "the PR step never passes a base: {worker}"
+        );
+        // The label as the brief spells it, not the bare noun: the step after this one says
+        // 「step 2 のベースブランチを渡す」, so a check for the word alone was satisfied by that
+        // sentence — and renaming the label the step goes looking for passed the guard while
+        // leaving the worker hunting for a line the hub does not write.
+        assert!(
+            worker.contains("指示書の「ベースブランチ」行"),
+            "the PR step does not say where the base comes from: {worker}"
+        );
+        // The hub writes a commit-ish (`origin/release/1.2`), which is not a branch name
+        // GitHub will accept — so the step has to say to strip the remote.
+        assert!(
+            worker.contains("origin/"),
+            "the PR step does not say the brief's value is remote-qualified: {worker}"
+        );
+
+        // Both sides spell the label the same way. Renaming it in the hub's brief template
+        // without telling the worker is what left the line unread in the first place.
+        let hub = find("adj-hub").unwrap().raw_content;
+        assert!(
+            hub.contains("- ベースブランチ: {base_branch}"),
+            "the brief template no longer writes the line the worker is told to read"
+        );
+    }
+
+    /// A `gh pr create` with nothing to base it on is the defect itself, not just one
+    /// wording of it: the flag is easy to drop when the surrounding prose is rewritten.
+    ///
+    /// The flag has to be inside the command, which is why this reads the command's own span
+    /// instead of the characters around it. A first version looked within 40 characters of
+    /// the occurrence and passed a stripped `gh pr create` — the sentence that follows it
+    /// explains what omitting `--base` does, so the word was there either way, and the guard
+    /// was reading the explanation rather than the command.
+    #[test]
+    fn no_procedure_opens_a_pull_request_without_saying_what_to_base_it_on() {
+        let mut found = 0usize;
+        for prompt in &PROMPTS {
+            for (at, _) in prompt.raw_content.match_indices("gh pr create") {
+                found += 1;
+                let tail = &prompt.raw_content[at..];
+                // The command runs to the end of its backticks, or of its line in a fenced
+                // block. Anything past that is prose about the command.
+                let end = tail.find(['`', '\n']).unwrap_or(tail.len());
+                let command = &tail[..end];
+                assert!(
+                    command.contains("--base"),
+                    "{} opens a PR with no base: {command}",
+                    prompt.name
+                );
+            }
+        }
+        assert!(
+            found > 0,
+            "no procedure opens a pull request at all any more"
+        );
+    }
+
+    /// One numbered section of a procedure, from its heading to the next one.
+    ///
+    /// Section-scoped rather than whole-file: `--base` anywhere in 400 lines would satisfy
+    /// a substring check while the step that opens the PR carried none.
+    fn section(raw: &str, heading: &str) -> String {
+        // Anchored to the start of a line: `## 5. ` also matches inside `### 5. `, which is a
+        // heading the procedures really use, and a guard that quietly read the wrong section
+        // would pass by finding nothing to object to.
+        let anchored = format!("\n{heading}");
+        let at = raw
+            .find(&anchored)
+            .unwrap_or_else(|| panic!("no section starting `{heading}`"));
+        let rest = &raw[at + anchored.len()..];
+        let end = rest.find("\n## ").unwrap_or(rest.len());
+        rest[..end].to_string()
+    }
+
     #[test]
     fn the_always_on_instructions_carry_the_rule_and_its_reason() {
         // A worker that knows the rule and not the reason weighs it against whatever it was

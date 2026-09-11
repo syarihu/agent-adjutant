@@ -126,14 +126,29 @@ prefix は付けない。メッセージの言語はそのリポジトリの直�
 指示書の完了条件が「PR作成まで」のとき、またはユーザーに直接頼まれたときだけ。
 
 1. config の `skills.prStyle` があれば、その skill を先に読む。PR のタイトル・本文を書く前に必須。
-2. config の `skills.createPr` があればそれを呼ぶ（ベースブランチ判定・タイトル・本文・draft・
-   テンプレートの扱いを持っているのはそちら）。worktree のパスとタスクの URL、それに config の
-   `draftPr`（既定 `true` = draft で出す）を渡す。無ければ `gh pr create` で自分で出す。
-3. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
-4. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
+2. **PR のベースは指示書の「ベースブランチ」行から取る。** hub は `baseBranch` のルールで決めた
+   結果を commit-ish の形（`origin/main` や `origin/release/1.2`）で書いているので、`origin/` を
+   外したブランチ名（`main` / `release/1.2`）がベースになる。この行が worktree を何から生やしたかの
+   唯一の記録で、落とすと PR はリポジトリの default branch に向く — リリースブランチを持つ repo では
+   「release にあって default branch に無いコミット」が全部 diff に乗り、レビュアーには身に覚えの
+   無い巨大な差分になるし、マージすると release が default branch に入る。行が無い、または `-` の
+   ときは**推測で default branch を入れない。ユーザーに聞く。** hub が worktree を作らずに指示書
+   だけ書く経路（既存の worktree への引き渡し）では、この行を埋めた人がいない。
+3. config の `skills.createPr` があればそれを呼ぶ（タイトル・本文・draft・テンプレートの扱いを
+   持っているのはそちら）。worktree のパスとタスクの URL、config の `draftPr`（既定 `true` =
+   draft で出す）、それに **step 2 のベースブランチ**を渡す。ベースを createPr に任せないのは、
+   あちらには hub が `baseBranch` のルールで何を選んだかを知る術が無いから — 判定結果は指示書に
+   しか書かれていない。createPr が無ければ `gh pr create --base '<step 2 のブランチ名>'` で自分で
+   出す（`--base` を省くと PR は default branch に向く）。
+4. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
+5. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
    フォールバック: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f 'reviewers[]=Copilot'`
-5. PR の URL を出す。
-6. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
+6. PR の URL を出す。あわせてベースを照合する:
+   `gh pr view <n> -R <codeRepo> --json baseRefName` が step 2 のブランチと違っていたら
+   `gh pr edit <n> --base '<step 2 のブランチ名>'` で直す。createPr は外部の skill で、ベースを
+   どう決めるかを何も約束していない — 黙って default branch に向いていても、auto mode の worker
+   には気づく手立てがこれしか無い。
+7. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
    `github-project` なら `gh project item-edit` にそのソースの `projectFields.inReviewOptionId` を
    渡す。**`inReviewOptionId` を持たないボードには何もしない** — Status を PR の状態で自動更新して
    いるボードでは、手で動かすのが害になるので、キーを置かないことでそれを表している。
