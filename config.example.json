@@ -23,7 +23,7 @@
   "defaults": {
     "//ide": "Editor for `adj ide --worktree <path>`. A preset name (code, cursor, idea, subl) or a command template containing {worktree}. No built-in: guessing puts you in the wrong editor, so leaving it out is reported in `warnings` and the prompts ask.",
     "ide": "code",
-    "//baseBranch": "What a new worktree branches from. \"auto\" means the newest `origin/release/*` if the repo has any, otherwise the default branch. A branch name here instead pins it.",
+    "//baseBranch": "What a new worktree branches from. \"auto\" means the newest `origin/release/*` if the repo has any, otherwise the default branch. A branch name here instead pins it. This is the default, not a constraint: a single dispatch can be told to branch from somewhere else without this key changing.",
     "baseBranch": "auto",
     "//reviewBots": "Review accounts whose comments a worker waits for before calling a round done. Exactly as GitHub spells them, `[bot]` suffix included.",
     "reviewBots": ["copilot-pull-request-reviewer[bot]"],

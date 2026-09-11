@@ -21,8 +21,8 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
   （§7。聞いた相手が待っているので、答えないと起票が止まる）。
 - セッション終了時に「worktree を残すか消すか」を聞かれたら、**残す**。成果が乗っている場所で、
   削除は hub の片付けに一本化してある（頼み方は §9）。
-- 対象タスク・ベースブランチ・完了条件・`verify` コマンドは `.claude/task-brief.md` にある。
-  まずそれを読む。
+- 対象タスク・親タスク・ベースブランチ・完了条件・`verify` コマンドは `.claude/task-brief.md`
+  にある。まずそれを読む。
 - **hub からの連絡を取りこぼさない。** hub からこちらへの連絡は `adjutant_outbox` で読む
   （この worktree の `.claude/adjutant-outbox.md` に `##` 見出し1件ずつ溜まっている）。
   エージェント間の直接メッセージを使わないのは、それが特定のコーディングエージェントにしか
@@ -55,6 +55,12 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
      `responseContentFormat: "markdown"`。**チケットにコメントを投稿しない・ステータスを勝手に
      動かさない** — 書き込みは hub の担当で、こちらは読むだけ。
    - `linear` — `mcp__linear__get_issue`。
+
+   **指示書の「親タスク」が `-` でなければ、そちらの本文とコメントも同じ道具で読む。** 大きな
+   作業を割ったサブタスクなら、設計の意図と兄弟のサブタスクとの境目はそこにしか書かれていない。
+   別のタスクの最中に見つかった不具合として起票されたものなら、再現手順と発見時の状況がそこに
+   ある。読む対象を増やすだけで、**親タスクに書き込まない・親タスクの作業をしない** — 受け持ちは
+   「作業対象」の1件だけ。
 
    hub は調査をしないので、引き継ぎは指示書に書いてあることだけ。ここから自分で読む。
 
@@ -126,9 +132,10 @@ prefix は付けない。メッセージの言語はそのリポジトリの直�
 指示書の完了条件が「PR作成まで」のとき、またはユーザーに直接頼まれたときだけ。
 
 1. config の `skills.prStyle` があれば、その skill を先に読む。PR のタイトル・本文を書く前に必須。
-2. **PR のベースは指示書の「ベースブランチ」行から取る。** hub は `baseBranch` のルールで決めた
-   結果を commit-ish の形（`origin/main` や `origin/release/1.2`）で書いているので、`origin/` を
-   外したブランチ名（`main` / `release/1.2`）がベースになる。この行が worktree を何から生やしたかの
+2. **PR のベースは指示書の「ベースブランチ」行から取る。** hub が決めた結果（`baseBranch` の
+   ルール、またはこの dispatch にだけ指定された分岐元）が commit-ish の形（`origin/main`、
+   `origin/release/1.2`、`origin/feature/x`）で書いてあるので、`origin/` を外したブランチ名
+   （`main` / `release/1.2` / `feature/x`）がベースになる。この行が worktree を何から生やしたかの
    唯一の記録で、落とすと PR はリポジトリの default branch に向く — リリースブランチを持つ repo では
    「release にあって default branch に無いコミット」が全部 diff に乗り、レビュアーには身に覚えの
    無い巨大な差分になるし、マージすると release が default branch に入る。行が無い、または `-` の
@@ -137,9 +144,9 @@ prefix は付けない。メッセージの言語はそのリポジトリの直�
 3. config の `skills.createPr` があればそれを呼ぶ（タイトル・本文・draft・テンプレートの扱いを
    持っているのはそちら）。worktree のパスとタスクの URL、config の `draftPr`（既定 `true` =
    draft で出す）、それに **step 2 のベースブランチ**を渡す。ベースを createPr に任せないのは、
-   あちらには hub が `baseBranch` のルールで何を選んだかを知る術が無いから — 判定結果は指示書に
-   しか書かれていない。createPr が無ければ `gh pr create --base '<step 2 のブランチ名>'` で自分で
-   出す（`--base` を省くと PR は default branch に向く）。
+   あちらには hub が何を選んだかを知る術が無いから — 判定結果は指示書にしか書かれていない。
+   createPr が無ければ `gh pr create --base '<step 2 のブランチ名>'` で自分で出す
+   （`--base` を省くと PR は default branch に向く）。
 4. **PR が開いたら、まずベースを照合する。** レビューを頼む前にやる:
    `gh pr view <n> -R <codeRepo> --json baseRefName` が step 2 のブランチと違っていたら
    `gh pr edit <n> -R <codeRepo> --base '<step 2 のブランチ名>'` で直す。createPr は外部の skill で、

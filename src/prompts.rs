@@ -230,6 +230,97 @@ mod tests {
         );
     }
 
+    /// A dispatch can be told what to branch from, and saying so must not touch the config.
+    ///
+    /// `baseBranch` is a repository-level key, so answering 「`feature/x` から生やして」 by
+    /// rewriting it sends every later task in that repository to the feature branch too —
+    /// silently, because the next dispatch reads the same key and cannot tell it was set for
+    /// one task.
+    #[test]
+    fn the_worktree_step_takes_a_base_meant_for_one_dispatch() {
+        let create = step(find("adj-hub").unwrap().raw_content, "### 3. ");
+        // Matched against the step with its whitespace squeezed out, for the reason the
+        // base-branch guard above gives: the procedures are hard-wrapped, so re-wrapping a
+        // paragraph must not decide whether this holds.
+        let flowed: String = create.chars().filter(|c| !c.is_whitespace()).collect();
+        // Which of the two wins. Without this the step can describe a per-dispatch base and
+        // still leave the reader to guess whether the config overrides it.
+        assert!(
+            flowed.contains("指定された分岐元がconfigの`baseBranch`に優先する"),
+            "the worktree step does not say the per-dispatch base wins: {create}"
+        );
+        assert!(
+            flowed.contains("`baseBranch`を書き換えるのは誤り"),
+            "the worktree step does not say to leave the repository-wide default alone: {create}"
+        );
+        // The value has to be turned into the remote-tracking form. `git worktree add` takes
+        // a commit-ish, and a bare `feature/x` resolves to nothing in a worktree with no
+        // local branch of that name — and the brief would then carry a spelling the base
+        // line is not otherwise written in.
+        assert!(
+            flowed.contains("`origin/`付きのcommit-ishに揃える"),
+            "the worktree step does not normalise the base it was handed: {create}"
+        );
+        // A base that does not resolve has to stop the dispatch. Falling through to the
+        // default puts the worktree — and the pull request that follows it — on a branch
+        // nobody asked for, and the brief then records that answer as though it were chosen.
+        assert!(
+            flowed.contains("gitrev-parse--verify"),
+            "the worktree step never checks that the base it was handed exists: {create}"
+        );
+        // …against refs that were refreshed. A fetch that does not prune leaves the
+        // remote-tracking ref of a branch deleted upstream in place, so the check above
+        // answers "it exists" for a base that is gone and the failure surfaces later, at
+        // `gh pr create`. Written as a ban on the bare form because the step fetches twice —
+        // once for a base it was handed, once for the newest release branch — and both reads
+        // are wrong in the same way.
+        assert!(
+            !create.contains("git fetch origin"),
+            "the worktree step fetches without pruning, so a deleted base still resolves: {create}"
+        );
+        assert!(
+            flowed.contains("gitfetch--pruneorigin"),
+            "the worktree step does not refresh the remote before resolving a base: {create}"
+        );
+        assert!(
+            flowed.contains("既定に落とさずユーザーに聞く"),
+            "the worktree step falls back to the default base in silence: {create}"
+        );
+        // Only the base moves. A per-dispatch base that also renamed the branch would break
+        // the lookup 「既存の worktree に手を入れたいと言われたら」 does by key.
+        assert!(
+            flowed.contains("変わるのは分岐元だけ"),
+            "the worktree step does not say the branch and worktree names stay put: {create}"
+        );
+    }
+
+    /// The brief's parent-task line is written by one side and read by the other.
+    ///
+    /// Same failure mode as the base-branch line: the hub can fill in a field nothing looks
+    /// at and nothing goes red — the worker simply never learns what its task hangs off, and
+    /// re-derives from one subtask the design the siblings already settled.
+    #[test]
+    fn the_parent_task_line_is_written_by_the_hub_and_read_by_the_worker() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        assert!(
+            hub.contains("- 親タスク: {parent_task}"),
+            "the brief template has no slot for the parent task"
+        );
+        let plan = section(find("adj-worker").unwrap().raw_content, "## 1. ");
+        let flowed: String = plan.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("指示書の「親タスク」"),
+            "the plan step never reads the parent task the brief carries: {plan}"
+        );
+        // Naming the field is not reading it. A step that mentions 親タスク and tells nobody
+        // to open it leaves both guards green while the worker learns nothing it did not
+        // already have.
+        assert!(
+            flowed.contains("そちらの本文とコメントも同じ道具で読む"),
+            "the plan step names the parent task without saying to read it: {plan}"
+        );
+    }
+
     /// One numbered section of a procedure, from its heading to the next one.
     ///
     /// Section-scoped rather than whole-file: `--base` anywhere in 400 lines would satisfy
@@ -245,6 +336,17 @@ mod tests {
         let rest = &raw[at + anchored.len()..];
         let end = rest.find("\n## ").unwrap_or(rest.len());
         rest[..end].to_string()
+    }
+
+    /// One `###` step of a procedure, from its heading to the next heading of any level.
+    ///
+    /// `section` stops at the next `## `, which for a `### ` step swallows every step after
+    /// it — a phrase the guard looks for could then be satisfied by a neighbouring step
+    /// while the one being inspected carried none.
+    fn step(raw: &str, heading: &str) -> String {
+        let body = section(raw, heading);
+        let end = body.find("\n### ").unwrap_or(body.len());
+        body[..end].to_string()
     }
 
     #[test]
