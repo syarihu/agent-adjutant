@@ -572,9 +572,10 @@ proctor's pattern for this repo bakes in one source's key, stop and settle it wi
   `baseBranch` を書き換えるのは誤り — あれはリポジトリエントリ単位の設定なので、以降の無関係な
   タスクまで feature ブランチから生えることになる。
 - 受け取った値は **`origin/` 付きの commit-ish に揃える**（`feature/x` → `origin/feature/x`）。
-  ブランチ名のまま渡すと、同名のローカルブランチが無いこの worktree では
-  `fatal: invalid reference` になる。指示書の「ベースブランチ」行の形も既定の経路（下の `auto`）と
-  揃う — worker はその行から `origin/` を外して `--base` に渡すので、綴りが2通りあると
+  下の `git worktree add` が取るのは commit-ish で、素のブランチ名はメインチェックアウトに
+  同名のローカルブランチが無ければ解決できず `fatal: invalid reference` になる。指したいのは
+  リモートにあるものなので、そちらを名指しする。指示書の「ベースブランチ」行の形も既定の経路
+  （下の `auto`）と揃う — worker はその行から `origin/` を外して `--base` に渡すので、綴りが2通りあると
   worker はどちらを受け取ったかで挙動を変えることになる。
 - **実在を確かめてから使う。** 通らなければ**既定に落とさずユーザーに聞く**。黙って落とすと
   worktree は既定ブランチから生え、PR もそちらに向くが、頼んだ側は feature ブランチに乗って
