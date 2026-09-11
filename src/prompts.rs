@@ -174,6 +174,21 @@ mod tests {
             "the PR step does not say to strip the remote from the brief's value: {worker}"
         );
 
+        // The base is checked before anyone is asked to review, not after. A bot asked to
+        // read a PR opened against the wrong base reviews a diff of everything the base was
+        // missing, and correcting the base afterwards does not re-run that review — so §6
+        // ends up triaging it.
+        let checks_base = flowed
+            .find("baseRefName")
+            .expect("the PR step never checks the base it landed on");
+        let asks_for_review = flowed
+            .find("request_copilot_review")
+            .expect("the PR step never asks for a review");
+        assert!(
+            checks_base < asks_for_review,
+            "the base is checked after the review is requested"
+        );
+
         // Both sides spell the label the same way. Renaming it in the hub's brief template
         // without telling the worker is what left the line unread in the first place.
         let hub = find("adj-hub").unwrap().raw_content;
