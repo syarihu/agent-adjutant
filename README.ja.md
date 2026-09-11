@@ -65,7 +65,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
 | `adjutant notify --message …` | 人間にデスクトップ通知を送る |
-| `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パス・ベースを出力 |
+| `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パス・メインチェックアウトのパスを出力 |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 
 エージェント側（`adjutant mcp`）：7つのツールと3つのプロンプトを提供します。
