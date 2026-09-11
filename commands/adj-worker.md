@@ -140,15 +140,18 @@ prefix は付けない。メッセージの言語はそのリポジトリの直�
    あちらには hub が `baseBranch` のルールで何を選んだかを知る術が無いから — 判定結果は指示書に
    しか書かれていない。createPr が無ければ `gh pr create --base '<step 2 のブランチ名>'` で自分で
    出す（`--base` を省くと PR は default branch に向く）。
-4. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
-5. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
-   フォールバック: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f 'reviewers[]=Copilot'`
-6. PR の URL を出す。あわせてベースを照合する:
+4. **PR が開いたら、まずベースを照合する。** レビューを頼む前にやる:
    `gh pr view <n> -R <codeRepo> --json baseRefName` が step 2 のブランチと違っていたら
-   `gh pr edit <n> --base '<step 2 のブランチ名>'` で直す。createPr は外部の skill で、ベースを
-   どう決めるかを何も約束していない — 黙って default branch に向いていても、auto mode の worker
-   には気づく手立てがこれしか無い。
-7. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
+   `gh pr edit <n> -R <codeRepo> --base '<step 2 のブランチ名>'` で直す。createPr は外部の skill で、
+   ベースをどう決めるかを何も約束していない — 黙って default branch に向いていても、auto mode の
+   worker には気づく手立てがこれしか無い。**直せなかったらここで止めてユーザーに言う**（step 5 以降に
+   進まない）。base が誤ったままレビューを頼むと、bot は巨大な誤 diff を読み、base を直しても
+   レビューは再実行されないので、§6 がその誤レビューをトリアージすることになる。
+5. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
+6. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
+   フォールバック: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f 'reviewers[]=Copilot'`
+7. PR の URL を出す。
+8. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
    `github-project` なら `gh project item-edit` にそのソースの `projectFields.inReviewOptionId` を
    渡す。**`inReviewOptionId` を持たないボードには何もしない** — Status を PR の状態で自動更新して
    いるボードでは、手で動かすのが害になるので、キーを置かないことでそれを表している。

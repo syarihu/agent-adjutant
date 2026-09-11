@@ -149,6 +149,10 @@ mod tests {
     #[test]
     fn the_pr_step_takes_its_base_from_the_brief() {
         let worker = section(find("adj-worker").unwrap().raw_content, "## 5. ");
+        // Matched against the section with its whitespace squeezed out. The procedures are
+        // hard-wrapped, so a phrase to look for is as likely as not to be split across two
+        // lines — and re-wrapping a paragraph must not decide whether this guard holds.
+        let flowed: String = worker.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
             worker.contains("--base"),
             "the PR step never passes a base: {worker}"
@@ -158,14 +162,16 @@ mod tests {
         // sentence — and renaming the label the step goes looking for passed the guard while
         // leaving the worker hunting for a line the hub does not write.
         assert!(
-            worker.contains("指示書の「ベースブランチ」行"),
+            flowed.contains("指示書の「ベースブランチ」行"),
             "the PR step does not say where the base comes from: {worker}"
         );
         // The hub writes a commit-ish (`origin/release/1.2`), which is not a branch name
-        // GitHub will accept — so the step has to say to strip the remote.
+        // GitHub will accept — so the step has to say to strip the remote. Asserting on
+        // `origin/` alone was satisfied by the examples that illustrate the stripping, so
+        // the instruction itself could go while the guard stayed green.
         assert!(
-            worker.contains("origin/"),
-            "the PR step does not say the brief's value is remote-qualified: {worker}"
+            flowed.contains("`origin/`を外した"),
+            "the PR step does not say to strip the remote from the brief's value: {worker}"
         );
 
         // Both sides spell the label the same way. Renaming it in the hub's brief template
