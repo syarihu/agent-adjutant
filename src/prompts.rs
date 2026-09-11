@@ -316,8 +316,16 @@ mod tests {
         // to open it leaves both guards green while the worker learns nothing it did not
         // already have.
         assert!(
-            flowed.contains("そちらの本文とコメントも同じ道具で読む"),
+            flowed.contains("そちらの本文とコメントも読む"),
             "the plan step names the parent task without saying to read it: {plan}"
+        );
+        // And reading it starts from its own URL. The tools above take the tracker and the
+        // repository from the task's URL, so a parent on another repository of the same
+        // board — or another host — is fetched from the child's, which answers with whatever
+        // task happens to carry that number.
+        assert!(
+            flowed.contains("親タスクのURLから割り出す"),
+            "the plan step reuses the task's own tracker for the parent: {plan}"
         );
     }
 
