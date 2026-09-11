@@ -39,9 +39,9 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
   名前で参照しているのは `reviewEffort` / `selfReviewRounds` / `reviewEngine` / `reviewBots` /
   `ide` / `draftPr` / `verify` / `taskSources[].projectFields`。**`taskSources` は常に配列**で、
   **どのソースの `projectFields` か**は「指示書の URL の repo が乗っているボード =
-  `projectFields` を持つソース」で決める。指示書が運ぶのは作業対象・ブランチ・ベース・
-  完了条件・`verify` だけなので、**それ以外は自分でここから引く**。`repo`（= `<codeRepo>`）も
-  同じ出力に入っている。スキーマは配布物の `config.example.json`。
+  `projectFields` を持つソース」で決める。指示書が運ぶのは作業対象・親タスク・ブランチ・
+  ベース・完了条件・`verify` だけなので、**それ以外は自分でここから引く**。
+  `repo`（= `<codeRepo>`）も同じ出力に入っている。スキーマは配布物の `config.example.json`。
 
 ## 1. Plan
 
