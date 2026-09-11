@@ -590,11 +590,16 @@ proctor's pattern for this repo bakes in one source's key, stop and settle it wi
 
   ```bash
   git fetch --prune origin
-  git rev-parse --verify 'origin/feature/x'
+  git rev-parse --verify '{base}'
   ```
 
 - **変わるのは分岐元だけ。** ブランチ名も worktree 名も上で決めたまま（`branchPattern` /
   `worktreeName`）で、分岐元の指定はそこに何も足さない。
+
+`baseBranch` にブランチ名が書いてあるときは、それが分岐元。**指定された分岐元と同じ扱いをする** —
+`origin/` を付けて、上と同じ fetch と `rev-parse --verify` を通す。config に書いてあることは
+そのブランチが手元にあることを意味しないし、`auto` の側だけ確かめて固定値を素通しにすると、
+確かめない経路がひとつ残る。
 
 `baseBranch: "auto"` なら、リリースブランチがある repo は一番新しいものを、無ければ既定ブランチを
 使う。`--format` は要る。既定の出力は現在ブランチのマーカー用に2桁インデントされていて、そのまま
