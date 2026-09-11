@@ -815,11 +815,12 @@ mod tests {
 
     #[test]
     fn every_documented_spawn_template_produces_a_valid_command() {
-        // Each of these is offered in the shipped example config, and each puts {command}
-        // in an argv slot. Prepending `cd … &&` or `( … ) &&` there is a syntax error, so
-        // this asserts on a real shell's verdict rather than on the string's shape.
+        // Each of these puts {command} in an argv slot: the three the shipped example
+        // config offers, plus two a person would plausibly write. Prepending `cd … &&`
+        // or `( … ) &&` there is a syntax error, so this asserts on a real shell's
+        // verdict rather than on the string's shape.
         for template in [
-            "tmux new-window -c {cwd} -n {title} {command}",
+            "tmux new-window -d -c {cwd} -n {title} {command}",
             "ghostty --working-directory={cwd} -e {command}",
             "wezterm cli spawn --cwd {cwd} -- {command}",
             "sh -c '{command}'",
