@@ -79,7 +79,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
-| `adjutant worktree-path --name …` | the branch, path and main checkout for a task's worktree |
+| `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as seven tools and three prompts:
