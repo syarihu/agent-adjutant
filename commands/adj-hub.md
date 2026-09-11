@@ -257,6 +257,17 @@ worktree** なので、そのタブが何で走っていても届く。
 
 どれか分からないときだけ `AskUserQuestion` で聞く。
 
+**着手を伴う依頼は「分岐元」と「親タスク」を連れてくることがある。** 「`feature/x` から
+生やして」「これは ALPHA-233 のサブタスク」のような指定で、どちらも**その dispatch 1件にだけ**
+効く。受け取ったら前者を「3. worktree を作る」の Base branch へ、後者を「4. worker を起動する」の
+指示書の 親タスク 行へ渡す。**2 も 3 も、「依頼が届いたら」の Step 4 も同じ** — worker を立てる
+経路はどれもこの2つを運ぶ。**こちらから毎回聞かない**（指定が無ければ `baseBranch` と `-` の
+既定で通る）。**sub-issue のリンクから推測もしない** — 親子関係があることと、親のブランチから
+生やしたいことは別の話で、繋いでしまうと頼まれていない分岐元を選ぶことになる。
+**親タスクは URL で書く。** キーで言われたら（`ALPHA-233`）、そのキーを持つソースを探して
+issue の URL に直してから指示書に入れる（引き方は「既存の worktree に手を入れたいと言われたら」
+の 3 と同じ）。worker は URL からトラッカーと repo を決めるので、キーのままでは引きに行けない。
+
 **4 がやるのは「タスクに着手させる」の 3・4手だけ**（worktree を作る → worker を起動する）。
 
 - **「2. 着手を宣言する」は飛ばす。** assign も In Progress も動かさない。報告で終わる依頼は
@@ -558,12 +569,44 @@ The branch name and the worktree name come from the **selected task's source**
 proctor's pattern for this repo bakes in one source's key, stop and settle it with the user —
 「proctor との境界」 in Config says how that is normally resolved.
 
-**Base branch** — `baseBranch: "auto"` なら、リリースブランチがある repo は一番新しいものを、
-無ければ既定ブランチを使う。`--format` は要る。既定の出力は現在ブランチのマーカー用に2桁
-インデントされていて、そのまま commit-ish に渡すと `fatal: invalid reference` になる。
+**Base branch** — 分岐元は2段で決まる。**この dispatch に指定された分岐元が config の
+`baseBranch` に優先する**。指定が無ければ `baseBranch`。
+
+- **指定された分岐元は、この1件にだけ効く。** 「`feature/x` から生やして」と言われて config の
+  `baseBranch` を書き換えるのは誤り — あれはリポジトリエントリ単位の設定なので、以降の無関係な
+  タスクまで feature ブランチから生えることになる。
+- 受け取った値は **`origin/` 付きの commit-ish に揃える**（`feature/x` → `origin/feature/x`。
+  既に `origin/` が付いていればそのまま — 足すと `origin/origin/feature/x` になり、実在する
+  ブランチなのに下の確認が落ちる）。下の `git worktree add` が取るのは commit-ish で、素の
+  ブランチ名はメインチェックアウトに同名のローカルブランチが無ければ解決できず
+  `fatal: invalid reference` になる。指したいのはリモートにあるものなので、そちらを名指しする。
+  指示書の「ベースブランチ」行の形も既定の経路（下の `auto`）と揃う — worker はその行から
+  `origin/` を外して `--base` に渡すので、綴りが2通りあると worker はどちらを受け取ったかで
+  挙動を変えることになる。
+- **実在を確かめてから使う。** 通らなければ**既定に落とさずユーザーに聞く**。黙って落とすと
+  worktree は既定ブランチから生え、PR もそちらに向くが、頼んだ側は feature ブランチに乗って
+  いるつもりでいる。`--prune` が要る: 上流で消えたブランチの remote-tracking ref は残るので、
+  付けないと `rev-parse` は消えたブランチを「ある」と答え、あとで `gh pr create --base` が落ちる。
+
+  ```bash
+  git fetch --prune origin
+  git rev-parse --verify '{base}'
+  ```
+
+- **変わるのは分岐元だけ。** ブランチ名も worktree 名も上で決めたまま（`branchPattern` /
+  `worktreeName`）で、分岐元の指定はそこに何も足さない。
+
+`baseBranch` にブランチ名が書いてあるときは、それが分岐元。**指定された分岐元と同じ扱いをする** —
+`origin/` を付けて、上と同じ fetch と `rev-parse --verify` を通す。config に書いてあることは
+そのブランチが手元にあることを意味しないし、`auto` の側だけ確かめて固定値を素通しにすると、
+確かめない経路がひとつ残る。
+
+`baseBranch: "auto"` なら、リリースブランチがある repo は一番新しいものを、無ければ既定ブランチを
+使う。`--format` は要る。既定の出力は現在ブランチのマーカー用に2桁インデントされていて、そのまま
+commit-ish に渡すと `fatal: invalid reference` になる。
 
 ```bash
-git fetch origin
+git fetch --prune origin
 git branch -r --list 'origin/release/*' --format='%(refname:short)' --sort=-version:refname | head -1
 ```
 
@@ -619,6 +662,10 @@ inflates the hub transcript for every task it dispatches.
   飛ばして報告だけで終わるかどうか）。
 - **「調査だけ」のときは PR も Issue 更新もさせない。** 成果はそのタブのユーザーに出させる
   （指示書の「報告先」がそう書いてある）。ここで自分に報告させると、報告が二重になる。
+- **親タスクを渡されているなら 親タスク 行に書く。** 大きな作業を割ったサブタスクの1つや、
+  別のタスクの最中に見つかった不具合がこれにあたる。worker はそのタスクしか知らないので、
+  この行が無いと兄弟のサブタスクが共有している設計の文脈に辿り着けない。無ければ `-`。
+  **サブタスクだからといって分岐元を変えない** — 分岐元は別の行で、指定されたときだけ動く。
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
   it is; if it is not, write the brief outside the worktree instead — and then **change the
   path in Step 3's prompt to match**, because that prompt names `.claude/task-brief.md`
@@ -852,8 +899,8 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
 - **3. worktree を作る** — キーは起票先 repo を `issueKeys` に通して作る。`jira` は起票時に
   返ってきた課題キーがそのままキー。
 - **4. worker を起動する** — 指示書の「完了条件」は依頼元が指定した範囲。指定が無ければ
-  「PR作成まで」。指示書の「作業対象」には、**起票した issue と発見元の親タスクの両方**の URL を
-  書く — worker は発見時の文脈を知らないので、親タスクの URL が唯一の手がかりになる。
+  「PR作成まで」。指示書の「作業対象」はいま起票した issue、**「親タスク」は発見元のタスク**の
+  URL — worker は発見時の文脈を知らないので、そちらの URL が唯一の手がかりになる。
 
 ### Step 5 — 返信する
 
@@ -1149,6 +1196,8 @@ worker はそれを引きに行って空振りする。**ここで起票はし�
   {task_url}
 - 作業場所: いまの cwd がその worktree なのだ（ブランチ {branch}）
 - ベースブランチ: {base_branch}
+- 親タスク: {parent_task}
+  （このタスクの親にあたるタスクの URL なのだ。無ければ `-` なのだ）
 - 完了条件: {PR作成まで / 動作確認待ちで引き渡しまで / 調査だけ（報告して終わり）}
   （hub がユーザーから受けた依頼をそのまま書くのだ。「PR作成まで」でなければ PR は作らないのだ。
   「調査だけ」なら実装もコミットも Issue の起票・更新もしないのだ）
