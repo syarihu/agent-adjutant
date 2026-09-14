@@ -980,6 +980,119 @@ mod tests {
         );
     }
 
+    /// Not rebuilding the list must not mean skipping what the list step does after fetching.
+    ///
+    /// 「1. タスクを選ぶ」 is a fetch *and* four rules and a question, and 「一覧を作り直さない」 sent
+    /// the route past all of it. The three that matter here are the ones the parent collection
+    /// cannot have already applied, because it deliberately asks a wider question than the
+    /// repository route does: it ignores assignment, and it follows sub-issue links into
+    /// repositories `issueKeys` never heard of. So a child assigned to someone else was offered
+    /// as a candidate and claiming it overwrote their assignment on the two trackers that
+    /// replace rather than append; a child from an unkeyed repository was offered and then
+    /// stalled at the branch name; and the worker-or-worktree question the worktree step's last
+    /// line demands an answer to was never asked.
+    #[test]
+    fn the_parent_route_keeps_the_selection_step_s_rules_when_it_skips_the_fetch() {
+        let startup = step(find("adj-hub").unwrap().raw_content, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        // What exactly is skipped. Without this the reader has one sentence saying "do not
+        // rebuild the list" and no boundary on how much of that step it covers.
+        assert!(
+            flowed.contains("作り直さないのは一覧だけ"),
+            "skipping the fetch is still written as skipping the whole step: {startup}"
+        );
+
+        // 1. Assignment. The classification has to carry the children the repository route
+        // would have filtered out, and it must not number them as work to pick up.
+        assert!(
+            flowed.contains("**他人が持っている**"),
+            "children assigned to someone else have nowhere to go but 次の候補: {startup}"
+        );
+        assert!(
+            flowed.contains("**番号は振らない**"),
+            "a child someone else holds is offered as a candidate to start: {startup}"
+        );
+        assert!(
+            flowed.contains("着手する前に1回確認する"),
+            "the route claims a child someone else holds without asking: {startup}"
+        );
+        // The cost of going ahead is not symmetric across trackers, and the confirmation is
+        // worth nothing if it does not say so: `--add-assignee` adds, the other two replace.
+        assert!(
+            flowed.contains("**置き換え**"),
+            "the confirmation does not say what claiming costs on Jira and Linear: {startup}"
+        );
+        assert!(
+            flowed.contains("他人のアサインが本当に消える"),
+            "nothing says the other person's assignment is lost, not shared: {startup}"
+        );
+
+        // 2. Repositories with no key. Same line the dashboard collection already reports, so
+        // that a child from an unkeyed repository is accounted for rather than silently listed.
+        assert!(
+            flowed.contains("キー未設定のため対象外:"),
+            "a child from an unkeyed repository is dropped or offered in silence: {startup}"
+        );
+        assert!(
+            flowed.contains("番号を振ると「3.worktreeを作る」で詰まる"),
+            "nothing says why an unkeyed child cannot be numbered: {startup}"
+        );
+
+        // 3. The route question. Its answer is read at the end of the worktree step, so a
+        // dispatch that never asks arrives there with nothing to branch on.
+        assert!(
+            flowed.contains("「workerに任せる/worktreeだけ」を`AskUserQuestion`で聞く"),
+            "the route never asks how far to take the task: {startup}"
+        );
+        // And it has to be reconciled with the rule two paragraphs above, or the two read as a
+        // contradiction and the more emphatic one — the ban — wins.
+        assert!(
+            flowed.contains("開かないのは起動時の話"),
+            "asking here reads as breaking the startup ban on questions: {startup}"
+        );
+        // The precedent that does skip the question is not comparable, and saying which route
+        // it is stops it being copied here.
+        assert!(
+            flowed.contains("Step4がここを飛ばせるのはworker起動が確定している経路だから"),
+            "the dispatch route's skip is left looking like a general licence: {startup}"
+        );
+
+        // The columns those rules read have to be collected, or the rules have nothing to run
+        // on: assignment is not recoverable later without another round trip per child.
+        let fetch = step(find("adj-hub").unwrap().raw_content, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("\\([.assignees[].login]"),
+            "the sub-issue rows carry no assignee: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("\"assignee\"]"),
+            "the Jira subtask search does not ask for the assignee: {fetch}"
+        );
+        // A column nobody is told the purpose of is a column the next edit deletes.
+        assert!(
+            fetch_flowed.contains("**`assignees`は「他人が持っている」を分けるため**"),
+            "nothing says what the assignees are collected for: {fetch}"
+        );
+        // Comparing them needs the viewer's own identity, spelled the way each tracker spells
+        // it — a display name matches nothing on GitHub and is not unique on Jira.
+        assert!(
+            fetch_flowed.contains("自分が誰かは、そのトラッカーの言い方で取る"),
+            "the assignee comparison has no other side: {fetch}"
+        );
+
+        // And it has to reach the hub. The machine-readable row is the only channel.
+        let brief = section(
+            find("adj-hub").unwrap().raw_content,
+            "## Appendix — 親タスク収集エージェントへの指示書",
+        );
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("{assigneeまたは-}"),
+            "the collected assignee is dropped before the hub sees it: {brief}"
+        );
+    }
+
     /// Counting a Linear parent's children starts from the key, on both routes that count.
     ///
     /// 「親の下を引く」 already says the hub holds a key and no internal id, and resolves one
