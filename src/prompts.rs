@@ -870,6 +870,30 @@ mod tests {
         );
     }
 
+    /// Counting a Linear parent's children starts from the key, on both routes that count.
+    ///
+    /// 「親の下を引く」 already says the hub holds a key and no internal id, and resolves one
+    /// before listing children. The offer asks the same tracker the same question one step
+    /// earlier, and was left handed 「親の id を渡して」 — an id that exists nowhere at that
+    /// point. It fails as a count of zero, which reads exactly like a task with no children:
+    /// the offer is then silently never made for any Linear parent.
+    #[test]
+    fn the_offer_resolves_a_linear_parent_from_its_key_before_counting() {
+        let offer = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 親タスクの hub を提案する",
+        );
+        let flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("`mcp__linear__get_issue`にキーを渡して親のidを取り"),
+            "the offer counts Linear children off an id it was never given: {offer}"
+        );
+        assert!(
+            flowed.contains("hubが持っているのはキーだけで、idは持っていない"),
+            "the offer does not say why the key has to be resolved first: {offer}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so

@@ -451,7 +451,9 @@ Step 1 と裏表）。**ただし「このサブタスクを割りたい」と�
   `gh api repos/{親の repo}/issues/{番号} --jq '.sub_issues_summary.total'`（ボードに載っている
   issue では、そこはコードリポジトリとは限らない）
 - `jira` — `searchJiraIssuesUsingJql` に `parent = {キー}` と `searchResultMode: "count"`
-- `linear` — `mcp__linear__list_issues` に親の id を渡して件数を見る
+- `linear` — `mcp__linear__get_issue` にキーを渡して親の id を取り、その id を
+  `mcp__linear__list_issues` に渡して件数を見る。**ここでもキーから id を取るところから始める** —
+  hub が持っているのはキーだけで、id は持っていない（「親の下を引く」の「親そのものを引く」と同じ）
 
 承認されたら、**タブを開くだけ**:
 
