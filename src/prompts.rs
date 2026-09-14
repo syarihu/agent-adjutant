@@ -329,6 +329,127 @@ mod tests {
         );
     }
 
+    /// A report carries two tasks: the one it was found in, and that one's parent.
+    ///
+    /// The report used to carry only the task the reporter was holding, and the hub decides
+    /// placement — independent issue or sub-issue — against what the report names. A worker
+    /// holding one subtask of a split-up piece of work therefore handed the hub that subtask,
+    /// and a sibling bug got hung underneath it instead of beside it, where the real parent
+    /// could never see it.
+    #[test]
+    fn a_report_carries_the_task_it_was_found_in_and_that_task_s_parent() {
+        let report = find("adj-report").unwrap().raw_content;
+        let compose = between(report, "### 2. ", "### 3. ");
+        // Matched against the step with its whitespace squeezed out, for the reason the
+        // base-branch guard above gives: the procedures are hard-wrapped, so re-wrapping a
+        // paragraph must not decide whether this holds.
+        let flowed: String = compose.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compose.contains("## 発見元"),
+            "the report body has no slot for the task the bug was found in: {compose}"
+        );
+        assert!(
+            compose.contains("## 親タスク"),
+            "the report body has no slot for that task's parent: {compose}"
+        );
+        // Which line fills which slot. The two headings alone are satisfied by a template
+        // that never says where either value comes from, and the reporter then guesses —
+        // which is the original defect with one more heading on it.
+        assert!(
+            flowed.contains("発見元は`.claude/task-brief.md`の「作業対象」行から"),
+            "the report does not say the 発見元 is the reporter's own task: {compose}"
+        );
+        // The reason the 発見元 is not re-pointed at the parent. Losing it is how the slot
+        // gets "fixed" back into the single field it was split out of.
+        assert!(
+            flowed.contains("**指示書の「親タスク」行ではない**"),
+            "the report no longer says why the 発見元 stays on the reporter's own task: {compose}"
+        );
+        assert!(
+            flowed.contains("親タスクは指示書の「親タスク」行をそのまま写す"),
+            "the report does not forward the brief's parent-task line: {compose}"
+        );
+        // A missing parent has to have a spelling, or the hub cannot tell "no parent" from
+        // "the reporter forgot" and questions every report that is not a subtask.
+        assert!(
+            flowed.contains("無ければ`-`"),
+            "the report does not say what to write when there is no parent: {compose}"
+        );
+
+        // Both sides spell the labels the same way, in both directions: the hub writes the
+        // brief line the report reads, and reads the report heading the report writes.
+        // Renaming one end without the other is what left the base-branch line unread.
+        let hub = find("adj-hub").unwrap().raw_content;
+        assert!(
+            hub.contains("- 親タスク: {parent_task}"),
+            "the brief template no longer writes the line the report is told to forward"
+        );
+        // A report whose parent is `-` is complete, not short of a field. Without this the
+        // hub asks back on every report that is not a subtask — and the reporter is told to
+        // answer nothing but `[質問]`, so that round trip lands in the middle of its task.
+        let intake: String = step(hub, "### Step 1 — 読む")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            intake.contains("`-`なのは欠落ではない"),
+            "the hub reads a report with no parent as one that is missing a field"
+        );
+        let placement: String = step(hub, "### Step 3 — 起票")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            placement.contains("報告の「親タスク」"),
+            "the hub does not read the parent the report now carries"
+        );
+        // Naming the field is not using it. The whole point is which task the sub-issue
+        // decision is taken against, so the instruction has to say that much.
+        assert!(
+            placement.contains("sub-issueにするかは、報告の「親タスク」に対して決める"),
+            "the hub names the report's parent without placing the issue against it"
+        );
+        // And a report with no parent still has to be placeable, the way it was before.
+        assert!(
+            placement.contains("親タスクが`-`のときだけ、発見元に"),
+            "the hub has no rule for a report whose parent is `-`"
+        );
+
+        // The parent then keeps travelling: the brief of the issue the hub just filed
+        // carries it too, or the next worker re-derives from one subtask the design its
+        // siblings already settled — the same loss, one hop further down.
+        let dispatch: String = step(hub, "### Step 4 — 着手させる")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            dispatch.contains("「親タスク」は報告の「親タスク」をそのまま"),
+            "the new brief does not carry the parent the report reported"
+        );
+        assert!(
+            dispatch.contains("`-`なら発見元のタスク"),
+            "the new brief has nothing to fall back to when the report carries no parent"
+        );
+    }
+
+    /// The span between two headings, for a section `section` cannot hold.
+    ///
+    /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
+    /// `section` — which ends at the next line starting `## ` — stops at the first line of
+    /// the template and reads none of the prose that follows it. A guard scoped that way
+    /// passes by finding nothing to object to.
+    fn between(raw: &str, from: &str, to: &str) -> String {
+        let start = format!("\n{from}");
+        let at = raw
+            .find(&start)
+            .unwrap_or_else(|| panic!("no section starting `{from}`"));
+        let rest = &raw[at + start.len()..];
+        let end = rest
+            .find(&format!("\n{to}"))
+            .unwrap_or_else(|| panic!("no section starting `{to}` after `{from}`"));
+        rest[..end].to_string()
+    }
+
     /// One numbered section of a procedure, from its heading to the next one.
     ///
     /// Section-scoped rather than whole-file: `--base` anywhere in 400 lines would satisfy
