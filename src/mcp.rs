@@ -121,6 +121,15 @@ fn repo_property() -> Value {
     })
 }
 
+/// Named `hub` rather than `hubName`: what goes in here is the identifier a person typed
+/// after `--hub`, not the `adjutant-…` session name the tools answer with.
+fn hub_property() -> Value {
+    json!({
+        "type": "string",
+        "description": "Which hub of the repository, when it is not the repository's own one. Leave it out unless you were told otherwise: a hub already knows its own, and a worker's is read from the worktree it is in.",
+    })
+}
+
 fn cwd_property() -> Value {
     json!({
         "type": "string",
@@ -135,7 +144,7 @@ fn tool_definitions() -> Value {
             "description": "The resolved configuration for a repository: task sources (always an array, flat shorthand already expanded), defaults already merged, and the machine settings (terminal, agent runner, notification, editor). Also reports warnings about the config rather than failing on it. Call this once at startup instead of reading the config file.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "repo": repo_property(), "cwd": cwd_property() },
+                "properties": { "repo": repo_property(), "hub": hub_property(), "cwd": cwd_property() },
             },
         },
         {
@@ -143,7 +152,7 @@ fn tool_definitions() -> Value {
             "description": "The hub session name for a repository, and whether that hub is currently running. The name is the address a report is sent to; derive it here rather than reconstructing it, so both sides always agree.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "repo": repo_property(), "cwd": cwd_property() },
+                "properties": { "repo": repo_property(), "hub": hub_property(), "cwd": cwd_property() },
             },
         },
         {
@@ -157,6 +166,7 @@ fn tool_definitions() -> Value {
                     "from": { "type": "string", "description": "Who is sending: your session or worktree name." },
                     "kind": { "type": "string", "description": "report (default) | question | answer | ack | done | needs-user" },
                     "repo": repo_property(),
+                    "hub": hub_property(),
                     "cwd": cwd_property(),
                 },
                 "required": ["body"],
@@ -171,6 +181,7 @@ fn tool_definitions() -> Value {
                     "action": { "type": "string", "enum": ["list", "read", "ack"], "description": "Default: list." },
                     "name": { "type": "string", "description": "Message file name, as given by action=list. Required for read and ack." },
                     "repo": repo_property(),
+                    "hub": hub_property(),
                     "cwd": cwd_property(),
                 },
             },
@@ -186,6 +197,7 @@ fn tool_definitions() -> Value {
                     "body": { "type": "string", "description": "The message. Markdown." },
                     "from": { "type": "string", "description": "Who is speaking (default: this repository's hub name)." },
                     "repo": repo_property(),
+                    "hub": hub_property(),
                     "cwd": cwd_property(),
                 },
                 "required": ["worktree", "subject", "body"],
@@ -226,9 +238,15 @@ fn cwd_param(args: &Value) -> Option<PathBuf> {
 
 fn resolve_repo(args: &Value) -> Result<repo::RepoInfo, String> {
     let cwd = cwd_param(args);
+    // `cwd` and not the server's own directory, for the same reason the repository is
+    // resolved from it: a worker's answer is written in the worktree it is standing in, and
+    // this server is started once and then asked about whichever checkout the session is
+    // sitting in.
+    let hub = messaging::hub_id(args["hub"].as_str(), cwd.as_deref());
     repo::resolve_in(
         cwd.as_deref(),
         args["repo"].as_str().filter(|s| !s.is_empty()),
+        hub.as_deref(),
     )
 }
 
@@ -240,6 +258,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             Ok(json!({
                 "repo": info.nwo,
                 "main": info.main,
+                "hub": info.hub,
                 "hubName": info.hub_name,
                 "registered": resolved.registered,
                 "configPath": resolved.config_path,
@@ -253,6 +272,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let status = messaging::hub_status(&info.slug, &info.hub_name);
             let mut out = messaging::status_json(&status);
             out["repo"] = json!(info.nwo);
+            out["hub"] = json!(info.hub);
             out["main"] = json!(info.main);
             out["waiting"] = json!(messaging::list(&info.slug).len());
             Ok(out)
@@ -793,6 +813,68 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A hub an agent cannot name is a hub an agent cannot reach. The tools are the only
+    /// way in for a session that has no shell, so every one of them that answers about a
+    /// repository's hub has to take which hub of it — otherwise the address MCP reaches is
+    /// always the repository's own, whatever the session was started as.
+    #[test]
+    fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
+        let listed = call("tools/list", json!({}));
+        for tool in listed["result"]["tools"].as_array().unwrap() {
+            let properties = &tool["inputSchema"]["properties"];
+            if properties.get("repo").is_none() {
+                continue;
+            }
+            assert!(
+                properties.get("hub").is_some(),
+                "{} takes a repository but not which hub of it",
+                tool["name"]
+            );
+        }
+    }
+
+    /// The same split the command line makes, made where the agent actually stands.
+    #[test]
+    fn a_tool_call_naming_a_hub_moves_the_address_and_not_the_lookup() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["remote", "add", "origin", "git@github.com:acme/widget.git"],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(dir.path())
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {args:?}"
+            );
+        }
+        let cwd = json!(dir.path().to_string_lossy());
+
+        let plain = resolve_repo(&json!({"cwd": cwd})).unwrap();
+        let feature = resolve_repo(&json!({"cwd": cwd, "hub": "wid-957"})).unwrap();
+        assert!(plain.hub.is_none());
+        assert_eq!(feature.hub.as_deref(), Some("wid-957"));
+        // Two addresses…
+        assert_ne!(plain.hub_name, feature.hub_name);
+        assert_ne!(plain.slug, feature.slug);
+        // …and one repository, which is the key `config::resolve_config` is handed.
+        assert_eq!(plain.nwo, feature.nwo);
+        assert_eq!(feature.nwo, "acme/widget");
+
+        // Blank is silence here too. A client filling every advertised property in with an
+        // empty string would otherwise address a hub nobody can name a second time.
+        assert_eq!(
+            resolve_repo(&json!({"cwd": cwd, "hub": ""}))
+                .unwrap()
+                .hub_name,
+            plain.hub_name
+        );
     }
 
     #[test]

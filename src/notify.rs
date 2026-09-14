@@ -195,6 +195,7 @@ mod tests {
     #[test]
     fn the_title_and_the_repository_placeholder_name_the_same_repository() {
         let info = RepoInfo {
+            hub: None,
             main: "/src/widget".into(),
             nwo: "acme/widget".into(),
             repo: "widget".into(),

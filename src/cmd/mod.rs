@@ -22,8 +22,11 @@ pub struct Context {
     pub resolved: config::Resolved,
 }
 
-pub fn context(repo_arg: Option<&str>) -> Result<Context, String> {
-    let repo = repo::resolve(repo_arg)?;
+pub fn context(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context, String> {
+    let repo = resolve(repo_arg, hub_arg)?;
+    // By `owner/name` and nothing else. The hub identifier moves the address; it must not
+    // move the lookup, or asking for a second hub of a registered repository would answer
+    // with an unregistered one — no task sources, no issue keys, no verify command.
     let resolved = config::resolve_config(&repo.nwo)?;
     Ok(Context {
         settings: resolved.settings.clone(),
@@ -32,10 +35,23 @@ pub fn context(repo_arg: Option<&str>) -> Result<Context, String> {
     })
 }
 
+/// Where we are, and which hub of it we are talking to.
+///
+/// Every subcommand that names a hub goes through here rather than calling `repo::resolve`
+/// with whatever it was given: deciding between the flag, the environment and the worktree
+/// is one rule, and a second copy of it is a second answer.
+fn resolve(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<RepoInfo, String> {
+    repo::resolve(repo_arg, messaging::hub_id(hub_arg, None).as_deref())
+}
+
 // ── hub-name ─────────────────────────────────────────────────────────
 
-pub fn hub_name(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
-    let info = repo::resolve(repo_arg)?;
+pub fn hub_name(
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    as_json: bool,
+) -> Result<(), String> {
+    let info = resolve(repo_arg, hub_arg)?;
     if as_json {
         println!(
             "{}",
@@ -43,6 +59,10 @@ pub fn hub_name(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
                 "main": info.main,
                 "nwo": info.nwo,
                 "repo": info.repo,
+                // Which hub of the repository this address belongs to, as it was resolved
+                // — `null` for the repository's own. Printed because it is the only way to
+                // see, from outside, which of the three answers won.
+                "hub": info.hub,
                 "slug": info.slug,
                 "hubName": info.hub_name,
                 "nwoSource": info.nwo_source,
@@ -63,13 +83,14 @@ pub fn hub_name(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
 
 // ── config ───────────────────────────────────────────────────────────
 
-pub fn show_config(repo_arg: Option<&str>) -> Result<(), String> {
-    let ctx = context(repo_arg)?;
+pub fn show_config(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
+    let ctx = context(repo_arg, hub_arg)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "repo": ctx.repo.nwo,
             "main": ctx.repo.main,
+            "hub": ctx.repo.hub,
             "hubName": ctx.repo.hub_name,
             "registered": ctx.resolved.registered,
             "configPath": ctx.resolved.config_path,
@@ -86,6 +107,7 @@ pub fn show_config(repo_arg: Option<&str>) -> Result<(), String> {
 
 pub struct PendingArgs<'a> {
     pub repo: Option<&'a str>,
+    pub hub: Option<&'a str>,
     pub path_only: bool,
     pub limit: usize,
     pub as_json: bool,
@@ -94,7 +116,7 @@ pub struct PendingArgs<'a> {
 }
 
 pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
-    let info = repo::resolve(args.repo)?;
+    let info = resolve(args.repo, args.hub)?;
     let dir = messaging::inbox_dir(&info.slug);
     if args.path_only {
         // A caller asking for the path is about to write into it, so hand back a directory
@@ -158,6 +180,7 @@ pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
 
 pub struct SendArgs<'a> {
     pub repo: Option<&'a str>,
+    pub hub: Option<&'a str>,
     pub from: Option<&'a str>,
     pub kind: &'a str,
     pub subject: Option<&'a str>,
@@ -166,7 +189,7 @@ pub struct SendArgs<'a> {
 }
 
 pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo)?;
+    let ctx = context(args.repo, args.hub)?;
     let body = read_body(args.body)?;
     let message = Message {
         from: args.from.unwrap_or("unknown").to_string(),
@@ -284,12 +307,13 @@ pub fn spawn(
 /// template is read in exactly one place.
 pub fn work(
     repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
     worktree: &str,
     title: &str,
     prompt: &str,
     dry_run: bool,
 ) -> Result<(), String> {
-    let ctx = context(repo_arg)?;
+    let ctx = context(repo_arg, hub_arg)?;
     let worktree = config::expand_home(worktree).to_string_lossy().to_string();
     // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
     // process that has already written down its own PID and then `exec`s itself away, which
@@ -307,6 +331,16 @@ pub fn work(
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
         parts.push(repo.to_string());
+    }
+    // The *resolved* identifier rather than the flag, because a hub dispatching work runs
+    // this as its own child and so usually passes no flag at all — it is carrying the
+    // answer in its environment. That environment does not survive the trip: the tab is
+    // opened by the terminal, which is handed a command line and nothing else. So the
+    // answer goes onto the command line, or the worker registers under the wrong hub and
+    // reports to an inbox nobody reads.
+    if let Some(hub) = &ctx.repo.hub {
+        parts.push("--hub".to_string());
+        parts.push(hub.clone());
     }
     let name_it = title_command(&ctx.settings, title);
     let done = terminal::spawn(
@@ -327,8 +361,13 @@ pub fn work(
     Ok(())
 }
 
-pub fn focus(repo_arg: Option<&str>, quiet: bool, dry_run: bool) -> Result<bool, String> {
-    let ctx = context(repo_arg)?;
+pub fn focus(
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    quiet: bool,
+    dry_run: bool,
+) -> Result<bool, String> {
+    let ctx = context(repo_arg, hub_arg)?;
     let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
     let Some(pid) = status.pid.filter(|_| status.present) else {
         if !quiet {
@@ -576,7 +615,7 @@ pub fn close(
 }
 
 pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result<(), String> {
-    let ctx = context(repo_arg)?;
+    let ctx = context(repo_arg, None)?;
     let worktree = config::expand_home(worktree).to_string_lossy().to_string();
     let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {
         return Err("ide is not set: put your editor command in the config's ide key".to_string());
@@ -614,7 +653,7 @@ pub fn notify_user(
     // legitimately be run from outside a repository, where there is no answer at all.
     let nwo = match repo_arg {
         Some(arg) => Some(arg.to_string()),
-        None => repo::resolve(None).ok().map(|info| info.nwo),
+        None => repo::resolve(None, None).ok().map(|info| info.nwo),
     };
     let settings = settings_for(nwo.as_deref());
     if nwo.is_none() && notify::needs_repo(&settings.notification) {
@@ -656,7 +695,7 @@ pub struct WorktreeArgs<'a> {
 }
 
 pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo)?;
+    let ctx = context(args.repo, None)?;
     let layout = ctx
         .settings
         .worktree_pattern
@@ -729,6 +768,24 @@ fn go_to_running_hub(
     Ok(())
 }
 
+/// The environment the hub's agent is started with.
+///
+/// `agentEnv` as configured, and then the hub identifier when there is one. Appended rather
+/// than merged so that ours is the later assignment on the `env` line and therefore the one
+/// that takes: a config naming this variable is describing a default, not overruling the
+/// `--hub` that was just typed.
+///
+/// Nothing is added when there is no identifier, and that is deliberate rather than tidy:
+/// the command line a plain `adj hub` prints has to stay exactly what it printed before, or
+/// every existing dry run, doc and expectation of it is wrong.
+fn hub_env(ctx: &Context) -> Vec<(String, String)> {
+    let mut env = ctx.settings.agent_env.clone();
+    if let Some(hub) = &ctx.repo.hub {
+        env.push((messaging::HUB_ENV.to_string(), hub.clone()));
+    }
+    env
+}
+
 /// Three things go wrong when a person types the agent command by hand, and this exists to
 /// take all three away: the session name has to match what a worker will look for, the hub
 /// has to run in the main checkout or it cannot cut worktrees, and a second hub for the same
@@ -736,10 +793,15 @@ fn go_to_running_hub(
 ///
 /// The process registers itself and then *replaces* itself with the agent, so the recorded
 /// PID belongs to the live agent rather than to a launcher that has already exited.
-pub fn hub(repo_arg: Option<&str>, extra: &[String], dry_run: bool) -> Result<(), String> {
+pub fn hub(
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    extra: &[String],
+    dry_run: bool,
+) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    let ctx = context(repo_arg)?;
+    let ctx = context(repo_arg, hub_arg)?;
     if ctx.repo.nwo_source == "dirname" {
         eprintln!(
             "adjutant: origin gave no repository name, using the directory name {}",
@@ -754,7 +816,7 @@ pub fn hub(repo_arg: Option<&str>, extra: &[String], dry_run: bool) -> Result<()
     }
     let mut command = runner::hub_command(
         ctx.settings.hub_runner.as_deref(),
-        &ctx.settings.agent_env,
+        &hub_env(&ctx),
         &ctx.repo.hub_name,
         runner::HUB_STARTUP_PROMPT,
     );
@@ -810,6 +872,7 @@ pub fn hub(repo_arg: Option<&str>, extra: &[String], dry_run: bool) -> Result<()
 /// anything, and waking a dead launcher wakes nobody.
 pub fn worker(
     repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
     worktree: &str,
     title: &str,
     prompt: &str,
@@ -821,7 +884,7 @@ pub fn worker(
     if !worktree.is_dir() {
         return Err(format!("no such worktree: {}", worktree.display()));
     }
-    let ctx = context(repo_arg)?;
+    let ctx = context(repo_arg, hub_arg)?;
     let status = messaging::worker_status(&worktree);
     if status.present {
         println!(
@@ -849,7 +912,9 @@ pub fn worker(
 
     std::env::set_current_dir(&worktree)
         .map_err(|e| format!("cannot change directory to {}: {e}", worktree.display()))?;
-    messaging::register_worker(&worktree, title)?;
+    // The address goes into the record here, at the last moment before this process stops
+    // being a launcher. Everything the worker's agent later sends is addressed from it.
+    messaging::register_worker(&worktree, title, ctx.repo.hub.as_deref())?;
 
     let error = std::process::Command::new("sh")
         .arg("-c")
@@ -862,13 +927,14 @@ pub fn worker(
 /// Leave a message for the worker in a worktree, and poke it if it is sitting there.
 pub fn tell(
     repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
     worktree: &str,
     subject: &str,
     body: Option<&str>,
     from: Option<&str>,
     quiet: bool,
 ) -> Result<(), String> {
-    let ctx = context(repo_arg)?;
+    let ctx = context(repo_arg, hub_arg)?;
     let worktree = config::expand_home(worktree);
     if !worktree.is_dir() {
         return Err(format!("no such worktree: {}", worktree.display()));
@@ -955,8 +1021,8 @@ pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {
 
 /// Remove this repo's hub record. For a hub shutting down cleanly, and for clearing a record
 /// left behind by one that did not.
-pub fn hub_stop(repo_arg: Option<&str>) -> Result<(), String> {
-    let info = repo::resolve(repo_arg)?;
+pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
+    let info = resolve(repo_arg, hub_arg)?;
     messaging::unregister_hub(&info.slug)?;
     println!("unregistered {}", info.hub_name);
     Ok(())
@@ -999,7 +1065,7 @@ fn exe_path() -> String {
 fn settings_for(repo_arg: Option<&str>) -> Settings {
     let nwo = match repo_arg {
         Some(arg) => arg.to_string(),
-        None => repo::resolve(None).map(|i| i.nwo).unwrap_or_default(),
+        None => repo::resolve(None, None).map(|i| i.nwo).unwrap_or_default(),
     };
     config::resolve_config(&nwo)
         .map(|r| r.settings)
