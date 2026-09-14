@@ -978,15 +978,25 @@ fn opening_a_tab_for_a_hub_leaves_the_claim_to_the_tab() {
     // reads it, so under test it changes nothing — but a regression that dropped the route
     // would fall through to the exec path, and this is what stops that from starting a real
     // agent inside the suite instead of failing.
+    // Built with `json!` rather than by formatting a string: the redirect target has to be
+    // shell-quoted, and a quoted path lands inside a JSON string — so the escaping of the two
+    // has to be done by something that knows which is which.
     std::fs::write(
         &fixture.config,
-        format!(
-            r#"{{"notification": "true", "hubRunner": "true {{name}} {{prompt}}",
-                 "terminal": {{"spawn": "echo {{cwd}} {{command}} > {}"}},
-                 "repos": {{"acme/widget": {{"taskSource": "github",
-                            "issueRepo": "acme/widget"}}}}}}"#,
-            spawned.display()
-        ),
+        serde_json::json!({
+            "notification": "true",
+            "hubRunner": "true {name} {prompt}",
+            "terminal": {
+                "spawn": format!(
+                    "echo {{cwd}} {{command}} > {}",
+                    shell_quoted(&spawned.to_string_lossy())
+                ),
+            },
+            "repos": {
+                "acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"},
+            },
+        })
+        .to_string(),
     )
     .unwrap();
 
@@ -1044,6 +1054,58 @@ fn a_hub_that_is_already_running_is_brought_forward_rather_than_opened_again() {
     assert!(!out.contains("/adjutant hub"), "{out}");
     // And the record it found is the record it leaves.
     assert_eq!(std::fs::read_to_string(&record).unwrap(), written);
+}
+
+/// The record is looked for where the hub keeps it, not where the command was typed.
+///
+/// A relative `ADJUTANT_STATE_DIR` resolves against the working directory, so a look taken
+/// before the move to the main checkout reads a directory that holds nothing. The claim used
+/// to cover for that by answering `Taken` a few lines later; the tab route never reaches the
+/// claim, so a missed record there opens a tab for a hub that is already running.
+#[test]
+fn a_relative_state_directory_is_read_from_the_checkout_not_from_where_it_was_typed() {
+    let fixture = Fixture::new(QUIET);
+    let name = std::env::current_exe()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    // Relative, and under the main checkout — which is the only place it resolves to the
+    // same directory twice.
+    let relative = "state-here";
+    let record = fixture
+        .repo
+        .join(relative)
+        .join("hubs")
+        .join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": std::process::id(), "hubName": name, "cwd": "/",
+            "psStarted": ps_started(std::process::id()),
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Typed somewhere else inside the checkout, so a look taken before the move lands in a
+    // directory that was never written to.
+    let elsewhere = fixture.repo.join("somewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let out = Command::new(BIN)
+        .args(["hub", "--tab", "--dry-run"])
+        .current_dir(&elsewhere)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", relative)
+        .env_remove("ADJUTANT_HUB")
+        .output()
+        .unwrap();
+    let said =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("is already running"), "{said}");
+    assert!(!said.contains("/adjutant hub"), "{said}");
 }
 
 /// The tab is opened for one hub of the repository, and has to be told which.
