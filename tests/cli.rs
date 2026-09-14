@@ -547,7 +547,7 @@ fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
         fixture.repo.to_str().unwrap(),
         "--dry-run",
     ]);
-    assert!(out.contains(&format!("--hub {FEATURE}")), "{out}");
+    assert!(out.contains(&format!("--hub={FEATURE}")), "{out}");
 
     // A hub dispatching work runs this as its own child and passes no flag at all — it is
     // carrying the answer in its environment. The resolved identifier is what goes on the
@@ -566,7 +566,7 @@ fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
         .output()
         .unwrap();
     let line = String::from_utf8_lossy(&inherited.stdout);
-    assert!(line.contains(&format!("--hub {FEATURE}")), "{line}");
+    assert!(line.contains(&format!("--hub={FEATURE}")), "{line}");
 
     // The far end of that trip. `adj worker` writes the identifier into the worktree
     // before it becomes the agent; forged here rather than run, because running it would
@@ -827,6 +827,36 @@ fn every_flag_the_help_lists_describes_itself_and_not_its_neighbour() {
         "{focus}"
     );
     assert!(line(&focus, "--quiet").contains("Say nothing"), "{focus}");
+}
+
+/// An identifier that starts with a dash still reaches the worker.
+///
+/// It gets this far only through `ADJUTANT_HUB`, where no flag parser has seen it, and the
+/// command line the terminal is handed has none between it and the worker either. As two
+/// words, `--hub -x` reads as two options and the tab never starts; as one, it is a value.
+#[test]
+fn an_identifier_that_reads_like_a_flag_is_handed_down_as_one_argument() {
+    let fixture = Fixture::new(CODEX);
+    let inherited = Command::new(BIN)
+        .args([
+            "work",
+            "--worktree",
+            fixture.repo.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env("ADJUTANT_HUB", "-x")
+        .output()
+        .unwrap();
+    let line = String::from_utf8_lossy(&inherited.stdout);
+    assert!(line.contains("--hub=-x"), "{line}");
+    // And that spelling is one the far end takes: the same token, parsed.
+    assert_eq!(
+        fixture.json(&["hub-name", "--json", "--hub=-x"])["hub"],
+        "-x"
+    );
 }
 
 #[test]

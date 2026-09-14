@@ -358,9 +358,11 @@ pub fn work(
     // opened by the terminal, which is handed a command line and nothing else. So the
     // answer goes onto the command line, or the worker registers under the wrong hub and
     // reports to an inbox nobody reads.
+    // One argument rather than two: an identifier that starts with a dash reaches here from
+    // `ADJUTANT_HUB`, where no flag parser has seen it, and as a separate word clap reads it
+    // as the next option instead of as this one's value.
     if let Some(hub) = &ctx.repo.hub {
-        parts.push("--hub".to_string());
-        parts.push(hub.clone());
+        parts.push(format!("--hub={hub}"));
     }
     let name_it = title_command(&ctx.settings, title);
     let done = terminal::spawn(
