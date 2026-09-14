@@ -904,6 +904,17 @@ pub fn hub(
             ctx.repo.nwo
         );
     }
+    // The directory move comes first, and not only because the hub has to run there: a
+    // relative `ADJUTANT_STATE_DIR` is resolved against the working directory, so looking or
+    // claiming before moving reads and writes the record under wherever `adj hub` happened to
+    // be typed, and the hub then goes looking for it somewhere else. It is above the check
+    // rather than beside the claim because every route below this line reads that record: the
+    // claim used to be the only one, and recovered a missed record by answering `Taken`, which
+    // the tab route has no equivalent of — it would open a tab for a hub already running.
+    // Nothing has been written at this point, so a failure here has nothing to undo.
+    std::env::set_current_dir(&ctx.repo.main)
+        .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
+
     // Asked before the command is even built, so the common "it is already up" case costs
     // nothing. It is not what *enforces* one hub per repository — the claim below is.
     let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
@@ -941,13 +952,6 @@ pub fn hub(
     // Whether the *rendered* command carries the name, not whether the template has a
     // `{name}` in it: a template that hardcodes the name works, and one that renders it
     // away does not, and only the finished line knows which.
-    // The directory move comes first, and not only because the hub has to run there: a
-    // relative `ADJUTANT_STATE_DIR` is resolved against the working directory, so claiming
-    // before moving wrote the record under wherever `adj hub` happened to be typed, and the
-    // hub then went looking for it somewhere else. Nothing has been written at this point,
-    // so a failure here has nothing to undo.
-    std::env::set_current_dir(&ctx.repo.main)
-        .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
 
     let named = command.contains(&ctx.repo.hub_name);
     match messaging::claim_hub(&ctx.repo.slug, &ctx.repo.hub_name, &ctx.repo.main, named)? {
