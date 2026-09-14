@@ -105,8 +105,8 @@ the origin remote of whichever checkout you are standing in, worktrees included.
 A repository can have more than one hub. `--hub <id>` names which one: it moves the address
 — the session name, the inbox, the record — and nothing else. The configuration is still
 looked up under `owner/name`, so a second hub of a registered repository keeps its task
-sources, issue keys and verify command. Without `--hub` you get the repository's own hub, at
-exactly the address it has always had.
+sources, issue keys and verify command. Outside a worker's worktree, without `--hub` you get
+the repository's own hub, at exactly the address it has always had.
 
 Nothing has to repeat the identifier afterwards. `adj hub --hub <id>` puts `ADJUTANT_HUB` on
 the command line it starts the agent with, so every `adj` call and every MCP tool call that
