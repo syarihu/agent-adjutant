@@ -18,6 +18,13 @@ const BIN: &str = env!("CARGO_BIN_EXE_adjutant");
 const SLUG: &str = "acme-widget-898449509108182c";
 const HUB: &str = "adjutant-acme-widget-898449509108182c";
 
+/// The same repository, addressed as one hub of it rather than as itself. Written out for
+/// the same reason, and load-bearing for a second one: these two constants differing is
+/// what a separate inbox *is*.
+const FEATURE: &str = "wid-957";
+const FEATURE_SLUG: &str = "acme-widget-wid-957-5283c95d4f4cc314";
+const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
+
 struct Fixture {
     _dir: tempfile::TempDir,
     repo: PathBuf,
@@ -66,6 +73,9 @@ impl Fixture {
             .current_dir(&self.repo)
             .env("ADJUTANT_CONFIG", &self.config)
             .env("ADJUTANT_STATE_DIR", &self.state)
+            // Whatever started `cargo test` may itself be a hub, and an inherited
+            // `ADJUTANT_HUB` would re-address every inbox these tests assert on.
+            .env_remove("ADJUTANT_HUB")
             .output()
             .unwrap()
     }
@@ -144,6 +154,7 @@ fn a_worktree_answers_for_the_repository_it_belongs_to() {
         .current_dir(&worktree)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
         .output()
         .unwrap();
     let info: serde_json::Value = serde_json::from_slice(&from_worktree.stdout).unwrap();
@@ -248,6 +259,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
         .current_dir(&worktree)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
         .output()
         .unwrap();
     assert!(
@@ -304,6 +316,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
         .current_dir(&bare)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
         .output()
         .unwrap();
     assert!(
@@ -347,6 +360,7 @@ fn a_body_can_arrive_on_stdin_so_a_long_report_never_touches_the_command_line() 
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -374,6 +388,238 @@ fn an_empty_report_is_refused_rather_than_filed() {
     let fixture = Fixture::new(QUIET);
     let out = fixture.cmd(&["send", "--body", "   "]);
     assert!(!out.status.success());
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+}
+
+/// The compatibility lock, from the outside.
+///
+/// There are hub records, inboxes and archives sitting in `~/.local/state/adjutant` right
+/// now, filed under the address a plain `adj` produced before any of this existed. An
+/// upgrade that moved that address would leave every running hub unreachable and every
+/// queued report unread, with nothing anywhere saying so — so the no-identifier answer has
+/// to be the same bytes it always was, and the command line the launcher prints has to be
+/// the same line it always printed.
+#[test]
+fn naming_no_hub_addresses_exactly_what_it_addressed_before() {
+    let fixture = Fixture::new(QUIET);
+    let info = fixture.json(&["hub-name", "--json"]);
+    assert_eq!(info["hubName"], HUB);
+    assert_eq!(info["slug"], SLUG);
+    // Null rather than a string: nothing was asked for, and the repository's own hub is
+    // not an identifier anybody typed.
+    assert!(info["hub"].is_null(), "{info}");
+
+    // The launcher's line gains nothing. A hub that is the repository's own has no
+    // identifier to hand down, and an `env ADJUTANT_HUB=` prefix appearing here would be a
+    // change to a command line people read, script and paste.
+    let launch = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!launch.contains("ADJUTANT_HUB"), "{launch}");
+    assert!(launch.contains(&format!("claude -n {HUB}")), "{launch}");
+
+    // Neither does the line that starts a worker.
+    let work = fixture.ok(&[
+        "work",
+        "--worktree",
+        fixture.repo.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert!(!work.contains("--hub"), "{work}");
+}
+
+/// The point of the whole change: a second hub is a second *address*, not a second
+/// repository.
+///
+/// Before this, the only way to ask for one was to invent a repository name — which moved
+/// the address and emptied the configuration at the same time, because the config has no
+/// entry for a repository that does not exist. The settings have to keep coming from
+/// `owner/name` while the inbox moves.
+#[test]
+fn a_hub_identifier_moves_the_address_without_moving_the_configuration() {
+    let fixture = Fixture::new(QUIET);
+    let info = fixture.json(&["hub-name", "--hub", FEATURE, "--json"]);
+    assert_eq!(info["hub"], FEATURE);
+    assert_eq!(info["hubName"], FEATURE_HUB);
+    assert_eq!(info["slug"], FEATURE_SLUG);
+    assert_ne!(info["hubName"], HUB);
+    // Still visibly this repository, because that is what a person picks out of a listing
+    // of the state directory.
+    assert_eq!(info["repo"], "widget");
+    assert_eq!(info["nwo"], "acme/widget");
+
+    // The half that must not move. `repos` is keyed by `owner/name`, and it is still
+    // looked up by `owner/name`.
+    let config = fixture.json(&["config", "--hub", FEATURE]);
+    assert_eq!(config["registered"], true);
+    assert_eq!(config["repo"], "acme/widget");
+    assert_eq!(config["hub"], FEATURE);
+    assert_eq!(config["hubName"], FEATURE_HUB);
+    assert_eq!(config["config"]["taskSources"][0]["type"], "github");
+    assert_eq!(config["config"]["issueKeys"]["acme/widget"], "WID");
+    assert_eq!(config["config"]["verify"][0], "cargo test");
+
+    // The half that must move: a report filed against one is not waiting in the other's
+    // inbox. Both directories are asked for by path first, so a shared one fails here
+    // rather than in the count below.
+    let plain_dir = fixture.ok(&["pending", "--path"]).trim().to_string();
+    let feature_dir = fixture
+        .ok(&["pending", "--path", "--hub", FEATURE])
+        .trim()
+        .to_string();
+    assert_ne!(plain_dir, feature_dir);
+    assert!(feature_dir.contains(FEATURE_SLUG), "{feature_dir}");
+
+    let sent = fixture.ok(&[
+        "send",
+        "--hub",
+        FEATURE,
+        "--from",
+        "wid-957-worker",
+        "--subject",
+        "検索結果の画像が縦に潰れる",
+        "--body",
+        "b",
+    ]);
+    assert!(sent.contains(FEATURE_HUB), "{sent}");
+    assert_eq!(
+        fixture.json(&["pending", "--json", "--hub", FEATURE])["count"],
+        1
+    );
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+
+    // And a third identifier is a third address, not a shared one.
+    assert_ne!(
+        fixture.json(&["hub-name", "--hub", "wid-958", "--json"])["hubName"],
+        info["hubName"]
+    );
+}
+
+/// How a hub's own agent comes to know which hub it is.
+///
+/// Its procedure calls `adjutant_pending` and the rest with no arguments — it is talking
+/// about itself. The identifier therefore has to reach those calls without any of them
+/// mentioning it, and the environment is the one channel that does: the launcher puts it on
+/// the line it `exec`s, the agent inherits it, and the MCP server the agent starts is that
+/// agent's own child.
+#[test]
+fn the_launcher_hands_its_identifier_down_to_the_agent_it_starts() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.ok(&["hub", "--hub", FEATURE, "--dry-run"]);
+    assert!(out.contains(&format!("ADJUTANT_HUB={FEATURE}")), "{out}");
+    // The session is named for the address it answers at, or a worker looking for it finds
+    // the repository's own hub instead.
+    assert!(out.contains(&format!("claude -n {FEATURE_HUB}")), "{out}");
+    assert!(
+        out.contains(&fixture.repo.to_string_lossy().to_string()),
+        "{out}"
+    );
+
+    // And the other way round: a command run *by* that agent, with no flag, addresses the
+    // hub that started it. This is every `adj` call the hub's procedure makes.
+    let inherited = Command::new(BIN)
+        .args(["hub-name", "--json"])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env("ADJUTANT_HUB", FEATURE)
+        .output()
+        .unwrap();
+    let info: serde_json::Value = serde_json::from_slice(&inherited.stdout).unwrap();
+    assert_eq!(info["hubName"], FEATURE_HUB);
+    assert_eq!(info["hub"], FEATURE);
+}
+
+/// A worker is dispatched with the hub that dispatched it, and finds it again without
+/// being told.
+///
+/// The identifier cannot travel the way the hub's own does: the tab is opened by the
+/// terminal, which is handed a command line and nothing else, so an inherited environment
+/// does not survive the trip. It goes onto the command line instead, and from there into
+/// the worktree — which is what lets `adj-report` keep promising that a worker never writes
+/// an address down.
+#[test]
+fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
+    let fixture = Fixture::new(CODEX);
+    let out = fixture.ok(&[
+        "work",
+        "--hub",
+        FEATURE,
+        "--worktree",
+        fixture.repo.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert!(out.contains(&format!("--hub {FEATURE}")), "{out}");
+
+    // A hub dispatching work runs this as its own child and passes no flag at all — it is
+    // carrying the answer in its environment. The resolved identifier is what goes on the
+    // line, not the flag, or exactly the hub that most needs this loses it.
+    let inherited = Command::new(BIN)
+        .args([
+            "work",
+            "--worktree",
+            fixture.repo.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env("ADJUTANT_HUB", FEATURE)
+        .output()
+        .unwrap();
+    let line = String::from_utf8_lossy(&inherited.stdout);
+    assert!(line.contains(&format!("--hub {FEATURE}")), "{line}");
+
+    // The far end of that trip. `adj worker` writes the identifier into the worktree
+    // before it becomes the agent; forged here rather than run, because running it would
+    // `exec` an agent over this test.
+    let worktree = fixture.repo.parent().unwrap().join("widget-wid-957");
+    let added = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            FEATURE,
+            worktree.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let record = worktree.join(".claude").join("adjutant-worker.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({"pid": 1, "title": "WID-957", "hub": FEATURE}).to_string(),
+    )
+    .unwrap();
+
+    // No flag, no environment: the worker's agent says nothing about where it is sending,
+    // and the report still reaches the hub that opened this worktree.
+    let sent = Command::new(BIN)
+        .args(["send", "--subject", "s", "--body", "b"])
+        .current_dir(&worktree)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&sent.stdout);
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    assert!(said.contains(FEATURE_HUB), "{said}");
+    assert_eq!(
+        fixture.json(&["pending", "--json", "--hub", FEATURE])["count"],
+        1
+    );
+    // And nothing landed in the repository's own inbox, which is the failure this whole
+    // arrangement exists to prevent.
     assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
 }
 
@@ -1231,6 +1477,7 @@ fn mcp(fixture: &Fixture, requests: &[serde_json::Value]) -> Vec<serde_json::Val
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -1257,6 +1504,7 @@ fn mcp_raw(fixture: &Fixture, lines: &[&[u8]]) -> Vec<serde_json::Value> {
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
