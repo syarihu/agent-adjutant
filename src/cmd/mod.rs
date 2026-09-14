@@ -925,6 +925,24 @@ pub fn hub(
     // opening a tab for one that is already up would break it in the one way nothing later
     // repairs — two sessions answering to the same name, with the record naming one of them.
     if tab {
+        // `present: false` answers two different questions the same way: nobody is there,
+        // and whether anybody is there could not be established — an unreadable record, or
+        // a `ps` that would not run. Only the first is a reason to start a hub, and the
+        // other route never has to tell them apart because its claim refuses the second in
+        // exactly these words. This one leaves the claim to the tab it opens, so the
+        // refusal happens here or nowhere — and nowhere means the caller this route exists
+        // for, which is not a person, is told a hub was started in a new tab and handed
+        // `exit 0`, for a hub whose own claim is about to refuse it.
+        //
+        // Only `CannotTell`. `Alive` is the record of a hub that is running under a name
+        // this repository no longer matches on, which the tab's claim answers by bringing
+        // that hub forward — the same thing this route would do with it.
+        if matches!(
+            messaging::hub_liveness(&ctx.repo.slug),
+            messaging::Liveness::CannotTell
+        ) {
+            return Err(messaging::hub_cannot_tell(&ctx.repo.slug));
+        }
         return open_hub_tab(&ctx, repo_arg, extra, dry_run);
     }
     let mut command = runner::hub_command(

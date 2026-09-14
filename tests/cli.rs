@@ -1108,6 +1108,154 @@ fn a_relative_state_directory_is_read_from_the_checkout_not_from_where_it_was_ty
     assert!(!said.contains("/adjutant hub"), "{said}");
 }
 
+/// A record whose liveness cannot be established is not a free name, and `--tab` is the one
+/// route that would have taken it anyway.
+///
+/// `hub_status` answers `present: false` to "nobody is there" and to "cannot tell" alike.
+/// The route that claims has `claim_hub` behind it to draw the line; the tab route leaves
+/// the claim to the tab, so the line is drawn before the tab is opened or not at all — and
+/// not at all is the worst of the two, because the caller `--tab` exists for is an agent
+/// reading an exit code, and `exit 0` beside "started in a new tab" is read as a hub that
+/// is now running.
+#[test]
+fn a_hub_whose_record_cannot_be_read_is_not_opened_in_a_tab() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_spawn_stub_config(&fixture, &spawned);
+
+    let record = forge_unreadable_hub_record(&fixture);
+    let before = std::fs::read_to_string(&record).unwrap();
+
+    // For real, not a dry run: a dry run opens nothing either way, so only this can tell a
+    // refusal from a tab that was opened.
+    let out = fixture.cmd(&["hub", "--tab"]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(
+        said.contains("cannot tell whether the hub recorded in"),
+        "{said}"
+    );
+    // Which record, so the person sent to look has somewhere to look.
+    assert!(
+        said.contains(&record.to_string_lossy().to_string()),
+        "{said}"
+    );
+    assert!(
+        !spawned.exists(),
+        "a tab was opened for a hub nobody can account for"
+    );
+    // And the record it could not read is the record it leaves.
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), before);
+}
+
+/// The other way the answer goes missing: the record parses, and `ps` will not answer.
+///
+/// Two sources, one state. A fix that only asked whether the JSON parses would leave this
+/// one opening tabs, and it is the likelier of the two on a machine under load or with a
+/// locked-down `ps`.
+#[test]
+fn a_hub_is_not_opened_in_a_tab_when_ps_cannot_answer_for_the_record() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_spawn_stub_config(&fixture, &spawned);
+
+    // A perfectly good record, anchored on this process — asked before `ps` is taken away,
+    // which is the same order the launcher wrote one in.
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    let written = serde_json::json!({
+        "pid": std::process::id(), "hubName": "adjutant-someone-else", "cwd": "/",
+        "psStarted": ps_started(std::process::id()),
+    })
+    .to_string();
+    std::fs::write(&record, &written).unwrap();
+
+    // A `ps` that fails *with something on stderr*: that is what tells "I could not do
+    // that" from "no such process", and only the second is an answer.
+    let stubs = fixture.repo.join("stub-bin");
+    std::fs::create_dir_all(&stubs).unwrap();
+    let ps = stubs.join("ps");
+    std::fs::write(
+        &ps,
+        "#!/bin/sh\necho 'ps: cannot do that here' >&2\nexit 1\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Prepended rather than replacing: the binary still has to find the real `git`.
+    let path = format!(
+        "{}:{}",
+        stubs.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let out = Command::new(BIN)
+        .args(["hub", "--tab"])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env("PATH", &path)
+        .env_remove("ADJUTANT_HUB")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(
+        said.contains("cannot tell whether the hub recorded in"),
+        "{said}"
+    );
+    assert!(
+        said.contains(&record.to_string_lossy().to_string()),
+        "{said}"
+    );
+    assert!(
+        !spawned.exists(),
+        "a tab was opened while `ps` was answering nothing"
+    );
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), written);
+}
+
+/// The route that claims refuses the same state, and refuses it the way it always did.
+///
+/// This is not new behaviour — `claim_hub` has always stopped here — and that is the point
+/// of pinning it: the tab route was made to agree with this one, so a later change that
+/// moved the words or the exit code would have the two disagreeing again.
+#[test]
+fn the_route_that_claims_refuses_an_unreadable_record_as_it_always_did() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_spawn_stub_config(&fixture, &spawned);
+    let record = forge_unreadable_hub_record(&fixture);
+
+    // No `--tab`, and not a dry run, so this is the exec path — which `hubRunner: true`
+    // keeps from starting a real agent if the refusal ever stops happening.
+    let out = fixture.cmd(&["hub"]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(
+        said.contains("cannot tell whether the hub recorded in"),
+        "{said}"
+    );
+    assert!(
+        said.contains(&record.to_string_lossy().to_string()),
+        "{said}"
+    );
+}
+
+/// And the route that claims nothing still says what it would run.
+///
+/// A dry run on the default route prints a command and stops; it writes nothing, claims
+/// nothing and opens nothing, so there is nothing there for an unreadable record to be
+/// dangerous to. The refusal is the tab route's, and this is what says so: move it up a
+/// line, to cover both routes, and this goes red.
+#[test]
+fn a_dry_run_that_claims_nothing_still_says_what_it_would_run() {
+    let fixture = Fixture::new(QUIET);
+    forge_unreadable_hub_record(&fixture);
+    let out = fixture.ok(&["hub", "--dry-run"]);
+    assert!(out.contains(&format!("claude -n {HUB}")), "{out}");
+}
+
 /// The tab is opened for one hub of the repository, and has to be told which.
 ///
 /// The identifier cannot ride the environment across: the terminal is handed a command line
@@ -1310,6 +1458,43 @@ fn closing_with(close: impl Into<serde_json::Value>) -> String {
 /// The crate's own `sh_quote` is not reachable from an integration test. Quoting matters
 /// here for the same reason it matters in the tool: a `TMPDIR` with a space in it is the
 /// machine's business, not a defect in what is under test.
+/// A hub record that is there and is not a record. Both readings of it — the one behind
+/// `present` and the one behind a claim — have to meet it, so it is written as bytes rather
+/// than as a JSON document with something wrong inside.
+fn forge_unreadable_hub_record(fixture: &Fixture) -> PathBuf {
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(&record, "{ this was a hub record once").unwrap();
+    record
+}
+
+/// A terminal that writes down what it was handed instead of opening anything, and a hub
+/// runner that is `true`.
+///
+/// The runner matters even where the test never means to reach it: a regression that let a
+/// refusal through would fall down to the exec path, and the net is what turns that into a
+/// failing test rather than a real agent started inside the suite.
+fn write_spawn_stub_config(fixture: &Fixture, spawned: &Path) {
+    std::fs::write(
+        &fixture.config,
+        serde_json::json!({
+            "notification": "true",
+            "hubRunner": "true {name} {prompt}",
+            "terminal": {
+                "spawn": format!(
+                    "echo {{cwd}} {{command}} > {}",
+                    shell_quoted(&spawned.to_string_lossy())
+                ),
+            },
+            "repos": {
+                "acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"},
+            },
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
 fn shell_quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
