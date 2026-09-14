@@ -219,7 +219,11 @@ fn cannot_tell(path: &Path) -> String {
 pub fn hub_liveness(slug: &str) -> Liveness {
     let path = hub_record_path(slug);
     // `try_exists` rather than `exists`, which answers "no" to every error it meets — and
-    // "no" is the answer that goes on to start a hub.
+    // "no" is the answer that goes on to start a hub. Not perfect in the same way
+    // `read_worker` is not: a symlink pointing nowhere answers `Ok(false)` here while the
+    // claim's own `hard_link` meets it and says the name is taken — the one reading of a
+    // record these two still disagree about. It has no way of arising for a file this tool
+    // writes itself, which writes records by linking them into place.
     match path.try_exists() {
         // No record is the same answer as a record whose process has gone: nobody holds
         // the name. It is what `create_new` is about to say by succeeding.
