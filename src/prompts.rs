@@ -395,6 +395,39 @@ mod tests {
             intake.contains("`-`なのは欠落ではない"),
             "the hub reads a report with no parent as one that is missing a field"
         );
+        // `-` being fine is not the heading being optional. The list of fields the hub
+        // insists on is what makes a report without the heading incomplete; drop 親タスク
+        // from it and a report that never mentions a parent passes intake as complete.
+        assert!(
+            intake.contains("/発見元（依頼元がいま持っているタスク）/親タスク。"),
+            "the hub no longer requires the parent heading a complete report carries"
+        );
+        // And the missing heading has to be spelled out as a gap, because the only other
+        // reading available downstream is `-`: placement then falls to the 発見元 and the
+        // sibling bug sinks under one subtask again, which is the defect this PR fixes.
+        assert!(
+            intake.contains("見出しが丸ごと無いのは欠落"),
+            "the hub has no rule for a report whose parent heading is missing entirely"
+        );
+        assert!(
+            intake.contains("**`-`と同じには扱わない**"),
+            "the hub may read a missing parent heading as `-`, which re-files the bug wrong"
+        );
+        // Two tasks to look up, so two trackers to resolve. Reusing the 発見元's repository
+        // for the parent is the mistake the worker's plan step is already guarded against
+        // (`親タスクのURLから割り出す` above): boards carry issues from several repositories,
+        // and the wrong one answers with whatever task happens to hold that number.
+        assert!(
+            intake.contains("トラッカーとrepoはそれぞれのURLから割り出す"),
+            "the hub checks both tasks against a single tracker: {intake}"
+        );
+        // The reason travels with the rule. Without it the two lookups get folded back into
+        // one repository the next time this paragraph is tightened, and nothing goes red:
+        // the lookup succeeds, it just answers about a different task.
+        assert!(
+            intake.contains("エラーも出さずに"),
+            "the hub does not say why the wrong tracker is dangerous: {intake}"
+        );
         let placement: String = step(hub, "### Step 3 — 起票")
             .chars()
             .filter(|c| !c.is_whitespace())
