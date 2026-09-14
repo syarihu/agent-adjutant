@@ -870,6 +870,47 @@ mod tests {
         );
     }
 
+    /// A source with no board says a task is started with a label, and that has to arrive.
+    ///
+    /// 「ボード上で着手済みのもの」 is the whole in-progress test the classification had, and a
+    /// plain `github` source has no board for it to read — its own recipe calls a label and an
+    /// open PR the signal. A started subtask carrying only the label therefore lands in 「次の
+    /// 候補」, i.e. it is offered as unstarted work. The column has to exist before the
+    /// classification can consult it: the sub-issue call is the only place the labels are
+    /// reachable without one more round trip per child.
+    #[test]
+    fn a_started_subtask_is_recognised_where_the_source_marks_it_with_a_label() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("\\([.labels[].name]"),
+            "the sub-issue rows carry no labels: {fetch}"
+        );
+        // A column nobody is told the purpose of is a column the next edit deletes.
+        assert!(
+            fetch_flowed.contains(
+                "ラベルは、ボードを持たない素の`github`で着手済みを見分ける唯一の手掛かり"
+            ),
+            "nothing says what the labels are collected for: {fetch}"
+        );
+        let startup = step(raw, "### 起動時に読む");
+        let startup_flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            startup_flowed
+                .contains("ボードを持たない素の`github`では、進行中ラベルが付いているものも進行中"),
+            "a labelled subtask on a boardless source is offered as a candidate: {startup}"
+        );
+        // And the collector has to put it somewhere the hub reads. The machine-readable row
+        // is the only channel between them.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("ボードの無い素の`github`では`{status}`にラベルを入れるのだ"),
+            "the label is fetched and then dropped before the hub sees it: {brief}"
+        );
+    }
+
     /// The candidate list the hub printed is the one the number is answered against.
     ///
     /// Handing the answer to 「2. タスクに着手」 alone lands in 「1. タスクを選ぶ」, which fetches

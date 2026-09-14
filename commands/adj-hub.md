@@ -249,7 +249,9 @@ hub が立つ** — その箱に届いた報告を誰も読まない。
 この3つに分けて出す:
 
 - **済み** — 閉じているサブタスク、または PR がマージ済みのもの
-- **進行中** — worktree があるもの、open な PR があるもの、ボード上で着手済みのもの
+- **進行中** — worktree があるもの、open な PR があるもの、ボード上で着手済みのもの。**ボードを
+  持たない素の `github` では、進行中ラベルが付いているものも進行中**（そのソースの着手済みの印は
+  ラベルか PR で、「ボード上」が空振りする。「Task sources」の `github`）
 - **次の候補** — 残り。**トラッカーが返した順のまま**並べて、番号を振る
 
 そのうえで**候補を並べて待機に入る**。**`AskUserQuestion` は開かない** — 起動直後に質問で
@@ -296,13 +298,14 @@ PR は分岐しない。
 
   ```bash
   gh api --paginate repos/{親の repo}/issues/{親の番号}/sub_issues \
-    --jq '.[] | "\(.number) | \(.title) | \(.state) | \(.html_url) | \(.node_id) | \(.repository_url | sub(".*/repos/"; ""))"'
+    --jq '.[] | "\(.number) | \(.title) | \(.state) | \(.html_url) | \(.node_id) | \(.repository_url | sub(".*/repos/"; "")) | \([.labels[].name] | join(","))"'
   ```
 
   **この列を削らない。** URL は報告の機械行が要る。`node_id` は下の `github-project` が
   `nodes(ids:)` にそのまま渡す。`repository_url` から取る repo は、別 repo の子に自分の repo の
-  キーを当てないために要る（`issueKeys` は repo ごとで、ボードは repo ではない）。**`--paginate`
-  も落とさない** — 途中で切れた一覧は、短い一覧と見分けが付かない。
+  キーを当てないために要る（`issueKeys` は repo ごとで、ボードは repo ではない）。ラベルは、
+  ボードを持たない素の `github` で着手済みを見分ける唯一の手掛かり（「Task sources」の `github`）。
+  **`--paginate` も落とさない** — 途中で切れた一覧は、短い一覧と見分けが付かない。
 - **`github-project`** — サブ issue の引き方は `github` と同じ。親子関係は issue 側の属性で、
   ボードの持ちものではない。ボード上のステータスも要るなら、「Task sources」の
   `github-project` にある `nodes(ids:)` の1本に上の `node_id` を渡す。**ここに写さない。**
@@ -1437,6 +1440,8 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
    {PR番号または -} | {PR の state または -} | {worktree のパスまたは -}
    識別子と project item id の書き方はダッシュボード収集の指示書と同じなのだ。
    PR の state と worktree は hub が「済み / 進行中 / 次の候補」を分けるのに使うのだ。
+   **ボードの無い素の `github` では `{status}` にラベルを入れるのだ** — そこが進行中の唯一の
+   手掛かりで、落とすと着手済みのサブタスクが「次の候補」に並ぶのだ。
    無いものは `-` で埋めて、**列ごと落とさないのだ。**
 
 サブタスクが1件も無いなら「無い」と書いて返すのだ。**代わりに割り方を考えないのだ。**
