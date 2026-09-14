@@ -4,6 +4,14 @@
 //! The hub name IS the address a worker sends its report to, so the derivation lives here
 //! and nowhere else. A rule spelled out in the hub's prompt and again in the worker's is a
 //! rule with two versions, and the day they disagree the report goes silently nowhere.
+//!
+//! `owner/name` was doing three jobs at once: the key the config is looked up under, the
+//! address the hub answers at, and the thing a worker derives both from. Asking for a second
+//! hub therefore meant inventing a second repository name — which moved the address *and*
+//! emptied the configuration, because there is no such repository in the config. The hub
+//! identifier here splits the second job off the first: it goes into the address and nowhere
+//! near the lookup, so `owner/name` keeps answering for the settings while the hub can be
+//! named separately.
 
 use std::path::Path;
 use std::process::Command;
@@ -20,6 +28,14 @@ pub struct RepoInfo {
     pub nwo: String,
     /// Just the `name` half.
     pub repo: String,
+    /// Which hub of this repository, when it is not the repository's own one.
+    ///
+    /// `None` is the whole-repository hub, and its address is bit for bit the one every
+    /// record and inbox already on the machine is filed under — so an upgrade does not
+    /// orphan a running hub. Held as it was typed rather than folded: `adj work` forwards
+    /// it to the tab it opens, and a person reading that command line should see what they
+    /// wrote.
+    pub hub: Option<String>,
     pub slug: String,
     pub hub_name: String,
     /// `origin`, `argument`, or `dirname` — how `nwo` was arrived at. The commands warn on
@@ -131,26 +147,53 @@ pub fn name_with_owner(main: &str) -> (String, &'static str) {
 /// Appending it unconditionally rather than only when the collapse looked lossy: every
 /// conditional rule leaks a case, and a rule with an exception is one both sides have to
 /// agree about exactly.
-pub fn slugify(nwo: &str) -> String {
-    let readable: String = nwo
-        .to_lowercase()
-        .chars()
-        .map(|c| match c {
-            '.' | '_' | '/' => '-',
-            c => c,
-        })
-        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
-        .collect();
+///
+/// `None` means the repository's own hub and takes the branch this has always taken, digest
+/// and all, because there are hub records and inboxes on disk under those names right now:
+/// a slug that changed shape on upgrade would leave every running hub unreachable and every
+/// queued report unread.
+///
+/// With an identifier, the digest is taken of *both* halves. Digesting the repository alone
+/// and appending the identifier to the readable half would put `acme/widget` + `foo-bar` and
+/// `acme/widget` + `foo.bar` back in one inbox, which is the collapse the digest exists to
+/// undo. The two are joined by a newline, which neither can contain — a repository name
+/// comes out of a remote URL and a hub identifier is a word somebody typed — so no pair can
+/// borrow another pair's address.
+pub fn slug_for(nwo: &str, hub: Option<&str>) -> String {
+    let base = readable(nwo);
     // Nothing readable left is still an error at `hub_name`, where it can say so. A slug
     // that is only a digest names nothing a person could recognise.
-    if readable.is_empty() {
+    if base.is_empty() {
         return String::new();
     }
     // Of the *lowercased* name, so that the address is as case-insensitive as the config
     // lookup beside it. Hashing the original made `Acme/Widget` and `acme/widget` two
     // addresses for one registered repository — a hub started from one and a worker from
     // the other, each writing to an inbox the other never reads.
-    format!("{readable}-{:016x}", fnv1a(&nwo.to_lowercase()))
+    let Some(hub) = hub.filter(|hub| !hub.is_empty()) else {
+        return format!("{base}-{:016x}", fnv1a(&nwo.to_lowercase()));
+    };
+    let digest = fnv1a(&format!("{}\n{}", nwo.to_lowercase(), hub.to_lowercase()));
+    // An identifier with no ASCII in it contributes nothing a person could read, and a
+    // trailing `-` before the digest would only look like a typo. It is still in the
+    // digest, which is the half that makes the slug an address.
+    match readable(hub) {
+        tail if tail.is_empty() => format!("{base}-{digest:016x}"),
+        tail => format!("{base}-{tail}-{digest:016x}"),
+    }
+}
+
+/// The half of a slug a person recognises: lowercase, `.` `_` `/` collapsed to `-`, and
+/// everything else dropped.
+fn readable(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            '.' | '_' | '/' => '-',
+            c => c,
+        })
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+        .collect()
 }
 
 /// FNV-1a, written out rather than taken from the standard library: `DefaultHasher`'s
@@ -170,8 +213,8 @@ fn fnv1a(text: &str) -> u64 {
     hash
 }
 
-pub fn hub_name(nwo: &str) -> Result<String, String> {
-    let slug = slugify(nwo);
+pub fn hub_name(nwo: &str, hub: Option<&str>) -> Result<String, String> {
+    let slug = slug_for(nwo, hub);
     if slug.is_empty() {
         return Err(format!(
             "cannot build a hub name from the repository name ({nwo})"
@@ -180,24 +223,36 @@ pub fn hub_name(nwo: &str) -> Result<String, String> {
     Ok(format!("{HUB_PREFIX}{slug}"))
 }
 
-pub fn resolve(repo_arg: Option<&str>) -> Result<RepoInfo, String> {
-    resolve_in(None, repo_arg)
+pub fn resolve(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<RepoInfo, String> {
+    resolve_in(None, repo_arg, hub_arg)
 }
 
 /// Same, but answering for `start` rather than for the process's own directory. An MCP
 /// server is started once per session and then asked about whichever checkout the caller is
 /// sitting in, which is not necessarily the one it was launched from.
-pub fn resolve_in(start: Option<&Path>, repo_arg: Option<&str>) -> Result<RepoInfo, String> {
+pub fn resolve_in(
+    start: Option<&Path>,
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+) -> Result<RepoInfo, String> {
     let main = main_worktree(start)?;
     let (nwo, source) = match repo_arg {
         Some(arg) => (arg.to_string(), "argument"),
         None => name_with_owner(&main),
     };
-    let hub_name = hub_name(&nwo)?;
+    // Blank is absent, here as well as at every gate in front of this one: an identifier
+    // that is only whitespace would otherwise be a hub that exists, has an address nobody
+    // can type twice, and is invisible in every listing.
+    let hub = hub_arg
+        .map(str::trim)
+        .filter(|hub| !hub.is_empty())
+        .map(str::to_string);
+    let hub_name = hub_name(&nwo, hub.as_deref())?;
     Ok(RepoInfo {
         repo: nwo.rsplit('/').next().unwrap_or(&nwo).to_string(),
-        slug: slugify(&nwo),
+        slug: slug_for(&nwo, hub.as_deref()),
         hub_name,
+        hub,
         main,
         nwo,
         nwo_source: source,
@@ -316,6 +371,12 @@ mod tests {
         assert_eq!(nwo_from_url("widget"), None);
     }
 
+    /// The repository's own hub, which is what every caller asking for no hub in
+    /// particular gets.
+    fn slugify(nwo: &str) -> String {
+        slug_for(nwo, None)
+    }
+
     #[test]
     fn slug_collapses_separators_and_drops_the_rest() {
         assert!(slugify("acme/widget").starts_with("acme-widget-"));
@@ -350,13 +411,16 @@ mod tests {
 
     #[test]
     fn two_owners_of_the_same_name_get_different_hubs() {
-        assert_ne!(hub_name("orgA/app").unwrap(), hub_name("orgB/app").unwrap());
+        assert_ne!(
+            hub_name("orgA/app", None).unwrap(),
+            hub_name("orgB/app", None).unwrap()
+        );
         assert_eq!(
-            hub_name("acme/widget").unwrap(),
+            hub_name("acme/widget", None).unwrap(),
             format!("{HUB_PREFIX}{}", slugify("acme/widget"))
         );
         assert!(
-            hub_name("acme/widget")
+            hub_name("acme/widget", None)
                 .unwrap()
                 .starts_with("adjutant-acme-widget-")
         );
@@ -364,7 +428,71 @@ mod tests {
 
     #[test]
     fn a_name_with_no_ascii_left_is_an_error_rather_than_a_bare_prefix() {
-        assert!(hub_name("ウィジェット").is_err());
+        assert!(hub_name("ウィジェット", None).is_err());
+    }
+
+    /// The compatibility lock. There are hub records, inboxes and archives on disk under
+    /// the slug this used to produce, and a hub whose address moved on upgrade is a hub
+    /// nothing can reach and a pile of reports nobody reads. Pinned to the literal rather
+    /// than to `slugify` so that a change to *either* side fails here.
+    #[test]
+    fn asking_for_no_hub_in_particular_addresses_exactly_what_it_addressed_before() {
+        assert_eq!(
+            slug_for("acme/widget", None),
+            "acme-widget-898449509108182c"
+        );
+        assert_eq!(slug_for("acme/widget", None), slugify("acme/widget"));
+        assert_eq!(
+            hub_name("acme/widget", None).unwrap(),
+            "adjutant-acme-widget-898449509108182c"
+        );
+        // An identifier that is empty says nothing, so it addresses the same hub rather
+        // than a nameless second one. Every gate in front of this drops blanks; this is
+        // the one that has to hold when one of them is bypassed.
+        assert_eq!(slug_for("acme/widget", Some("")), slugify("acme/widget"));
+    }
+
+    /// The point of the split: a second hub is a second address, not a second repository.
+    #[test]
+    fn a_hub_identifier_moves_the_address_and_nothing_else() {
+        let plain = slug_for("acme/widget", None);
+        let feature = slug_for("acme/widget", Some("wid-957"));
+        assert_ne!(plain, feature);
+        assert_ne!(feature, slug_for("acme/widget", Some("wid-958")));
+        // Same repository, so the readable half still says which one — that is what a
+        // person picks out of a state directory listing.
+        assert!(feature.starts_with("acme-widget-wid-957-"), "{feature}");
+        // Pinned like the plain slug beside it, and for the same reason: FNV-1a is written
+        // out here precisely so that an address never moves under a running hub.
+        assert_eq!(feature, "acme-widget-wid-957-5283c95d4f4cc314");
+        // Case-folded like the repository half. `--hub WID-957` and `--hub wid-957` are
+        // one hub, the way `Acme/Widget` and `acme/widget` are one repository.
+        assert_eq!(slug_for("acme/widget", Some("WID-957")), feature);
+
+        // The digest covers both halves. Identifiers that collapse to the same readable
+        // characters would otherwise share an inbox — the same collapse the digest was
+        // added to undo for repository names.
+        let together = ["foo-bar", "foo_bar", "foo.bar"];
+        let slugs: std::collections::BTreeSet<String> = together
+            .iter()
+            .map(|hub| slug_for("acme/widget", Some(hub)))
+            .collect();
+        assert_eq!(slugs.len(), together.len(), "{slugs:?}");
+        // And it covers the repository half too, so one identifier does not merge two
+        // repositories into one hub.
+        assert_ne!(feature, slug_for("acme/gadget", Some("wid-957")));
+
+        // An identifier with nothing readable in it still gets its own address, and still
+        // reads as this repository rather than as a name ending in a stray separator.
+        let opaque = slug_for("acme/widget", Some("ウィジェット"));
+        assert_eq!(opaque, "acme-widget-75ea31bdae83ea93");
+        assert_ne!(opaque, plain);
+        assert_ne!(opaque, slug_for("acme/widget", Some("ガジェット")));
+
+        assert_eq!(
+            hub_name("acme/widget", Some("wid-957")).unwrap(),
+            format!("{HUB_PREFIX}{feature}")
+        );
     }
 
     #[test]

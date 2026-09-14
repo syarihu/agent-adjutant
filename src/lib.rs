@@ -24,9 +24,9 @@ mod terminal;
 /// which is why `check-layering.sh` lets any module name it.
 #[cfg(test)]
 pub(crate) mod testing {
-    /// `ADJUTANT_CONFIG` and `ADJUTANT_STATE_DIR` are process-global and the harness runs
-    /// tests in parallel threads, so a sandbox has to be exclusive or two tests read each
-    /// other's config and each other's inboxes.
+    /// `ADJUTANT_CONFIG`, `ADJUTANT_STATE_DIR` and `ADJUTANT_HUB` are process-global and
+    /// the harness runs tests in parallel threads, so a sandbox has to be exclusive or two
+    /// tests read each other's config and each other's inboxes.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     pub struct Sandbox {
@@ -46,6 +46,9 @@ pub(crate) mod testing {
             unsafe {
                 std::env::set_var("ADJUTANT_STATE_DIR", dir.path().join("state"));
                 std::env::set_var("ADJUTANT_CONFIG", &config);
+                // `cargo test` run from inside a hub's own session inherits this, and every
+                // test that asserts on an address would then be answering about that hub.
+                std::env::remove_var("ADJUTANT_HUB");
             }
             Sandbox {
                 _dir: dir,
@@ -80,6 +83,9 @@ enum Commands {
         /// owner/name (default: derived from origin)
         #[arg(long)]
         repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
         /// Also print the slug, main checkout and where the name came from
         #[arg(long)]
         json: bool,
@@ -88,11 +94,17 @@ enum Commands {
     Config {
         #[arg(long)]
         repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
     },
     /// Messages waiting for this repository's hub
     Pending {
         #[arg(long)]
         repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
         /// Print only the inbox directory, creating it if absent
         #[arg(long)]
         path: bool,
@@ -112,6 +124,9 @@ enum Commands {
     Send {
         #[arg(long)]
         repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
         /// Who is sending: your session or worktree name
         #[arg(long)]
         from: Option<String>,
@@ -152,6 +167,9 @@ enum Commands {
         worktree: String,
         #[arg(long, default_value = "")]
         title: String,
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
+        #[arg(long)]
+        hub: Option<String>,
         /// What the worker is told on startup
         #[arg(
             long,
@@ -169,6 +187,9 @@ enum Commands {
         worktree: String,
         #[arg(long, default_value = "")]
         title: String,
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
+        #[arg(long)]
+        hub: Option<String>,
         #[arg(
             long,
             default_value = ".claude/task-brief.md を読んで、その指示に従って作業を開始してください"
@@ -183,6 +204,9 @@ enum Commands {
         repo: Option<String>,
         #[arg(long)]
         worktree: String,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
         /// One line stating the point. `[質問 …]` is what makes a worker answer
         #[arg(long)]
         subject: String,
@@ -214,6 +238,9 @@ enum Commands {
     Focus {
         #[arg(long)]
         repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
         /// Say nothing, use the exit code
         #[arg(long)]
         quiet: bool,
@@ -238,6 +265,9 @@ enum Commands {
         repo: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
+        #[arg(long)]
+        hub: Option<String>,
         /// Extra arguments appended to the agent command
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -246,6 +276,9 @@ enum Commands {
     HubStop {
         #[arg(long)]
         repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
     },
     /// Open a worktree in the configured editor
     Ide {
@@ -312,10 +345,15 @@ enum Commands {
 pub fn run() -> ! {
     let cli = Cli::parse();
     let result: Result<i32, String> = match &cli.command {
-        Commands::HubName { repo, json } => cmd::hub_name(repo.as_deref(), *json).map(|_| 0),
-        Commands::Config { repo } => cmd::show_config(repo.as_deref()).map(|_| 0),
+        Commands::HubName { repo, hub, json } => {
+            cmd::hub_name(repo.as_deref(), hub.as_deref(), *json).map(|_| 0)
+        }
+        Commands::Config { repo, hub } => {
+            cmd::show_config(repo.as_deref(), hub.as_deref()).map(|_| 0)
+        }
         Commands::Pending {
             repo,
+            hub,
             path,
             limit,
             json,
@@ -323,6 +361,7 @@ pub fn run() -> ! {
             ack,
         } => cmd::pending(&cmd::PendingArgs {
             repo: repo.as_deref(),
+            hub: hub.as_deref(),
             path_only: *path,
             limit: *limit,
             as_json: *json,
@@ -332,6 +371,7 @@ pub fn run() -> ! {
         .map(|_| 0),
         Commands::Send {
             repo,
+            hub,
             from,
             kind,
             subject,
@@ -339,6 +379,7 @@ pub fn run() -> ! {
             quiet,
         } => cmd::send(&cmd::SendArgs {
             repo: repo.as_deref(),
+            hub: hub.as_deref(),
             from: from.as_deref(),
             kind,
             subject: subject.as_deref(),
@@ -362,22 +403,41 @@ pub fn run() -> ! {
         .map(|_| 0),
         Commands::Work {
             repo,
+            hub,
             worktree,
             title,
             prompt,
             dry_run,
-        } => cmd::work(repo.as_deref(), worktree, title, prompt, *dry_run).map(|_| 0),
+        } => cmd::work(
+            repo.as_deref(),
+            hub.as_deref(),
+            worktree,
+            title,
+            prompt,
+            *dry_run,
+        )
+        .map(|_| 0),
         // Exit 1 when the hub is not running, so a shell can branch on it without parsing
         // anything this prints.
         Commands::Worker {
             repo,
+            hub,
             worktree,
             title,
             prompt,
             dry_run,
-        } => cmd::worker(repo.as_deref(), worktree, title, prompt, *dry_run).map(|_| 0),
+        } => cmd::worker(
+            repo.as_deref(),
+            hub.as_deref(),
+            worktree,
+            title,
+            prompt,
+            *dry_run,
+        )
+        .map(|_| 0),
         Commands::Tell {
             repo,
+            hub,
             worktree,
             subject,
             body,
@@ -385,6 +445,7 @@ pub fn run() -> ! {
             quiet,
         } => cmd::tell(
             repo.as_deref(),
+            hub.as_deref(),
             worktree,
             subject,
             body.as_deref(),
@@ -396,9 +457,11 @@ pub fn run() -> ! {
         Commands::Outbox { worktree, clear } => cmd::outbox(worktree.as_deref(), *clear).map(|_| 0),
         Commands::Focus {
             repo,
+            hub,
             quiet,
             dry_run,
-        } => cmd::focus(repo.as_deref(), *quiet, *dry_run).map(|found| i32::from(!found)),
+        } => cmd::focus(repo.as_deref(), hub.as_deref(), *quiet, *dry_run)
+            .map(|found| i32::from(!found)),
         Commands::Close {
             repo,
             worktree,
@@ -409,10 +472,19 @@ pub fn run() -> ! {
         }
         Commands::Hub {
             repo,
+            hub,
             dry_run,
             extra,
-        } => cmd::hub(repo.as_deref(), &strip_separator(extra), *dry_run).map(|_| 0),
-        Commands::HubStop { repo } => cmd::hub_stop(repo.as_deref()).map(|_| 0),
+        } => cmd::hub(
+            repo.as_deref(),
+            hub.as_deref(),
+            &strip_separator(extra),
+            *dry_run,
+        )
+        .map(|_| 0),
+        Commands::HubStop { repo, hub } => {
+            cmd::hub_stop(repo.as_deref(), hub.as_deref()).map(|_| 0)
+        }
         Commands::Ide {
             repo,
             worktree,
