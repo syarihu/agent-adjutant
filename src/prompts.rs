@@ -809,6 +809,42 @@ mod tests {
         );
     }
 
+    /// An identifier finds its source however it was typed, because the address already does.
+    ///
+    /// `slug_for` folds the identifier before it digests it, so `alpha-233` and `ALPHA-233`
+    /// share one inbox and one record. Had the reverse lookup stayed case-sensitive, the
+    /// lowercase spelling would have stood a hub up at the right address that could not name
+    /// its own parent — and reports filed there would have gone unread by a hub sitting on
+    /// them. Matching without regard to case is also what `adjutant_config` does to find the
+    /// repository entry beside it.
+    #[test]
+    fn an_identifier_finds_its_source_whatever_case_it_was_typed_in() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let scoped = section(raw, "## 親タスクの hub");
+        let flowed: String = scoped.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("綴りの大小は見ない"),
+            "the reverse lookup leaves case undefined: {scoped}"
+        );
+        assert!(
+            flowed.contains("大文字小文字を無視して突き合わせる"),
+            "the reverse lookup does not say how it matches: {scoped}"
+        );
+        // Which makes two sources answering to one key reachable — the config only warns
+        // about a duplicated key, and it compares the spellings exactly.
+        assert!(
+            flowed.contains("複数のソースに当たったら、どれかに決めない"),
+            "the reverse lookup picks one of several matching sources: {scoped}"
+        );
+        // And the offer must not go on claiming the address moves with the spelling.
+        let offer = step(raw, "### 親タスクの hub を提案する");
+        let offer_flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            offer_flowed.contains("箱は動かない"),
+            "the offer says a drifting spelling files the hub elsewhere: {offer}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
