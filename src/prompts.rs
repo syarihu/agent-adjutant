@@ -491,6 +491,168 @@ mod tests {
         );
     }
 
+    /// A hub named for a parent task has to go and read that task.
+    ///
+    /// The machinery for standing one up was already there — an identifier moves the session
+    /// name, the inbox and the record, and `--tab` opens a tab to put it in — but nothing
+    /// told the hub that landed there what its own name meant. It started, collected the
+    /// repository-wide dashboard, and waited: a hub scoped to one parent that could not name
+    /// a single thing under it.
+    #[test]
+    fn a_hub_named_for_a_parent_task_reads_that_task_at_startup() {
+        let scoped = section(find("adj-hub").unwrap().raw_content, "## 親タスクの hub");
+        // Matched against the section with its whitespace squeezed out, for the reason the
+        // base-branch guard above gives: the procedures are hard-wrapped, so re-wrapping a
+        // paragraph must not decide whether this holds.
+        let flowed: String = scoped.chars().filter(|c| !c.is_whitespace()).collect();
+        // What tells this hub apart from the repository's own, out of what startup already
+        // collected. A section that describes the behaviour without saying who it applies to
+        // is one every hub reads as being about itself.
+        assert!(
+            flowed.contains("`adjutant_config`の`hub`に識別子が入っているhub"),
+            "the section never says which hub it is about: {scoped}"
+        );
+        // The identifier is the key, which is what makes the subject readable without
+        // storing it anywhere: reverse the key and the tracker and the repository fall out.
+        assert!(
+            flowed.contains("識別子は親タスクのキーそのもの"),
+            "the section does not say the identifier is the parent's key: {scoped}"
+        );
+        assert!(
+            flowed.contains("`issueKeys`で"),
+            "the section does not reverse the key back to the issue's repository: {scoped}"
+        );
+        // Three levels, and the third is what says whether a subtask is actually done.
+        assert!(
+            flowed.contains("親タスク→その下のサブタスク→それらのサブタスクが開いたPR"),
+            "the section does not say how far down to read: {scoped}"
+        );
+        // The collection is as heavy as the dashboard's and the hub lives as long, so it
+        // goes the same way: to a sub-agent, without waiting for it.
+        assert!(
+            flowed.contains("サブエージェントに出す") && flowed.contains("結果を待たない"),
+            "the startup step collects in the hub itself: {scoped}"
+        );
+        // And it asks rather than deciding. 「次はどれ」 taken from the tracker's own order
+        // keeps the hub out of a dependency model it has no way to be right about.
+        assert!(
+            flowed.contains("トラッカーが返した順のまま"),
+            "the startup step invents an order for the candidates: {scoped}"
+        );
+        assert!(
+            flowed.contains("順序を発明しない"),
+            "the startup step does not say to leave the ordering to the person: {scoped}"
+        );
+        // Asking must not mean stopping. 「起動時に AskUserQuestion を開かない」 is the
+        // repository hub's rule and it holds here for the same reason — a hub waiting on an
+        // answer is a hub not reading its inbox.
+        assert!(
+            flowed.contains("`AskUserQuestion`は開かない"),
+            "the startup step stops the hub on a question: {scoped}"
+        );
+        // Re-read every time. That is what lets several of these run side by side and what
+        // makes standing one up again tomorrow land where it left off.
+        assert!(
+            flowed.contains("状態を持たない"),
+            "the section does not say to keep no state: {scoped}"
+        );
+        assert!(
+            flowed.contains("起動のたびにこれを読み直し"),
+            "the section keeps state without saying to re-read it: {scoped}"
+        );
+        // An identifier no source accounts for is not a licence to guess: a hub reporting on
+        // the wrong parent is wrong silently.
+        assert!(
+            flowed.contains("どのソースにも当たらない識別子"),
+            "the section has no answer for an identifier nothing accounts for: {scoped}"
+        );
+    }
+
+    /// Reading a parent's children is the one step that differs per tracker.
+    ///
+    /// Everything else in this section is tracker-independent, so a single recipe written
+    /// for whichever tracker was in front of the author would have been invisible until a
+    /// repository on another one stood a hub up — and then it fails as an empty list, which
+    /// reads exactly like a parent with nothing under it.
+    #[test]
+    fn a_parent_s_children_are_fetched_by_the_tracker_that_holds_them() {
+        let fetch = step(find("adj-hub").unwrap().raw_content, "### 親の下を引く");
+        let flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("/sub_issues"),
+            "no recipe for GitHub sub-issues: {fetch}"
+        );
+        // The board holds statuses, not the parent-child relation, so the same sub-issue
+        // call serves both GitHub types and only the status lookup is board-specific.
+        assert!(
+            flowed.contains("親子関係はissue側の属性"),
+            "the board is treated as the owner of the parent-child relation: {fetch}"
+        );
+        assert!(
+            flowed.contains("`parent={親キー}`"),
+            "no recipe for Jira subtasks: {fetch}"
+        );
+        // The concrete form of 「順序を発明しない」: a sorted list read as a running order.
+        assert!(
+            flowed.contains("`ORDERBY`を付けない"),
+            "the Jira query sorts the children, which reads as a running order: {fetch}"
+        );
+        assert!(
+            flowed.contains("mcp__linear__list_issues"),
+            "no recipe for Linear sub-issues: {fetch}"
+        );
+        // Pull requests are the exception: they land in the code repository whichever
+        // tracker the tasks live in, so branching there would be four copies of one answer.
+        assert!(
+            flowed.contains("PRを探す先は、どのtypeでもコードリポジトリ1つ"),
+            "the PR lookup branches by tracker as well: {fetch}"
+        );
+    }
+
+    /// The brief's parent line is the payoff: a scoped hub always knows what to put in it.
+    ///
+    /// 「4. worker を起動する」 fills that line only when the dispatch was handed a parent,
+    /// and tells the hub not to infer one from a sub-issue link. Left at that, a hub *named*
+    /// for the parent still dispatched `-` — and its workers went on re-deriving from one
+    /// subtask the design their siblings had already settled, which is the whole reason the
+    /// line exists.
+    #[test]
+    fn a_hub_named_for_a_parent_task_puts_it_in_every_brief() {
+        let dispatch = step(
+            find("adj-hub").unwrap().raw_content,
+            "### dispatch には自分の親タスクを載せる",
+        );
+        let flowed: String = dispatch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("指示書の「親タスク」行に自分の親タスクのURLを書く"),
+            "the scoped hub does not fill the brief's parent line: {dispatch}"
+        );
+        assert!(
+            flowed.contains("`-`にしない"),
+            "the scoped hub is allowed to leave the parent line empty: {dispatch}"
+        );
+        // A report that names its own parent is the more specific answer, and Step 4 already
+        // says which one to take. This must add a default, not overrule that.
+        assert!(
+            flowed.contains("報告が親タスクを名指ししているなら、そちらが優先"),
+            "the scoped hub overwrites the parent a report reported: {dispatch}"
+        );
+        // Having a parent says nothing about where to branch from. Wiring the two together
+        // would pick a base nobody asked for.
+        assert!(
+            flowed.contains("分岐元は動かさない"),
+            "the scoped hub's parent moves the base branch too: {dispatch}"
+        );
+        // And the rule has to be reachable from the step that writes the brief: a reader of
+        // 「4. worker を起動する」 who stops at 「無ければ `-`」 never learns about it.
+        let spawn = step(find("adj-hub").unwrap().raw_content, "### 4. ");
+        let spawn_flowed: String = spawn.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            spawn_flowed.contains("親タスクのhubはここが常に埋まる"),
+            "the brief step's `-` default does not exempt a hub named for a parent: {spawn}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
