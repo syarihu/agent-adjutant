@@ -870,6 +870,37 @@ mod tests {
         );
     }
 
+    /// The branch a subtask's PR is on is a convention, and a source is free to set its own.
+    ///
+    /// Both the PR lookup and the worktree match are written against `{user}/{キー}`, which is
+    /// only the default: a source carrying its own `branchPattern` produces something else,
+    /// and `--head` is an exact match. The failure is silent in the direction that matters —
+    /// a subtask with a PR and a worktree is listed as having neither, which is the reading
+    /// the caveat right below already warns against.
+    #[test]
+    fn a_source_with_its_own_branch_pattern_is_not_read_as_having_no_pull_request() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("独自の`branchPattern`を持つソースも同じ"),
+            "the exact-match PR lookup is presented as complete: {fetch}"
+        );
+        // The fallback search is not the answer, and saying so is what stops a reader from
+        // treating the caveat as already handled.
+        assert!(
+            fetch_flowed.contains("あれが見るのはタイトルと本文で、ブランチ名ではない"),
+            "the fallback search is left looking like it covers the gap: {fetch}"
+        );
+        // The collector matches worktrees the same way and was handed the same literal form.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("この形は既定であって決まりではないのだ"),
+            "the collector matches worktrees against one hard-coded branch shape: {brief}"
+        );
+    }
+
     /// A source with no board says a task is started with a label, and that has to arrive.
     ///
     /// 「ボード上で着手済みのもの」 is the whole in-progress test the classification had, and a
