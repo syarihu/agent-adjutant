@@ -705,6 +705,110 @@ mod tests {
         );
     }
 
+    /// Nobody handed the hub the parent task, so the agent it sends has to go and get it.
+    ///
+    /// The section reversed the identifier back to a *source* and stopped there, while the
+    /// brief the collector is given asked for the parent's title and URL — two things a key
+    /// alone does not carry, and for Jira an URL the same file forbids assembling. Resolving
+    /// it in the hub would have cost a lookup in the one block startup is allowed, so the
+    /// agent that is already going to the tracker does it.
+    #[test]
+    fn the_agent_that_collects_a_parent_s_children_resolves_the_parent_itself() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let startup = step(raw, "### 起動時に読む");
+        let startup_flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            startup_flowed.contains("hubが渡すのは識別子と、逆引きで判ったソースの情報だけ"),
+            "the hub is left to resolve the parent before it can wait: {startup}"
+        );
+        assert!(
+            startup_flowed.contains("収集エージェントが引く"),
+            "nobody is told to read the parent task itself: {startup}"
+        );
+        // And the recipes have to exist, per tracker, or the collector is being asked for
+        // something the procedure never shows it how to get.
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("親そのものを引く"),
+            "the fetch step reads the children of a parent it never reads: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("--jq'{title,html_url,node_id}'"),
+            "no URL for a GitHub parent: {fetch}"
+        );
+        // Jira's is the one that cannot be worked around by assembling a URL out of the key.
+        assert!(
+            fetch_flowed.contains("`webUrl`をそのまま使う"),
+            "the Jira parent's URL is built rather than read: {fetch}"
+        );
+        // Linear needs a third thing: `list_issues` takes the parent's internal id, and the
+        // identifier is a key.
+        assert!(
+            fetch_flowed.contains("mcp__linear__get_issue"),
+            "no way to turn a Linear key into the parent: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("下を引くのに要る親のidもここで取る"),
+            "the Linear parent's id is never obtained: {fetch}"
+        );
+        // The brief must not go back to asking for what the hub does not have.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            !brief_flowed.contains("{親タスクのタイトル}"),
+            "the brief asks the hub for a title it cannot fill in: {brief}"
+        );
+        assert!(
+            !brief_flowed.contains("{親タスクのURL}"),
+            "the brief asks the hub for an URL it cannot fill in: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("親タスクのタイトルとURLは渡していないのだ"),
+            "the brief never says who resolves the parent: {brief}"
+        );
+    }
+
+    /// Every column of the sub-issue row is read by a step further down.
+    ///
+    /// The call started life as number, title and state — enough to print a list and nothing
+    /// else. The URL the report's machine-readable rows require, the node id the board's
+    /// status query is addressed by, and the repository that decides which `issueKeys` entry
+    /// keys a child all come back from that same call, and none of them is recoverable
+    /// afterwards without another round trip per child.
+    #[test]
+    fn a_sub_issue_row_carries_the_columns_its_readers_need() {
+        let fetch = step(find("adj-hub").unwrap().raw_content, "### 親の下を引く");
+        let flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("\\(.html_url)"),
+            "the sub-issue rows carry no URL: {fetch}"
+        );
+        assert!(
+            flowed.contains("\\(.node_id)"),
+            "the sub-issue rows carry no node id: {fetch}"
+        );
+        assert!(
+            flowed.contains("\\(.repository_url"),
+            "the sub-issue rows carry no repository: {fetch}"
+        );
+        // The node id is dead weight unless the step that spends it says so.
+        assert!(
+            flowed.contains("`node_id`を渡す"),
+            "nothing says what the node id is collected for: {fetch}"
+        );
+        // A list cut off at the page boundary is indistinguishable from a short one, which
+        // is the same reason this file gives for raising the board search's `--limit`.
+        assert!(
+            flowed.contains("ghapi--paginaterepos/"),
+            "the sub-issue list stops at the first page: {fetch}"
+        );
+        assert!(
+            flowed.contains("`nextPageToken`で辿る"),
+            "the Jira subtask search stops at the first page: {fetch}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
