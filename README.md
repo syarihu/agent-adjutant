@@ -64,7 +64,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 
 | | |
 | --- | --- |
-| `adjutant hub` | start this repo's hub, in the main checkout, once |
+| `adjutant hub [--tab]` | start this repo's hub, in the main checkout, once (`--tab`: open a tab and start it there, rather than becoming it in this one) |
 | `adjutant hub-name [--json]` | the hub's session name — the address a report goes to |
 | `adjutant config` | the resolved config for this repo, as JSON |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |

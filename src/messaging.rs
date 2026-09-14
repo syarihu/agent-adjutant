@@ -196,6 +196,51 @@ fn cannot_tell(path: &Path) -> String {
     )
 }
 
+/// The three answers `claim_hub` acts on, for a caller that is going to act on "nobody is
+/// there" without claiming anything.
+///
+/// `hub_status` folds "cannot tell" into `present: false`, which is the right reading for a
+/// sender — a message left for a hub that may or may not be there waits in a file until
+/// somebody reads it, so guessing wrong costs nothing. It is the wrong reading for a caller
+/// about to *start* a hub, and `claim_hub` is where that is normally caught. A route that
+/// starts a hub somewhere else, and so never reaches a claim, has to ask here instead.
+///
+/// Deliberately `holder`'s reading of a record that is *there* and not a stricter one. The
+/// question being asked is whether the name is free to take, which is the question
+/// `claim_hub` will ask about the same record a moment later; a caller that refused where
+/// the claim proceeds would be two routes disagreeing about one record, which is the
+/// disagreement this is here to close.
+///
+/// What has to be added to `holder` is the case it never sees. It is called by `claim_hub`
+/// only once `create_new` has failed, so the file is known to exist and `read_json`
+/// answering `None` can only mean unreadable. Asked cold, that same `None` is mostly the
+/// ordinary "nothing has ever registered here" — so existence is established first, the way
+/// `read_worker` establishes it, and only then is the record read.
+pub fn hub_liveness(slug: &str) -> Liveness {
+    let path = hub_record_path(slug);
+    // `try_exists` rather than `exists`, which answers "no" to every error it meets — and
+    // "no" is the answer that goes on to start a hub. Not perfect in the same way
+    // `read_worker` is not: a symlink pointing nowhere answers `Ok(false)` here while the
+    // claim's own `hard_link` meets it and says the name is taken — the one reading of a
+    // record these two still disagree about. It has no way of arising for a file this tool
+    // writes itself, which writes records by linking them into place.
+    match path.try_exists() {
+        // No record is the same answer as a record whose process has gone: nobody holds
+        // the name. It is what `create_new` is about to say by succeeding.
+        Ok(false) => Liveness::Gone,
+        Err(_) => Liveness::CannotTell,
+        Ok(true) => holder(&path),
+    }
+}
+
+/// Why a hub's name was left alone, in the words `claim_hub` refuses with.
+///
+/// A caller that asks `hub_liveness` first is refusing on the claim's behalf, so it says
+/// what the claim would have said — same record named, same thing to go and look at.
+pub fn hub_cannot_tell(slug: &str) -> String {
+    cannot_tell(&hub_record_path(slug))
+}
+
 /// The start time a record offers as an anchor, or `None` when what it offers cannot be one.
 ///
 /// Four readers compare this against what `ps` says now, and a value that can match nothing

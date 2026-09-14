@@ -818,6 +818,62 @@ fn hub_env(ctx: &Context) -> Vec<(String, String)> {
     env
 }
 
+/// Open a tab and start this repository's hub in it, rather than becoming it here.
+///
+/// What the tab runs is `adj hub` — this same command without `--tab`. The claim is left to
+/// it, and that is the whole reason the split exists: a claim records the claiming process's
+/// PID, so claiming here would write down a launcher that is about to exit, for a hub that
+/// is a different process in another tab. Every later liveness check would then be asking
+/// about the wrong one, and the first `--hub` that answered "gone" would start a second hub
+/// beside the live one. See the comment above the claim in `hub`.
+///
+/// The *resolved* identifier goes on the line rather than the flag, for the reason `work`
+/// spells out: the caller most likely to open a tab for a hub is another hub, running this
+/// as its own child with no flag at all and carrying the answer in its environment — and
+/// that environment does not survive the trip through the terminal.
+fn open_hub_tab(
+    ctx: &Context,
+    repo_arg: Option<&str>,
+    extra: &[String],
+    dry_run: bool,
+) -> Result<(), String> {
+    let mut parts = vec![exe_path(), "hub".to_string()];
+    if let Some(repo) = repo_arg {
+        parts.push("--repo".to_string());
+        parts.push(repo.to_string());
+    }
+    // One argument rather than two, as in `work`: an identifier that starts with a dash
+    // reaches here from `ADJUTANT_HUB`, where no flag parser has seen it.
+    if let Some(hub) = &ctx.repo.hub {
+        parts.push(format!("--hub={hub}"));
+    }
+    // The separator is put back because clap takes everything after it as the trailing
+    // argument, and `strip_separator` at the far end takes it off again.
+    if !extra.is_empty() {
+        parts.push("--".to_string());
+        parts.extend(extra.iter().cloned());
+    }
+    let name_it = title_command(&ctx.settings, &ctx.repo.hub_name);
+    let done = terminal::spawn(
+        ctx.settings.terminal.spawn.as_deref(),
+        &SpawnRequest {
+            // The main checkout, never a worktree: a hub that cannot cut worktrees is not a
+            // hub, and this is the one thing `hub` moves to before it starts.
+            cwd: &ctx.repo.main,
+            title: &ctx.repo.hub_name,
+            command: &crate::template::sh_join(&parts),
+            title_command: name_it.as_deref(),
+        },
+        dry_run,
+    )?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(())
+}
+
 /// Three things go wrong when a person types the agent command by hand, and this exists to
 /// take all three away: the session name has to match what a worker will look for, the hub
 /// has to run in the main checkout or it cannot cut worktrees, and a second hub for the same
@@ -825,10 +881,15 @@ fn hub_env(ctx: &Context) -> Vec<(String, String)> {
 ///
 /// The process registers itself and then *replaces* itself with the agent, so the recorded
 /// PID belongs to the live agent rather than to a launcher that has already exited.
+///
+/// `tab` opens a tab and starts it there instead, for a caller that is not a person sitting
+/// at an empty one — nothing else about the decision changes, including which of the two
+/// tabs claims the record.
 pub fn hub(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
     extra: &[String],
+    tab: bool,
     dry_run: bool,
 ) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
@@ -843,11 +904,49 @@ pub fn hub(
             ctx.repo.nwo
         );
     }
+    // The directory move comes first, and not only because the hub has to run there: a
+    // relative `ADJUTANT_STATE_DIR` is resolved against the working directory, so looking or
+    // claiming before moving reads and writes the record under wherever `adj hub` happened to
+    // be typed, and the hub then goes looking for it somewhere else. It is above the check
+    // rather than beside the claim because every route below this line reads that record: the
+    // claim used to be the only one, and recovered a missed record by answering `Taken`, which
+    // the tab route has no equivalent of — it would open a tab for a hub already running.
+    // Nothing has been written at this point, so a failure here has nothing to undo.
+    std::env::set_current_dir(&ctx.repo.main)
+        .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
+
     // Asked before the command is even built, so the common "it is already up" case costs
     // nothing. It is not what *enforces* one hub per repository — the claim below is.
     let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
     if status.present {
         return go_to_running_hub(&ctx, &status, dry_run);
+    }
+    // Below the presence check, and deliberately: one hub per address is the invariant, and
+    // opening a tab for one that is already up would break it in the one way nothing later
+    // repairs — two sessions answering to the same name, with the record naming one of them.
+    if tab {
+        // `present: false` answers two different questions the same way: nobody is there,
+        // and whether anybody is there could not be established — an unreadable record, or
+        // a `ps` that would not run. Only the first is a reason to start a hub, and the
+        // other route never has to tell them apart because its claim refuses the second in
+        // exactly these words. This one leaves the claim to the tab it opens, so the
+        // refusal happens here or nowhere — and nowhere means the caller this route exists
+        // for, which is not a person, is told a hub was started in a new tab and handed
+        // `exit 0`, for a hub whose own claim is about to refuse it.
+        //
+        // `Alive` is a hub running under a name the check above no longer matches on. The
+        // tab's own claim would bring it forward, so the hub ends up in the same place
+        // either way — but this side would have said it started one and exited 0 for a hub
+        // that was already up, which is the same untruth told to the same non-human caller.
+        // It is brought forward from here instead, and no tab is opened for it.
+        match messaging::hub_liveness(&ctx.repo.slug) {
+            messaging::Liveness::CannotTell => {
+                return Err(messaging::hub_cannot_tell(&ctx.repo.slug));
+            }
+            messaging::Liveness::Alive => return go_to_running_hub(&ctx, &status, dry_run),
+            messaging::Liveness::Gone => {}
+        }
+        return open_hub_tab(&ctx, repo_arg, extra, dry_run);
     }
     let mut command = runner::hub_command(
         ctx.settings.hub_runner.as_deref(),
@@ -874,13 +973,6 @@ pub fn hub(
     // Whether the *rendered* command carries the name, not whether the template has a
     // `{name}` in it: a template that hardcodes the name works, and one that renders it
     // away does not, and only the finished line knows which.
-    // The directory move comes first, and not only because the hub has to run there: a
-    // relative `ADJUTANT_STATE_DIR` is resolved against the working directory, so claiming
-    // before moving wrote the record under wherever `adj hub` happened to be typed, and the
-    // hub then went looking for it somewhere else. Nothing has been written at this point,
-    // so a failure here has nothing to undo.
-    std::env::set_current_dir(&ctx.repo.main)
-        .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
 
     let named = command.contains(&ctx.repo.hub_name);
     match messaging::claim_hub(&ctx.repo.slug, &ctx.repo.hub_name, &ctx.repo.main, named)? {
