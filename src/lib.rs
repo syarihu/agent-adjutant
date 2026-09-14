@@ -167,10 +167,10 @@ enum Commands {
         worktree: String,
         #[arg(long, default_value = "")]
         title: String,
-        /// What the worker is told on startup
         /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
         #[arg(long)]
         hub: Option<String>,
+        /// What the worker is told on startup
         #[arg(
             long,
             default_value = ".claude/task-brief.md を読んで、その指示に従って作業を開始してください"
@@ -238,10 +238,10 @@ enum Commands {
     Focus {
         #[arg(long)]
         repo: Option<String>,
-        /// Say nothing, use the exit code
         /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
         #[arg(long)]
         hub: Option<String>,
+        /// Say nothing, use the exit code
         #[arg(long)]
         quiet: bool,
         #[arg(long)]

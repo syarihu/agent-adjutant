@@ -703,6 +703,47 @@ fn a_record_left_in_a_worktree_never_decides_which_hub_is_being_started() {
     assert_eq!(addressed["hubName"], FEATURE_HUB);
 }
 
+/// Every flag `work` hands the tab keeps its own description, and `--hub` did not steal one.
+///
+/// `--hub` was inserted between a description and the flag it described, so clap read the
+/// pair as one doc comment on `--hub` and left the flag below it with none. Nothing fails
+/// at runtime; the help text just stops explaining two flags.
+#[test]
+fn every_flag_the_help_lists_describes_itself_and_not_its_neighbour() {
+    let fixture = Fixture::new(QUIET);
+    let line = |help: &str, flag: &str| {
+        help.lines()
+            .find(|l| l.contains(flag))
+            .unwrap_or_else(|| panic!("no {flag} in:\n{help}"))
+            .to_string()
+    };
+
+    let work = fixture.ok(&["work", "--help"]);
+    assert!(
+        line(&work, "--hub <HUB>").contains("Which hub of the repository"),
+        "{work}"
+    );
+    assert!(
+        !line(&work, "--hub <HUB>").contains("What the worker is told"),
+        "{work}"
+    );
+    assert!(
+        line(&work, "--prompt <PROMPT>").contains("What the worker is told"),
+        "{work}"
+    );
+
+    let focus = fixture.ok(&["focus", "--help"]);
+    assert!(
+        line(&focus, "--hub <HUB>").contains("Which hub of the repository"),
+        "{focus}"
+    );
+    assert!(
+        !line(&focus, "--hub <HUB>").contains("Say nothing"),
+        "{focus}"
+    );
+    assert!(line(&focus, "--quiet").contains("Say nothing"), "{focus}");
+}
+
 #[test]
 fn focus_exits_one_when_no_hub_is_running() {
     let fixture = Fixture::new(QUIET);
