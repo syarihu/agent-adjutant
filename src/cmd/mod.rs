@@ -22,8 +22,26 @@ pub struct Context {
     pub resolved: config::Resolved,
 }
 
+/// Where we are, for a command addressing a hub: sending to it, listing its inbox, naming
+/// it, bringing it forward.
 pub fn context(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context, String> {
-    let repo = resolve(repo_arg, hub_arg)?;
+    context_of(resolve(repo_arg, hub_arg)?)
+}
+
+/// The same, for a command that *starts or registers* a hub rather than addressing one.
+///
+/// The difference is the worker record. A hub launched from inside a worktree, and a worker
+/// registering in the worktree its tab was opened at, would both read a record that belongs
+/// to somebody else — or, for the worker, the one it is a moment away from overwriting. See
+/// `messaging::hub_id_told`.
+fn context_as(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context, String> {
+    context_of(repo::resolve(
+        repo_arg,
+        messaging::hub_id_told(hub_arg).as_deref(),
+    )?)
+}
+
+fn context_of(repo: RepoInfo) -> Result<Context, String> {
     // By `owner/name` and nothing else. The hub identifier moves the address; it must not
     // move the lookup, or asking for a second hub of a registered repository would answer
     // with an unregistered one — no task sources, no issue keys, no verify command.
@@ -37,9 +55,9 @@ pub fn context(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context,
 
 /// Where we are, and which hub of it we are talking to.
 ///
-/// Every subcommand that names a hub goes through here rather than calling `repo::resolve`
-/// with whatever it was given: deciding between the flag, the environment and the worktree
-/// is one rule, and a second copy of it is a second answer.
+/// Every subcommand that addresses a hub goes through here rather than calling
+/// `repo::resolve` with whatever it was given: deciding between the flag, the environment
+/// and the worktree is one rule, and a second copy of it is a second answer.
 fn resolve(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<RepoInfo, String> {
     repo::resolve(repo_arg, messaging::hub_id(hub_arg, None).as_deref())
 }
@@ -313,7 +331,9 @@ pub fn work(
     prompt: &str,
     dry_run: bool,
 ) -> Result<(), String> {
-    let ctx = context(repo_arg, hub_arg)?;
+    // The dispatching side: the identifier being handed to the new worker is this caller's
+    // own, never one read out of some worktree it happens to be standing in.
+    let ctx = context_as(repo_arg, hub_arg)?;
     let worktree = config::expand_home(worktree).to_string_lossy().to_string();
     // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
     // process that has already written down its own PID and then `exec`s itself away, which
@@ -801,7 +821,10 @@ pub fn hub(
 ) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    let ctx = context(repo_arg, hub_arg)?;
+    // `context_as`, not `context`: this command is run from anywhere in the repository,
+    // worktrees included, and a hub that took its identity from whichever worktree it was
+    // typed in would be a different hub every time.
+    let ctx = context_as(repo_arg, hub_arg)?;
     if ctx.repo.nwo_source == "dirname" {
         eprintln!(
             "adjutant: origin gave no repository name, using the directory name {}",
@@ -884,7 +907,10 @@ pub fn worker(
     if !worktree.is_dir() {
         return Err(format!("no such worktree: {}", worktree.display()));
     }
-    let ctx = context(repo_arg, hub_arg)?;
+    // This tab was opened *at* the worktree, so `context` would read the record this is
+    // about to replace. A worker that crashed without being closed leaves one behind, and
+    // re-dispatching that task would file the new worker under the hub that ran the old.
+    let ctx = context_as(repo_arg, hub_arg)?;
     let status = messaging::worker_status(&worktree);
     if status.present {
         println!(

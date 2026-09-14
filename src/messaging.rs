@@ -398,27 +398,38 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
 /// it, and the MCP server the agent starts is that agent's child.
 pub const HUB_ENV: &str = "ADJUTANT_HUB";
 
+/// Which hub this invocation was *told* it is: what the caller passed (`--hub`, or the
+/// tool's `hub`), and failing that `ADJUTANT_HUB` — the process was started by a hub, so it
+/// is that hub wherever it has since wandered to.
+///
+/// This is the whole answer for a command that starts or registers a hub rather than
+/// addressing one. `adj hub` may be run from inside a worktree, and `adj worker` runs in a
+/// tab opened *at* the worktree it is about to register in: both would otherwise read a
+/// record that is either somebody else's or the one they are seconds from overwriting. A
+/// crashed worker leaves its record behind, so re-dispatching that task under the
+/// repository's own hub would file the new worker under the old one — and every report it
+/// ever sends goes to a hub that may not even be running.
+pub fn hub_id_told(explicit: Option<&str>) -> Option<String> {
+    said(explicit).or_else(|| said(std::env::var(HUB_ENV).ok().as_deref()))
+}
+
 /// Which hub this invocation is addressing, asked once and in one place.
 ///
 /// Three answers, in the order of how specific the claim is:
 ///
-/// 1. what the caller passed (`--hub`, or the tool's `hub`) — somebody said it outright;
-/// 2. `ADJUTANT_HUB` — this process was started by a hub, so it *is* that hub, wherever it
-///    has wandered to; a hub running a command inside a worker's worktree is still itself;
+/// 1. what the caller passed — somebody said it outright;
+/// 2. `ADJUTANT_HUB` — this process was started by a hub, so it *is* that hub; a hub
+///    running a command inside a worker's worktree is still itself;
 /// 3. the worker record in the worktree we are standing in — nobody said anything and
 ///    nothing launched us, so the answer is whoever dispatched this worktree.
 ///
 /// The third is what keeps `adj-report`'s promise that a worker never writes down an
 /// address. The worker's agent is told to send, not to say where; `adj work` wrote the
-/// answer into the worktree when it opened the tab, and it is read back from there.
+/// answer into the worktree when it opened the tab, and it is read back from there. It
+/// answers the question "where do I send", which is why only the commands that send, list
+/// or name an inbox ask it — `hub_id_told` is the one for the other side.
 pub fn hub_id(explicit: Option<&str>, start: Option<&Path>) -> Option<String> {
-    if let Some(hub) = said(explicit) {
-        return Some(hub);
-    }
-    if let Some(hub) = said(std::env::var(HUB_ENV).ok().as_deref()) {
-        return Some(hub);
-    }
-    worker_hub(start)
+    hub_id_told(explicit).or_else(|| worker_hub(start))
 }
 
 /// Blank is silence. An identifier that is empty or only spaces is a caller passing the
@@ -1623,6 +1634,19 @@ mod tests {
         );
         unsafe { std::env::set_var(HUB_ENV, "") };
         assert_eq!(hub_id(None, Some(worktree)).as_deref(), Some("from-record"));
+        unsafe { std::env::remove_var(HUB_ENV) };
+
+        // The record answers for the side that *addresses* a hub and never for the side
+        // that starts or registers one. `adj hub` may be typed inside a worktree and `adj
+        // worker` runs in a tab opened at the worktree it is about to register in, so
+        // reading a record there is reading somebody else's answer, or one's own from a
+        // previous life.
+        register_worker(worktree, "WID-957", Some("from-record")).unwrap();
+        assert_eq!(hub_id(None, Some(worktree)).as_deref(), Some("from-record"));
+        assert_eq!(hub_id_told(None), None);
+        unsafe { std::env::set_var(HUB_ENV, "from-env") };
+        assert_eq!(hub_id_told(None).as_deref(), Some("from-env"));
+        assert_eq!(hub_id_told(Some("from-flag")).as_deref(), Some("from-flag"));
         unsafe { std::env::remove_var(HUB_ENV) };
 
         // A worker dispatched by a repository's own hub records no identifier at all, and

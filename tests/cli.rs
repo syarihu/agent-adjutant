@@ -623,6 +623,86 @@ fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
     assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
 }
 
+/// A record left in a worktree says who dispatched *that* worktree. It must never be read
+/// by the side that starts or registers a hub.
+///
+/// A worker that crashed without being closed leaves its record behind. Re-dispatching that
+/// task under the repository's own hub would then file the new worker under the hub that ran
+/// the old one, and every report it ever sends would go to an inbox that may have no hub
+/// reading it — the silent misroute, arrived at from the other direction.
+#[test]
+fn a_record_left_in_a_worktree_never_decides_which_hub_is_being_started() {
+    let fixture = Fixture::new(CODEX);
+    let worktree = fixture.repo.parent().unwrap().join("widget-wid-957");
+    let added = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            FEATURE,
+            worktree.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let record = worktree.join(".claude").join("adjutant-worker.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({"pid": 1, "title": "WID-957", "hub": FEATURE}).to_string(),
+    )
+    .unwrap();
+
+    let from_worktree = |args: &[&str]| {
+        let out = Command::new(BIN)
+            .args(args)
+            .current_dir(&worktree)
+            .env("ADJUTANT_CONFIG", &fixture.config)
+            .env("ADJUTANT_STATE_DIR", &fixture.state)
+            .env_remove("ADJUTANT_HUB")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "adjutant {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    // `adj hub` is run from anywhere in the repository, worktrees included. Typed here it
+    // still starts the repository's own hub.
+    let launch = from_worktree(&["hub", "--dry-run"]);
+    assert!(launch.contains(&format!("claude -n {HUB}")), "{launch}");
+    assert!(!launch.contains("ADJUTANT_HUB"), "{launch}");
+    assert!(!launch.contains(FEATURE_HUB), "{launch}");
+
+    // And the dispatching pair hands on its own identity rather than the worktree's. `adj
+    // worker` matters most: its tab is opened *at* the worktree, so it would be reading the
+    // record it is a moment from overwriting.
+    let dispatched = from_worktree(&[
+        "work",
+        "--worktree",
+        worktree.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert!(!dispatched.contains("--hub"), "{dispatched}");
+
+    // The other side of the asymmetry, and the reason it is not simply "ignore the record":
+    // a command that *addresses* a hub from in here still reaches the one that dispatched
+    // this worktree, which is what a worker's report depends on.
+    let addressed: serde_json::Value =
+        serde_json::from_str(&from_worktree(&["hub-name", "--json"])).unwrap();
+    assert_eq!(addressed["hub"], FEATURE);
+    assert_eq!(addressed["hubName"], FEATURE_HUB);
+}
+
 #[test]
 fn focus_exits_one_when_no_hub_is_running() {
     let fixture = Fixture::new(QUIET);
