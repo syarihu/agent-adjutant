@@ -845,6 +845,29 @@ mod tests {
         );
     }
 
+    /// Being asked to split a subtask up is being handed a parent.
+    ///
+    /// 「サブタスクを名指しされたときは提案しない」 and 「細分化を依頼された」 both fit that
+    /// request, and read as written the exclusion wins — which would have declined to offer
+    /// exactly where the offer pays for itself, since the split is about to give that issue
+    /// children. The exclusion is about being told to *start* on a subtask.
+    #[test]
+    fn being_asked_to_split_a_subtask_up_still_earns_a_hub() {
+        let offer = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 親タスクの hub を提案する",
+        );
+        let flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("ただし「このサブタスクを割りたい」と言われたときは提案する"),
+            "the exclusion swallows the request to split a subtask up: {offer}"
+        );
+        assert!(
+            flowed.contains("除外が効くのは、そのサブタスクに**着手して**と言われたとき"),
+            "the exclusion never says which request it is about: {offer}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
