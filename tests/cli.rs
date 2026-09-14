@@ -1108,6 +1108,43 @@ fn a_relative_state_directory_is_read_from_the_checkout_not_from_where_it_was_ty
     assert!(!said.contains("/adjutant hub"), "{said}");
 }
 
+/// A hub the check could not match on is brought forward, not opened a second tab beside.
+///
+/// `hub_status` matches a record with no start time to anchor on by looking for the name in
+/// the command line, and a hub that has replaced its own no longer carries it. The claim in
+/// the tab would answer `Taken` and bring that hub forward — the same place, reached the
+/// long way round, after this side has already said it started one and exited 0 for a hub
+/// that was up the whole time.
+#[test]
+fn a_hub_the_presence_check_could_not_match_is_brought_forward_rather_than_opened_beside() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_spawn_stub_config(&fixture, &spawned);
+
+    // This process stands in for the hub: a live pid, under a name the check will not find
+    // in its command line, and **no start time** — which is what sends the check to the
+    // name and leaves the claim's own reading answering `Alive`.
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    let written = serde_json::json!({
+        "pid": std::process::id(), "hubName": "adjutant-acme-widget-renamed", "cwd": "/",
+    })
+    .to_string();
+    std::fs::write(&record, &written).unwrap();
+
+    let out = fixture.cmd(&["hub", "--tab"]);
+    let said =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("is already running"), "{said}");
+    assert!(!said.contains("new tab"), "{said}");
+    assert!(
+        !spawned.exists(),
+        "a tab was opened for a hub that was already running"
+    );
+    // And the record it found is the record it leaves.
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), written);
+}
+
 /// A record whose liveness cannot be established is not a free name, and `--tab` is the one
 /// route that would have taken it anyway.
 ///
@@ -1453,11 +1490,6 @@ fn closing_with(close: impl Into<serde_json::Value>) -> String {
     .to_string()
 }
 
-/// POSIX single-quoting, for a value going into a shell line.
-///
-/// The crate's own `sh_quote` is not reachable from an integration test. Quoting matters
-/// here for the same reason it matters in the tool: a `TMPDIR` with a space in it is the
-/// machine's business, not a defect in what is under test.
 /// A hub record that is there and is not a record. Both readings of it — the one behind
 /// `present` and the one behind a claim — have to meet it, so it is written as bytes rather
 /// than as a JSON document with something wrong inside.
@@ -1495,6 +1527,11 @@ fn write_spawn_stub_config(fixture: &Fixture, spawned: &Path) {
     .unwrap();
 }
 
+/// POSIX single-quoting, for a value going into a shell line.
+///
+/// The crate's own `sh_quote` is not reachable from an integration test. Quoting matters
+/// here for the same reason it matters in the tool: a `TMPDIR` with a space in it is the
+/// machine's business, not a defect in what is under test.
 fn shell_quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }

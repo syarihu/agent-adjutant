@@ -934,14 +934,17 @@ pub fn hub(
         // for, which is not a person, is told a hub was started in a new tab and handed
         // `exit 0`, for a hub whose own claim is about to refuse it.
         //
-        // Only `CannotTell`. `Alive` is the record of a hub that is running under a name
-        // this repository no longer matches on, which the tab's claim answers by bringing
-        // that hub forward — the same thing this route would do with it.
-        if matches!(
-            messaging::hub_liveness(&ctx.repo.slug),
-            messaging::Liveness::CannotTell
-        ) {
-            return Err(messaging::hub_cannot_tell(&ctx.repo.slug));
+        // `Alive` is a hub running under a name the check above no longer matches on. The
+        // tab's own claim would bring it forward, so the hub ends up in the same place
+        // either way — but this side would have said it started one and exited 0 for a hub
+        // that was already up, which is the same untruth told to the same non-human caller.
+        // It is brought forward from here instead, and no tab is opened for it.
+        match messaging::hub_liveness(&ctx.repo.slug) {
+            messaging::Liveness::CannotTell => {
+                return Err(messaging::hub_cannot_tell(&ctx.repo.slug));
+            }
+            messaging::Liveness::Alive => return go_to_running_hub(&ctx, &status, dry_run),
+            messaging::Liveness::Gone => {}
         }
         return open_hub_tab(&ctx, repo_arg, extra, dry_run);
     }
