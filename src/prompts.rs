@@ -882,34 +882,94 @@ mod tests {
         );
     }
 
-    /// The branch a subtask's PR is on is a convention, and a source is free to set its own.
+    /// The branch a subtask's PR is on is a convention, so it is resolved rather than spelled.
     ///
-    /// Both the PR lookup and the worktree match are written against `{user}/{キー}`, which is
-    /// only the default: a source carrying its own `branchPattern` produces something else,
-    /// and `--head` is an exact match. The failure is silent in the direction that matters —
-    /// a subtask with a PR and a worktree is listed as having neither, which is the reading
-    /// the caveat right below already warns against.
+    /// Both the PR lookup and the worktree match were written against `{user}/{キー}`, which is
+    /// only the default: a source carrying its own `branchPattern` produces something else, and
+    /// `--head` is an exact match, so a subtask with a PR and a worktree was listed as having
+    /// neither. Matching on 「ブランチ名にキーが入っているか」 instead traded that for the
+    /// opposite error — `ALPHA-1` is a substring of `ALPHA-10`, so a subtask picks up its
+    /// neighbour's worktree, which is worse: it reads as started work and the number beside it
+    /// disappears. The convention has one owner, and `adj worktree-path` is who answers for it —
+    /// the same call 「3. worktree を作る」 makes, so the expectation and the real branch come
+    /// out of one place.
     #[test]
-    fn a_source_with_its_own_branch_pattern_is_not_read_as_having_no_pull_request() {
+    fn a_subtask_s_branch_is_resolved_from_the_convention_rather_than_spelled_out() {
         let raw = find("adj-hub").unwrap().raw_content;
         let fetch = step(raw, "### 親の下を引く");
         let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            fetch_flowed.contains("独自の`branchPattern`を持つソースも同じ"),
-            "the exact-match PR lookup is presented as complete: {fetch}"
+            fetch_flowed.contains("ブランチは子ごとに解決する"),
+            "the branch is still assumed to have one shape for every child: {fetch}"
         );
-        // The fallback search is not the answer, and saying so is what stops a reader from
-        // treating the caveat as already handled.
         assert!(
-            fetch_flowed.contains("あれが見るのはタイトルと本文で、ブランチ名ではない"),
+            fetch_flowed.contains("adjworktree-path--name"),
+            "nothing resolves a child's branch from the convention: {fetch}"
+        );
+        // Linear is the exception the source recipe already carved out: its branch is a field
+        // on the issue, not a pattern, so running it through the convention invents a name the
+        // tracker will never show anyone.
+        assert!(
+            fetch_flowed.contains("`linear`だけは打たない"),
+            "a Linear child's branch is rebuilt instead of read: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("`gitBranchName`を落とさない"),
+            "the Linear fetch drops the field its branch comes from: {fetch}"
+        );
+        // And the resolved value is what the lookup is given. Leaving the literal
+        // `{user}/{サブタスクのキー}` in the command keeps the exact-match defect while the
+        // paragraph above claims it is fixed.
+        assert!(
+            fetch_flowed.contains("--head'{解決したブランチ}'"),
+            "the PR lookup still spells the branch out by hand: {fetch}"
+        );
+        // The remaining gap is now only the PR whose branch left the convention entirely. Kept
+        // because the caveat is what stops 「PR が無い」 being read as 「未着手」.
+        assert!(
+            fetch_flowed.contains("`--search`が見るのはタイトルと本文で、ブランチ名ではない"),
             "the fallback search is left looking like it covers the gap: {fetch}"
         );
-        // The collector matches worktrees the same way and was handed the same literal form.
+
+        // The collector matches worktrees against the same resolved value, and by equality.
         let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
         let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            brief_flowed.contains("この形は既定であって決まりではないのだ"),
-            "the collector matches worktrees against one hard-coded branch shape: {brief}"
+            brief_flowed.contains("解決したブランチとの文字列一致"),
+            "the collector matches worktrees by something other than the resolved branch: {brief}"
+        );
+        // Named as a ban, because containment is the reading a reader arrives at on their own
+        // once the shapes stop being uniform — and it is wrong in the silent direction.
+        assert!(
+            brief_flowed.contains("キーが入っているかで探さないのだ"),
+            "the collector may match a worktree by key containment: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("`ALPHA-1`が`ALPHA-10`"),
+            "nothing says why containment matching is wrong: {brief}"
+        );
+        // `git worktree list --porcelain` prints `branch refs/heads/x`, so equality against a
+        // short branch name matches nothing at all on the machine with no convention tool.
+        assert!(
+            brief_flowed.contains("`refs/heads/`が付いていたら外してから比べる"),
+            "the equality match is defeated by the ref prefix git prints: {brief}"
+        );
+        // Equality has one failure mode of its own: a worktree created under a convention this
+        // resolution does not reproduce now matches nothing, silently. Reporting the leftovers
+        // is the only signal that proctor and `worktree-path` have drifted apart.
+        assert!(
+            brief_flowed.contains("どのサブタスクにも当たらなかったworktreeは"),
+            "a worktree matching no child is dropped, hiding a drifted convention: {brief}"
+        );
+        // The row is the only channel to the hub, so the resolved branch has to travel on it —
+        // as a column of the row, not merely as a word in the prose beside it.
+        assert!(
+            brief_flowed.contains("{status}|{assigneeまたは-}|{解決したブランチ}|{title}"),
+            "the row the collector returns has no column for the resolved branch: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("**`{解決したブランチ}`も必ず入れるのだ**"),
+            "the branch column is optional, so it is the one that gets dropped: {brief}"
         );
     }
 
