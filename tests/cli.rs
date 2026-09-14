@@ -786,6 +786,23 @@ fn a_record_that_cannot_be_read_refuses_to_guess_which_hub_to_address() {
         fixture.json(&["pending", "--json", "--hub", FEATURE])["count"],
         1
     );
+
+    // A command that never asks which hub is not stopped by the same record. `ide` and
+    // `worktree-path` read the settings and the checkout and nothing else, and neither
+    // takes `--hub` — so routing them through the addressing path would strand them with
+    // advice they cannot take, on exactly the worktree somebody is trying to open.
+    for args in [
+        vec!["ide", "--worktree", worktree.to_str().unwrap(), "--dry-run"],
+        vec!["worktree-path", "--name", "wid-957"],
+    ] {
+        let ran = from_worktree(&args);
+        assert!(
+            ran.status.success(),
+            "{} stopped on a record it never reads: {}",
+            args[0],
+            String::from_utf8_lossy(&ran.stderr)
+        );
+    }
 }
 
 /// Every flag `work` hands the tab keeps its own description, and `--hub` did not steal one.

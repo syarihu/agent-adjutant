@@ -41,6 +41,16 @@ fn context_as(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context, 
     )?)
 }
 
+/// The same, for a command that needs the settings and the checkout and no hub at all.
+///
+/// `ide` and `worktree-path` never read a hub field, and neither takes `--hub`. Sending them
+/// through the addressing path would make an unreadable worker record stop them — and an
+/// unreadable record is exactly the state of the worktree somebody is trying to open an
+/// editor on. Strictness belongs where a wrong answer misroutes something.
+fn context_without_hub(repo_arg: Option<&str>) -> Result<Context, String> {
+    context_of(repo::resolve(repo_arg, None)?)
+}
+
 fn context_of(repo: RepoInfo) -> Result<Context, String> {
     // By `owner/name` and nothing else. The hub identifier moves the address; it must not
     // move the lookup, or asking for a second hub of a registered repository would answer
@@ -637,7 +647,7 @@ pub fn close(
 }
 
 pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result<(), String> {
-    let ctx = context(repo_arg, None)?;
+    let ctx = context_without_hub(repo_arg)?;
     let worktree = config::expand_home(worktree).to_string_lossy().to_string();
     let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {
         return Err("ide is not set: put your editor command in the config's ide key".to_string());
@@ -717,7 +727,7 @@ pub struct WorktreeArgs<'a> {
 }
 
 pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo, None)?;
+    let ctx = context_without_hub(args.repo)?;
     let layout = ctx
         .settings
         .worktree_pattern
