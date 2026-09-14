@@ -799,6 +799,18 @@ mod tests {
             flowed.contains("`node_id`を渡す"),
             "nothing says what the node id is collected for: {fetch}"
         );
+        // And spending it is not optional. The call was introduced as 「ボード上のステータスも
+        // 要るなら」, while the collector's row demands a project item id and 「2. 着手を宣言する」
+        // says not to fetch one twice — so a collector that reads this as optional hands back
+        // `-` and the claim step pays for a GraphQL round trip it was told it would not need.
+        assert!(
+            flowed.contains("`nodes(ids:)`を1本打つ"),
+            "the board call a `github-project` row depends on is optional: {fetch}"
+        );
+        assert!(
+            flowed.contains("**projectitemid**がそこからしか出ず"),
+            "nothing says the item id has no other source: {fetch}"
+        );
         // A list cut off at the page boundary is indistinguishable from a short one, which
         // is the same reason this file gives for raising the board search's `--limit`.
         assert!(

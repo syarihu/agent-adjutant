@@ -336,8 +336,10 @@ PR は分岐しない。
   この列が無いと他人の担当分が「次の候補」に番号付きで並ぶ。
   **`--paginate` も落とさない** — 途中で切れた一覧は、短い一覧と見分けが付かない。
 - **`github-project`** — サブ issue の引き方は `github` と同じ。親子関係は issue 側の属性で、
-  ボードの持ちものではない。ボード上のステータスも要るなら、「Task sources」の
-  `github-project` にある `nodes(ids:)` の1本に上の `node_id` を渡す。**ここに写さない。**
+  ボードの持ちものではない。**そのうえで「Task sources」の `github-project` にある
+  `nodes(ids:)` を1本打つ** — ステータスだけでなく **project item id** がそこからしか出ず、
+  機械行はそれを要求していて、「2. 着手を宣言する」は二度引かないと書いてある。上の `node_id` を渡す。
+  **ここに写さない。**
 - **`jira`** — `searchJiraIssuesUsingJql` に `parent = {親キー}`。**`ORDER BY` を付けない** —
   並べ替えた順を「次にやる順」と読まれるため。`fields` は
   `["summary","status","issuetype","updated","assignee"]` に絞る（「Task sources」の `jira`）。
