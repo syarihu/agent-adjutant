@@ -818,6 +818,62 @@ fn hub_env(ctx: &Context) -> Vec<(String, String)> {
     env
 }
 
+/// Open a tab and start this repository's hub in it, rather than becoming it here.
+///
+/// What the tab runs is `adj hub` — this same command without `--tab`. The claim is left to
+/// it, and that is the whole reason the split exists: a claim records the claiming process's
+/// PID, so claiming here would write down a launcher that is about to exit, for a hub that
+/// is a different process in another tab. Every later liveness check would then be asking
+/// about the wrong one, and the first `--hub` that answered "gone" would start a second hub
+/// beside the live one. See the comment above the claim in `hub`.
+///
+/// The *resolved* identifier goes on the line rather than the flag, for the reason `work`
+/// spells out: the caller most likely to open a tab for a hub is another hub, running this
+/// as its own child with no flag at all and carrying the answer in its environment — and
+/// that environment does not survive the trip through the terminal.
+fn open_hub_tab(
+    ctx: &Context,
+    repo_arg: Option<&str>,
+    extra: &[String],
+    dry_run: bool,
+) -> Result<(), String> {
+    let mut parts = vec![exe_path(), "hub".to_string()];
+    if let Some(repo) = repo_arg {
+        parts.push("--repo".to_string());
+        parts.push(repo.to_string());
+    }
+    // One argument rather than two, as in `work`: an identifier that starts with a dash
+    // reaches here from `ADJUTANT_HUB`, where no flag parser has seen it.
+    if let Some(hub) = &ctx.repo.hub {
+        parts.push(format!("--hub={hub}"));
+    }
+    // The separator is put back because clap takes everything after it as the trailing
+    // argument, and `strip_separator` at the far end takes it off again.
+    if !extra.is_empty() {
+        parts.push("--".to_string());
+        parts.extend(extra.iter().cloned());
+    }
+    let name_it = title_command(&ctx.settings, &ctx.repo.hub_name);
+    let done = terminal::spawn(
+        ctx.settings.terminal.spawn.as_deref(),
+        &SpawnRequest {
+            // The main checkout, never a worktree: a hub that cannot cut worktrees is not a
+            // hub, and this is the one thing `hub` moves to before it starts.
+            cwd: &ctx.repo.main,
+            title: &ctx.repo.hub_name,
+            command: &crate::template::sh_join(&parts),
+            title_command: name_it.as_deref(),
+        },
+        dry_run,
+    )?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(())
+}
+
 /// Three things go wrong when a person types the agent command by hand, and this exists to
 /// take all three away: the session name has to match what a worker will look for, the hub
 /// has to run in the main checkout or it cannot cut worktrees, and a second hub for the same
@@ -825,10 +881,15 @@ fn hub_env(ctx: &Context) -> Vec<(String, String)> {
 ///
 /// The process registers itself and then *replaces* itself with the agent, so the recorded
 /// PID belongs to the live agent rather than to a launcher that has already exited.
+///
+/// `tab` opens a tab and starts it there instead, for a caller that is not a person sitting
+/// at an empty one — nothing else about the decision changes, including which of the two
+/// tabs claims the record.
 pub fn hub(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
     extra: &[String],
+    tab: bool,
     dry_run: bool,
 ) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
@@ -848,6 +909,12 @@ pub fn hub(
     let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
     if status.present {
         return go_to_running_hub(&ctx, &status, dry_run);
+    }
+    // Below the presence check, and deliberately: one hub per address is the invariant, and
+    // opening a tab for one that is already up would break it in the one way nothing later
+    // repairs — two sessions answering to the same name, with the record naming one of them.
+    if tab {
+        return open_hub_tab(&ctx, repo_arg, extra, dry_run);
     }
     let mut command = runner::hub_command(
         ctx.settings.hub_runner.as_deref(),

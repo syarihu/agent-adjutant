@@ -268,6 +268,9 @@ enum Commands {
         /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
+        /// Open a tab and start it there, instead of becoming it in this one
+        #[arg(long)]
+        tab: bool,
         /// Extra arguments appended to the agent command
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -474,11 +477,13 @@ pub fn run() -> ! {
             repo,
             hub,
             dry_run,
+            tab,
             extra,
         } => cmd::hub(
             repo.as_deref(),
             hub.as_deref(),
             &strip_separator(extra),
+            *tab,
             *dry_run,
         )
         .map(|_| 0),

@@ -927,6 +927,147 @@ fn the_launcher_names_the_session_and_lands_in_the_main_checkout() {
     );
 }
 
+/// Nothing could open a tab for a hub, so only a person at an empty one could start it.
+///
+/// `--tab` is the route for a caller that is not sitting in a spare tab — the same command,
+/// opened rather than exec'd. Without it, `hub` is exactly what it was: this tab becomes the
+/// hub, and no terminal is opened at all.
+#[test]
+fn a_hub_is_opened_in_a_new_tab_only_when_asked_for_one() {
+    let fixture = Fixture::new(QUIET);
+
+    // The default. It prints the agent command to run here, and never a command that would
+    // open something: `adj hub` appearing in this output would mean the tab route leaked
+    // into the one people already use.
+    let here = fixture.ok(&["hub", "--dry-run"]);
+    assert!(here.contains(&format!("claude -n {HUB}")), "{here}");
+    assert!(!here.contains("/adjutant hub"), "{here}");
+
+    // And the new one. The tab is handed the launcher, not the agent, for the same reason
+    // `work` hands a tab `adjutant worker`: whoever ends up being the hub has to be the
+    // process that wrote down its own PID.
+    let tab = fixture.ok(&["hub", "--tab", "--dry-run"]);
+    assert!(tab.contains("/adjutant hub"), "{tab}");
+    assert!(!tab.contains(&format!("claude -n {HUB}")), "{tab}");
+    // In the main checkout, which is where a hub has to be to cut a worktree at all.
+    assert!(
+        tab.contains(&fixture.repo.to_string_lossy().to_string()),
+        "{tab}"
+    );
+    // The repository's own hub has no identifier to hand down, so nothing is added.
+    assert!(!tab.contains("--hub"), "{tab}");
+}
+
+/// The side that opens the tab claims nothing.
+///
+/// A claim records the claiming process's PID, and the process that is going to be the hub
+/// is the one in the new tab. Claiming here would name a launcher that exits a moment later,
+/// and from then on every check would call a live hub gone and start another beside it.
+///
+/// Run for real rather than dry, because a dry run claims nothing either way and so could
+/// not tell the two apart. The terminal is a stub that only writes down what it was handed.
+#[test]
+fn opening_a_tab_for_a_hub_leaves_the_claim_to_the_tab() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    // `{cwd}` is what tells `spawn` this template takes arguments rather than a shell line,
+    // so `{command}` arrives as words for `echo` instead of a `cd … && …` chain that would
+    // start a real hub inside the test suite.
+    std::fs::write(
+        &fixture.config,
+        format!(
+            r#"{{"notification": "true",
+                 "terminal": {{"spawn": "echo {{cwd}} {{command}} > {}"}},
+                 "repos": {{"acme/widget": {{"taskSource": "github",
+                            "issueRepo": "acme/widget"}}}}}}"#,
+            spawned.display()
+        ),
+    )
+    .unwrap();
+
+    let out = fixture.ok(&["hub", "--tab"]);
+    assert!(out.contains("new tab"), "{out}");
+    let handed = std::fs::read_to_string(&spawned).expect("the terminal was never asked");
+    assert!(handed.contains("/adjutant hub"), "{handed}");
+    assert!(
+        handed.contains(&fixture.repo.to_string_lossy().to_string()),
+        "{handed}"
+    );
+
+    // The record belongs to whoever ends up running the agent, and that is nobody yet.
+    assert!(
+        !fixture
+            .state
+            .join("hubs")
+            .join(format!("{SLUG}.json"))
+            .exists(),
+        "the opening side claimed the hub: {handed}"
+    );
+}
+
+/// One hub per address, whichever route is taken.
+///
+/// The presence check comes first and answers both routes the same way: bring the tab that
+/// exists forward. Opening a second one would leave two sessions answering to one name, with
+/// the record naming whichever of them claimed last.
+#[test]
+fn a_hub_that_is_already_running_is_brought_forward_rather_than_opened_again() {
+    let fixture = Fixture::new(QUIET);
+    // This very process stands in for the running hub, the same way the wake test does it:
+    // both anchors have to be real, so the recorded name is this executable's and the start
+    // time is the one the system reports for it.
+    let name = std::env::current_exe()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    let written = serde_json::json!({
+        "pid": std::process::id(), "hubName": name, "cwd": "/",
+        "psStarted": ps_started(std::process::id()),
+    })
+    .to_string();
+    std::fs::write(&record, &written).unwrap();
+
+    let out = fixture.ok(&["hub", "--tab", "--dry-run"]);
+    assert!(out.contains("is already running"), "{out}");
+    assert!(!out.contains("/adjutant hub"), "{out}");
+    // And the record it found is the record it leaves.
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), written);
+}
+
+/// The tab is opened for one hub of the repository, and has to be told which.
+///
+/// The identifier cannot ride the environment across: the terminal is handed a command line
+/// and nothing else. So it goes onto the line — and it is the *resolved* one, because the
+/// caller this exists for is a hub opening a tab as its own child, passing no flag at all.
+#[test]
+fn a_tab_opened_for_a_hub_is_told_which_hub_it_is_opening() {
+    let fixture = Fixture::new(QUIET);
+    let asked = fixture.ok(&["hub", "--tab", "--hub", FEATURE, "--dry-run"]);
+    assert!(asked.contains(&format!("--hub={FEATURE}")), "{asked}");
+    // Named for the address it will answer at, so the tab is findable as that hub.
+    assert!(asked.contains("adjutant-acme-widget-wid-957"), "{asked}");
+
+    let inherited = Command::new(BIN)
+        .args(["hub", "--tab", "--dry-run"])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env("ADJUTANT_HUB", FEATURE)
+        .output()
+        .unwrap();
+    let line = String::from_utf8_lossy(&inherited.stdout);
+    assert!(line.contains(&format!("--hub={FEATURE}")), "{line}");
+
+    // Extra arguments survive the trip too: they are the trailing argument at both ends, so
+    // the separator has to go back on the line the tab is handed.
+    let extra = fixture.ok(&["hub", "--tab", "--dry-run", "--", "--resume"]);
+    assert!(extra.contains("hub -- --resume"), "{extra}");
+}
+
 const CODEX: &str = r#"{"notification": "true",
     "defaults": {"ide": "code", "agentRunner": "codex exec {prompt}"},
     "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
