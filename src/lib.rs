@@ -167,7 +167,7 @@ enum Commands {
         worktree: String,
         #[arg(long, default_value = "")]
         title: String,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
         /// What the worker is told on startup
@@ -187,7 +187,7 @@ enum Commands {
         worktree: String,
         #[arg(long, default_value = "")]
         title: String,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
         #[arg(
@@ -265,7 +265,7 @@ enum Commands {
         repo: Option<String>,
         #[arg(long)]
         dry_run: bool,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
         /// Extra arguments appended to the agent command

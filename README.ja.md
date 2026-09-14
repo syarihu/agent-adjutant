@@ -77,7 +77,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 リポジトリ固有の情報を扱うコマンドは `--repo owner/name` を受け取ります。省略した場合は、カレントディレクトリ（worktree 含む）の git origin リモートからリポジトリを自動判定します。
 
-1つのリポジトリに hub を複数立てられます。`--hub <id>` はそのどれを指すかを表します。動くのは宛先（セッション名・受信箱・レコード）だけで、設定は変わりません。設定は引き続き `owner/name` で引かれるので、登録済みリポジトリの2つめの hub でも taskSources / issueKeys / verify はそのまま使えます。worker の worktree の外では、`--hub` を付けなければ、これまでと同じアドレスのリポジトリ自身の hub になります。
+1つのリポジトリに hub を複数立てられます。`--hub <id>` はそのどれを指すかを表します。動くのは宛先（セッション名・受信箱・レコード）だけで、設定は変わりません。設定は引き続き `owner/name` で引かれるので、登録済みリポジトリの2つめの hub でも taskSources / issueKeys / verify はそのまま使えます。`--hub` を付けなければ、これまでと同じアドレスのリポジトリ自身の hub になります。ただし `adj work` が開いた worktree の中でだけは、hub を**指す**コマンドがその worktree のレコードから識別子を読みます。何かを**起こす**側（`hub` / `work` / `worker`）は読みません。worktree の中から立てた hub も、タブが開かれた worktree に登録する worker も、他人のレコードを読むことになるからです。
 
 識別子を毎回書き直す必要はありません。`adj hub --hub <id>` はエージェントを起動するコマンドラインに `ADJUTANT_HUB` を載せるので、そのエージェントが叩く `adj` も MCP ツールも自分自身の hub を指します。`adj work` は開いた worktree に識別子を書き込むので、worker は宛先を書かずに送っても自分を出した hub に届きます。
 

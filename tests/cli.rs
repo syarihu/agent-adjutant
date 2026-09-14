@@ -844,6 +844,28 @@ fn every_flag_the_help_lists_describes_itself_and_not_its_neighbour() {
         "{focus}"
     );
     assert!(line(&focus, "--quiet").contains("Say nothing"), "{focus}");
+
+    // And the help says which of the two answers the flag defaults to. A command that
+    // *starts* something resolves the identifier without opening a worktree's record — a
+    // hub launched from inside a worktree, and a worker registering in the one its tab was
+    // opened at, would each read somebody else's. Promising the record there is a promise
+    // the code deliberately breaks, and it is the direction of this change that it breaks.
+    for command in ["hub", "work", "worker"] {
+        let help = fixture.ok(&[command, "--help"]);
+        assert!(
+            !line(&help, "--hub <HUB>").contains("dispatched this worktree"),
+            "{command} offers the worktree's record as its default, and never reads it:\n{help}"
+        );
+    }
+    for command in [
+        "send", "pending", "tell", "focus", "hub-stop", "hub-name", "config",
+    ] {
+        let help = fixture.ok(&[command, "--help"]);
+        assert!(
+            line(&help, "--hub <HUB>").contains("dispatched this worktree"),
+            "{command} reads the worktree's record and does not say so:\n{help}"
+        );
+    }
 }
 
 /// An identifier that starts with a dash still reaches the worker.
