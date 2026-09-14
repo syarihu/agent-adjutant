@@ -102,6 +102,18 @@ Every command that answers *about a repository* takes `--repo owner/name` (`outb
 and `install-mcp` do not — they are not about one); without it the repository is read from
 the origin remote of whichever checkout you are standing in, worktrees included.
 
+A repository can have more than one hub. `--hub <id>` names which one: it moves the address
+— the session name, the inbox, the record — and nothing else. The configuration is still
+looked up under `owner/name`, so a second hub of a registered repository keeps its task
+sources, issue keys and verify command. Without `--hub` you get the repository's own hub, at
+exactly the address it has always had.
+
+Nothing has to repeat the identifier afterwards. `adj hub --hub <id>` puts `ADJUTANT_HUB` on
+the command line it starts the agent with, so every `adj` call and every MCP tool call that
+agent makes addresses the hub it is; and `adj work` writes the identifier into the worktree
+it opens, so a worker reporting from there reaches the hub that dispatched it without being
+told where to send.
+
 `instructions` is five lines. The 1500 lines of procedure matter only while a hub or a worker
 is running, and both fetch them on purpose; the one thing worth always-on context is that a
 worker is allowed to report a bug it did not come to fix.
