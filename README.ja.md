@@ -50,7 +50,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 | コマンド | 説明 |
 | --- | --- |
-| `adjutant hub` | このリポジトリの hub をメインチェックアウトで1つ起動 |
+| `adjutant hub [--tab]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動） |
 | `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
