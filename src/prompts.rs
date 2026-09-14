@@ -689,7 +689,9 @@ mod tests {
             "the offer fires on a subtask, where the person has already chosen: {offer}"
         );
         // Approval opens a tab and nothing else — the identifier spelled as the tracker
-        // spells it, since that string is the address the inbox and the record are filed at.
+        // spells it. Not because the address moves with it (`slug_for` folds the identifier
+        // before it digests it), but because that string is what the hub that lands there
+        // shows, writes into a brief, and matches back against the config.
         assert!(
             flowed.contains("adjhub--tab--hub"),
             "the offer never says how to stand the hub up: {offer}"

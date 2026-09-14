@@ -1398,7 +1398,8 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
 
 - 対象リポジトリ: {owner/repo}
 - 親タスク: {親のキー}（トラッカーは {type}、issue の在処は {issueRepo / project / cloudId / team}
-  なのだ）
+  なのだ）。**`github` 系の「親の repo」は `issueKeys` の逆引きで出た issue の repo なのだ** —
+  ボードの `project` はステータスを引くときにしか使わないのだ
 - **親タスクのタイトルと URL は渡していないのだ。そこも自分で引くのだ** — 「親の下を引く」の
   「親そのものを引く」のとおりなのだ（`linear` は、下を引くのに要る親の id もそこで取るのだ）
 - 設定: `adjutant_config`（無ければ `adj config --repo {owner/repo}`）で解決済みのものを取るのだ。
