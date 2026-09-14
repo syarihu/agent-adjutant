@@ -419,15 +419,26 @@ mod tests {
         // and the wrong one answers with whatever task happens to hold that number.
         assert!(
             intake.contains("トラッカーとrepoはそれぞれのURLから割り出す"),
-            "the hub checks both tasks against a single tracker: {intake}"
+            "the hub checks both tasks against a single tracker"
         );
         // The reason travels with the rule. Without it the two lookups get folded back into
         // one repository the next time this paragraph is tightened, and nothing goes red:
         // the lookup succeeds, it just answers about a different task.
         assert!(
             intake.contains("エラーも出さずに"),
-            "the hub does not say why the wrong tracker is dangerous: {intake}"
+            "the hub does not say why the wrong tracker is dangerous"
         );
+        // The lookups above are named after a URL, and the 発見元 does not always have one:
+        // a report from a worktree with no brief carries a key off the branch, and a worker
+        // started on a request with no issue carries the request itself where the URL goes.
+        // Without this the hub asks back for something the reporter cannot produce, or
+        // assembles a URL out of a number and sends the next worker somewhere that is not
+        // there.
+        assert!(
+            intake.contains("発見元にURLが無いこともある"),
+            "the hub takes every report as naming its 発見元 by URL"
+        );
+
         let placement: String = step(hub, "### Step 3 — 起票")
             .chars()
             .filter(|c| !c.is_whitespace())
