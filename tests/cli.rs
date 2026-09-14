@@ -703,6 +703,91 @@ fn a_record_left_in_a_worktree_never_decides_which_hub_is_being_started() {
     assert_eq!(addressed["hubName"], FEATURE_HUB);
 }
 
+/// A record that cannot be read is not a record that says nothing.
+///
+/// Reading it as "nobody dispatched this worktree" addresses the repository's own hub, and
+/// a worker whose worktree *was* dispatched then files every report it ever writes into an
+/// inbox that may have no hub reading it. Both ends refuse instead: the CLI the worker's
+/// agent types, and the MCP tools it calls.
+#[test]
+fn a_record_that_cannot_be_read_refuses_to_guess_which_hub_to_address() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = fixture.repo.parent().unwrap().join("widget-wid-957");
+    let added = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            FEATURE,
+            worktree.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let record = worktree.join(".claude").join("adjutant-worker.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    // Cut off mid-string: a write that was interrupted leaves exactly this.
+    std::fs::write(&record, r#"{"pid": 1, "title": "WID-957", "hub": "wid-9"#).unwrap();
+
+    let from_worktree = |args: &[&str]| {
+        Command::new(BIN)
+            .args(args)
+            .current_dir(&worktree)
+            .env("ADJUTANT_CONFIG", &fixture.config)
+            .env("ADJUTANT_STATE_DIR", &fixture.state)
+            .env_remove("ADJUTANT_HUB")
+            .output()
+            .unwrap()
+    };
+
+    let refused = from_worktree(&["send", "--subject", "s", "--body", "b"]);
+    assert_eq!(refused.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(said.contains("worker record"), "{said}");
+    // The assertion the fix is for: not filed under the repository's own hub instead.
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+
+    // The same refusal on the way in through the server, which is how a worker's agent
+    // actually sends. `cwd` and not the server's own directory: one server answers about
+    // whichever checkout the session is sitting in.
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({"name": "adjutant_send", "arguments": {
+                "from": "wid-957-worker",
+                "subject": "s",
+                "body": "b",
+                "cwd": worktree.to_string_lossy(),
+            }}),
+        )],
+    );
+    assert_eq!(replies[0]["result"]["isError"], true);
+    let text = replies[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("worker record"), "{text}");
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+
+    // And the way out, which is why this is an error rather than a dead end: what the
+    // caller says outright is settled before the record is opened at all.
+    let sent = from_worktree(&["send", "--hub", FEATURE, "--subject", "s", "--body", "b"]);
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    assert_eq!(
+        fixture.json(&["pending", "--json", "--hub", FEATURE])["count"],
+        1
+    );
+}
+
 /// Every flag `work` hands the tab keeps its own description, and `--hub` did not steal one.
 ///
 /// `--hub` was inserted between a description and the flag it described, so clap read the

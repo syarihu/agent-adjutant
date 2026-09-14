@@ -59,7 +59,7 @@ fn context_of(repo: RepoInfo) -> Result<Context, String> {
 /// `repo::resolve` with whatever it was given: deciding between the flag, the environment
 /// and the worktree is one rule, and a second copy of it is a second answer.
 fn resolve(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<RepoInfo, String> {
-    repo::resolve(repo_arg, messaging::hub_id(hub_arg, None).as_deref())
+    repo::resolve(repo_arg, messaging::hub_id(hub_arg, None)?.as_deref())
 }
 
 // ── hub-name ─────────────────────────────────────────────────────────

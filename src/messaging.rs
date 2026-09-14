@@ -428,8 +428,16 @@ pub fn hub_id_told(explicit: Option<&str>) -> Option<String> {
 /// answer into the worktree when it opened the tab, and it is read back from there. It
 /// answers the question "where do I send", which is why only the commands that send, list
 /// or name an inbox ask it — `hub_id_told` is the one for the other side.
-pub fn hub_id(explicit: Option<&str>, start: Option<&Path>) -> Option<String> {
-    hub_id_told(explicit).or_else(|| worker_hub(start))
+///
+/// There is a fourth outcome, and it is an error rather than a fourth answer: a record that
+/// is there and cannot be read. See `worker_hub`. Being told outright is settled before the
+/// record is opened at all, so a damaged record never takes the way out with it — `--hub`,
+/// or `ADJUTANT_HUB`, still addresses whatever the caller names.
+pub fn hub_id(explicit: Option<&str>, start: Option<&Path>) -> Result<Option<String>, String> {
+    match hub_id_told(explicit) {
+        told @ Some(_) => Ok(told),
+        None => worker_hub(start),
+    }
 }
 
 /// Blank is silence. An identifier that is empty or only spaces is a caller passing the
@@ -448,10 +456,57 @@ fn said(value: Option<&str>) -> Option<String> {
 /// directories down inside a worktree gets the same answer as one run at its root, and a
 /// main checkout answers with itself — where there is no worker record, which is the
 /// correct "nobody dispatched me".
-fn worker_hub(start: Option<&Path>) -> Option<String> {
-    let worktree = current_worktree(start)?;
-    let record = read_json(&worker_record_path(Path::new(&worktree)))?;
-    said(record.get("hub").and_then(Value::as_str))
+///
+/// No record and an unreadable one are kept apart, because they are opposite answers. No
+/// record means nobody dispatched this worktree and the repository's own hub is right. A
+/// record that cannot be read means somebody did dispatch it and the address has been lost:
+/// answering the repository's own hub there is the silent misroute this whole arrangement
+/// exists to prevent, with every report the worker files landing in an inbox that may have
+/// no hub reading it. So it is raised, and the caller can still say where to send.
+///
+/// `read_worker` draws the same line for the same reason and is deliberately not reused:
+/// it also insists on a usable pid, which is its caller's question — whether a worktree may
+/// be taken apart — and has nothing to do with where a report goes.
+fn worker_hub(start: Option<&Path>) -> Result<Option<String>, String> {
+    let Some(worktree) = current_worktree(start) else {
+        return Ok(None);
+    };
+    let path = worker_record_path(Path::new(&worktree));
+    // `try_exists` rather than `exists`, which answers "no" to every error it meets — and
+    // "no" here is the answer that loses the address.
+    match path.try_exists() {
+        Ok(false) => return Ok(None),
+        Err(e) => return Err(unreadable_record(&path, &e.to_string())),
+        Ok(true) => {}
+    }
+    let Some(record) = read_json(&path) else {
+        return Err(unreadable_record(
+            &path,
+            "it is not the JSON this tool writes",
+        ));
+    };
+    let Some(record) = record.as_object() else {
+        return Err(unreadable_record(&path, "it is not an object"));
+    };
+    match record.get("hub") {
+        // Absent is a worker the repository's own hub dispatched, which records no
+        // identifier at all. Null is read the same way rather than refused: the key is
+        // absent in what this version writes, and a record has to read the same to every
+        // other version of this tool on the machine.
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(hub)) => Ok(said(Some(hub))),
+        Some(_) => Err(unreadable_record(&path, "its hub is not a name")),
+    }
+}
+
+/// A worktree was dispatched and the record no longer says by whom. Named, because the one
+/// thing that gets someone out of it is saying the identifier themselves.
+fn unreadable_record(path: &Path, why: &str) -> String {
+    format!(
+        "cannot read the worker record at {}: {why}. It says which hub this worktree \
+         reports to; pass the identifier (--hub, or ADJUTANT_HUB) to address one anyway",
+        path.display()
+    )
 }
 
 // ── the other direction: a worker in a worktree ──────────────────────
@@ -1606,22 +1661,30 @@ mod tests {
         let worktree = worktree.as_path();
 
         // Nobody said anything and nothing dispatched this: the repository's own hub.
-        assert_eq!(hub_id(None, Some(worktree)), None);
+        assert_eq!(hub_id(None, Some(worktree)).unwrap(), None);
 
         // The record alone. This is the worker's case, and the only one where the answer
         // comes from where the caller is standing rather than from what it was told.
         register_worker(worktree, "WID-957", Some("from-record")).unwrap();
-        assert_eq!(hub_id(None, Some(worktree)).as_deref(), Some("from-record"));
+        assert_eq!(
+            hub_id(None, Some(worktree)).unwrap().as_deref(),
+            Some("from-record")
+        );
 
         // The environment beats the record. A hub running a command inside one of its
         // workers' worktrees is still itself, and reading the worktree there would have it
         // addressing a hub on the strength of where it happened to `cd`.
         unsafe { std::env::set_var(HUB_ENV, "from-env") };
-        assert_eq!(hub_id(None, Some(worktree)).as_deref(), Some("from-env"));
+        assert_eq!(
+            hub_id(None, Some(worktree)).unwrap().as_deref(),
+            Some("from-env")
+        );
 
         // And being told outright beats both.
         assert_eq!(
-            hub_id(Some("from-flag"), Some(worktree)).as_deref(),
+            hub_id(Some("from-flag"), Some(worktree))
+                .unwrap()
+                .as_deref(),
             Some("from-flag")
         );
 
@@ -1629,11 +1692,14 @@ mod tests {
         // flag passed through without a value would otherwise build an address whose
         // identifier is the empty string — a hub nobody can name a second time.
         assert_eq!(
-            hub_id(Some("   "), Some(worktree)).as_deref(),
+            hub_id(Some("   "), Some(worktree)).unwrap().as_deref(),
             Some("from-env")
         );
         unsafe { std::env::set_var(HUB_ENV, "") };
-        assert_eq!(hub_id(None, Some(worktree)).as_deref(), Some("from-record"));
+        assert_eq!(
+            hub_id(None, Some(worktree)).unwrap().as_deref(),
+            Some("from-record")
+        );
         unsafe { std::env::remove_var(HUB_ENV) };
 
         // The record answers for the side that *addresses* a hub and never for the side
@@ -1642,7 +1708,10 @@ mod tests {
         // reading a record there is reading somebody else's answer, or one's own from a
         // previous life.
         register_worker(worktree, "WID-957", Some("from-record")).unwrap();
-        assert_eq!(hub_id(None, Some(worktree)).as_deref(), Some("from-record"));
+        assert_eq!(
+            hub_id(None, Some(worktree)).unwrap().as_deref(),
+            Some("from-record")
+        );
         assert_eq!(hub_id_told(None), None);
         unsafe { std::env::set_var(HUB_ENV, "from-env") };
         assert_eq!(hub_id_told(None).as_deref(), Some("from-env"));
@@ -1653,13 +1722,74 @@ mod tests {
         // the key is absent rather than null: a record this version writes has to read the
         // same way to every other version of this tool on the machine.
         register_worker(worktree, "WID-957", None).unwrap();
-        assert_eq!(hub_id(None, Some(worktree)), None);
+        assert_eq!(hub_id(None, Some(worktree)).unwrap(), None);
         assert!(
             read_json(&worker_record_path(worktree))
                 .unwrap()
                 .get("hub")
                 .is_none()
         );
+    }
+
+    /// A record that cannot be read is not a record that says nothing.
+    ///
+    /// The two readings differ by exactly the failure this is all built to stop: falling
+    /// back to the repository's own hub in a worktree somebody dispatched sends every
+    /// report that worker files to an inbox that may have no hub reading it. So the damaged
+    /// record is raised, and the caller keeps the one way out that never touches it.
+    #[test]
+    fn a_record_that_cannot_be_read_is_not_read_as_the_repository_s_own_hub() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        let worktree = std::fs::canonicalize(dir.path()).unwrap();
+        let worktree = worktree.as_path();
+
+        // No record at all: nobody dispatched this, and the repository's own hub is the
+        // right answer. This is the reading the damaged ones must not share.
+        assert_eq!(hub_id(None, Some(worktree)).unwrap(), None);
+
+        let path = worker_record_path(worktree);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Truncated, the wrong shape, and the right shape with the wrong kind of name in
+        // it: three ways a record stops naming a hub, none of them a repository's own.
+        for damaged in [
+            "{\"pid\": 1, \"hub\": \"wid-957",
+            "[\"wid-957\"]",
+            "{\"pid\": 1, \"hub\": 957}",
+        ] {
+            std::fs::write(&path, damaged).unwrap();
+            let said = hub_id(None, Some(worktree)).unwrap_err();
+            assert!(said.contains(&path.display().to_string()), "{said}");
+
+            // And the way out, which is the reason this is an error and not a stop: being
+            // told outright is settled before the record is opened.
+            assert_eq!(
+                hub_id(Some("from-flag"), Some(worktree))
+                    .unwrap()
+                    .as_deref(),
+                Some("from-flag")
+            );
+            unsafe { std::env::set_var(HUB_ENV, "from-env") };
+            assert_eq!(
+                hub_id(None, Some(worktree)).unwrap().as_deref(),
+                Some("from-env")
+            );
+            unsafe { std::env::remove_var(HUB_ENV) };
+        }
+
+        // A hub written as null is the absent key by another name, not damage: this
+        // version writes no key at all, and a record has to read the same way to every
+        // other version of this tool on the machine.
+        std::fs::write(&path, "{\"pid\": 1, \"hub\": null}").unwrap();
+        assert_eq!(hub_id(None, Some(worktree)).unwrap(), None);
     }
 
     #[test]

@@ -242,7 +242,7 @@ fn resolve_repo(args: &Value) -> Result<repo::RepoInfo, String> {
     // resolved from it: a worker's answer is written in the worktree it is standing in, and
     // this server is started once and then asked about whichever checkout the session is
     // sitting in.
-    let hub = messaging::hub_id(args["hub"].as_str(), cwd.as_deref());
+    let hub = messaging::hub_id(args["hub"].as_str(), cwd.as_deref())?;
     repo::resolve_in(
         cwd.as_deref(),
         args["repo"].as_str().filter(|s| !s.is_empty()),
