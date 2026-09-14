@@ -329,6 +329,186 @@ mod tests {
         );
     }
 
+    /// A report carries two tasks: the one it was found in, and that one's parent.
+    ///
+    /// The report used to carry only the task the reporter was holding, and the hub decides
+    /// placement — independent issue or sub-issue — against what the report names. A worker
+    /// holding one subtask of a split-up piece of work therefore handed the hub that subtask,
+    /// and a sibling bug got hung underneath it instead of beside it, where the real parent
+    /// could never see it.
+    #[test]
+    fn a_report_carries_the_task_it_was_found_in_and_that_task_s_parent() {
+        let report = find("adj-report").unwrap().raw_content;
+        let compose = between(report, "### 2. ", "### 3. ");
+        // Matched against the step with its whitespace squeezed out, for the reason the
+        // base-branch guard above gives: the procedures are hard-wrapped, so re-wrapping a
+        // paragraph must not decide whether this holds.
+        let flowed: String = compose.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compose.contains("## 発見元"),
+            "the report body has no slot for the task the bug was found in: {compose}"
+        );
+        assert!(
+            compose.contains("## 親タスク"),
+            "the report body has no slot for that task's parent: {compose}"
+        );
+        // Which line fills which slot. The two headings alone are satisfied by a template
+        // that never says where either value comes from, and the reporter then guesses —
+        // which is the original defect with one more heading on it.
+        assert!(
+            flowed.contains("発見元は`.claude/task-brief.md`の「作業対象」行から"),
+            "the report does not say the 発見元 is the reporter's own task: {compose}"
+        );
+        // The reason the 発見元 is not re-pointed at the parent. Losing it is how the slot
+        // gets "fixed" back into the single field it was split out of.
+        assert!(
+            flowed.contains("**指示書の「親タスク」行ではない**"),
+            "the report no longer says why the 発見元 stays on the reporter's own task: {compose}"
+        );
+        assert!(
+            flowed.contains("親タスクは指示書の「親タスク」行をそのまま写す"),
+            "the report does not forward the brief's parent-task line: {compose}"
+        );
+        // A missing parent has to have a spelling, or the hub cannot tell "no parent" from
+        // "the reporter forgot" and questions every report that is not a subtask.
+        assert!(
+            flowed.contains("無ければ`-`"),
+            "the report does not say what to write when there is no parent: {compose}"
+        );
+
+        // Both sides spell the labels the same way, in both directions: the hub writes the
+        // brief line the report reads, and reads the report heading the report writes.
+        // Renaming one end without the other is what left the base-branch line unread.
+        let hub = find("adj-hub").unwrap().raw_content;
+        assert!(
+            hub.contains("- 親タスク: {parent_task}"),
+            "the brief template no longer writes the line the report is told to forward"
+        );
+        // A report whose parent is `-` is complete, not short of a field. Without this the
+        // hub asks back on every report that is not a subtask — and the reporter is told to
+        // answer nothing but `[質問]`, so that round trip lands in the middle of its task.
+        let intake: String = step(hub, "### Step 1 — 読む")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            intake.contains("`-`なのは欠落ではない"),
+            "the hub reads a report with no parent as one that is missing a field"
+        );
+        // `-` being fine is not the heading being optional. The list of fields the hub
+        // insists on is what makes a report without the heading incomplete; drop 親タスク
+        // from it and a report that never mentions a parent passes intake as complete.
+        assert!(
+            intake.contains("/発見元（依頼元がいま持っているタスク）/親タスク。"),
+            "the hub no longer requires the parent heading a complete report carries"
+        );
+        // And the missing heading has to be spelled out as a gap, because the only other
+        // reading available downstream is `-`: placement then falls to the 発見元 and the
+        // sibling bug sinks under one subtask again, which is the defect this PR fixes.
+        assert!(
+            intake.contains("見出しが丸ごと無いのは欠落"),
+            "the hub has no rule for a report whose parent heading is missing entirely"
+        );
+        assert!(
+            intake.contains("**`-`と同じには扱わない**"),
+            "the hub may read a missing parent heading as `-`, which re-files the bug wrong"
+        );
+        // Two tasks to look up, so two trackers to resolve. Reusing the 発見元's repository
+        // for the parent is the mistake the worker's plan step is already guarded against
+        // (`親タスクのURLから割り出す` above): boards carry issues from several repositories,
+        // and the wrong one answers with whatever task happens to hold that number.
+        assert!(
+            intake.contains("トラッカーとrepoはそれぞれのURLから割り出す"),
+            "the hub checks both tasks against a single tracker"
+        );
+        // The reason travels with the rule. Without it the two lookups get folded back into
+        // one repository the next time this paragraph is tightened, and nothing goes red:
+        // the lookup succeeds, it just answers about a different task.
+        assert!(
+            intake.contains("エラーも出さずに"),
+            "the hub does not say why the wrong tracker is dangerous"
+        );
+        // The lookups above are named after a URL, and the 発見元 does not always have one:
+        // a report from a worktree with no brief carries a key off the branch, and a worker
+        // started on a request with no issue carries the request itself where the URL goes.
+        // Without this the hub asks back for something the reporter cannot produce, or
+        // assembles a URL out of a number and sends the next worker somewhere that is not
+        // there.
+        assert!(
+            intake.contains("発見元にURLが無いこともある"),
+            "the hub takes every report as naming its 発見元 by URL"
+        );
+
+        let placement: String = step(hub, "### Step 3 — 起票")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            placement.contains("報告の「親タスク」"),
+            "the hub does not read the parent the report now carries"
+        );
+        // Naming the field is not using it. The whole point is which task the sub-issue
+        // decision is taken against, so the instruction has to say that much.
+        assert!(
+            placement.contains("sub-issueにするかは、報告の「親タスク」に対して決める"),
+            "the hub names the report's parent without placing the issue against it"
+        );
+        // And a report with no parent still has to be placeable, the way it was before.
+        assert!(
+            placement.contains("親タスクが`-`のときだけ、発見元に"),
+            "the hub has no rule for a report whose parent is `-`"
+        );
+
+        // The parent then keeps travelling: the brief of the issue the hub just filed
+        // carries it too, or the next worker re-derives from one subtask the design its
+        // siblings already settled — the same loss, one hop further down.
+        let dispatch: String = step(hub, "### Step 4 — 着手させる")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            dispatch.contains("「親タスク」は報告の「親タスク」をそのまま"),
+            "the new brief does not carry the parent the report reported"
+        );
+        assert!(
+            dispatch.contains("`-`なら発見元のタスク"),
+            "the new brief has nothing to fall back to when the report carries no parent"
+        );
+
+        // The worker's own summary of what it hands over names the same fields the hub
+        // asks for, and there are four of them now. This PR gave 親タスク a second meaning
+        // — the brief's parent line — so a summary still calling the reporter's own task
+        // 親タスク sends the worker to the wrong line of its brief; and one that drops the
+        // parent instead spends a `[質問]` round trip in the middle of the worker's task,
+        // which is the cost the parent heading was made required to avoid.
+        let handover: String = section(find("adj-worker").unwrap().raw_content, "## 7. ")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            handover.contains("症状・`file:line`・発見元・親タスクを揃えて渡す"),
+            "the worker summarises the hub's required fields as some other set: {handover}"
+        );
+    }
+
+    /// The span between two headings, for a section `section` cannot hold.
+    ///
+    /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
+    /// `section` — which ends at the next line starting `## ` — stops at the first line of
+    /// the template and reads none of the prose that follows it. A guard scoped that way
+    /// passes by finding nothing to object to.
+    fn between(raw: &str, from: &str, to: &str) -> String {
+        let start = format!("\n{from}");
+        let at = raw
+            .find(&start)
+            .unwrap_or_else(|| panic!("no section starting `{from}`"));
+        let rest = &raw[at + start.len()..];
+        let end = rest
+            .find(&format!("\n{to}"))
+            .unwrap_or_else(|| panic!("no section starting `{to}` after `{from}`"));
+        rest[..end].to_string()
+    }
+
     /// One numbered section of a procedure, from its heading to the next one.
     ///
     /// Section-scoped rather than whole-file: `--base` anywhere in 400 lines would satisfy
