@@ -464,17 +464,19 @@ mod tests {
             "the new brief has nothing to fall back to when the report carries no parent"
         );
 
-        // The worker's own summary of what it hands over names the same three fields the
-        // hub asks for. This PR gave 親タスク a second meaning — the brief's parent line —
-        // so a summary still calling the reporter's own task 親タスク sends the worker to
-        // the wrong line of its brief, and the two ends drift apart without failing.
+        // The worker's own summary of what it hands over names the same fields the hub
+        // asks for, and there are four of them now. This PR gave 親タスク a second meaning
+        // — the brief's parent line — so a summary still calling the reporter's own task
+        // 親タスク sends the worker to the wrong line of its brief; and one that drops the
+        // parent instead spends a `[質問]` round trip in the middle of the worker's task,
+        // which is the cost the parent heading was made required to avoid.
         let handover: String = section(find("adj-worker").unwrap().raw_content, "## 7. ")
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
         assert!(
-            handover.contains("症状・`file:line`・発見元を揃えて渡す"),
-            "the worker still summarises the hub's required fields with the old word"
+            handover.contains("症状・`file:line`・発見元・親タスクを揃えて渡す"),
+            "the worker summarises the hub's required fields as some other set: {handover}"
         );
     }
 
