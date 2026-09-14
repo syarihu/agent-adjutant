@@ -870,6 +870,44 @@ mod tests {
         );
     }
 
+    /// The candidate list the hub printed is the one the number is answered against.
+    ///
+    /// Handing the answer to 「2. タスクに着手」 alone lands in 「1. タスクを選ぶ」, which fetches
+    /// every `taskSources` entry of the repository and keeps only what is assigned to the user
+    /// or to nobody. A parent's children are collected under no such condition, so a subtask
+    /// already assigned to someone else — or one living in a repository the board does not
+    /// list — is printed as a candidate and then absent from the list the route rebuilds.
+    /// That list also numbers itself, so the numbers stop meaning the same rows.
+    #[test]
+    fn a_number_answered_to_a_parent_hub_is_read_against_the_list_it_printed() {
+        let startup = step(find("adj-hub").unwrap().raw_content, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("番号はこの一覧の行に当てる"),
+            "the number is answered against some other list: {startup}"
+        );
+        assert!(
+            flowed.contains("「1.タスクを選ぶ」で一覧を作り直さない"),
+            "the route re-runs the repository-wide selection: {startup}"
+        );
+        // The reason has to travel with the rule, or a reader who finds the selection step
+        // more thorough overrules it.
+        assert!(
+            flowed.contains("他人にアサイン済みのサブタスク"),
+            "nothing says which candidates the rebuilt list drops: {startup}"
+        );
+        // And the key alone is not enough to carry: the claim step reads an item id it is
+        // told not to fetch twice, which for this hub comes from the collector's rows.
+        assert!(
+            flowed.contains("「2.着手を宣言する」へ進み"),
+            "the route does not say where the decided key goes instead: {startup}"
+        );
+        assert!(
+            flowed.contains("収集の機械行がその行に持っているrepo・itemid"),
+            "the claim step is left to re-fetch what the collection already reported: {startup}"
+        );
+    }
+
     /// Counting a Linear parent's children starts from the key, on both routes that count.
     ///
     /// 「親の下を引く」 already says the hub holds a key and no internal id, and resolves one
