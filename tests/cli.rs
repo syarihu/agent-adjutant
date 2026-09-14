@@ -973,10 +973,15 @@ fn opening_a_tab_for_a_hub_leaves_the_claim_to_the_tab() {
     // `{cwd}` is what tells `spawn` this template takes arguments rather than a shell line,
     // so `{command}` arrives as words for `echo` instead of a `cd … && …` chain that would
     // start a real hub inside the test suite.
+    //
+    // `hubRunner` is a no-op for the same reason it is here at all: the tab route never
+    // reads it, so under test it changes nothing — but a regression that dropped the route
+    // would fall through to the exec path, and this is what stops that from starting a real
+    // agent inside the suite instead of failing.
     std::fs::write(
         &fixture.config,
         format!(
-            r#"{{"notification": "true",
+            r#"{{"notification": "true", "hubRunner": "true {{name}} {{prompt}}",
                  "terminal": {{"spawn": "echo {{cwd}} {{command}} > {}"}},
                  "repos": {{"acme/widget": {{"taskSource": "github",
                             "issueRepo": "acme/widget"}}}}}}"#,
@@ -993,6 +998,9 @@ fn opening_a_tab_for_a_hub_leaves_the_claim_to_the_tab() {
         handed.contains(&fixture.repo.to_string_lossy().to_string()),
         "{handed}"
     );
+    // And the tab is handed the command *without* the flag, or it would open a tab of its
+    // own, and that one another, and nothing would ever claim anything.
+    assert!(!handed.contains("--tab"), "{handed}");
 
     // The record belongs to whoever ends up running the agent, and that is nobody yet.
     assert!(
