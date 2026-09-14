@@ -653,6 +653,58 @@ mod tests {
         );
     }
 
+    /// Offering a scoped hub is worth doing twice and worth not doing every time.
+    ///
+    /// The offer costs a tab and an `AskUserQuestion`, so its value is entirely in when it
+    /// is *not* made: a hub that asks on every issue that happens to have children trains
+    /// the person to dismiss it, and the two occasions where it helps get dismissed with
+    /// the rest.
+    #[test]
+    fn a_scoped_hub_is_offered_for_a_parent_or_a_split_and_not_otherwise() {
+        let offer = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 親タスクの hub を提案する",
+        );
+        let flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        // Who offers. A hub that is already inside the parent has nobody to offer it to.
+        assert!(
+            flowed.contains("提案するのはrepo自身のhubだけ"),
+            "a hub already scoped to a parent offers another one: {offer}"
+        );
+        assert!(
+            flowed.contains("条件は2つだけ"),
+            "the offer has no closed set of conditions: {offer}"
+        );
+        assert!(
+            flowed.contains("親タスクそのものを名指しされた"),
+            "the offer does not cover being handed the parent itself: {offer}"
+        );
+        assert!(
+            flowed.contains("細分化を依頼された"),
+            "the offer does not cover being asked to split a task up: {offer}"
+        );
+        // The one that keeps the offer worth reading.
+        assert!(
+            flowed.contains("サブタスクを名指しされたときは提案しない"),
+            "the offer fires on a subtask, where the person has already chosen: {offer}"
+        );
+        // Approval opens a tab and nothing else — the identifier spelled as the tracker
+        // spells it, since that string is the address the inbox and the record are filed at.
+        assert!(
+            flowed.contains("adjhub--tab--hub"),
+            "the offer never says how to stand the hub up: {offer}"
+        );
+        assert!(
+            flowed.contains("キーはトラッカーの綴りのまま渡す"),
+            "the offer lets the identifier drift from the key: {offer}"
+        );
+        // Still the person's trigger. Opening a tab is not dispatching, on either side.
+        assert!(
+            flowed.contains("dispatchの引き金は人のまま"),
+            "accepting the offer starts work by itself: {offer}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so

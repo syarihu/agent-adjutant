@@ -30,6 +30,11 @@ adj hub   # git リポジトリのどこからでも（worktree の中からで�
 起動したプロセスは自分を在席簿に登録する（`exec` で入れ替わるので、記録された PID は
 このセッションそのもの）。終わるときは `adjutant hub-stop` で外す。
 
+**1枚とは限らない。** 親タスクを1つ抱えているときは、その親専用の hub を別タブに立てられる
+（`adj hub --tab --hub ALPHA-233`）。受信箱もレコードも repo 自身の hub とは分かれるので、
+並べても混ざらない。立ったあとの振る舞いは「親タスクの hub」、立てるかを勧める条件は
+「人間に話しかけられたら」の「親タスクの hub を提案する」。
+
 ## General rules
 
 - **Always use `AskUserQuestion`** when the user has to choose, select, or confirm. Never
@@ -374,6 +379,40 @@ issue の URL に直してから指示書に入れる（引き方は「既存の
 - **Issue が無いと worktree 名の素が無い。** キーから作れないので、依頼内容の短い小文字 slug
   （`login-crash` のような）を `AskUserQuestion` で提案して決め、それを `{worktreeName}` として
   「3. worktree を作る」に渡す（ブランチはいつもどおり `{user}/{name}`）。黙って即興しない。
+
+### 親タスクの hub を提案する
+
+**提案するのは repo 自身の hub だけ**（`adjutant_config` の `hub` が `null`）。識別子を持つ hub は
+もうその親の中にいるので、もう1枚勧める相手がいない。
+
+**条件は2つだけ**で、どちらかに当てはまったときにだけ `AskUserQuestion` で聞く:
+
+- **親タスクそのものを名指しされた**、かつそれがサブタスクを持っている
+- **タスクの細分化を依頼された**（この1件を割りたい、と言われた）
+
+**サブタスクを名指しされたときは提案しない。** その人はもう何をやるかを決めていて、hub を1枚
+増やす話ではない。サブを持つ issue を見るたびに聞けば、うるさくなって無視される — タブが
+増えるのは、頼まれていないところで勝手にやっていい種類の副作用ではない（「依頼が届いたら」の
+Step 1 と裏表）。
+
+サブを持つかの確認は1回で済ませる。ソースの `type` ごとに:
+
+- `github` / `github-project` — `gh api repos/{repo}/issues/{番号} --jq '.sub_issues_summary.total'`
+- `jira` — `searchJiraIssuesUsingJql` に `parent = {キー}` と `searchResultMode: "count"`
+- `linear` — `mcp__linear__list_issues` に親の id を渡して件数を見る
+
+承認されたら、**タブを開くだけ**:
+
+```bash
+adj hub --tab --hub '{親のキー}'
+```
+
+- **キーはトラッカーの綴りのまま渡す**（`ALPHA-233`）。受信箱もレコードもこの文字列で決まるので、
+  綴りが揺れると翌日立て直したときに別の箱になる。
+- **既に立っていればフォーカスが移るだけ**なので、走っているかを先に確かめなくていい。
+- **開いたあと、こちらからは何もしない。** 立った hub が自分で親タスクを読む（「親タスクの hub」）。
+  dispatch の引き金は人のまま — 提案までが repo hub の仕事で、worker を立てるのはあちらでもない。
+- 断られたら、そのまま名指しされたタスクを上の 2 で捌く。
 
 ---
 
