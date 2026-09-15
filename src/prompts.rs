@@ -1335,6 +1335,119 @@ mod tests {
         );
     }
 
+    /// Splitting a parent is the person's decision, not a shape the hub brings with it.
+    ///
+    /// A hub that picks a count (「3〜5 個に割る」) or an order hands back an answer the person
+    /// reads as reasoned, and the parent's own body — the only place that says what the work
+    /// is — is not in the machine row the collector returns, so it has to be fetched here.
+    /// One approval covers the whole plan: a hub that asks per issue is a hub nobody lets
+    /// finish. And exactly one side files — the collector is told not to.
+    #[test]
+    fn a_split_is_planned_in_one_approval_without_a_shape_the_hub_invented() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let split = step(raw, "### 割ってくれと言われたら");
+        let flowed: String = split.chars().filter(|c| !c.is_whitespace()).collect();
+        // The parent already has children more often than not, and the plan is an addition.
+        assert!(
+            flowed.contains("同じものをもう一度作らない"),
+            "the split can file a second copy of a subtask that already exists: {split}"
+        );
+        // What to split is in the parent's body, and the collection never carried it.
+        assert!(
+            flowed.contains("親タスクの本文はここで引く"),
+            "the plan is drawn from a title and an URL alone: {split}"
+        );
+        // The two inventions.
+        assert!(
+            flowed.contains("割る数を発明しない"),
+            "the hub brings a number of subtasks of its own: {split}"
+        );
+        assert!(
+            flowed.contains("順序を発明しない"),
+            "the filed order is presented as an order to work in: {split}"
+        );
+        // One approval, and it is a question rather than a line the person may not answer.
+        assert!(
+            flowed.contains("承認は1回にまとめる") && flowed.contains("AskUserQuestion"),
+            "the plan is not put to the person as one approval: {split}"
+        );
+        assert!(
+            flowed.contains("N件ぶん聞かない"),
+            "nothing stops an approval being taken per subtask: {split}"
+        );
+        // Who writes what. The template side belongs to the repository's own command.
+        assert!(
+            flowed.contains("本文はhubが書き、テンプレートは起票コマンドが持つ"),
+            "the hub and the issue-creation command trade roles: {split}"
+        );
+        // And the command is fed the approved plan — its other caller feeds it a report.
+        assert!(
+            flowed.contains("ヒアリングを埋めるのは承認済みの案"),
+            "the filing command is left to ask again what was just approved: {split}"
+        );
+        // The other side of the same rule: the agent that reads the parent files nothing.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("サブタスクを起票すること"),
+            "both the collector and the hub may now file subtasks: {brief}"
+        );
+    }
+
+    /// Filing stops at the issues: what was just filed has no machine row to be started from.
+    ///
+    /// 「着手へ渡すとき」 reads the collection's row whole — item id, branch, worktree, PR — and
+    /// an issue created a second ago appears in no collection. Numbering it onto the list that
+    /// is already on screen would hand that step a row whose every column is missing, so the
+    /// route ends at the keys and the next 「1. 一覧」 is what turns them into work. The reuse
+    /// of Step 3 is what keeps the sub-issue link out of this section, so Step 3 has to still
+    /// be the place that owns it.
+    #[test]
+    fn a_freshly_filed_subtask_is_not_started_by_the_hub_that_filed_it() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let split = step(raw, "### 割ってくれと言われたら");
+        let flowed: String = split.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("起票したら止まる"),
+            "the split route runs past the issues it filed: {split}"
+        );
+        assert!(
+            flowed.contains("「依頼が届いたら」のStep4へ進まない"),
+            "nothing names the step this route must not fall into: {split}"
+        );
+        assert!(
+            flowed.contains("一覧に手で継ぎ足さない"),
+            "the filed subtasks are numbered onto the list on screen: {split}"
+        );
+        assert!(
+            flowed.contains("起票したばかりのサブタスクはそこに無い"),
+            "the reason a filed subtask cannot be dispatched yet is not given: {split}"
+        );
+        // The person will name one of those keys immediately. Say where the row comes from.
+        assert!(
+            flowed.contains("先に「1.一覧」を出し直す"),
+            "a key named right after filing has no route back to the collection: {split}"
+        );
+        // The menu is where a parent hub asked to split arrives, and 3 runs on to claiming.
+        let menu = section(raw, "## 人間に話しかけられたら");
+        let menu_flowed: String = menu.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            menu_flowed.contains("「割ってくれと言われたら」へ"),
+            "a parent hub asked to split is routed to the step that also claims: {menu}"
+        );
+        // The shortcut this section takes: filing itself, and the parent link inside it.
+        let filing = step(raw, "### Step 3 — 起票");
+        assert!(
+            filing.contains("issueCreate.command"),
+            "the filing step no longer names the command this route reuses: {filing}"
+        );
+        let filing_flowed: String = filing.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            filing_flowed.contains("sub-issue紐付け"),
+            "nothing owns linking the new issue under the parent any more: {filing}"
+        );
+    }
+
     /// Two boards under one entry is a configuration that ships, so it has to stand a hub up.
     ///
     /// 「複数のソースに当たったら、どれかに決めない」 read as counting `taskSources` elements
