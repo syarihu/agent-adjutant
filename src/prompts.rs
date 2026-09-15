@@ -1363,10 +1363,17 @@ mod tests {
             "the later steps are left with no source to call the task's own: {scoped}"
         );
         // And the rule needs the same escape hatch as the ambiguous lookup above it, or a
-        // board picked at random moves the wrong card.
+        // board picked at random moves the wrong card. It has to be an *else*, not a second
+        // enumerated case: the rule above answers for two boards and the entry that matched
+        // a `github` source and a `github-project` one — whose fetches differ — falls through
+        // both, and a rule with a hole in it is read as licence to pick.
         assert!(
-            flowed.contains("`projectFields`を持つソースが2つ以上ある、または1つも無いなら"),
-            "a tie between two boards resolves itself silently: {scoped}"
+            flowed.contains("**それ以外は決めない。**"),
+            "a board choice with no answer resolves itself silently: {scoped}"
+        );
+        assert!(
+            flowed.contains("`type`の違うソースが当たった（`github`と`github-project`の混在も）"),
+            "sources of different types under one entry have no answer: {scoped}"
         );
         // The collector must not decide a second time.
         let fetch = step(raw, "### 親の下を引く");
