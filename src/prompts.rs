@@ -1487,6 +1487,14 @@ mod tests {
             "the row the collection would have given is neither read nor replaced: {split}"
         );
         assert!(
+            flowed.contains("引き方は「親の下を引く」をそのまま1件ぶん"),
+            "this route writes a second recipe for reading a subtask's state: {split}"
+        );
+        assert!(
+            flowed.contains("Step4のあとStep5へ続けない"),
+            "the dispatch runs on into a reply addressed to a report that does not exist: {split}"
+        );
+        assert!(
             flowed.contains("飛ばすと他人のアサインが消える"),
             "skipping the assignee check reads as free: {split}"
         );
