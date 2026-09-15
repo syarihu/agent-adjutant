@@ -1152,6 +1152,14 @@ mod tests {
             fetch_flowed.contains("自分が誰かは、そのトラッカーの言い方で取る"),
             "the assignee comparison has no other side: {fetch}"
         );
+        // Two of the three name a command or a field; Linear was left at 「Linear 側の自分」,
+        // which is not executable — and the comparison it feeds decides 「他人が持っている」,
+        // so on that tracker every child lands on the wrong side of it. No new schema is
+        // needed: the list call the source recipe already makes takes `assignee: "me"`.
+        assert!(
+            fetch_flowed.contains("`linear`なら**親のidに`assignee:\"me\"`を足して"),
+            "Linear's half of the comparison is not something anyone can run: {fetch}"
+        );
 
         // And it has to reach the hub. The machine-readable row is the only channel.
         let brief = section(

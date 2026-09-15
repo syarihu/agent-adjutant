@@ -382,7 +382,10 @@ PR は分岐しない。
 
 **自分が誰かは、そのトラッカーの言い方で取る。** アサインが自分のものかを比べる相手は、
 `github` 系なら Context の `gh api user -q '.login'`、`jira` なら `atlassianUserInfo` の
-`account_id`、`linear` なら Linear 側の自分。表示名で比べない。
+`account_id`、`linear` なら**親の id に `assignee: "me"` を足して `mcp__linear__list_issues` を
+もう1本引き、返ってきた子の集合を「自分の分」として突き合わせる**（`assignee: "me"` は
+「Task sources」の `linear` が一覧に渡しているのと同じ。自分の id を別に引かなくていい）。
+表示名で比べない。
 
 **ブランチは子ごとに解決する。** 下の PR 引きも worktree の突き合わせも、ブランチ名を期待値に
 する。形は `{user}/{キー}` が既定だが、ソースが `branchPattern` を持っていれば違う形になるので、
