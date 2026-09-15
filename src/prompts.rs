@@ -519,7 +519,7 @@ mod tests {
             "the section does not say the identifier is the parent's key: {scoped}"
         );
         assert!(
-            flowed.contains("`issueKeys`で"),
+            flowed.contains("`issueKeys`で逆引きしてissueのrepoを決め"),
             "the section does not reverse the key back to the issue's repository: {scoped}"
         );
         // Three levels, and the third is what says whether a subtask is actually done.
@@ -540,7 +540,7 @@ mod tests {
             "the startup step invents an order for the candidates: {scoped}"
         );
         assert!(
-            flowed.contains("順序を発明しない"),
+            flowed.contains("「次はこれ」と決めるのは人で、hubがやるのは候補を並べるところまで"),
             "the startup step does not say to leave the ordering to the person: {scoped}"
         );
         // Asking must not mean stopping. 「起動時に AskUserQuestion を開かない」 is the
@@ -1363,12 +1363,13 @@ mod tests {
             "the hub brings a number of subtasks of its own: {split}"
         );
         assert!(
-            flowed.contains("順序を発明しない"),
+            flowed.contains("起票した順がそのまま順序で、依存関係も優先度も書かない"),
             "the filed order is presented as an order to work in: {split}"
         );
         // One approval, and it is a question rather than a line the person may not answer.
         assert!(
-            flowed.contains("承認は1回にまとめる") && flowed.contains("AskUserQuestion"),
+            flowed.contains("承認は1回にまとめる")
+                && flowed.contains("案を全部見せて`AskUserQuestion`を開く"),
             "the plan is not put to the person as one approval: {split}"
         );
         assert!(
@@ -1395,7 +1396,7 @@ mod tests {
             "the parent is handed to the issue command as a bare key: {split}"
         );
         assert!(
-            flowed.contains("起票先は親issueのあるrepo"),
+            flowed.contains("起票先は親issueのあるrepo。**あちらの既定は報告の発見元だが"),
             "the filing target stops at the source, which is not one repository: {split}"
         );
         // The promise is unconditional and the thing it rests on is not: `parent` takes a
@@ -1430,39 +1431,94 @@ mod tests {
         );
     }
 
-    /// Filing stops at the issues: what was just filed has no machine row to be started from.
+    /// One of the issues just filed can be started, and only through the step built for that.
     ///
-    /// 「着手へ渡すとき」 reads the collection's row whole — item id, branch, worktree, PR — and
-    /// an issue created a second ago appears in no collection. Numbering it onto the list that
-    /// is already on screen would hand that step a row whose every column is missing, so the
-    /// route ends at the keys and the next 「1. 一覧」 is what turns them into work. The reuse
-    /// of Step 3 is what keeps the sub-issue link out of this section, so Step 3 has to still
-    /// be the place that owns it.
+    /// 「着手へ渡すとき」 reads the collection's row whole — item id, branch, worktree, PR — and an
+    /// issue created a second ago appears in no collection. 「依頼が届いたら」の Step 4 is the one
+    /// route that already starts a just-filed issue without a row, so this section hands its one
+    /// chosen key there instead of growing a second copy of that sourcing. What it cannot inherit
+    /// is the trigger: that step is entered only by a request spelling out 着手, and the person
+    /// here said 「割って」, so the yes is taken by a question of its own — once, after all the
+    /// filing is done, with no key marked as the one to do first. What the row would have carried
+    /// is fetched for that one key instead of being assumed absent: the hub sits paused while the
+    /// person decides, and on Jira and Linear assigning replaces, so a check skipped as
+    /// obviously-empty is how someone else's assignment comes off the issue. The reuse of Step 3
+    /// is what keeps the sub-issue link out of this section, so Step 3 owns it still.
     #[test]
-    fn a_freshly_filed_subtask_is_not_started_by_the_hub_that_filed_it() {
+    fn a_freshly_filed_subtask_reaches_dispatch_through_the_step_that_needs_no_row() {
         let raw = find("adj-hub").unwrap().raw_content;
         let split = step(raw, "### 割ってくれと言われたら");
         let flowed: String = split.chars().filter(|c| !c.is_whitespace()).collect();
+        // Filing ends in a question, not in a line the person may never answer.
         assert!(
-            flowed.contains("起票したら止まる"),
-            "the split route runs past the issues it filed: {split}"
+            flowed.contains("着手するかを`AskUserQuestion`で1回だけ聞く"),
+            "the split route ends without putting 着手 to the person: {split}"
         );
         assert!(
-            flowed.contains("「依頼が届いたら」のStep4へ進まない"),
-            "nothing names the step this route must not fall into: {split}"
+            flowed.contains("着手しないと言われたら待機に戻る"),
+            "declining the offer leaves the hub holding the question: {split}"
+        );
+        // The filed order is the order they were filed in, and nothing more.
+        assert!(
+            flowed.contains("並べるのは起票した順のまま、推奨を付けない"),
+            "one of the filed keys is put forward as the one to start: {split}"
+        );
+        assert!(
+            flowed.contains("選択肢は4つまでなので**キーは3件まで**"),
+            "a split of six offers more options than the question can carry: {split}"
         );
         assert!(
             flowed.contains("一覧に手で継ぎ足さない"),
             "the filed subtasks are numbered onto the list on screen: {split}"
         );
+        // Where the values come from: the step that already starts an issue with no row.
         assert!(
-            flowed.contains("起票したばかりのサブタスクはそこに無い"),
-            "the reason a filed subtask cannot be dispatched yet is not given: {split}"
+            flowed.contains("Step4へ渡す。ここに写さない"),
+            "this route sources a dispatch of its own instead of reusing Step 4: {split}"
         );
-        // The person will name one of those keys immediately. Say where the row comes from.
         assert!(
-            flowed.contains("先に「1.一覧」を出し直す"),
-            "a key named right after filing has no route back to the collection: {split}"
+            flowed.contains("着手が明記されているのは、この質問の答え"),
+            "Step 4 is entered without the 着手 it requires: {split}"
+        );
+        // Why the missing machine row costs nothing here.
+        assert!(
+            flowed.contains("その1件だけは引く")
+                && flowed.contains("「着手へ渡すとき」の突き合わせをやる"),
+            "the row the collection would have given is neither read nor replaced: {split}"
+        );
+        assert!(
+            flowed.contains("引き方は「親の下を引く」をそのまま1件ぶん"),
+            "this route writes a second recipe for reading a subtask's state: {split}"
+        );
+        assert!(
+            flowed.contains("Step4のあとStep5へ続けない"),
+            "the dispatch runs on into a reply addressed to a report that does not exist: {split}"
+        );
+        assert!(
+            flowed.contains("飛ばすと他人のアサインが消える"),
+            "skipping the assignee check reads as free: {split}"
+        );
+        assert!(
+            flowed.contains("起票するものが無かったとき（既存で足りていたとき）は質問を開かない"),
+            "a split that files nothing still opens the question: {split}"
+        );
+        // Step 4's caller has worker launch settled; here the person is present to be asked.
+        assert!(
+            flowed.contains("経路は聞く"),
+            "the worker / worktree question is inherited as skipped: {split}"
+        );
+        // One tab at a time, and a key named later still has the collection to come back to.
+        assert!(
+            flowed.contains("渡すのは1件"),
+            "every filed subtask can be dispatched at once: {split}"
+        );
+        assert!(
+            flowed.contains("収集は待たない"),
+            "a key named after the question closes is made to wait for a collection: {split}"
+        );
+        assert!(
+            flowed.contains("タイトルとURLが手元に無ければ、引いたissueのものを使う"),
+            "a key named a turn later reaches Step 4 with no title to put in the brief: {split}"
         );
         // The menu is where a parent hub asked to split arrives, and 3 runs on to claiming.
         let menu = section(raw, "## 人間に話しかけられたら");
@@ -1470,6 +1526,19 @@ mod tests {
         assert!(
             menu_flowed.contains("「割ってくれと言われたら」へ"),
             "a parent hub asked to split is routed to the step that also claims: {menu}"
+        );
+        assert!(
+            menu_flowed.contains("そのうち1件に着手するかを聞く経路"),
+            "the menu still describes the split route as one that only files: {menu}"
+        );
+        // The brief's title has no 「1. タスクを選ぶ」 to come from on either of Step 4's callers.
+        let dispatch: String = step(raw, "### Step 4 — 着手させる")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            dispatch.contains("タイトルは起票に使ったもの"),
+            "the brief's title has no source on a route that skips 「1. タスクを選ぶ」: {dispatch}"
         );
         // The shortcut this section takes: filing itself, and the parent link inside it.
         let filing = step(raw, "### Step 3 — 起票");
