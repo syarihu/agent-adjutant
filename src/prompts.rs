@@ -961,6 +961,16 @@ mod tests {
             brief_flowed.contains("どのサブタスクにも当たらなかったworktreeは"),
             "a worktree matching no child is dropped, hiding a drifted convention: {brief}"
         );
+        // The collector reporting it is only half: the hub's own display list named five
+        // groups and none of them was this one, so the line arrived and was printed by
+        // nobody — the signal that proctor and `worktree-path` disagree, produced and
+        // then dropped one step before the person who can act on it.
+        let startup = step(raw, "### 起動時に読む");
+        let startup_flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            startup_flowed.contains("どのサブタスクにも当たらなかったworktree"),
+            "the hub has nowhere to print the worktrees that matched no child: {startup}"
+        );
         // The row is the only channel to the hub, so the resolved branch has to travel on it —
         // as a column of the row, not merely as a word in the prose beside it.
         assert!(
