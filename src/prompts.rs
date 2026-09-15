@@ -1315,6 +1315,66 @@ mod tests {
         );
     }
 
+    /// Two boards under one entry is a configuration that ships, so it has to stand a hub up.
+    ///
+    /// 「複数のソースに当たったら、どれかに決めない」 read as counting `taskSources` elements
+    /// declines exactly the shape `config.example.json` demonstrates — one repository drawing
+    /// from two Project v2 boards — and that repository could then never have a parent hub at
+    /// all. `issueKeys` is a property of the entry, so the reverse lookup answers with an
+    /// entry; which board to address inside it is the separate question, and 「1. タスクを選ぶ」
+    /// already answers the same question for statuses.
+    #[test]
+    fn an_entry_with_two_boards_still_stands_a_parent_hub_up() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let scoped = section(raw, "## 親タスクの hub");
+        let flowed: String = scoped.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("**ここで数えるのは*エントリ*で、`taskSources`の要素ではない。**"),
+            "「複数のソース」 is left to be read as counting task sources: {scoped}"
+        );
+        assert!(
+            flowed.contains("`github-project`を2枚持っていても「複数に当たった」ではない"),
+            "an entry with two boards is still declined as ambiguous: {scoped}"
+        );
+        assert!(
+            flowed.contains("`projectFields`を持つソースを使う"),
+            "nothing says which of the two boards to address: {scoped}"
+        );
+        // Not a new rule: the selection step decides where a status comes from the same way,
+        // and two answers to one question is how the two steps start disagreeing.
+        assert!(
+            flowed.contains("「1.タスクを選ぶ」のDedupeが同じ規則"),
+            "the board choice is invented rather than taken from the existing precedent: {scoped}"
+        );
+        // The chosen source is not only where the board query runs: two later steps say
+        // 「選択したタスク自身のソース」 and the row carries no source column.
+        assert!(
+            flowed.contains("「2.着手を宣言する」と「3.worktreeを作る」が"),
+            "the later steps are left with no source to call the task's own: {scoped}"
+        );
+        // And the rule needs the same escape hatch as the ambiguous lookup above it, or a
+        // board picked at random moves the wrong card.
+        assert!(
+            flowed.contains("`projectFields`を持つソースが2つ以上ある、または1つも無いなら"),
+            "a tie between two boards resolves itself silently: {scoped}"
+        );
+        // The collector must not decide a second time.
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("打つボードは**hubが渡した1枚**"),
+            "the collector picks a board of its own: {fetch}"
+        );
+
+        // The premise: this is a shape the repository ships, not a hypothetical.
+        let example = include_str!("../config.example.json");
+        assert!(
+            example.matches("\"type\": \"github-project\"").count() >= 2,
+            "the shipped example no longer has an entry with two boards, so the rule above \
+             is about nothing"
+        );
+    }
+
     /// Counting a Linear parent's children starts from the key, on both routes that count.
     ///
     /// 「親の下を引く」 already says the hub holds a key and no internal id, and resolves one
