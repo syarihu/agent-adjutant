@@ -248,7 +248,13 @@ hub が立つ** — その箱に届いた報告を誰も読まない。
 **読むのは 親タスク → その下のサブタスク → それらのサブタスクが開いた PR** の3段。集まったら
 こう分けて出す:
 
-- **済み** — 閉じているサブタスク、または PR がマージ済みのもの
+- **済み** — **トラッカーが終了と言っているサブタスク**、または PR がマージ済みのもの。終了かは
+  type ごとに読む: `github` 系は issue の `state` が `closed`、`jira` は `statusCategory` が
+  `Done`（「Task sources」の jira の既定クエリが `statusCategory != Done` で外しているのと同じ
+  判定。**進行中を `statusCategory` で判定しない**のとは別の話で、あちらは `indeterminate` の
+  取り違えの話）、`linear` は完了・中止扱いの state。**親の収集は状態で絞らない** — 済みも
+  見せるのがこの hub の仕事なので、外すのはここだけ。ここで拾わないと終わったサブタスクが
+  「次の候補」に落ちて、また出される
 - **進行中** — worktree があるもの、open な PR があるもの、ボード上で着手済みのもの。**ボードを
   持たない素の `github` では、進行中ラベルが付いているものも進行中**（そのソースの着手済みの印は
   ラベルか PR で、「ボード上」が空振りする。「Task sources」の `github`）
@@ -350,7 +356,8 @@ PR は分岐しない。
     --jq '.[] | "\(.number) | \(.title) | \(.state) | \(.html_url) | \(.node_id) | \(.repository_url | sub(".*/repos/"; "")) | \([.labels[].name] | join(",")) | \([.assignees[].login] | join(","))"'
   ```
 
-  **この列を削らない。** URL は報告の機械行が要る。`node_id` は下の `github-project` が
+  **この列を削らない。** `state` は「済み」の判定そのもの（上の分類。`closed` がそれ）。
+  URL は報告の機械行が要る。`node_id` は下の `github-project` が
   `nodes(ids:)` にそのまま渡す。`repository_url` から取る repo は、別 repo の子に自分の repo の
   キーを当てないために要る（`issueKeys` は repo ごとで、ボードは repo ではない）。ラベルは、
   ボードを持たない素の `github` で着手済みを見分ける唯一の手掛かり（「Task sources」の `github`）。
@@ -365,11 +372,13 @@ PR は分岐しない。
 - **`jira`** — `searchJiraIssuesUsingJql` に `parent = {親キー}`。**`ORDER BY` を付けない** —
   並べ替えた順を「次にやる順」と読まれるため。`fields` は
   `["summary","status","issuetype","updated","assignee"]` に絞る（「Task sources」の `jira`）。
-  `assignee` は上の `assignees` と同じ用途。
+  `assignee` は上の `assignees` と同じ用途。**`status` に入ってくる `statusCategory` が
+  「済み」の判定**（上の分類。`Done` がそれ）なので、ステータス名だけ抜いて捨てない。
   `maxResults` は 50〜100 しか返らないので、**続きは `nextPageToken` で辿る**（同じく `jira`）。
   ここでも、途中で切れた一覧は短い一覧と見分けが付かない。
 - **`linear`** — `mcp__linear__list_issues` に親の id を渡す。返ってくる assignee（用途は上と同じ）と、
-  下のブランチ解決がそのまま使う **`gitBranchName` を落とさない**。
+  下のブランチ解決がそのまま使う **`gitBranchName` を落とさない**。**state も落とさない** —
+  完了・中止扱いかどうかが「済み」の判定（上の分類）。
 
 **自分が誰かは、そのトラッカーの言い方で取る。** アサインが自分のものかを比べる相手は、
 `github` 系なら Context の `gh api user -q '.login'`、`jira` なら `atlassianUserInfo` の
@@ -1530,8 +1539,13 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
    **`{assignee}` は他人が持っている子を分けるのに使うのだ** — 落とすと他人の担当分が
    「次の候補」に番号付きで並んで、着手すると他人のアサインを踏むのだ。未アサインは `-` なのだ。
    **`{解決したブランチ}` も必ず入れるのだ** — hub はそこから worktree と PR を辿るのだ。
+   **終了しているサブタスクは `{status}` にその終了区分を入れるのだ** — `github` 系は issue の
+   `state` の `closed`、`jira` は `statusCategory` の `Done`、`linear` は完了・中止扱いの
+   state なのだ。ラベルやボードの列名より**こちらが優先**なのだ。hub は「済み」をここだけで
+   判るので、落とすと終わったサブタスクが「次の候補」に並んで、また出されるのだ。
    **ボードの無い素の `github` では `{status}` にラベルを入れるのだ** — そこが進行中の唯一の
-   手掛かりで、落とすと着手済みのサブタスクが「次の候補」に並ぶのだ。
+   手掛かりで、落とすと着手済みのサブタスクが「次の候補」に並ぶのだ（終了しているときは上が
+   優先なのだ）。
    無いものは `-` で埋めて、**列ごと落とさないのだ。**
 
 キー未設定で対象外になった issue も、件数と repo 名を報告に入れるのだ（黙って捨てないのだ）。

@@ -1234,6 +1234,79 @@ mod tests {
         );
     }
 
+    /// A subtask the tracker calls finished has to reach 「済み」, in the tracker's own words.
+    ///
+    /// 「閉じているサブタスク」 is GitHub's vocabulary: Jira has `statusCategory` and Linear has
+    /// completed states, and neither was named. The parent collection deliberately applies no
+    /// state filter — unlike the repository-wide Jira query, which drops `Done` server-side —
+    /// so a finished subtask arrived, failed the 済み test, failed 進行中 as well, and was
+    /// numbered as work to pick up. The row is the only channel, so the terminal state has to
+    /// be fetched, put in `{status}`, and read there.
+    #[test]
+    fn a_subtask_the_tracker_calls_finished_is_not_offered_again() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let startup = step(raw, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("**トラッカーが終了と言っているサブタスク**"),
+            "「済み」 is still defined in one tracker's vocabulary: {startup}"
+        );
+        assert!(
+            flowed.contains("`github`系はissueの`state`が`closed`"),
+            "no terminal state for the GitHub types: {startup}"
+        );
+        assert!(
+            flowed.contains("`jira`は`statusCategory`が`Done`"),
+            "no terminal state for Jira: {startup}"
+        );
+        assert!(
+            flowed.contains("`linear`は完了・中止扱いのstate"),
+            "no terminal state for Linear: {startup}"
+        );
+        // Jira is the one place this file bans `statusCategory`, for the in-progress test.
+        // Saying so here is what keeps a reader from applying that ban to this line too.
+        assert!(
+            flowed.contains("**進行中を`statusCategory`で判定しない**のとは別の話"),
+            "the Jira terminal test reads as breaking this file's own ban: {startup}"
+        );
+        // Why the filtering is not done in the query instead: the hub shows 済み.
+        assert!(
+            flowed.contains("**親の収集は状態で絞らない**"),
+            "nothing says why the finished children arrive at all: {startup}"
+        );
+
+        // The column they arrive in. No twelfth column — the row's shape is pinned
+        // elsewhere — so `{status}` carries it, and terminal beats the label.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("終了しているサブタスクは`{status}`にその終了区分を入れるのだ"),
+            "the terminal state is fetched and then dropped before the hub sees it: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("ラベルやボードの列名より**こちらが優先**なのだ"),
+            "the label rule and the terminal rule both claim `{{status}}`: {brief}"
+        );
+
+        // And it has to be in what the fetch asks for, per tracker, or there is nothing to
+        // put in the column. A column nobody is told the purpose of is one the next edit
+        // deletes, which is how this file already argues for the labels and the assignees.
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("`state`は「済み」の判定そのもの"),
+            "nothing says what the sub-issue `state` column is for: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("**`status`に入ってくる`statusCategory`が「済み」の判定**"),
+            "the Jira fetch keeps only the status name, which is localized prose: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("**stateも落とさない**"),
+            "the Linear fetch drops the field its terminal test reads: {fetch}"
+        );
+    }
+
     /// Counting a Linear parent's children starts from the key, on both routes that count.
     ///
     /// 「親の下を引く」 already says the hub holds a key and no internal id, and resolves one
