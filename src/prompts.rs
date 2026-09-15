@@ -1516,6 +1516,10 @@ mod tests {
             flowed.contains("収集は待たない"),
             "a key named after the question closes is made to wait for a collection: {split}"
         );
+        assert!(
+            flowed.contains("タイトルとURLが手元に無ければ、引いたissueのものを使う"),
+            "a key named a turn later reaches Step 4 with no title to put in the brief: {split}"
+        );
         // The menu is where a parent hub asked to split arrives, and 3 runs on to claiming.
         let menu = section(raw, "## 人間に話しかけられたら");
         let menu_flowed: String = menu.chars().filter(|c| !c.is_whitespace()).collect();
