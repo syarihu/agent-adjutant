@@ -1047,7 +1047,7 @@ mod tests {
             "the route does not say where the decided key goes instead: {startup}"
         );
         assert!(
-            flowed.contains("収集の機械行がその行に持っているrepo・itemid"),
+            flowed.contains("**収集の機械行のその行をまるごと**持って"),
             "the claim step is left to re-fetch what the collection already reported: {startup}"
         );
     }
@@ -1162,6 +1162,75 @@ mod tests {
         assert!(
             brief_flowed.contains("{assigneeまたは-}"),
             "the collected assignee is dropped before the hub sees it: {brief}"
+        );
+    }
+
+    /// The row the collector returns is handed on whole, because every column has a reader.
+    ///
+    /// The handoff named two of the eleven columns — repository and item id — and a route
+    /// that carries only what it names drops the rest. Three of the dropped ones are read
+    /// further down: the brief's `{task_title}` and `{task_url}`, which this route cannot
+    /// get from 「1. タスクを選ぶ」 because it deliberately skips that fetch; and the resolved
+    /// branch, without which 「3. worktree を作る」 rebuilds one from `branchPattern` — a
+    /// shape Linear's branches do not come in. The worktree path is the fourth: a child
+    /// that already has one is offered for `git worktree add -b`, which fails on an
+    /// existing branch, and on a machine without proctor nothing checks first.
+    #[test]
+    fn a_row_handed_to_the_claim_step_travels_whole_rather_than_column_by_column() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let startup = step(raw, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("運ぶのは機械行のその行ごと"),
+            "the handoff still carries a hand-picked subset of the row: {startup}"
+        );
+        // The brief's two placeholders, named here because this is the only route that has
+        // to fill them from the row.
+        assert!(
+            flowed.contains("`{task_title}`と`{task_url}`"),
+            "the title and URL the brief requires are not carried: {startup}"
+        );
+        // The branch. Re-deriving it is the specific failure, so the ban has to be on the
+        // re-derivation and not merely on forgetting the column.
+        assert!(
+            flowed.contains("**「3.worktreeを作る」で引き直さない**"),
+            "the worktree step is left to rebuild the branch from the pattern: {startup}"
+        );
+        // Only the branch, though: the path still comes from the convention, or a Linear
+        // child — whose branch never goes through `worktree-path` — has nowhere to live.
+        assert!(
+            flowed.contains("置き場所のパスは規約から出していい"),
+            "banning the rebuild leaves the worktree with no path at all: {startup}"
+        );
+        // The worktree path, and the PR that says a branch exists even when no worktree does.
+        assert!(
+            flowed.contains("もう始まっている行にはworktreeを作らない"),
+            "a child that is already under way is sent to create a worktree: {startup}"
+        );
+        assert!(
+            flowed.contains("`gitworktreeadd-b`を打たない"),
+            "nothing says which command must not run on an existing branch: {startup}"
+        );
+        assert!(
+            flowed.contains("PRだけあってworktreeが無い行"),
+            "a branch that exists only on the remote is branched over: {startup}"
+        );
+
+        // The readers have to still be asking for what is now carried, on both ends.
+        let worker = section(raw, "## Appendix — worker への指示書");
+        assert!(
+            worker.contains("{task_title}") && worker.contains("{task_url}"),
+            "the brief no longer reads the title and URL this route carries: {worker}"
+        );
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("{title}|{URL}|"),
+            "the collector's row has no title and URL columns to carry: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("{worktreeのパスまたは-}"),
+            "the collector's row has no worktree column to carry: {brief}"
         );
     }
 
