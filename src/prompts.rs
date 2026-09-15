@@ -1375,6 +1375,29 @@ mod tests {
             flowed.contains("N件ぶん聞かない"),
             "nothing stops an approval being taken per subtask: {split}"
         );
+
+        // A draft that changed is a different draft. "Once" counts the issues, not the
+        // times the question is opened — shown-and-filed would let an edit through with an
+        // approval that was given to something else.
+        assert!(
+            flowed.contains("「1回」は件数の話で、回数の話ではない"),
+            "one approval reads as one opening, so an edited draft needs none: {split}"
+        );
+        assert!(
+            flowed.contains("承認が返るまで起票に進まない"),
+            "nothing stops an edited draft going straight to the filing step: {split}"
+        );
+        // The parent leaves this hub the way it leaves it everywhere else in the file. Its
+        // identifier alone does not say which repository the issue is in, and an entry can
+        // name several.
+        assert!(
+            flowed.contains("親は収集が返した親タスクのURL"),
+            "the parent is handed to the issue command as a bare key: {split}"
+        );
+        assert!(
+            flowed.contains("起票先は親issueのあるrepo"),
+            "the filing target stops at the source, which is not one repository: {split}"
+        );
         // Who writes what. The template side belongs to the repository's own command.
         assert!(
             flowed.contains("本文はhubが書き、テンプレートは起票コマンドが持つ"),
