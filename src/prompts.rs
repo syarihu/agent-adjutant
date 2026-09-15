@@ -1438,11 +1438,12 @@ mod tests {
     /// route that already starts a just-filed issue without a row, so this section hands its one
     /// chosen key there instead of growing a second copy of that sourcing. What it cannot inherit
     /// is the trigger: that step is entered only by a request spelling out 着手, and the person
-    /// here said 「割って」, so the yes is taken by a question of its own — once, after every filing,
-    /// with no key marked as the one to do first. A key named after it closes is not made to wait
-    /// for a collection either, but it is no longer seconds old, so that one row is fetched and
-    /// the checks the exemption skipped are run. The reuse of Step 3 is what keeps the sub-issue
-    /// link out of this section, so Step 3 has to still be the place that owns it.
+    /// here said 「割って」, so the yes is taken by a question of its own — once, after all the
+    /// filing is done, with no key marked as the one to do first. What the row would have carried
+    /// is fetched for that one key instead of being assumed absent: the hub sits paused while the
+    /// person decides, and on Jira and Linear assigning replaces, so a check skipped as
+    /// obviously-empty is how someone else's assignment comes off the issue. The reuse of Step 3
+    /// is what keeps the sub-issue link out of this section, so Step 3 owns it still.
     #[test]
     fn a_freshly_filed_subtask_reaches_dispatch_through_the_step_that_needs_no_row() {
         let raw = find("adj-hub").unwrap().raw_content;
@@ -1481,8 +1482,17 @@ mod tests {
         );
         // Why the missing machine row costs nothing here.
         assert!(
-            flowed.contains("機械行から読む列には見るものが無いので、機械行が無くて困らない"),
-            "nothing says why 「着手へ渡すとき」 can be skipped for a filed subtask: {split}"
+            flowed.contains("その1件だけは引く")
+                && flowed.contains("「着手へ渡すとき」の突き合わせをやる"),
+            "the row the collection would have given is neither read nor replaced: {split}"
+        );
+        assert!(
+            flowed.contains("飛ばすと他人のアサインが消える"),
+            "skipping the assignee check reads as free: {split}"
+        );
+        assert!(
+            flowed.contains("起票するものが無かったとき（既存で足りていたとき）は質問を開かない"),
+            "a split that files nothing still opens the question: {split}"
         );
         // Step 4's caller has worker launch settled; here the person is present to be asked.
         assert!(
@@ -1495,12 +1505,8 @@ mod tests {
             "every filed subtask can be dispatched at once: {split}"
         );
         assert!(
-            flowed.contains("引いた値で「着手へ渡すとき」の突き合わせをやる"),
+            flowed.contains("収集は待たない"),
             "a key named after the question closes is made to wait for a collection: {split}"
-        );
-        assert!(
-            flowed.contains("上の免除が効くのはこの質問の場だけ"),
-            "the exemption outlives the moment the issues were filed: {split}"
         );
         // The menu is where a parent hub asked to split arrives, and 3 runs on to claiming.
         let menu = section(raw, "## 人間に話しかけられたら");
