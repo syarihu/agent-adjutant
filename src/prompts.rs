@@ -1273,6 +1273,16 @@ mod tests {
             flowed.contains("`github`系はissueの`state`が`closed`"),
             "no terminal state for the GitHub types: {startup}"
         );
+        // The other half of the same rule. The done bucket is read tracker by tracker, and
+        // the in-progress one stopped at the board — which only `github-project` has, so a
+        // Jira or Linear subtask being worked on somewhere else lands under "next" and gets
+        // a number against it. The repository-wide route makes the same comparison already.
+        assert!(
+            flowed.contains(
+                "`jira`は`inProgressStatus`、`linear`は`inProgressState`と一致するstateも進行中"
+            ),
+            "in progress stops at the board, so Jira and Linear are read as untouched: {startup}"
+        );
         assert!(
             flowed.contains("`jira`は`statusCategory`が`Done`"),
             "no terminal state for Jira: {startup}"

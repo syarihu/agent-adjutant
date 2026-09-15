@@ -273,7 +273,11 @@ hub が立つ** — その箱に届いた報告を誰も読まない。
   「次の候補」に落ちて、また出される
 - **進行中** — worktree があるもの、open な PR があるもの、ボード上で着手済みのもの。**ボードを
   持たない素の `github` では、進行中ラベルが付いているものも進行中**（そのソースの着手済みの印は
-  ラベルか PR で、「ボード上」が空振りする。「Task sources」の `github`）
+  ラベルか PR で、「ボード上」が空振りする。「Task sources」の `github`）。**`jira` は
+  `inProgressStatus`、`linear` は `inProgressState` と一致する state も進行中** — 済みを type ごとに
+  読むのと同じで、ボードを持つのは `github-project` だけなので、ここを「ボード上」で止めると別の
+  機械で進んでいる Jira・Linear の子が「次の候補」に並ぶ（「1. タスクを選ぶ」の 2 が repo 全体の
+  側で同じ突き合わせをしている。`statusCategory` で判定しないのもそちらと同じ）
 - **次の候補** — 残りのうち、自分にアサインされているか未アサインのもの。**トラッカーが返した順の
   まま**並べて、番号を振る
 - **他人が持っている** — 残りのうち、**自分以外にアサインされている**もの。`{キー}（{login}）` で
@@ -416,8 +420,9 @@ adj worktree-path --name '{worktreeName}' --user '{user}' [--pattern '{ソース
 ```
 
 返ってくる `branch` がそのサブタスクの期待値（`worktreeName` の既定は
-`{issuekey-lowercase}-{issue}`、`{user}` は `gh api user -q '.login'`。「3. worktree を作る」が
-同じ呼び出しで worktree を作るので、期待値と実物が同じ規約から出る）。**コードリポジトリの
+`{issuekey-lowercase}-{issue}`、`{user}` は `gh api user -q '.login'`。**proctor が入っていない
+機械でだけ、「3. worktree を作る」も同じ呼び出しで掘るので期待値と実物が同じ規約から出る** —
+入っている機械の正本は proctor で、そちらは下の段落）。**コードリポジトリの
 チェックアウトで打つ** — 規約はそのリポジトリの設定から出るので、親タスクが別 repo（`jira` なら
 別ホスト）にあっても打つ場所は変わらない。**`linear` だけは打たない** — ブランチは
 `gitBranchName` をそのまま使う（「Task sources」の `linear`）。子1件につき1回で、設定を読むだけの
