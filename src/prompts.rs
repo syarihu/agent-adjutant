@@ -1398,6 +1398,19 @@ mod tests {
             flowed.contains("起票先は親issueのあるrepo"),
             "the filing target stops at the source, which is not one repository: {split}"
         );
+        // The promise is unconditional and the thing it rests on is not: `parent` takes a
+        // subtask-shaped issue, and the filing step falls back to asking when the source
+        // names no type. Asked and answered "task", the pieces come out beside the parent.
+        assert!(
+            flowed.contains("だから`jira`はタイプもここで決まる"),
+            "the split promises every piece lands under the parent without pinning the type: {split}"
+        );
+        // Read twice as "run the duplicate search again, asking per match", which is the
+        // one thing the single approval above it is there to prevent.
+        assert!(
+            flowed.contains("案を作るときに済んでいる"),
+            "the duplicate search reads as something this route opens for itself: {split}"
+        );
         // Who writes what. The template side belongs to the repository's own command.
         assert!(
             flowed.contains("本文はhubが書き、テンプレートは起票コマンドが持つ"),
