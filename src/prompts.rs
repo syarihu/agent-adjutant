@@ -491,6 +491,941 @@ mod tests {
         );
     }
 
+    /// A hub named for a parent task has to go and read that task.
+    ///
+    /// The machinery for standing one up was already there — an identifier moves the session
+    /// name, the inbox and the record, and `--tab` opens a tab to put it in — but nothing
+    /// told the hub that landed there what its own name meant. It started, collected the
+    /// repository-wide dashboard, and waited: a hub scoped to one parent that could not name
+    /// a single thing under it.
+    #[test]
+    fn a_hub_named_for_a_parent_task_reads_that_task_at_startup() {
+        let scoped = section(find("adj-hub").unwrap().raw_content, "## 親タスクの hub");
+        // Matched against the section with its whitespace squeezed out, for the reason the
+        // base-branch guard above gives: the procedures are hard-wrapped, so re-wrapping a
+        // paragraph must not decide whether this holds.
+        let flowed: String = scoped.chars().filter(|c| !c.is_whitespace()).collect();
+        // What tells this hub apart from the repository's own, out of what startup already
+        // collected. A section that describes the behaviour without saying who it applies to
+        // is one every hub reads as being about itself.
+        assert!(
+            flowed.contains("`adjutant_config`の`hub`に識別子が入っているhub"),
+            "the section never says which hub it is about: {scoped}"
+        );
+        // The identifier is the key, which is what makes the subject readable without
+        // storing it anywhere: reverse the key and the tracker and the repository fall out.
+        assert!(
+            flowed.contains("識別子は親タスクのキーそのもの"),
+            "the section does not say the identifier is the parent's key: {scoped}"
+        );
+        assert!(
+            flowed.contains("`issueKeys`で"),
+            "the section does not reverse the key back to the issue's repository: {scoped}"
+        );
+        // Three levels, and the third is what says whether a subtask is actually done.
+        assert!(
+            flowed.contains("親タスク→その下のサブタスク→それらのサブタスクが開いたPR"),
+            "the section does not say how far down to read: {scoped}"
+        );
+        // The collection is as heavy as the dashboard's and the hub lives as long, so it
+        // goes the same way: to a sub-agent, without waiting for it.
+        assert!(
+            flowed.contains("サブエージェントに出す") && flowed.contains("結果を待たない"),
+            "the startup step collects in the hub itself: {scoped}"
+        );
+        // And it asks rather than deciding. 「次はどれ」 taken from the tracker's own order
+        // keeps the hub out of a dependency model it has no way to be right about.
+        assert!(
+            flowed.contains("トラッカーが返した順のまま"),
+            "the startup step invents an order for the candidates: {scoped}"
+        );
+        assert!(
+            flowed.contains("順序を発明しない"),
+            "the startup step does not say to leave the ordering to the person: {scoped}"
+        );
+        // Asking must not mean stopping. 「起動時に AskUserQuestion を開かない」 is the
+        // repository hub's rule and it holds here for the same reason — a hub waiting on an
+        // answer is a hub not reading its inbox.
+        assert!(
+            flowed.contains("`AskUserQuestion`は開かない"),
+            "the startup step stops the hub on a question: {scoped}"
+        );
+        // Re-read every time. That is what lets several of these run side by side and what
+        // makes standing one up again tomorrow land where it left off.
+        assert!(
+            flowed.contains("状態を持たない"),
+            "the section does not say to keep no state: {scoped}"
+        );
+        assert!(
+            flowed.contains("起動のたびにこれを読み直し"),
+            "the section keeps state without saying to re-read it: {scoped}"
+        );
+        // An identifier no source accounts for is not a licence to guess: a hub reporting on
+        // the wrong parent is wrong silently.
+        assert!(
+            flowed.contains("どのソースにも当たらない識別子"),
+            "the section has no answer for an identifier nothing accounts for: {scoped}"
+        );
+    }
+
+    /// Reading a parent's children is the one step that differs per tracker.
+    ///
+    /// Everything else in this section is tracker-independent, so a single recipe written
+    /// for whichever tracker was in front of the author would have been invisible until a
+    /// repository on another one stood a hub up — and then it fails as an empty list, which
+    /// reads exactly like a parent with nothing under it.
+    #[test]
+    fn a_parent_s_children_are_fetched_by_the_tracker_that_holds_them() {
+        let fetch = step(find("adj-hub").unwrap().raw_content, "### 親の下を引く");
+        let flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("/sub_issues"),
+            "no recipe for GitHub sub-issues: {fetch}"
+        );
+        // The board holds statuses, not the parent-child relation, so the same sub-issue
+        // call serves both GitHub types and only the status lookup is board-specific.
+        assert!(
+            flowed.contains("親子関係はissue側の属性"),
+            "the board is treated as the owner of the parent-child relation: {fetch}"
+        );
+        assert!(
+            flowed.contains("`parent={親キー}`"),
+            "no recipe for Jira subtasks: {fetch}"
+        );
+        // The concrete form of 「順序を発明しない」: a sorted list read as a running order.
+        assert!(
+            flowed.contains("`ORDERBY`を付けない"),
+            "the Jira query sorts the children, which reads as a running order: {fetch}"
+        );
+        assert!(
+            flowed.contains("mcp__linear__list_issues"),
+            "no recipe for Linear sub-issues: {fetch}"
+        );
+        // Pull requests are the exception: they land in the code repository whichever
+        // tracker the tasks live in, so branching there would be four copies of one answer.
+        assert!(
+            flowed.contains("PRを探す先は、どのtypeでもコードリポジトリ1つ"),
+            "the PR lookup branches by tracker as well: {fetch}"
+        );
+    }
+
+    /// The brief's parent line is the payoff: a scoped hub always knows what to put in it.
+    ///
+    /// 「4. worker を起動する」 fills that line only when the dispatch was handed a parent,
+    /// and tells the hub not to infer one from a sub-issue link. Left at that, a hub *named*
+    /// for the parent still dispatched `-` — and its workers went on re-deriving from one
+    /// subtask the design their siblings had already settled, which is the whole reason the
+    /// line exists.
+    #[test]
+    fn a_hub_named_for_a_parent_task_puts_it_in_every_brief() {
+        let dispatch = step(
+            find("adj-hub").unwrap().raw_content,
+            "### dispatch には自分の親タスクを載せる",
+        );
+        let flowed: String = dispatch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("指示書の「親タスク」行に自分の親タスクのURLを書く"),
+            "the scoped hub does not fill the brief's parent line: {dispatch}"
+        );
+        assert!(
+            flowed.contains("`-`にしない"),
+            "the scoped hub is allowed to leave the parent line empty: {dispatch}"
+        );
+        // A report that names its own parent is the more specific answer, and Step 4 already
+        // says which one to take. This must add a default, not overrule that.
+        assert!(
+            flowed.contains("報告が親タスクを名指ししているなら、そちらが優先"),
+            "the scoped hub overwrites the parent a report reported: {dispatch}"
+        );
+        // Having a parent says nothing about where to branch from. Wiring the two together
+        // would pick a base nobody asked for.
+        assert!(
+            flowed.contains("分岐元は動かさない"),
+            "the scoped hub's parent moves the base branch too: {dispatch}"
+        );
+        // And the rule has to be reachable from the step that writes the brief: a reader of
+        // 「4. worker を起動する」 who stops at 「無ければ `-`」 never learns about it.
+        let spawn = step(find("adj-hub").unwrap().raw_content, "### 4. ");
+        let spawn_flowed: String = spawn.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            spawn_flowed.contains("親タスクのhubはここが常に埋まる"),
+            "the brief step's `-` default does not exempt a hub named for a parent: {spawn}"
+        );
+    }
+
+    /// Offering a scoped hub is worth doing twice and worth not doing every time.
+    ///
+    /// The offer costs a tab and an `AskUserQuestion`, so its value is entirely in when it
+    /// is *not* made: a hub that asks on every issue that happens to have children trains
+    /// the person to dismiss it, and the two occasions where it helps get dismissed with
+    /// the rest.
+    #[test]
+    fn a_scoped_hub_is_offered_for_a_parent_or_a_split_and_not_otherwise() {
+        let offer = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 親タスクの hub を提案する",
+        );
+        let flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        // Who offers. A hub that is already inside the parent has nobody to offer it to.
+        assert!(
+            flowed.contains("提案するのはrepo自身のhubだけ"),
+            "a hub already scoped to a parent offers another one: {offer}"
+        );
+        assert!(
+            flowed.contains("条件は2つだけ"),
+            "the offer has no closed set of conditions: {offer}"
+        );
+        assert!(
+            flowed.contains("親タスクそのものを名指しされた"),
+            "the offer does not cover being handed the parent itself: {offer}"
+        );
+        assert!(
+            flowed.contains("細分化を依頼された"),
+            "the offer does not cover being asked to split a task up: {offer}"
+        );
+        // The one that keeps the offer worth reading.
+        assert!(
+            flowed.contains("サブタスクを名指しされたときは提案しない"),
+            "the offer fires on a subtask, where the person has already chosen: {offer}"
+        );
+        // Approval opens a tab and nothing else — the identifier spelled as the tracker
+        // spells it. Not because the address moves with it (`slug_for` folds the identifier
+        // before it digests it), but because that string is what the hub that lands there
+        // shows, writes into a brief, and matches back against the config.
+        assert!(
+            flowed.contains("adjhub--tab--hub"),
+            "the offer never says how to stand the hub up: {offer}"
+        );
+        assert!(
+            flowed.contains("キーはトラッカーの綴りのまま渡す"),
+            "the offer lets the identifier drift from the key: {offer}"
+        );
+        // Still the person's trigger. Opening a tab is not dispatching, on either side.
+        assert!(
+            flowed.contains("dispatchの引き金は人のまま"),
+            "accepting the offer starts work by itself: {offer}"
+        );
+    }
+
+    /// Nobody handed the hub the parent task, so the agent it sends has to go and get it.
+    ///
+    /// The section reversed the identifier back to a *source* and stopped there, while the
+    /// brief the collector is given asked for the parent's title and URL — two things a key
+    /// alone does not carry, and for Jira an URL the same file forbids assembling. Resolving
+    /// it in the hub would have cost a lookup in the one block startup is allowed, so the
+    /// agent that is already going to the tracker does it.
+    #[test]
+    fn the_agent_that_collects_a_parent_s_children_resolves_the_parent_itself() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let startup = step(raw, "### 起動時に読む");
+        let startup_flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            startup_flowed.contains("hubが渡すのは識別子と、逆引きで判ったソースの情報だけ"),
+            "the hub is left to resolve the parent before it can wait: {startup}"
+        );
+        assert!(
+            startup_flowed.contains("収集エージェントが引く"),
+            "nobody is told to read the parent task itself: {startup}"
+        );
+        // And the recipes have to exist, per tracker, or the collector is being asked for
+        // something the procedure never shows it how to get.
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("親そのものを引く"),
+            "the fetch step reads the children of a parent it never reads: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("--jq'{title,html_url,node_id}'"),
+            "no URL for a GitHub parent: {fetch}"
+        );
+        // Jira's is the one that cannot be worked around by assembling a URL out of the key.
+        assert!(
+            fetch_flowed.contains("`webUrl`をそのまま使う"),
+            "the Jira parent's URL is built rather than read: {fetch}"
+        );
+        // Linear needs a third thing: `list_issues` takes the parent's internal id, and the
+        // identifier is a key.
+        assert!(
+            fetch_flowed.contains("mcp__linear__get_issue"),
+            "no way to turn a Linear key into the parent: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("下を引くのに要る親のidもここで取る"),
+            "the Linear parent's id is never obtained: {fetch}"
+        );
+        // The brief must not go back to asking for what the hub does not have.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            !brief_flowed.contains("{親タスクのタイトル}"),
+            "the brief asks the hub for a title it cannot fill in: {brief}"
+        );
+        assert!(
+            !brief_flowed.contains("{親タスクのURL}"),
+            "the brief asks the hub for an URL it cannot fill in: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("親タスクのタイトルとURLは渡していないのだ"),
+            "the brief never says who resolves the parent: {brief}"
+        );
+    }
+
+    /// Every column of the sub-issue row is read by a step further down.
+    ///
+    /// The call started life as number, title and state — enough to print a list and nothing
+    /// else. The URL the report's machine-readable rows require, the node id the board's
+    /// status query is addressed by, and the repository that decides which `issueKeys` entry
+    /// keys a child all come back from that same call, and none of them is recoverable
+    /// afterwards without another round trip per child.
+    #[test]
+    fn a_sub_issue_row_carries_the_columns_its_readers_need() {
+        let fetch = step(find("adj-hub").unwrap().raw_content, "### 親の下を引く");
+        let flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("\\(.html_url)"),
+            "the sub-issue rows carry no URL: {fetch}"
+        );
+        assert!(
+            flowed.contains("\\(.node_id)"),
+            "the sub-issue rows carry no node id: {fetch}"
+        );
+        assert!(
+            flowed.contains("\\(.repository_url"),
+            "the sub-issue rows carry no repository: {fetch}"
+        );
+        // The node id is dead weight unless the step that spends it says so.
+        assert!(
+            flowed.contains("`node_id`を渡す"),
+            "nothing says what the node id is collected for: {fetch}"
+        );
+        // And spending it is not optional. The call was introduced as 「ボード上のステータスも
+        // 要るなら」, while the collector's row demands a project item id and 「2. 着手を宣言する」
+        // says not to fetch one twice — so a collector that reads this as optional hands back
+        // `-` and the claim step pays for a GraphQL round trip it was told it would not need.
+        assert!(
+            flowed.contains("`nodes(ids:)`を1本打つ"),
+            "the board call a `github-project` row depends on is optional: {fetch}"
+        );
+        assert!(
+            flowed.contains("**projectitemid**がそこからしか出ず"),
+            "nothing says the item id has no other source: {fetch}"
+        );
+        // A list cut off at the page boundary is indistinguishable from a short one, which
+        // is the same reason this file gives for raising the board search's `--limit`.
+        assert!(
+            flowed.contains("ghapi--paginaterepos/"),
+            "the sub-issue list stops at the first page: {fetch}"
+        );
+        assert!(
+            flowed.contains("`nextPageToken`で辿る"),
+            "the Jira subtask search stops at the first page: {fetch}"
+        );
+    }
+
+    /// An identifier finds its source however it was typed, because the address already does.
+    ///
+    /// `slug_for` folds the identifier before it digests it, so `alpha-233` and `ALPHA-233`
+    /// share one inbox and one record. Had the reverse lookup stayed case-sensitive, the
+    /// lowercase spelling would have stood a hub up at the right address that could not name
+    /// its own parent — and reports filed there would have gone unread by a hub sitting on
+    /// them. Matching without regard to case is also what `adjutant_config` does to find the
+    /// repository entry beside it.
+    #[test]
+    fn an_identifier_finds_its_source_whatever_case_it_was_typed_in() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let scoped = section(raw, "## 親タスクの hub");
+        let flowed: String = scoped.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("綴りの大小は見ない"),
+            "the reverse lookup leaves case undefined: {scoped}"
+        );
+        assert!(
+            flowed.contains("大文字小文字を無視して突き合わせる"),
+            "the reverse lookup does not say how it matches: {scoped}"
+        );
+        // Which makes two sources answering to one key reachable — the config only warns
+        // about a duplicated key, and it compares the spellings exactly.
+        assert!(
+            flowed.contains("複数のソースに当たったら、どれかに決めない"),
+            "the reverse lookup picks one of several matching sources: {scoped}"
+        );
+        // And the offer must not go on claiming the address moves with the spelling.
+        let offer = step(raw, "### 親タスクの hub を提案する");
+        let offer_flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            offer_flowed.contains("箱は動かない"),
+            "the offer says a drifting spelling files the hub elsewhere: {offer}"
+        );
+    }
+
+    /// Being asked to split a subtask up is being handed a parent.
+    ///
+    /// 「サブタスクを名指しされたときは提案しない」 and 「細分化を依頼された」 both fit that
+    /// request, and read as written the exclusion wins — which would have declined to offer
+    /// exactly where the offer pays for itself, since the split is about to give that issue
+    /// children. The exclusion is about being told to *start* on a subtask.
+    #[test]
+    fn being_asked_to_split_a_subtask_up_still_earns_a_hub() {
+        let offer = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 親タスクの hub を提案する",
+        );
+        let flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("ただし「このサブタスクを割りたい」と言われたときは提案する"),
+            "the exclusion swallows the request to split a subtask up: {offer}"
+        );
+        assert!(
+            flowed.contains("除外が効くのは、そのサブタスクに**着手して**と言われたとき"),
+            "the exclusion never says which request it is about: {offer}"
+        );
+    }
+
+    /// The branch a subtask's PR is on is a convention, so it is resolved rather than spelled.
+    ///
+    /// Both the PR lookup and the worktree match were written against `{user}/{キー}`, which is
+    /// only the default: a source carrying its own `branchPattern` produces something else, and
+    /// `--head` is an exact match, so a subtask with a PR and a worktree was listed as having
+    /// neither. Matching on 「ブランチ名にキーが入っているか」 instead traded that for the
+    /// opposite error — `ALPHA-1` is a substring of `ALPHA-10`, so a subtask picks up its
+    /// neighbour's worktree, which is worse: it reads as started work and the number beside it
+    /// disappears. The convention has one owner, and `adj worktree-path` is who answers for it —
+    /// the same call 「3. worktree を作る」 makes, so the expectation and the real branch come
+    /// out of one place.
+    #[test]
+    fn a_subtask_s_branch_is_resolved_from_the_convention_rather_than_spelled_out() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("ブランチは子ごとに解決する"),
+            "the branch is still assumed to have one shape for every child: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("adjworktree-path--name"),
+            "nothing resolves a child's branch from the convention: {fetch}"
+        );
+        // Linear is the exception the source recipe already carved out: its branch is a field
+        // on the issue, not a pattern, so running it through the convention invents a name the
+        // tracker will never show anyone.
+        assert!(
+            fetch_flowed.contains("`linear`だけは打たない"),
+            "a Linear child's branch is rebuilt instead of read: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("`gitBranchName`を落とさない"),
+            "the Linear fetch drops the field its branch comes from: {fetch}"
+        );
+        // And the resolved value is what the lookup is given. Leaving the literal
+        // `{user}/{サブタスクのキー}` in the command keeps the exact-match defect while the
+        // paragraph above claims it is fixed.
+        assert!(
+            fetch_flowed.contains("--head'{解決したブランチ}'"),
+            "the PR lookup still spells the branch out by hand: {fetch}"
+        );
+        // The remaining gap is now only the PR whose branch left the convention entirely. Kept
+        // because the caveat is what stops 「PR が無い」 being read as 「未着手」.
+        assert!(
+            fetch_flowed.contains("`--search`が見るのはタイトルと本文で、ブランチ名ではない"),
+            "the fallback search is left looking like it covers the gap: {fetch}"
+        );
+
+        // The collector matches worktrees against the same resolved value, and by equality.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("解決したブランチとの文字列一致"),
+            "the collector matches worktrees by something other than the resolved branch: {brief}"
+        );
+        // Named as a ban, because containment is the reading a reader arrives at on their own
+        // once the shapes stop being uniform — and it is wrong in the silent direction.
+        assert!(
+            brief_flowed.contains("キーが入っているかで探さないのだ"),
+            "the collector may match a worktree by key containment: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("`ALPHA-1`が`ALPHA-10`"),
+            "nothing says why containment matching is wrong: {brief}"
+        );
+        // `git worktree list --porcelain` prints `branch refs/heads/x`, so equality against a
+        // short branch name matches nothing at all on the machine with no convention tool.
+        assert!(
+            brief_flowed.contains("`refs/heads/`が付いていたら外してから比べる"),
+            "the equality match is defeated by the ref prefix git prints: {brief}"
+        );
+        // Equality has one failure mode of its own: a worktree created under a convention this
+        // resolution does not reproduce now matches nothing, silently. Reporting the leftovers
+        // is the only signal that proctor and `worktree-path` have drifted apart.
+        assert!(
+            brief_flowed.contains("どのサブタスクにも当たらなかったworktreeは"),
+            "a worktree matching no child is dropped, hiding a drifted convention: {brief}"
+        );
+        // The collector reporting it is only half: the hub's own display list named five
+        // groups and none of them was this one, so the line arrived and was printed by
+        // nobody — the signal that proctor and `worktree-path` disagree, produced and
+        // then dropped one step before the person who can act on it.
+        let startup = step(raw, "### 起動時に読む");
+        let startup_flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            startup_flowed.contains("どのサブタスクにも当たらなかったworktree"),
+            "the hub has nowhere to print the worktrees that matched no child: {startup}"
+        );
+        // The row is the only channel to the hub, so the resolved branch has to travel on it —
+        // as a column of the row, not merely as a word in the prose beside it.
+        assert!(
+            brief_flowed.contains("{status}|{assigneeまたは-}|{解決したブランチ}|{title}"),
+            "the row the collector returns has no column for the resolved branch: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("**`{解決したブランチ}`も必ず入れるのだ**"),
+            "the branch column is optional, so it is the one that gets dropped: {brief}"
+        );
+    }
+
+    /// A source with no board says a task is started with a label, and that has to arrive.
+    ///
+    /// 「ボード上で着手済みのもの」 is the whole in-progress test the classification had, and a
+    /// plain `github` source has no board for it to read — its own recipe calls a label and an
+    /// open PR the signal. A started subtask carrying only the label therefore lands in 「次の
+    /// 候補」, i.e. it is offered as unstarted work. The column has to exist before the
+    /// classification can consult it: the sub-issue call is the only place the labels are
+    /// reachable without one more round trip per child.
+    #[test]
+    fn a_started_subtask_is_recognised_where_the_source_marks_it_with_a_label() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("\\([.labels[].name]"),
+            "the sub-issue rows carry no labels: {fetch}"
+        );
+        // A column nobody is told the purpose of is a column the next edit deletes.
+        assert!(
+            fetch_flowed.contains(
+                "ラベルは、ボードを持たない素の`github`で着手済みを見分ける唯一の手掛かり"
+            ),
+            "nothing says what the labels are collected for: {fetch}"
+        );
+        let startup = step(raw, "### 起動時に読む");
+        let startup_flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            startup_flowed
+                .contains("ボードを持たない素の`github`では、進行中ラベルが付いているものも進行中"),
+            "a labelled subtask on a boardless source is offered as a candidate: {startup}"
+        );
+        // And the collector has to put it somewhere the hub reads. The machine-readable row
+        // is the only channel between them.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("ボードの無い素の`github`では`{status}`にラベルを入れるのだ"),
+            "the label is fetched and then dropped before the hub sees it: {brief}"
+        );
+    }
+
+    /// The candidate list the hub printed is the one the number is answered against.
+    ///
+    /// Handing the answer to 「2. タスクに着手」 alone lands in 「1. タスクを選ぶ」, which fetches
+    /// every `taskSources` entry of the repository and keeps only what is assigned to the user
+    /// or to nobody. A parent's children are collected under no such condition, so a subtask
+    /// already assigned to someone else — or one living in a repository the board does not
+    /// list — is printed as a candidate and then absent from the list the route rebuilds.
+    /// That list also numbers itself, so the numbers stop meaning the same rows.
+    #[test]
+    fn a_number_answered_to_a_parent_hub_is_read_against_the_list_it_printed() {
+        let startup = step(find("adj-hub").unwrap().raw_content, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("番号はこの一覧の行に当てる"),
+            "the number is answered against some other list: {startup}"
+        );
+        assert!(
+            flowed.contains("「1.タスクを選ぶ」で一覧を作り直さない"),
+            "the route re-runs the repository-wide selection: {startup}"
+        );
+        // The reason has to travel with the rule, or a reader who finds the selection step
+        // more thorough overrules it.
+        assert!(
+            flowed.contains("他人にアサイン済みのサブタスク"),
+            "nothing says which candidates the rebuilt list drops: {startup}"
+        );
+        // And the key alone is not enough to carry: the claim step reads an item id it is
+        // told not to fetch twice, which for this hub comes from the collector's rows.
+        assert!(
+            flowed.contains("「2.着手を宣言する」へ進み"),
+            "the route does not say where the decided key goes instead: {startup}"
+        );
+        assert!(
+            flowed.contains("**収集の機械行のその行をまるごと**持って"),
+            "the claim step is left to re-fetch what the collection already reported: {startup}"
+        );
+    }
+
+    /// Not rebuilding the list must not mean skipping what the list step does after fetching.
+    ///
+    /// 「1. タスクを選ぶ」 is a fetch *and* four rules and a question, and 「一覧を作り直さない」 sent
+    /// the route past all of it. The three that matter here are the ones the parent collection
+    /// cannot have already applied, because it deliberately asks a wider question than the
+    /// repository route does: it ignores assignment, and it follows sub-issue links into
+    /// repositories `issueKeys` never heard of. So a child assigned to someone else was offered
+    /// as a candidate and claiming it overwrote their assignment on the two trackers that
+    /// replace rather than append; a child from an unkeyed repository was offered and then
+    /// stalled at the branch name; and the worker-or-worktree question the worktree step's last
+    /// line demands an answer to was never asked.
+    #[test]
+    fn the_parent_route_keeps_the_selection_step_s_rules_when_it_skips_the_fetch() {
+        let startup = step(find("adj-hub").unwrap().raw_content, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        // What exactly is skipped. Without this the reader has one sentence saying "do not
+        // rebuild the list" and no boundary on how much of that step it covers.
+        assert!(
+            flowed.contains("作り直さないのは一覧だけ"),
+            "skipping the fetch is still written as skipping the whole step: {startup}"
+        );
+
+        // 1. Assignment. The classification has to carry the children the repository route
+        // would have filtered out, and it must not number them as work to pick up.
+        assert!(
+            flowed.contains("**他人が持っている**"),
+            "children assigned to someone else have nowhere to go but 次の候補: {startup}"
+        );
+        assert!(
+            flowed.contains("**番号は振らない**"),
+            "a child someone else holds is offered as a candidate to start: {startup}"
+        );
+        assert!(
+            flowed.contains("着手する前に1回確認する"),
+            "the route claims a child someone else holds without asking: {startup}"
+        );
+        // The cost of going ahead is not symmetric across trackers, and the confirmation is
+        // worth nothing if it does not say so: `--add-assignee` adds, the other two replace.
+        assert!(
+            flowed.contains("**置き換え**"),
+            "the confirmation does not say what claiming costs on Jira and Linear: {startup}"
+        );
+        assert!(
+            flowed.contains("他人のアサインが本当に消える"),
+            "nothing says the other person's assignment is lost, not shared: {startup}"
+        );
+
+        // 2. Repositories with no key. Same line the dashboard collection already reports, so
+        // that a child from an unkeyed repository is accounted for rather than silently listed.
+        assert!(
+            flowed.contains("キー未設定のため対象外:"),
+            "a child from an unkeyed repository is dropped or offered in silence: {startup}"
+        );
+        assert!(
+            flowed.contains("番号を振ると「3.worktreeを作る」で詰まる"),
+            "nothing says why an unkeyed child cannot be numbered: {startup}"
+        );
+
+        // 3. The route question. Its answer is read at the end of the worktree step, so a
+        // dispatch that never asks arrives there with nothing to branch on.
+        assert!(
+            flowed.contains("「workerに任せる/worktreeだけ」を`AskUserQuestion`で聞く"),
+            "the route never asks how far to take the task: {startup}"
+        );
+        // And it has to be reconciled with the rule two paragraphs above, or the two read as a
+        // contradiction and the more emphatic one — the ban — wins.
+        assert!(
+            flowed.contains("開かないのは起動時の話"),
+            "asking here reads as breaking the startup ban on questions: {startup}"
+        );
+        // The precedent that does skip the question is not comparable, and saying which route
+        // it is stops it being copied here.
+        assert!(
+            flowed.contains("Step4がここを飛ばせるのはworker起動が確定している経路だから"),
+            "the dispatch route's skip is left looking like a general licence: {startup}"
+        );
+
+        // The columns those rules read have to be collected, or the rules have nothing to run
+        // on: assignment is not recoverable later without another round trip per child.
+        let fetch = step(find("adj-hub").unwrap().raw_content, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("\\([.assignees[].login]"),
+            "the sub-issue rows carry no assignee: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("\"assignee\"]"),
+            "the Jira subtask search does not ask for the assignee: {fetch}"
+        );
+        // A column nobody is told the purpose of is a column the next edit deletes.
+        assert!(
+            fetch_flowed.contains("**`assignees`は「他人が持っている」を分けるため**"),
+            "nothing says what the assignees are collected for: {fetch}"
+        );
+        // Comparing them needs the viewer's own identity, spelled the way each tracker spells
+        // it — a display name matches nothing on GitHub and is not unique on Jira.
+        assert!(
+            fetch_flowed.contains("自分が誰かは、そのトラッカーの言い方で取る"),
+            "the assignee comparison has no other side: {fetch}"
+        );
+        // Two of the three name a command or a field; Linear was left at 「Linear 側の自分」,
+        // which is not executable — and the comparison it feeds decides 「他人が持っている」,
+        // so on that tracker every child lands on the wrong side of it. No new schema is
+        // needed: the list call the source recipe already makes takes `assignee: "me"`.
+        assert!(
+            fetch_flowed.contains("`linear`なら**親のidに`assignee:\"me\"`を足して"),
+            "Linear's half of the comparison is not something anyone can run: {fetch}"
+        );
+
+        // And it has to reach the hub. The machine-readable row is the only channel.
+        let brief = section(
+            find("adj-hub").unwrap().raw_content,
+            "## Appendix — 親タスク収集エージェントへの指示書",
+        );
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("{assigneeまたは-}"),
+            "the collected assignee is dropped before the hub sees it: {brief}"
+        );
+    }
+
+    /// The row the collector returns is handed on whole, because every column has a reader.
+    ///
+    /// The handoff named two of the eleven columns — repository and item id — and a route
+    /// that carries only what it names drops the rest. Three of the dropped ones are read
+    /// further down: the brief's `{task_title}` and `{task_url}`, which this route cannot
+    /// get from 「1. タスクを選ぶ」 because it deliberately skips that fetch; and the resolved
+    /// branch, without which 「3. worktree を作る」 rebuilds one from `branchPattern` — a
+    /// shape Linear's branches do not come in. The worktree path is the fourth: a child
+    /// that already has one is offered for `git worktree add -b`, which fails on an
+    /// existing branch, and on a machine without proctor nothing checks first.
+    #[test]
+    fn a_row_handed_to_the_claim_step_travels_whole_rather_than_column_by_column() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let startup = step(raw, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("運ぶのは機械行のその行ごと"),
+            "the handoff still carries a hand-picked subset of the row: {startup}"
+        );
+        // The brief's two placeholders, named here because this is the only route that has
+        // to fill them from the row.
+        assert!(
+            flowed.contains("`{task_title}`と`{task_url}`"),
+            "the title and URL the brief requires are not carried: {startup}"
+        );
+        // The branch. Re-deriving it is the specific failure, so the ban has to be on the
+        // re-derivation and not merely on forgetting the column.
+        assert!(
+            flowed.contains("**「3.worktreeを作る」で引き直さない**"),
+            "the worktree step is left to rebuild the branch from the pattern: {startup}"
+        );
+        // Only the branch, though: the path still comes from the convention, or a Linear
+        // child — whose branch never goes through `worktree-path` — has nowhere to live.
+        assert!(
+            flowed.contains("置き場所のパスは規約から出していい"),
+            "banning the rebuild leaves the worktree with no path at all: {startup}"
+        );
+        // The worktree path, and the PR that says a branch exists even when no worktree does.
+        assert!(
+            flowed.contains("もう始まっている行にはworktreeを作らない"),
+            "a child that is already under way is sent to create a worktree: {startup}"
+        );
+        assert!(
+            flowed.contains("`gitworktreeadd-b`を打たない"),
+            "nothing says which command must not run on an existing branch: {startup}"
+        );
+        assert!(
+            flowed.contains("PRだけあってworktreeが無い行"),
+            "a branch that exists only on the remote is branched over: {startup}"
+        );
+
+        // The readers have to still be asking for what is now carried, on both ends.
+        let worker = section(raw, "## Appendix — worker への指示書");
+        assert!(
+            worker.contains("{task_title}") && worker.contains("{task_url}"),
+            "the brief no longer reads the title and URL this route carries: {worker}"
+        );
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("{title}|{URL}|"),
+            "the collector's row has no title and URL columns to carry: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("{worktreeのパスまたは-}"),
+            "the collector's row has no worktree column to carry: {brief}"
+        );
+    }
+
+    /// A subtask the tracker calls finished has to reach 「済み」, in the tracker's own words.
+    ///
+    /// 「閉じているサブタスク」 is GitHub's vocabulary: Jira has `statusCategory` and Linear has
+    /// completed states, and neither was named. The parent collection deliberately applies no
+    /// state filter — unlike the repository-wide Jira query, which drops `Done` server-side —
+    /// so a finished subtask arrived, failed the 済み test, failed 進行中 as well, and was
+    /// numbered as work to pick up. The row is the only channel, so the terminal state has to
+    /// be fetched, put in `{status}`, and read there.
+    #[test]
+    fn a_subtask_the_tracker_calls_finished_is_not_offered_again() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let startup = step(raw, "### 起動時に読む");
+        let flowed: String = startup.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("**トラッカーが終了と言っているサブタスク**"),
+            "「済み」 is still defined in one tracker's vocabulary: {startup}"
+        );
+        assert!(
+            flowed.contains("`github`系はissueの`state`が`closed`"),
+            "no terminal state for the GitHub types: {startup}"
+        );
+        // The other half of the same rule. The done bucket is read tracker by tracker, and
+        // the in-progress one stopped at the board — which only `github-project` has, so a
+        // Jira or Linear subtask being worked on somewhere else lands under "next" and gets
+        // a number against it. The repository-wide route makes the same comparison already.
+        assert!(
+            flowed.contains(
+                "`jira`は`inProgressStatus`、`linear`は`inProgressState`と一致するstateも進行中"
+            ),
+            "in progress stops at the board, so Jira and Linear are read as untouched: {startup}"
+        );
+        assert!(
+            flowed.contains("`jira`は`statusCategory`が`Done`"),
+            "no terminal state for Jira: {startup}"
+        );
+        assert!(
+            flowed.contains("`linear`は完了・中止扱いのstate"),
+            "no terminal state for Linear: {startup}"
+        );
+        // Jira is the one place this file bans `statusCategory`, for the in-progress test.
+        // Saying so here is what keeps a reader from applying that ban to this line too.
+        assert!(
+            flowed.contains("**進行中を`statusCategory`で判定しない**のとは別の話"),
+            "the Jira terminal test reads as breaking this file's own ban: {startup}"
+        );
+        // Why the filtering is not done in the query instead: the hub shows 済み.
+        assert!(
+            flowed.contains("**親の収集は状態で絞らない**"),
+            "nothing says why the finished children arrive at all: {startup}"
+        );
+
+        // The column they arrive in. No twelfth column — the row's shape is pinned
+        // elsewhere — so `{status}` carries it, and terminal beats the label.
+        let brief = section(raw, "## Appendix — 親タスク収集エージェントへの指示書");
+        let brief_flowed: String = brief.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            brief_flowed.contains("終了しているサブタスクは`{status}`にその終了区分を入れるのだ"),
+            "the terminal state is fetched and then dropped before the hub sees it: {brief}"
+        );
+        assert!(
+            brief_flowed.contains("ラベルやボードの列名より**こちらが優先**なのだ"),
+            "the label rule and the terminal rule both claim `{{status}}`: {brief}"
+        );
+
+        // And it has to be in what the fetch asks for, per tracker, or there is nothing to
+        // put in the column. A column nobody is told the purpose of is one the next edit
+        // deletes, which is how this file already argues for the labels and the assignees.
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("`state`は「済み」の判定そのもの"),
+            "nothing says what the sub-issue `state` column is for: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("**`status`に入ってくる`statusCategory`が「済み」の判定**"),
+            "the Jira fetch keeps only the status name, which is localized prose: {fetch}"
+        );
+        assert!(
+            fetch_flowed.contains("**stateも落とさない**"),
+            "the Linear fetch drops the field its terminal test reads: {fetch}"
+        );
+    }
+
+    /// Two boards under one entry is a configuration that ships, so it has to stand a hub up.
+    ///
+    /// 「複数のソースに当たったら、どれかに決めない」 read as counting `taskSources` elements
+    /// declines exactly the shape `config.example.json` demonstrates — one repository drawing
+    /// from two Project v2 boards — and that repository could then never have a parent hub at
+    /// all. `issueKeys` is a property of the entry, so the reverse lookup answers with an
+    /// entry; which board to address inside it is the separate question, and 「1. タスクを選ぶ」
+    /// already answers the same question for statuses.
+    #[test]
+    fn an_entry_with_two_boards_still_stands_a_parent_hub_up() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let scoped = section(raw, "## 親タスクの hub");
+        let flowed: String = scoped.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("**ここで数えるのは*エントリ*で、`taskSources`の要素ではない。**"),
+            "「複数のソース」 is left to be read as counting task sources: {scoped}"
+        );
+        assert!(
+            flowed.contains("`github-project`を2枚持っていても「複数に当たった」ではない"),
+            "an entry with two boards is still declined as ambiguous: {scoped}"
+        );
+        assert!(
+            flowed.contains("`projectFields`を持つソースを使う"),
+            "nothing says which of the two boards to address: {scoped}"
+        );
+        // Not a new rule: the selection step decides where a status comes from the same way,
+        // and two answers to one question is how the two steps start disagreeing.
+        assert!(
+            flowed.contains("「1.タスクを選ぶ」のDedupeが同じ規則"),
+            "the board choice is invented rather than taken from the existing precedent: {scoped}"
+        );
+        // The chosen source is not only where the board query runs: two later steps say
+        // 「選択したタスク自身のソース」 and the row carries no source column.
+        assert!(
+            flowed.contains("「2.着手を宣言する」と「3.worktreeを作る」が"),
+            "the later steps are left with no source to call the task's own: {scoped}"
+        );
+        // And the rule needs the same escape hatch as the ambiguous lookup above it, or a
+        // board picked at random moves the wrong card. It has to be an *else*, not a second
+        // enumerated case: the rule above answers for two boards and the entry that matched
+        // a `github` source and a `github-project` one — whose fetches differ — falls through
+        // both, and a rule with a hole in it is read as licence to pick.
+        assert!(
+            flowed.contains("**それ以外は決めない。**"),
+            "a board choice with no answer resolves itself silently: {scoped}"
+        );
+        assert!(
+            flowed.contains("`type`の違うソースが当たった（`github`と`github-project`の混在も）"),
+            "sources of different types under one entry have no answer: {scoped}"
+        );
+        // The collector must not decide a second time.
+        let fetch = step(raw, "### 親の下を引く");
+        let fetch_flowed: String = fetch.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            fetch_flowed.contains("打つボードは**hubが渡した1枚**"),
+            "the collector picks a board of its own: {fetch}"
+        );
+
+        // The premise: this is a shape the repository ships, not a hypothetical.
+        let example = include_str!("../config.example.json");
+        assert!(
+            example.matches("\"type\": \"github-project\"").count() >= 2,
+            "the shipped example no longer has an entry with two boards, so the rule above \
+             is about nothing"
+        );
+    }
+
+    /// Counting a Linear parent's children starts from the key, on both routes that count.
+    ///
+    /// 「親の下を引く」 already says the hub holds a key and no internal id, and resolves one
+    /// before listing children. The offer asks the same tracker the same question one step
+    /// earlier, and was left handed 「親の id を渡して」 — an id that exists nowhere at that
+    /// point. It fails as a count of zero, which reads exactly like a task with no children:
+    /// the offer is then silently never made for any Linear parent.
+    #[test]
+    fn the_offer_resolves_a_linear_parent_from_its_key_before_counting() {
+        let offer = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 親タスクの hub を提案する",
+        );
+        let flowed: String = offer.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("`mcp__linear__get_issue`にキーを渡して親のidを取り"),
+            "the offer counts Linear children off an id it was never given: {offer}"
+        );
+        assert!(
+            flowed.contains("hubが持っているのはキーだけで、idは持っていない"),
+            "the offer does not say why the key has to be resolved first: {offer}"
+        );
+    }
+
     /// The span between two headings, for a section `section` cannot hold.
     ///
     /// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
