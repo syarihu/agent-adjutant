@@ -802,18 +802,29 @@ fn go_to_running_hub(
 
 /// The environment the hub's agent is started with.
 ///
-/// `agentEnv` as configured, and then the hub identifier when there is one. Appended rather
-/// than merged so that ours is the later assignment on the `env` line and therefore the one
-/// that takes: a config naming this variable is describing a default, not overruling the
-/// `--hub` that was just typed.
+/// `agentEnv` as configured, and then the two things this invocation was told that the agent
+/// has no other way to learn: which hub it is, and whether it was asked to collect the
+/// dashboard at startup. Appended rather than merged so that ours is the later assignment on
+/// the `env` line and therefore the one that takes: a config naming either variable is
+/// describing a default, not overruling the flag that was just typed.
 ///
-/// Nothing is added when there is no identifier, and that is deliberate rather than tidy:
-/// the command line a plain `adj hub` prints has to stay exactly what it printed before, or
-/// every existing dry run, doc and expectation of it is wrong.
-fn hub_env(ctx: &Context) -> Vec<(String, String)> {
+/// Neither is added when it was not asked for, and that is deliberate rather than tidy: the
+/// command line a plain `adj hub` prints has to stay exactly what it printed before, or every
+/// existing dry run, doc and expectation of it is wrong.
+fn hub_env(ctx: &Context, dashboard: Option<bool>) -> Vec<(String, String)> {
     let mut env = ctx.settings.agent_env.clone();
     if let Some(hub) = &ctx.repo.hub {
         env.push((messaging::HUB_ENV.to_string(), hub.clone()));
+    }
+    // Appended for the reason above, and absent when no flag was typed for the reason above
+    // that: `--dashboard` and `--no-dashboard` are this invocation overruling the standing
+    // `startupDashboard`, and a variable set unconditionally would make every hub's command
+    // line carry an override nobody asked for.
+    if let Some(on) = dashboard {
+        env.push((
+            config::STARTUP_DASHBOARD_ENV.to_string(),
+            if on { "1" } else { "0" }.to_string(),
+        ));
     }
     env
 }
@@ -835,6 +846,7 @@ fn open_hub_tab(
     ctx: &Context,
     repo_arg: Option<&str>,
     extra: &[String],
+    dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
     let mut parts = vec![exe_path(), "hub".to_string()];
@@ -846,6 +858,19 @@ fn open_hub_tab(
     // reaches here from `ADJUTANT_HUB`, where no flag parser has seen it.
     if let Some(hub) = &ctx.repo.hub {
         parts.push(format!("--hub={hub}"));
+    }
+    // Forwarded on the line, not through the environment: this route never reaches
+    // `hub_env`, and the tab is opened by a terminal that is handed a command string and
+    // nothing else. Left off, `adj hub --tab --no-dashboard` would open a tab running a
+    // plain `adj hub` — the flag accepted, acknowledged, and silently dropped at the door.
+    //
+    // Above the separator, and that matters: everything after `--` is clap's trailing
+    // argument at the far end, so a flag placed below here would be forwarded as an extra
+    // argument to the *agent* rather than parsed by the `adj hub` that starts it.
+    match dashboard {
+        Some(true) => parts.push("--dashboard".to_string()),
+        Some(false) => parts.push("--no-dashboard".to_string()),
+        None => {}
     }
     // The separator is put back because clap takes everything after it as the trailing
     // argument, and `strip_separator` at the far end takes it off again.
@@ -885,11 +910,16 @@ fn open_hub_tab(
 /// `tab` opens a tab and starts it there instead, for a caller that is not a person sitting
 /// at an empty one — nothing else about the decision changes, including which of the two
 /// tabs claims the record.
+/// `dashboard` is `--dashboard` / `--no-dashboard`, and `None` when neither was typed — the
+/// standing `startupDashboard` then answers on its own. It is carried to the agent as an
+/// environment variable rather than resolved here, because the thing that reads it is the
+/// hub's procedure, which asks `adjutant_config` for the *resolved* settings.
 pub fn hub(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
     extra: &[String],
     tab: bool,
+    dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
@@ -946,11 +976,11 @@ pub fn hub(
             messaging::Liveness::Alive => return go_to_running_hub(&ctx, &status, dry_run),
             messaging::Liveness::Gone => {}
         }
-        return open_hub_tab(&ctx, repo_arg, extra, dry_run);
+        return open_hub_tab(&ctx, repo_arg, extra, dashboard, dry_run);
     }
     let mut command = runner::hub_command(
         ctx.settings.hub_runner.as_deref(),
-        &hub_env(&ctx),
+        &hub_env(&ctx, dashboard),
         &ctx.repo.hub_name,
         runner::HUB_STARTUP_PROMPT,
     );

@@ -50,7 +50,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 | コマンド | 説明 |
 | --- | --- |
-| `adjutant hub [--tab]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動） |
+| `adjutant hub [--tab] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
 | `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
@@ -80,6 +80,8 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 1つのリポジトリに hub を複数立てられます。`--hub <id>` はそのどれを指すかを表します。動くのは宛先（セッション名・受信箱・レコード）だけで、設定は変わりません。設定は引き続き `owner/name` で引かれるので、登録済みリポジトリの2つめの hub でも taskSources / issueKeys / verify はそのまま使えます。`--hub` を付けなければ、これまでと同じアドレスのリポジトリ自身の hub になります。ただし `adj work` が開いた worktree の中でだけは、hub を**指す**コマンドがその worktree のレコードから識別子を読みます。何かを**起こす**側（`hub` / `work` / `worker`）は読みません。worktree の中から立てた hub も、タブが開かれた worktree に登録する worker も、他人のレコードを読むことになるからです。
 
 識別子を毎回書き直す必要はありません。`adj hub --hub <id>` はエージェントを起動するコマンドラインに `ADJUTANT_HUB` を載せるので、そのエージェントが叩く `adj` も MCP ツールも自分自身の hub を指します。`adj work` は開いた worktree に識別子を書き込むので、worker は宛先を書かずに送っても自分を出した hub に届きます。
+
+`--no-dashboard` / `--dashboard` も同じ経路を通ります。これらは同じコマンドラインに `ADJUTANT_STARTUP_DASHBOARD` として載り、`adjutant config` が解決の時点で織り込むため、`settings.startupDashboard` を読む手順書には設定ファイルの値ではなく**その hub が起動したときのフラグ**が見えます。ただし `--tab` のときはこの変数が出てきません。ターミナルに渡せるのはコマンドラインだけなので、フラグは新しいタブで走る `adjutant hub` にそのまま転送され、**環境を組み立てるのはそちらの `adjutant hub`** になります。最終的な結果は同じで、1プロセス遅れるだけです（2つの経路の dry run の出力が違って見えるのはこのためです）。
 
 MCP の `instructions` は約5行の最小限に抑えています。1500行を超える詳細な手順書は、hub や worker が必要になったタイミングでオンデマンドに取得するため、常時コンテキストを圧迫しません。
 
@@ -135,6 +137,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier`（未インストールなら `osascript`） |
 | `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
+| `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
 
 キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
 

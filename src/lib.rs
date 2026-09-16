@@ -49,6 +49,11 @@ pub(crate) mod testing {
                 // `cargo test` run from inside a hub's own session inherits this, and every
                 // test that asserts on an address would then be answering about that hub.
                 std::env::remove_var("ADJUTANT_HUB");
+                // The same trap one variable over, and a quieter one: a hub started with
+                // `--no-dashboard` exports this, so a test run in that hub's tab would see
+                // `startupDashboard` resolve to `false` no matter what its fixture said —
+                // and the settings tests would fail for a reason nothing in them mentions.
+                std::env::remove_var(crate::config::STARTUP_DASHBOARD_ENV);
             }
             Sandbox {
                 _dir: dir,
@@ -271,6 +276,12 @@ enum Commands {
         /// Open a tab and start it there, instead of becoming it in this one
         #[arg(long)]
         tab: bool,
+        /// Skip the dashboard collection this hub runs at startup (overrides startupDashboard)
+        #[arg(long, conflicts_with = "dashboard")]
+        no_dashboard: bool,
+        /// Collect the dashboard at startup even where startupDashboard is off
+        #[arg(long)]
+        dashboard: bool,
         /// Extra arguments appended to the agent command
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -478,12 +489,22 @@ pub fn run() -> ! {
             hub,
             dry_run,
             tab,
+            no_dashboard,
+            dashboard,
             extra,
         } => cmd::hub(
             repo.as_deref(),
             hub.as_deref(),
             &strip_separator(extra),
             *tab,
+            // Two flags, three answers. `None` is "nobody said", and it has to stay distinct
+            // from both: it is what leaves the configured value standing, and what keeps a
+            // plain `adj hub` printing the command line it has always printed.
+            match (*no_dashboard, *dashboard) {
+                (true, _) => Some(false),
+                (_, true) => Some(true),
+                _ => None,
+            },
             *dry_run,
         )
         .map(|_| 0),

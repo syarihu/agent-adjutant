@@ -771,6 +771,127 @@ mod tests {
         );
     }
 
+    /// `startupDashboard: false` has to reach four places, and the drift between them is the
+    /// failure this guards.
+    ///
+    /// A setting is a promise made by the binary and kept by the prose: the resolver can be
+    /// asked whether it is `false` and answer perfectly while the hub collects anyway,
+    /// because nothing in its procedure ever reads the answer. So the four places are pinned
+    /// here rather than left to whoever edits the file next.
+    ///
+    /// The one that matters most is 「起動時に読む」. A hub scoped to a parent task replaces
+    /// the startup step with its own, which means a change made to the step and not to the
+    /// replacement turns the setting off for repo hubs and leaves it on for parent-task hubs
+    /// — the same config, two behaviours, and nothing that fails.
+    #[test]
+    fn turning_the_startup_collection_off_reaches_both_kinds_of_hub_and_stops_there() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let flow = |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+
+        // The startup step is a numbered item rather than a heading, so it is bounded by its
+        // neighbour: `section` on the `##` above it would read every step in the block, and
+        // a phrase in step 5 would answer for step 3.
+        let step3 = between(
+            raw,
+            "3. **収集をサブエージェントに出すかどうかを",
+            "4. **受信箱",
+        );
+        let step3_flowed = flow(&step3);
+        assert!(
+            step3_flowed
+                .contains("`settings.startupDashboard`が`false`なら、収集エージェントを出さない"),
+            "the startup step collects whatever the setting says: {step3}"
+        );
+        before(
+            &step3,
+            "`settings.startupDashboard`で決める",
+            "結果を待たない",
+        );
+        // Naming the tab is not collecting. Dropped along with the collector it would leave
+        // a tab nobody can tell from any other, for a saving of nothing.
+        assert!(
+            step3_flowed.contains("名乗り（`adjutanttitle`）は変わらず打つ"),
+            "turning the collection off also stops the hub naming its tab: {step3}"
+        );
+
+        // The parent-task hub's replacement for that step.
+        let parent = step(raw, "### 起動時に読む");
+        let parent_flowed = flow(&parent);
+        assert!(
+            parent_flowed.contains("`settings.startupDashboard`が`false`なら、ここでも出さない"),
+            "a parent-task hub collects at startup however the setting is set: {parent}"
+        );
+        before(&parent, "出すかどうかの判断はStep3のまま", "結果を待たない");
+
+        // Having not collected, the hub has to say so — and say how to get the listing. Left
+        // out, the person reads 「集計中なのだ」 and waits for a subagent that was never sent.
+        let step5 = between(raw, "5. **待機に入る。**", "## 親タスクの hub");
+        let step5_flowed = flow(&step5);
+        assert!(
+            step5_flowed.contains("集めていないことと、頼めば集まることを1行で"),
+            "the hub goes to wait without saying the listing is not coming: {step5}"
+        );
+        // 「集計中なのだ」 is the one sentence that must never be reachable unconditionally.
+        before(
+            &step5,
+            "step3で収集を出したかどうかで変わる",
+            "一覧はいま集計中なのだ",
+        );
+
+        // And the on-demand route is explicitly *not* gated. The setting exists to stop a
+        // collection nobody asked for; a procedure that read it as "this hub does not do
+        // listings" would take the feature away instead of the automatic part of it.
+        let dashboard = flow(&section(raw, "## Dashboard — 一覧と片付け"));
+        assert!(
+            dashboard.contains("起動時の分だけは設定で止められる"),
+            "the dashboard section never says the startup collection can be turned off"
+        );
+        assert!(
+            dashboard.contains("人から「一覧」と言われたときは止まらない"),
+            "the setting reads as gating the listing itself, not just the startup one"
+        );
+    }
+
+    /// Nothing downstream may wait on a collection that was never sent.
+    ///
+    /// 「割ってくれと言われたら」 starts from the listing the startup step produced, and said
+    /// only "wait if it has not come back yet". For a hub whose `startupDashboard` is `false`
+    /// nothing was ever sent, so that condition is true forever: every 「割って」 ends the turn
+    /// with 「集計中なのだ」, and the next one ends the same way. A hub that cannot be asked to
+    /// do the one thing it was stood up for is worse than one that collects when it was told
+    /// not to — the setting was supposed to save a few seconds at startup, not the feature.
+    ///
+    /// The escape is the file's own, twice over: 「まだ戻っていないのに『ALPHA-233 に着手して』と
+    /// 言われたら、待たない」 in the listing step, and the one-off parent lookup in
+    /// 「dispatch には自分の親タスクを載せる」. Both say a person standing there is worth a
+    /// lookup, and neither is the same rule as keeping startup to one block. This pins the
+    /// split step to that answer rather than to a third one invented later.
+    #[test]
+    fn a_hub_that_was_told_not_to_collect_does_not_wait_for_the_collection_to_split() {
+        let split = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 割ってくれと言われたら",
+        );
+        let flowed: String = split.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("収集をそもそも出していない"),
+            "the split step knows only 'not back yet', not 'never sent': {split}"
+        );
+        assert!(
+            flowed.contains("待たない。その場で親の下を引く"),
+            "a hub that never collected is left with nothing to split against: {split}"
+        );
+        // Naming the consequence, not just the rule. A reader who only has the rule weighs it
+        // against 「起動を1ブロックに保つ」 one line below and reaches the wrong answer.
+        assert!(
+            flowed.contains("待つと永久に待つ"),
+            "nothing says what waiting costs here: {split}"
+        );
+        // And the wait has to arrive already qualified. Flat, it is the whole bug: the reader
+        // acts on it before reaching the branch that says it does not apply.
+        before(&split, "その一覧が手元にあるかで3つに分かれる", "先に待つ");
+    }
+
     /// Every column of the sub-issue row is read by a step further down.
     ///
     /// The call started life as number, title and state — enough to print a list and nothing
@@ -1619,6 +1740,26 @@ mod tests {
         let body = section(raw, heading);
         let end = body.find("\n### ").unwrap_or(body.len());
         body[..end].to_string()
+    }
+
+    /// Assert that a condition is reached before the instruction it qualifies.
+    ///
+    /// A procedure is read top to bottom and acted on as it is read, so a condition that
+    /// arrives after its imperative arrives too late: the reader has already done the thing
+    /// by the time it reaches the branch saying it does not apply. Both orders hold the same
+    /// words, so `contains` calls them equal — only the position says whether the qualifier
+    /// was ever in time to qualify anything.
+    fn before(text: &str, condition: &str, imperative: &str) {
+        let flowed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let at = |needle: &str| {
+            flowed
+                .find(needle)
+                .unwrap_or_else(|| panic!("`{needle}` is missing from:\n{text}"))
+        };
+        assert!(
+            at(condition) < at(imperative),
+            "`{imperative}` is reached before `{condition}` qualifies it:\n{text}"
+        );
     }
 
     #[test]

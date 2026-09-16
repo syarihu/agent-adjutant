@@ -25,6 +25,40 @@ const FEATURE: &str = "wid-957";
 const FEATURE_SLUG: &str = "acme-widget-wid-957-5283c95d4f4cc314";
 const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 
+/// Everything a child of this suite must not inherit from whatever ran `cargo test`.
+///
+/// That is regularly a tab which *is* a hub, and a hub exports its own answers:
+/// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
+/// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
+/// fixture has just written into its own config file.
+const AMBIENT: [&str; 2] = ["ADJUTANT_HUB", "ADJUTANT_STARTUP_DASHBOARD"];
+
+/// Strip `AMBIENT` from a child about to be run.
+///
+/// One list in one place, because the alternative is what this replaced: the rule had
+/// reached thirteen builders by being copied, so when a second variable joined it, it was
+/// added to one of them. The other twelve kept inheriting it, and the failure that surfaced
+/// blamed neither — `the_config_tool_and_the_config_subcommand_agree` compares a sanitised
+/// child against an unsanitised one, so the two resolved the same config to different
+/// answers and reported a disagreement between the CLI and the MCP server. A variable added
+/// to this array reaches every child at once; one added to a call site reaches one.
+///
+/// Applied before any deliberate `.env(…)`, so a test that means to hand a child one of
+/// these still can. Sanitising first is what makes such a value the test's own rather than
+/// the terminal's.
+trait Ambient {
+    fn hermetic(&mut self) -> &mut Self;
+}
+
+impl Ambient for Command {
+    fn hermetic(&mut self) -> &mut Self {
+        for name in AMBIENT {
+            self.env_remove(name);
+        }
+        self
+    }
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     repo: PathBuf,
@@ -73,9 +107,7 @@ impl Fixture {
             .current_dir(&self.repo)
             .env("ADJUTANT_CONFIG", &self.config)
             .env("ADJUTANT_STATE_DIR", &self.state)
-            // Whatever started `cargo test` may itself be a hub, and an inherited
-            // `ADJUTANT_HUB` would re-address every inbox these tests assert on.
-            .env_remove("ADJUTANT_HUB")
+            .hermetic()
             .output()
             .unwrap()
     }
@@ -154,7 +186,7 @@ fn a_worktree_answers_for_the_repository_it_belongs_to() {
         .current_dir(&worktree)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .output()
         .unwrap();
     let info: serde_json::Value = serde_json::from_slice(&from_worktree.stdout).unwrap();
@@ -259,7 +291,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
         .current_dir(&worktree)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .output()
         .unwrap();
     assert!(
@@ -316,7 +348,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
         .current_dir(&bare)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .output()
         .unwrap();
     assert!(
@@ -360,7 +392,7 @@ fn a_body_can_arrive_on_stdin_so_a_long_report_never_touches_the_command_line() 
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -520,6 +552,7 @@ fn the_launcher_hands_its_identifier_down_to_the_agent_it_starts() {
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
         .env("ADJUTANT_HUB", FEATURE)
         .output()
         .unwrap();
@@ -562,6 +595,7 @@ fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
         .env("ADJUTANT_HUB", FEATURE)
         .output()
         .unwrap();
@@ -604,7 +638,7 @@ fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
         .current_dir(&worktree)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&sent.stdout);
@@ -665,7 +699,7 @@ fn a_record_left_in_a_worktree_never_decides_which_hub_is_being_started() {
             .current_dir(&worktree)
             .env("ADJUTANT_CONFIG", &fixture.config)
             .env("ADJUTANT_STATE_DIR", &fixture.state)
-            .env_remove("ADJUTANT_HUB")
+            .hermetic()
             .output()
             .unwrap();
         assert!(
@@ -741,7 +775,7 @@ fn a_record_that_cannot_be_read_refuses_to_guess_which_hub_to_address() {
             .current_dir(&worktree)
             .env("ADJUTANT_CONFIG", &fixture.config)
             .env("ADJUTANT_STATE_DIR", &fixture.state)
-            .env_remove("ADJUTANT_HUB")
+            .hermetic()
             .output()
             .unwrap()
     };
@@ -886,6 +920,7 @@ fn an_identifier_that_reads_like_a_flag_is_handed_down_as_one_argument() {
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
         .env("ADJUTANT_HUB", "-x")
         .output()
         .unwrap();
@@ -1099,7 +1134,7 @@ fn a_relative_state_directory_is_read_from_the_checkout_not_from_where_it_was_ty
         .current_dir(&elsewhere)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", relative)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .output()
         .unwrap();
     let said =
@@ -1232,7 +1267,7 @@ fn a_hub_is_not_opened_in_a_tab_when_ps_cannot_answer_for_the_record() {
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
         .env("PATH", &path)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&out.stderr).to_string();
@@ -1311,6 +1346,7 @@ fn a_tab_opened_for_a_hub_is_told_which_hub_it_is_opening() {
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
         .env("ADJUTANT_HUB", FEATURE)
         .output()
         .unwrap();
@@ -1321,6 +1357,138 @@ fn a_tab_opened_for_a_hub_is_told_which_hub_it_is_opening() {
     // the separator has to go back on the line the tab is handed.
     let extra = fixture.ok(&["hub", "--tab", "--dry-run", "--", "--resume"]);
     assert!(extra.contains("hub -- --resume"), "{extra}");
+}
+
+/// What `--no-dashboard` has to reach is the hub's own procedure, which asks the MCP server
+/// for its settings — so the flag becomes a variable on the line the agent is `exec`ed
+/// with, and the resolver folds it in before anybody reads `startupDashboard`.
+#[test]
+fn a_hub_told_not_to_collect_carries_that_down_to_the_agent_it_becomes() {
+    let fixture = Fixture::new(QUIET);
+    let off = fixture.ok(&["hub", "--dry-run", "--no-dashboard"]);
+    assert!(off.contains("ADJUTANT_STARTUP_DASHBOARD=0"), "{off}");
+    let on = fixture.ok(&["hub", "--dry-run", "--dashboard"]);
+    assert!(on.contains("ADJUTANT_STARTUP_DASHBOARD=1"), "{on}");
+
+    // Neither flag adds anything at all. The line a plain `adj hub` prints is one people
+    // read, script and paste, and an override appearing in it would be a change to that
+    // line for every user who never asked about the dashboard.
+    let plain = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!plain.contains("ADJUTANT_STARTUP_DASHBOARD"), "{plain}");
+
+    // Both at once is a contradiction with no sensible winner, so clap refuses it rather
+    // than letting declaration order decide.
+    let both = fixture.cmd(&["hub", "--dry-run", "--dashboard", "--no-dashboard"]);
+    assert!(!both.status.success(), "{both:?}");
+}
+
+/// The `--tab` route never reaches the environment the other one builds: the terminal is
+/// handed a command line and nothing else, exactly as with `--hub`. So the flag is
+/// forwarded as a flag, and above the `--` — below it, clap at the far end would take it as
+/// a trailing argument and append it to the *agent's* command instead of parsing it.
+#[test]
+fn a_tab_opened_for_a_hub_is_told_whether_to_collect_too() {
+    let fixture = Fixture::new(QUIET);
+    let off = fixture.ok(&["hub", "--tab", "--dry-run", "--no-dashboard"]);
+    assert!(off.contains("--no-dashboard"), "{off}");
+    // The variable belongs to the hub the tab starts, not to the launcher that opens it:
+    // this line runs `adj hub`, and that invocation builds its own environment.
+    assert!(!off.contains("ADJUTANT_STARTUP_DASHBOARD"), "{off}");
+
+    let on = fixture.ok(&["hub", "--tab", "--dry-run", "--dashboard"]);
+    assert!(on.contains("--dashboard"), "{on}");
+
+    let extra = fixture.ok(&["hub", "--tab", "--dry-run", "--no-dashboard", "--", "-r"]);
+    let line = extra.find("--no-dashboard").unwrap();
+    assert!(line < extra.find("-- -r").unwrap(), "{extra}");
+
+    let plain = fixture.ok(&["hub", "--tab", "--dry-run"]);
+    assert!(!plain.contains("dashboard"), "{plain}");
+}
+
+/// The machine says collect and this repository says don't.
+const DASHBOARD_PER_REPO: &str = r#"{"notification": "true", "startupDashboard": true,
+    "defaults": {"ide": "code"},
+    "repos": {"acme/widget": {"startupDashboard": false, "taskSource": "github",
+              "issueRepo": "acme/widget", "issueKeys": {"acme/widget": "WID"}}}}"#;
+
+/// The same, with nothing said about the repository.
+const DASHBOARD_PER_MACHINE: &str = r#"{"notification": "true", "startupDashboard": false,
+    "defaults": {"ide": "code"},
+    "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+              "issueKeys": {"acme/widget": "WID"}}}}"#;
+
+/// The middle rung: `defaults` says don't, the top level says do, and the entry says nothing.
+/// Both neighbours disagree with it, so the answer can only have come from `defaults` itself.
+const DASHBOARD_PER_DEFAULTS: &str = r#"{"notification": "true", "startupDashboard": true,
+    "defaults": {"ide": "code", "startupDashboard": false},
+    "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+              "issueKeys": {"acme/widget": "WID"}}}}"#;
+
+/// Every answer `settings.startupDashboard` can give, read back out of the binary.
+///
+/// `adj config` is what the hub's procedure actually reads, so this is the only place the
+/// whole trip is visible: the file, the level that won it, and the flag that outranks both.
+///
+/// The unit tests take that decision apart — which level wins, and what the flag does to the
+/// winner — and check the halves separately. Nothing checked that the resolver still joins
+/// them: hand the deciding function `None` for the configured value instead of the level it
+/// picked, and every one of those tests stays green while a repository that turned the
+/// collection off gets it anyway.
+///
+/// Both directions are asserted, because a resolver that ignored the file would be right
+/// half the time by accident — `true` is also the default, so a fixture that only ever says
+/// `false` would not tell "read it" from "never read it and defaulted".
+#[test]
+fn what_the_config_file_says_about_the_dashboard_reaches_the_resolved_settings() {
+    // A machine that has never heard of the setting collects, which is what every existing
+    // config has to keep doing.
+    assert_eq!(
+        Fixture::new(QUIET).json(&["config"])["settings"]["startupDashboard"],
+        true
+    );
+
+    // The most specific level wins, as it does for every other machine setting — and the
+    // two levels are made to disagree so that the answer names which one was read.
+    let per_repo = Fixture::new(DASHBOARD_PER_REPO);
+    assert_eq!(
+        per_repo.json(&["config"])["settings"]["startupDashboard"],
+        false
+    );
+
+    // And a machine that says it once, for every repository it holds, is read the same way.
+    // A resolver that only ever looked at the entry would pass the case above.
+    let per_machine = Fixture::new(DASHBOARD_PER_MACHINE);
+    assert_eq!(
+        per_machine.json(&["config"])["settings"]["startupDashboard"],
+        false
+    );
+
+    // The rung between those two. `defaults` is the level the other two cases step over
+    // without touching, so a break in it — `pick` skipping the middle, or `defaults` losing
+    // to the top level — passes everything above and is found by nobody. With the entry
+    // silent and the two outer levels disagreeing, `false` here names `defaults` and only
+    // `defaults`, which makes this one assertion pin the whole order: entry > defaults > root.
+    let per_defaults = Fixture::new(DASHBOARD_PER_DEFAULTS);
+    assert_eq!(
+        per_defaults.json(&["config"])["settings"]["startupDashboard"],
+        false
+    );
+
+    // The flag still outranks the file it disagrees with, asked of the same fixture that
+    // says `false` so that `true` coming back can only have come from the flag.
+    let overridden = Command::new(BIN)
+        .args(["config"])
+        .current_dir(&per_repo.repo)
+        .env("ADJUTANT_CONFIG", &per_repo.config)
+        .env("ADJUTANT_STATE_DIR", &per_repo.state)
+        .hermetic()
+        .env("ADJUTANT_STARTUP_DASHBOARD", "1")
+        .output()
+        .unwrap();
+    let answer: serde_json::Value =
+        serde_json::from_slice(&overridden.stdout).expect("config printed no JSON");
+    assert_eq!(answer["settings"]["startupDashboard"], true);
 }
 
 const CODEX: &str = r#"{"notification": "true",
@@ -2089,7 +2257,17 @@ fn every_command_and_tool_the_procedures_name_actually_exists() {
     // The procedures are prose telling an agent which commands to run. Rename a subcommand
     // or a tool and nothing here stops compiling — the agent just gets an error at the one
     // moment it was supposed to be getting work done.
-    let help = String::from_utf8(Command::new(BIN).arg("--help").output().unwrap().stdout).unwrap();
+    // Sanitised like every other child, though a help dump reads neither config nor
+    // environment: an exemption is a thing the next reader has to re-derive.
+    let help = String::from_utf8(
+        Command::new(BIN)
+            .arg("--help")
+            .hermetic()
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
     let subcommands: Vec<String> = help
         .lines()
         .skip_while(|l| !l.starts_with("Commands:"))
@@ -2185,7 +2363,7 @@ fn mcp(fixture: &Fixture, requests: &[serde_json::Value]) -> Vec<serde_json::Val
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -2212,7 +2390,7 @@ fn mcp_raw(fixture: &Fixture, lines: &[&[u8]]) -> Vec<serde_json::Value> {
         .current_dir(&fixture.repo)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
-        .env_remove("ADJUTANT_HUB")
+        .hermetic()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

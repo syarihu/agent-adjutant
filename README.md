@@ -64,7 +64,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 
 | | |
 | --- | --- |
-| `adjutant hub [--tab]` | start this repo's hub, in the main checkout, once (`--tab`: open a tab and start it there, rather than becoming it in this one) |
+| `adjutant hub [--tab] [--no-dashboard\|--dashboard]` | start this repo's hub, in the main checkout, once (`--tab`: open a tab and start it there, rather than becoming it in this one; `--no-dashboard`: skip the listing it collects at startup, `--dashboard`: collect it anyway — both override `startupDashboard`) |
 | `adjutant hub-name [--json]` | the hub's session name — the address a report goes to |
 | `adjutant config` | the resolved config for this repo, as JSON |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |
@@ -117,6 +117,15 @@ the command line it starts the agent with, so every `adj` call and every MCP too
 agent makes addresses the hub it is; and `adj work` writes the identifier into the worktree
 it opens, so a worker reporting from there reaches the hub that dispatched it without being
 told where to send.
+
+`--no-dashboard` and `--dashboard` ride the same channel: they become
+`ADJUTANT_STARTUP_DASHBOARD` on that command line, and `adjutant config` folds the value in
+before it answers, so the procedure reading `settings.startupDashboard` sees the flag the hub
+was started under rather than the file it disagrees with. With `--tab` there is no such
+variable to see: a terminal is handed a command line and nothing else, so the flag is
+forwarded to the `adjutant hub` that runs in the new tab, and that one builds the
+environment. Same answer, one process later — which is why the two dry runs do not print the
+same thing.
 
 `instructions` is five lines. The 1500 lines of procedure matter only while a hub or a worker
 is running, and both fetch them on purpose; the one thing worth always-on context is that a
@@ -193,6 +202,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
+| `startupDashboard` | — (`true` / `false`) | `true` |
+| | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
 different answer. `terminal` and the `wake` family merge key by key, so a repository can
