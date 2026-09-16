@@ -605,6 +605,32 @@ fn as_object(value: Option<&Value>) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+/// What a key says at the most specific level that names it: repo entry > `defaults` > top
+/// level.
+///
+/// A free function rather than the closure it used to be so that a test can ask it which
+/// level won without going through `resolve_settings`, whose answer for `startupDashboard`
+/// also depends on the environment. Checking that precedence against the resolved `bool`
+/// meant a `cargo test` run in a hub's own tab was answering about that hub's flag rather
+/// than about the fixture in front of it — which is the same trap `Sandbox::new` clears
+/// `ADJUTANT_STARTUP_DASHBOARD` for, and these tests hold no sandbox.
+///
+/// The null filter is deliberately after the chain, not inside it: an explicit `null` at the
+/// most specific level means "unset", and is not a hole for the level below to show through.
+fn pick_level(
+    entry: &Map<String, Value>,
+    defaults: &Map<String, Value>,
+    root: &Map<String, Value>,
+    key: &str,
+) -> Option<Value> {
+    entry
+        .get(key)
+        .or_else(|| defaults.get(key))
+        .or_else(|| root.get(key))
+        .filter(|v| !v.is_null())
+        .cloned()
+}
+
 /// Machine-level knobs, most specific wins: repo entry > `defaults` > top level > built-in.
 ///
 /// The top level is where `terminal` and `notification` normally sit — they describe the
@@ -622,14 +648,7 @@ fn resolve_settings(
     ] {
         check_shapes(place, map, warnings);
     }
-    let pick = |key: &str| -> Option<Value> {
-        entry
-            .get(key)
-            .or_else(|| defaults.get(key))
-            .or_else(|| root.get(key))
-            .filter(|v| !v.is_null())
-            .cloned()
-    };
+    let pick = |key: &str| -> Option<Value> { pick_level(entry, defaults, root, key) };
     let pick_str = |key: &str| -> Option<String> {
         pick(key)
             .and_then(|v| v.as_str().map(str::to_string))
@@ -669,6 +688,11 @@ fn resolve_settings(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
+    // The one setting whose answer comes partly from outside the config file. Read out here
+    // rather than inside the decision so that the decision stays a function of its two
+    // inputs — `startup_dashboard` says why that is worth the extra line.
+    let configured_dashboard = pick("startupDashboard");
+    let dashboard_flag = std::env::var(STARTUP_DASHBOARD_ENV).ok();
     Settings {
         terminal: TerminalSettings {
             spawn: str_field(&terminal, "spawn"),
@@ -700,7 +724,10 @@ fn resolve_settings(
         // question. `adj config` and the MCP tool both come out of this function, and the
         // agent asks the tool — resolving the override in the command layer would leave the
         // hub reading a `settings` block that disagrees with the flag it was started under.
-        startup_dashboard: startup_dashboard(pick("startupDashboard")),
+        startup_dashboard: startup_dashboard(
+            configured_dashboard.as_ref(),
+            dashboard_flag.as_deref(),
+        ),
     }
 }
 
@@ -710,16 +737,23 @@ fn resolve_settings(
 /// three processes away; the config is the standing preference, and a standing preference
 /// that a person can no longer override for one session is a setting they end up editing
 /// twice a day.
-fn startup_dashboard(configured: Option<Value>) -> bool {
-    match std::env::var(STARTUP_DASHBOARD_ENV).as_deref() {
-        Ok("1") => return true,
-        Ok("0") => return false,
+///
+/// Both inputs are arguments, and the variable is read by the caller. A test that had to set
+/// the variable to exercise this would be writing process-global state, and most of the
+/// tests around it resolve a config without taking any lock at all — so the one that wrote
+/// would be read by whichever of its siblings happened to be running beside it. Taking the
+/// value as a parameter means the interesting cases are decided by an ordinary function
+/// call, and nothing in this file has to touch the environment to check them.
+fn startup_dashboard(configured: Option<&Value>, flag: Option<&str>) -> bool {
+    match flag {
+        Some("1") => return true,
+        Some("0") => return false,
         // Anything else is not an answer. Falling through beats guessing: the variable is
         // inherited by everything a hub starts, so one malformed export would otherwise
         // follow the person into every session they open from there.
         _ => {}
     }
-    configured.as_ref().and_then(Value::as_bool).unwrap_or(true)
+    configured.and_then(Value::as_bool).unwrap_or(true)
 }
 
 /// The hub's name is its *address*: a worker derives it, finds the session record under it
@@ -1228,37 +1262,31 @@ mod tests {
         );
     }
 
-    /// The env variable is process-global and the harness runs tests in threads, so every
-    /// test that touches it has to hold the sandbox's lock — and the sandbox also clears the
-    /// variable, which is what keeps these answering about their fixture rather than about
-    /// the hub whose tab `cargo test` was typed in.
-    fn with_startup_dashboard_env<T>(value: Option<&str>, body: impl FnOnce() -> T) -> T {
-        let _sandbox = crate::testing::Sandbox::empty();
-        unsafe {
-            match value {
-                Some(value) => std::env::set_var(STARTUP_DASHBOARD_ENV, value),
-                None => std::env::remove_var(STARTUP_DASHBOARD_ENV),
-            }
-        }
-        let answer = body();
-        // Cleared here rather than left to the next sandbox: the guard this holds is the
-        // only thing serialising these, and a variable outliving it would be read by
-        // whichever test the lock goes to next.
-        unsafe { std::env::remove_var(STARTUP_DASHBOARD_ENV) };
-        answer
+    #[test]
+    fn a_hub_collects_the_dashboard_at_startup_until_somebody_says_not_to() {
+        // Nothing configured and no flag: the hub collects, which is what every machine that
+        // has never heard of this setting has to keep doing.
+        assert!(startup_dashboard(None, None));
+        assert!(!startup_dashboard(Some(&json!(false)), None));
+        assert!(startup_dashboard(Some(&json!(true)), None));
     }
 
     #[test]
-    fn a_hub_collects_the_dashboard_at_startup_until_somebody_says_not_to() {
-        let (_, settings, _) = with_startup_dashboard_env(None, || {
-            resolve(
-                json!({"repos": {"acme/app": {"taskSource": "github",
-                   "issueRepo": "acme/app", "issueKeys": {"acme/app": "WID"},
-                   "ide": "code"}}}),
-                "acme/app",
-            )
-        });
-        assert!(settings.startup_dashboard);
+    fn the_flag_a_hub_was_started_under_outranks_what_the_config_says() {
+        // `--no-dashboard` against a config that says collect…
+        assert!(!startup_dashboard(Some(&json!(true)), Some("0")));
+        // …and `--dashboard` against a config that says don't, which is the case the second
+        // flag exists for: a standing preference is not a thing you want to edit twice.
+        assert!(startup_dashboard(Some(&json!(false)), Some("1")));
+        // Anything that is neither leaves the configured answer standing. The variable is
+        // inherited by every process a hub starts, so a mistyped export that reversed a
+        // setting would follow the person around all day.
+        //
+        // Both fixtures, on purpose: an implementation that read every value other than
+        // `"1"` as off would satisfy the second on its own, and the pair is what tells
+        // "falls through" apart from "unknown means no".
+        assert!(startup_dashboard(Some(&json!(true)), Some("no")));
+        assert!(!startup_dashboard(Some(&json!(false)), Some("no")));
     }
 
     #[test]
@@ -1266,65 +1294,45 @@ mod tests {
         // Machine level says collect, this repository says don't: the more specific level
         // wins, as it does for every other setting. A repo whose board is enormous is
         // exactly the one that wants this, and it is the only one that should get it.
-        let (_, settings, _) = with_startup_dashboard_env(None, || {
-            resolve(
-                json!({"startupDashboard": true, "repos": {"acme/app": {
-                       "startupDashboard": false, "taskSource": "github",
-                       "issueRepo": "acme/app", "issueKeys": {"acme/app": "WID"},
-                       "ide": "code"}}}),
-                "acme/app",
-            )
-        });
-        assert!(!settings.startup_dashboard);
-    }
-
-    #[test]
-    fn the_flag_a_hub_was_started_under_outranks_what_the_config_says() {
-        // `--no-dashboard` against a config that says collect…
-        let (_, off, _) = with_startup_dashboard_env(Some("0"), || {
-            resolve(json!({"startupDashboard": true, "repos": {}}), "acme/app")
-        });
-        assert!(!off.startup_dashboard);
-        // …and `--dashboard` against a config that says don't, which is the case the second
-        // flag exists for: a standing preference is not a thing you want to edit twice.
-        let (_, on, _) = with_startup_dashboard_env(Some("1"), || {
-            resolve(json!({"startupDashboard": false, "repos": {}}), "acme/app")
-        });
-        assert!(on.startup_dashboard);
-        // Anything that is neither leaves the configured answer standing. The variable is
-        // inherited by every process a hub starts, so a mistyped export that reversed a
-        // setting would follow the person around all day.
         //
-        // Asserted against a config that says *collect*, on purpose: an implementation that
-        // read every value other than `"1"` as off would satisfy the opposite fixture and
-        // this is the only case that tells the two apart.
-        let (_, stray_over_true, _) = with_startup_dashboard_env(Some("no"), || {
-            resolve(json!({"startupDashboard": true, "repos": {}}), "acme/app")
-        });
-        assert!(stray_over_true.startup_dashboard);
-        let (_, stray_over_false, _) = with_startup_dashboard_env(Some("no"), || {
-            resolve(json!({"startupDashboard": false, "repos": {}}), "acme/app")
-        });
-        assert!(!stray_over_false.startup_dashboard);
+        // Asked of the level picker rather than of the resolved `bool`, because the resolved
+        // one also answers to `ADJUTANT_STARTUP_DASHBOARD` — and a `cargo test` typed in a
+        // hub's own tab inherits that. Split this way the two halves are each checkable on
+        // their own: which level wins here, and what the flag does to it above.
+        let map = |value: Value| value.as_object().cloned().unwrap();
+        let none = Map::new();
+        let machine_on = map(json!({"startupDashboard": true}));
+        let repo_off = map(json!({"startupDashboard": false}));
+        assert_eq!(
+            pick_level(&repo_off, &none, &machine_on, "startupDashboard"),
+            Some(json!(false))
+        );
+        // And nothing at the specific level leaves the machine's answer standing, or the
+        // setting would only ever be writable per repository.
+        assert_eq!(
+            pick_level(&none, &none, &machine_on, "startupDashboard"),
+            Some(json!(true))
+        );
+        assert_eq!(pick_level(&none, &none, &none, "startupDashboard"), None);
     }
 
     #[test]
     fn a_startup_dashboard_that_is_not_a_yes_or_no_is_said_out_loud_and_dropped() {
         // `"false"` the string is the shape somebody writes when they are thinking of the
-        // command-line settings around it, and it used to read as "set" to a `as_bool` that
-        // then said `None`. Dropped either way — but dropped in silence is a person who
-        // turned the dashboard off and watched it collect anyway.
-        let (_, settings, warnings) = with_startup_dashboard_env(None, || {
-            resolve(
-                json!({"startupDashboard": "false", "repos": {}}),
-                "acme/app",
-            )
-        });
-        assert!(settings.startup_dashboard);
+        // command-line settings around it, and it reads as "set" to a `as_bool` that then
+        // says `None`. Dropped either way — but dropped in silence is a person who turned
+        // the dashboard off and watched it collect anyway.
+        let (_, _, warnings) = resolve(
+            json!({"startupDashboard": "false", "repos": {}}),
+            "acme/app",
+        );
         assert!(
             warnings.iter().any(|w| w.contains("startupDashboard")),
             "{warnings:?}"
         );
+        // And what it resolves to once dropped, asked of the decision directly so that no
+        // ambient variable can answer for it.
+        assert!(startup_dashboard(Some(&json!("false")), None));
     }
 
     #[test]

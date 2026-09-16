@@ -771,6 +771,69 @@ mod tests {
         );
     }
 
+    /// `startupDashboard: false` has to reach four places, and the drift between them is the
+    /// failure this guards.
+    ///
+    /// A setting is a promise made by the binary and kept by the prose: the resolver can be
+    /// asked whether it is `false` and answer perfectly while the hub collects anyway,
+    /// because nothing in its procedure ever reads the answer. So the four places are pinned
+    /// here rather than left to whoever edits the file next.
+    ///
+    /// The one that matters most is 「起動時に読む」. A hub scoped to a parent task replaces
+    /// the startup step with its own, which means a change made to the step and not to the
+    /// replacement turns the setting off for repo hubs and leaves it on for parent-task hubs
+    /// — the same config, two behaviours, and nothing that fails.
+    #[test]
+    fn turning_the_startup_collection_off_reaches_both_kinds_of_hub_and_stops_there() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let flow = |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+
+        // The startup step is a numbered item rather than a heading, so it is bounded by its
+        // neighbour: `section` on the `##` above it would read every step in the block, and
+        // a phrase in step 5 would answer for step 3.
+        let step3 = between(raw, "3. **Dashboard の収集", "4. **受信箱を空にする");
+        let step3_flowed = flow(&step3);
+        assert!(
+            step3_flowed
+                .contains("`settings.startupDashboard`が`false`なら、収集エージェントを出さない"),
+            "the startup step collects whatever the setting says: {step3}"
+        );
+        // Naming the tab is not collecting. Dropped along with the collector it would leave
+        // a tab nobody can tell from any other, for a saving of nothing.
+        assert!(
+            step3_flowed.contains("名乗り（`adjutanttitle`）は変わらず打つ"),
+            "turning the collection off also stops the hub naming its tab: {step3}"
+        );
+
+        // The parent-task hub's replacement for that step.
+        let startup = flow(&step(raw, "### 起動時に読む"));
+        assert!(
+            startup.contains("`settings.startupDashboard`が`false`なら、ここでも出さない"),
+            "a parent-task hub collects at startup however the setting is set"
+        );
+
+        // Having not collected, the hub has to say so — and say how to get the listing. Left
+        // out, the person reads 「集計中なのだ」 and waits for a subagent that was never sent.
+        let step5 = between(raw, "5. **待機に入る。**", "## 親タスクの hub");
+        assert!(
+            flow(&step5).contains("集めていないことと、頼めば集まることを1行で"),
+            "the hub goes to wait without saying the listing is not coming: {step5}"
+        );
+
+        // And the on-demand route is explicitly *not* gated. The setting exists to stop a
+        // collection nobody asked for; a procedure that read it as "this hub does not do
+        // listings" would take the feature away instead of the automatic part of it.
+        let dashboard = flow(&section(raw, "## Dashboard — 一覧と片付け"));
+        assert!(
+            dashboard.contains("起動時の分だけは設定で止められる"),
+            "the dashboard section never says the startup collection can be turned off"
+        );
+        assert!(
+            dashboard.contains("人から「一覧」と言われたときは止まらない"),
+            "the setting reads as gating the listing itself, not just the startup one"
+        );
+    }
+
     /// Every column of the sub-issue row is read by a step further down.
     ///
     /// The call started life as number, title and state — enough to print a list and nothing
