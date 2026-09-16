@@ -97,7 +97,7 @@ at the repo-entry level**, in `issueKeys`:
 | --- | --- |
 | **リポジトリエントリ直下** | `issueKeys`, `issueCreate` (`adj-hub` 用), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr` |
 | **ソースごと** | `type` (フラット形式での `taskSource`), `projectOwner`, `projectNumber`, `projectFields`, `issueRepo` (`github` 型のみ), `branchPattern`, `worktreeName`, `linear`, `jira` |
-| **このマシンの設定** | `ide`, `terminal`, `notification`, `wake` / `hubWake` / `workerWake`, `agentRunner`, `hubRunner`, `agentEnv`, `worktreePattern` |
+| **このマシンの設定** | `ide`, `terminal`, `notification`, `wake` / `hubWake` / `workerWake`, `agentRunner`, `hubRunner`, `agentEnv`, `worktreePattern`, `startupDashboard` |
 
 **マシンの設定はエントリ直下に書いてもいい**（そこが一番具体的なので勝つ）が、返ってくるのは
 `settings` の側だけで、`config` には出てこない。`config` に無いからといって未設定ではない。
@@ -180,6 +180,12 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
    **`adjutant_config` の `hub` に識別子が入っていて、それがソースに当たるなら、ここで出すのは
    Dashboard ではなく親タスクの収集**（「親タスクの hub」）。repo 全体の一覧はその hub の担当範囲
    ではない。当たらなければ Dashboard のまま。
+
+   **ただし `adjutant_config` の `settings.startupDashboard` が `false` なら、収集エージェントを
+   出さない。** Dashboard も親タスクの収集も同じで、どちらも起動時のこの1枠。名乗り
+   （`adjutant title`）は変わらず打つ — あれは収集ではなく、このタブが何なのかを人に見せるもの。
+   `false` にしているのは「起動のたびに board を舐めなくていい」という意思表示なので、
+   **代わりに hub が自分で集めにいかない。** 一覧が要るときは人が「一覧」と言う。
 4. **受信箱を空にする。** Context の `adjutant_pending` に溜まっているものを、`kind` で振り分ける。
    1件処理し終えたら `adjutant_pending` の `action: ack` でその名前を片付ける（`read/` に移る。
    二度処理しない）:
@@ -205,6 +211,12 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
    **起動時に `AskUserQuestion` を開かない** — 人が来るまで hub が止まる。
    片付け可能な worktree があっても、集計が返ってきたときの要約に1行入れるだけで、聞かない
    （Dashboard の Step 1 は走らせない）。
+
+   **収集を出していないとき**（step 3 の `startupDashboard` が `false`）は、来ない集計を
+   待っているように見せない。「待機中なのだ（一覧は集めてないのだ。「一覧」と言えば集めるのだ）」の
+   ように、**集めていないことと、頼めば集まることを1行で**書いて終える。前者だけだと人は
+   待ち続けるし、後者が無いと一覧の出し方がこの画面のどこにも無い。片付けの提案も同じ理由で
+   出てこないので、worktree の掃除もこの hub からは「一覧」を経由する。
 
 ## 親タスクの hub
 
@@ -252,9 +264,15 @@ hub が立つ** — その箱に届いた報告を誰も読まない。
 
 「起動時にやること」の Step 3 がこれに差し替わる。Dashboard ではなく**親タスクの収集**を
 サブエージェントに出す（Appendix — 親タスク収集エージェントへの指示書）。**結果を待たない。**
+
 出す理由は Dashboard と同じで、hub は1日中生きているから生の JSON を積むと後半のターンが全部
 重くなるし、集めている数十秒のあいだ hub が手を塞ぐのも同じ。タブには親のキーで名乗る
 （`adjutant title --title '🗂 {親のキー} hub'`）。hub が何枚並んでも、どれがどの親か一目で分かる。
+
+**`settings.startupDashboard` が `false` なら、ここでも出さない。** 差し替わるのは収集の中身
+だけで、枠そのものは Step 3 と同じ1枠。設定が止めているのは「起動時に重い収集を回すこと」で、
+それは親タスクを引くのも repo 全体を舐めるのも変わらない。タブの名乗りは打ち、
+待機の1行には「頼めば集める」を入れる（Step 5）。
 
 **hub が渡すのは識別子と、逆引きで判ったソースの情報だけ**（`type` と issue の在処）。親タスク
 そのもの — タイトルと URL、`linear` なら内部 id — は**収集エージェントが引く。** hub の起動は
@@ -664,7 +682,10 @@ adj hub --tab --hub '{親のキー}'
 ## Dashboard — 一覧と片付け
 
 **収集（Step 2）はサブエージェントに出す。** 起動時も、人から「一覧」と言われたときも同じ
-（Appendix — ダッシュボード収集エージェントへの指示書）。理由は2つ:
+（Appendix — ダッシュボード収集エージェントへの指示書）。ただし**起動時の分だけは設定で止められる**
+（`settings.startupDashboard` が `false`、または `adj hub --no-dashboard`。「起動時にやること」の
+Step 3）。**人から「一覧」と言われたときは止まらない** — 止めているのは「聞かれてもいないのに
+起動のたびに集めること」であって、一覧そのものではない。理由は2つ:
 
 - **hub を busy にしないため。** board 検索・GraphQL・PR 一覧で数十秒かかり、その間 hub は
   人も worker も受け付けられない。人から頼まれたときも結果を待たず、「集計中なのだ」で

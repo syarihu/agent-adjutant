@@ -76,6 +76,10 @@ impl Fixture {
             // Whatever started `cargo test` may itself be a hub, and an inherited
             // `ADJUTANT_HUB` would re-address every inbox these tests assert on.
             .env_remove("ADJUTANT_HUB")
+            // And if that hub was started with `--no-dashboard`, it exported this — which
+            // the resolver reads as an override, so `adj config` here would answer about
+            // the tab the suite was run in rather than about the fixture.
+            .env_remove("ADJUTANT_STARTUP_DASHBOARD")
             .output()
             .unwrap()
     }
@@ -1321,6 +1325,78 @@ fn a_tab_opened_for_a_hub_is_told_which_hub_it_is_opening() {
     // the separator has to go back on the line the tab is handed.
     let extra = fixture.ok(&["hub", "--tab", "--dry-run", "--", "--resume"]);
     assert!(extra.contains("hub -- --resume"), "{extra}");
+}
+
+/// What `--no-dashboard` has to reach is the hub's own procedure, which asks the MCP server
+/// for its settings — so the flag becomes a variable on the line the agent is `exec`ed
+/// with, and the resolver folds it in before anybody reads `startupDashboard`.
+#[test]
+fn a_hub_told_not_to_collect_carries_that_down_to_the_agent_it_becomes() {
+    let fixture = Fixture::new(QUIET);
+    let off = fixture.ok(&["hub", "--dry-run", "--no-dashboard"]);
+    assert!(off.contains("ADJUTANT_STARTUP_DASHBOARD=0"), "{off}");
+    let on = fixture.ok(&["hub", "--dry-run", "--dashboard"]);
+    assert!(on.contains("ADJUTANT_STARTUP_DASHBOARD=1"), "{on}");
+
+    // Neither flag adds anything at all. The line a plain `adj hub` prints is one people
+    // read, script and paste, and an override appearing in it would be a change to that
+    // line for every user who never asked about the dashboard.
+    let plain = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!plain.contains("ADJUTANT_STARTUP_DASHBOARD"), "{plain}");
+
+    // Both at once is a contradiction with no sensible winner, so clap refuses it rather
+    // than letting declaration order decide.
+    let both = fixture.cmd(&["hub", "--dry-run", "--dashboard", "--no-dashboard"]);
+    assert!(!both.status.success(), "{both:?}");
+}
+
+/// The `--tab` route never reaches the environment the other one builds: the terminal is
+/// handed a command line and nothing else, exactly as with `--hub`. So the flag is
+/// forwarded as a flag, and above the `--` — below it, clap at the far end would take it as
+/// a trailing argument and append it to the *agent's* command instead of parsing it.
+#[test]
+fn a_tab_opened_for_a_hub_is_told_whether_to_collect_too() {
+    let fixture = Fixture::new(QUIET);
+    let off = fixture.ok(&["hub", "--tab", "--dry-run", "--no-dashboard"]);
+    assert!(off.contains("--no-dashboard"), "{off}");
+    // The variable belongs to the hub the tab starts, not to the launcher that opens it:
+    // this line runs `adj hub`, and that invocation builds its own environment.
+    assert!(!off.contains("ADJUTANT_STARTUP_DASHBOARD"), "{off}");
+
+    let on = fixture.ok(&["hub", "--tab", "--dry-run", "--dashboard"]);
+    assert!(on.contains("--dashboard"), "{on}");
+
+    let extra = fixture.ok(&["hub", "--tab", "--dry-run", "--no-dashboard", "--", "-r"]);
+    let line = extra.find("--no-dashboard").unwrap();
+    assert!(line < extra.find("-- -r").unwrap(), "{extra}");
+
+    let plain = fixture.ok(&["hub", "--tab", "--dry-run"]);
+    assert!(!plain.contains("dashboard"), "{plain}");
+}
+
+/// `adj config` is what the hub actually reads, so the answer it gives has to be the one the
+/// flag produced. Resolving the override in the command layer instead would leave a hub
+/// started with `--no-dashboard` reading a `settings` block that says it should collect.
+#[test]
+fn the_resolved_settings_answer_about_the_dashboard_including_the_override() {
+    let fixture = Fixture::new(QUIET);
+    assert_eq!(
+        fixture.json(&["config"])["settings"]["startupDashboard"],
+        true
+    );
+
+    let overridden = Command::new(BIN)
+        .args(["config"])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .env_remove("ADJUTANT_HUB")
+        .env("ADJUTANT_STARTUP_DASHBOARD", "0")
+        .output()
+        .unwrap();
+    let answer: serde_json::Value =
+        serde_json::from_slice(&overridden.stdout).expect("config printed no JSON");
+    assert_eq!(answer["settings"]["startupDashboard"], false);
 }
 
 const CODEX: &str = r#"{"notification": "true",

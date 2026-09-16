@@ -54,7 +54,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-const SETTING_KEYS: [&str; 10] = [
+const SETTING_KEYS: [&str; 11] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -68,7 +68,24 @@ const SETTING_KEYS: [&str; 10] = [
     // these. Left out of this list it survived into the per-repo config as well as into
     // `Settings`, so `adj config` answered with it twice and the two could disagree.
     "ide",
+    // Whether the hub spends its first block dispatching the dashboard collector. Machine
+    // level because it is about how somebody wants their hub to come up, not about the work
+    // the repository holds — and it is here rather than in the prompt because the prompt is
+    // the same text on every machine.
+    "startupDashboard",
 ];
+
+/// Overrides `startupDashboard` for one hub, set by `adj hub --no-dashboard` / `--dashboard`.
+///
+/// A flag on a command that `exec`s an agent has no other way to reach the prompt: the hub
+/// reads its settings through `adjutant_config`, which is served by an MCP server that is
+/// the agent's own child, so the environment is the one channel that survives both hops.
+/// The same trick `ADJUTANT_HUB` uses, for the same reason.
+///
+/// `"1"` and `"0"` and nothing else. Anything else falls through to the configured value
+/// rather than picking a side, because a variable somebody exported with a typo in it should
+/// not quietly reverse a setting they wrote down on purpose.
+pub const STARTUP_DASHBOARD_ENV: &str = "ADJUTANT_STARTUP_DASHBOARD";
 
 /// What each machine-level key is allowed to be.
 ///
@@ -79,6 +96,10 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
     match key {
         "terminal" | "agentEnv" => &["an object"],
         "notification" | "wake" | "hubWake" | "workerWake" => &["a string", "false", "an object"],
+        // The one knob that is a yes/no rather than a command line. Without its own arm it
+        // fell through to the string default below, and every `true` anybody wrote was
+        // reported as the wrong shape and dropped — a setting that warns when used correctly.
+        "startupDashboard" => &["true", "false"],
         _ => &["a string"],
     }
 }
@@ -428,7 +449,11 @@ pub struct TerminalSettings {
     pub title: Hook,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+/// `Default` is hand-written rather than derived because `startup_dashboard` is the one
+/// field whose "nothing was configured" answer is not the type's zero. Derived, a
+/// `Settings::default()` would say the dashboard is off, which is the opposite of what an
+/// empty config means.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub terminal: TerminalSettings,
@@ -459,6 +484,32 @@ pub struct Settings {
     /// Where a worktree goes when no convention tool answers. `None` = built-in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_pattern: Option<String>,
+    /// Whether a starting hub hands the dashboard collection to a subagent before it goes to
+    /// wait. Off means it comes up with nothing but its own settings read, and the listing is
+    /// there for the asking instead.
+    ///
+    /// Never skipped when serialising, unlike the `Option` fields above it: the hub's
+    /// procedure branches on this value, and a key that disappears when it is `true` makes
+    /// the prompt read "absent" and "off" as the same thing. That reversal is silent — a hub
+    /// that simply never collects, on the machine that changed nothing.
+    pub startup_dashboard: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            terminal: TerminalSettings::default(),
+            notification: Hook::default(),
+            hub_wake: Wake::default(),
+            worker_wake: Wake::default(),
+            agent_runner: None,
+            agent_env: Vec::new(),
+            hub_runner: None,
+            ide: None,
+            worktree_pattern: None,
+            startup_dashboard: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -645,7 +696,30 @@ fn resolve_settings(
         agent_env: agent_env(pick("agentEnv"), warnings),
         ide: pick_str("ide"),
         worktree_pattern: pick_str("worktreePattern"),
+        // Read here rather than where the flag is parsed, so that there is one answer to the
+        // question. `adj config` and the MCP tool both come out of this function, and the
+        // agent asks the tool — resolving the override in the command layer would leave the
+        // hub reading a `settings` block that disagrees with the flag it was started under.
+        startup_dashboard: startup_dashboard(pick("startupDashboard")),
     }
+}
+
+/// `ADJUTANT_STARTUP_DASHBOARD` over the configured value over `true`.
+///
+/// The environment wins because it is how a flag typed just now reaches an agent that is
+/// three processes away; the config is the standing preference, and a standing preference
+/// that a person can no longer override for one session is a setting they end up editing
+/// twice a day.
+fn startup_dashboard(configured: Option<Value>) -> bool {
+    match std::env::var(STARTUP_DASHBOARD_ENV).as_deref() {
+        Ok("1") => return true,
+        Ok("0") => return false,
+        // Anything else is not an answer. Falling through beats guessing: the variable is
+        // inherited by everything a hub starts, so one malformed export would otherwise
+        // follow the person into every session they open from there.
+        _ => {}
+    }
+    configured.as_ref().and_then(Value::as_bool).unwrap_or(true)
 }
 
 /// The hub's name is its *address*: a worker derives it, finds the session record under it
@@ -983,7 +1057,7 @@ mod tests {
             // skipped key would pass an "is it spelled right" check for free.
             json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                    "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
-                   "agentEnv": {"K": "v"}, "ide": "code",
+                   "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false,
                    "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
                    "repos": {}}),
             "acme/app",
@@ -996,6 +1070,7 @@ mod tests {
             "hubRunner",
             "worktreePattern",
             "agentEnv",
+            "startupDashboard",
         ] {
             assert!(text.get(key).is_some(), "{key} is missing from {text}");
         }
@@ -1006,6 +1081,7 @@ mod tests {
             "hub_runner",
             "worktree_pattern",
             "agent_env",
+            "startup_dashboard",
         ] {
             assert!(
                 text.get(key).is_none(),
@@ -1152,12 +1228,111 @@ mod tests {
         );
     }
 
+    /// The env variable is process-global and the harness runs tests in threads, so every
+    /// test that touches it has to hold the sandbox's lock — and the sandbox also clears the
+    /// variable, which is what keeps these answering about their fixture rather than about
+    /// the hub whose tab `cargo test` was typed in.
+    fn with_startup_dashboard_env<T>(value: Option<&str>, body: impl FnOnce() -> T) -> T {
+        let _sandbox = crate::testing::Sandbox::empty();
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(STARTUP_DASHBOARD_ENV, value),
+                None => std::env::remove_var(STARTUP_DASHBOARD_ENV),
+            }
+        }
+        let answer = body();
+        // Cleared here rather than left to the next sandbox: the guard this holds is the
+        // only thing serialising these, and a variable outliving it would be read by
+        // whichever test the lock goes to next.
+        unsafe { std::env::remove_var(STARTUP_DASHBOARD_ENV) };
+        answer
+    }
+
+    #[test]
+    fn a_hub_collects_the_dashboard_at_startup_until_somebody_says_not_to() {
+        let (_, settings, _) = with_startup_dashboard_env(None, || {
+            resolve(
+                json!({"repos": {"acme/app": {"taskSource": "github",
+                   "issueRepo": "acme/app", "issueKeys": {"acme/app": "WID"},
+                   "ide": "code"}}}),
+                "acme/app",
+            )
+        });
+        assert!(settings.startup_dashboard);
+    }
+
+    #[test]
+    fn a_repository_can_keep_its_own_hub_from_collecting_at_startup() {
+        // Machine level says collect, this repository says don't: the more specific level
+        // wins, as it does for every other setting. A repo whose board is enormous is
+        // exactly the one that wants this, and it is the only one that should get it.
+        let (_, settings, _) = with_startup_dashboard_env(None, || {
+            resolve(
+                json!({"startupDashboard": true, "repos": {"acme/app": {
+                       "startupDashboard": false, "taskSource": "github",
+                       "issueRepo": "acme/app", "issueKeys": {"acme/app": "WID"},
+                       "ide": "code"}}}),
+                "acme/app",
+            )
+        });
+        assert!(!settings.startup_dashboard);
+    }
+
+    #[test]
+    fn the_flag_a_hub_was_started_under_outranks_what_the_config_says() {
+        // `--no-dashboard` against a config that says collect…
+        let (_, off, _) = with_startup_dashboard_env(Some("0"), || {
+            resolve(json!({"startupDashboard": true, "repos": {}}), "acme/app")
+        });
+        assert!(!off.startup_dashboard);
+        // …and `--dashboard` against a config that says don't, which is the case the second
+        // flag exists for: a standing preference is not a thing you want to edit twice.
+        let (_, on, _) = with_startup_dashboard_env(Some("1"), || {
+            resolve(json!({"startupDashboard": false, "repos": {}}), "acme/app")
+        });
+        assert!(on.startup_dashboard);
+        // Anything that is neither leaves the configured answer standing. The variable is
+        // inherited by every process a hub starts, so a mistyped export that reversed a
+        // setting would follow the person around all day.
+        //
+        // Asserted against a config that says *collect*, on purpose: an implementation that
+        // read every value other than `"1"` as off would satisfy the opposite fixture and
+        // this is the only case that tells the two apart.
+        let (_, stray_over_true, _) = with_startup_dashboard_env(Some("no"), || {
+            resolve(json!({"startupDashboard": true, "repos": {}}), "acme/app")
+        });
+        assert!(stray_over_true.startup_dashboard);
+        let (_, stray_over_false, _) = with_startup_dashboard_env(Some("no"), || {
+            resolve(json!({"startupDashboard": false, "repos": {}}), "acme/app")
+        });
+        assert!(!stray_over_false.startup_dashboard);
+    }
+
+    #[test]
+    fn a_startup_dashboard_that_is_not_a_yes_or_no_is_said_out_loud_and_dropped() {
+        // `"false"` the string is the shape somebody writes when they are thinking of the
+        // command-line settings around it, and it used to read as "set" to a `as_bool` that
+        // then said `None`. Dropped either way — but dropped in silence is a person who
+        // turned the dashboard off and watched it collect anyway.
+        let (_, settings, warnings) = with_startup_dashboard_env(None, || {
+            resolve(
+                json!({"startupDashboard": "false", "repos": {}}),
+                "acme/app",
+            )
+        });
+        assert!(settings.startup_dashboard);
+        assert!(
+            warnings.iter().any(|w| w.contains("startupDashboard")),
+            "{warnings:?}"
+        );
+    }
+
     #[test]
     fn machine_settings_stay_out_of_the_repo_config() {
         let (config, _, _) = resolve(
             json!({"repos": {"acme/app": {
                 "terminal": {"spawn": "x {command}"}, "agentRunner": "y {prompt}",
-                "worktreePattern": ".worktrees/{name}",
+                "worktreePattern": ".worktrees/{name}", "startupDashboard": false,
                 "taskSource": "github", "issueRepo": "acme/app",
                 "issueKeys": {"acme/app": "WID"}, "ide": "code"
             }}}),
@@ -1170,6 +1345,7 @@ mod tests {
             "agentEnv",
             "worktreePattern",
             "notification",
+            "startupDashboard",
         ] {
             assert!(config.get(key).is_none(), "{key} leaked into config");
         }
