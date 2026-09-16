@@ -788,15 +788,42 @@ mod tests {
         let raw = find("adj-hub").unwrap().raw_content;
         let flow = |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
 
+        // A procedure is read top to bottom and acted on as it is read, so a condition that
+        // arrives after the instruction it governs arrives too late: the agent has already
+        // dispatched the collector, or already written 「集計中なのだ」 for one that was
+        // never sent. Each of the three places below is checked for the condition *and* for
+        // where it sits relative to the imperative.
+        let before = |text: &str, flowed: &str, condition: &str, imperative: &str| {
+            let at = |needle: &str| {
+                flowed
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("`{needle}` is missing from:\n{text}"))
+            };
+            assert!(
+                at(condition) < at(imperative),
+                "`{imperative}` is reached before `{condition}` qualifies it:\n{text}"
+            );
+        };
+
         // The startup step is a numbered item rather than a heading, so it is bounded by its
         // neighbour: `section` on the `##` above it would read every step in the block, and
         // a phrase in step 5 would answer for step 3.
-        let step3 = between(raw, "3. **Dashboard の収集", "4. **受信箱を空にする");
+        let step3 = between(
+            raw,
+            "3. **収集をサブエージェントに出すかどうかを",
+            "4. **受信箱",
+        );
         let step3_flowed = flow(&step3);
         assert!(
             step3_flowed
                 .contains("`settings.startupDashboard`が`false`なら、収集エージェントを出さない"),
             "the startup step collects whatever the setting says: {step3}"
+        );
+        before(
+            &step3,
+            &step3_flowed,
+            "`settings.startupDashboard`で決める",
+            "結果を待たない",
         );
         // Naming the tab is not collecting. Dropped along with the collector it would leave
         // a tab nobody can tell from any other, for a saving of nothing.
@@ -806,18 +833,33 @@ mod tests {
         );
 
         // The parent-task hub's replacement for that step.
-        let startup = flow(&step(raw, "### 起動時に読む"));
+        let parent = step(raw, "### 起動時に読む");
+        let parent_flowed = flow(&parent);
         assert!(
-            startup.contains("`settings.startupDashboard`が`false`なら、ここでも出さない"),
-            "a parent-task hub collects at startup however the setting is set"
+            parent_flowed.contains("`settings.startupDashboard`が`false`なら、ここでも出さない"),
+            "a parent-task hub collects at startup however the setting is set: {parent}"
+        );
+        before(
+            &parent,
+            &parent_flowed,
+            "出すかどうかの判断はStep3のまま",
+            "結果を待たない",
         );
 
         // Having not collected, the hub has to say so — and say how to get the listing. Left
         // out, the person reads 「集計中なのだ」 and waits for a subagent that was never sent.
         let step5 = between(raw, "5. **待機に入る。**", "## 親タスクの hub");
+        let step5_flowed = flow(&step5);
         assert!(
-            flow(&step5).contains("集めていないことと、頼めば集まることを1行で"),
+            step5_flowed.contains("集めていないことと、頼めば集まることを1行で"),
             "the hub goes to wait without saying the listing is not coming: {step5}"
+        );
+        // 「集計中なのだ」 is the one sentence that must never be reachable unconditionally.
+        before(
+            &step5,
+            &step5_flowed,
+            "step3で収集を出したかどうかで変わる",
+            "一覧はいま集計中なのだ",
         );
 
         // And the on-demand route is explicitly *not* gated. The setting exists to stop a

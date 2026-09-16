@@ -1418,6 +1418,13 @@ const DASHBOARD_PER_MACHINE: &str = r#"{"notification": "true", "startupDashboar
     "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
               "issueKeys": {"acme/widget": "WID"}}}}"#;
 
+/// The middle rung: `defaults` says don't, the top level says do, and the entry says nothing.
+/// Both neighbours disagree with it, so the answer can only have come from `defaults` itself.
+const DASHBOARD_PER_DEFAULTS: &str = r#"{"notification": "true", "startupDashboard": true,
+    "defaults": {"ide": "code", "startupDashboard": false},
+    "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+              "issueKeys": {"acme/widget": "WID"}}}}"#;
+
 /// Every answer `settings.startupDashboard` can give, read back out of the binary.
 ///
 /// `adj config` is what the hub's procedure actually reads, so this is the only place the
@@ -1454,6 +1461,17 @@ fn what_the_config_file_says_about_the_dashboard_reaches_the_resolved_settings()
     let per_machine = Fixture::new(DASHBOARD_PER_MACHINE);
     assert_eq!(
         per_machine.json(&["config"])["settings"]["startupDashboard"],
+        false
+    );
+
+    // The rung between those two. `defaults` is the level the other two cases step over
+    // without touching, so a break in it — `pick` skipping the middle, or `defaults` losing
+    // to the top level — passes everything above and is found by nobody. With the entry
+    // silent and the two outer levels disagreeing, `false` here names `defaults` and only
+    // `defaults`, which makes this one assertion pin the whole order: entry > defaults > root.
+    let per_defaults = Fixture::new(DASHBOARD_PER_DEFAULTS);
+    assert_eq!(
+        per_defaults.json(&["config"])["settings"]["startupDashboard"],
         false
     );
 

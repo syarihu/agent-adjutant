@@ -141,7 +141,7 @@ fn tool_definitions() -> Value {
     json!({ "tools": [
         {
             "name": "adjutant_config",
-            "description": "The resolved configuration for a repository: task sources (always an array, flat shorthand already expanded), defaults already merged, and the machine settings (terminal, agent runner, notification, editor). Also reports warnings about the config rather than failing on it. Call this once at startup instead of reading the config file.",
+            "description": "The resolved configuration for a repository: task sources (always an array, flat shorthand already expanded), defaults already merged, and the machine settings (terminal, agent runner, notification, editor, whether to collect the dashboard at startup). Also reports warnings about the config rather than failing on it. Call this once at startup instead of reading the config file.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "repo": repo_property(), "hub": hub_property(), "cwd": cwd_property() },

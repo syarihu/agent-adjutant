@@ -635,10 +635,14 @@ fn pick_level(
 ///
 /// The top level is where `terminal` and `notification` normally sit — they describe the
 /// machine, and repeating them per repo is how they drift apart.
+///
+/// `startup_flag` is `ADJUTANT_STARTUP_DASHBOARD` as the entry point found it, handed down
+/// rather than read here. See `resolve_config`, which is the one place that looks.
 fn resolve_settings(
     root: &Map<String, Value>,
     defaults: &Map<String, Value>,
     entry: &Map<String, Value>,
+    startup_flag: Option<&str>,
     warnings: &mut Vec<String>,
 ) -> Settings {
     for (place, map) in [
@@ -688,11 +692,9 @@ fn resolve_settings(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
-    // The one setting whose answer comes partly from outside the config file. Read out here
-    // rather than inside the decision so that the decision stays a function of its two
-    // inputs — `startup_dashboard` says why that is worth the extra line.
+    // The one setting whose answer comes partly from outside the config file. Picked here,
+    // decided by a function of two arguments, and the outside half arrives as one of them.
     let configured_dashboard = pick("startupDashboard");
-    let dashboard_flag = std::env::var(STARTUP_DASHBOARD_ENV).ok();
     Settings {
         terminal: TerminalSettings {
             spawn: str_field(&terminal, "spawn"),
@@ -724,10 +726,7 @@ fn resolve_settings(
         // question. `adj config` and the MCP tool both come out of this function, and the
         // agent asks the tool — resolving the override in the command layer would leave the
         // hub reading a `settings` block that disagrees with the flag it was started under.
-        startup_dashboard: startup_dashboard(
-            configured_dashboard.as_ref(),
-            dashboard_flag.as_deref(),
-        ),
+        startup_dashboard: startup_dashboard(configured_dashboard.as_ref(), startup_flag),
     }
 }
 
@@ -738,12 +737,12 @@ fn resolve_settings(
 /// that a person can no longer override for one session is a setting they end up editing
 /// twice a day.
 ///
-/// Both inputs are arguments, and the variable is read by the caller. A test that had to set
-/// the variable to exercise this would be writing process-global state, and most of the
-/// tests around it resolve a config without taking any lock at all — so the one that wrote
-/// would be read by whichever of its siblings happened to be running beside it. Taking the
-/// value as a parameter means the interesting cases are decided by an ordinary function
-/// call, and nothing in this file has to touch the environment to check them.
+/// Both inputs are arguments, and the variable itself is read at the entry point rather than
+/// here — see `resolve_config`. A test that had to set the variable to exercise this would be
+/// writing process-global state, and most of the tests around it resolve a config without
+/// taking any lock at all, so the one that wrote would be read by whichever of its siblings
+/// happened to be running beside it. Passed as a parameter, every case is decided by an
+/// ordinary function call and nothing in this file has to touch the environment at all.
 fn startup_dashboard(configured: Option<&Value>, flag: Option<&str>) -> bool {
     match flag {
         Some("1") => return true,
@@ -817,8 +816,15 @@ fn agent_env(value: Option<Value>, warnings: &mut Vec<String>) -> Vec<(String, S
 
 /// Resolve one repo's entry out of an already-parsed config document.
 ///
-/// Split from the file reading so it can be tested as what it is: JSON in, JSON out.
-pub fn resolve_from_value(raw: &Value, nwo: &str) -> (bool, Option<Value>, Settings, Vec<String>) {
+/// Split from the file reading so it can be tested as what it is: JSON in, JSON out. That
+/// claim is only true while it stays true of the whole call tree, which is why
+/// `startup_flag` is threaded through rather than read where it is used — see
+/// `resolve_config`.
+pub fn resolve_from_value(
+    raw: &Value,
+    nwo: &str,
+    startup_flag: Option<&str>,
+) -> (bool, Option<Value>, Settings, Vec<String>) {
     let mut warnings: Vec<String> = Vec::new();
     let root = raw.as_object().cloned().unwrap_or_default();
     if !raw.is_object() {
@@ -858,7 +864,7 @@ pub fn resolve_from_value(raw: &Value, nwo: &str) -> (bool, Option<Value>, Setti
     }
 
     let Some(entry_raw) = lookup_entry(&repos, nwo) else {
-        let settings = resolve_settings(&root, &defaults, &Map::new(), &mut warnings);
+        let settings = resolve_settings(&root, &defaults, &Map::new(), startup_flag, &mut warnings);
         check_runner(&settings, &mut warnings);
         return (false, None, settings, warnings);
     };
@@ -869,7 +875,7 @@ pub fn resolve_from_value(raw: &Value, nwo: &str) -> (bool, Option<Value>, Setti
         ));
     }
     let entry = as_object(Some(entry_raw));
-    let settings = resolve_settings(&root, &defaults, &entry, &mut warnings);
+    let settings = resolve_settings(&root, &defaults, &entry, startup_flag, &mut warnings);
     check_runner(&settings, &mut warnings);
 
     let mut resolved = builtin_defaults();
@@ -960,13 +966,25 @@ pub fn resolve_from_value(raw: &Value, nwo: &str) -> (bool, Option<Value>, Setti
     (true, Some(Value::Object(resolved)), settings, warnings)
 }
 
+/// The runtime entry point: the config file on disk, plus the one answer that does not come
+/// from it.
+///
+/// This is the only place `ADJUTANT_STARTUP_DASHBOARD` is read — `config_path` above has its
+/// own reasons to look at the environment, and they are about *which file*, not what is in
+/// it. Everything below this takes the value as an argument, which is what lets the rest of
+/// the resolver be tested as a function of its inputs — the tests call it
+/// directly, in parallel, holding no lock, and a variable exported by the hub whose tab
+/// `cargo test` was typed in cannot reach them. Read one layer down instead, it could: the
+/// suite would be answering about that hub's `--no-dashboard` rather than about its fixture.
 pub fn resolve_config(nwo: &str) -> Result<Resolved, String> {
     let path = config_path();
     let shown = path.to_string_lossy().to_string();
+    let startup_flag = std::env::var(STARTUP_DASHBOARD_ENV).ok();
+    let startup_flag = startup_flag.as_deref();
     if !path.exists() {
         // No config at all is the first-run state, not a failure. Everything that does not
         // need task sources — spawn, send, notify — still works off the built-ins.
-        let (_, _, settings, _) = resolve_from_value(&json!({}), nwo);
+        let (_, _, settings, _) = resolve_from_value(&json!({}), nwo, startup_flag);
         return Ok(Resolved {
             registered: false,
             config_path: shown.clone(),
@@ -978,7 +996,7 @@ pub fn resolve_config(nwo: &str) -> Result<Resolved, String> {
     let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
     let raw: Value =
         serde_json::from_str(&text).map_err(|e| format!("cannot parse {shown}: {e}"))?;
-    let (registered, config, settings, warnings) = resolve_from_value(&raw, nwo);
+    let (registered, config, settings, warnings) = resolve_from_value(&raw, nwo, startup_flag);
     Ok(Resolved {
         registered,
         config_path: shown,
@@ -992,8 +1010,11 @@ pub fn resolve_config(nwo: &str) -> Result<Resolved, String> {
 mod tests {
     use super::*;
 
+    /// No flag, always and explicitly. The one that a hub exports is `resolve_config`'s to
+    /// read, and a test that picked it up from the terminal would be reporting on the tab it
+    /// was run in.
     fn resolve(raw: Value, nwo: &str) -> (Option<Value>, Settings, Vec<String>) {
-        let (_, config, settings, warnings) = resolve_from_value(&raw, nwo);
+        let (_, config, settings, warnings) = resolve_from_value(&raw, nwo, None);
         (config, settings, warnings)
     }
 
