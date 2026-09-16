@@ -788,23 +788,6 @@ mod tests {
         let raw = find("adj-hub").unwrap().raw_content;
         let flow = |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
 
-        // A procedure is read top to bottom and acted on as it is read, so a condition that
-        // arrives after the instruction it governs arrives too late: the agent has already
-        // dispatched the collector, or already written 「集計中なのだ」 for one that was
-        // never sent. Each of the three places below is checked for the condition *and* for
-        // where it sits relative to the imperative.
-        let before = |text: &str, flowed: &str, condition: &str, imperative: &str| {
-            let at = |needle: &str| {
-                flowed
-                    .find(needle)
-                    .unwrap_or_else(|| panic!("`{needle}` is missing from:\n{text}"))
-            };
-            assert!(
-                at(condition) < at(imperative),
-                "`{imperative}` is reached before `{condition}` qualifies it:\n{text}"
-            );
-        };
-
         // The startup step is a numbered item rather than a heading, so it is bounded by its
         // neighbour: `section` on the `##` above it would read every step in the block, and
         // a phrase in step 5 would answer for step 3.
@@ -821,7 +804,6 @@ mod tests {
         );
         before(
             &step3,
-            &step3_flowed,
             "`settings.startupDashboard`で決める",
             "結果を待たない",
         );
@@ -839,12 +821,7 @@ mod tests {
             parent_flowed.contains("`settings.startupDashboard`が`false`なら、ここでも出さない"),
             "a parent-task hub collects at startup however the setting is set: {parent}"
         );
-        before(
-            &parent,
-            &parent_flowed,
-            "出すかどうかの判断はStep3のまま",
-            "結果を待たない",
-        );
+        before(&parent, "出すかどうかの判断はStep3のまま", "結果を待たない");
 
         // Having not collected, the hub has to say so — and say how to get the listing. Left
         // out, the person reads 「集計中なのだ」 and waits for a subagent that was never sent.
@@ -857,7 +834,6 @@ mod tests {
         // 「集計中なのだ」 is the one sentence that must never be reachable unconditionally.
         before(
             &step5,
-            &step5_flowed,
             "step3で収集を出したかどうかで変わる",
             "一覧はいま集計中なのだ",
         );
@@ -874,6 +850,46 @@ mod tests {
             dashboard.contains("人から「一覧」と言われたときは止まらない"),
             "the setting reads as gating the listing itself, not just the startup one"
         );
+    }
+
+    /// Nothing downstream may wait on a collection that was never sent.
+    ///
+    /// 「割ってくれと言われたら」 starts from the listing the startup step produced, and said
+    /// only "wait if it has not come back yet". For a hub whose `startupDashboard` is `false`
+    /// nothing was ever sent, so that condition is true forever: every 「割って」 ends the turn
+    /// with 「集計中なのだ」, and the next one ends the same way. A hub that cannot be asked to
+    /// do the one thing it was stood up for is worse than one that collects when it was told
+    /// not to — the setting was supposed to save a few seconds at startup, not the feature.
+    ///
+    /// The escape is the file's own, twice over: 「まだ戻っていないのに『ALPHA-233 に着手して』と
+    /// 言われたら、待たない」 in the listing step, and the one-off parent lookup in
+    /// 「dispatch には自分の親タスクを載せる」. Both say a person standing there is worth a
+    /// lookup, and neither is the same rule as keeping startup to one block. This pins the
+    /// split step to that answer rather than to a third one invented later.
+    #[test]
+    fn a_hub_that_was_told_not_to_collect_does_not_wait_for_the_collection_to_split() {
+        let split = step(
+            find("adj-hub").unwrap().raw_content,
+            "### 割ってくれと言われたら",
+        );
+        let flowed: String = split.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            flowed.contains("収集をそもそも出していない"),
+            "the split step knows only 'not back yet', not 'never sent': {split}"
+        );
+        assert!(
+            flowed.contains("待たない。その場で親の下を引く"),
+            "a hub that never collected is left with nothing to split against: {split}"
+        );
+        // Naming the consequence, not just the rule. A reader who only has the rule weighs it
+        // against 「起動を1ブロックに保つ」 one line below and reaches the wrong answer.
+        assert!(
+            flowed.contains("待つと永久に待つ"),
+            "nothing says what waiting costs here: {split}"
+        );
+        // And the wait has to arrive already qualified. Flat, it is the whole bug: the reader
+        // acts on it before reaching the branch that says it does not apply.
+        before(&split, "その一覧が手元にあるかで3つに分かれる", "先に待つ");
     }
 
     /// Every column of the sub-issue row is read by a step further down.
@@ -1724,6 +1740,26 @@ mod tests {
         let body = section(raw, heading);
         let end = body.find("\n### ").unwrap_or(body.len());
         body[..end].to_string()
+    }
+
+    /// Assert that a condition is reached before the instruction it qualifies.
+    ///
+    /// A procedure is read top to bottom and acted on as it is read, so a condition that
+    /// arrives after its imperative arrives too late: the reader has already done the thing
+    /// by the time it reaches the branch saying it does not apply. Both orders hold the same
+    /// words, so `contains` calls them equal — only the position says whether the qualifier
+    /// was ever in time to qualify anything.
+    fn before(text: &str, condition: &str, imperative: &str) {
+        let flowed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let at = |needle: &str| {
+            flowed
+                .find(needle)
+                .unwrap_or_else(|| panic!("`{needle}` is missing from:\n{text}"))
+        };
+        assert!(
+            at(condition) < at(imperative),
+            "`{imperative}` is reached before `{condition}` qualifies it:\n{text}"
+        );
     }
 
     #[test]

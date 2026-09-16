@@ -121,7 +121,11 @@ told where to send.
 `--no-dashboard` and `--dashboard` ride the same channel: they become
 `ADJUTANT_STARTUP_DASHBOARD` on that command line, and `adjutant config` folds the value in
 before it answers, so the procedure reading `settings.startupDashboard` sees the flag the hub
-was started under rather than the file it disagrees with.
+was started under rather than the file it disagrees with. With `--tab` there is no such
+variable to see: a terminal is handed a command line and nothing else, so the flag is
+forwarded to the `adjutant hub` that runs in the new tab, and that one builds the
+environment. Same answer, one process later — which is why the two dry runs do not print the
+same thing.
 
 `instructions` is five lines. The 1500 lines of procedure matter only while a hub or a worker
 is running, and both fetch them on purpose; the one thing worth always-on context is that a
