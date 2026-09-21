@@ -433,6 +433,20 @@ enum GateAction {
         #[arg(long)]
         json: bool,
     },
+    /// Archive a gate without delivering an answer to the worker (e.g. dealt with in tab)
+    Close {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        /// Reason or note for closing
+        #[arg(long)]
+        comment: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -830,6 +844,19 @@ fn run_gate(action: &GateAction) -> Result<(), String> {
             id,
             decision,
             choice: choice.as_deref(),
+            comment: comment.as_deref(),
+            json: *json,
+        }),
+        GateAction::Close {
+            repo,
+            hub,
+            id,
+            comment,
+            json,
+        } => cmd::gate_close(&cmd::CloseArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            id,
             comment: comment.as_deref(),
             json: *json,
         }),

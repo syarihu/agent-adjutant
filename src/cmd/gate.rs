@@ -112,6 +112,23 @@ pub fn answer(
     Ok((gate, told))
 }
 
+/// Archive a gate without delivering an answer to the worker's outbox.
+///
+/// Used when the conversation happened directly in a terminal tab, or when a gate was
+/// rendered moot. It leaves the gate in `answered/` with decision "closed" so the record
+/// survives, but skips the delivery and the wake.
+pub fn close(ctx: &Context, id: &str, comment: Option<&str>) -> Result<Gate, String> {
+    let mut gate = gate::load(&dir(ctx), id)?;
+    gate.decision = Some("closed".to_string());
+    gate.comment = comment
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
+    gate.answered_at = Some(stamp());
+    gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
+    Ok(gate)
+}
+
 // ── the subcommands ──────────────────────────────────────────────────
 
 pub fn open_cmd(
@@ -227,5 +244,24 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
              whoever starts one there next."
         ),
     }
+    Ok(())
+}
+
+pub struct CloseArgs<'a> {
+    pub repo: Option<&'a str>,
+    pub hub: Option<&'a str>,
+    pub id: &'a str,
+    pub comment: Option<&'a str>,
+    pub json: bool,
+}
+
+pub fn close_cmd(args: &CloseArgs<'_>) -> Result<(), String> {
+    let ctx = super::context(args.repo, args.hub)?;
+    let gate = close(&ctx, args.id, args.comment)?;
+    if args.json {
+        println!("{}", json!({ "gate": gate, "closed": true }));
+        return Ok(());
+    }
+    println!("{} → closed", gate.id);
     Ok(())
 }

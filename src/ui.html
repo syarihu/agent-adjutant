@@ -141,6 +141,9 @@ details.decided[open] summary { margin-bottom:8px; }
   border-radius:7px; padding:6px 13px; }
 .decide .talk { border:1px solid var(--accent); background:transparent; color:var(--accent);
   border-radius:7px; padding:6px 13px; font-weight:600; }
+.decide .close { border:1px solid var(--border); background:transparent; color:var(--ink-2);
+  border-radius:7px; padding:6px 13px; }
+.decide .close:hover { border-color:var(--ink-2); color:var(--ink); }
 .empty-state { padding:40px; color:var(--muted); }
 .badge-count { display:inline-block; min-width:16px; margin-left:6px; padding:0 4px;
   border-radius:999px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; text-align:center; }
@@ -611,7 +614,7 @@ function renderReview() {
   const pane = document.querySelector('#review .pane');
   const gates = state.gates || [];
 
-  rail.innerHTML = `<h2>要対応 ${gates.length} 件 &nbsp;<kbd>j</kbd><kbd>k</kbd> 移動 <kbd>a</kbd> 承認 <kbd>r</kbd> 修正</h2>`;
+  rail.innerHTML = `<h2>要対応 ${gates.length} 件 &nbsp;<kbd>j</kbd><kbd>k</kbd> 移動 <kbd>a</kbd> 承認 <kbd>r</kbd> 修正 <kbd>c</kbd> 閉じる</h2>`;
   for (const g of gates) {
     const [label, colour] = kindOf(g.kind);
     const b = document.createElement('button');
@@ -625,7 +628,7 @@ function renderReview() {
 
   const g = gates.find(x => x.id === focused) || gates[0];
   if (!g) {
-    pane.innerHTML = '<div class="empty-state">ボールは全部 AI 側なのだ。<br>ボードに戻って待つのだ。</div>';
+    pane.innerHTML = '<div class="empty-state">対応待ちの判定はありません。<br>ボード画面でお待ちください。</div>';
     if (view === 'review') location.hash = '';
     return;
   }
@@ -646,14 +649,14 @@ function renderReview() {
     h += `<div class="work">
       <button class="big" onclick="cmd('adj ide --worktree ${esc(g.worktree)}')">IDE で開く</button>
       <span class="mono2">${esc(g.worktree)}</span>
-      <span style="color:var(--ink-2)">— 確かめたら、下のボタンで戻してほしいのだ</span></div>`;
+      <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
   }
   if (g.facts?.length) {
     h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
   }
   if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
   if (g.choices?.length) {
-    h += `<div class="panel"><h3>どちらにするか選んでほしいのだ</h3><div class="choices">` +
+    h += `<div class="panel"><h3>選択肢</h3><div class="choices">` +
       g.choices.map(c => `<div class="choice${c.recommended ? ' rec' : ''}">
         ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}
         <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
@@ -664,21 +667,21 @@ function renderReview() {
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
   if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
-  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決めたこと — 読まなくていいのだ</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
 
   h += `<div class="panel"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
     // Past two rounds a gate has become a conversation, and a conversation is faster where
     // it is not posted.
-    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復なのだ。<b>タブで話したほうが速い</b>のだ — 1往復ごとに outbox と wake を挟むのだ</div>` : '') +
+    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復しています。<b>タブで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</div>` : '') +
     `<div class="field" style="margin-bottom:12px"><span>コメント(修正指示・追加で聞きたいことはここに)</span>
       <textarea id="gate-comment"></textarea></div>
     <div class="decide">${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
-      <button class="talk" onclick="talk()">タブで話す</button></div>
+      <button class="talk" onclick="talk()">タブで話す</button>
+      <button class="close" onclick="closeGate()" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">解決済みとして閉じる</button></div>
     <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
-      判定は <code>adj gate answer</code> → その worktree の outbox に追記 → <code>workerWake</code> で worker を起こすのだ。
-      worker が落ちていても答えは outbox に残るのだ。<br>
-      <b>「タブで話す」は gate を閉じない</b> — 話がついてから、ここに戻って閉じるのだ。</p></div>`;
+      判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。<br>
+      <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
   pane.innerHTML = h;
 }
 
@@ -692,8 +695,8 @@ async function answer(decision, choice) {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
     });
     note(line, false, `${g.worktree.split('/').pop()} の outbox に追記` +
-      (data.woken ? ' → worker を起こしたのだ' : data.present ? ' → worker は次に outbox を見たときに読むのだ'
-                                                             : ' → worker は動いていないので、答えは outbox で待つのだ'));
+      (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
+                                                             : ' → worker は停止中のため、回答は outbox で保持されます'));
     focused = null;
     await refresh();
   } catch (e) { note(line, true, e.message); }
@@ -705,7 +708,22 @@ function talk() {
   const g = (state.gates || []).find(x => x.id === focused);
   if (!g) return;
   cmd(`terminal.focus (worktree ${g.worktree})`);
-  note('gate は開いたままなのだ', false, '話がついたら、ここに戻って閉じるのだ');
+  note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
+}
+
+async function closeGate() {
+  const g = (state.gates || []).find(x => x.id === focused);
+  if (!g) return;
+  const comment = document.getElementById('gate-comment')?.value.trim();
+  const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
+  try {
+    await api(`/api/gates/${encodeURIComponent(g.id)}`, {
+      method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
+    });
+    note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
+    focused = null;
+    await refresh();
+  } catch (e) { note(line, true, e.message); }
 }
 
 document.addEventListener('keydown', e => {
@@ -716,6 +734,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'k' && i > 0) { focused = gates[i - 1].id; renderReview(); }
   if (e.key === 'a') answer((gates[i]?.options || ['approve'])[0]);
   if (e.key === 'r') answer((gates[i]?.options || [, 'changes'])[1] || 'changes');
+  if (e.key === 'c') closeGate();
 });
 
 function setView(v) {
@@ -732,7 +751,7 @@ function toggleTheme() {
   document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
 }
 
-note('adj serve', false, 'この板が出しているのは、ぜんぶ既存の adj コマンドなのだ');
+note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
 // Opening #gate/<id> lands straight on that card — the shape a notification's click takes.
 const deep = location.hash.match(/^#gate\/(.+)$/);
 if (deep) { focused = deep[1]; setView('review'); } else { setView('board'); }
@@ -740,5 +759,6 @@ refresh();
 // The server holds no clock, so the page carries one: it asks, nothing pushes.
 setInterval(refresh, 2000);
 </script>
+
 </body>
 </html>

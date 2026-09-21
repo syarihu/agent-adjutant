@@ -358,6 +358,14 @@ fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
         .get("decision")
         .and_then(Value::as_str)
         .ok_or("a decision is required")?;
+    if decision == "close" || decision == "dismiss" {
+        let gate = super::gate::close(
+            &server.ctx,
+            id,
+            input.get("comment").and_then(Value::as_str),
+        )?;
+        return Ok(json!({ "gate": gate, "closed": true }));
+    }
     let (gate, told) = super::gate::answer(
         &server.ctx,
         id,

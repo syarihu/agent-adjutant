@@ -19,8 +19,8 @@ mod serve;
 mod task;
 
 pub use gate::{
-    AnswerArgs, answer_cmd as gate_answer, list as gate_list, open_cmd as gate_open,
-    show as gate_show,
+    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
+    open_cmd as gate_open, show as gate_show,
 };
 pub use serve::{DEFAULT_PORT, serve};
 pub use task::{
