@@ -80,6 +80,9 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
+| `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) |
+| `adjutant task add\|list\|show\|update` | the records that board is a view of |
+| `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as seven tools and three prompts:
@@ -210,6 +213,20 @@ different answer. `terminal` and the `wake` family merge key by key, so a reposi
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
 
+A command line the terminal would have to type is **staged in a file once it grows past
+about 900 characters**, and what gets typed is `sh /tmp/adjutant-spawn-….sh`. Long lines do
+not fail, they arrive *corrupted* — a chunk dropped somewhere in the middle — and what runs
+is whatever that mangling happened to spell. An `agentEnv` carrying a `PATH` is the ordinary
+way to reach that length. A dry run is never staged: it is read by a person, and a path to a
+file tells them nothing about what would have run.
+
+**`ADJUTANT_CONFIG` and `ADJUTANT_STATE_DIR` are forwarded onto the command line** of every
+tab `hub --tab` and `work` open, when this process was given them. `ADJUTANT_HUB` already
+travels as a flag; these two have none, and losing them does not fail — it splits. The tab
+reads the default config and the default state directory, so the worker it starts registers
+in one world while the hub that dispatched it waits in another, and both halves look healthy
+from where they stand.
+
 `{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
 terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A
 `focus`, `close` or `wake` template has to look that handle up before it acts: handing `{pid}` to
@@ -263,6 +280,65 @@ mechanism that does not generalise, since a profile whose title format is driven
 variables ignores it and the tab silently keeps the wrong name. `agentEnv` is an object of environment variables
 both the hub and its workers are started with, for a repository that runs under a separate
 agent profile.
+
+## The board
+
+`adjutant serve` puts this repository's work on one page in a browser: what is in the
+backlog, what has been handed to the hub, which worktrees have a worker in them, and what is
+sitting unread in the inbox.
+
+It is not a second coordination system. Every button on it ends in something this binary
+could already do — handing a task over writes a `request` into the hub's inbox and pokes its
+tab, through the same code `adjutant send` runs, so waking and notifying cannot drift between
+the two callers. The page says so out loud: a strip along the bottom prints the command each
+action maps to.
+
+**It holds no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
+arrives because a person clicked. The page asks for state every two seconds, which is the
+only repeating thing anywhere in it.
+
+A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
+message that announces it: the message is read once and acked, and after that the hub would
+have no way to say what became of the thing. The hub writes back to the record — `adjutant
+task update --id … --status dispatched --worktree …` — and that is what the board shows.
+The record is also the referee: a card dragged back to the backlog sets `status` there, and
+the hub reads it once more just before it starts, so a task pulled back while its message
+was still in the inbox does not get picked up anyway.
+
+### Gates
+
+A gate is the other half: something an agent has prepared for a person to look at, and the
+ball handed over with it. A worker used to stop at three places — its plan, its diff, the
+handover for a manual check — and ask in a tab nobody was watching. Now it writes the
+question down, ends its turn, and the board shows it.
+
+The payload is three frames rather than one wall of prose, because a reviewer who has to
+read four hundred lines to find the two decisions that matter is a reviewer who approves
+without reading: **what to look at**, **what was already decided** (folded away), and
+**where the agent's confidence ran out**. A gate may also carry two designs side by side and
+ask which one — the thing a terminal cannot do, since in a tab the second option has
+scrolled past the first by the time you have read it.
+
+The answer goes back out through that worktree's outbox and pokes the worker, which is
+`adjutant tell` and nothing new. That path already survives the worker having died: the
+answer simply waits there for whoever starts one next.
+
+**A gate is one question, one decision and one comment.** Past two rounds it has become a
+conversation, and a conversation is faster in the tab than through an outbox — so the board
+counts the rounds, says so, and offers a button that raises the tab *without* closing the
+gate. Leaving is not failing.
+
+`adj gate open` reads its payload as JSON on stdin and answers with `server: up` or
+`server: down`. That second answer is the whole reason it reports rather than just
+succeeding: with nothing serving, a gate is a message into a directory no one opens, so the
+procedure falls back to asking in its own tab. **A worker must never wait on a queue nobody
+is watching.**
+
+**The port is bound on `127.0.0.1` and everything needs a token**, kept in
+`~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.
+Anything that changes state needs it in a header as well, and needs an `Origin` naming this
+server — a page on another site can submit a form to a loopback port, but it cannot set that
+header, and these endpoints are how work gets started.
 
 ## How the two sides reach each other
 

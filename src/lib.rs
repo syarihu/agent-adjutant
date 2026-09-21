@@ -10,6 +10,8 @@
 
 mod cmd;
 mod config;
+mod gate;
+mod http;
 mod ide;
 mod mcp;
 mod messaging;
@@ -17,6 +19,7 @@ mod notify;
 mod prompts;
 mod repo;
 mod runner;
+mod task;
 mod template;
 mod terminal;
 
@@ -348,10 +351,187 @@ enum Commands {
         #[arg(long, default_value = "claude-code")]
         target: String,
     },
+    /// Serve this repository's dashboard on a local port
+    Serve {
+        #[arg(long)]
+        repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
+        /// 0 picks a free port, for a second dashboard on the same machine
+        #[arg(long, default_value_t = cmd::DEFAULT_PORT)]
+        port: u16,
+        /// Print the URL without opening a browser
+        #[arg(long)]
+        no_open: bool,
+    },
+    /// Tasks handed to this repository's hub
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
+    /// Gates: what an agent has put up for a person to look at
+    Gate {
+        #[command(subcommand)]
+        action: GateAction,
+    },
     /// Remove the MCP server registration
     UninstallMcp {
         #[arg(long, default_value = "claude-code")]
         target: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GateAction {
+    /// Hand the ball over. The payload is JSON, on stdin unless --file says otherwise
+    Open {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        /// Read the payload from here instead of stdin
+        #[arg(long)]
+        file: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// What is waiting for a person
+    List {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One gate's payload, as JSON
+    Show {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+    },
+    /// Hand the ball back: deliver the decision to that worktree's outbox
+    Answer {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        /// approve | changes | reject | choice | ack | ask | answer
+        #[arg(long)]
+        decision: String,
+        /// Which of the gate's choices, for `--decision choice`
+        #[arg(long)]
+        choice: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Archive a gate without delivering an answer to the worker (e.g. dealt with in tab)
+    Close {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        /// Reason or note for closing
+        #[arg(long)]
+        comment: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskAction {
+    /// Write a task down, and hand it over if asked
+    Add {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        title: String,
+        /// What is being asked for (may come on stdin as `-`)
+        #[arg(long)]
+        body: Option<String>,
+        /// start | file-and-start | investigate | tell-worker
+        #[arg(long, default_value = "start")]
+        kind: String,
+        /// report-only | verify | pr | review
+        #[arg(long, default_value = "pr")]
+        done_when: String,
+        #[arg(long)]
+        issue_url: Option<String>,
+        /// What this one dispatch should branch from
+        #[arg(long)]
+        base: Option<String>,
+        /// The parent task's URL
+        #[arg(long)]
+        parent: Option<String>,
+        /// Needed only when there is no issue to take a name from
+        #[arg(long)]
+        worktree_name: Option<String>,
+        /// Have the hub confirm before it starts
+        #[arg(long)]
+        ask_first: bool,
+        /// Hand it to the hub now, rather than leaving it in the backlog
+        #[arg(long)]
+        queue: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// What this hub has been handed
+    List {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        /// backlog | queued | dispatched | pr | done | cancelled
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One task's record, as JSON
+    Show {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+    },
+    /// Move a task on. This is how the hub reports back what it did with one
+    Update {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        order: Option<u32>,
+        #[arg(long)]
+        worktree: Option<String>,
+        #[arg(long)]
+        issue: Option<String>,
+        #[arg(long)]
+        pr: Option<String>,
+        /// Why it could not be taken, when that is the answer
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -467,6 +647,14 @@ pub fn run() -> ! {
             *quiet,
         )
         .map(|_| 0),
+        Commands::Serve {
+            repo,
+            hub,
+            port,
+            no_open,
+        } => cmd::serve(repo.as_deref(), hub.as_deref(), *port, !*no_open).map(|_| 0),
+        Commands::Gate { action } => run_gate(action).map(|_| 0),
+        Commands::Task { action } => run_task(action).map(|_| 0),
         Commands::Skill { name, arguments } => cmd::skill(name, arguments).map(|_| 0),
         Commands::Outbox { worktree, clear } => cmd::outbox(worktree.as_deref(), *clear).map(|_| 0),
         Commands::Focus {
@@ -560,5 +748,117 @@ fn strip_separator(args: &[String]) -> Vec<String> {
     match args.split_first() {
         Some((first, rest)) if first == "--" => rest.to_vec(),
         _ => args.to_vec(),
+    }
+}
+
+/// The `adj task` verbs. Split out of `run` because the four of them are a subcommand of a
+/// subcommand, and inlining that match would bury the rest of the dispatch.
+fn run_task(action: &TaskAction) -> Result<(), String> {
+    match action {
+        TaskAction::Add {
+            repo,
+            hub,
+            title,
+            body,
+            kind,
+            done_when,
+            issue_url,
+            base,
+            parent,
+            worktree_name,
+            ask_first,
+            queue,
+            json,
+        } => cmd::task_add(&cmd::AddArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            title,
+            body: body.as_deref(),
+            kind,
+            done_when,
+            issue_url: issue_url.as_deref(),
+            base: base.as_deref(),
+            parent: parent.as_deref(),
+            worktree_name: worktree_name.as_deref(),
+            ask_first: *ask_first,
+            queue: *queue,
+            json: *json,
+        }),
+        TaskAction::List {
+            repo,
+            hub,
+            status,
+            json,
+        } => cmd::task_list(repo.as_deref(), hub.as_deref(), status.as_deref(), *json),
+        TaskAction::Show { repo, hub, id } => cmd::task_show(repo.as_deref(), hub.as_deref(), id),
+        TaskAction::Update {
+            repo,
+            hub,
+            id,
+            status,
+            order,
+            worktree,
+            issue,
+            pr,
+            note,
+            json,
+        } => cmd::task_update(&cmd::UpdateArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            id,
+            status: status.as_deref(),
+            order: *order,
+            worktree: worktree.as_deref(),
+            issue: issue.as_deref(),
+            pr: pr.as_deref(),
+            note: note.as_deref(),
+            json: *json,
+        }),
+    }
+}
+
+/// The `adj gate` verbs, split out for the same reason `run_task` is.
+fn run_gate(action: &GateAction) -> Result<(), String> {
+    match action {
+        GateAction::Open {
+            repo,
+            hub,
+            file,
+            json,
+        } => cmd::gate_open(repo.as_deref(), hub.as_deref(), file.as_deref(), *json),
+        GateAction::List { repo, hub, json } => {
+            cmd::gate_list(repo.as_deref(), hub.as_deref(), *json)
+        }
+        GateAction::Show { repo, hub, id } => cmd::gate_show(repo.as_deref(), hub.as_deref(), id),
+        GateAction::Answer {
+            repo,
+            hub,
+            id,
+            decision,
+            choice,
+            comment,
+            json,
+        } => cmd::gate_answer(&cmd::AnswerArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            id,
+            decision,
+            choice: choice.as_deref(),
+            comment: comment.as_deref(),
+            json: *json,
+        }),
+        GateAction::Close {
+            repo,
+            hub,
+            id,
+            comment,
+            json,
+        } => cmd::gate_close(&cmd::CloseArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            id,
+            comment: comment.as_deref(),
+            json: *json,
+        }),
     }
 }

@@ -14,6 +14,20 @@ use crate::repo::{self, RepoInfo};
 use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
+mod gate;
+mod serve;
+mod task;
+
+pub use gate::{
+    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
+    open_cmd as gate_open, show as gate_show,
+};
+pub use serve::{DEFAULT_PORT, serve};
+pub use task::{
+    AddArgs, UpdateArgs, add as task_add, list as task_list, show as task_show,
+    update_cmd as task_update,
+};
+
 /// Everything a command needs to know about where it is. Resolved once, at the top, because
 /// two commands disagreeing about which repo they are in is the failure that loses reports.
 pub struct Context {
@@ -216,21 +230,21 @@ pub struct SendArgs<'a> {
     pub quiet: bool,
 }
 
-pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo, args.hub)?;
-    let body = read_body(args.body)?;
-    let message = Message {
-        from: args.from.unwrap_or("unknown").to_string(),
-        // Where this is being sent from, taken from the same directory the repository was
-        // resolved in rather than from anything the sender says about itself.
-        worktree: repo::current_worktree(None),
-        kind: args.kind.to_string(),
-        subject: args.subject.unwrap_or("").to_string(),
-        body,
-    };
-    let subject = messaging::header_value(&messaging::render_message(&message), "subject")
-        .unwrap_or_default();
-    let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, &message)?;
+/// What became of a message handed to the hub.
+pub struct Delivered {
+    pub delivery: messaging::Delivery,
+    pub woken: bool,
+}
+
+/// Leave a message for the hub, poke its tab, and tell the person.
+///
+/// Shared by `adj send` and by the dashboard's hand-over, which is the whole reason it is a
+/// function: the three steps are one rule, and a second copy of it is a second set of
+/// conditions about when to wake and when to notify — drifting from the day it is written.
+pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<Delivered, String> {
+    let subject =
+        messaging::header_value(&messaging::render_message(message), "subject").unwrap_or_default();
+    let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, message)?;
 
     // A file appearing in a directory wakes nobody, so delivery has two follow-ups: poke the
     // hub if it is actually sitting there, and tell the person either way.
@@ -259,6 +273,22 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     if let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject) {
         let _ = terminal::run_shell(&command);
     }
+    Ok(Delivered { delivery, woken })
+}
+
+pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
+    let ctx = context(args.repo, args.hub)?;
+    let body = read_body(args.body)?;
+    let message = Message {
+        from: args.from.unwrap_or("unknown").to_string(),
+        // Where this is being sent from, taken from the same directory the repository was
+        // resolved in rather than from anything the sender says about itself.
+        worktree: repo::current_worktree(None),
+        kind: args.kind.to_string(),
+        subject: args.subject.unwrap_or("").to_string(),
+        body,
+    };
+    let Delivered { delivery, woken } = deliver_to_hub(&ctx, &message)?;
 
     if args.quiet {
         return Ok(());
@@ -333,6 +363,35 @@ pub fn spawn(
 
 /// Open a tab and start a worker agent in it. One command rather than two so the runner
 /// template is read in exactly one place.
+/// The environment a new tab has to be handed on its command line, because a terminal is
+/// given a command line and nothing else.
+///
+/// `ADJUTANT_HUB` already travels as a flag, and `ADJUTANT_STARTUP_DASHBOARD` as one too.
+/// These two have none, and losing them does not fail — it *splits*: the tab reads the
+/// default config and the default state directory, so the agent it starts registers in one
+/// world while the hub that dispatched it waits in another. The worker reports into an
+/// inbox nobody is reading, and both halves look healthy from where they stand.
+///
+/// Forwarded only when this process was given them. A machine that never sets them gets the
+/// command line it always had.
+fn forwarded_env() -> Vec<String> {
+    let set: Vec<String> = [config::CONFIG_ENV, messaging::STATE_DIR_ENV]
+        .iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("{name}={value}"))
+        })
+        .collect();
+    if set.is_empty() {
+        return Vec::new();
+    }
+    let mut parts = vec!["env".to_string()];
+    parts.extend(set);
+    parts
+}
+
 pub fn work(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
@@ -348,7 +407,8 @@ pub fn work(
     // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
     // process that has already written down its own PID and then `exec`s itself away, which
     // is the only way anyone later gets to ask "is that worker still there".
-    let mut parts = vec![
+    let mut parts = forwarded_env();
+    parts.extend([
         exe_path(),
         "worker".to_string(),
         "--worktree".to_string(),
@@ -357,7 +417,7 @@ pub fn work(
         title.to_string(),
         "--prompt".to_string(),
         prompt.to_string(),
-    ];
+    ]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
         parts.push(repo.to_string());
@@ -849,7 +909,8 @@ fn open_hub_tab(
     dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
-    let mut parts = vec![exe_path(), "hub".to_string()];
+    let mut parts = forwarded_env();
+    parts.extend([exe_path(), "hub".to_string()]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
         parts.push(repo.to_string());
@@ -1085,25 +1146,30 @@ pub fn worker(
 }
 
 /// Leave a message for the worker in a worktree, and poke it if it is sitting there.
-pub fn tell(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    worktree: &str,
-    subject: &str,
-    body: Option<&str>,
-    from: Option<&str>,
-    quiet: bool,
-) -> Result<(), String> {
-    let ctx = context(repo_arg, hub_arg)?;
-    let worktree = config::expand_home(worktree);
-    if !worktree.is_dir() {
-        return Err(format!("no such worktree: {}", worktree.display()));
-    }
-    let body = read_body(body)?;
-    let from = from.unwrap_or(&ctx.repo.hub_name).to_string();
-    let path = messaging::tell(&worktree, &from, subject, &body)?;
+/// What became of a message left for a worker.
+pub struct Told {
+    pub path: std::path::PathBuf,
+    pub present: bool,
+    pub woken: bool,
+}
 
-    let status = messaging::worker_status(&worktree);
+/// Append to a worktree's outbox, poke the worker sitting in it, and tell the person when
+/// poking was not possible.
+///
+/// Shared by `adj tell` and by a gate's answer, which is the point: both are the hub-to-
+/// worker direction, and the rule about when to wake and when to notify is one rule. A
+/// worker that was woken reads the message itself, so the notification is what happens
+/// *instead* — unlike the other direction, where the hub is unattended and the person is
+/// told either way.
+pub fn deliver_to_worker(
+    ctx: &Context,
+    worktree: &std::path::Path,
+    from: &str,
+    subject: &str,
+    body: &str,
+) -> Result<Told, String> {
+    let path = messaging::tell(worktree, from, subject, body)?;
+    let status = messaging::worker_status(worktree);
     let woken = match (status.present, status.pid) {
         (true, Some(pid)) => terminal::wake(
             &ctx.settings.worker_wake,
@@ -1121,11 +1187,40 @@ pub fn tell(
     {
         let _ = terminal::run_shell(&command);
     }
+    Ok(Told {
+        path,
+        present: status.present,
+        woken,
+    })
+}
+
+pub fn tell(
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    worktree: &str,
+    subject: &str,
+    body: Option<&str>,
+    from: Option<&str>,
+    quiet: bool,
+) -> Result<(), String> {
+    let ctx = context(repo_arg, hub_arg)?;
+    let worktree = config::expand_home(worktree);
+    if !worktree.is_dir() {
+        return Err(format!("no such worktree: {}", worktree.display()));
+    }
+    let body = read_body(body)?;
+    let from = from.unwrap_or(&ctx.repo.hub_name).to_string();
+    let Told {
+        path,
+        present,
+        woken,
+    } = deliver_to_worker(&ctx, &worktree, &from, subject, &body)?;
+
     if quiet {
         return Ok(());
     }
     println!("wrote {}", path.display());
-    match (status.present, woken) {
+    match (present, woken) {
         (true, true) => println!("Woke the worker."),
         (true, false) => {
             println!("The worker is running; it will read this the next time it checks its outbox.")
@@ -1235,6 +1330,40 @@ fn settings_for(repo_arg: Option<&str>) -> Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hub told where to read and write has to hand both to the tabs it opens. Losing
+    /// them does not fail: the worker registers in the default world and reports into an
+    /// inbox the hub is not watching, and both halves look healthy from where they stand.
+    #[test]
+    fn a_tab_is_handed_the_config_and_state_directory_it_must_not_lose() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let parts = forwarded_env();
+        assert_eq!(parts.first().map(String::as_str), Some("env"));
+        assert!(
+            parts
+                .iter()
+                .any(|p| p.starts_with(&format!("{}=", config::CONFIG_ENV))),
+            "{parts:?}"
+        );
+        assert!(
+            parts
+                .iter()
+                .any(|p| p.starts_with(&format!("{}=", messaging::STATE_DIR_ENV))),
+            "{parts:?}"
+        );
+    }
+
+    /// A machine that never sets them gets the command line it always had — no `env`
+    /// prefix, nothing to read past.
+    #[test]
+    fn nothing_is_forwarded_when_nothing_was_given() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        unsafe {
+            std::env::remove_var(config::CONFIG_ENV);
+            std::env::remove_var(messaging::STATE_DIR_ENV);
+        }
+        assert!(forwarded_env().is_empty());
+    }
     use crate::messaging::Liveness;
 
     /// A `look` that answers down a script and then keeps repeating its last word, so a

@@ -217,11 +217,15 @@ fn required_keys(source_type: &str) -> &'static [&'static str] {
 
 // ── where the config lives ───────────────────────────────────────────
 
+/// The file this binary reads its configuration out of. Named here rather than spelled in
+/// each place that forwards it: a tab that is handed the wrong one reads a different world.
+pub const CONFIG_ENV: &str = "ADJUTANT_CONFIG";
+
 /// `ADJUTANT_CONFIG` wins, then `$XDG_CONFIG_HOME/adjutant/config.json`, then
 /// `~/.config/adjutant/config.json`. Not under a specific agent's config directory: the
 /// point of this tool is that the same config serves whichever agent is driving.
 pub fn config_path() -> PathBuf {
-    if let Ok(path) = std::env::var("ADJUTANT_CONFIG")
+    if let Ok(path) = std::env::var(CONFIG_ENV)
         && !path.is_empty()
     {
         return expand_home(&path);
