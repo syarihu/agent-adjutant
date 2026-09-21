@@ -457,8 +457,9 @@ enum TaskAction {
         repo: Option<String>,
         #[arg(long)]
         hub: Option<String>,
+        /// Short title for the card (inferred from body when omitted)
         #[arg(long)]
-        title: String,
+        title: Option<String>,
         /// What is being asked for (may come on stdin as `-`)
         #[arg(long)]
         body: Option<String>,
@@ -772,7 +773,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
         } => cmd::task_add(&cmd::AddArgs {
             repo: repo.as_deref(),
             hub: hub.as_deref(),
-            title,
+            title: title.as_deref(),
             body: body.as_deref(),
             kind,
             done_when,

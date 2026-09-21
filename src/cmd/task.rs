@@ -22,13 +22,25 @@ fn stamp() -> String {
     messaging::utc_stamp(messaging::now_secs())
 }
 
+/// Derive a card title from the input title or the first non-empty line of the body.
+fn derive_title(input: &Value) -> Option<String> {
+    if let Some(title) = string(input, "title") {
+        return Some(title);
+    }
+    let body = string(input, "body")?;
+    let first_line = body.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let title: String = first_line.chars().take(80).collect();
+    if title.is_empty() { None } else { Some(title) }
+}
+
 /// Write a new record, and hand it over if it was created already queued.
 pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let stamp = stamp();
-    let title = string(input, "title").ok_or("a task needs a title")?;
+    let title = derive_title(input).ok_or("a task needs content or a title")?;
     let id = task::claim_id(&dir(ctx), &stamp, &title)?;
-    let mut task: Task = serde_json::from_value(with_defaults(input, &id, &stamp)?)
-        .map_err(|e| format!("bad task: {e}"))?;
+    let mut defaults = with_defaults(input, &id, &stamp)?;
+    defaults["title"] = json!(title);
+    let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
     task.order = next_order(ctx);
 
     // Written before the message is sent, and never the other way round: the record is what
@@ -133,7 +145,7 @@ fn string(value: &Value, key: &str) -> Option<String> {
 pub struct AddArgs<'a> {
     pub repo: Option<&'a str>,
     pub hub: Option<&'a str>,
-    pub title: &'a str,
+    pub title: Option<&'a str>,
     pub body: Option<&'a str>,
     pub kind: &'a str,
     pub done_when: &'a str,
@@ -149,8 +161,7 @@ pub struct AddArgs<'a> {
 pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
     let body = super::read_body(args.body)?;
-    let input = json!({
-        "title": args.title,
+    let mut input = json!({
         "body": body,
         "kind": args.kind,
         "doneWhen": args.done_when,
@@ -161,6 +172,9 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         "autoStart": !args.ask_first,
         "status": if args.queue { "queued" } else { "backlog" },
     });
+    if let Some(title) = args.title {
+        input["title"] = json!(title);
+    }
     let (task, handed) = create(&ctx, &input)?;
     if args.json {
         println!(
@@ -297,5 +311,40 @@ fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<Delivered>) {
             "The hub is not running. Waiting in its inbox for the next time it starts (task {}).",
             task.id
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn title_is_taken_verbatim_when_present() {
+        let input = json!({ "title": "explicit title", "body": "first line\nsecond line" });
+        assert_eq!(derive_title(&input).as_deref(), Some("explicit title"));
+    }
+
+    #[test]
+    fn title_is_derived_from_the_first_non_empty_line_of_the_body() {
+        let input =
+            json!({ "body": "\n\n  Fix the flaky network retry logic  \nand more details" });
+        assert_eq!(
+            derive_title(&input).as_deref(),
+            Some("Fix the flaky network retry logic")
+        );
+    }
+
+    #[test]
+    fn title_is_capped_at_eighty_characters() {
+        let long_line = "a".repeat(120);
+        let input = json!({ "body": long_line });
+        let derived = derive_title(&input).expect("derived");
+        assert_eq!(derived.len(), 80);
+    }
+
+    #[test]
+    fn empty_title_and_body_produce_nothing() {
+        let input = json!({ "title": "   ", "body": "   \n\n  " });
+        assert!(derive_title(&input).is_none());
     }
 }
