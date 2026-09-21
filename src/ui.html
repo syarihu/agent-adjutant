@@ -967,8 +967,10 @@ function md(src) {
     // Table rows
     const isTableRow = raw.trim().startsWith('|') && raw.trim().endsWith('|');
     if (isTableRow) {
-      closeAll();
-      inTable = true;
+      if (!inTable) {
+        closeAll();
+        inTable = true;
+      }
       const cells = raw.trim().slice(1, -1).split('|');
       tableRows.push(cells);
       continue;
@@ -1156,12 +1158,10 @@ function renderReview() {
     b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
   pane.querySelectorAll('.pick[data-choice]').forEach(b =>
     b.addEventListener('click', () => answer('choice', b.dataset.choice)));
-  if (commentVal) {
-    const newCommentEl = document.getElementById('gate-comment');
-    if (newCommentEl) {
-      newCommentEl.value = commentVal;
-      if (isCommentFocused) newCommentEl.focus();
-    }
+  const newCommentEl = document.getElementById('gate-comment');
+  if (newCommentEl) {
+    if (commentVal) newCommentEl.value = commentVal;
+    if (isCommentFocused) newCommentEl.focus();
   }
   pane.scrollTop = paneScroll;
 }

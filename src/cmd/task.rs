@@ -22,6 +22,7 @@ fn stamp() -> String {
     messaging::utc_stamp(messaging::now_secs())
 }
 
+/// Derive a card title from the input title or the first non-empty line of the body.
 fn derive_title(input: &Value) -> Option<String> {
     if let Some(title) = string(input, "title") {
         return Some(title);
