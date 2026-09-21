@@ -66,8 +66,25 @@ fn stage_command(line: &str) -> Result<String, String> {
             .unwrap_or(0)
     );
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{line}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        file.write_all(format!("#!/bin/sh\n{line}\n").as_bytes())
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, format!("#!/bin/sh\n{line}\n"))
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
     Ok(format!("sh {}", sh_quote(&path.to_string_lossy())))
 }
 

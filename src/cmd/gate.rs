@@ -48,9 +48,9 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         return Err("a gate needs a title".to_string());
     }
 
-    // The worktree is derived, not taken from the payload: it is the address the answer
-    // will be delivered to, and an agent that mistyped it would wait on an outbox nobody
-    // writes to.
+    // The payload may name the worktree; otherwise it is derived from where the caller
+    // stands. This is the address the answer is delivered to, so an agent that mistypes it
+    // waits on an outbox nobody writes to.
     let worktree = match payload.get("worktree").and_then(Value::as_str) {
         Some(path) => path.to_string(),
         None => crate::repo::current_worktree(None)
@@ -71,7 +71,7 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     let gate: Gate = serde_json::from_value(value).map_err(|e| format!("bad gate: {e}"))?;
 
     gate::save(&dir(ctx), &gate)?;
-    Ok((gate, super::serve::running().is_some()))
+    Ok((gate, super::serve::running(&ctx.repo.slug).is_some()))
 }
 
 /// Hand the ball back. The gate leaves the queue and the answer lands in the outbox.

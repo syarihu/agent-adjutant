@@ -55,7 +55,7 @@ pub fn serve(
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let url = format!("http://127.0.0.1:{port}/?token={token}");
 
-    record(port)?;
+    record(&ctx.repo.slug, port)?;
     println!("adj serve: {} — {url}", ctx.repo.nwo);
     println!("The token is in the URL. Anything without it gets a 403.");
     if open {
@@ -84,8 +84,10 @@ pub fn serve(
 
 // ── is anybody serving? ──────────────────────────────────────────────
 
-fn record_path() -> PathBuf {
-    messaging::state_dir().join("dashboard.json")
+fn record_path(slug: &str) -> PathBuf {
+    messaging::state_dir()
+        .join("dashboards")
+        .join(format!("{slug}.json"))
 }
 
 /// The port a live dashboard is on, or `None`.
@@ -95,8 +97,8 @@ fn record_path() -> PathBuf {
 /// one would wait for ever. Anchored on the recorded process start time like every other
 /// record here, so a crashed server leaves a file that reads as absent rather than as a
 /// dashboard that is about to answer.
-pub fn running() -> Option<u16> {
-    let record: Value = std::fs::read_to_string(record_path())
+pub fn running(slug: &str) -> Option<u16> {
+    let record: Value = std::fs::read_to_string(record_path(slug))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())?;
     let pid = record.get("pid").and_then(Value::as_u64)? as u32;
@@ -107,8 +109,8 @@ pub fn running() -> Option<u16> {
     record.get("port").and_then(Value::as_u64).map(|p| p as u16)
 }
 
-fn record(port: u16) -> Result<(), String> {
-    let path = record_path();
+fn record(slug: &str, port: u16) -> Result<(), String> {
+    let path = record_path(slug);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;

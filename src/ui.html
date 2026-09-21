@@ -294,7 +294,7 @@ const columnOf = t => t.status === 'dispatched'
 const ALLOWED = { backlog:['queued'], queued:['backlog','queued'] };
 const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
 
-const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -424,13 +424,17 @@ function cardEl(task, col) {
   if (task.note) h += `<div class="meta"><span class="state bad"><span>⚠</span>${esc(task.note)}</span></div>`;
 
   const acts = [];
-  if (col === 'backlog') acts.push(['渡す →', `hand('${task.id}')`]);
-  if (task.worktree) acts.push(['IDE', `cmd('adj ide --worktree ${esc(task.worktree)}')`]);
+  if (col === 'backlog') acts.push(`<button type="button" data-hand="${esc(task.id)}">渡す →</button>`);
+  if (task.worktree) acts.push(`<button type="button" data-ide="${esc(task.worktree)}">IDE</button>`);
   if (acts.length) {
-    h += `<div class="acts">${acts.map(([l, fn]) => `<button type="button" onclick="${fn}">${l}</button>`).join('')}</div>`;
+    h += `<div class="acts">${acts.join('')}</div>`;
   }
   h += `<div class="mono">${esc(task.id)}</div>`;
   el.innerHTML = h;
+  el.querySelectorAll('[data-hand]').forEach(b =>
+    b.addEventListener('click', () => hand(b.dataset.hand)));
+  el.querySelectorAll('[data-ide]').forEach(b =>
+    b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
   return el;
 }
 
@@ -647,7 +651,7 @@ function renderReview() {
   // so the way in comes first and the buttons wait at the bottom for the way back.
   if (g.kind === 'verify') {
     h += `<div class="work">
-      <button class="big" onclick="cmd('adj ide --worktree ${esc(g.worktree)}')">IDE で開く</button>
+      <button class="big" data-ide="${esc(g.worktree)}">IDE で開く</button>
       <span class="mono2">${esc(g.worktree)}</span>
       <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
   }
@@ -661,7 +665,7 @@ function renderReview() {
         ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}
         <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
         <ul>${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-        <button class="pick" onclick="answer('choice','${esc(c.id)}')">これで進める</button>
+        <button class="pick" data-choice="${esc(c.id)}">これで進める</button>
       </div>`).join('') + `</div></div>`;
   }
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
@@ -683,6 +687,10 @@ function renderReview() {
       判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。<br>
       <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
   pane.innerHTML = h;
+  pane.querySelectorAll('.work button[data-ide]').forEach(b =>
+    b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
+  pane.querySelectorAll('.pick[data-choice]').forEach(b =>
+    b.addEventListener('click', () => answer('choice', b.dataset.choice)));
 }
 
 async function answer(decision, choice) {
