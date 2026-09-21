@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<!-- No data-theme stamp: the OS preference decides, and the toggle overrides it. -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>adj</title>
+<style>
+/* Surfaces, ink and status are the reference palette. Status colours are reserved — they
+   never stand for anything but state, and they always ship with an icon and a label so the
+   colour is never the only carrier. */
+:root {
+  color-scheme: light;
+  --plane:#f9f9f7; --surface-1:#fcfcfb; --surface-2:#f2f1ed;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --border:rgba(11,11,11,.10); --hairline:#e1e0d9;
+  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --accent:#2a78d6;
+  --shadow:0 1px 2px rgba(11,11,11,.06),0 1px 1px rgba(11,11,11,.04);
+}
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) {
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface-1:#1a1a19; --surface-2:#232321;
+  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+  --border:rgba(255,255,255,.10); --hairline:#2c2c2a;
+  --good:#0ca30c; --warning:#fab219; --critical:#e66767; --accent:#3987e5;
+  --shadow:0 1px 2px rgba(0,0,0,.5);
+} }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface-1:#1a1a19; --surface-2:#232321;
+  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
+  --border:rgba(255,255,255,.10); --hairline:#2c2c2a;
+  --good:#0ca30c; --warning:#fab219; --critical:#e66767; --accent:#3987e5;
+  --shadow:0 1px 2px rgba(0,0,0,.5);
+}
+* { box-sizing:border-box; }
+html,body { height:100%; }
+body { margin:0; background:var(--plane); color:var(--ink); display:flex; flex-direction:column;
+  font:13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; }
+button { font:inherit; color:inherit; cursor:pointer; }
+
+header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 14px;
+  background:var(--surface-1); border-bottom:1px solid var(--hairline); }
+.brand { font-weight:660; }
+.brand span { color:var(--muted); font-weight:400; margin-left:6px; }
+.spacer { flex:1; }
+.state { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.state.good { color:var(--good); } .state.warn { color:var(--ink-2); }
+.state.bad { color:var(--critical); }
+.iconbtn { border:1px solid var(--border); background:var(--surface-1); border-radius:6px;
+  padding:3px 8px; color:var(--ink-2); }
+.iconbtn:hover { background:var(--surface-2); }
+.primary { border:0; background:var(--ink); color:var(--plane); border-radius:6px;
+  padding:5px 12px; font-weight:600; }
+
+main { flex:1; overflow:auto; }
+#board { display:flex; gap:12px; padding:14px; align-items:flex-start; }
+.col { flex:0 0 214px; display:flex; flex-direction:column; gap:8px; background:var(--surface-2);
+  border-radius:10px; padding:8px; min-height:110px; }
+.col.attention { background:color-mix(in oklab,var(--surface-2) 88%,var(--accent)); }
+.col > h2 { margin:0; padding:2px 4px 0; font-size:12px; font-weight:640; color:var(--ink-2);
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap; white-space:nowrap; }
+.col > h2 .n { color:var(--muted); font-weight:400; font-variant-numeric:tabular-nums; }
+.col > h2 .hint { margin-left:auto; color:var(--muted); font-weight:400; font-size:11px; }
+.col.drop-ok { outline:2px dashed var(--good); outline-offset:1px; }
+.col .empty { color:var(--muted); padding:6px 4px; }
+
+.card { background:var(--surface-1); border:1px solid var(--border); border-radius:8px;
+  padding:8px 10px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:5px;
+  text-align:left; width:100%; }
+.card[draggable="true"] { cursor:grab; }
+.card.dragging { opacity:.45; }
+.card.ghost { border-style:dashed; box-shadow:none; background:transparent; }
+.card .title { font-weight:600; }
+.card .meta { display:flex; flex-wrap:wrap; gap:4px 8px; color:var(--ink-2); font-size:12px; }
+.card .mono { font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); }
+.card .acts { display:flex; gap:4px; flex-wrap:wrap; margin-top:2px; }
+.card .acts button { border:1px solid var(--border); background:transparent; color:var(--ink-2);
+  border-radius:5px; padding:1px 7px; font-size:11px; }
+.card .acts button:hover { background:var(--surface-2); color:var(--ink); }
+
+#review { display:none; padding:40px; color:var(--muted); }
+#review.on { display:block; }
+.tabs { display:flex; gap:2px; background:var(--surface-2); padding:2px; border-radius:8px; }
+.tabs button { border:0; background:transparent; padding:4px 12px; border-radius:6px; color:var(--ink-2); }
+.tabs button[aria-selected="true"] { background:var(--surface-1); color:var(--ink); font-weight:600;
+  box-shadow:var(--shadow); }
+
+footer { border-top:1px solid var(--hairline); background:var(--surface-1); padding:7px 14px;
+  max-height:96px; overflow:auto; }
+footer .cap { color:var(--muted); font-size:11px; margin-bottom:3px; }
+footer ol { margin:0; padding:0; list-style:none; }
+footer li { font:11.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--ink-2); }
+footer li b { color:var(--ink); font-weight:600; }
+footer li.err { color:var(--critical); }
+
+dialog { border:1px solid var(--border); border-radius:12px; padding:0; background:var(--surface-1);
+  color:var(--ink); width:min(560px,94vw); box-shadow:0 12px 40px rgba(0,0,0,.28); }
+dialog::backdrop { background:rgba(11,11,11,.38); }
+dialog .head { padding:14px 18px; border-bottom:1px solid var(--hairline); font-weight:660; }
+dialog .body { padding:16px 18px; display:flex; flex-direction:column; gap:14px; }
+dialog .foot { padding:12px 18px; border-top:1px solid var(--hairline); display:flex; gap:8px;
+  justify-content:flex-end; }
+fieldset { border:0; margin:0; padding:0; }
+legend { padding:0 0 6px; color:var(--ink-2); font-size:12px; }
+.radios { display:flex; gap:6px; flex-wrap:wrap; }
+.radios label { border:1px solid var(--border); border-radius:999px; padding:4px 11px;
+  color:var(--ink-2); cursor:pointer; }
+.radios input { position:absolute; opacity:0; pointer-events:none; }
+.radios label:has(input:checked) { border-color:var(--ink); color:var(--ink); font-weight:600;
+  background:var(--surface-2); }
+.field { display:flex; flex-direction:column; gap:5px; }
+.field > span { color:var(--ink-2); font-size:12px; }
+.field .note { color:var(--muted); font-size:11px; }
+textarea,input[type=text],select { width:100%; font:inherit; color:var(--ink);
+  background:var(--surface-1); border:1px solid var(--border); border-radius:7px; padding:7px 9px; }
+textarea { resize:vertical; min-height:64px; }
+details.more summary { color:var(--ink-2); cursor:pointer; font-size:12px; }
+details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding-top:12px; }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">adj <span id="repo">…</span></div>
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tab-board" aria-selected="true" onclick="setView('board')">ボード</button>
+    <button role="tab" id="tab-review" aria-selected="false" onclick="setView('review')">レビュー</button>
+  </div>
+  <div class="spacer"></div>
+  <span id="hub" class="state warn">…</span>
+  <span id="inbox" class="state warn"></span>
+  <button class="iconbtn" onclick="toggleTheme()" aria-label="表示テーマを切り替える">◐ テーマ</button>
+  <button class="primary" onclick="openForm()">+ タスクを渡す</button>
+</header>
+
+<main>
+  <div id="board"></div>
+  <div id="review">gate はまだ無いのだ。(段階3で入るのだ)</div>
+</main>
+
+<footer>
+  <div class="cap">操作ログ — UI の操作がどの adj コマンドに落ちるか</div>
+  <ol id="log"></ol>
+</footer>
+
+<dialog id="form">
+  <form method="dialog" onsubmit="submitForm(event)">
+    <div class="head">タスクを渡す</div>
+    <div class="body">
+      <fieldset>
+        <legend>種類</legend>
+        <div class="radios">
+          <label><input type="radio" name="kind" value="start" checked onchange="syncForm()">Issue に着手</label>
+          <label><input type="radio" name="kind" value="file-and-start" onchange="syncForm()">起票して着手</label>
+          <label><input type="radio" name="kind" value="investigate" onchange="syncForm()">調査だけ</label>
+        </div>
+      </fieldset>
+      <label class="field"><span>タイトル</span>
+        <input type="text" name="title" required placeholder="ログイン失敗時のリトライを調べる"></label>
+      <label class="field" id="f-issue"><span>Issue URL</span>
+        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233"></label>
+      <label class="field"><span>内容</span>
+        <textarea name="body" placeholder="リトライが効いていない気がするので、現状の実装を調べて報告してほしいのだ"></textarea></label>
+      <details class="more">
+        <summary>詳細(省略可)</summary>
+        <div class="grid">
+          <label class="field"><span>完了条件</span>
+            <select name="doneWhen">
+              <option value="report-only">調査のみ(報告して終わり)</option>
+              <option value="verify">動作確認まで</option>
+              <option value="pr" selected>PR 作成まで</option>
+              <option value="review">レビュー対応まで</option>
+            </select></label>
+          <label class="field"><span>分岐元</span>
+            <input type="text" name="base" placeholder="既定 (baseBranch)"></label>
+          <label class="field"><span>親タスク(URL)</span>
+            <input type="text" name="parent" placeholder="https://…/issues/200">
+            <span class="note">キーではなく URL なのだ</span></label>
+          <label class="field" id="f-wtname"><span>worktree 名</span>
+            <input type="text" name="worktreeName" placeholder="login-retry">
+            <span class="note">Issue が無いときは必須なのだ</span></label>
+        </div>
+        <fieldset style="padding-top:12px">
+          <legend>着手</legend>
+          <div class="radios">
+            <label><input type="radio" name="autoStart" value="true" checked>確認なしで着手</label>
+            <label><input type="radio" name="autoStart" value="false">着手前に確認したい</label>
+          </div>
+        </fieldset>
+      </details>
+    </div>
+    <div class="foot">
+      <button type="button" class="iconbtn" onclick="document.getElementById('form').close()">やめる</button>
+      <button type="submit" class="iconbtn" name="act" value="backlog">Backlog に置く</button>
+      <button type="submit" class="primary" name="act" value="queued">いま渡す</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+/* The token arrives in the URL (that is how this page was opened) and travels back in a
+   header — which is also the half of the CSRF defence a cross-site form cannot reproduce. */
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+
+let state = { tasks: [], workers: [], pending: [], gates: [] };
+let view = 'board';
+let log = [];
+
+const COLUMNS = [
+  { id:'backlog',   label:'Backlog',   hint:'未受付' },
+  { id:'queued',    label:'待ち',       hint:'並べ替え可' },
+  { id:'working',   label:'進行中',     hint:'' },
+  { id:'attention', label:'要対応',     hint:'段階3' },
+  { id:'pr',        label:'レビュー中', hint:'' },
+  { id:'done',      label:'完了',       hint:'' },
+];
+
+/* 要対応 is derived from the gate directory, never stored as a status — so the board reads
+   the thing it is describing rather than a second copy of it. */
+const openGate = t => state.gates.find(g => g.taskId === t.id);
+const columnOf = t => t.status === 'dispatched'
+  ? (openGate(t) ? 'attention' : 'working')
+  : { backlog:'backlog', queued:'queued', pr:'pr', done:'done', cancelled:null }[t.status];
+
+/* The only human-owned moves. Everything else belongs to the hub and its workers. */
+const ALLOWED = { backlog:['queued'], queued:['backlog','queued'] };
+const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
+
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { 'X-Adjutant-Token': TOKEN, 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `${res.status}`);
+  return data;
+}
+
+async function refresh() {
+  try {
+    state = await api('/api/state');
+    render();
+  } catch (e) {
+    note(`状態を取れなかったのだ: ${e.message}`, true);
+  }
+}
+
+function render() {
+  document.getElementById('repo').textContent = state.repo || '';
+  const hub = state.hub || {};
+  const hubEl = document.getElementById('hub');
+  hubEl.className = 'state ' + (hub.present ? 'good' : hub.stale ? 'bad' : 'warn');
+  hubEl.innerHTML = hub.present
+    ? '<span>●</span>hub 稼働中'
+    : hub.stale ? '<span>⚠</span>hub の記録が残っているが止まっている'
+                : '<span>○</span>hub は止まっている';
+
+  const waiting = (state.pending || []).length;
+  document.getElementById('inbox').innerHTML = waiting
+    ? `<span>✉</span>受信箱 ${waiting} 件(hub が未読)` : '';
+
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  for (const col of COLUMNS) board.appendChild(columnEl(col));
+}
+
+function columnEl(col) {
+  const items = (state.tasks || []).filter(t => columnOf(t) === col.id);
+  const el = document.createElement('section');
+  el.className = 'col' + (col.id === 'attention' ? ' attention' : '');
+  el.dataset.col = col.id;
+
+  const live = (state.workers || []).filter(w => w.present).length;
+  const hint = col.id === 'working' ? `worker ${live}` : col.hint;
+  el.innerHTML = `<h2>${col.label}<span class="n">${items.length}</span>` +
+    (hint ? `<span class="hint">${esc(hint)}</span>` : '') + '</h2>';
+
+  for (const task of items) el.appendChild(cardEl(task, col.id));
+  // A worktree with a live worker and no record of why: the board would otherwise be a
+  // mirror that leaves things out. Slice 2 gives the hub a record for every dispatch.
+  if (col.id === 'working') {
+    const known = new Set(items.map(t => t.worktree).filter(Boolean));
+    for (const w of (state.workers || []).filter(w => w.present && !known.has(w.worktree))) {
+      el.appendChild(ghostEl(w));
+    }
+  }
+  if (!el.querySelector('.card')) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
+
+  el.addEventListener('dragover', e => {
+    if (canDrop(window.__from, col.id)) { e.preventDefault(); el.classList.add('drop-ok'); }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-ok'));
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    el.classList.remove('drop-ok');
+    move(e.dataTransfer.getData('text/plain'), col.id, e.target.closest('.card')?.dataset.id);
+  });
+  return el;
+}
+
+const DONE_WHEN = { 'report-only':'調査のみ', verify:'動作確認まで', pr:'PR作成まで', review:'レビュー対応まで' };
+
+function cardEl(task, col) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.dataset.id = task.id;
+  if ((ALLOWED[col] || []).length) {
+    el.draggable = true;
+    el.addEventListener('dragstart', e => {
+      window.__from = col;
+      e.dataTransfer.setData('text/plain', task.id);
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => { window.__from = null; render(); });
+  }
+
+  let h = `<div class="title">${esc(task.title)}</div>`;
+  const meta = [DONE_WHEN[task.doneWhen] || task.doneWhen];
+  if (col === 'queued') meta.push(`↕ ${task.order}`);
+  if (task.worktree) meta.push(esc(task.worktree.split('/').pop()));
+  if (task.pr) meta.push(esc(task.pr));
+  if (!task.autoStart) meta.push('着手前に確認');
+  h += `<div class="meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>`;
+  if (task.issueUrl) h += `<div class="mono">${esc(task.issueUrl)}</div>`;
+  if (task.note) h += `<div class="meta"><span class="state bad"><span>⚠</span>${esc(task.note)}</span></div>`;
+
+  const acts = [];
+  if (col === 'backlog') acts.push(['渡す →', `hand('${task.id}')`]);
+  if (task.worktree) acts.push(['IDE', `cmd('adj ide --worktree ${esc(task.worktree)}')`]);
+  if (acts.length) {
+    h += `<div class="acts">${acts.map(([l, fn]) => `<button type="button" onclick="${fn}">${l}</button>`).join('')}</div>`;
+  }
+  h += `<div class="mono">${esc(task.id)}</div>`;
+  el.innerHTML = h;
+  return el;
+}
+
+function ghostEl(worker) {
+  const el = document.createElement('div');
+  el.className = 'card ghost';
+  el.innerHTML = `<div class="title">${esc(worker.title || worker.name)}</div>
+    <div class="meta"><span>${esc(worker.branch || '')}</span>
+      <span class="state warn"><span>◷</span>タスクレコードなし</span></div>
+    <div class="mono">${esc(worker.worktree)}</div>`;
+  return el;
+}
+
+// ── the actions, each one logging the adj command it maps to ──────────
+
+async function move(id, to, before) {
+  const task = (state.tasks || []).find(t => t.id === id);
+  if (!task || !canDrop(columnOf(task), to)) return;
+  if (columnOf(task) === 'backlog' && to === 'queued') return hand(id);
+  if (to === 'backlog') {
+    await update(id, { status:'backlog' },
+      `adj task update --id ${id} --status backlog`,
+      'hub は着手の直前に status を読むので、戻したものは飛ばされるのだ');
+    return;
+  }
+  // Reordering inside 待ち: the dropped card takes the position of the one it landed on.
+  const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id);
+  const at = before ? queue.findIndex(t => t.id === before) : queue.length;
+  const order = at < 0 ? queue.length + 1 : at + 1;
+  await update(id, { order }, `adj task update --id ${id} --order ${order}`,
+    'hub がキューの先頭を引く順序なのだ');
+}
+
+async function hand(id) {
+  await update(id, { status:'queued' },
+    `adj task update --id ${id} --status queued`,
+    'レコードを queued にして、受信箱に kind:request を置いて hubWake するのだ');
+}
+
+async function update(id, body, line, why) {
+  try {
+    const data = await api(`/api/tasks/${encodeURIComponent(id)}`, {
+      method:'POST', body: JSON.stringify(body),
+    });
+    note(line, false, why + handedNote(data.handed));
+    await refresh();
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+  }
+}
+
+function handedNote(handed) {
+  if (!handed) return '';
+  if (!handed.present) return ' / hub は止まっていたので、次に起動したときに拾われるのだ';
+  return handed.woken ? ' / hub を起こしたのだ' : ' / hub は稼働中。次に受信箱を見たときに拾うのだ';
+}
+
+function openForm() { document.getElementById('form').showModal(); syncForm(); }
+function syncForm() {
+  const kind = document.querySelector('input[name=kind]:checked').value;
+  document.getElementById('f-issue').classList.toggle('hidden', kind !== 'start');
+  document.getElementById('f-wtname').classList.toggle('hidden', kind === 'start');
+}
+
+async function submitForm(e) {
+  const f = new FormData(e.target);
+  const status = e.submitter?.value || 'backlog';
+  const body = {
+    title: f.get('title'),
+    body: f.get('body') || '',
+    kind: f.get('kind'),
+    doneWhen: f.get('doneWhen'),
+    autoStart: f.get('autoStart') === 'true',
+    status,
+  };
+  for (const key of ['issueUrl', 'base', 'parent', 'worktreeName']) {
+    const value = (f.get(key) || '').trim();
+    if (value) body[key] = value;
+  }
+  const line = `adj task add --title '${body.title}' --kind ${body.kind}` + (status === 'queued' ? ' --queue' : '');
+  try {
+    const data = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
+    note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱に書かないのだ') + handedNote(data.handed));
+    e.target.reset();
+    await refresh();
+  } catch (err) {
+    note(`${line} → ${err.message}`, true);
+  }
+}
+
+/* Buttons that are only a shell command: shown as what they would run, until slice 5 wires
+   them to the terminal templates. */
+function cmd(line) { note(line, false, '(段階5でここから実行できるようにするのだ)'); }
+
+function note(line, isError, why) {
+  log.unshift({ line, isError, why });
+  log = log.slice(0, 5);
+  document.getElementById('log').innerHTML = log.map(l =>
+    `<li class="${l.isError ? 'err' : ''}"><b>${l.isError ? '!' : '$'}</b> ${esc(l.line)}` +
+    (l.why ? `   <span style="color:var(--muted)">— ${esc(l.why)}</span>` : '') + '</li>').join('');
+}
+
+function setView(v) {
+  view = v;
+  document.getElementById('board').style.display = v === 'board' ? 'flex' : 'none';
+  document.getElementById('review').classList.toggle('on', v === 'review');
+  document.getElementById('tab-board').setAttribute('aria-selected', String(v === 'board'));
+  document.getElementById('tab-review').setAttribute('aria-selected', String(v === 'review'));
+}
+
+function toggleTheme() {
+  const cur = document.documentElement.dataset.theme ||
+    (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+}
+
+note('adj serve', false, 'この板が出しているのは、ぜんぶ既存の adj コマンドなのだ');
+setView('board');
+refresh();
+// The server holds no clock, so the page carries one: it asks, nothing pushes.
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -80,6 +80,8 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
+| `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) |
+| `adjutant task add\|list\|show\|update` | the records that board is a view of |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as seven tools and three prompts:
@@ -263,6 +265,36 @@ mechanism that does not generalise, since a profile whose title format is driven
 variables ignores it and the tab silently keeps the wrong name. `agentEnv` is an object of environment variables
 both the hub and its workers are started with, for a repository that runs under a separate
 agent profile.
+
+## The board
+
+`adjutant serve` puts this repository's work on one page in a browser: what is in the
+backlog, what has been handed to the hub, which worktrees have a worker in them, and what is
+sitting unread in the inbox.
+
+It is not a second coordination system. Every button on it ends in something this binary
+could already do — handing a task over writes a `request` into the hub's inbox and pokes its
+tab, through the same code `adjutant send` runs, so waking and notifying cannot drift between
+the two callers. The page says so out loud: a strip along the bottom prints the command each
+action maps to.
+
+**It holds no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
+arrives because a person clicked. The page asks for state every two seconds, which is the
+only repeating thing anywhere in it.
+
+A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
+message that announces it: the message is read once and acked, and after that the hub would
+have no way to say what became of the thing. The hub writes back to the record — `adjutant
+task update --id … --status dispatched --worktree …` — and that is what the board shows.
+The record is also the referee: a card dragged back to the backlog sets `status` there, and
+the hub reads it once more just before it starts, so a task pulled back while its message
+was still in the inbox does not get picked up anyway.
+
+**The port is bound on `127.0.0.1` and everything needs a token**, kept in
+`~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.
+Anything that changes state needs it in a header as well, and needs an `Origin` naming this
+server — a page on another site can submit a form to a loopback port, but it cannot set that
+header, and these endpoints are how work gets started.
 
 ## How the two sides reach each other
 

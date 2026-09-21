@@ -14,6 +14,15 @@ use crate::repo::{self, RepoInfo};
 use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
+mod serve;
+mod task;
+
+pub use serve::{DEFAULT_PORT, serve};
+pub use task::{
+    AddArgs, UpdateArgs, add as task_add, list as task_list, show as task_show,
+    update_cmd as task_update,
+};
+
 /// Everything a command needs to know about where it is. Resolved once, at the top, because
 /// two commands disagreeing about which repo they are in is the failure that loses reports.
 pub struct Context {
@@ -216,21 +225,21 @@ pub struct SendArgs<'a> {
     pub quiet: bool,
 }
 
-pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo, args.hub)?;
-    let body = read_body(args.body)?;
-    let message = Message {
-        from: args.from.unwrap_or("unknown").to_string(),
-        // Where this is being sent from, taken from the same directory the repository was
-        // resolved in rather than from anything the sender says about itself.
-        worktree: repo::current_worktree(None),
-        kind: args.kind.to_string(),
-        subject: args.subject.unwrap_or("").to_string(),
-        body,
-    };
-    let subject = messaging::header_value(&messaging::render_message(&message), "subject")
-        .unwrap_or_default();
-    let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, &message)?;
+/// What became of a message handed to the hub.
+pub struct Delivered {
+    pub delivery: messaging::Delivery,
+    pub woken: bool,
+}
+
+/// Leave a message for the hub, poke its tab, and tell the person.
+///
+/// Shared by `adj send` and by the dashboard's hand-over, which is the whole reason it is a
+/// function: the three steps are one rule, and a second copy of it is a second set of
+/// conditions about when to wake and when to notify — drifting from the day it is written.
+pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<Delivered, String> {
+    let subject =
+        messaging::header_value(&messaging::render_message(message), "subject").unwrap_or_default();
+    let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, message)?;
 
     // A file appearing in a directory wakes nobody, so delivery has two follow-ups: poke the
     // hub if it is actually sitting there, and tell the person either way.
@@ -259,6 +268,22 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     if let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject) {
         let _ = terminal::run_shell(&command);
     }
+    Ok(Delivered { delivery, woken })
+}
+
+pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
+    let ctx = context(args.repo, args.hub)?;
+    let body = read_body(args.body)?;
+    let message = Message {
+        from: args.from.unwrap_or("unknown").to_string(),
+        // Where this is being sent from, taken from the same directory the repository was
+        // resolved in rather than from anything the sender says about itself.
+        worktree: repo::current_worktree(None),
+        kind: args.kind.to_string(),
+        subject: args.subject.unwrap_or("").to_string(),
+        body,
+    };
+    let Delivered { delivery, woken } = deliver_to_hub(&ctx, &message)?;
 
     if args.quiet {
         return Ok(());
