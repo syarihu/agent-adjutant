@@ -21,9 +21,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::{expand_home, home_dir};
 use crate::repo::current_worktree;
 
+/// Where the inbox, the records and the boards live. A constant for the same reason
+/// `config::CONFIG_ENV` is one: it has to be forwarded by name into the tabs this opens.
+pub const STATE_DIR_ENV: &str = "ADJUTANT_STATE_DIR";
+
 /// `ADJUTANT_STATE_DIR` wins, then `$XDG_STATE_HOME/adjutant`, then `~/.local/state/adjutant`.
 pub fn state_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("ADJUTANT_STATE_DIR")
+    if let Ok(dir) = std::env::var(STATE_DIR_ENV)
         && !dir.is_empty()
     {
         return expand_home(&dir);

@@ -213,6 +213,20 @@ different answer. `terminal` and the `wake` family merge key by key, so a reposi
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
 
+A command line the terminal would have to type is **staged in a file once it grows past
+about 900 characters**, and what gets typed is `sh /tmp/adjutant-spawn-….sh`. Long lines do
+not fail, they arrive *corrupted* — a chunk dropped somewhere in the middle — and what runs
+is whatever that mangling happened to spell. An `agentEnv` carrying a `PATH` is the ordinary
+way to reach that length. A dry run is never staged: it is read by a person, and a path to a
+file tells them nothing about what would have run.
+
+**`ADJUTANT_CONFIG` and `ADJUTANT_STATE_DIR` are forwarded onto the command line** of every
+tab `hub --tab` and `work` open, when this process was given them. `ADJUTANT_HUB` already
+travels as a flag; these two have none, and losing them does not fail — it splits. The tab
+reads the default config and the default state directory, so the worker it starts registers
+in one world while the hub that dispatched it waits in another, and both halves look healthy
+from where they stand.
+
 `{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
 terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A
 `focus`, `close` or `wake` template has to look that handle up before it acts: handing `{pid}` to

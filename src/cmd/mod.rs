@@ -363,6 +363,35 @@ pub fn spawn(
 
 /// Open a tab and start a worker agent in it. One command rather than two so the runner
 /// template is read in exactly one place.
+/// The environment a new tab has to be handed on its command line, because a terminal is
+/// given a command line and nothing else.
+///
+/// `ADJUTANT_HUB` already travels as a flag, and `ADJUTANT_STARTUP_DASHBOARD` as one too.
+/// These two have none, and losing them does not fail — it *splits*: the tab reads the
+/// default config and the default state directory, so the agent it starts registers in one
+/// world while the hub that dispatched it waits in another. The worker reports into an
+/// inbox nobody is reading, and both halves look healthy from where they stand.
+///
+/// Forwarded only when this process was given them. A machine that never sets them gets the
+/// command line it always had.
+fn forwarded_env() -> Vec<String> {
+    let set: Vec<String> = [config::CONFIG_ENV, messaging::STATE_DIR_ENV]
+        .iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("{name}={value}"))
+        })
+        .collect();
+    if set.is_empty() {
+        return Vec::new();
+    }
+    let mut parts = vec!["env".to_string()];
+    parts.extend(set);
+    parts
+}
+
 pub fn work(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
@@ -378,7 +407,8 @@ pub fn work(
     // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
     // process that has already written down its own PID and then `exec`s itself away, which
     // is the only way anyone later gets to ask "is that worker still there".
-    let mut parts = vec![
+    let mut parts = forwarded_env();
+    parts.extend([
         exe_path(),
         "worker".to_string(),
         "--worktree".to_string(),
@@ -387,7 +417,7 @@ pub fn work(
         title.to_string(),
         "--prompt".to_string(),
         prompt.to_string(),
-    ];
+    ]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
         parts.push(repo.to_string());
@@ -879,7 +909,8 @@ fn open_hub_tab(
     dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
-    let mut parts = vec![exe_path(), "hub".to_string()];
+    let mut parts = forwarded_env();
+    parts.extend([exe_path(), "hub".to_string()]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
         parts.push(repo.to_string());
@@ -1299,6 +1330,40 @@ fn settings_for(repo_arg: Option<&str>) -> Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hub told where to read and write has to hand both to the tabs it opens. Losing
+    /// them does not fail: the worker registers in the default world and reports into an
+    /// inbox the hub is not watching, and both halves look healthy from where they stand.
+    #[test]
+    fn a_tab_is_handed_the_config_and_state_directory_it_must_not_lose() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let parts = forwarded_env();
+        assert_eq!(parts.first().map(String::as_str), Some("env"));
+        assert!(
+            parts
+                .iter()
+                .any(|p| p.starts_with(&format!("{}=", config::CONFIG_ENV))),
+            "{parts:?}"
+        );
+        assert!(
+            parts
+                .iter()
+                .any(|p| p.starts_with(&format!("{}=", messaging::STATE_DIR_ENV))),
+            "{parts:?}"
+        );
+    }
+
+    /// A machine that never sets them gets the command line it always had — no `env`
+    /// prefix, nothing to read past.
+    #[test]
+    fn nothing_is_forwarded_when_nothing_was_given() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        unsafe {
+            std::env::remove_var(config::CONFIG_ENV);
+            std::env::remove_var(messaging::STATE_DIR_ENV);
+        }
+        assert!(forwarded_env().is_empty());
+    }
     use crate::messaging::Liveness;
 
     /// A `look` that answers down a script and then keeps repeating its last word, so a

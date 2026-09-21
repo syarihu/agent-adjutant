@@ -37,6 +37,64 @@ pub struct Performed {
     pub ran: bool,
 }
 
+/// How long a command line may be before it is staged in a file instead of typed.
+///
+/// The built-in spawner hands the line to the terminal to type into a shell, and a long one
+/// does not fail — it *arrives corrupted*, a chunk dropped somewhere in the middle, and what
+/// runs is whatever that mangling happened to spell. Seen with an `agentEnv` carrying a
+/// PATH: the tab ran a command containing `/usrdj-e2e/config.json`, which named no file
+/// anybody could search for.
+///
+/// The exact limit is a property of the terminal and is not documented by any of them, so
+/// this is deliberately well under any of the numbers involved rather than tuned to one.
+const MAX_INLINE_COMMAND: usize = 900;
+
+/// Put a long command line in a file and return the short one that runs it.
+///
+/// Left behind rather than self-deleting: the script is read by a shell in another process
+/// at a time we do not get to know, and a file removed before that read is a tab that opens
+/// on an error. Old ones are swept on the way past instead.
+fn stage_command(line: &str) -> Result<String, String> {
+    let dir = std::env::temp_dir();
+    sweep_staged(&dir);
+    let name = format!(
+        "adjutant-spawn-{}-{}.sh",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{line}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(format!("sh {}", sh_quote(&path.to_string_lossy())))
+}
+
+/// Remove staged scripts older than a day. A tab that never opened leaves one behind, and
+/// nothing else would ever collect it.
+fn sweep_staged(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let day = std::time::Duration::from_secs(86_400);
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("adjutant-spawn-") || !name.ends_with(".sh") {
+            continue;
+        }
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().map(|age| age > day).unwrap_or(false))
+            .unwrap_or(false);
+        if old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub fn spawn(
     template: Option<&str>,
     req: &SpawnRequest,
@@ -72,6 +130,14 @@ pub fn spawn(
             line.push_str(&format!("( {name_it} || true ) && "));
         }
         line.push_str(req.command);
+        line
+    };
+
+    // Staged only when it is actually going to be typed: a dry run is read by a person,
+    // and `sh /tmp/…` tells them nothing about what would have run.
+    let line = if !dry_run && line.len() > MAX_INLINE_COMMAND {
+        stage_command(&line)?
+    } else {
         line
     };
 
@@ -728,6 +794,61 @@ pub fn run_shell(command: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A line the terminal would mangle is put in a file instead. The failure this prevents
+    /// is silent: the tab opens and runs something that was never written.
+    #[test]
+    fn an_overlong_command_is_staged_in_a_file() {
+        let long = format!("echo {}", "x".repeat(MAX_INLINE_COMMAND));
+        let staged = stage_command(&long).unwrap();
+        let path = staged.strip_prefix("sh ").unwrap().trim_matches('\'');
+        let written = std::fs::read_to_string(path).unwrap();
+        assert!(written.starts_with("#!/bin/sh\n"), "{written}");
+        assert!(written.contains(&long), "{written}");
+        assert!(staged.len() < MAX_INLINE_COMMAND, "{staged}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// A dry run is read by a person. Handing them `sh /tmp/…` would hide the one thing
+    /// they asked to see.
+    #[test]
+    fn a_dry_run_shows_the_command_rather_than_a_path_to_it() {
+        let long = format!("claude {}", "y".repeat(MAX_INLINE_COMMAND));
+        let done = spawn(
+            Some("tmux new-window -c {cwd} -n {title} {command}"),
+            &SpawnRequest {
+                cwd: ".",
+                title: "t",
+                command: &long,
+                title_command: None,
+            },
+            true,
+        )
+        .unwrap();
+        assert!(done.script.contains(&long), "{}", done.script);
+        assert!(!done.script.contains("adjutant-spawn-"), "{}", done.script);
+    }
+
+    /// A short one is left alone, so the common case stays inspectable and leaves no files.
+    #[test]
+    fn a_short_command_is_not_staged() {
+        let done = spawn(
+            Some("tmux new-window -c {cwd} -n {title} {command}"),
+            &SpawnRequest {
+                cwd: ".",
+                title: "t",
+                command: "claude --help",
+                title_command: None,
+            },
+            false,
+        );
+        // Running tmux may fail on this machine; what matters is what was going to run.
+        let script = match done {
+            Ok(done) => done.script,
+            Err(e) => e,
+        };
+        assert!(!script.contains("adjutant-spawn-"), "{script}");
+    }
 
     #[test]
     fn a_title_with_a_newline_cannot_submit_a_line_in_the_new_tab() {
