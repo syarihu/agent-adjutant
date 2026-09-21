@@ -53,9 +53,10 @@ header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10p
 .primary { border:0; background:var(--ink); color:var(--plane); border-radius:6px;
   padding:5px 12px; font-weight:600; }
 
-main { flex:1; overflow:auto; }
-#board { display:flex; gap:12px; padding:14px; align-items:flex-start; }
-.col { flex:0 0 214px; display:flex; flex-direction:column; gap:8px; background:var(--surface-2);
+main { flex:1; overflow:hidden; position:relative; }
+#board-view { display:flex; height:100%; width:100%; min-width:0; overflow:hidden; }
+#board { flex:1; min-width:0; display:flex; gap:12px; padding:14px; align-items:flex-start; overflow-x:auto; overflow-y:auto; }
+.col { flex:0 0 214px; min-width:0; display:flex; flex-direction:column; gap:8px; background:var(--surface-2);
   border-radius:10px; padding:8px; min-height:110px; }
 .col.attention { background:color-mix(in oklab,var(--surface-2) 88%,var(--accent)); }
 .col > h2 { margin:0; padding:2px 4px 0; font-size:12px; font-weight:640; color:var(--ink-2);
@@ -67,17 +68,49 @@ main { flex:1; overflow:auto; }
 
 .card { background:var(--surface-1); border:1px solid var(--border); border-radius:8px;
   padding:8px 10px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:5px;
-  text-align:left; width:100%; }
+  text-align:left; width:100%; min-width:0; cursor:pointer; transition:border-color .15s, box-shadow .15s; }
+.card:hover { border-color:var(--ink-2); }
+.card.selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
 .card[draggable="true"] { cursor:grab; }
 .card.dragging { opacity:.45; }
-.card.ghost { border-style:dashed; box-shadow:none; background:transparent; }
-.card .title { font-weight:600; }
+.card.ghost { border-style:dashed; box-shadow:none; background:transparent; cursor:default; }
+.card .title { font-weight:600; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3;
+  -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; }
 .card .meta { display:flex; flex-wrap:wrap; gap:4px 8px; color:var(--ink-2); font-size:12px; }
-.card .mono { font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); }
+.card .mono { font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.card .note { font-size:12px; color:var(--ink-2); overflow-wrap:anywhere; display:-webkit-box;
+  -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; }
+.card .state { white-space:normal; overflow-wrap:anywhere; align-items:flex-start; }
+.card .state > span:first-child { flex:none; }
 .card .acts { display:flex; gap:4px; flex-wrap:wrap; margin-top:2px; }
 .card .acts button { border:1px solid var(--border); background:transparent; color:var(--ink-2);
   border-radius:5px; padding:1px 7px; font-size:11px; }
 .card .acts button:hover { background:var(--surface-2); color:var(--ink); }
+
+/* ── task drawer (right sidebar) ── */
+#task-drawer { flex:0 0 380px; width:380px; max-width:90vw; height:100%; overflow-y:auto;
+  background:var(--surface-1); border-left:1px solid var(--border); box-shadow:-2px 0 16px rgba(0,0,0,.08);
+  display:flex; flex-direction:column; }
+#task-drawer.hidden { display:none !important; }
+#task-drawer .d-head { padding:14px 16px; border-bottom:1px solid var(--hairline); display:flex;
+  gap:10px; align-items:flex-start; }
+#task-drawer .d-head h2 { margin:0; font-size:15px; font-weight:640; line-height:1.4; flex:1;
+  overflow-wrap:anywhere; }
+#task-drawer .d-close { border:0; background:transparent; font-size:18px; line-height:1;
+  color:var(--muted); cursor:pointer; padding:2px 6px; border-radius:4px; }
+#task-drawer .d-close:hover { color:var(--ink); background:var(--surface-2); }
+#task-drawer .d-body { padding:16px; display:flex; flex-direction:column; gap:12px; flex:1; overflow-y:auto; }
+#task-drawer .d-section { background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+  padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+#task-drawer .d-label { font-size:11px; color:var(--muted); font-weight:640; text-transform:uppercase; letter-spacing:.04em; }
+#task-drawer .d-value { font-size:13px; color:var(--ink); overflow-wrap:anywhere; line-height:1.5; }
+#task-drawer .d-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+#task-drawer .d-gate-banner { border:1px solid var(--accent); background:color-mix(in oklab,var(--surface-1) 85%,var(--accent));
+  border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+#task-drawer .d-gate-banner button { align-self:flex-start; border:0; background:var(--accent); color:#fff;
+  border-radius:6px; padding:4px 10px; font-weight:600; font-size:12px; cursor:pointer; }
+
 
 /* ── the review view ── */
 #review { display:none; height:100%; padding:0; color:var(--ink); }
@@ -104,9 +137,29 @@ main { flex:1; overflow:auto; }
   letter-spacing:.04em; text-transform:uppercase; }
 .panel > ul { margin:0; padding-left:18px; }
 .frame-focus { border-left:3px solid var(--accent); padding-left:12px; }
-.body h4 { margin:15px 0 6px; font-size:13px; } .body h4:first-child { margin-top:0; }
-.body p { margin:0 0 9px; } .body ul, .body ol { margin:0 0 10px; padding-left:20px; }
-.body li { margin:2px 0; } .body > :last-child { margin-bottom:0; }
+.body h3 { margin:18px 0 8px; font-size:14px; font-weight:700; color:var(--ink); }
+.body h3:first-child { margin-top:0; }
+.body h4 { margin:15px 0 6px; font-size:13px; font-weight:660; color:var(--ink); }
+.body h4:first-child { margin-top:0; }
+.body h5 { margin:13px 0 5px; font-size:12.5px; font-weight:640; color:var(--ink); }
+.body h5:first-child { margin-top:0; }
+.body p { margin:0 0 9px; line-height:1.6; }
+.body ul, .body ol { margin:0 0 10px; padding-left:20px; line-height:1.6; }
+.body li { margin:3px 0; }
+.body hr { border:0; border-top:1px solid var(--hairline); margin:16px 0; }
+.body blockquote { margin:0 0 10px; padding:6px 12px; border-left:3px solid var(--accent);
+  background:var(--surface-2); border-radius:0 6px 6px 0; color:var(--ink-2); }
+.body blockquote p { margin:0; }
+.body pre { background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+  padding:10px 12px; overflow:auto; margin:0 0 10px; }
+.body pre code { background:transparent; padding:0; font:12px/1.5 ui-monospace,Menlo,monospace; border-radius:0; }
+.body table { width:100%; border-collapse:collapse; margin:10px 0 14px; font-size:12px; }
+.body th, .body td { border:1px solid var(--border); padding:6px 10px; text-align:left; vertical-align:top; }
+.body th { background:var(--surface-2); font-weight:640; color:var(--ink); white-space:nowrap; }
+.body a { color:var(--accent); text-decoration:none; }
+.body a:hover { text-decoration:underline; }
+.body del { color:var(--muted); text-decoration:line-through; }
+.body > :last-child { margin-bottom:0; }
 .body code { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--surface-2);
   padding:1px 5px; border-radius:4px; }
 details.decided summary { color:var(--muted); cursor:pointer; font-size:12px; }
@@ -180,7 +233,7 @@ legend { padding:0 0 6px; color:var(--ink-2); font-size:12px; }
 .field .note { color:var(--muted); font-size:11px; }
 textarea,input[type=text],select { width:100%; font:inherit; color:var(--ink);
   background:var(--surface-1); border:1px solid var(--border); border-radius:7px; padding:7px 9px; }
-textarea { resize:vertical; min-height:64px; }
+textarea { resize:vertical; min-height:84px; }
 details.more summary { color:var(--ink-2); cursor:pointer; font-size:12px; }
 details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding-top:12px; }
 .hidden { display:none !important; }
@@ -197,12 +250,16 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
   <div class="spacer"></div>
   <span id="hub" class="state warn">…</span>
   <span id="inbox" class="state warn"></span>
+  <button class="iconbtn" id="btn-notify" onclick="toggleNotify()" aria-label="デスクトップ通知を設定する">🔔 通知</button>
   <button class="iconbtn" onclick="toggleTheme()" aria-label="表示テーマを切り替える">◐ テーマ</button>
   <button class="primary" onclick="openForm()">+ タスクを渡す</button>
 </header>
 
 <main>
-  <div id="board"></div>
+  <div id="board-view">
+    <div id="board"></div>
+    <aside id="task-drawer" class="hidden"></aside>
+  </div>
   <div id="review"><div class="rail"></div><div class="pane"></div></div>
 </main>
 
@@ -223,15 +280,15 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
           <label><input type="radio" name="kind" value="investigate" onchange="syncForm()">調査だけ</label>
         </div>
       </fieldset>
-      <label class="field"><span>タイトル</span>
-        <input type="text" name="title" required placeholder="ログイン失敗時のリトライを調べる"></label>
+      <label class="field"><span>内容</span>
+        <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力"></textarea></label>
       <label class="field" id="f-issue"><span>Issue URL</span>
         <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233"></label>
-      <label class="field"><span>内容</span>
-        <textarea name="body" placeholder="リトライが効いていない気がするので、現状の実装を調べて報告してほしいのだ"></textarea></label>
       <details class="more">
         <summary>詳細(省略可)</summary>
         <div class="grid">
+          <label class="field"><span>タイトル</span>
+            <input type="text" name="title" placeholder="省略時は内容の1行目"></label>
           <label class="field"><span>完了条件</span>
             <select name="doneWhen">
               <option value="report-only">調査のみ(報告して終わり)</option>
@@ -243,10 +300,10 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
             <input type="text" name="base" placeholder="既定 (baseBranch)"></label>
           <label class="field"><span>親タスク(URL)</span>
             <input type="text" name="parent" placeholder="https://…/issues/200">
-            <span class="note">キーではなく URL なのだ</span></label>
+            <span class="note">キーではなく URL を指定</span></label>
           <label class="field" id="f-wtname"><span>worktree 名</span>
             <input type="text" name="worktreeName" placeholder="login-retry">
-            <span class="note">Issue が無いときは必須なのだ</span></label>
+            <span class="note">Issue が無いときは必須</span></label>
         </div>
         <fieldset style="padding-top:12px">
           <legend>着手</legend>
@@ -273,6 +330,7 @@ const TOKEN = new URLSearchParams(location.search).get('token') || '';
 let state = { tasks: [], workers: [], pending: [], gates: [] };
 let view = 'board';
 let log = [];
+let selectedTaskId = null;
 
 const COLUMNS = [
   { id:'backlog',   label:'Backlog',   hint:'未受付' },
@@ -306,12 +364,83 @@ async function api(path, options = {}) {
   return data;
 }
 
-async function refresh() {
+let lastStateJson = '';
+let seenGateIds = null;
+
+function updateNotifyButton() {
+  const btn = document.getElementById('btn-notify');
+  if (!btn || !('Notification' in window)) {
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    btn.textContent = '🔔 通知ON';
+    btn.title = '確認依頼のデスクトップ通知が有効です';
+  } else if (Notification.permission === 'denied') {
+    btn.textContent = '🔕 通知OFF';
+    btn.title = 'ブラウザの設定で通知がブロックされています';
+  } else {
+    btn.textContent = '🔔 通知を許可';
+    btn.title = '確認依頼が届いたときにデスクトップ通知を受け取る';
+  }
+}
+
+async function toggleNotify() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') {
+    const perm = await Notification.requestPermission();
+    updateNotifyButton();
+    if (perm === 'granted') {
+      new Notification('adj', {
+        body: '確認依頼が届いたときにデスクトップ通知でお知らせします',
+        tag: 'adj-notify-init',
+      });
+    }
+  } else if (Notification.permission === 'denied') {
+    alert('ブラウザの設定で通知がブロックされています。ブラウザのアドレスバーのサイト設定から通知を許可してください。');
+  }
+}
+
+function checkNewGates(gates) {
+  const list = gates || [];
+  const currentIds = new Set(list.map(g => g.id));
+  if (seenGateIds === null) {
+    seenGateIds = currentIds;
+    return;
+  }
+  if (window.Notification && Notification.permission === 'granted') {
+    for (const g of list) {
+      if (!seenGateIds.has(g.id)) {
+        const [label] = kindOf(g.kind);
+        const wtName = g.worktree ? g.worktree.split('/').pop() : '';
+        const n = new Notification(`【${label}】${g.title}`, {
+          body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
+          tag: 'gate-' + g.id,
+        });
+        n.onclick = () => {
+          window.focus();
+          focused = g.id;
+          setView('review');
+          renderReview();
+        };
+      }
+    }
+  }
+  seenGateIds = currentIds;
+}
+
+async function refresh(force = false) {
   try {
-    state = await api('/api/state');
+    const next = await api('/api/state');
+    checkNewGates(next.gates);
+    const nextJson = JSON.stringify(next);
+    if (!force && nextJson === lastStateJson) return;
+    lastStateJson = nextJson;
+    state = next;
+    if (window.__from) return;
     render();
   } catch (e) {
-    note(`状態を取れなかったのだ: ${e.message}`, true);
+    note(`状態を取得できませんでした: ${e.message}`, true);
   }
 }
 
@@ -338,6 +467,8 @@ function render() {
   // The ball count belongs in the tab title: you should know it is your turn without
   // having to look at the page.
   document.title = (mine ? `(${mine}) ` : '') + 'adj';
+  updateNotifyButton();
+  renderDrawer();
   renderReview();
 }
 
@@ -393,7 +524,7 @@ const DONE_WHEN = { 'report-only':'調査のみ', verify:'動作確認まで', p
 
 function cardEl(task, col) {
   const el = document.createElement('div');
-  el.className = 'card';
+  el.className = 'card' + (selectedTaskId === task.id ? ' selected' : '');
   el.dataset.id = task.id;
   if ((ALLOWED[col] || []).length) {
     el.draggable = true;
@@ -409,10 +540,8 @@ function cardEl(task, col) {
   let h = `<div class="title">${esc(task.title)}</div>`;
   if (gate) {
     const [label, colour] = kindOf(gate.kind);
-    h += `<div class="meta"><span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+    h += `<div class="meta"><span class="tag" onclick="event.stopPropagation();goToGate('${gate.id}')" style="cursor:pointer" title="クリックしてレビュー画面を開く"><span class="dot" style="background:${colour}"></span>${label}</span>
       <span>${ago(gate.openedAt)}から待ち</span></div>`;
-    el.style.cursor = 'pointer';
-    el.onclick = () => { focused = gate.id; setView('review'); renderReview(); };
   }
   const meta = [DONE_WHEN[task.doneWhen] || task.doneWhen];
   if (col === 'queued') meta.push(`↕ ${task.order}`);
@@ -421,7 +550,13 @@ function cardEl(task, col) {
   if (!task.autoStart) meta.push('着手前に確認');
   h += `<div class="meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>`;
   if (task.issueUrl) h += `<div class="mono">${esc(task.issueUrl)}</div>`;
-  if (task.note) h += `<div class="meta"><span class="state bad"><span>⚠</span>${esc(task.note)}</span></div>`;
+  if (task.note) {
+    if (task.status === 'done') {
+      h += `<div class="note">${esc(task.note)}</div>`;
+    } else {
+      h += `<div class="meta"><span class="state bad"><span>⚠</span>${esc(task.note)}</span></div>`;
+    }
+  }
 
   const acts = [];
   if (col === 'backlog') acts.push(`<button type="button" data-hand="${esc(task.id)}">渡す →</button>`);
@@ -432,11 +567,18 @@ function cardEl(task, col) {
   h += `<div class="mono">${esc(task.id)}</div>`;
   el.innerHTML = h;
   el.querySelectorAll('[data-hand]').forEach(b =>
-    b.addEventListener('click', () => hand(b.dataset.hand)));
+    b.addEventListener('click', (e) => { e.stopPropagation(); hand(b.dataset.hand); }));
   el.querySelectorAll('[data-ide]').forEach(b =>
-    b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
+    b.addEventListener('click', (e) => { e.stopPropagation(); cmd(`adj ide --worktree ${b.dataset.ide}`); }));
+
+  el.onclick = (e) => {
+    if (e.target.closest('button') || e.target.closest('.tag')) return;
+    selectTask(task.id);
+  };
+
   return el;
 }
+
 
 function gateCardEl(gate) {
   const [label, colour] = kindOf(gate.kind);
@@ -461,6 +603,161 @@ function ghostEl(worker) {
   return el;
 }
 
+function selectTask(id) {
+  selectedTaskId = (selectedTaskId === id ? null : id);
+  for (const card of document.querySelectorAll('#board .card')) {
+    card.classList.toggle('selected', card.dataset.id === selectedTaskId);
+  }
+  renderDrawer();
+}
+
+function closeDrawer() {
+  selectedTaskId = null;
+  for (const card of document.querySelectorAll('#board .card')) {
+    card.classList.remove('selected');
+  }
+  renderDrawer();
+}
+
+function goToGate(gateId) {
+  focused = gateId;
+  setView('review');
+  renderReview();
+}
+
+function renderDrawer() {
+  const drawer = document.getElementById('task-drawer');
+  if (!drawer) return;
+  if (!selectedTaskId || view !== 'board') {
+    drawer.classList.add('hidden');
+    drawer.innerHTML = '';
+    return;
+  }
+  const task = (state.tasks || []).find(t => t.id === selectedTaskId);
+  if (!task) {
+    drawer.classList.add('hidden');
+    drawer.innerHTML = '';
+    selectedTaskId = null;
+    return;
+  }
+  drawer.classList.remove('hidden');
+
+  const colId = columnOf(task);
+  const colObj = COLUMNS.find(c => c.id === colId);
+  const gate = openGate(task);
+
+  let h = `
+    <div class="d-head">
+      <div style="flex:1;min-width:0">
+        <span class="tag" style="margin-bottom:6px">${colObj ? colObj.label : task.status}</span>
+        <h2>${esc(task.title)}</h2>
+      </div>
+      <button class="d-close" onclick="closeDrawer()" title="閉じる (Esc)">✕</button>
+    </div>
+    <div class="d-body">`;
+
+  if (gate) {
+    const [label, colour] = kindOf(gate.kind);
+    h += `<div class="d-gate-banner">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+        <span style="font-weight:600;font-size:13px">${esc(gate.title)}</span>
+      </div>
+      <div style="color:var(--ink-2);font-size:12px">${ago(gate.openedAt)}から確認待ち</div>
+      <button type="button" onclick="goToGate('${gate.id}')">レビュー画面で判定する →</button>
+    </div>`;
+  }
+
+  if (task.note) {
+    h += `<div class="d-section">
+      <div class="d-label">ノート / 実行ログ</div>
+      <div class="d-value" style="white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12px">${esc(task.note)}</div>
+    </div>`;
+  }
+
+  h += `<div class="d-section">
+    <div class="d-label">タスクID</div>
+    <div class="d-value mono2">${esc(task.id)}</div>
+  </div>`;
+
+  h += `<div class="d-grid">
+    <div class="d-section">
+      <div class="d-label">完了条件</div>
+      <div class="d-value">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')}</div>
+    </div>
+    <div class="d-section">
+      <div class="d-label">優先順位 (order)</div>
+      <div class="d-value">${task.order != null ? task.order : '—'}</div>
+    </div>
+  </div>`;
+
+  if (task.issueUrl) {
+    h += `<div class="d-section">
+      <div class="d-label">Issue URL</div>
+      <div class="d-value"><a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);word-break:break-all">${esc(task.issueUrl)}</a></div>
+    </div>`;
+  }
+
+  if (task.worktree) {
+    h += `<div class="d-section">
+      <div class="d-label">worktree</div>
+      <div class="d-value mono2" style="word-break:break-all">${esc(task.worktree)}</div>
+      <div style="margin-top:6px">
+        <button class="iconbtn" data-ide="${esc(task.worktree)}">IDE で開く</button>
+      </div>
+    </div>`;
+  }
+
+  if (task.branch) {
+    h += `<div class="d-section">
+      <div class="d-label">ブランチ</div>
+      <div class="d-value mono2">${esc(task.branch)}</div>
+    </div>`;
+  }
+
+  if (task.base || task.parent) {
+    h += `<div class="d-grid">`;
+    if (task.base) {
+      h += `<div class="d-section">
+        <div class="d-label">分岐元</div>
+        <div class="d-value mono2">${esc(task.base)}</div>
+      </div>`;
+    }
+    if (task.parent) {
+      h += `<div class="d-section">
+        <div class="d-label">親タスク</div>
+        <div class="d-value">${esc(task.parent)}</div>
+      </div>`;
+    }
+    h += `</div>`;
+  }
+
+  h += `<div class="d-section">
+    <div class="d-label">着手設定</div>
+    <div class="d-value">${task.autoStart ? '確認なしで着手' : '着手前に確認が必要'}</div>
+  </div>`;
+
+  const acts = [];
+  if (colId === 'backlog') {
+    acts.push(`<button class="primary" style="width:100%;padding:8px" data-hand="${esc(task.id)}">待ちキューに渡す →</button>`);
+  } else if (colId === 'queued') {
+    acts.push(`<button class="iconbtn" style="width:100%;padding:8px" data-move="${esc(task.id)}" data-to="backlog">Backlog に戻す</button>`);
+  }
+  if (acts.length) {
+    h += `<div style="margin-top:auto;padding-top:10px">${acts.join('')}</div>`;
+  }
+
+  h += `</div>`;
+  drawer.innerHTML = h;
+  drawer.querySelectorAll('[data-ide]').forEach(b =>
+    b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
+  drawer.querySelectorAll('[data-hand]').forEach(b =>
+    b.addEventListener('click', () => hand(b.dataset.hand)));
+  drawer.querySelectorAll('[data-move]').forEach(b =>
+    b.addEventListener('click', () => move(b.dataset.move, b.dataset.to)));
+}
+
+
 // ── the actions, each one logging the adj command it maps to ──────────
 
 async function move(id, to, before) {
@@ -470,7 +767,7 @@ async function move(id, to, before) {
   if (to === 'backlog') {
     await update(id, { status:'backlog' },
       `adj task update --id ${id} --status backlog`,
-      'hub は着手の直前に status を読むので、戻したものは飛ばされるのだ');
+      'hub は着手の直前に status を読むため、戻したものはスキップされます');
     return;
   }
   // Reordering inside 待ち: the dropped card takes the position of the one it landed on.
@@ -478,13 +775,13 @@ async function move(id, to, before) {
   const at = before ? queue.findIndex(t => t.id === before) : queue.length;
   const order = at < 0 ? queue.length + 1 : at + 1;
   await update(id, { order }, `adj task update --id ${id} --order ${order}`,
-    'hub がキューの先頭を引く順序なのだ');
+    'hub がキューの先頭から取得する順序です');
 }
 
 async function hand(id) {
   await update(id, { status:'queued' },
     `adj task update --id ${id} --status queued`,
-    'レコードを queued にして、受信箱に kind:request を置いて hubWake するのだ');
+    'レコードを queued にして、受信箱に kind:request を配置し hubWake を実行します');
 }
 
 async function update(id, body, line, why) {
@@ -501,8 +798,8 @@ async function update(id, body, line, why) {
 
 function handedNote(handed) {
   if (!handed) return '';
-  if (!handed.present) return ' / hub は止まっていたので、次に起動したときに拾われるのだ';
-  return handed.woken ? ' / hub を起こしたのだ' : ' / hub は稼働中。次に受信箱を見たときに拾うのだ';
+  if (!handed.present) return ' / hub は停止中のため、次回起動時に処理されます';
+  return handed.woken ? ' / hub を起動/通知しました' : ' / hub は稼働中。次回の受信箱確認時に処理されます';
 }
 
 function openForm() { document.getElementById('form').showModal(); syncForm(); }
@@ -515,22 +812,24 @@ function syncForm() {
 async function submitForm(e) {
   const f = new FormData(e.target);
   const status = e.submitter?.value || 'backlog';
+  const titleText = (f.get('title') || '').trim();
+  const bodyText = (f.get('body') || '').trim();
   const body = {
-    title: f.get('title'),
-    body: f.get('body') || '',
+    body: bodyText,
     kind: f.get('kind'),
     doneWhen: f.get('doneWhen'),
     autoStart: f.get('autoStart') === 'true',
     status,
   };
+  if (titleText) body.title = titleText;
   for (const key of ['issueUrl', 'base', 'parent', 'worktreeName']) {
     const value = (f.get(key) || '').trim();
     if (value) body[key] = value;
   }
-  const line = `adj task add --title '${body.title}' --kind ${body.kind}` + (status === 'queued' ? ' --queue' : '');
+  const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` + (status === 'queued' ? ' --queue' : '');
   try {
     const data = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
-    note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱に書かないのだ') + handedNote(data.handed));
+    note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));
     e.target.reset();
     await refresh();
   } catch (err) {
@@ -540,7 +839,7 @@ async function submitForm(e) {
 
 /* Buttons that are only a shell command: shown as what they would run, until slice 5 wires
    them to the terminal templates. */
-function cmd(line) { note(line, false, '(段階5でここから実行できるようにするのだ)'); }
+function cmd(line) { note(line, false, '(将来的にここから実行可能にする予定)'); }
 
 function note(line, isError, why) {
   log.unshift({ line, isError, why });
@@ -579,24 +878,184 @@ function ago(stamp) {
   return hours < 24 ? `${hours}時間前` : `${Math.round(hours / 24)}日前`;
 }
 
-/* Enough markdown for what a gate body actually holds: ## headings, - and 1. lists,
-   `inline code`. Escaping happens first, so these are the only tags that survive. */
+/* Render markdown into safe HTML: headings (H1-H5), code blocks, tables, lists, blockquotes,
+   horizontal rules, links, and inline decorations (bold, italic, strikethrough, inline code).
+   Escaping happens before parsing so untrusted HTML is never executed. */
 function md(src) {
-  let html = '', list = null;
-  const close = () => { if (list) { html += `</${list}>`; list = null; } };
-  for (const raw of esc(src).split('\n')) {
-    const l = raw.replace(/`([^`]+)`/g, '<code>$1</code>')
-                 .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
-    let m;
-    if ((m = l.match(/^##\s+(.*)$/)))         { close(); html += `<h4>${m[1]}</h4>`; }
-    else if ((m = l.match(/^-\s+(.*)$/)))     { if (list !== 'ul') { close(); html += '<ul>'; list = 'ul'; } html += `<li>${m[1]}</li>`; }
-    else if ((m = l.match(/^\d+\.\s+(.*)$/))) { if (list !== 'ol') { close(); html += '<ol>'; list = 'ol'; } html += `<li>${m[1]}</li>`; }
-    else if (!l.trim())                       { close(); }
-    else                                      { close(); html += `<p>${l}</p>`; }
+  if (!src) return '';
+  const lines = esc(src).split('\n');
+  let html = '';
+  let inCode = false;
+  let codeLang = '';
+  let codeContent = [];
+  let inTable = false;
+  let tableRows = [];
+  let listStack = [];
+  let currentPara = [];
+
+  function closePara() {
+    if (currentPara.length) {
+      html += `<p>${currentPara.join('<br>')}</p>`;
+      currentPara = [];
+    }
   }
-  close();
+
+  function closeLists() {
+    closePara();
+    while (listStack.length) {
+      html += `</${listStack.pop()}>`;
+    }
+  }
+
+  function closeTable() {
+    if (!inTable) return;
+    inTable = false;
+    if (tableRows.length === 0) return;
+    html += '<table>';
+    let startIdx = 0;
+    if (tableRows.length >= 2 && tableRows[1].every(cell => /^:?-+:?$/.test(cell.trim()))) {
+      html += '<thead><tr>' + tableRows[0].map(c => `<th>${inlineMd(c.trim())}</th>`).join('') + '</tr></thead>';
+      startIdx = 2;
+    }
+    if (startIdx < tableRows.length) {
+      html += '<tbody>';
+      for (let i = startIdx; i < tableRows.length; i++) {
+        html += '<tr>' + tableRows[i].map(c => `<td>${inlineMd(c.trim())}</td>`).join('') + '</tr>';
+      }
+      html += '</tbody>';
+    }
+    html += '</table>';
+    tableRows = [];
+  }
+
+  function closeAll() {
+    closePara();
+    closeLists();
+    closeTable();
+  }
+
+  function inlineMd(text) {
+    return text
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\*([^*]+)\*/g, '<i>$1</i>')
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  }
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const raw = lines[idx];
+
+    // Fenced code blocks
+    const codeMatch = raw.match(/^```(\w*)/);
+    if (codeMatch && !inCode) {
+      closeAll();
+      inCode = true;
+      codeLang = codeMatch[1] || '';
+      codeContent = [];
+      continue;
+    } else if (raw.startsWith('```') && inCode) {
+      inCode = false;
+      html += `<pre><code class="${codeLang}">${codeContent.join('\n')}</code></pre>`;
+      continue;
+    }
+    if (inCode) {
+      codeContent.push(raw);
+      continue;
+    }
+
+    // Table rows
+    const isTableRow = raw.trim().startsWith('|') && raw.trim().endsWith('|');
+    if (isTableRow) {
+      closeAll();
+      inTable = true;
+      const cells = raw.trim().slice(1, -1).split('|');
+      tableRows.push(cells);
+      continue;
+    } else if (inTable) {
+      closeTable();
+    }
+
+    // Headings
+    let m;
+    if ((m = raw.match(/^####\s+(.*)$/))) {
+      closeAll();
+      html += `<h5>${inlineMd(m[1])}</h5>`;
+      continue;
+    }
+    if ((m = raw.match(/^###\s+(.*)$/))) {
+      closeAll();
+      html += `<h5>${inlineMd(m[1])}</h5>`;
+      continue;
+    }
+    if ((m = raw.match(/^##\s+(.*)$/))) {
+      closeAll();
+      html += `<h4>${inlineMd(m[1])}</h4>`;
+      continue;
+    }
+    if ((m = raw.match(/^#\s+(.*)$/))) {
+      closeAll();
+      html += `<h3>${inlineMd(m[1])}</h3>`;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(\*\*\*|---|___)$/.test(raw.trim())) {
+      closeAll();
+      html += '<hr>';
+      continue;
+    }
+
+    // Blockquote
+    if ((m = raw.match(/^(?:&gt;|>)\s*(.*)$/))) {
+      closeAll();
+      html += `<blockquote><p>${inlineMd(m[1])}</p></blockquote>`;
+      continue;
+    }
+
+    // Bullet list
+    if ((m = raw.match(/^(\s*)([-*+])\s+(.*)$/))) {
+      closePara();
+      closeTable();
+      if (!listStack.length || listStack[listStack.length - 1] !== 'ul') {
+        closeLists();
+        listStack.push('ul');
+        html += '<ul>';
+      }
+      html += `<li>${inlineMd(m[3])}</li>`;
+      continue;
+    }
+
+    // Numbered list
+    if ((m = raw.match(/^(\s*)(\d+)\.\s+(.*)$/))) {
+      closePara();
+      closeTable();
+      if (!listStack.length || listStack[listStack.length - 1] !== 'ol') {
+        closeLists();
+        listStack.push('ol');
+        html += '<ol>';
+      }
+      html += `<li>${inlineMd(m[3])}</li>`;
+      continue;
+    }
+
+    // Blank line terminates paragraphs/blocks
+    if (!raw.trim()) {
+      closeAll();
+      continue;
+    }
+
+    // Paragraph text line
+    currentPara.push(inlineMd(raw));
+  }
+
+  closeAll();
+  if (inCode) {
+    html += `<pre><code>${codeContent.join('\n')}</code></pre>`;
+  }
   return html;
 }
+
 
 const renderDiff = d => esc(d).split('\n').map(l => {
   const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
@@ -640,6 +1099,12 @@ function renderReview() {
   // A permalink, so "反映しといたから見てね" can point at this one card.
   if (view === 'review') location.hash = 'gate/' + g.id;
 
+  const wasDecidedOpen = pane.querySelector('details.decided')?.open;
+  const commentEl = document.getElementById('gate-comment');
+  const commentVal = commentEl ? commentEl.value : '';
+  const isCommentFocused = document.activeElement === commentEl;
+  const paneScroll = pane.scrollTop;
+
   const [label, colour] = kindOf(g.kind);
   let h = `<h1>${esc(g.title)}</h1><div class="sub">
     <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
@@ -671,7 +1136,7 @@ function renderReview() {
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
   if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
-  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  if (g.decided) h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
 
   h += `<div class="panel"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
@@ -691,6 +1156,14 @@ function renderReview() {
     b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
   pane.querySelectorAll('.pick[data-choice]').forEach(b =>
     b.addEventListener('click', () => answer('choice', b.dataset.choice)));
+  if (commentVal) {
+    const newCommentEl = document.getElementById('gate-comment');
+    if (newCommentEl) {
+      newCommentEl.value = commentVal;
+      if (isCommentFocused) newCommentEl.focus();
+    }
+  }
+  pane.scrollTop = paneScroll;
 }
 
 async function answer(decision, choice) {
@@ -735,6 +1208,12 @@ async function closeGate() {
 }
 
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (selectedTaskId) {
+      closeDrawer();
+      return;
+    }
+  }
   if (view !== 'review' || e.target.matches('textarea,input,select')) return;
   const gates = state.gates || [];
   const i = gates.findIndex(g => g.id === focused);
@@ -747,11 +1226,13 @@ document.addEventListener('keydown', e => {
 
 function setView(v) {
   view = v;
-  document.getElementById('board').style.display = v === 'board' ? 'flex' : 'none';
+  document.getElementById('board-view').style.display = v === 'board' ? 'flex' : 'none';
   document.getElementById('review').classList.toggle('on', v === 'review');
   document.getElementById('tab-board').setAttribute('aria-selected', String(v === 'board'));
   document.getElementById('tab-review').setAttribute('aria-selected', String(v === 'review'));
+  if (v !== 'board') closeDrawer();
 }
+
 
 function toggleTheme() {
   const cur = document.documentElement.dataset.theme ||
@@ -764,9 +1245,9 @@ note('adj serve', false, 'このボードの操作は既存の adj コマンド�
 const deep = location.hash.match(/^#gate\/(.+)$/);
 if (deep) { focused = deep[1]; setView('review'); } else { setView('board'); }
 refresh();
+updateNotifyButton();
 // The server holds no clock, so the page carries one: it asks, nothing pushes.
 setInterval(refresh, 2000);
 </script>
-
 </body>
 </html>
