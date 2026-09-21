@@ -79,8 +79,71 @@ main { flex:1; overflow:auto; }
   border-radius:5px; padding:1px 7px; font-size:11px; }
 .card .acts button:hover { background:var(--surface-2); color:var(--ink); }
 
-#review { display:none; padding:40px; color:var(--muted); }
-#review.on { display:block; }
+/* ── the review view ── */
+#review { display:none; height:100%; padding:0; color:var(--ink); }
+#review.on { display:grid; grid-template-columns:272px 1fr; }
+.rail { border-right:1px solid var(--hairline); background:var(--surface-1); overflow:auto; padding:10px; }
+.rail h2 { margin:0 0 8px 4px; font-size:12px; color:var(--ink-2); font-weight:600; }
+.rail kbd { font:11px/1 ui-monospace,Menlo,monospace; border:1px solid var(--border);
+  border-bottom-width:2px; border-radius:4px; padding:1px 4px; color:var(--muted); }
+.rail .item { width:100%; text-align:left; border:1px solid transparent; background:transparent;
+  border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:4px; }
+.rail .item:hover { background:var(--surface-2); }
+.rail .item[aria-current="true"] { background:var(--surface-2); border-color:var(--border); }
+.rail .item .t { font-weight:600; }
+.rail .item .w { color:var(--muted); font-size:12px; }
+.pane { overflow:auto; padding:18px 22px 28px; max-width:980px; }
+.pane h1 { font-size:17px; margin:0 0 2px; }
+.pane .sub { color:var(--ink-2); margin-bottom:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.tag { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; font-size:11px;
+  color:var(--ink-2); border:1px solid var(--border); border-radius:999px; padding:0 7px; }
+.tag .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+.panel { background:var(--surface-1); border:1px solid var(--border); border-radius:10px;
+  padding:14px 16px; margin-bottom:14px; }
+.panel h3 { margin:0 0 8px; font-size:12px; color:var(--muted); font-weight:640;
+  letter-spacing:.04em; text-transform:uppercase; }
+.panel > ul { margin:0; padding-left:18px; }
+.frame-focus { border-left:3px solid var(--accent); padding-left:12px; }
+.body h4 { margin:15px 0 6px; font-size:13px; } .body h4:first-child { margin-top:0; }
+.body p { margin:0 0 9px; } .body ul, .body ol { margin:0 0 10px; padding-left:20px; }
+.body li { margin:2px 0; } .body > :last-child { margin-bottom:0; }
+.body code { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--surface-2);
+  padding:1px 5px; border-radius:4px; }
+details.decided summary { color:var(--muted); cursor:pointer; font-size:12px; }
+details.decided[open] summary { margin-bottom:8px; }
+.choices { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.choice { border:1px solid var(--border); border-radius:9px; padding:12px 14px;
+  background:var(--surface-2); display:flex; flex-direction:column; gap:8px; }
+.choice.rec { border-color:var(--accent); }
+.choice .rec-tag { font-size:11px; color:var(--accent); font-weight:640; }
+.choice h4 { margin:0; font-size:13px; }
+.choice .why { color:var(--ink-2); font-size:12px; margin:0; }
+.choice ul { margin:0; padding-left:17px; font-size:12px; color:var(--ink-2); }
+.choice .pick { margin-top:auto; border:1px solid var(--ink); background:transparent;
+  border-radius:7px; padding:6px 10px; font-weight:600; }
+.work { border:1px solid var(--good); border-radius:9px; padding:12px 14px; display:flex;
+  align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+.work .big { border:0; background:var(--good); color:#fff; border-radius:7px; padding:8px 15px; font-weight:640; }
+.mono2 { font:12px ui-monospace,Menlo,monospace; color:var(--ink-2); }
+.diff { font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--surface-2);
+  border-radius:8px; padding:8px 0; overflow:auto; }
+.diff div { padding:0 12px; white-space:pre; }
+.diff .h { color:var(--muted); }
+.diff .a { color:var(--good); background:color-mix(in oklab,var(--surface-2) 86%,var(--good)); }
+.diff .d { color:var(--critical); background:color-mix(in oklab,var(--surface-2) 86%,var(--critical)); }
+.hint-bar { border:1px solid var(--warning); border-radius:8px; padding:8px 12px; margin-bottom:12px;
+  color:var(--ink-2); font-size:12px; }
+.decide { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.decide .approve { border:0; background:var(--good); color:#fff; border-radius:7px; padding:7px 14px; font-weight:640; }
+.decide .changes { border:1px solid var(--warning); background:transparent; color:var(--ink);
+  border-radius:7px; padding:6px 13px; font-weight:600; }
+.decide .reject { border:1px solid var(--border); background:transparent; color:var(--ink-2);
+  border-radius:7px; padding:6px 13px; }
+.decide .talk { border:1px solid var(--accent); background:transparent; color:var(--accent);
+  border-radius:7px; padding:6px 13px; font-weight:600; }
+.empty-state { padding:40px; color:var(--muted); }
+.badge-count { display:inline-block; min-width:16px; margin-left:6px; padding:0 4px;
+  border-radius:999px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; text-align:center; }
 .tabs { display:flex; gap:2px; background:var(--surface-2); padding:2px; border-radius:8px; }
 .tabs button { border:0; background:transparent; padding:4px 12px; border-radius:6px; color:var(--ink-2); }
 .tabs button[aria-selected="true"] { background:var(--surface-1); color:var(--ink); font-weight:600;
@@ -126,7 +189,7 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
   <div class="brand">adj <span id="repo">…</span></div>
   <div class="tabs" role="tablist">
     <button role="tab" id="tab-board" aria-selected="true" onclick="setView('board')">ボード</button>
-    <button role="tab" id="tab-review" aria-selected="false" onclick="setView('review')">レビュー</button>
+    <button role="tab" id="tab-review" aria-selected="false" onclick="setView('review')">レビュー<span class="badge-count" id="gate-count">0</span></button>
   </div>
   <div class="spacer"></div>
   <span id="hub" class="state warn">…</span>
@@ -137,7 +200,7 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
 
 <main>
   <div id="board"></div>
-  <div id="review">gate はまだ無いのだ。(段階3で入るのだ)</div>
+  <div id="review"><div class="rail"></div><div class="pane"></div></div>
 </main>
 
 <footer>
@@ -212,14 +275,14 @@ const COLUMNS = [
   { id:'backlog',   label:'Backlog',   hint:'未受付' },
   { id:'queued',    label:'待ち',       hint:'並べ替え可' },
   { id:'working',   label:'進行中',     hint:'' },
-  { id:'attention', label:'要対応',     hint:'段階3' },
+  { id:'attention', label:'要対応',     hint:'' },
   { id:'pr',        label:'レビュー中', hint:'' },
   { id:'done',      label:'完了',       hint:'' },
 ];
 
 /* 要対応 is derived from the gate directory, never stored as a status — so the board reads
    the thing it is describing rather than a second copy of it. */
-const openGate = t => state.gates.find(g => g.taskId === t.id);
+const openGate = t => (state.gates || []).find(g => g.task === t.id);
 const columnOf = t => t.status === 'dispatched'
   ? (openGate(t) ? 'attention' : 'working')
   : { backlog:'backlog', queued:'queued', pr:'pr', done:'done', cancelled:null }[t.status];
@@ -266,6 +329,13 @@ function render() {
   const board = document.getElementById('board');
   board.innerHTML = '';
   for (const col of COLUMNS) board.appendChild(columnEl(col));
+
+  const mine = (state.gates || []).length;
+  document.getElementById('gate-count').textContent = mine;
+  // The ball count belongs in the tab title: you should know it is your turn without
+  // having to look at the page.
+  document.title = (mine ? `(${mine}) ` : '') + 'adj';
+  renderReview();
 }
 
 function columnEl(col) {
@@ -273,11 +343,6 @@ function columnEl(col) {
   const el = document.createElement('section');
   el.className = 'col' + (col.id === 'attention' ? ' attention' : '');
   el.dataset.col = col.id;
-
-  const live = (state.workers || []).filter(w => w.present).length;
-  const hint = col.id === 'working' ? `worker ${live}` : col.hint;
-  el.innerHTML = `<h2>${col.label}<span class="n">${items.length}</span>` +
-    (hint ? `<span class="hint">${esc(hint)}</span>` : '') + '</h2>';
 
   for (const task of items) el.appendChild(cardEl(task, col.id));
   // A worktree with a live worker and no record of why: the board would otherwise be a
@@ -288,7 +353,26 @@ function columnEl(col) {
       el.appendChild(ghostEl(w));
     }
   }
-  if (!el.querySelector('.card')) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
+  // A gate whose task has no record — a worker asking about something it picked up on the
+  // way — still belongs on the board. Leaving it out would make the count in the tab title
+  // disagree with the column under it.
+  if (col.id === 'attention') {
+    const shown = new Set(items.map(t => openGate(t)?.id).filter(Boolean));
+    for (const g of (state.gates || []).filter(g => !shown.has(g.id))) {
+      el.appendChild(gateCardEl(g));
+    }
+  }
+  // The count is what is on screen, not what one of the two sources holds: a column that
+  // says 0 above four cards is a column nobody believes again.
+  const shownCards = el.querySelectorAll('.card').length;
+  if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
+  const live = (state.workers || []).filter(w => w.present).length;
+  let hint = col.hint;
+  if (col.id === 'working') hint = `worker ${live}`;
+  if (col.id === 'attention') hint = 'あなたのボール';
+  el.insertAdjacentHTML('afterbegin',
+    `<h2>${col.label}<span class="n">${shownCards}</span>` +
+    (hint ? `<span class="hint">${esc(hint)}</span>` : '') + '</h2>');
 
   el.addEventListener('dragover', e => {
     if (canDrop(window.__from, col.id)) { e.preventDefault(); el.classList.add('drop-ok'); }
@@ -318,7 +402,15 @@ function cardEl(task, col) {
     el.addEventListener('dragend', () => { window.__from = null; render(); });
   }
 
+  const gate = openGate(task);
   let h = `<div class="title">${esc(task.title)}</div>`;
+  if (gate) {
+    const [label, colour] = kindOf(gate.kind);
+    h += `<div class="meta"><span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+      <span>${ago(gate.openedAt)}から待ち</span></div>`;
+    el.style.cursor = 'pointer';
+    el.onclick = () => { focused = gate.id; setView('review'); renderReview(); };
+  }
   const meta = [DONE_WHEN[task.doneWhen] || task.doneWhen];
   if (col === 'queued') meta.push(`↕ ${task.order}`);
   if (task.worktree) meta.push(esc(task.worktree.split('/').pop()));
@@ -336,6 +428,19 @@ function cardEl(task, col) {
   }
   h += `<div class="mono">${esc(task.id)}</div>`;
   el.innerHTML = h;
+  return el;
+}
+
+function gateCardEl(gate) {
+  const [label, colour] = kindOf(gate.kind);
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.style.cursor = 'pointer';
+  el.innerHTML = `<div class="title">${esc(gate.title)}</div>
+    <div class="meta"><span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+      <span>${ago(gate.openedAt)}から待ち</span></div>
+    <div class="mono">${esc(gate.worktree.split('/').pop())}</div>`;
+  el.onclick = () => { focused = gate.id; setView('review'); renderReview(); };
   return el;
 }
 
@@ -438,6 +543,181 @@ function note(line, isError, why) {
     (l.why ? `   <span style="color:var(--muted)">— ${esc(l.why)}</span>` : '') + '</li>').join('');
 }
 
+// ── the review view ───────────────────────────────────────────────────
+
+/* Gate kinds take categorical slots in a fixed order, never cycled. Each one ships with a
+   label beside the dot: the colour is a landmark, never the carrier. */
+const KINDS = {
+  plan:     ['設計レビュー',  '#2a78d6'],
+  diff:     ['コードレビュー','#eb6834'],
+  verify:   ['動作確認',      '#1baf7a'],
+  result:   ['調査報告',      '#e87ba4'],
+  dispatch: ['着手確認',      '#4a3aa7'],
+  issue:    ['起票の確認',    '#eda100'],
+  question: ['質問',          '#52514e'],
+};
+const kindOf = k => KINDS[k] || [k, '#898781'];
+
+let focused = null;
+
+/* `20260922T041233Z` → 「4分前」. The stamp is UTC and says so; the reader wants neither. */
+function ago(stamp) {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
+  if (!m) return stamp || '';
+  const then = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return 'たった今';
+  if (mins < 60) return `${mins}分前`;
+  const hours = Math.round(mins / 60);
+  return hours < 24 ? `${hours}時間前` : `${Math.round(hours / 24)}日前`;
+}
+
+/* Enough markdown for what a gate body actually holds: ## headings, - and 1. lists,
+   `inline code`. Escaping happens first, so these are the only tags that survive. */
+function md(src) {
+  let html = '', list = null;
+  const close = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (const raw of esc(src).split('\n')) {
+    const l = raw.replace(/`([^`]+)`/g, '<code>$1</code>')
+                 .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    let m;
+    if ((m = l.match(/^##\s+(.*)$/)))         { close(); html += `<h4>${m[1]}</h4>`; }
+    else if ((m = l.match(/^-\s+(.*)$/)))     { if (list !== 'ul') { close(); html += '<ul>'; list = 'ul'; } html += `<li>${m[1]}</li>`; }
+    else if ((m = l.match(/^\d+\.\s+(.*)$/))) { if (list !== 'ol') { close(); html += '<ol>'; list = 'ol'; } html += `<li>${m[1]}</li>`; }
+    else if (!l.trim())                       { close(); }
+    else                                      { close(); html += `<p>${l}</p>`; }
+  }
+  close();
+  return html;
+}
+
+const renderDiff = d => esc(d).split('\n').map(l => {
+  const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
+            : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : '';
+  return `<div class="${cls}">${l || ' '}</div>`;
+}).join('');
+
+const BUTTONS = {
+  approve: g => `<button class="approve" onclick="answer('approve')">${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</button>`,
+  changes: g => `<button class="changes" onclick="answer('changes')">${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</button>`,
+  reject:  () => `<button class="reject" onclick="answer('reject')">却下</button>`,
+  ack:     () => `<button class="approve" onclick="answer('ack')">了解(閉じる)</button>`,
+  ask:     () => `<button class="changes" onclick="answer('ask')">追加で聞く</button>`,
+  answer:  () => `<button class="approve" onclick="answer('answer')">これで返す</button>`,
+};
+
+function renderReview() {
+  const rail = document.querySelector('#review .rail');
+  const pane = document.querySelector('#review .pane');
+  const gates = state.gates || [];
+
+  rail.innerHTML = `<h2>要対応 ${gates.length} 件 &nbsp;<kbd>j</kbd><kbd>k</kbd> 移動 <kbd>a</kbd> 承認 <kbd>r</kbd> 修正</h2>`;
+  for (const g of gates) {
+    const [label, colour] = kindOf(g.kind);
+    const b = document.createElement('button');
+    b.className = 'item';
+    b.setAttribute('aria-current', String(g.id === focused));
+    b.innerHTML = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+      <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
+    b.onclick = () => { focused = g.id; renderReview(); };
+    rail.appendChild(b);
+  }
+
+  const g = gates.find(x => x.id === focused) || gates[0];
+  if (!g) {
+    pane.innerHTML = '<div class="empty-state">ボールは全部 AI 側なのだ。<br>ボードに戻って待つのだ。</div>';
+    if (view === 'review') location.hash = '';
+    return;
+  }
+  focused = g.id;
+  // A permalink, so "反映しといたから見てね" can point at this one card.
+  if (view === 'review') location.hash = 'gate/' + g.id;
+
+  const [label, colour] = kindOf(g.kind);
+  let h = `<h1>${esc(g.title)}</h1><div class="sub">
+    <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+    <span class="mono2">${esc(g.worktree.split('/').pop())}</span>
+    <span>${ago(g.openedAt)}から待ち</span>
+    <span class="mono2" style="color:var(--muted)">#gate/${esc(g.id)}</span></div>`;
+
+  // verify is not a judgement — it is the door to work that happens outside the browser,
+  // so the way in comes first and the buttons wait at the bottom for the way back.
+  if (g.kind === 'verify') {
+    h += `<div class="work">
+      <button class="big" onclick="cmd('adj ide --worktree ${esc(g.worktree)}')">IDE で開く</button>
+      <span class="mono2">${esc(g.worktree)}</span>
+      <span style="color:var(--ink-2)">— 確かめたら、下のボタンで戻してほしいのだ</span></div>`;
+  }
+  if (g.facts?.length) {
+    h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  }
+  if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
+  if (g.choices?.length) {
+    h += `<div class="panel"><h3>どちらにするか選んでほしいのだ</h3><div class="choices">` +
+      g.choices.map(c => `<div class="choice${c.recommended ? ' rec' : ''}">
+        ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}
+        <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
+        <ul>${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        <button class="pick" onclick="answer('choice','${esc(c.id)}')">これで進める</button>
+      </div>`).join('') + `</div></div>`;
+  }
+  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
+  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
+  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決めたこと — 読まなくていいのだ</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+
+  h += `<div class="panel"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
+    // Past two rounds a gate has become a conversation, and a conversation is faster where
+    // it is not posted.
+    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復なのだ。<b>タブで話したほうが速い</b>のだ — 1往復ごとに outbox と wake を挟むのだ</div>` : '') +
+    `<div class="field" style="margin-bottom:12px"><span>コメント(修正指示・追加で聞きたいことはここに)</span>
+      <textarea id="gate-comment"></textarea></div>
+    <div class="decide">${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
+      <button class="talk" onclick="talk()">タブで話す</button></div>
+    <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+      判定は <code>adj gate answer</code> → その worktree の outbox に追記 → <code>workerWake</code> で worker を起こすのだ。
+      worker が落ちていても答えは outbox に残るのだ。<br>
+      <b>「タブで話す」は gate を閉じない</b> — 話がついてから、ここに戻って閉じるのだ。</p></div>`;
+  pane.innerHTML = h;
+}
+
+async function answer(decision, choice) {
+  const g = (state.gates || []).find(x => x.id === focused);
+  if (!g) return;
+  const comment = document.getElementById('gate-comment')?.value.trim();
+  const line = `adj gate answer --id ${g.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
+  try {
+    const data = await api(`/api/gates/${encodeURIComponent(g.id)}`, {
+      method: 'POST', body: JSON.stringify({ decision, choice, comment }),
+    });
+    note(line, false, `${g.worktree.split('/').pop()} の outbox に追記` +
+      (data.woken ? ' → worker を起こしたのだ' : data.present ? ' → worker は次に outbox を見たときに読むのだ'
+                                                             : ' → worker は動いていないので、答えは outbox で待つのだ'));
+    focused = null;
+    await refresh();
+  } catch (e) { note(line, true, e.message); }
+}
+
+/* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
+   the ball is still with the human until they come back and close it. */
+function talk() {
+  const g = (state.gates || []).find(x => x.id === focused);
+  if (!g) return;
+  cmd(`terminal.focus (worktree ${g.worktree})`);
+  note('gate は開いたままなのだ', false, '話がついたら、ここに戻って閉じるのだ');
+}
+
+document.addEventListener('keydown', e => {
+  if (view !== 'review' || e.target.matches('textarea,input,select')) return;
+  const gates = state.gates || [];
+  const i = gates.findIndex(g => g.id === focused);
+  if (e.key === 'j' && i < gates.length - 1) { focused = gates[i + 1].id; renderReview(); }
+  if (e.key === 'k' && i > 0) { focused = gates[i - 1].id; renderReview(); }
+  if (e.key === 'a') answer((gates[i]?.options || ['approve'])[0]);
+  if (e.key === 'r') answer((gates[i]?.options || [, 'changes'])[1] || 'changes');
+});
+
 function setView(v) {
   view = v;
   document.getElementById('board').style.display = v === 'board' ? 'flex' : 'none';
@@ -453,7 +733,9 @@ function toggleTheme() {
 }
 
 note('adj serve', false, 'この板が出しているのは、ぜんぶ既存の adj コマンドなのだ');
-setView('board');
+// Opening #gate/<id> lands straight on that card — the shape a notification's click takes.
+const deep = location.hash.match(/^#gate\/(.+)$/);
+if (deep) { focused = deep[1]; setView('review'); } else { setView('board'); }
 refresh();
 // The server holds no clock, so the page carries one: it asks, nothing pushes.
 setInterval(refresh, 2000);

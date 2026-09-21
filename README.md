@@ -82,6 +82,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) |
 | `adjutant task add\|list\|show\|update` | the records that board is a view of |
+| `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as seven tools and three prompts:
@@ -289,6 +290,35 @@ task update --id … --status dispatched --worktree …` — and that is what th
 The record is also the referee: a card dragged back to the backlog sets `status` there, and
 the hub reads it once more just before it starts, so a task pulled back while its message
 was still in the inbox does not get picked up anyway.
+
+### Gates
+
+A gate is the other half: something an agent has prepared for a person to look at, and the
+ball handed over with it. A worker used to stop at three places — its plan, its diff, the
+handover for a manual check — and ask in a tab nobody was watching. Now it writes the
+question down, ends its turn, and the board shows it.
+
+The payload is three frames rather than one wall of prose, because a reviewer who has to
+read four hundred lines to find the two decisions that matter is a reviewer who approves
+without reading: **what to look at**, **what was already decided** (folded away), and
+**where the agent's confidence ran out**. A gate may also carry two designs side by side and
+ask which one — the thing a terminal cannot do, since in a tab the second option has
+scrolled past the first by the time you have read it.
+
+The answer goes back out through that worktree's outbox and pokes the worker, which is
+`adjutant tell` and nothing new. That path already survives the worker having died: the
+answer simply waits there for whoever starts one next.
+
+**A gate is one question, one decision and one comment.** Past two rounds it has become a
+conversation, and a conversation is faster in the tab than through an outbox — so the board
+counts the rounds, says so, and offers a button that raises the tab *without* closing the
+gate. Leaving is not failing.
+
+`adj gate open` reads its payload as JSON on stdin and answers with `server: up` or
+`server: down`. That second answer is the whole reason it reports rather than just
+succeeding: with nothing serving, a gate is a message into a directory no one opens, so the
+procedure falls back to asking in its own tab. **A worker must never wait on a queue nobody
+is watching.**
 
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.

@@ -11,11 +11,12 @@
 
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 
+use crate::gate;
 use crate::http::{self, Request};
 use crate::messaging;
 use crate::task;
@@ -54,6 +55,7 @@ pub fn serve(
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let url = format!("http://127.0.0.1:{port}/?token={token}");
 
+    record(port)?;
     println!("adj serve: {} — {url}", ctx.repo.nwo);
     println!("The token is in the URL. Anything without it gets a 403.");
     if open {
@@ -78,6 +80,43 @@ pub fn serve(
         }
     }
     Ok(())
+}
+
+// ── is anybody serving? ──────────────────────────────────────────────
+
+fn record_path() -> PathBuf {
+    messaging::state_dir().join("dashboard.json")
+}
+
+/// The port a live dashboard is on, or `None`.
+///
+/// This is what `adj gate open` asks before it hands the ball over: a gate written with
+/// nobody serving is a message into a directory no one opens, and an agent that waited on
+/// one would wait for ever. Anchored on the recorded process start time like every other
+/// record here, so a crashed server leaves a file that reads as absent rather than as a
+/// dashboard that is about to answer.
+pub fn running() -> Option<u16> {
+    let record: Value = std::fs::read_to_string(record_path())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())?;
+    let pid = record.get("pid").and_then(Value::as_u64)? as u32;
+    let started = record.get("psStarted").and_then(Value::as_str);
+    if messaging::ps_started(pid).as_deref() != started {
+        return None;
+    }
+    record.get("port").and_then(Value::as_u64).map(|p| p as u16)
+}
+
+fn record(port: u16) -> Result<(), String> {
+    let path = record_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let pid = std::process::id();
+    let record = json!({ "pid": pid, "port": port, "psStarted": messaging::ps_started(pid) });
+    std::fs::write(&path, format!("{record:#}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 // ── the security boundary ────────────────────────────────────────────
@@ -202,6 +241,9 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
+        ("POST", path) if path.starts_with("/api/gates/") => {
+            reply(out, answer_gate(server, req.tail(), &req.body))
+        }
         _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
     }
 }
@@ -268,9 +310,7 @@ fn state(server: &Server) -> Value {
         "tasks": tasks,
         "workers": workers,
         "pending": pending,
-        // Slice 1 knows about no gates. The key is here so the page can be written once
-        // against the shape it will have.
-        "gates": [],
+        "gates": gate::list(&super::gate::dir(&server.ctx)),
     })
 }
 
@@ -310,6 +350,22 @@ fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
     let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
     let (task, handed) = super::task::update(&server.ctx, id, &input)?;
     Ok(json!({ "task": task, "handed": handed_json(handed) }))
+}
+
+fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
+    let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let decision = input
+        .get("decision")
+        .and_then(Value::as_str)
+        .ok_or("a decision is required")?;
+    let (gate, told) = super::gate::answer(
+        &server.ctx,
+        id,
+        decision,
+        input.get("choice").and_then(Value::as_str),
+        input.get("comment").and_then(Value::as_str),
+    )?;
+    Ok(json!({ "gate": gate, "present": told.present, "woken": told.woken }))
 }
 
 /// What the page is told about the hand-over: whether the hub was there, and whether its

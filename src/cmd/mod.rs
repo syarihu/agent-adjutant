@@ -14,9 +14,14 @@ use crate::repo::{self, RepoInfo};
 use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
+mod gate;
 mod serve;
 mod task;
 
+pub use gate::{
+    AnswerArgs, answer_cmd as gate_answer, list as gate_list, open_cmd as gate_open,
+    show as gate_show,
+};
 pub use serve::{DEFAULT_PORT, serve};
 pub use task::{
     AddArgs, UpdateArgs, add as task_add, list as task_list, show as task_show,
@@ -1110,25 +1115,30 @@ pub fn worker(
 }
 
 /// Leave a message for the worker in a worktree, and poke it if it is sitting there.
-pub fn tell(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    worktree: &str,
-    subject: &str,
-    body: Option<&str>,
-    from: Option<&str>,
-    quiet: bool,
-) -> Result<(), String> {
-    let ctx = context(repo_arg, hub_arg)?;
-    let worktree = config::expand_home(worktree);
-    if !worktree.is_dir() {
-        return Err(format!("no such worktree: {}", worktree.display()));
-    }
-    let body = read_body(body)?;
-    let from = from.unwrap_or(&ctx.repo.hub_name).to_string();
-    let path = messaging::tell(&worktree, &from, subject, &body)?;
+/// What became of a message left for a worker.
+pub struct Told {
+    pub path: std::path::PathBuf,
+    pub present: bool,
+    pub woken: bool,
+}
 
-    let status = messaging::worker_status(&worktree);
+/// Append to a worktree's outbox, poke the worker sitting in it, and tell the person when
+/// poking was not possible.
+///
+/// Shared by `adj tell` and by a gate's answer, which is the point: both are the hub-to-
+/// worker direction, and the rule about when to wake and when to notify is one rule. A
+/// worker that was woken reads the message itself, so the notification is what happens
+/// *instead* — unlike the other direction, where the hub is unattended and the person is
+/// told either way.
+pub fn deliver_to_worker(
+    ctx: &Context,
+    worktree: &std::path::Path,
+    from: &str,
+    subject: &str,
+    body: &str,
+) -> Result<Told, String> {
+    let path = messaging::tell(worktree, from, subject, body)?;
+    let status = messaging::worker_status(worktree);
     let woken = match (status.present, status.pid) {
         (true, Some(pid)) => terminal::wake(
             &ctx.settings.worker_wake,
@@ -1146,11 +1156,40 @@ pub fn tell(
     {
         let _ = terminal::run_shell(&command);
     }
+    Ok(Told {
+        path,
+        present: status.present,
+        woken,
+    })
+}
+
+pub fn tell(
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    worktree: &str,
+    subject: &str,
+    body: Option<&str>,
+    from: Option<&str>,
+    quiet: bool,
+) -> Result<(), String> {
+    let ctx = context(repo_arg, hub_arg)?;
+    let worktree = config::expand_home(worktree);
+    if !worktree.is_dir() {
+        return Err(format!("no such worktree: {}", worktree.display()));
+    }
+    let body = read_body(body)?;
+    let from = from.unwrap_or(&ctx.repo.hub_name).to_string();
+    let Told {
+        path,
+        present,
+        woken,
+    } = deliver_to_worker(&ctx, &worktree, &from, subject, &body)?;
+
     if quiet {
         return Ok(());
     }
     println!("wrote {}", path.display());
-    match (status.present, woken) {
+    match (present, woken) {
         (true, true) => println!("Woke the worker."),
         (true, false) => {
             println!("The worker is running; it will read this the next time it checks its outbox.")
