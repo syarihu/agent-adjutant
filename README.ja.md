@@ -25,7 +25,8 @@ Homebrew の場合:
 ```bash
 brew install syarihu/tap/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
 adjutant install-mcp                   # Claude Code に MCP サーバーを登録（user スコープ）
-adjutant install-mcp --target json          # 他のクライアント向けに設定用 JSON を出力
+adjutant install-mcp --target agy       # Antigravity (agy) に MCP サーバーを登録
+adjutant install-mcp --target json      # 他のクライアント向けに設定用 JSON を出力
 ```
 
 Cargo の場合:
@@ -38,7 +39,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 #   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
 ```
 
-`install-mcp` は `claude mcp add` を直接実行して Claude Code に登録します。他のクライアントを使う場合は `--target json` で設定 JSON を出力して手動登録できます。
+`install-mcp` は `--target claude-code`（既定）で `claude mcp add`、`--target agy` で `agy mcp add` を直接実行して登録します。他のクライアントを使う場合は `--target json` で設定 JSON を出力して手動登録できます。
 
 **登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
 
@@ -71,7 +72,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 エージェント側（`adjutant mcp`）：7つのツールと3つのプロンプトを提供します。
 
 - **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスクの着手から完了引き渡しまで）、`adj-report`（作業中に発見したバグを hub に報告）。Claude Code では `/mcp__adjutant__adj-hub` のように呼び出せます。
-- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_skill`。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_skill`。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。エージェントに応じた形式（Claude Code の `AskUserQuestion` や Antigravity の `ask_question` など）に自動調整されます（`--agent` または `agent` 引数で指定も可能）。
 
 名前の使い分けとして、人間が入力する CLI コマンドやプロンプトは短く（`adj`, `adj-…`）、システムが参照する MCP サーバー名やツール名は長めに（`adjutant`, `adjutant_…`）揃えています。
 

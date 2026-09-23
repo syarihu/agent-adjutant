@@ -31,7 +31,8 @@ Via Homebrew:
 ```bash
 brew install syarihu/tap/agent-adjutant # both binaries: `adjutant` and the short `adj`
 adjutant install-mcp                   # registers the MCP server with Claude Code (user scope)
-adjutant install-mcp --target json          # or print the JSON for another client
+adjutant install-mcp --target agy       # registers the MCP server with Antigravity (agy)
+adjutant install-mcp --target json      # or print the JSON for another client
 ```
 
 Via Cargo:
@@ -45,8 +46,8 @@ cargo install --git https://github.com/syarihu/agent-adjutant # both binaries: `
 ```
 
 `install-mcp` performs the registration rather than printing instructions for someone to
-follow: it runs `claude mcp add`, because the tool that owns a config file is the one that
-should write it. The `json` target is the escape hatch for clients this does not know, and
+follow: `--target claude-code` (the default) runs `claude mcp add`, and `--target agy` runs
+`agy mcp add`. The `json` target is the escape hatch for clients this does not know, and
 is the only path that asks you to paste anything.
 
 **Install before registering.** The registration records `adjutant` when PATH already
@@ -93,8 +94,9 @@ Agent-side (`adjutant mcp`), the same machinery as seven tools and three prompts
 
 - **tools** — `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`,
   `adjutant_tell`, `adjutant_outbox`, `adjutant_skill`. The last one serves the same
-  procedure text as the prompts, because MCP prompt support is uneven across agents and a
-  procedure nobody can fetch is a procedure nobody follows.
+  procedure text as the prompts, tailored to the target agent format (such as Claude Code's
+  `AskUserQuestion` or Antigravity's `ask_question`), because MCP prompt support is uneven
+  across agents and a procedure nobody can fetch is a procedure nobody follows.
 
 The names are short where a person types them and long where something reads them back:
 `adj` on the command line and `adj-…` for the prompts, against `adjutant` for the MCP server
