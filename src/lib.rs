@@ -238,6 +238,9 @@ enum Commands {
         /// Free text substituted into the procedure where it asks for it
         #[arg(long, default_value = "")]
         arguments: String,
+        /// Target agent format: claude | agy | generic (default: auto-detect)
+        #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
+        agent: Option<String>,
     },
     /// What the hub has left for the worker in this worktree
     Outbox {
@@ -360,7 +363,7 @@ enum Commands {
     Mcp,
     /// Register the MCP server with an agent
     InstallMcp {
-        /// claude-code | json
+        /// claude-code | agy | json
         #[arg(long, default_value = "claude-code")]
         target: String,
     },
@@ -390,6 +393,7 @@ enum Commands {
     },
     /// Remove the MCP server registration
     UninstallMcp {
+        /// claude-code | agy
         #[arg(long, default_value = "claude-code")]
         target: String,
     },
@@ -673,7 +677,11 @@ pub fn run() -> ! {
         } => cmd::serve(repo.as_deref(), hub.as_deref(), *port, !*no_open).map(|_| 0),
         Commands::Gate { action } => run_gate(action).map(|_| 0),
         Commands::Task { action } => run_task(action).map(|_| 0),
-        Commands::Skill { name, arguments } => cmd::skill(name, arguments).map(|_| 0),
+        Commands::Skill {
+            name,
+            arguments,
+            agent,
+        } => cmd::skill(name, arguments, agent.as_deref()).map(|_| 0),
         Commands::Outbox { worktree, clear } => cmd::outbox(worktree.as_deref(), *clear).map(|_| 0),
         Commands::Focus {
             repo,

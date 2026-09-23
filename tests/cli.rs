@@ -3240,3 +3240,40 @@ fn a_hub_with_a_runner_of_its_own_is_not_resumed_by_the_built_in_one_uninvited()
         "{resumed}"
     );
 }
+
+#[test]
+fn skill_formats_for_specified_agent() {
+    let fixture = Fixture::new(QUIET);
+    let claude = fixture.ok(&["skill", "adj-hub", "--agent", "claude"]);
+    let agy = fixture.ok(&["skill", "adj-hub", "--agent", "agy"]);
+
+    assert!(claude.contains("AskUserQuestion"));
+    assert!(!agy.contains("AskUserQuestion"));
+    assert!(agy.contains("ask_question"));
+}
+
+#[test]
+fn skill_rejects_unknown_agent() {
+    let fixture = Fixture::new(QUIET);
+    let out = Command::new(BIN)
+        .args(["skill", "adj-hub", "--agent", "invalid-agent"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("invalid value 'invalid-agent'"));
+}
+
+#[test]
+fn install_mcp_rejects_unknown_target() {
+    let fixture = Fixture::new(QUIET);
+    let out = Command::new(BIN)
+        .args(["install-mcp", "--target", "invalid-target"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("target must be claude-code, agy, or json"));
+}
