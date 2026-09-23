@@ -416,8 +416,12 @@ fn claim_worker_slot(
     };
     let main = std::path::Path::new(&ctx.repo.main);
     messaging::with_dispatch_lock(main, || {
-        let busy =
-            messaging::busy_worktrees(&repo::linked_worktrees(&ctx.repo.main)?, Some(worktree));
+        // The main checkout too. It is where the hub sits and a worker is not meant to go,
+        // but nothing stops `adj work` being pointed at it, and a worker running there
+        // uncounted is one past the limit.
+        let mut candidates = repo::linked_worktrees(&ctx.repo.main)?;
+        candidates.push(ctx.repo.main.clone());
+        let busy = messaging::busy_worktrees(&candidates, Some(worktree));
         if busy.len() >= max as usize {
             return Ok(Some(format!(
                 "worker limit reached: {} of maxWorkers {max} are running ({}). \

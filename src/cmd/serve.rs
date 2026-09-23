@@ -272,7 +272,8 @@ fn state(server: &Server) -> Value {
         .collect();
 
     let now = messaging::now_secs();
-    let mut busy = 0;
+    // Counted as `adj work` counts, main checkout included, though it is not listed below.
+    let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
     let workers: Vec<Value> = crate::repo::linked_worktrees(&repo.main)
         .unwrap_or_default()

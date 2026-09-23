@@ -93,8 +93,8 @@ pub fn main_worktree(start: Option<&Path>) -> Result<String, String> {
 
 /// The worktrees hanging off `main`, the main checkout itself left out, as absolute paths.
 ///
-/// Left out because the main checkout is where the hub sits, never a worker, and every
-/// caller here is asking about workers.
+/// Left out because the main checkout is where the hub sits rather than a worker. A caller
+/// that has to account for a worker put there anyway adds it back itself.
 ///
 /// An error when git cannot answer, rather than an empty list: the question is "which of
 /// these is busy", and a list that failed to come back read as "none" would let a dispatch

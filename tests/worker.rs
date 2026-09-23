@@ -272,3 +272,14 @@ fn a_worker_turned_away_by_one_already_running_gives_back_the_slot_it_was_marked
             .exists()
     );
 }
+
+#[test]
+fn a_worker_in_the_main_checkout_counts_against_max_workers_too() {
+    // Not where workers are meant to go, but `adj work` does not refuse it, so leaving it
+    // out of the count would let one more start than the limit says.
+    let fixture = one_worker_at_a_time();
+    let next = linked_worktree(&fixture, "wid-6");
+    just_dispatched(fixture.repo.to_str().unwrap());
+    let out = fixture.cmd(&["work", "--worktree", &next, "--title", "WID-6", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+}
