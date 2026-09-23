@@ -285,9 +285,13 @@ enum Commands {
         /// Open a tab and start it there, instead of becoming it in this one
         #[arg(long)]
         tab: bool,
-        /// Reopen this hub's saved session instead of starting a new one
-        #[arg(long)]
+        /// Reopen this hub's saved session instead of starting a new one (without either flag,
+        /// a session that ended within hubAutoResumeHours is resumed)
+        #[arg(long, conflicts_with = "new")]
         resume: bool,
+        /// Start a new session even when the last one ended within hubAutoResumeHours
+        #[arg(long)]
+        new: bool,
         /// Skip the dashboard collection this hub runs at startup (overrides startupDashboard)
         #[arg(long, conflicts_with = "dashboard")]
         no_dashboard: bool,
@@ -692,6 +696,7 @@ pub fn run() -> ! {
             dry_run,
             tab,
             resume,
+            new,
             no_dashboard,
             dashboard,
             extra,
@@ -700,7 +705,11 @@ pub fn run() -> ! {
             hub.as_deref(),
             &strip_separator(extra),
             *tab,
-            *resume,
+            match (*resume, *new) {
+                (true, _) => cmd::HubStart::Resume,
+                (_, true) => cmd::HubStart::New,
+                _ => cmd::HubStart::Auto,
+            },
             // Two flags, three answers. `None` is "nobody said", and it has to stay distinct
             // from both: it is what leaves the configured value standing, and what keeps a
             // plain `adj hub` printing the command line it has always printed.

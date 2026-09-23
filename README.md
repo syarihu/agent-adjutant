@@ -64,7 +64,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 
 | | |
 | --- | --- |
-| `adjutant hub [--tab] [--resume] [--no-dashboard\|--dashboard]` | start this repo's hub, in the main checkout, once (`--tab`: open a tab and start it there, rather than becoming it in this one; `--resume`: reopen the session it was last started into; `--no-dashboard`: skip the listing it collects at startup, `--dashboard`: collect it anyway — both override `startupDashboard`) |
+| `adjutant hub [--tab] [--resume\|--new] [--no-dashboard\|--dashboard]` | start this repo's hub, in the main checkout, once — resuming the last session if it ended within `hubAutoResumeHours` (`--tab`: open a tab and start it there, rather than becoming it in this one; `--resume`: reopen the last session however long ago it ended; `--new`: start a fresh one even so; `--no-dashboard`: skip the listing it collects at startup, `--dashboard`: collect it anyway — both override `startupDashboard`) |
 | `adjutant hub-name [--json]` | the hub's session name — the address a report goes to |
 | `adjutant config` | the resolved config for this repo, as JSON |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |
@@ -132,9 +132,10 @@ same thing.
 
 ### Resuming after a restart
 
-Updating the agent, or a crash, ends the hub and its workers, and starting them again with a
-plain `adj hub` / `adj work` gives each a new, empty conversation. `--resume` reopens the one
-it had instead:
+Updating the agent, or a crash, ends the hub and its workers. A hub that ended within the last
+`hubAutoResumeHours` (3 by default) comes back on a plain `adj hub`; past that, `adj hub`
+starts a new, empty conversation, so the first hub of the morning is a clean one. `--resume`
+reopens the one it had whenever it ended, and `--new` starts fresh even inside the window:
 
 ```bash
 adj hub --resume                  # this repo's hub, from anywhere in the repo
@@ -149,6 +150,18 @@ the default runners). The id is saved beside the records, not in them: the hub's
 leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
 (Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
 the agent to check its inbox or outbox for whatever arrived while it was gone.
+
+When the hub ended is written by the hub's own MCP server. `adj hub` puts
+`ADJUTANT_HUB_SESSION` on the line it `exec`s, the agent's `adjutant mcp` inherits it, and
+that server records the session as alive every minute and once more when the agent closes
+its pipe — in `sessions/<slug>.alive`, a file of its own so that an old hub's last beat can
+never overwrite a new hub's saved session. The same server runs under every session on the
+machine, and only the one carrying the variable writes anything; `adj worker` strips it
+before it starts an agent. With no MCP server under the hub nothing says when it ended, and
+`adj hub` starts fresh rather than guessing.
+
+Workers are only resumed when asked: `adj work` is how a hub hands over a new brief, and
+coming back to an old conversation there would bury it.
 
 A resumed worker goes back under the hub that dispatched it, as saved — ahead of
 `ADJUTANT_HUB`, which the tab it is typed in may have inherited from a different hub. A hub
@@ -235,6 +248,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
 | `startupDashboard` | — (`true` / `false`) | `true` |
+| `hubAutoResumeHours` | — (a number, `0` to turn it off) | `3` |
 | | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a

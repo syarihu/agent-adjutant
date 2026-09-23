@@ -31,7 +31,13 @@ const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-const AMBIENT: [&str; 2] = ["ADJUTANT_HUB", "ADJUTANT_STARTUP_DASHBOARD"];
+const AMBIENT: [&str; 3] = [
+    "ADJUTANT_HUB",
+    "ADJUTANT_STARTUP_DASHBOARD",
+    // A hub's MCP server beats for the session this names; a test child that inherited it
+    // would be beating for the hub `cargo test` was typed in.
+    "ADJUTANT_HUB_SESSION",
+];
 
 /// Strip `AMBIENT` from a child about to be run.
 ///
@@ -441,11 +447,12 @@ fn naming_no_hub_addresses_exactly_what_it_addressed_before() {
     // not an identifier anybody typed.
     assert!(info["hub"].is_null(), "{info}");
 
-    // The launcher's line gains nothing. A hub that is the repository's own has no
-    // identifier to hand down, and an `env ADJUTANT_HUB=` prefix appearing here would be a
-    // change to a command line people read, script and paste.
+    // The launcher's line gains no identifier. A hub that is the repository's own has none
+    // to hand down, and an `env ADJUTANT_HUB=` prefix appearing here would be a change to a
+    // command line people read, script and paste. (`ADJUTANT_HUB_SESSION` is a different
+    // variable, and every hub carries one.)
     let launch = fixture.ok(&["hub", "--dry-run"]);
-    assert!(!launch.contains("ADJUTANT_HUB"), "{launch}");
+    assert!(!launch.contains("ADJUTANT_HUB="), "{launch}");
     assert!(launch.contains(&format!("claude -n {HUB}")), "{launch}");
 
     // Neither does the line that starts a worker.
@@ -714,7 +721,7 @@ fn a_record_left_in_a_worktree_never_decides_which_hub_is_being_started() {
     // still starts the repository's own hub.
     let launch = from_worktree(&["hub", "--dry-run"]);
     assert!(launch.contains(&format!("claude -n {HUB}")), "{launch}");
-    assert!(!launch.contains("ADJUTANT_HUB"), "{launch}");
+    assert!(!launch.contains("ADJUTANT_HUB="), "{launch}");
     assert!(!launch.contains(FEATURE_HUB), "{launch}");
 
     // And the dispatching pair hands on its own identity rather than the worktree's. `adj
@@ -2926,4 +2933,182 @@ fn work_resume_opens_a_tab_that_resumes_and_leaves_the_hub_to_the_saved_session(
     assert!(line.contains(" worker --resume --worktree "), "{line}");
     assert!(line.contains("--title WID-1"), "{line}");
     assert!(!line.contains("--hub"), "{line}");
+}
+
+/// What the hub's MCP server writes as it beats, forged for a test that cannot run an agent.
+fn forge_last_alive(fixture: &Fixture, slug: &str, session: &str, secs_ago: i64) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let path = fixture.state.join("sessions").join(format!("{slug}.alive"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        serde_json::json!({"sessionId": session, "lastAlive": now - secs_ago}).to_string(),
+    )
+    .unwrap();
+}
+
+fn set_config(fixture: &Fixture, key: &str, value: serde_json::Value) {
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config[key] = value;
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+}
+
+/// Start a hub through the stub runner and hand back the session it saved.
+fn started_hub_session(fixture: &Fixture) -> String {
+    fixture.ok(&["hub"]);
+    let saved = saved_session(&fixture.state.join("sessions").join(format!("{SLUG}.json")));
+    saved["sessionId"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn the_hub_tells_its_mcp_server_which_session_it_is() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.ok(&["hub", "--dry-run"]);
+    assert!(
+        out.contains(&format!("ADJUTANT_HUB_SESSION={SLUG}/")),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_plain_hub_comes_back_to_a_session_that_ended_recently() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let sid = started_hub_session(&fixture);
+
+    // Ended ten minutes ago, well inside the default window.
+    forge_last_alive(&fixture, SLUG, &sid, 600);
+    let out = fixture.cmd(&["hub", "--dry-run"]);
+    let line = String::from_utf8_lossy(&out.stdout).to_string();
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(out.status.success(), "{said}");
+    assert!(line.contains(&format!("--resume {sid} ")), "{line}");
+    assert!(
+        line.contains(&format!("ADJUTANT_HUB_SESSION={SLUG}/{sid}")),
+        "{line}"
+    );
+    assert!(said.contains("ended 10 min ago"), "{said}");
+    assert!(said.contains("adj hub --new"), "{said}");
+
+    // `--new` is the way out.
+    let fresh = fixture.ok(&["hub", "--new", "--dry-run"]);
+    assert!(!fresh.contains("--resume"), "{fresh}");
+    assert!(!fresh.contains(&sid), "{fresh}");
+
+    // And `--tab` leaves the decision to the tab, carrying only what was said outright.
+    let tab = fixture.ok(&["hub", "--tab", "--dry-run"]);
+    assert!(!tab.contains("--resume") && !tab.contains("--new"), "{tab}");
+    let tab = fixture.ok(&["hub", "--tab", "--new", "--dry-run"]);
+    assert!(tab.contains(" --new"), "{tab}");
+    assert!(
+        !fixture
+            .cmd(&["hub", "--resume", "--new", "--dry-run"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn a_plain_hub_starts_fresh_when_the_last_session_is_old_or_unknown() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let sid = started_hub_session(&fixture);
+
+    // Nothing has said when it ended: no MCP server, or an older version.
+    let unknown = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!unknown.contains("--resume"), "{unknown}");
+
+    // Ended last night.
+    forge_last_alive(&fixture, SLUG, &sid, 10 * 3600);
+    let old = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!old.contains("--resume"), "{old}");
+
+    // Recently — but the beat is about some other session.
+    forge_last_alive(&fixture, SLUG, "another-session", 60);
+    let other = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!other.contains("--resume"), "{other}");
+
+    // Recently, about this one, on a machine that turned it off.
+    forge_last_alive(&fixture, SLUG, &sid, 60);
+    set_config(&fixture, "hubAutoResumeHours", 0.into());
+    let off = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!off.contains("--resume"), "{off}");
+    // `--resume` still works there.
+    let asked = fixture.ok(&["hub", "--resume", "--dry-run"]);
+    assert!(asked.contains(&format!("--resume {sid} ")), "{asked}");
+}
+
+#[test]
+fn the_mcp_server_under_a_hub_records_when_the_session_ended() {
+    let fixture = Fixture::new(QUIET);
+    let out = Command::new(BIN)
+        .arg("mcp")
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
+        .env("ADJUTANT_HUB_SESSION", format!("{SLUG}/sid-under-test"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let alive = saved_session(&fixture.state.join("sessions").join(format!("{SLUG}.alive")));
+    assert_eq!(alive["sessionId"], "sid-under-test");
+    assert!(alive["lastAlive"].as_i64().unwrap() > 0, "{alive}");
+
+    // A server with no hub session behind it — every other session on the machine — writes
+    // nothing at all.
+    let quiet = Fixture::new(QUIET);
+    Command::new(BIN)
+        .arg("mcp")
+        .current_dir(&quiet.repo)
+        .env("ADJUTANT_CONFIG", &quiet.config)
+        .env("ADJUTANT_STATE_DIR", &quiet.state)
+        .hermetic()
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!quiet.state.join("sessions").exists());
+}
+
+#[test]
+fn a_worker_never_inherits_the_hubs_session() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let seen = fixture.repo.join("seen.txt");
+    set_config(
+        &fixture,
+        "agentRunner",
+        format!(
+            "sh -c 'echo \"[$ADJUTANT_HUB_SESSION]\"' > {} ; true {{sessionId}} {{prompt}}",
+            shell_quoted(&seen.to_string_lossy())
+        )
+        .into(),
+    );
+    let out = Command::new(BIN)
+        .args(["worker", "--worktree", fixture.repo.to_str().unwrap()])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
+        .env("ADJUTANT_HUB_SESSION", format!("{SLUG}/the-hubs-session"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "[]");
 }

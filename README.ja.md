@@ -50,7 +50,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 | コマンド | 説明 |
 | --- | --- |
-| `adjutant hub [--tab] [--resume] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--resume` は前回起動したセッションを再開。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
+| `adjutant hub [--tab] [--resume\|--new] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動。前回のセッションが `hubAutoResumeHours` 以内に終了していれば再開する（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--resume` は終了からの時間に関係なく前回のセッションを再開し、`--new` は時間内でも新しく起動する。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
 | `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
@@ -85,7 +85,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 ### 再起動後の再開
 
-エージェントのアップデートやクラッシュで hub や worker が終了したあと、`adj hub` / `adj work` で立て直すと会話は空の状態から始まります。`--resume` を付けると前回の会話を再開できます。
+エージェントのアップデートやクラッシュで hub や worker が終了することがあります。hub は終了から `hubAutoResumeHours`（既定は3時間）以内なら、`adj hub` を打つだけで前回の会話に戻ります。それを過ぎていれば空の会話で起動するので、朝の1枚目はまっさらになります。時間に関係なく再開したいときは `--resume` を、時間内でも新しく立てたいときは `--new` を付けます。
 
 ```bash
 adj hub --resume                  # このリポジトリの hub（リポジトリ内のどこからでも）
@@ -94,6 +94,10 @@ adj worker --resume               # worktree の中で実行すると、そこ�
 ```
 
 起動のたびにセッション ID を作ってエージェントに渡します（既定のランナーでは `--session-id {sessionId}`）。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
+
+hub の終了時刻は、hub の下で動く MCP サーバーが記録します。`adj hub` は `exec` するコマンドラインに `ADJUTANT_HUB_SESSION` を載せ、エージェントが起動する `adjutant mcp` がそれを引き継ぎます。MCP サーバーは1分ごとと、エージェントがパイプを閉じたときに、セッションが生きていたことを `sessions/<slug>.alive` に書きます。保存したセッションとは別のファイルにしているのは、古い hub の最後の書き込みが新しい hub の保存を上書きしないようにするためです。MCP サーバーはマシン上のすべてのセッションで動きますが、書き込むのはこの変数を持つものだけです。`adj worker` はエージェントを起動する前にこの変数を外します。hub の下に MCP サーバーが無い場合は終了時刻が分からないので、推測せずに新しく起動します。
+
+worker は `--resume` を付けたときだけ再開します。`adj work` は hub が新しい指示書を渡す経路なので、そこで古い会話に戻ると指示書が埋もれてしまいます。
 
 再開した worker は、保存しておいた「自分を出した hub」の下に戻ります。`--resume` を打ったタブが別の hub の `ADJUTANT_HUB` を引き継いでいても、保存された値を優先します。保存されたセッションが無い hub を再開しようとすると、そのリポジトリで再開できる hub の一覧を表示します。`{sessionId}` を含まないランナーで起動したセッションは再開できません。ただしエラーになるのは `--resume` を付けたときだけです。
 
@@ -154,6 +158,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier`（未インストールなら `osascript`） |
 | `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
+| `hubAutoResumeHours` | なし（数値。`0` で無効） | `3`（この時間以内に終了した hub は `adj hub` で自動的に再開する） |
 | `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
 
 キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。

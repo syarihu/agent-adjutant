@@ -882,6 +882,47 @@ pub fn hub_session_path(slug: &str) -> PathBuf {
     state_dir().join("sessions").join(format!("{slug}.json"))
 }
 
+/// Carried on the hub's command line and inherited by the MCP server the agent starts:
+/// `{slug}/{session id}`. It is what tells that server it belongs to a hub — the same server
+/// runs under every session on the machine that has it registered — and which one.
+pub const HUB_SESSION_ENV: &str = "ADJUTANT_HUB_SESSION";
+
+/// The value of `HUB_SESSION_ENV` for this hub. Neither half can contain a `/`: a slug is
+/// lowercase, digits and `-`, and a session id is whatever the runner was handed, which is
+/// made up here.
+pub fn hub_session_env(slug: &str, session_id: &str) -> String {
+    format!("{slug}/{session_id}")
+}
+
+/// When a hub session was last known to be running, kept in a file of its own.
+///
+/// Not a field in the session file, because the two have different writers: the session is
+/// written by `adj hub` as it starts a hub, this by the MCP server under the agent, every
+/// minute and once more as it ends. Written into one file, the old hub's server finishing
+/// its last write could put the old session back over the one a new hub has just saved. Here
+/// the worst it can do is record that the old session was alive, which the reader discards
+/// because the ids do not match.
+pub fn hub_alive_path(slug: &str) -> PathBuf {
+    state_dir().join("sessions").join(format!("{slug}.alive"))
+}
+
+/// Note that the hub session `session_id` is alive now.
+pub fn touch_hub_session(slug: &str, session_id: &str) -> Result<(), String> {
+    write_json(
+        &hub_alive_path(slug),
+        &json!({"sessionId": session_id, "lastAlive": now_secs()}),
+    )
+}
+
+/// When the hub session saved for `slug` was last seen alive, in epoch seconds — or `None`
+/// when nothing has said so about *that* session.
+pub fn hub_last_alive(slug: &str, session_id: &str) -> Option<i64> {
+    let record = read_json(&hub_alive_path(slug))?;
+    (record.get("sessionId").and_then(Value::as_str) == Some(session_id))
+        .then(|| record.get("lastAlive").and_then(Value::as_i64))
+        .flatten()
+}
+
 /// Beside the worker record, for the reason the record is there: the worktree is the one key
 /// both sides already have.
 pub fn worker_session_path(worktree: &Path) -> PathBuf {
@@ -1587,6 +1628,20 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["b", "a"]
         );
+    }
+
+    #[test]
+    fn last_alive_is_only_an_answer_about_the_session_it_names() {
+        let _sandbox = Sandbox::empty();
+        assert_eq!(hub_last_alive("acme-widget", "sid-1"), None);
+        touch_hub_session("acme-widget", "sid-1").unwrap();
+        let last = hub_last_alive("acme-widget", "sid-1").expect("the beat was not recorded");
+        assert!((now_secs() - last).abs() < 5, "{last}");
+        // An old hub's server beating after a new hub saved its own session says nothing
+        // about the new one.
+        assert_eq!(hub_last_alive("acme-widget", "sid-2"), None);
+        // And the beat is not a session: listing what can be resumed does not read it.
+        assert!(hub_sessions_for("acme/widget").is_empty());
     }
 
     #[test]

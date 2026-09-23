@@ -976,7 +976,7 @@ fn open_hub_tab(
     ctx: &Context,
     repo_arg: Option<&str>,
     extra: &[String],
-    resume: bool,
+    start: HubStart,
     dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
@@ -1005,9 +1005,12 @@ fn open_hub_tab(
         None => {}
     }
     // Above the separator for the same reason, and dropped just as silently if it were not
-    // here: the tab would start a fresh hub while this one reported resuming.
-    if resume {
-        parts.push("--resume".to_string());
+    // here: the tab would decide for itself what it had been told. `Auto` is left to it —
+    // deciding is what a plain `adj hub` does.
+    match start {
+        HubStart::Resume => parts.push("--resume".to_string()),
+        HubStart::New => parts.push("--new".to_string()),
+        HubStart::Auto => {}
     }
     // The separator is put back because clap takes everything after it as the trailing
     // argument, and `strip_separator` at the far end takes it off again.
@@ -1056,7 +1059,7 @@ pub fn hub(
     hub_arg: Option<&str>,
     extra: &[String],
     tab: bool,
-    resume: bool,
+    start: HubStart,
     dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
@@ -1091,9 +1094,9 @@ pub fn hub(
     }
     // Looked up before either route, so that asking for a session that is not there is
     // refused here, in the tab it was typed in — not in a tab opened to show the refusal.
-    let resumed = match resume {
-        true => Some(saved_hub_session(&ctx)?),
-        false => None,
+    let asked = match start {
+        HubStart::Resume => Some(saved_hub_session(&ctx)?),
+        HubStart::Auto | HubStart::New => None,
     };
     // Below the presence check, and deliberately: one hub per address is the invariant, and
     // opening a tab for one that is already up would break it in the one way nothing later
@@ -1120,40 +1123,52 @@ pub fn hub(
             messaging::Liveness::Alive => return go_to_running_hub(&ctx, &status, dry_run),
             messaging::Liveness::Gone => {}
         }
-        return open_hub_tab(&ctx, repo_arg, extra, resume, dashboard, dry_run);
+        return open_hub_tab(&ctx, repo_arg, extra, start, dashboard, dry_run);
     }
-    let env = hub_env(&ctx, dashboard);
+    // Only on this route: the tab route hands the question to the `adj hub` in the new tab,
+    // which asks it a moment later with the same answer.
+    let resumed = match start {
+        HubStart::Auto => recent_hub_session(&ctx),
+        _ => asked,
+    };
     // The id a fresh hub is started into, when its runner has somewhere to put one. Written
     // down only once the claim is won, below: a launch that loses the claim started nothing,
     // and saving its id would point the next `--resume` at a conversation that never began.
-    let (mut command, fresh_session) = match &resumed {
-        Some(saved) => {
-            let template =
-                resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
-            let command = runner::hub_resume_command(
-                template,
-                &env,
-                &ctx.repo.hub_name,
-                &saved.session_id,
-                runner::HUB_RESUME_PROMPT,
-            );
-            (command, None)
-        }
-        None => {
-            let session = messaging::new_session_id()?;
-            let command = runner::hub_command(
-                ctx.settings.hub_runner.as_deref(),
-                &env,
-                &ctx.repo.hub_name,
-                &session,
-                runner::HUB_STARTUP_PROMPT,
-            );
-            let records = runner::records_session(
-                ctx.settings.hub_runner.as_deref(),
-                runner::DEFAULT_HUB_RUNNER,
-            );
-            (command, records.then_some(session))
-        }
+    let session = match &resumed {
+        Some(saved) => saved.session_id.clone(),
+        None => messaging::new_session_id()?,
+    };
+    let records = resumed.is_some()
+        || runner::records_session(
+            ctx.settings.hub_runner.as_deref(),
+            runner::DEFAULT_HUB_RUNNER,
+        );
+    let mut env = hub_env(&ctx, dashboard);
+    // The session this hub runs as, for the MCP server the agent is about to start: it is
+    // what keeps `lastAlive` current, and what the next plain `adj hub` reads to decide
+    // whether to come back to this one. Absent for a runner that records no session, since
+    // there would be nothing to come back to.
+    if records {
+        env.push((
+            messaging::HUB_SESSION_ENV.to_string(),
+            messaging::hub_session_env(&ctx.repo.slug, &session),
+        ));
+    }
+    let mut command = match &resumed {
+        Some(_) => runner::hub_resume_command(
+            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?,
+            &env,
+            &ctx.repo.hub_name,
+            &session,
+            runner::HUB_RESUME_PROMPT,
+        ),
+        None => runner::hub_command(
+            ctx.settings.hub_runner.as_deref(),
+            &env,
+            &ctx.repo.hub_name,
+            &session,
+            runner::HUB_STARTUP_PROMPT,
+        ),
     };
     if !extra.is_empty() {
         command = format!("{command} {}", crate::template::sh_join(extra));
@@ -1183,13 +1198,14 @@ pub fn hub(
     // A hub that cannot be resumed later is still a hub, so failing to write this down is
     // said and then got past — refusing to start over it would trade a working hub for a
     // convenience.
-    if let Some(session) = &fresh_session
+    if resumed.is_none()
+        && records
         && let Err(e) = messaging::save_hub_session(
             &ctx.repo.slug,
             &ctx.repo.nwo,
             ctx.repo.hub.as_deref(),
             &ctx.repo.hub_name,
-            session,
+            &session,
         )
     {
         eprintln!("adjutant: {e}; this hub will not be resumable with --resume");
@@ -1204,13 +1220,69 @@ pub fn hub(
 
     // `exec` keeps the PID, which is the whole point: the record written a line ago has to
     // name the process a worker will later check for.
+    // Removed and then set on the line itself, so the only value the agent — and so its MCP
+    // server — can see is this hub's own, never one inherited from whatever started this.
     let error = std::process::Command::new("sh")
         .arg("-c")
         .arg(&command)
+        .env_remove(messaging::HUB_SESSION_ENV)
         .exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
     let _ = messaging::unregister_hub(&ctx.repo.slug);
     Err(format!("cannot start the hub: {error}"))
+}
+
+/// How `adj hub` decides between a new session and the one it had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HubStart {
+    /// Resume when the last session ended within `hubAutoResumeHours`, start fresh otherwise.
+    Auto,
+    /// `--resume`: the saved session, or a refusal.
+    Resume,
+    /// `--new`: a fresh session whatever was saved.
+    New,
+}
+
+/// The saved session a plain `adj hub` comes back to, if it ended recently enough.
+///
+/// "Ended" is the last time the hub's MCP server said the session was alive — it beats
+/// every minute and once more as the agent closes it. Where nothing has said so (no MCP
+/// server, a runner that is not the agent this knows, a session saved by an older version)
+/// there is no answer, and no answer starts fresh: coming back uninvited to a conversation of
+/// unknown age is worse than one clean start too many.
+fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
+    let window = ctx.settings.hub_auto_resume_hours;
+    if window <= 0.0 {
+        return None;
+    }
+    let saved = messaging::hub_session(&ctx.repo.slug)?;
+    let last = messaging::hub_last_alive(&ctx.repo.slug, &saved.session_id)?;
+    let age = messaging::now_secs().saturating_sub(last).max(0);
+    if age as f64 > window * 3600.0 {
+        return None;
+    }
+    // A resume template that cannot be told the session would make this refuse, and a
+    // refusal is the wrong answer to a command that was not asked to resume anything.
+    if resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner").is_err() {
+        eprintln!("adjutant: not resuming the last session: hubResumeRunner has no {{sessionId}}");
+        return None;
+    }
+    eprintln!(
+        "adjutant: resuming the session that ended {} ago (within hubAutoResumeHours); \
+         `adj hub --new` starts a fresh one instead",
+        ago(age)
+    );
+    Some(saved)
+}
+
+/// "12 min", "2 h 5 min": how long ago, the way a person reads it.
+fn ago(secs: i64) -> String {
+    let minutes = secs / 60;
+    match minutes {
+        0 => "less than a minute".to_string(),
+        1..=59 => format!("{minutes} min"),
+        _ => format!("{} h {} min", minutes / 60, minutes % 60),
+    }
 }
 
 /// The session `adj hub --resume` reopens, or a refusal that says what can be resumed.
@@ -1360,9 +1432,13 @@ pub fn worker(
         eprintln!("adjutant: {e}; this worker will not be resumable with --resume");
     }
 
+    // A worker is not a hub. A tab opened by a spawn command that passes its environment on
+    // would otherwise hand the hub's session to this agent's MCP server, which would then
+    // keep saying the hub is alive for as long as the worker runs.
     let error = std::process::Command::new("sh")
         .arg("-c")
         .arg(&command)
+        .env_remove(messaging::HUB_SESSION_ENV)
         .exec();
     let _ = messaging::unregister_worker(&worktree);
     Err(format!("cannot start the worker: {error}"))
