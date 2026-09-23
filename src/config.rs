@@ -54,12 +54,16 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-const SETTING_KEYS: [&str; 11] = [
+const SETTING_KEYS: [&str; 14] = [
     "terminal",
     "notification",
     "agentRunner",
     "agentEnv",
     "hubRunner",
+    // What `--resume` runs instead of the two above. Beside them for the reason they are here:
+    // which agent a session is, and how it is reopened, is the machine's business.
+    "agentResumeRunner",
+    "hubResumeRunner",
     "wake",
     "hubWake",
     "workerWake",
@@ -73,7 +77,17 @@ const SETTING_KEYS: [&str; 11] = [
     // the repository holds — and it is here rather than in the prompt because the prompt is
     // the same text on every machine.
     "startupDashboard",
+    // How recently a hub has to have ended for a plain `adj hub` to bring it back rather than
+    // start a new one. About how somebody works, like the one above.
+    "hubAutoResumeHours",
 ];
+
+/// The window a plain `adj hub` resumes in, when nothing is configured.
+///
+/// Long enough to cover an update, a crash, lunch; short enough that the first hub of the
+/// morning starts clean. The hub is meant to be one a day, and a conversation that carries on
+/// forever carries every task it ever dispatched along with it.
+pub const DEFAULT_HUB_AUTO_RESUME_HOURS: f64 = 3.0;
 
 /// Overrides `startupDashboard` for one hub, set by `adj hub --no-dashboard` / `--dashboard`.
 ///
@@ -100,6 +114,7 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
         // fell through to the string default below, and every `true` anybody wrote was
         // reported as the wrong shape and dropped — a setting that warns when used correctly.
         "startupDashboard" => &["true", "false"],
+        "hubAutoResumeHours" => &["a number"],
         _ => &["a string"],
     }
 }
@@ -457,7 +472,7 @@ pub struct TerminalSettings {
 /// field whose "nothing was configured" answer is not the type's zero. Derived, a
 /// `Settings::default()` would say the dashboard is off, which is the opposite of what an
 /// empty config means.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub terminal: TerminalSettings,
@@ -482,6 +497,14 @@ pub struct Settings {
     /// Command template that starts the hub itself. `None` = built-in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hub_runner: Option<String>,
+    /// Command template that reopens a worker's session (`adj worker --resume`). `None` =
+    /// built-in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_resume_runner: Option<String>,
+    /// Command template that reopens the hub's session (`adj hub --resume`). `None` =
+    /// built-in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hub_resume_runner: Option<String>,
     /// Editor preset name or a command template containing `{worktree}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ide: Option<String>,
@@ -497,6 +520,9 @@ pub struct Settings {
     /// the prompt read "absent" and "off" as the same thing. That reversal is silent — a hub
     /// that simply never collects, on the machine that changed nothing.
     pub startup_dashboard: bool,
+    /// How many hours after a hub ended a plain `adj hub` resumes it instead of starting a
+    /// new one. `0` turns that off, leaving `--resume` as the only way back.
+    pub hub_auto_resume_hours: f64,
 }
 
 impl Default for Settings {
@@ -509,9 +535,12 @@ impl Default for Settings {
             agent_runner: None,
             agent_env: Vec::new(),
             hub_runner: None,
+            agent_resume_runner: None,
+            hub_resume_runner: None,
             ide: None,
             worktree_pattern: None,
             startup_dashboard: true,
+            hub_auto_resume_hours: DEFAULT_HUB_AUTO_RESUME_HOURS,
         }
     }
 }
@@ -723,6 +752,8 @@ fn resolve_settings(
         worker_wake: Wake::resolve(merged("wake"), merged("workerWake")),
         agent_runner: pick_str("agentRunner"),
         hub_runner: pick_str("hubRunner"),
+        agent_resume_runner: pick_str("agentResumeRunner"),
+        hub_resume_runner: pick_str("hubResumeRunner"),
         agent_env: agent_env(pick("agentEnv"), warnings),
         ide: pick_str("ide"),
         worktree_pattern: pick_str("worktreePattern"),
@@ -731,6 +762,7 @@ fn resolve_settings(
         // agent asks the tool — resolving the override in the command layer would leave the
         // hub reading a `settings` block that disagrees with the flag it was started under.
         startup_dashboard: startup_dashboard(configured_dashboard.as_ref(), startup_flag),
+        hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
     }
 }
 
@@ -759,11 +791,34 @@ fn startup_dashboard(configured: Option<&Value>, flag: Option<&str>) -> bool {
     configured.and_then(Value::as_bool).unwrap_or(true)
 }
 
+/// The auto-resume window, in hours. A number that is not a finite, non-negative one is said
+/// and replaced by the default — a negative window would read as "never", which is what `0`
+/// is for, and saying nothing would leave somebody wondering why their hubs never came back.
+fn auto_resume_hours(configured: Option<&Value>, warnings: &mut Vec<String>) -> f64 {
+    let Some(value) = configured else {
+        return DEFAULT_HUB_AUTO_RESUME_HOURS;
+    };
+    match value.as_f64() {
+        Some(hours) if hours.is_finite() && hours >= 0.0 => hours,
+        // A non-number was already reported by `check_shapes`.
+        Some(_) => {
+            warnings.push(format!(
+                "hubAutoResumeHours is {value} but has to be 0 or more: using {DEFAULT_HUB_AUTO_RESUME_HOURS}"
+            ));
+            DEFAULT_HUB_AUTO_RESUME_HOURS
+        }
+        None => DEFAULT_HUB_AUTO_RESUME_HOURS,
+    }
+}
+
 /// The hub's name is its *address*: a worker derives it, finds the session record under it
 /// and sends there. A `hubRunner` with nowhere to put the name still starts something, and
 /// presence still works — that rests on the recorded start time, not on the name — but the
-/// session is then nameless in every listing a person reads, and `-n {name}` is also what
-/// makes an agent resume the same session rather than open a new one each time.
+/// session is then nameless in every listing a person reads.
+///
+/// A resume template with no `{sessionId}` is the other thing worth saying: it has no way to
+/// be told which conversation to reopen, so every `--resume` through it would open whatever
+/// the agent picks on its own.
 ///
 /// `{prompt}` is appended when a template forgets it; `{name}` cannot be, because where it
 /// goes is the agent's own flag. So the only thing to do is say so.
@@ -774,6 +829,18 @@ fn check_runner(settings: &Settings, warnings: &mut Vec<String>) {
         warnings.push(
             "hubRunner has no {name}: the hub still runs, but nothing a person reads will show which session it is".to_string(),
         );
+    }
+    for (key, template) in [
+        ("hubResumeRunner", &settings.hub_resume_runner),
+        ("agentResumeRunner", &settings.agent_resume_runner),
+    ] {
+        if let Some(template) = template
+            && !template.contains("{sessionId}")
+        {
+            warnings.push(format!(
+                "{key} has no {{sessionId}}: --resume could not say which session to reopen, so it refuses to run"
+            ));
+        }
     }
 }
 
@@ -1116,6 +1183,8 @@ mod tests {
             // skipped key would pass an "is it spelled right" check for free.
             json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                    "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
+                   "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
+                   "hubResumeRunner": "again {name} {sessionId}",
                    "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false,
                    "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
                    "repos": {}}),
@@ -1127,9 +1196,12 @@ mod tests {
             "workerWake",
             "agentRunner",
             "hubRunner",
+            "agentResumeRunner",
+            "hubResumeRunner",
             "worktreePattern",
             "agentEnv",
             "startupDashboard",
+            "hubAutoResumeHours",
         ] {
             assert!(text.get(key).is_some(), "{key} is missing from {text}");
         }
@@ -1138,6 +1210,9 @@ mod tests {
             "worker_wake",
             "agent_runner",
             "hub_runner",
+            "agent_resume_runner",
+            "hub_resume_runner",
+            "hub_auto_resume_hours",
             "worktree_pattern",
             "agent_env",
             "startup_dashboard",
@@ -1599,6 +1674,61 @@ mod tests {
         assert!(
             !warnings.iter().any(|w| w.contains("hubRunner")),
             "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn the_auto_resume_window_is_hours_and_falls_back_when_it_cannot_be_one() {
+        let (_, settings, _) = resolve(a_repo(json!({})), "acme/app");
+        assert_eq!(
+            settings.hub_auto_resume_hours,
+            DEFAULT_HUB_AUTO_RESUME_HOURS
+        );
+
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"hubAutoResumeHours": 0.5})), "acme/app");
+        assert_eq!(settings.hub_auto_resume_hours, 0.5);
+        assert!(
+            !warnings.iter().any(|w| w.contains("hubAutoResumeHours")),
+            "{warnings:?}"
+        );
+
+        let (_, settings, warnings) = resolve(a_repo(json!({"hubAutoResumeHours": 0})), "acme/app");
+        assert_eq!(settings.hub_auto_resume_hours, 0.0);
+        assert!(warnings.is_empty() || !warnings.iter().any(|w| w.contains("hubAutoResume")));
+
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"hubAutoResumeHours": -1})), "acme/app");
+        assert_eq!(
+            settings.hub_auto_resume_hours,
+            DEFAULT_HUB_AUTO_RESUME_HOURS
+        );
+        assert!(warning_about(&warnings, "hubAutoResumeHours").contains("0 or more"));
+
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"hubAutoResumeHours": "3"})), "acme/app");
+        assert_eq!(
+            settings.hub_auto_resume_hours,
+            DEFAULT_HUB_AUTO_RESUME_HOURS
+        );
+        assert!(warning_about(&warnings, "hubAutoResumeHours").contains("a number"));
+    }
+
+    #[test]
+    fn a_resume_runner_that_cannot_be_told_the_session_is_called_out() {
+        let (_, settings, warnings) = resolve(
+            a_repo(json!({"hubResumeRunner": "myagent --continue",
+                          "agentResumeRunner": "myagent resume {sessionId}"})),
+            "acme/app",
+        );
+        assert!(warning_about(&warnings, "hubResumeRunner").contains("{sessionId}"));
+        assert!(
+            !warnings.iter().any(|w| w.contains("agentResumeRunner")),
+            "{warnings:?}"
+        );
+        assert_eq!(
+            settings.agent_resume_runner.as_deref(),
+            Some("myagent resume {sessionId}")
         );
     }
 

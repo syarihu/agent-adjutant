@@ -51,13 +51,13 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 | コマンド | 説明 |
 | --- | --- |
-| `adjutant hub [--tab] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
+| `adjutant hub [--tab] [--resume\|--new] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動。前回のセッションが `hubAutoResumeHours` 以内に終了していれば再開する（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--resume` は終了からの時間に関係なく前回のセッションを再開し、`--new` は時間内でも新しく起動する。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
 | `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
 | `adjutant send --subject … --body …` | hub にメッセージを送信（本文は stdin 可） |
-| `adjutant work --worktree … --title …` | 新しいタブを開いて worker を起動 |
-| `adjutant worker --worktree …` | 自身を worker として起動（`work` のタブ内で実行されるコマンド） |
+| `adjutant work --worktree … --title … [--resume]` | 新しいタブを開いて worker を起動（`--resume` はその worktree に保存されたセッションを再開） |
+| `adjutant worker --worktree … [--resume]` | 自身を worker として起動（`work` のタブ内で実行されるコマンド。worktree の中で `--resume` を付けると保存されたセッションを再開） |
 | `adjutant tell --worktree … --subject …` | 指定 worktree の worker にメッセージを送信 |
 | `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
 | `adjutant spawn --cwd … -- cmd …` | 新しいタブを開いてコマンドを実行 |
@@ -84,6 +84,24 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 `--no-dashboard` / `--dashboard` も同じ経路を通ります。これらは同じコマンドラインに `ADJUTANT_STARTUP_DASHBOARD` として載り、`adjutant config` が解決の時点で織り込むため、`settings.startupDashboard` を読む手順書には設定ファイルの値ではなく**その hub が起動したときのフラグ**が見えます。ただし `--tab` のときはこの変数が出てきません。ターミナルに渡せるのはコマンドラインだけなので、フラグは新しいタブで走る `adjutant hub` にそのまま転送され、**環境を組み立てるのはそちらの `adjutant hub`** になります。最終的な結果は同じで、1プロセス遅れるだけです（2つの経路の dry run の出力が違って見えるのはこのためです）。
 
+### 再起動後の再開
+
+エージェントのアップデートやクラッシュで hub や worker が終了することがあります。hub は終了から `hubAutoResumeHours`（既定は3時間）以内なら、`adj hub` を打つだけで前回の会話に戻ります。それを過ぎていれば空の会話で起動するので、朝の1枚目はまっさらになります。時間に関係なく再開したいときは `--resume` を、時間内でも新しく立てたいときは `--new` を付けます。
+
+```bash
+adj hub --resume                  # このリポジトリの hub（リポジトリ内のどこからでも）
+adj hub --resume --hub ALPHA-233  # 親タスクの hub（識別子は推測しないので明示する）
+adj worker --resume               # worktree の中で実行すると、そこで作業していた worker
+```
+
+`{sessionId}` を含むランナー（既定のランナーは `--session-id {sessionId}` として含んでいます）で新しく起動するときは、セッション ID を作ってエージェントに渡し、保存します。再開するときは新しく作らず、保存済みの ID を使います。`{sessionId}` を含まないランナーで新しく起動したときは ID を作らず、前の起動が保存した ID を消します。これで2つ前の起動の会話が開かれることはありません。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
+
+hub の終了時刻は、hub の下で動く MCP サーバーが記録します。`adj hub` はセッションを記録する起動（`{sessionId}` を含むランナーでの起動と、再開）のときだけ、`exec` するコマンドラインに `ADJUTANT_HUB_SESSION` を載せます。エージェントが起動する `adjutant mcp` がそれを引き継ぎます。`{sessionId}` を含まないランナーで新しく起動した hub にはこの変数が付かないので、MCP サーバーが動いていても終了時刻は記録されません。MCP サーバーは1分ごとと、エージェントがパイプを閉じたときに、セッションが生きていたことを `sessions/<slug>.alive` に書きます。保存したセッションとは別のファイルにしているのは、古い hub の最後の書き込みが新しい hub の保存を上書きしないようにするためです。MCP サーバーはマシン上のすべてのセッションで動きますが、書き込むのはこの変数を持つものだけです。`adj worker` はエージェントを起動する前にこの変数を外します。hub の下に MCP サーバーが無い場合は終了時刻が分からないので、推測せずに新しく起動します。`hubRunner` を独自に設定していて `hubResumeRunner` を設定していない場合も同じです。組み込みの再開コマンドで開くと独自の runner で足した指定が抜けるので、`--resume` を付けたときだけ再開します。
+
+worker は `--resume` を付けたときだけ再開します。`adj work` は hub が新しい指示書を渡す経路なので、そこで古い会話に戻ると指示書が埋もれてしまいます。
+
+再開した worker は、保存しておいた「自分を出した hub」の下に戻ります。`--resume` を打ったタブが別の hub の `ADJUTANT_HUB` を引き継いでいても、保存された値を優先します。保存されたセッションが無い hub を再開しようとすると、そのリポジトリで再開できる hub の一覧を表示します。`{sessionId}` を含まないランナーで起動したセッションは再開できません。ただしエラーになるのは `--resume` を付けたときだけです。
+
 MCP の `instructions` は約5行の最小限に抑えています。1500行を超える詳細な手順書は、hub や worker が必要になったタイミングでオンデマンドに取得するため、常時コンテキストを圧迫しません。
 
 ## 権限
@@ -92,10 +110,11 @@ MCP 経由で配信される手順書からは、個別ツールの許可リス�
 
 そのため、**hub も worker も既定では自動実行モード（unattended）で起動します**。worker のビルドや hub の受信箱監視が確認ダイアログで止まるのを防ぐためです。ただし、Issue の起票確認やタスクの着手確認など、人による判断が必要なチェックポイント（`AskUserQuestion`）は手順書側で維持されます。スキップされるのは `gh issue view` などの日常的なコマンド実行確認です。
 
-都度確認を挟みたい場合は、設定で `hubRunner` を変更してください：
+都度確認を挟みたい場合は、設定で `hubRunner` と `hubResumeRunner` を変更してください：
 
 ```jsonc
-"hubRunner": "claude -n {name} {prompt}"
+"hubRunner": "claude -n {name} --session-id {sessionId} {prompt}",
+"hubResumeRunner": "claude -n {name} --resume {sessionId} {prompt}"
 ```
 
 その場合、hub が停止しないよう `~/.claude/settings.json` で必要なツールを事前に許可しておく必要があります：
@@ -133,14 +152,17 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
 | `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |
-| `agentRunner` | `{prompt}` `{worktree}` `{title}` | `claude --permission-mode auto {prompt}` |
-| `hubRunner` | `{name}` `{prompt}` | `claude -n {name} --permission-mode auto {prompt}` |
+| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
+| `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
+| `agentResumeRunner` | `agentRunner` と同じ | `claude --resume {sessionId} --permission-mode auto {prompt}` |
+| `hubResumeRunner` | `hubRunner` と同じ | `claude -n {name} --resume {sessionId} --permission-mode auto {prompt}` |
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier`（未インストールなら `osascript`） |
 | `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
+| `hubAutoResumeHours` | なし（数値。`0` で無効） | `3`（この時間以内に終了した hub は `adj hub` で自動的に再開する） |
 | `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
 
-キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
+キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。ただしコマンドではない2つの設定は別の値を取ります。`startupDashboard` は `true` / `false` で、`hubAutoResumeHours` は数値です。`hubAutoResumeHours` を無効にするには `0` を指定します。`false` を指定すると `warnings` に報告され、既定値が使われます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
 
 `{pid}` と `{tty}` は OS 側から見たセッションの名前（プロセスIDと、そのセッションが載っている端末デバイス `ttys004`）であって、**ターミナル自身の pane / window の id ではありません**。そのため `focus` / `close` / `wake` のテンプレートは、動く前にその id を自分で引き当てる必要があります。`{pid}` を pane id を期待する引数（`--pane-id` など）に渡すと別の番号空間を指すことになり、その番号を持っていた無関係な pane に対して動作します。id 解決を行うラッパースクリプトを指定してください。`close` を「実行できたら成功」とみなさないのも同じ理由です。テンプレートは終了コードだけで判断されるため、adjutant は close 後に**その worker が実際に居なくなったこと**を確認してから記録を消し、居たままなら exit 1 を返します。
 

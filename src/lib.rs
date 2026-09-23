@@ -178,12 +178,13 @@ enum Commands {
         /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
-        /// What the worker is told on startup
-        #[arg(
-            long,
-            default_value = ".claude/task-brief.md を読んで、その指示に従って作業を開始してください"
-        )]
-        prompt: String,
+        /// What the worker is told on startup (default: read .claude/task-brief.md; with
+        /// --resume, check the outbox and carry on)
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Reopen the worker session saved in this worktree instead of starting a new one
+        #[arg(long)]
+        resume: bool,
         #[arg(long)]
         dry_run: bool,
     },
@@ -191,18 +192,23 @@ enum Commands {
     Worker {
         #[arg(long)]
         repo: Option<String>,
+        /// Default with --resume: the worktree this is run from
+        #[arg(long, required_unless_present = "resume")]
+        worktree: Option<String>,
+        /// Default with --resume: the title the worker was started with
         #[arg(long)]
-        worktree: String,
-        #[arg(long, default_value = "")]
-        title: String,
-        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
+        title: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not
+        /// read here. With --resume: the hub that dispatched the saved session)
         #[arg(long)]
         hub: Option<String>,
-        #[arg(
-            long,
-            default_value = ".claude/task-brief.md を読んで、その指示に従って作業を開始してください"
-        )]
-        prompt: String,
+        /// What the worker is told on startup (default: read .claude/task-brief.md; with
+        /// --resume, check the outbox and carry on)
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Reopen the worker session saved in this worktree instead of starting a new one
+        #[arg(long)]
+        resume: bool,
         #[arg(long)]
         dry_run: bool,
     },
@@ -282,6 +288,13 @@ enum Commands {
         /// Open a tab and start it there, instead of becoming it in this one
         #[arg(long)]
         tab: bool,
+        /// Reopen this hub's saved session instead of starting a new one (without either flag,
+        /// a session that ended within hubAutoResumeHours is resumed)
+        #[arg(long, conflicts_with = "new")]
+        resume: bool,
+        /// Start a new session even when the last one ended within hubAutoResumeHours
+        #[arg(long)]
+        new: bool,
         /// Skip the dashboard collection this hub runs at startup (overrides startupDashboard)
         #[arg(long, conflicts_with = "dashboard")]
         no_dashboard: bool,
@@ -606,13 +619,15 @@ pub fn run() -> ! {
             worktree,
             title,
             prompt,
+            resume,
             dry_run,
         } => cmd::work(
             repo.as_deref(),
             hub.as_deref(),
             worktree,
             title,
-            prompt,
+            prompt.as_deref(),
+            *resume,
             *dry_run,
         )
         .map(|_| 0),
@@ -624,13 +639,15 @@ pub fn run() -> ! {
             worktree,
             title,
             prompt,
+            resume,
             dry_run,
         } => cmd::worker(
             repo.as_deref(),
             hub.as_deref(),
-            worktree,
-            title,
-            prompt,
+            worktree.as_deref(),
+            title.as_deref(),
+            prompt.as_deref(),
+            *resume,
             *dry_run,
         )
         .map(|_| 0),
@@ -686,6 +703,8 @@ pub fn run() -> ! {
             hub,
             dry_run,
             tab,
+            resume,
+            new,
             no_dashboard,
             dashboard,
             extra,
@@ -694,6 +713,11 @@ pub fn run() -> ! {
             hub.as_deref(),
             &strip_separator(extra),
             *tab,
+            match (*resume, *new) {
+                (true, _) => cmd::HubStart::Resume,
+                (_, true) => cmd::HubStart::New,
+                _ => cmd::HubStart::Auto,
+            },
             // Two flags, three answers. `None` is "nobody said", and it has to stay distinct
             // from both: it is what leaves the configured value standing, and what keeps a
             // plain `adj hub` printing the command line it has always printed.

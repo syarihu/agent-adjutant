@@ -829,6 +829,211 @@ pub fn clear_outbox(worktree: &Path) -> Result<(), String> {
     remove_if_present(&outbox_path(worktree))
 }
 
+// ── sessions: what `--resume` reopens ────────────────────────────────
+
+/// The conversation a hub or a worker was started into, written down so it can be reopened
+/// after the agent itself has gone — an update, a crash, a closed tab.
+///
+/// Kept apart from the presence records on purpose. Those say who is running *now*, and are
+/// removed the moment nobody is: `hub-stop` clears the hub's, `close` the worker's, and a
+/// takeover rewrites either. The session is wanted precisely after that has happened, so it
+/// lives in a file nothing clears — a later start in the same place overwrites it, which is
+/// the one thing that should.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSession {
+    pub session_id: String,
+    /// The hub identifier: which hub this was (for a hub), or which hub dispatched it (for a
+    /// worker). `None` is the repository's own hub.
+    pub hub: Option<String>,
+    /// `owner/name`, for a hub. What lets `--resume` list a repository's resumable hubs when
+    /// asked for one that has nothing saved.
+    pub nwo: Option<String>,
+    pub hub_name: Option<String>,
+    /// The worker's tab title, so a resumed worker is named what it was named before.
+    pub title: Option<String>,
+    pub saved_at: Option<String>,
+}
+
+/// A fresh session id: a random (version 4) UUID, which is the shape Claude Code's
+/// `--session-id` insists on and every other agent can take as an opaque string.
+///
+/// From `/dev/urandom` rather than a crate: sixteen bytes do not justify a dependency, and
+/// this only runs on the Unix systems the rest of this tool already assumes.
+pub fn new_session_id() -> Result<String, String> {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .map_err(|e| format!("cannot read /dev/urandom for a session id: {e}"))?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
+pub fn hub_session_path(slug: &str) -> PathBuf {
+    state_dir().join("sessions").join(format!("{slug}.json"))
+}
+
+/// Carried on the hub's command line and inherited by the MCP server the agent starts:
+/// `{slug}/{session id}`. It is what tells that server it belongs to a hub — the same server
+/// runs under every session on the machine that has it registered — and which one.
+pub const HUB_SESSION_ENV: &str = "ADJUTANT_HUB_SESSION";
+
+/// The value of `HUB_SESSION_ENV` for this hub. Neither half can contain a `/`: a slug is
+/// lowercase, digits and `-`, and a session id is whatever the runner was handed, which is
+/// made up here.
+pub fn hub_session_env(slug: &str, session_id: &str) -> String {
+    format!("{slug}/{session_id}")
+}
+
+/// When a hub session was last known to be running, kept in a file of its own.
+///
+/// Not a field in the session file, because the two have different writers: the session is
+/// written by `adj hub` as it starts a hub, this by the MCP server under the agent, every
+/// minute and once more as it ends. Written into one file, the old hub's server finishing
+/// its last write could put the old session back over the one a new hub has just saved. Here
+/// the worst it can do is record that the old session was alive, which the reader discards
+/// because the ids do not match.
+pub fn hub_alive_path(slug: &str) -> PathBuf {
+    state_dir().join("sessions").join(format!("{slug}.alive"))
+}
+
+/// Note that the hub session `session_id` is alive now.
+pub fn touch_hub_session(slug: &str, session_id: &str) -> Result<(), String> {
+    write_json(
+        &hub_alive_path(slug),
+        &json!({"sessionId": session_id, "lastAlive": now_secs()}),
+    )
+}
+
+/// When the hub session saved for `slug` was last seen alive, in epoch seconds — or `None`
+/// when nothing has said so about *that* session.
+pub fn hub_last_alive(slug: &str, session_id: &str) -> Option<i64> {
+    let record = read_json(&hub_alive_path(slug))?;
+    (record.get("sessionId").and_then(Value::as_str) == Some(session_id))
+        .then(|| record.get("lastAlive").and_then(Value::as_i64))
+        .flatten()
+}
+
+/// Beside the worker record, for the reason the record is there: the worktree is the one key
+/// both sides already have.
+pub fn worker_session_path(worktree: &Path) -> PathBuf {
+    worktree.join(".claude").join("adjutant-session.json")
+}
+
+pub fn save_hub_session(
+    slug: &str,
+    nwo: &str,
+    hub: Option<&str>,
+    hub_name: &str,
+    session_id: &str,
+) -> Result<PathBuf, String> {
+    let path = hub_session_path(slug);
+    let mut record = json!({
+        "sessionId": session_id,
+        "nwo": nwo,
+        "hubName": hub_name,
+        "savedAt": utc_stamp(now_secs()),
+    });
+    if let Some(hub) = said(hub)
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("hub".to_string(), json!(hub));
+    }
+    write_json(&path, &record)?;
+    Ok(path)
+}
+
+pub fn save_worker_session(
+    worktree: &Path,
+    title: &str,
+    hub: Option<&str>,
+    session_id: &str,
+) -> Result<PathBuf, String> {
+    let path = worker_session_path(worktree);
+    let mut record = json!({
+        "sessionId": session_id,
+        "title": title,
+        "savedAt": utc_stamp(now_secs()),
+    });
+    if let Some(hub) = said(hub)
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("hub".to_string(), json!(hub));
+    }
+    write_json(&path, &record)?;
+    Ok(path)
+}
+
+/// Forget the hub session saved for `slug`, and when it was last alive.
+///
+/// For a hub started by a runner that records no session: what was saved belongs to a hub
+/// before it, and leaving it would have the next `--resume` — or a plain `adj hub`, while
+/// that older hub's last beat is still recent — reopen a conversation two hubs ago.
+pub fn forget_hub_session(slug: &str) -> Result<(), String> {
+    remove_if_present(&hub_session_path(slug))?;
+    remove_if_present(&hub_alive_path(slug))
+}
+
+/// The same for a worktree, for a worker started by a runner that records no session.
+pub fn forget_worker_session(worktree: &Path) -> Result<(), String> {
+    remove_if_present(&worker_session_path(worktree))
+}
+
+pub fn hub_session(slug: &str) -> Option<SavedSession> {
+    read_session(&hub_session_path(slug))
+}
+
+pub fn worker_session(worktree: &Path) -> Option<SavedSession> {
+    read_session(&worker_session_path(worktree))
+}
+
+/// Every hub of `nwo` that has a session to reopen, the repository's own first.
+pub fn hub_sessions_for(nwo: &str) -> Vec<SavedSession> {
+    let Ok(entries) = std::fs::read_dir(state_dir().join("sessions")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<SavedSession> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|entry| read_session(&entry.path()))
+        .filter(|session| session.nwo.as_deref() == Some(nwo))
+        .collect();
+    found.sort_by(|a, b| (a.hub.is_some(), &a.hub).cmp(&(b.hub.is_some(), &b.hub)));
+    found
+}
+
+/// A saved session, or `None` for anything that does not name one. There is nothing to be
+/// careful of here the way there is with a presence record: the worst a bad file can do is
+/// leave `--resume` with nothing to reopen, and that is said in so many words.
+fn read_session(path: &Path) -> Option<SavedSession> {
+    let record = read_json(path)?;
+    let text = |key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    Some(SavedSession {
+        session_id: text("sessionId")?,
+        hub: text("hub"),
+        nwo: text("nwo"),
+        hub_name: text("hubName"),
+        title: text("title"),
+        saved_at: text("savedAt"),
+    })
+}
+
 fn remove_if_present(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -1380,6 +1585,102 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn a_session_id_is_a_version_4_uuid_and_a_new_one_each_time() {
+        let a = new_session_id().unwrap();
+        let b = new_session_id().unwrap();
+        assert_ne!(a, b);
+        let parts: Vec<&str> = a.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12],
+            "{a}"
+        );
+        assert!(parts[2].starts_with('4'), "{a}");
+        assert!("89ab".contains(&parts[3][..1]), "{a}");
+        assert!(a.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "{a}");
+    }
+
+    #[test]
+    fn a_hub_session_outlives_the_record_that_hub_stop_clears() {
+        let _sandbox = Sandbox::empty();
+        claim_ours("acme-widget", "adjutant-acme-widget");
+        save_hub_session(
+            "acme-widget",
+            "acme/widget",
+            None,
+            "adjutant-acme-widget",
+            "sid-1",
+        )
+        .unwrap();
+        unregister_hub("acme-widget").unwrap();
+        let saved = hub_session("acme-widget").expect("the session went with the record");
+        assert_eq!(saved.session_id, "sid-1");
+        assert_eq!(saved.hub, None);
+        assert_eq!(saved.hub_name.as_deref(), Some("adjutant-acme-widget"));
+    }
+
+    #[test]
+    fn a_repositorys_resumable_hubs_are_listed_its_own_first() {
+        let _sandbox = Sandbox::empty();
+        save_hub_session(
+            "w-alpha",
+            "acme/widget",
+            Some("ALPHA-1"),
+            "adjutant-w-alpha",
+            "a",
+        )
+        .unwrap();
+        save_hub_session("w", "acme/widget", None, "adjutant-w", "b").unwrap();
+        save_hub_session("other", "acme/other", None, "adjutant-other", "c").unwrap();
+        let found = hub_sessions_for("acme/widget");
+        assert_eq!(
+            found
+                .iter()
+                .map(|s| s.session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["b", "a"]
+        );
+    }
+
+    #[test]
+    fn last_alive_is_only_an_answer_about_the_session_it_names() {
+        let _sandbox = Sandbox::empty();
+        assert_eq!(hub_last_alive("acme-widget", "sid-1"), None);
+        touch_hub_session("acme-widget", "sid-1").unwrap();
+        let last = hub_last_alive("acme-widget", "sid-1").expect("the beat was not recorded");
+        assert!((now_secs() - last).abs() < 5, "{last}");
+        // An old hub's server beating after a new hub saved its own session says nothing
+        // about the new one.
+        assert_eq!(hub_last_alive("acme-widget", "sid-2"), None);
+        // And the beat is not a session: listing what can be resumed does not read it.
+        assert!(hub_sessions_for("acme/widget").is_empty());
+    }
+
+    #[test]
+    fn a_worker_session_carries_what_the_worker_was_started_with() {
+        let dir = tempfile::tempdir().unwrap();
+        save_worker_session(dir.path(), "WID-1 fix", Some("ALPHA-1"), "sid-w").unwrap();
+        // `close` clears the presence record; the session is not its to clear.
+        register_worker(dir.path(), "WID-1 fix", Some("ALPHA-1")).unwrap();
+        unregister_worker(dir.path()).unwrap();
+        let saved = worker_session(dir.path()).unwrap();
+        assert_eq!(saved.session_id, "sid-w");
+        assert_eq!(saved.title.as_deref(), Some("WID-1 fix"));
+        assert_eq!(saved.hub.as_deref(), Some("ALPHA-1"));
+    }
+
+    #[test]
+    fn a_session_file_without_an_id_names_nothing_to_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = worker_session_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"sessionId": "  ", "title": "t"}"#).unwrap();
+        assert_eq!(worker_session(dir.path()), None);
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(worker_session(dir.path()), None);
     }
 
     #[test]

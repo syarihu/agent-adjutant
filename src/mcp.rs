@@ -521,7 +521,48 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
 /// runaway writer cannot spend the machine's memory before it is answered.
 const MAX_LINE: usize = 8 * 1024 * 1024;
 
+/// How often a hub's MCP server says the hub is still there. The error in "when did it
+/// end" is at most this, for an ending that gave the server no chance to say so itself.
+const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Which hub session this server is running under, if any — `ADJUTANT_HUB_SESSION`, put on
+/// the line `adj hub` execs and inherited from the agent.
+fn hub_session() -> Option<(String, String)> {
+    let value = std::env::var(messaging::HUB_SESSION_ENV).ok()?;
+    let (slug, session) = value.trim().split_once('/')?;
+    (!slug.is_empty() && !session.is_empty()).then(|| (slug.to_string(), session.to_string()))
+}
+
+/// Keep the hub's `lastAlive` current for as long as this server runs.
+///
+/// The server is the agent's child and lives exactly as long as the session does, which is
+/// what `adj hub` cannot see for itself: it has `exec`ed into the agent and is gone. A
+/// thread rather than a timer in the loop, because the loop sits in a blocking read for as
+/// long as the hub is idle — which is most of the time.
+fn start_heartbeat() -> Option<(String, String)> {
+    let (slug, session) = hub_session()?;
+    let (beat_slug, beat_session) = (slug.clone(), session.clone());
+    std::thread::spawn(move || {
+        loop {
+            let _ = messaging::touch_hub_session(&beat_slug, &beat_session);
+            std::thread::sleep(HEARTBEAT);
+        }
+    });
+    Some((slug, session))
+}
+
 pub fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    let heartbeat = start_heartbeat();
+    let served = serve_stdio();
+    // The client closed the pipe: the session is ending now, which is a better answer than
+    // the last beat. Written on the way out whatever the loop ended with.
+    if let Some((slug, session)) = &heartbeat {
+        let _ = messaging::touch_hub_session(slug, session);
+    }
+    served
+}
+
+fn serve_stdio() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
     // Bytes, not `lines()`. `lines()` hands back an error for a line that is not valid

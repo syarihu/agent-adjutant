@@ -397,9 +397,14 @@ pub fn work(
     hub_arg: Option<&str>,
     worktree: &str,
     title: &str,
-    prompt: &str,
+    prompt: Option<&str>,
+    resume: bool,
     dry_run: bool,
 ) -> Result<(), String> {
+    if resume {
+        return work_resumed(repo_arg, hub_arg, worktree, title, prompt, dry_run);
+    }
+    let prompt = prompt.unwrap_or(runner::WORKER_STARTUP_PROMPT);
     // The dispatching side: the identifier being handed to the new worker is this caller's
     // own, never one read out of some worktree it happens to be standing in.
     let ctx = context_as(repo_arg, hub_arg)?;
@@ -432,6 +437,75 @@ pub fn work(
     // `ADJUTANT_HUB`, where no flag parser has seen it, and as a separate word clap reads it
     // as the next option instead of as this one's value.
     if let Some(hub) = &ctx.repo.hub {
+        parts.push(format!("--hub={hub}"));
+    }
+    let name_it = title_command(&ctx.settings, title);
+    let done = terminal::spawn(
+        ctx.settings.terminal.spawn.as_deref(),
+        &SpawnRequest {
+            cwd: &worktree,
+            title,
+            command: &crate::template::sh_join(&parts),
+            title_command: name_it.as_deref(),
+        },
+        dry_run,
+    )?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(())
+}
+
+/// Open a tab that reopens the worker session saved in `worktree`.
+///
+/// Unlike a fresh dispatch, the hub is *not* this caller's: the worker goes back under
+/// whichever hub dispatched it, which the saved session remembers and `adj worker --resume`
+/// reads for itself. So nothing is forwarded unless it was said outright — forwarding the
+/// caller's own identifier would re-file the worker under whoever happened to reopen it.
+fn work_resumed(
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    worktree: &str,
+    title: &str,
+    prompt: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let ctx = context_without_hub(repo_arg)?;
+    let worktree = worker_worktree(Some(worktree))?;
+    // Refused here rather than in the tab, so the caller — often a hub — hears about it.
+    let saved = saved_worker_session(&worktree)?;
+    resume_template(
+        ctx.settings.agent_resume_runner.as_deref(),
+        "agentResumeRunner",
+    )?;
+    let worktree = worktree.to_string_lossy().to_string();
+    let title = match title {
+        "" => saved.title.as_deref().unwrap_or(""),
+        given => given,
+    };
+    let mut parts = forwarded_env();
+    parts.extend([
+        exe_path(),
+        "worker".to_string(),
+        "--resume".to_string(),
+        "--worktree".to_string(),
+        worktree.clone(),
+    ]);
+    if !title.is_empty() {
+        parts.push("--title".to_string());
+        parts.push(title.to_string());
+    }
+    if let Some(prompt) = prompt {
+        parts.push("--prompt".to_string());
+        parts.push(prompt.to_string());
+    }
+    if let Some(repo) = repo_arg {
+        parts.push("--repo".to_string());
+        parts.push(repo.to_string());
+    }
+    if let Some(hub) = hub_arg.map(str::trim).filter(|hub| !hub.is_empty()) {
         parts.push(format!("--hub={hub}"));
     }
     let name_it = title_command(&ctx.settings, title);
@@ -906,6 +980,7 @@ fn open_hub_tab(
     ctx: &Context,
     repo_arg: Option<&str>,
     extra: &[String],
+    start: HubStart,
     dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
@@ -932,6 +1007,14 @@ fn open_hub_tab(
         Some(true) => parts.push("--dashboard".to_string()),
         Some(false) => parts.push("--no-dashboard".to_string()),
         None => {}
+    }
+    // Above the separator for the same reason, and dropped just as silently if it were not
+    // here: the tab would decide for itself what it had been told. `Auto` is left to it —
+    // deciding is what a plain `adj hub` does.
+    match start {
+        HubStart::Resume => parts.push("--resume".to_string()),
+        HubStart::New => parts.push("--new".to_string()),
+        HubStart::Auto => {}
     }
     // The separator is put back because clap takes everything after it as the trailing
     // argument, and `strip_separator` at the far end takes it off again.
@@ -980,6 +1063,7 @@ pub fn hub(
     hub_arg: Option<&str>,
     extra: &[String],
     tab: bool,
+    start: HubStart,
     dashboard: Option<bool>,
     dry_run: bool,
 ) -> Result<(), String> {
@@ -1012,6 +1096,18 @@ pub fn hub(
     if status.present {
         return go_to_running_hub(&ctx, &status, dry_run);
     }
+    // Looked up before either route, so that asking for a session that is not there is
+    // refused here, in the tab it was typed in — not in a tab opened to show the refusal.
+    // The template is checked here too, for the same reason: on the tab route the refusal
+    // would otherwise come from inside a tab this one had already reported as opened.
+    let asked = match start {
+        HubStart::Resume => {
+            let saved = saved_hub_session(&ctx)?;
+            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
+            Some(saved)
+        }
+        HubStart::Auto | HubStart::New => None,
+    };
     // Below the presence check, and deliberately: one hub per address is the invariant, and
     // opening a tab for one that is already up would break it in the one way nothing later
     // repairs — two sessions answering to the same name, with the record naming one of them.
@@ -1037,14 +1133,53 @@ pub fn hub(
             messaging::Liveness::Alive => return go_to_running_hub(&ctx, &status, dry_run),
             messaging::Liveness::Gone => {}
         }
-        return open_hub_tab(&ctx, repo_arg, extra, dashboard, dry_run);
+        return open_hub_tab(&ctx, repo_arg, extra, start, dashboard, dry_run);
     }
-    let mut command = runner::hub_command(
-        ctx.settings.hub_runner.as_deref(),
-        &hub_env(&ctx, dashboard),
-        &ctx.repo.hub_name,
-        runner::HUB_STARTUP_PROMPT,
-    );
+    // Only on this route: the tab route hands the question to the `adj hub` in the new tab,
+    // which asks it a moment later with the same answer.
+    let resumed = match start {
+        HubStart::Auto => recent_hub_session(&ctx),
+        _ => asked,
+    };
+    // The id a fresh hub is started into, when its runner has somewhere to put one. Written
+    // down only once the claim is won, below: a launch that loses the claim started nothing,
+    // and saving its id would point the next `--resume` at a conversation that never began.
+    let session = match &resumed {
+        Some(saved) => saved.session_id.clone(),
+        None => messaging::new_session_id()?,
+    };
+    let records = resumed.is_some()
+        || runner::records_session(
+            ctx.settings.hub_runner.as_deref(),
+            runner::DEFAULT_HUB_RUNNER,
+        );
+    let mut env = hub_env(&ctx, dashboard);
+    // The session this hub runs as, for the MCP server the agent is about to start: it is
+    // what keeps `lastAlive` current, and what the next plain `adj hub` reads to decide
+    // whether to come back to this one. Absent for a runner that records no session, since
+    // there would be nothing to come back to.
+    if records {
+        env.push((
+            messaging::HUB_SESSION_ENV.to_string(),
+            messaging::hub_session_env(&ctx.repo.slug, &session),
+        ));
+    }
+    let mut command = match &resumed {
+        Some(_) => runner::hub_resume_command(
+            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?,
+            &env,
+            &ctx.repo.hub_name,
+            &session,
+            runner::HUB_RESUME_PROMPT,
+        ),
+        None => runner::hub_command(
+            ctx.settings.hub_runner.as_deref(),
+            &env,
+            &ctx.repo.hub_name,
+            &session,
+            runner::HUB_STARTUP_PROMPT,
+        ),
+    };
     if !extra.is_empty() {
         command = format!("{command} {}", crate::template::sh_join(extra));
     }
@@ -1070,17 +1205,155 @@ pub fn hub(
         messaging::Claim::Ours => {}
         messaging::Claim::Taken(status) => return go_to_running_hub(&ctx, &status, dry_run),
     }
-    println!("starting {} in {}", ctx.repo.hub_name, ctx.repo.main);
+    // A hub that cannot be resumed later is still a hub, so failing to write this down is
+    // said and then got past — refusing to start over it would trade a working hub for a
+    // convenience.
+    //
+    // A fresh hub whose runner records no session replaces what was saved with nothing, so
+    // that nothing can later reopen the conversation of the hub before it.
+    if resumed.is_none() {
+        let saved = match records {
+            true => messaging::save_hub_session(
+                &ctx.repo.slug,
+                &ctx.repo.nwo,
+                ctx.repo.hub.as_deref(),
+                &ctx.repo.hub_name,
+                &session,
+            )
+            .map(|_| ()),
+            false => messaging::forget_hub_session(&ctx.repo.slug),
+        };
+        if let Err(e) = saved {
+            eprintln!("adjutant: {e}; --resume may not reopen this hub");
+        }
+    }
+    match &resumed {
+        Some(saved) => println!(
+            "resuming {} (session {}) in {}",
+            ctx.repo.hub_name, saved.session_id, ctx.repo.main
+        ),
+        None => println!("starting {} in {}", ctx.repo.hub_name, ctx.repo.main),
+    }
 
     // `exec` keeps the PID, which is the whole point: the record written a line ago has to
     // name the process a worker will later check for.
+    // Removed and then set on the line itself, so the only value the agent — and so its MCP
+    // server — can see is this hub's own, never one inherited from whatever started this.
     let error = std::process::Command::new("sh")
         .arg("-c")
         .arg(&command)
+        .env_remove(messaging::HUB_SESSION_ENV)
         .exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
     let _ = messaging::unregister_hub(&ctx.repo.slug);
     Err(format!("cannot start the hub: {error}"))
+}
+
+/// How `adj hub` decides between a new session and the one it had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HubStart {
+    /// Resume when the last session ended within `hubAutoResumeHours`, start fresh otherwise.
+    Auto,
+    /// `--resume`: the saved session, or a refusal.
+    Resume,
+    /// `--new`: a fresh session whatever was saved.
+    New,
+}
+
+/// The saved session a plain `adj hub` comes back to, if it ended recently enough.
+///
+/// "Ended" is the last time the hub's MCP server said the session was alive — it beats
+/// every minute and once more as the agent closes it. Where nothing has said so (no MCP
+/// server, a runner that is not the agent this knows, a session saved by an older version)
+/// there is no answer, and no answer starts fresh: coming back uninvited to a conversation of
+/// unknown age is worse than one clean start too many.
+fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
+    let window = ctx.settings.hub_auto_resume_hours;
+    if window <= 0.0 {
+        return None;
+    }
+    let saved = messaging::hub_session(&ctx.repo.slug)?;
+    let last = messaging::hub_last_alive(&ctx.repo.slug, &saved.session_id)?;
+    let age = messaging::now_secs().saturating_sub(last).max(0);
+    if age as f64 > window * 3600.0 {
+        return None;
+    }
+    // A resume template that cannot be told the session would make this refuse, and a
+    // refusal is the wrong answer to a command that was not asked to resume anything.
+    if resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner").is_err() {
+        eprintln!("adjutant: not resuming the last session: hubResumeRunner has no {{sessionId}}");
+        return None;
+    }
+    // A hub started by a runner of its own would be reopened by the built-in one — without
+    // whatever that runner added, or as another agent entirely. Asked for outright, that is
+    // the person's call and `--resume` makes it; uninvited, it is not.
+    if ctx.settings.hub_runner.is_some() && ctx.settings.hub_resume_runner.is_none() {
+        eprintln!(
+            "adjutant: not resuming the last session: hubRunner is your own and hubResumeRunner \
+             is not set, so the built-in one would reopen it"
+        );
+        return None;
+    }
+    eprintln!(
+        "adjutant: resuming the session that ended {} ago (within hubAutoResumeHours); \
+         `adj hub --new` starts a fresh one instead",
+        ago(age)
+    );
+    Some(saved)
+}
+
+/// "12 min", "2 h 5 min": how long ago, the way a person reads it.
+fn ago(secs: i64) -> String {
+    let minutes = secs / 60;
+    match minutes {
+        0 => "less than a minute".to_string(),
+        1..=59 => format!("{minutes} min"),
+        _ => format!("{} h {} min", minutes / 60, minutes % 60),
+    }
+}
+
+/// The session `adj hub --resume` reopens, or a refusal that says what can be resumed.
+///
+/// Asking for a hub that has nothing saved is most often asking for the wrong one — the
+/// repository's own hub when it was a parent task's, or the other way round — so the refusal
+/// lists what this repository does have rather than only saying "no".
+fn saved_hub_session(ctx: &Context) -> Result<messaging::SavedSession, String> {
+    if let Some(saved) = messaging::hub_session(&ctx.repo.slug) {
+        return Ok(saved);
+    }
+    let mut message = format!("{} has no saved session to resume.", ctx.repo.hub_name);
+    let others = messaging::hub_sessions_for(&ctx.repo.nwo);
+    if others.is_empty() {
+        message.push_str(&format!(" No hub of {} has one.", ctx.repo.nwo));
+    } else {
+        message.push_str(" These can be resumed:");
+        for other in others {
+            let command = match &other.hub {
+                Some(hub) => format!("adj hub --resume --hub {}", crate::template::sh_quote(hub)),
+                None => "adj hub --resume".to_string(),
+            };
+            message.push_str(&format!("\n  {command}"));
+        }
+    }
+    message.push_str(
+        "\nA session is saved when a hub is started by a runner that takes {sessionId} \
+         (the built-in one does). Start a new one with `adj hub`.",
+    );
+    Err(message)
+}
+
+/// The resume template to use, refusing one that has nowhere to put the session id.
+///
+/// Without `{sessionId}` the agent is not told which conversation to reopen, and opens
+/// whichever one it would pick on its own — which for a hub in the main checkout is as likely
+/// to be somebody's unrelated work. Refusing is the one answer that cannot be that.
+fn resume_template<'a>(configured: Option<&'a str>, key: &str) -> Result<Option<&'a str>, String> {
+    match configured {
+        Some(template) if !runner::records_session(Some(template), "") => Err(format!(
+            "{key} has no {{sessionId}}, so it cannot be told which session to reopen"
+        )),
+        other => Ok(other),
+    }
 }
 
 /// Start the worker agent in the tab `work` just opened.
@@ -1091,21 +1364,34 @@ pub fn hub(
 pub fn worker(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
-    worktree: &str,
-    title: &str,
-    prompt: &str,
+    worktree: Option<&str>,
+    title: Option<&str>,
+    prompt: Option<&str>,
+    resume: bool,
     dry_run: bool,
 ) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    let worktree = config::expand_home(worktree);
-    if !worktree.is_dir() {
-        return Err(format!("no such worktree: {}", worktree.display()));
-    }
+    let worktree = worker_worktree(worktree)?;
+    let resumed = match resume {
+        true => Some(saved_worker_session(&worktree)?),
+        false => None,
+    };
     // This tab was opened *at* the worktree, so `context` would read the record this is
     // about to replace. A worker that crashed without being closed leaves one behind, and
     // re-dispatching that task would file the new worker under the hub that ran the old.
-    let ctx = context_as(repo_arg, hub_arg)?;
+    //
+    // A resumed worker goes back under the hub that dispatched it, which the saved session
+    // remembers — ahead of `ADJUTANT_HUB`, because the tab someone types `--resume` into
+    // may have inherited that from a different hub entirely. Only an explicit `--hub`
+    // outranks it.
+    let ctx = match &resumed {
+        Some(saved) => {
+            let told = hub_arg.map(str::trim).filter(|hub| !hub.is_empty());
+            context_of(repo::resolve(repo_arg, told.or(saved.hub.as_deref()))?)?
+        }
+        None => context_as(repo_arg, hub_arg)?,
+    };
     let status = messaging::worker_status(&worktree);
     if status.present {
         println!(
@@ -1115,18 +1401,47 @@ pub fn worker(
         return Ok(());
     }
 
-    let command = runner::worker_command(
-        ctx.settings.agent_runner.as_deref(),
-        &ctx.settings.agent_env,
-        prompt,
-        &worktree.to_string_lossy(),
-        title,
-    );
+    let worktree_text = worktree.to_string_lossy().to_string();
+    let title = title
+        .filter(|title| !title.is_empty())
+        .or(resumed.as_ref().and_then(|saved| saved.title.as_deref()))
+        .unwrap_or("")
+        .to_string();
+    let (command, fresh_session) = match &resumed {
+        Some(saved) => {
+            let template = resume_template(
+                ctx.settings.agent_resume_runner.as_deref(),
+                "agentResumeRunner",
+            )?;
+            let command = runner::worker_resume_command(
+                template,
+                &ctx.settings.agent_env,
+                &saved.session_id,
+                prompt.unwrap_or(runner::WORKER_RESUME_PROMPT),
+                &worktree_text,
+                &title,
+            );
+            (command, None)
+        }
+        None => {
+            let session = messaging::new_session_id()?;
+            let command = runner::worker_command(
+                ctx.settings.agent_runner.as_deref(),
+                &ctx.settings.agent_env,
+                &session,
+                prompt.unwrap_or(runner::WORKER_STARTUP_PROMPT),
+                &worktree_text,
+                &title,
+            );
+            let records = runner::records_session(
+                ctx.settings.agent_runner.as_deref(),
+                runner::DEFAULT_AGENT_RUNNER,
+            );
+            (command, records.then_some(session))
+        }
+    };
     if dry_run {
-        println!(
-            "cd {}",
-            crate::template::sh_quote(&worktree.to_string_lossy())
-        );
+        println!("cd {}", crate::template::sh_quote(&worktree_text));
         println!("{command}");
         return Ok(());
     }
@@ -1135,14 +1450,58 @@ pub fn worker(
         .map_err(|e| format!("cannot change directory to {}: {e}", worktree.display()))?;
     // The address goes into the record here, at the last moment before this process stops
     // being a launcher. Everything the worker's agent later sends is addressed from it.
-    messaging::register_worker(&worktree, title, ctx.repo.hub.as_deref())?;
+    messaging::register_worker(&worktree, &title, ctx.repo.hub.as_deref())?;
+    // Said and got past, as for the hub: a worker that cannot be resumed still works. And as
+    // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
+    if resumed.is_none() {
+        let saved = match &fresh_session {
+            Some(session) => {
+                messaging::save_worker_session(&worktree, &title, ctx.repo.hub.as_deref(), session)
+                    .map(|_| ())
+            }
+            None => messaging::forget_worker_session(&worktree),
+        };
+        if let Err(e) = saved {
+            eprintln!("adjutant: {e}; --resume may not reopen this worker");
+        }
+    }
 
+    // A worker is not a hub. A tab opened by a spawn command that passes its environment on
+    // would otherwise hand the hub's session to this agent's MCP server, which would then
+    // keep saying the hub is alive for as long as the worker runs.
     let error = std::process::Command::new("sh")
         .arg("-c")
         .arg(&command)
+        .env_remove(messaging::HUB_SESSION_ENV)
         .exec();
     let _ = messaging::unregister_worker(&worktree);
     Err(format!("cannot start the worker: {error}"))
+}
+
+/// The worktree a worker runs in: the one named, or — for `--resume`, typed by a person
+/// standing in it — the one this command was run from.
+fn worker_worktree(worktree: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let worktree = match worktree {
+        Some(path) => config::expand_home(path),
+        None => repo::current_worktree(None)
+            .map(std::path::PathBuf::from)
+            .ok_or("not inside a git worktree; pass --worktree")?,
+    };
+    if !worktree.is_dir() {
+        return Err(format!("no such worktree: {}", worktree.display()));
+    }
+    Ok(worktree)
+}
+
+/// The session `--resume` reopens in `worktree`, or a refusal that says why there is none.
+fn saved_worker_session(worktree: &std::path::Path) -> Result<messaging::SavedSession, String> {
+    messaging::worker_session(worktree).ok_or_else(|| {
+        format!(
+            "no saved worker session in {}: a session is saved when a worker is started by \
+             `adj work` with a runner that takes {{sessionId}} (the built-in one does)",
+            worktree.display()
+        )
+    })
 }
 
 /// Leave a message for the worker in a worktree, and poke it if it is sitting there.
