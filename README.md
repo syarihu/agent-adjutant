@@ -253,8 +253,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
-| `startupDashboard` | — (`true` / `false`) | `true` |
 | `hubAutoResumeHours` | — (a number, `0` to turn it off) | `3` |
+| `startupDashboard` | — (`true` / `false`) | `true` |
 | | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
