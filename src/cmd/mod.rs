@@ -392,6 +392,66 @@ fn forwarded_env() -> Vec<String> {
     parts
 }
 
+/// What `adj work` exits with when `maxWorkers` is reached. Its own code rather than the
+/// usual 1, because the caller is usually a hub, and "full, try later" is the one refusal it
+/// should answer by leaving the task queued instead of reporting a failure.
+pub const WORKER_LIMIT_EXIT: i32 = 3;
+
+/// Refuse when `maxWorkers` workers are already running in this checkout, and otherwise mark
+/// `worktree` as taken so the next dispatch in the same turn counts it.
+///
+/// Counted per checkout rather than per hub: two hubs on one repository share the machine
+/// the limit is protecting. `Ok(Some(message))` is the refusal, kept apart from `Err` so the
+/// caller can give it its own exit code.
+fn claim_worker_slot(
+    ctx: &Context,
+    worktree: &std::path::Path,
+    dry_run: bool,
+) -> Result<Option<String>, String> {
+    let Some(max) = ctx.settings.max_workers else {
+        if !dry_run {
+            messaging::mark_worker_starting(worktree)?;
+        }
+        return Ok(None);
+    };
+    let main = std::path::Path::new(&ctx.repo.main);
+    messaging::with_dispatch_lock(main, || {
+        let busy =
+            messaging::busy_worktrees(&repo::linked_worktrees(&ctx.repo.main), Some(worktree));
+        if busy.len() >= max as usize {
+            return Ok(Some(format!(
+                "worker limit reached: {} of maxWorkers {max} are running ({}). \
+                 Nothing was started; leave the task queued and dispatch it when one finishes",
+                busy.len(),
+                busy.join(", ")
+            )));
+        }
+        if !dry_run {
+            messaging::mark_worker_starting(worktree)?;
+        }
+        Ok(None)
+    })?
+}
+
+/// Open the tab, and give the slot back if it never opened.
+fn spawn_worker(
+    ctx: &Context,
+    worktree: &str,
+    request: &SpawnRequest<'_>,
+    dry_run: bool,
+) -> Result<i32, String> {
+    let done = terminal::spawn(ctx.settings.terminal.spawn.as_deref(), request, dry_run)
+        .inspect_err(|_| {
+            let _ = messaging::unmark_worker_starting(std::path::Path::new(worktree));
+        })?;
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+    Ok(0)
+}
+
 pub fn work(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
@@ -400,7 +460,7 @@ pub fn work(
     prompt: Option<&str>,
     resume: bool,
     dry_run: bool,
-) -> Result<(), String> {
+) -> Result<i32, String> {
     if resume {
         return work_resumed(repo_arg, hub_arg, worktree, title, prompt, dry_run);
     }
@@ -409,6 +469,16 @@ pub fn work(
     // own, never one read out of some worktree it happens to be standing in.
     let ctx = context_as(repo_arg, hub_arg)?;
     let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+    // Asked here and not left to the spawn, because marking the slot writes into the
+    // worktree and would create the very directory the spawn checks for — a mistyped path
+    // would then open a tab in an empty directory outside any repository.
+    if !std::path::Path::new(&worktree).is_dir() {
+        return Err(format!("no such directory: {worktree}"));
+    }
+    if let Some(refusal) = claim_worker_slot(&ctx, std::path::Path::new(&worktree), dry_run)? {
+        eprintln!("adjutant: {refusal}");
+        return Ok(WORKER_LIMIT_EXIT);
+    }
     // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
     // process that has already written down its own PID and then `exec`s itself away, which
     // is the only way anyone later gets to ask "is that worker still there".
@@ -440,8 +510,9 @@ pub fn work(
         parts.push(format!("--hub={hub}"));
     }
     let name_it = title_command(&ctx.settings, title);
-    let done = terminal::spawn(
-        ctx.settings.terminal.spawn.as_deref(),
+    spawn_worker(
+        &ctx,
+        &worktree,
         &SpawnRequest {
             cwd: &worktree,
             title,
@@ -449,13 +520,7 @@ pub fn work(
             title_command: name_it.as_deref(),
         },
         dry_run,
-    )?;
-    if dry_run {
-        println!("{}", done.script);
-    } else {
-        println!("{}", done.description);
-    }
-    Ok(())
+    )
 }
 
 /// Open a tab that reopens the worker session saved in `worktree`.
@@ -471,7 +536,7 @@ fn work_resumed(
     title: &str,
     prompt: Option<&str>,
     dry_run: bool,
-) -> Result<(), String> {
+) -> Result<i32, String> {
     let ctx = context_without_hub(repo_arg)?;
     let worktree = worker_worktree(Some(worktree))?;
     // Refused here rather than in the tab, so the caller — often a hub — hears about it.
@@ -480,6 +545,11 @@ fn work_resumed(
         ctx.settings.agent_resume_runner.as_deref(),
         "agentResumeRunner",
     )?;
+    // A reopened worker is as much a process as a fresh one.
+    if let Some(refusal) = claim_worker_slot(&ctx, &worktree, dry_run)? {
+        eprintln!("adjutant: {refusal}");
+        return Ok(WORKER_LIMIT_EXIT);
+    }
     let worktree = worktree.to_string_lossy().to_string();
     let title = match title {
         "" => saved.title.as_deref().unwrap_or(""),
@@ -509,8 +579,9 @@ fn work_resumed(
         parts.push(format!("--hub={hub}"));
     }
     let name_it = title_command(&ctx.settings, title);
-    let done = terminal::spawn(
-        ctx.settings.terminal.spawn.as_deref(),
+    spawn_worker(
+        &ctx,
+        &worktree,
         &SpawnRequest {
             cwd: &worktree,
             title,
@@ -518,13 +589,7 @@ fn work_resumed(
             title_command: name_it.as_deref(),
         },
         dry_run,
-    )?;
-    if dry_run {
-        println!("{}", done.script);
-    } else {
-        println!("{}", done.description);
-    }
-    Ok(())
+    )
 }
 
 pub fn focus(

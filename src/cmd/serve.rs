@@ -243,6 +243,7 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
+        ("POST", "/api/hub/next") => reply(out, nudge_hub(server)),
         ("POST", path) if path.starts_with("/api/gates/") => {
             reply(out, answer_gate(server, req.tail(), &req.body))
         }
@@ -270,11 +271,16 @@ fn state(server: &Server) -> Value {
         .filter_map(|t| serde_json::to_value(t).ok())
         .collect();
 
-    let workers: Vec<Value> = worktrees(&repo.main)
+    let now = messaging::now_secs();
+    let mut busy = 0;
+    let workers: Vec<Value> = crate::repo::linked_worktrees(&repo.main)
         .into_iter()
-        .filter(|path| Path::new(path) != Path::new(&repo.main))
         .map(|path| {
             let status = messaging::worker_status(Path::new(&path));
+            // `holds_worker_slot`, from the status already in hand rather than a second `ps`.
+            if status.present || messaging::is_starting(Path::new(&path), now) {
+                busy += 1;
+            }
             json!({
                 "worktree": path,
                 "name": Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()),
@@ -311,24 +317,25 @@ fn state(server: &Server) -> Value {
         },
         "tasks": tasks,
         "workers": workers,
+        // The slot count `adj work` decides by, counted the same way — a worker still
+        // starting up holds one — so the header and the refusal cannot disagree.
+        "workerSlots": {
+            "busy": busy,
+            "max": max_workers(server),
+        },
         "pending": pending,
         "gates": gate::list(&super::gate::dir(&server.ctx)),
     })
 }
 
-/// The worktrees of this checkout, main one included, as absolute paths.
-fn worktrees(main: &str) -> Vec<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", main, "worktree", "list", "--porcelain"])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .map(str::to_string)
-        .collect()
+/// `maxWorkers` as `adj work` would read it now. Resolved on every poll rather than taken
+/// from the settings the server started with, because `adj work` reads the config each time
+/// it runs, and a limit changed under a running board would otherwise show one number while
+/// dispatches are refused by another.
+fn max_workers(server: &Server) -> Option<u32> {
+    crate::config::resolve_config(&server.ctx.repo.nwo)
+        .map(|resolved| resolved.settings.max_workers)
+        .unwrap_or(server.ctx.settings.max_workers)
 }
 
 fn branch_of(worktree: &str) -> Option<String> {
@@ -352,6 +359,11 @@ fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
     let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
     let (task, handed) = super::task::update(&server.ctx, id, &input)?;
     Ok(json!({ "task": task, "handed": handed_json(handed) }))
+}
+
+fn nudge_hub(server: &Server) -> Result<Value, String> {
+    let handed = super::task::nudge(&server.ctx)?;
+    Ok(json!({ "handed": handed_json(Some(handed)) }))
 }
 
 fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {

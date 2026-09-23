@@ -522,3 +522,60 @@ fn a_hub_with_a_runner_of_its_own_is_not_resumed_by_the_built_in_one_uninvited()
         "{resumed}"
     );
 }
+
+#[test]
+fn reopening_a_worker_is_held_to_max_workers_like_starting_one() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["maxWorkers"] = serde_json::json!(1);
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+
+    let mut worktrees = Vec::new();
+    for name in ["wid-1", "wid-2"] {
+        let path = fixture.repo.parent().unwrap().join(name);
+        let out = std::process::Command::new("git")
+            .args(["worktree", "add", "-q", "-b", name])
+            .arg(&path)
+            .current_dir(&fixture.repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        worktrees.push(
+            std::fs::canonicalize(path)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
+    }
+    let (busy, crashed) = (&worktrees[0], &worktrees[1]);
+    // A worker that ran and ended, leaving its session behind to be reopened.
+    fixture.ok(&["worker", "--worktree", crashed, "--title", "WID-2"]);
+    // And one just dispatched into the other worktree, taking the only slot.
+    let marker = Path::new(busy).join(".claude");
+    std::fs::create_dir_all(&marker).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        marker.join("adjutant-worker-starting.json"),
+        format!(r#"{{"at": {now}}}"#),
+    )
+    .unwrap();
+
+    let out = fixture.cmd(&["work", "--resume", "--worktree", crashed, "--dry-run"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    // Refused before anything was touched: the session is still there to reopen later.
+    saved_session(
+        &Path::new(crashed)
+            .join(".claude")
+            .join("adjutant-session.json"),
+    );
+}

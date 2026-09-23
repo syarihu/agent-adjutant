@@ -138,7 +138,7 @@ enum Commands {
         /// Who is sending: your session or worktree name
         #[arg(long)]
         from: Option<String>,
-        /// report | question | answer | ack | done | needs-user
+        /// report | question | answer | ack | done | needs-user | request | next
         #[arg(long, default_value = "report")]
         kind: String,
         /// One line stating the conclusion
@@ -167,7 +167,7 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
-    /// Open a tab and start a worker agent on a worktree
+    /// Open a tab and start a worker agent on a worktree; exit 3 if maxWorkers are already running
     Work {
         #[arg(long)]
         repo: Option<String>,
@@ -503,6 +503,10 @@ enum TaskAction {
         /// Hand it to the hub now, rather than leaving it in the backlog
         #[arg(long)]
         queue: bool,
+        /// Queue it with this worktree already made, sending the hub nothing — for the hub
+        /// itself, when `adj work` refused because maxWorkers were running
+        #[arg(long, value_name = "WORKTREE", conflicts_with = "queue")]
+        waiting_in: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -629,8 +633,7 @@ pub fn run() -> ! {
             prompt.as_deref(),
             *resume,
             *dry_run,
-        )
-        .map(|_| 0),
+        ),
         // Exit 1 when the hub is not running, so a shell can branch on it without parsing
         // anything this prints.
         Commands::Worker {
@@ -801,6 +804,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             worktree_name,
             ask_first,
             queue,
+            waiting_in,
             json,
         } => cmd::task_add(&cmd::AddArgs {
             repo: repo.as_deref(),
@@ -815,6 +819,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             worktree_name: worktree_name.as_deref(),
             ask_first: *ask_first,
             queue: *queue,
+            waiting_in: waiting_in.as_deref(),
             json: *json,
         }),
         TaskAction::List {

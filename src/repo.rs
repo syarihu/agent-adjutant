@@ -91,6 +91,23 @@ pub fn main_worktree(start: Option<&Path>) -> Result<String, String> {
     Err("cannot locate the main checkout".to_string())
 }
 
+/// The worktrees hanging off `main`, the main checkout itself left out, as absolute paths.
+///
+/// Left out because the main checkout is where the hub sits, never a worker, and every
+/// caller here is asking about workers. Empty when git cannot answer: the question is always
+/// "which of these is busy", and no list is read as none busy rather than as an error.
+pub fn linked_worktrees(main: &str) -> Vec<String> {
+    let Ok(out) = git(&["worktree", "list", "--porcelain"], Some(Path::new(main))) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .filter(|path| Path::new(path) != Path::new(main))
+        .map(str::to_string)
+        .collect()
+}
+
 /// `owner/name` from a remote URL.
 ///
 /// Taking the *last two* path segments makes `git@host:o/r`, `https://host/o/r`,

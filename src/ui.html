@@ -63,6 +63,10 @@ main { flex:1; overflow:hidden; position:relative; }
   display:flex; align-items:center; gap:6px; flex-wrap:wrap; white-space:nowrap; }
 .col > h2 .n { color:var(--muted); font-weight:400; font-variant-numeric:tabular-nums; }
 .col > h2 .hint { margin-left:auto; color:var(--muted); font-weight:400; font-size:11px; }
+.col > h2 .hint.full { color:var(--warning); }
+.col > h2 .next { border:1px solid var(--border); background:transparent; color:var(--ink-2);
+  border-radius:6px; padding:1px 7px; font-size:11px; cursor:pointer; }
+.col > h2 .next:hover { border-color:var(--ink-2); color:var(--ink); }
 .col.drop-ok { outline:2px dashed var(--good); outline-offset:1px; }
 .col .empty { color:var(--muted); padding:6px 4px; }
 
@@ -500,13 +504,23 @@ function columnEl(col) {
   // says 0 above four cards is a column nobody believes again.
   const shownCards = el.querySelectorAll('.card').length;
   if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
-  const live = (state.workers || []).filter(w => w.present).length;
+  // Slots rather than cards: a worker parked at a gate sits in 要対応 and still holds one,
+  // and a worker still starting up holds one before it shows anywhere.
+  const slots = state.workerSlots || {};
+  const busy = slots.busy ?? (state.workers || []).filter(w => w.present).length;
+  const full = slots.max != null && busy >= slots.max;
   let hint = col.hint;
-  if (col.id === 'working') hint = `worker ${live}`;
+  if (col.id === 'working') hint = slots.max != null ? `worker ${busy}/${slots.max}` + (full ? ' ⚠満' : '') : `worker ${busy}`;
   if (col.id === 'attention') hint = 'あなたのボール';
+  // Only where there is something to start. The hub starts the next one itself when a worker
+  // reports done; this is for the worker that died without saying so.
+  const next = col.id === 'queued' && shownCards
+    ? '<button type="button" class="next" title="worker の枠が空いていれば、待ちの先頭を hub に着手させる">次を流す</button>'
+    : '';
   el.insertAdjacentHTML('afterbegin',
     `<h2>${col.label}<span class="n">${shownCards}</span>` +
-    (hint ? `<span class="hint">${esc(hint)}</span>` : '') + '</h2>');
+    (hint ? `<span class="hint${col.id === 'working' && full ? ' full' : ''}">${esc(hint)}</span>` : '') + next + '</h2>');
+  el.querySelector('h2 .next')?.addEventListener('click', nudgeHub);
 
   el.addEventListener('dragover', e => {
     if (canDrop(window.__from, col.id)) { e.preventDefault(); el.classList.add('drop-ok'); }
@@ -790,6 +804,17 @@ async function update(id, body, line, why) {
       method:'POST', body: JSON.stringify(body),
     });
     note(line, false, why + handedNote(data.handed));
+    await refresh();
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+  }
+}
+
+async function nudgeHub() {
+  const line = "adj send --kind next --from dashboard --subject 'start the next queued task if a worker slot is free'";
+  try {
+    const data = await api('/api/hub/next', { method: 'POST' });
+    note(line, false, '枠が空いていれば待ちの先頭を着手' + handedNote(data.handed));
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
