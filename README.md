@@ -151,8 +151,10 @@ leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResume
 (Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
 the agent to check its inbox or outbox for whatever arrived while it was gone.
 
-When the hub ended is written by the hub's own MCP server. `adj hub` puts
-`ADJUTANT_HUB_SESSION` on the line it `exec`s, the agent's `adjutant mcp` inherits it, and
+When the hub ended is written by the hub's own MCP server. For a start that records a session
+(a runner that takes `{sessionId}`, or a resume), `adj hub` puts `ADJUTANT_HUB_SESSION` on the
+line it `exec`s — a fresh start through a runner without `{sessionId}` gets no variable, and
+its MCP server records nothing even though it runs. The agent's `adjutant mcp` inherits it, and
 that server records the session as alive every minute and once more when the agent closes
 its pipe — in `sessions/<slug>.alive`, a file of its own so that an old hub's last beat can
 never overwrite a new hub's saved session. The same server runs under every session on the
