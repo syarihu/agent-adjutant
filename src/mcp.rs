@@ -88,11 +88,23 @@ fn prompt_definitions() -> Value {
             json!({
                 "name": prompt.name,
                 "description": prompts::description(prompt),
-                "arguments": [{
-                    "name": "arguments",
-                    "description": "Free text passed to the procedure (what you found, which task to pick up). Optional.",
-                    "required": false,
-                }],
+                "arguments": [
+                    {
+                        "name": "arguments",
+                        "description": "Free text passed to the procedure (what you found, which task to pick up). Optional.",
+                        "required": false,
+                    },
+                    {
+                        "name": "agent",
+                        "description": "Target agent format: claude | agy | generic. Defaults to auto-detect.",
+                        "required": false,
+                    },
+                    {
+                        "name": "worktree",
+                        "description": "Path to the worktree or repository root. Defaults to the server's working directory.",
+                        "required": false,
+                    },
+                ],
             })
         })
         .collect();
@@ -129,7 +141,17 @@ fn prompt_get(params: &Value) -> Result<Value, String> {
     let prompt = prompts::find(name).ok_or_else(|| format!("Unknown prompt: {name}"))?;
     let arguments = params["arguments"]["arguments"].as_str().unwrap_or("");
     let explicit_agent = params["arguments"]["agent"].as_str();
-    let runner = resolve_runner_for(None, name);
+    if let Some(value) = explicit_agent
+        && !matches!(value, "claude" | "agy" | "generic")
+    {
+        return Err(format!("agent must be claude, agy, or generic: {value}"));
+    }
+    let worktree = params["arguments"]["worktree"]
+        .as_str()
+        .or_else(|| params["arguments"]["cwd"].as_str())
+        .filter(|s| !s.is_empty())
+        .map(config::expand_home);
+    let runner = resolve_runner_for(worktree.as_deref(), name);
     let agent = prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
     Ok(json!({
         "description": prompts::description(prompt),
@@ -251,6 +273,7 @@ fn tool_definitions() -> Value {
                     "name": { "type": "string", "enum": ["adj-hub", "adj-worker", "adj-report"] },
                     "arguments": { "type": "string", "description": "Free text substituted into the procedure where it asks for it." },
                     "agent": { "type": "string", "enum": ["claude", "agy", "generic"], "description": "Target agent format: claude | agy | generic. Defaults to auto-detect." },
+                    "worktree": { "type": "string", "description": "Path to the worktree or repository root. Defaults to the server's working directory." },
                 },
                 "required": ["name"],
             },
@@ -467,12 +490,17 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 format!("no such procedure: {name} (adj-hub / adj-worker / adj-report)")
             })?;
             let explicit_agent = args["agent"].as_str();
-            let cwd = cwd_param(args);
-            let runner = resolve_repo(args)
-                .ok()
-                .and_then(|info| config::resolve_config(&info.nwo).ok())
-                .and_then(|r| runner_for_procedure(&r.settings, name))
-                .or_else(|| resolve_runner_for(cwd.as_deref(), name));
+            if let Some(value) = explicit_agent
+                && !matches!(value, "claude" | "agy" | "generic")
+            {
+                return Err(format!("agent must be claude, agy, or generic: {value}"));
+            }
+            let worktree = args["worktree"]
+                .as_str()
+                .or_else(|| args["cwd"].as_str())
+                .filter(|s| !s.is_empty())
+                .map(config::expand_home);
+            let runner = resolve_runner_for(worktree.as_deref(), name);
             let agent =
                 prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
             Ok(json!({
@@ -1076,6 +1104,87 @@ mod tests {
             ),
             prompts::Agent::Agy
         );
+    }
+
+    #[test]
+    fn unsupported_agent_value_is_rejected() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let res = call_tool(
+            "adjutant_skill",
+            &json!({"name": "adj-hub", "agent": "unknown"}),
+        );
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err(),
+            "agent must be claude, agy, or generic: unknown"
+        );
+
+        let prompt_res = prompt_get(&json!({"name": "adj-hub", "arguments": {"agent": "unknown"}}));
+        assert!(prompt_res.is_err());
+        assert_eq!(
+            prompt_res.unwrap_err(),
+            "agent must be claude, agy, or generic: unknown"
+        );
+    }
+
+    #[test]
+    fn skill_and_prompt_resolve_runner_for_specified_worktree() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let _guard = ClientNameGuard;
+        let _sandbox = crate::testing::Sandbox::new(
+            r#"{
+            "defaults": {
+                "agentRunner": "agy --dangerously-skip-permissions -i {prompt}"
+            }
+        }"#,
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec![
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:acme/agy-repo.git",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(dir.path())
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {args:?}"
+            );
+        }
+
+        let worktree = dir.path().to_str().unwrap();
+
+        let via_prompt = prompt_get(&json!({
+            "name": "adj-worker",
+            "arguments": { "worktree": worktree }
+        }))
+        .unwrap();
+        let prompt_text = via_prompt["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap();
+        assert!(prompt_text.contains("ask_question"));
+        assert!(!prompt_text.contains("AskUserQuestion"));
+
+        let via_skill = call_tool(
+            "adjutant_skill",
+            &json!({
+                "name": "adj-worker",
+                "worktree": worktree
+            }),
+        )
+        .unwrap();
+        assert_eq!(via_skill["agent"], "agy");
+        let skill_text = via_skill["content"].as_str().unwrap();
+        assert!(skill_text.contains("ask_question"));
+        assert!(!skill_text.contains("AskUserQuestion"));
     }
 
     #[test]
