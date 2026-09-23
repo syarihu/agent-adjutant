@@ -238,12 +238,10 @@ fn a_relative_state_directory_is_read_from_the_checkout_not_from_where_it_was_ty
     // directory that was never written to.
     let elsewhere = fixture.repo.join("somewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
-    let out = Command::new(BIN)
-        .args(["hub", "--tab", "--dry-run"])
+    let out = fixture
+        .command(["hub", "--tab", "--dry-run"])
         .current_dir(&elsewhere)
-        .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", relative)
-        .hermetic()
         .output()
         .unwrap();
     let said =

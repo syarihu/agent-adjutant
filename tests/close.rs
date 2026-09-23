@@ -56,9 +56,9 @@ fn forge_worker_record(worktree: &Path, pid: u32) -> PathBuf {
 /// `cat` on `/dev/null` is a stand-in that exits immediately.
 struct Sleeper {
     shell: std::process::Child,
-    /// `None` only while `new` is still assembling one. Armed early so that a panic during
-    /// construction still runs `Drop`: a value that never finished being built is never
-    /// dropped, and both processes would be left behind.
+    /// `None` only while `new` is still assembling one. The value exists before the pid is
+    /// read so that a panic during construction still runs `Drop`: a value that never
+    /// finished being built is never dropped, and both processes would be left behind.
     pid: Option<u32>,
 }
 
@@ -93,14 +93,13 @@ impl Sleeper {
 
 impl Drop for Sleeper {
     fn drop(&mut self) {
-        // The worker first, and by pid: it is the shell's background child, so killing the
-        // shell would leave it running with nobody to reap it. Killing it while the shell
-        // still waits is what gets it reaped, which is the whole point of the shape.
-        if let Some(pid) = self.pid {
-            let _ = Command::new("kill").arg(pid.to_string()).status();
-        }
-        // Then the shell, which is on its way out of `wait` anyway.
-        let _ = self.shell.kill();
+        // By closing the pipe, never by pid. Two tests kill the stand-in through the close
+        // template, and the shell reaps it at once, so its pid is back with the system by the
+        // time this runs — with the suite running in parallel, a second `kill` could reach
+        // whatever holds that number now. Closing the pipe needs no pid: `cat` reads end of
+        // file and exits, the shell reaps it and leaves `wait`, and waiting on the shell
+        // then returns. A stand-in that is already gone changes nothing.
+        drop(self.shell.stdin.take());
         let _ = self.shell.wait();
     }
 }
