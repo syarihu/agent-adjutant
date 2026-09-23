@@ -150,7 +150,7 @@ A fresh start through a runner that takes `{sessionId}` (the default ones do, as
 resume reuses the id that was saved rather than making a new one. A fresh start through a
 runner without `{sessionId}` gets no id, and clears whatever the start before it saved, so
 nothing can reopen a conversation two starts ago. The id is saved beside the records, not in
-them: the hub's under `sessions/` in the state directory, the worker's in the worktree's
+them: the hub's id under `sessions/` in the state directory, the worker's in the worktree's
 `.claude/adjutant-session.json`. That is why `hub-stop` and `close`, which clear the records,
 leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
 (Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
