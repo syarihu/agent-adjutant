@@ -742,7 +742,12 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
     let Some(record) = read_json(&worker_record_path(worktree)) else {
         return status;
     };
-    status.pid = record.get("pid").and_then(Value::as_u64).map(|p| p as u32);
+    // Checked, as `read_worker` checks it: truncated, `4294967297` would be pid 1 and read
+    // as a worker that is there, while the slot count reads the same record as nobody.
+    status.pid = record
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|p| u32::try_from(p).ok());
     status.title = record
         .get("title")
         .and_then(Value::as_str)
@@ -2796,6 +2801,21 @@ mod tests {
         )
         .unwrap();
         assert!(holds_worker_slot(worktree, now_secs()));
+    }
+
+    #[test]
+    fn a_pid_out_of_range_is_nobody_to_the_status_as_well_as_to_the_slot_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": 4294967297u64, "title": "WID-957"}),
+        )
+        .unwrap();
+        let status = worker_status(worktree);
+        assert_eq!(status.pid, None);
+        assert!(!status.present);
+        assert!(!holds_worker_slot(worktree, now_secs()));
     }
 
     #[test]
