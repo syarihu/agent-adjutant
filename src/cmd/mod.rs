@@ -1249,7 +1249,8 @@ pub fn skill(name: &str, arguments: &str, agent: Option<&str>) -> Result<(), Str
                 .join(" / ")
         )
     })?;
-    let resolved_agent = crate::prompts::resolve_agent(agent, None, None);
+    let runner = crate::mcp::resolve_runner_for(None, name);
+    let resolved_agent = crate::prompts::resolve_agent(agent, None, runner.as_deref());
     print!(
         "{}",
         crate::prompts::render_for(prompt, arguments, resolved_agent)

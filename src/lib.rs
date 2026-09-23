@@ -233,7 +233,7 @@ enum Commands {
         #[arg(long, default_value = "")]
         arguments: String,
         /// Target agent format: claude | agy | generic (default: auto-detect)
-        #[arg(long)]
+        #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
         agent: Option<String>,
     },
     /// What the hub has left for the worker in this worktree

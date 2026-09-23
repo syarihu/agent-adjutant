@@ -111,12 +111,26 @@ pub fn set_client_name(name: Option<&str>) {
     }
 }
 
+pub fn runner_for_procedure(settings: &config::Settings, procedure: &str) -> Option<String> {
+    match procedure {
+        "adj-hub" => settings.hub_runner.clone(),
+        _ => settings.agent_runner.clone(),
+    }
+}
+
+pub fn resolve_runner_for(cwd: Option<&Path>, procedure: &str) -> Option<String> {
+    let info = repo::resolve_in(cwd, None, None).ok()?;
+    let settings = config::resolve_config(&info.nwo).ok()?.settings;
+    runner_for_procedure(&settings, procedure)
+}
+
 fn prompt_get(params: &Value) -> Result<Value, String> {
     let name = params["name"].as_str().unwrap_or("");
     let prompt = prompts::find(name).ok_or_else(|| format!("Unknown prompt: {name}"))?;
     let arguments = params["arguments"]["arguments"].as_str().unwrap_or("");
     let explicit_agent = params["arguments"]["agent"].as_str();
-    let agent = prompts::resolve_agent(explicit_agent, client_name().as_deref(), None);
+    let runner = resolve_runner_for(None, name);
+    let agent = prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
     Ok(json!({
         "description": prompts::description(prompt),
         "messages": [{
@@ -453,11 +467,12 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 format!("no such procedure: {name} (adj-hub / adj-worker / adj-report)")
             })?;
             let explicit_agent = args["agent"].as_str();
-            let runner = resolve_repo(args).ok().and_then(|info| {
-                config::resolve_config(&info.nwo)
-                    .ok()
-                    .and_then(|r| r.settings.agent_runner)
-            });
+            let cwd = cwd_param(args);
+            let runner = resolve_repo(args)
+                .ok()
+                .and_then(|info| config::resolve_config(&info.nwo).ok())
+                .and_then(|r| runner_for_procedure(&r.settings, name))
+                .or_else(|| resolve_runner_for(cwd.as_deref(), name));
             let agent =
                 prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
             Ok(json!({
@@ -955,8 +970,18 @@ mod tests {
         assert!(out["error"].is_null());
     }
 
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct ClientNameGuard;
+    impl Drop for ClientNameGuard {
+        fn drop(&mut self) {
+            set_client_name(None);
+        }
+    }
+
     #[test]
     fn the_skill_tool_serves_the_same_text_as_the_prompt() {
+        let _lock = TEST_MUTEX.lock().unwrap();
         let via_tool = call_tool("adjutant_skill", &json!({"name": "adj-worker"})).unwrap();
         let via_prompt = prompt_get(&json!({"name": "adj-worker"})).unwrap();
         assert_eq!(
@@ -975,6 +1000,7 @@ mod tests {
 
     #[test]
     fn the_skill_tool_respects_explicit_agent_format() {
+        let _lock = TEST_MUTEX.lock().unwrap();
         let claude = call_tool(
             "adjutant_skill",
             &json!({"name": "adj-hub", "agent": "claude"}),
@@ -999,6 +1025,8 @@ mod tests {
 
     #[test]
     fn client_info_initialization_defaults_agent_format() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let _guard = ClientNameGuard;
         let _ = call(
             "initialize",
             json!({"clientInfo": {"name": "antigravity-cli"}}),
@@ -1009,8 +1037,45 @@ mod tests {
             .unwrap();
         assert!(!text.contains("AskUserQuestion"));
         assert!(text.contains("ask_question"));
+    }
 
-        set_client_name(None);
+    #[test]
+    fn procedure_runner_selection_distinguishes_hub_and_worker() {
+        let settings = config::Settings {
+            hub_runner: Some("claude -n {name} {prompt}".to_string()),
+            agent_runner: Some("agy --dangerously-skip-permissions -i {prompt}".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            runner_for_procedure(&settings, "adj-hub"),
+            Some("claude -n {name} {prompt}".to_string())
+        );
+        assert_eq!(
+            runner_for_procedure(&settings, "adj-worker"),
+            Some("agy --dangerously-skip-permissions -i {prompt}".to_string())
+        );
+        assert_eq!(
+            runner_for_procedure(&settings, "adj-report"),
+            Some("agy --dangerously-skip-permissions -i {prompt}".to_string())
+        );
+
+        assert_eq!(
+            prompts::resolve_agent(
+                None,
+                None,
+                runner_for_procedure(&settings, "adj-hub").as_deref()
+            ),
+            prompts::Agent::Claude
+        );
+        assert_eq!(
+            prompts::resolve_agent(
+                None,
+                None,
+                runner_for_procedure(&settings, "adj-worker").as_deref()
+            ),
+            prompts::Agent::Agy
+        );
     }
 
     #[test]

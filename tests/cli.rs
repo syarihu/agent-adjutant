@@ -2705,6 +2705,19 @@ fn skill_formats_for_specified_agent() {
 }
 
 #[test]
+fn skill_rejects_unknown_agent() {
+    let fixture = Fixture::new(QUIET);
+    let out = Command::new(BIN)
+        .args(["skill", "adj-hub", "--agent", "invalid-agent"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("invalid value 'invalid-agent'"));
+}
+
+#[test]
 fn install_mcp_rejects_unknown_target() {
     let fixture = Fixture::new(QUIET);
     let out = Command::new(BIN)
