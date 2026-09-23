@@ -158,7 +158,9 @@ its pipe — in `sessions/<slug>.alive`, a file of its own so that an old hub's 
 never overwrite a new hub's saved session. The same server runs under every session on the
 machine, and only the one carrying the variable writes anything; `adj worker` strips it
 before it starts an agent. With no MCP server under the hub nothing says when it ended, and
-`adj hub` starts fresh rather than guessing.
+`adj hub` starts fresh rather than guessing. The same goes for a hub started by a `hubRunner`
+of your own with no `hubResumeRunner` beside it: the built-in resume command would reopen it
+without whatever your runner adds, so it is only resumed when `--resume` asks.
 
 Workers are only resumed when asked: `adj work` is how a hub hands over a new brief, and
 coming back to an old conversation there would bury it.

@@ -2980,6 +2980,13 @@ fn a_plain_hub_comes_back_to_a_session_that_ended_recently() {
     let spawned = fixture.repo.join("spawned.txt");
     write_resumable_stub_config(&fixture, &spawned);
     let sid = started_hub_session(&fixture);
+    // The stub `hubRunner` is one of its own, and such a hub is only brought back uninvited
+    // through a resume runner of its own too.
+    set_config(
+        &fixture,
+        "hubResumeRunner",
+        "claude -n {name} --resume {sessionId} {prompt}".into(),
+    );
 
     // Ended ten minutes ago, well inside the default window.
     forge_last_alive(&fixture, SLUG, &sid, 600);
@@ -3019,6 +3026,12 @@ fn a_plain_hub_starts_fresh_when_the_last_session_is_old_or_unknown() {
     let spawned = fixture.repo.join("spawned.txt");
     write_resumable_stub_config(&fixture, &spawned);
     let sid = started_hub_session(&fixture);
+    // So that the only thing standing between these and a resume is the one each is about.
+    set_config(
+        &fixture,
+        "hubResumeRunner",
+        "claude -n {name} --resume {sessionId} {prompt}".into(),
+    );
 
     // Nothing has said when it ended: no MCP server, or an older version.
     let unknown = fixture.ok(&["hub", "--dry-run"]);
@@ -3198,4 +3211,32 @@ fn a_fresh_start_that_records_nothing_forgets_what_the_one_before_saved() {
     // And a plain `adj hub` does not come back to the hub two starts ago either.
     let plain = fixture.ok(&["hub", "--dry-run"]);
     assert!(!plain.contains(&sid), "{plain}");
+}
+
+#[test]
+fn a_hub_with_a_runner_of_its_own_is_not_resumed_by_the_built_in_one_uninvited() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    // The stub config's `hubRunner` is already one of its own, and records a session.
+    write_resumable_stub_config(&fixture, &spawned);
+    let sid = started_hub_session(&fixture);
+    forge_last_alive(&fixture, SLUG, &sid, 60);
+
+    let out = fixture.cmd(&["hub", "--dry-run"]);
+    let line = String::from_utf8_lossy(&out.stdout).to_string();
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!line.contains("--resume"), "{line}");
+    assert!(said.contains("hubResumeRunner"), "{said}");
+
+    // Given a resume runner of its own, it comes back through that one.
+    set_config(
+        &fixture,
+        "hubResumeRunner",
+        "true again {name} {sessionId}".into(),
+    );
+    let resumed = fixture.ok(&["hub", "--dry-run"]);
+    assert!(
+        resumed.contains(&format!("true again {HUB} {sid}")),
+        "{resumed}"
+    );
 }

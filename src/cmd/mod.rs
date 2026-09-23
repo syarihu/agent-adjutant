@@ -1284,6 +1284,16 @@ fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
         eprintln!("adjutant: not resuming the last session: hubResumeRunner has no {{sessionId}}");
         return None;
     }
+    // A hub started by a runner of its own would be reopened by the built-in one — without
+    // whatever that runner added, or as another agent entirely. Asked for outright, that is
+    // the person's call and `--resume` makes it; uninvited, it is not.
+    if ctx.settings.hub_runner.is_some() && ctx.settings.hub_resume_runner.is_none() {
+        eprintln!(
+            "adjutant: not resuming the last session: hubRunner is your own and hubResumeRunner \
+             is not set, so the built-in one would reopen it"
+        );
+        return None;
+    }
     eprintln!(
         "adjutant: resuming the session that ended {} ago (within hubAutoResumeHours); \
          `adj hub --new` starts a fresh one instead",
