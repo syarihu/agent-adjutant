@@ -64,13 +64,13 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 
 | | |
 | --- | --- |
-| `adjutant hub [--tab] [--no-dashboard\|--dashboard]` | start this repo's hub, in the main checkout, once (`--tab`: open a tab and start it there, rather than becoming it in this one; `--no-dashboard`: skip the listing it collects at startup, `--dashboard`: collect it anyway — both override `startupDashboard`) |
+| `adjutant hub [--tab] [--resume] [--no-dashboard\|--dashboard]` | start this repo's hub, in the main checkout, once (`--tab`: open a tab and start it there, rather than becoming it in this one; `--resume`: reopen the session it was last started into; `--no-dashboard`: skip the listing it collects at startup, `--dashboard`: collect it anyway — both override `startupDashboard`) |
 | `adjutant hub-name [--json]` | the hub's session name — the address a report goes to |
 | `adjutant config` | the resolved config for this repo, as JSON |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |
 | `adjutant send --subject … --body …` | hand a message to the hub (body may come on stdin) |
-| `adjutant work --worktree … --title …` | open a tab and start a worker there |
-| `adjutant worker --worktree …` | become the worker (what `work` opens a tab to run) |
+| `adjutant work --worktree … --title … [--resume]` | open a tab and start a worker there (`--resume`: reopen the worker session saved in that worktree) |
+| `adjutant worker --worktree … [--resume]` | become the worker (what `work` opens a tab to run; `--resume` inside a worktree reopens its saved session) |
 | `adjutant tell --worktree … --subject …` | leave a message for that worktree's worker |
 | `adjutant outbox [--clear]` | what the hub has left for the worker here |
 | `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
@@ -130,6 +130,32 @@ forwarded to the `adjutant hub` that runs in the new tab, and that one builds th
 environment. Same answer, one process later — which is why the two dry runs do not print the
 same thing.
 
+### Resuming after a restart
+
+Updating the agent, or a crash, ends the hub and its workers, and starting them again with a
+plain `adj hub` / `adj work` gives each a new, empty conversation. `--resume` reopens the one
+it had instead:
+
+```bash
+adj hub --resume                  # this repo's hub, from anywhere in the repo
+adj hub --resume --hub ALPHA-233  # a parent task's hub — the identifier is never guessed
+adj worker --resume               # in a worktree: the worker that was working there
+```
+
+Every start makes up a session id and hands it to the agent (`--session-id {sessionId}` in
+the default runners). The id is saved beside the records, not in them: the hub's under
+`sessions/` in the state directory, the worker's in the worktree's
+`.claude/adjutant-session.json`. That is why `hub-stop` and `close`, which clear the records,
+leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
+(Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
+the agent to check its inbox or outbox for whatever arrived while it was gone.
+
+A resumed worker goes back under the hub that dispatched it, as saved — ahead of
+`ADJUTANT_HUB`, which the tab it is typed in may have inherited from a different hub. A hub
+asked to resume with nothing saved lists the hubs of the repository that do have a session.
+A runner with no `{sessionId}` starts sessions nobody can resume; that is not an error until
+`--resume` is asked for.
+
 `instructions` is five lines. The 1500 lines of procedure matter only while a hub or a worker
 is running, and both fetch them on purpose; the one thing worth always-on context is that a
 worker is allowed to report a bug it did not come to fix.
@@ -147,10 +173,11 @@ entire premise. This does not remove the questions that matter: the procedures' 
 `AskUserQuestion` checkpoints (file this issue? start work on it?) are untouched. What goes
 away is being asked whether `gh issue view` may run.
 
-If you would rather the hub asked, take the mode back out —
+If you would rather the hub asked, take the mode back out of both hub runners —
 
 ```jsonc
-"hubRunner": "claude -n {name} {prompt}"
+"hubRunner": "claude -n {name} --session-id {sessionId} {prompt}",
+"hubResumeRunner": "claude -n {name} --resume {sessionId} {prompt}"
 ```
 
 — and pre-approve what the procedures reach for, in `~/.claude/settings.json`. Note that
@@ -199,8 +226,10 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *also names every tab `spawn` opens* |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session |
 | `hubWake` / `workerWake` | the same | override `wake` for one direction |
-| `agentRunner` | `{prompt}` `{worktree}` `{title}` | `claude --permission-mode auto {prompt}` |
-| `hubRunner` | `{name}` `{prompt}` | `claude -n {name} --permission-mode auto {prompt}` |
+| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
+| `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
+| `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {prompt}` |
+| `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {prompt}` |
 | | | *drop `{name}` and the session is nameless in every listing* |
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |

@@ -2692,3 +2692,238 @@ fn a_gate_can_be_closed_without_delivering_to_the_worker() {
     let outbox = fixture.ok(&["outbox", "--worktree", fixture.repo.to_str().unwrap()]);
     assert_eq!(outbox.trim(), "(empty)");
 }
+
+// ── --resume ─────────────────────────────────────────────────────────
+
+/// A config whose runners start nothing: `true` takes the place of the agent on the exec
+/// path, so a test can go all the way through a launch and read what it wrote down.
+fn write_resumable_stub_config(fixture: &Fixture, spawned: &Path) {
+    std::fs::write(
+        &fixture.config,
+        serde_json::json!({
+            "notification": "true",
+            "hubRunner": "true {name} {sessionId} {prompt}",
+            "agentRunner": "true {sessionId} {prompt}",
+            "terminal": {
+                "spawn": format!(
+                    "echo {{cwd}} {{command}} > {}",
+                    shell_quoted(&spawned.to_string_lossy())
+                ),
+            },
+            "repos": {
+                "acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"},
+            },
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+fn saved_session(path: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("no session saved at {}: {e}", path.display()));
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn the_default_runners_hand_the_agent_a_session_id() {
+    let fixture = Fixture::new(QUIET);
+    let hub = fixture.ok(&["hub", "--dry-run"]);
+    assert!(
+        hub.contains(&format!("claude -n {HUB} --session-id ")),
+        "{hub}"
+    );
+    let worker = fixture.ok(&[
+        "worker",
+        "--worktree",
+        fixture.repo.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert!(worker.contains("claude --session-id "), "{worker}");
+    assert!(worker.contains("task-brief.md"), "{worker}");
+}
+
+#[test]
+fn a_hub_resumes_the_session_it_was_started_into() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+
+    fixture.ok(&["hub"]);
+    let saved = saved_session(&fixture.state.join("sessions").join(format!("{SLUG}.json")));
+    let sid = saved["sessionId"].as_str().unwrap().to_string();
+    assert_eq!(sid.len(), 36, "{saved}");
+    assert_eq!(saved["hubName"], HUB);
+    assert_eq!(saved["nwo"], "acme/widget");
+
+    // Cleared the way a hub shutting down clears it: the session is not the record's.
+    fixture.ok(&["hub-stop"]);
+    let resumed = fixture.ok(&["hub", "--resume", "--dry-run"]);
+    assert!(
+        resumed.contains(&format!("claude -n {HUB} --resume {sid} ")),
+        "{resumed}"
+    );
+    assert!(resumed.contains("adjutant_pending"), "{resumed}");
+    assert!(!resumed.contains("--session-id"), "{resumed}");
+
+    // The tab route carries the flag across, above the separator.
+    let tab = fixture.ok(&["hub", "--tab", "--resume", "--dry-run", "--", "-x"]);
+    assert!(tab.contains("--resume -- -x"), "{tab}");
+}
+
+#[test]
+fn resuming_a_hub_with_nothing_saved_says_which_hubs_can_be() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    fixture.ok(&["hub", "--hub", FEATURE]);
+    assert!(
+        fixture
+            .state
+            .join("sessions")
+            .join(format!("{FEATURE_SLUG}.json"))
+            .exists()
+    );
+
+    let out = fixture.cmd(&["hub", "--resume", "--dry-run"]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("has no saved session"), "{said}");
+    assert!(
+        said.contains(&format!("adj hub --resume --hub {FEATURE}")),
+        "{said}"
+    );
+
+    let feature = fixture.ok(&["hub", "--resume", "--hub", FEATURE, "--dry-run"]);
+    assert!(
+        feature.contains(&format!("-n {FEATURE_HUB} --resume ")),
+        "{feature}"
+    );
+}
+
+#[test]
+fn a_resume_runner_with_nowhere_to_put_the_session_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    fixture.ok(&["hub"]);
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["hubResumeRunner"] = "claude --continue {prompt}".into();
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+
+    let out = fixture.cmd(&["hub", "--resume", "--dry-run"]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(
+        said.contains("hubResumeRunner has no {sessionId}"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_worker_resumes_in_its_worktree_under_the_hub_that_dispatched_it() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+
+    fixture.ok(&[
+        "worker",
+        "--worktree",
+        &worktree,
+        "--title",
+        "WID-1 画像が潰れる",
+        "--hub",
+        FEATURE,
+    ]);
+    let saved = saved_session(&fixture.repo.join(".claude").join("adjutant-session.json"));
+    let sid = saved["sessionId"].as_str().unwrap().to_string();
+    assert_eq!(saved["title"], "WID-1 画像が潰れる");
+    assert_eq!(saved["hub"], FEATURE);
+
+    // Typed from inside the worktree with nothing else said: the worktree, the title and
+    // the session all come from what was saved.
+    let resumed = fixture.ok(&["worker", "--resume", "--dry-run"]);
+    assert!(
+        resumed.contains(&format!("claude --resume {sid} --permission-mode auto ")),
+        "{resumed}"
+    );
+    assert!(resumed.contains("adjutant_outbox"), "{resumed}");
+
+    // Through to the exec path, in a tab that inherited another hub's identity: the record
+    // the resumed worker writes still names the hub that dispatched it.
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["agentResumeRunner"] = "true {sessionId}".into();
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+    let out = Command::new(BIN)
+        .args(["worker", "--resume"])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
+        .env("ADJUTANT_HUB", "someone-else")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record = saved_session(&fixture.repo.join(".claude").join("adjutant-worker.json"));
+    assert_eq!(record["hub"], FEATURE, "{record}");
+    assert_eq!(record["title"], "WID-1 画像が潰れる", "{record}");
+    // Resuming reopens the session; it does not replace the one that was saved.
+    let again = saved_session(&fixture.repo.join(".claude").join("adjutant-session.json"));
+    assert_eq!(again["sessionId"], sid.as_str());
+}
+
+#[test]
+fn resuming_a_worker_where_nothing_was_saved_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.cmd(&["worker", "--resume", "--dry-run"]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("no saved worker session"), "{said}");
+
+    // And without --resume the worktree is still required.
+    let out = fixture.cmd(&["worker", "--dry-run"]);
+    assert!(!out.status.success());
+}
+
+#[test]
+fn work_resume_opens_a_tab_that_resumes_and_leaves_the_hub_to_the_saved_session() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+    fixture.ok(&[
+        "worker",
+        "--worktree",
+        &worktree,
+        "--title",
+        "WID-1",
+        "--hub",
+        FEATURE,
+    ]);
+
+    let out = Command::new(BIN)
+        .args(["work", "--resume", "--worktree", &worktree, "--dry-run"])
+        .current_dir(&fixture.repo)
+        .env("ADJUTANT_CONFIG", &fixture.config)
+        .env("ADJUTANT_STATE_DIR", &fixture.state)
+        .hermetic()
+        .env("ADJUTANT_HUB", "someone-else")
+        .output()
+        .unwrap();
+    let line = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(line.contains(" worker --resume --worktree "), "{line}");
+    assert!(line.contains("--title WID-1"), "{line}");
+    assert!(!line.contains("--hub"), "{line}");
+}

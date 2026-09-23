@@ -50,13 +50,13 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 | コマンド | 説明 |
 | --- | --- |
-| `adjutant hub [--tab] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
+| `adjutant hub [--tab] [--resume] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--resume` は前回起動したセッションを再開。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
 | `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
 | `adjutant send --subject … --body …` | hub にメッセージを送信（本文は stdin 可） |
-| `adjutant work --worktree … --title …` | 新しいタブを開いて worker を起動 |
-| `adjutant worker --worktree …` | 自身を worker として起動（`work` のタブ内で実行されるコマンド） |
+| `adjutant work --worktree … --title … [--resume]` | 新しいタブを開いて worker を起動（`--resume` はその worktree に保存されたセッションを再開） |
+| `adjutant worker --worktree … [--resume]` | 自身を worker として起動（`work` のタブ内で実行されるコマンド。worktree の中で `--resume` を付けると保存されたセッションを再開） |
 | `adjutant tell --worktree … --subject …` | 指定 worktree の worker にメッセージを送信 |
 | `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
 | `adjutant spawn --cwd … -- cmd …` | 新しいタブを開いてコマンドを実行 |
@@ -83,6 +83,20 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 `--no-dashboard` / `--dashboard` も同じ経路を通ります。これらは同じコマンドラインに `ADJUTANT_STARTUP_DASHBOARD` として載り、`adjutant config` が解決の時点で織り込むため、`settings.startupDashboard` を読む手順書には設定ファイルの値ではなく**その hub が起動したときのフラグ**が見えます。ただし `--tab` のときはこの変数が出てきません。ターミナルに渡せるのはコマンドラインだけなので、フラグは新しいタブで走る `adjutant hub` にそのまま転送され、**環境を組み立てるのはそちらの `adjutant hub`** になります。最終的な結果は同じで、1プロセス遅れるだけです（2つの経路の dry run の出力が違って見えるのはこのためです）。
 
+### 再起動後の再開
+
+エージェントのアップデートやクラッシュで hub や worker が終了したあと、`adj hub` / `adj work` で立て直すと会話は空の状態から始まります。`--resume` を付けると前回の会話を再開できます。
+
+```bash
+adj hub --resume                  # このリポジトリの hub（リポジトリ内のどこからでも）
+adj hub --resume --hub ALPHA-233  # 親タスクの hub（識別子は推測しないので明示する）
+adj worker --resume               # worktree の中で実行すると、そこで作業していた worker
+```
+
+起動のたびにセッション ID を作ってエージェントに渡します（既定のランナーでは `--session-id {sessionId}`）。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
+
+再開した worker は、保存しておいた「自分を出した hub」の下に戻ります。`--resume` を打ったタブが別の hub の `ADJUTANT_HUB` を引き継いでいても、保存された値を優先します。保存されたセッションが無い hub を再開しようとすると、そのリポジトリで再開できる hub の一覧を表示します。`{sessionId}` を含まないランナーで起動したセッションは再開できません。ただしエラーになるのは `--resume` を付けたときだけです。
+
 MCP の `instructions` は約5行の最小限に抑えています。1500行を超える詳細な手順書は、hub や worker が必要になったタイミングでオンデマンドに取得するため、常時コンテキストを圧迫しません。
 
 ## 権限
@@ -91,10 +105,11 @@ MCP 経由で配信される手順書からは、個別ツールの許可リス�
 
 そのため、**hub も worker も既定では自動実行モード（unattended）で起動します**。worker のビルドや hub の受信箱監視が確認ダイアログで止まるのを防ぐためです。ただし、Issue の起票確認やタスクの着手確認など、人による判断が必要なチェックポイント（`AskUserQuestion`）は手順書側で維持されます。スキップされるのは `gh issue view` などの日常的なコマンド実行確認です。
 
-都度確認を挟みたい場合は、設定で `hubRunner` を変更してください：
+都度確認を挟みたい場合は、設定で `hubRunner` と `hubResumeRunner` を変更してください：
 
 ```jsonc
-"hubRunner": "claude -n {name} {prompt}"
+"hubRunner": "claude -n {name} --session-id {sessionId} {prompt}",
+"hubResumeRunner": "claude -n {name} --resume {sessionId} {prompt}"
 ```
 
 その場合、hub が停止しないよう `~/.claude/settings.json` で必要なツールを事前に許可しておく必要があります：
@@ -132,8 +147,10 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
 | `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |
-| `agentRunner` | `{prompt}` `{worktree}` `{title}` | `claude --permission-mode auto {prompt}` |
-| `hubRunner` | `{name}` `{prompt}` | `claude -n {name} --permission-mode auto {prompt}` |
+| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
+| `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
+| `agentResumeRunner` | `agentRunner` と同じ | `claude --resume {sessionId} --permission-mode auto {prompt}` |
+| `hubResumeRunner` | `hubRunner` と同じ | `claude -n {name} --resume {sessionId} --permission-mode auto {prompt}` |
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier`（未インストールなら `osascript`） |
 | `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
