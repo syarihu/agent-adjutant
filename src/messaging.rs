@@ -642,8 +642,19 @@ pub fn unmark_worker_starting(worktree: &Path) -> Result<(), String> {
 /// Whether `worktree` holds a worker slot: a worker that is there, or one dispatched less
 /// than `STARTING_GRACE_SECS` ago that has not said so yet. A worker parked at a gate holds
 /// its slot like any other — it is still a process on this machine — and a dead one does not.
+///
+/// "Dead" means `worker_liveness` said `Gone`, not merely that presence could not be shown:
+/// when `ps` cannot answer, or the record has no start time to match against, the worker
+/// may well be running, and counting it free is how a limit is overshot. Counting it busy
+/// only delays a dispatch, and not for long — a pid that is no longer running is `Gone`
+/// whatever else the record lacks.
 pub fn holds_worker_slot(worktree: &Path, now: i64) -> bool {
-    worker_status(worktree).present || is_starting(worktree, now)
+    let registered = match read_worker(worktree) {
+        WorkerRecord::Named(worker) => worker_liveness(&worker) != Liveness::Gone,
+        // Neither names a process that could be running.
+        WorkerRecord::Absent | WorkerRecord::Unreadable => false,
+    };
+    registered || is_starting(worktree, now)
 }
 
 /// The half of `holds_worker_slot` that is not a `ps` call, for a caller that already has
@@ -2764,13 +2775,27 @@ mod tests {
         assert!(holds_worker_slot(worktree, now_secs()));
 
         // A pid that is not running. Counting it would hold the slot for good, since nothing
-        // is left to send the `done` that would free it.
+        // is left to send the `done` that would free it. A process that has been and gone
+        // rather than a made-up number: `ps` refuses a pid out of range, which is `CannotTell`.
+        let mut exited = std::process::Command::new("true").spawn().unwrap();
+        let pid = exited.id();
+        exited.wait().unwrap();
         write_json(
             &worker_record_path(worktree),
-            &json!({"pid": 4_000_000, "title": "WID-957", "psStarted": "Thu Jan  1 00:00:00 1970"}),
+            &json!({"pid": pid, "title": "WID-957", "psStarted": "Thu Jan  1 00:00:00 1970"}),
         )
         .unwrap();
         assert!(!holds_worker_slot(worktree, now_secs()));
+
+        // A running pid with no start time to check it against cannot be told from whatever
+        // inherited the number. Counted busy: a free slot that was not is how a limit is
+        // overshot, and this holds only until that pid stops.
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": std::process::id(), "title": "WID-957"}),
+        )
+        .unwrap();
+        assert!(holds_worker_slot(worktree, now_secs()));
     }
 
     #[test]

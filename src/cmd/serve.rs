@@ -277,8 +277,9 @@ fn state(server: &Server) -> Value {
         .into_iter()
         .map(|path| {
             let status = messaging::worker_status(Path::new(&path));
-            // `holds_worker_slot`, from the status already in hand rather than a second `ps`.
-            if status.present || messaging::is_starting(Path::new(&path), now) {
+            // A present worker holds a slot without asking `ps` again; the rest are asked
+            // the way `adj work` asks, so the header and the refusal cannot disagree.
+            if status.present || messaging::holds_worker_slot(Path::new(&path), now) {
                 busy += 1;
             }
             json!({
