@@ -1238,7 +1238,7 @@ pub fn tell(
 /// because a shell command is the one way in that every agent has: MCP prompt support
 /// differs between agents, and a tool has to be loaded before it can be called — a woken
 /// session that cannot reach its procedure is a session that does nothing.
-pub fn skill(name: &str, arguments: &str) -> Result<(), String> {
+pub fn skill(name: &str, arguments: &str, agent: Option<&str>) -> Result<(), String> {
     let prompt = crate::prompts::find(name).ok_or_else(|| {
         format!(
             "no such procedure: {name} ({})",
@@ -1249,7 +1249,11 @@ pub fn skill(name: &str, arguments: &str) -> Result<(), String> {
                 .join(" / ")
         )
     })?;
-    print!("{}", crate::prompts::render(prompt, arguments));
+    let resolved_agent = crate::prompts::resolve_agent(agent, None, None);
+    print!(
+        "{}",
+        crate::prompts::render_for(prompt, arguments, resolved_agent)
+    );
     Ok(())
 }
 

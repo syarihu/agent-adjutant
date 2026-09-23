@@ -2692,3 +2692,27 @@ fn a_gate_can_be_closed_without_delivering_to_the_worker() {
     let outbox = fixture.ok(&["outbox", "--worktree", fixture.repo.to_str().unwrap()]);
     assert_eq!(outbox.trim(), "(empty)");
 }
+
+#[test]
+fn skill_formats_for_specified_agent() {
+    let fixture = Fixture::new(QUIET);
+    let claude = fixture.ok(&["skill", "adj-hub", "--agent", "claude"]);
+    let agy = fixture.ok(&["skill", "adj-hub", "--agent", "agy"]);
+
+    assert!(claude.contains("AskUserQuestion"));
+    assert!(!agy.contains("AskUserQuestion"));
+    assert!(agy.contains("ask_question"));
+}
+
+#[test]
+fn install_mcp_rejects_unknown_target() {
+    let fixture = Fixture::new(QUIET);
+    let out = Command::new(BIN)
+        .args(["install-mcp", "--target", "invalid-target"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("target must be claude-code, agy, or json"));
+}

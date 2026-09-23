@@ -86,6 +86,87 @@ pub fn render(prompt: &PromptDef, arguments: &str) -> String {
     body.replace("$ARGUMENTS", arguments)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Agent {
+    #[default]
+    Claude,
+    Agy,
+    Generic,
+}
+
+impl Agent {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "claude" | "claude-code" => Some(Agent::Claude),
+            "agy" | "antigravity" => Some(Agent::Agy),
+            "generic" | "codex" => Some(Agent::Generic),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Agent::Claude => "claude",
+            Agent::Agy => "agy",
+            Agent::Generic => "generic",
+        }
+    }
+}
+
+/// Resolve which agent format to render procedures for.
+pub fn resolve_agent(
+    explicit: Option<&str>,
+    client_name: Option<&str>,
+    runner: Option<&str>,
+) -> Agent {
+    if let Some(s) = explicit.and_then(Agent::parse) {
+        return s;
+    }
+    if let Some(s) = std::env::var("ADJUTANT_AGENT")
+        .ok()
+        .as_deref()
+        .and_then(Agent::parse)
+    {
+        return s;
+    }
+    if let Some(client) = client_name {
+        let lower = client.to_ascii_lowercase();
+        if lower.contains("agy") || lower.contains("antigravity") {
+            return Agent::Agy;
+        }
+        if lower.contains("claude") {
+            return Agent::Claude;
+        }
+    }
+    if let Some(runner_cmd) = runner {
+        let lower = runner_cmd.to_ascii_lowercase();
+        if lower.starts_with("agy ") || lower.contains("/agy ") {
+            return Agent::Agy;
+        }
+    }
+    Agent::Claude
+}
+
+/// The procedure body rendered for a specific agent.
+pub fn render_for(prompt: &PromptDef, arguments: &str, agent: Agent) -> String {
+    let text = render(prompt, arguments);
+    match agent {
+        Agent::Claude => text,
+        Agent::Agy => tailor_for_agy(&text),
+        Agent::Generic => tailor_for_generic(&text),
+    }
+}
+
+fn tailor_for_agy(text: &str) -> String {
+    text.replace("`AskUserQuestion`", "`ask_question`")
+        .replace("AskUserQuestion", "ask_question")
+}
+
+fn tailor_for_generic(text: &str) -> String {
+    text.replace("`AskUserQuestion`", "`ask_question`")
+        .replace("AskUserQuestion", "ask_question")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2197,6 +2278,60 @@ mod tests {
                         prompt.name
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn agent_resolves_from_explicit_argument() {
+        assert_eq!(resolve_agent(Some("agy"), None, None), Agent::Agy);
+        assert_eq!(resolve_agent(Some("antigravity"), None, None), Agent::Agy);
+        assert_eq!(resolve_agent(Some("claude"), None, None), Agent::Claude);
+        assert_eq!(
+            resolve_agent(Some("claude-code"), None, None),
+            Agent::Claude
+        );
+        assert_eq!(resolve_agent(Some("generic"), None, None), Agent::Generic);
+    }
+
+    #[test]
+    fn agent_resolves_from_client_name_or_runner() {
+        assert_eq!(
+            resolve_agent(None, Some("antigravity-cli"), None),
+            Agent::Agy
+        );
+        assert_eq!(
+            resolve_agent(None, Some("claude-code"), None),
+            Agent::Claude
+        );
+        assert_eq!(
+            resolve_agent(None, None, Some("agy run {prompt}")),
+            Agent::Agy
+        );
+        assert_eq!(
+            resolve_agent(None, None, Some("claude {prompt}")),
+            Agent::Claude
+        );
+    }
+
+    #[test]
+    fn procedures_are_tailored_for_agy() {
+        for prompt in &PROMPTS {
+            let claude_version = render_for(prompt, "", Agent::Claude);
+            let agy_version = render_for(prompt, "", Agent::Agy);
+
+            // If the prompt contained AskUserQuestion, the agy version replaces it with ask_question
+            if claude_version.contains("AskUserQuestion") {
+                assert!(
+                    !agy_version.contains("AskUserQuestion"),
+                    "{} still contains AskUserQuestion for agy",
+                    prompt.name
+                );
+                assert!(
+                    agy_version.contains("ask_question"),
+                    "{} does not contain ask_question for agy",
+                    prompt.name
+                );
             }
         }
     }

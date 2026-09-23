@@ -99,15 +99,29 @@ fn prompt_definitions() -> Value {
     json!({ "prompts": list })
 }
 
+static CLIENT_NAME: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+pub fn client_name() -> Option<String> {
+    CLIENT_NAME.read().ok().and_then(|lock| lock.clone())
+}
+
+pub fn set_client_name(name: Option<&str>) {
+    if let Ok(mut lock) = CLIENT_NAME.write() {
+        *lock = name.map(str::to_string);
+    }
+}
+
 fn prompt_get(params: &Value) -> Result<Value, String> {
     let name = params["name"].as_str().unwrap_or("");
     let prompt = prompts::find(name).ok_or_else(|| format!("Unknown prompt: {name}"))?;
     let arguments = params["arguments"]["arguments"].as_str().unwrap_or("");
+    let explicit_agent = params["arguments"]["agent"].as_str();
+    let agent = prompts::resolve_agent(explicit_agent, client_name().as_deref(), None);
     Ok(json!({
         "description": prompts::description(prompt),
         "messages": [{
             "role": "user",
-            "content": { "type": "text", "text": prompts::render(prompt, arguments) },
+            "content": { "type": "text", "text": prompts::render_for(prompt, arguments, agent) },
         }],
     }))
 }
@@ -222,6 +236,7 @@ fn tool_definitions() -> Value {
                 "properties": {
                     "name": { "type": "string", "enum": ["adj-hub", "adj-worker", "adj-report"] },
                     "arguments": { "type": "string", "description": "Free text substituted into the procedure where it asks for it." },
+                    "agent": { "type": "string", "enum": ["claude", "agy", "generic"], "description": "Target agent format: claude | agy | generic. Defaults to auto-detect." },
                 },
                 "required": ["name"],
             },
@@ -437,10 +452,19 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let prompt = prompts::find(name).ok_or_else(|| {
                 format!("no such procedure: {name} (adj-hub / adj-worker / adj-report)")
             })?;
+            let explicit_agent = args["agent"].as_str();
+            let runner = resolve_repo(args).ok().and_then(|info| {
+                config::resolve_config(&info.nwo)
+                    .ok()
+                    .and_then(|r| r.settings.agent_runner)
+            });
+            let agent =
+                prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
             Ok(json!({
                 "name": prompt.name,
+                "agent": agent.as_str(),
                 "description": prompts::description(prompt),
-                "content": prompts::render(prompt, args["arguments"].as_str().unwrap_or("")),
+                "content": prompts::render_for(prompt, args["arguments"].as_str().unwrap_or(""), agent),
             }))
         }
         other => Err(format!("Unknown tool: {other}")),
@@ -566,15 +590,25 @@ fn handle_line(line: &str) -> Option<JsonRpcResponse> {
         ));
     }
     Some(match request.method.as_str() {
-        "initialize" => respond(
-            id,
-            json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": { "tools": {}, "prompts": {} },
-                "serverInfo": { "name": SERVER_NAME, "version": VERSION },
-                "instructions": prompts::INSTRUCTIONS,
-            }),
-        ),
+        "initialize" => {
+            if let Some(client) = request
+                .params
+                .get("clientInfo")
+                .and_then(|c| c.get("name"))
+                .and_then(Value::as_str)
+            {
+                set_client_name(Some(client));
+            }
+            respond(
+                id,
+                json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": {}, "prompts": {} },
+                    "serverInfo": { "name": SERVER_NAME, "version": VERSION },
+                    "instructions": prompts::INSTRUCTIONS,
+                }),
+            )
+        }
         "ping" => respond(id, json!({})),
         "prompts/list" => respond(id, prompt_definitions()),
         "prompts/get" => match prompt_get(&request.params) {
@@ -674,6 +708,20 @@ pub fn install(target: &str) -> Result<(), String> {
             eprintln!("registered {SERVER_NAME} with Claude Code");
             Ok(())
         }
+        "agy" | "antigravity" => {
+            let status = std::process::Command::new("agy")
+                .args(["mcp", "add", SERVER_NAME, &exe, "mcp"])
+                .status()
+                .map_err(|e| format!("cannot run agy: {e}"))?;
+            if !status.success() {
+                return Err(format!(
+                    "agy mcp add failed (exit {})",
+                    status.code().unwrap_or(-1)
+                ));
+            }
+            eprintln!("registered {SERVER_NAME} with Antigravity (agy)");
+            Ok(())
+        }
         "json" => {
             println!(
                 "{}",
@@ -684,7 +732,7 @@ pub fn install(target: &str) -> Result<(), String> {
             );
             Ok(())
         }
-        other => Err(format!("target must be claude-code or json: {other}")),
+        other => Err(format!("target must be claude-code, agy, or json: {other}")),
     }
 }
 
@@ -704,7 +752,21 @@ pub fn uninstall(target: &str) -> Result<(), String> {
             eprintln!("removed {SERVER_NAME} from Claude Code");
             Ok(())
         }
-        other => Err(format!("target must be claude-code: {other}")),
+        "agy" | "antigravity" => {
+            let status = std::process::Command::new("agy")
+                .args(["mcp", "remove", SERVER_NAME])
+                .status()
+                .map_err(|e| format!("cannot run agy: {e}"))?;
+            if !status.success() {
+                return Err(format!(
+                    "agy mcp remove failed (exit {})",
+                    status.code().unwrap_or(-1)
+                ));
+            }
+            eprintln!("removed {SERVER_NAME} from Antigravity (agy)");
+            Ok(())
+        }
+        other => Err(format!("target must be claude-code or agy: {other}")),
     }
 }
 
@@ -909,5 +971,51 @@ mod tests {
     fn an_unknown_method_is_method_not_found() {
         let out = call("resources/list", json!({}));
         assert_eq!(out["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn the_skill_tool_respects_explicit_agent_format() {
+        let claude = call_tool(
+            "adjutant_skill",
+            &json!({"name": "adj-hub", "agent": "claude"}),
+        )
+        .unwrap();
+        let agy = call_tool(
+            "adjutant_skill",
+            &json!({"name": "adj-hub", "agent": "agy"}),
+        )
+        .unwrap();
+
+        assert_eq!(claude["agent"], "claude");
+        assert_eq!(agy["agent"], "agy");
+
+        let claude_text = claude["content"].as_str().unwrap();
+        let agy_text = agy["content"].as_str().unwrap();
+
+        assert!(claude_text.contains("AskUserQuestion"));
+        assert!(!agy_text.contains("AskUserQuestion"));
+        assert!(agy_text.contains("ask_question"));
+    }
+
+    #[test]
+    fn client_info_initialization_defaults_agent_format() {
+        let _ = call(
+            "initialize",
+            json!({"clientInfo": {"name": "antigravity-cli"}}),
+        );
+        let via_prompt = prompt_get(&json!({"name": "adj-hub"})).unwrap();
+        let text = via_prompt["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap();
+        assert!(!text.contains("AskUserQuestion"));
+        assert!(text.contains("ask_question"));
+
+        set_client_name(None);
+    }
+
+    #[test]
+    fn install_validates_target_names() {
+        assert!(install("unknown-agent").is_err());
+        assert!(uninstall("unknown-agent").is_err());
     }
 }
