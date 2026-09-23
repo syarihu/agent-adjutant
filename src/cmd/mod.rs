@@ -476,6 +476,10 @@ fn work_resumed(
     let worktree = worker_worktree(Some(worktree))?;
     // Refused here rather than in the tab, so the caller — often a hub — hears about it.
     let saved = saved_worker_session(&worktree)?;
+    resume_template(
+        ctx.settings.agent_resume_runner.as_deref(),
+        "agentResumeRunner",
+    )?;
     let worktree = worktree.to_string_lossy().to_string();
     let title = match title {
         "" => saved.title.as_deref().unwrap_or(""),
@@ -1094,8 +1098,14 @@ pub fn hub(
     }
     // Looked up before either route, so that asking for a session that is not there is
     // refused here, in the tab it was typed in — not in a tab opened to show the refusal.
+    // The template is checked here too, for the same reason: on the tab route the refusal
+    // would otherwise come from inside a tab this one had already reported as opened.
     let asked = match start {
-        HubStart::Resume => Some(saved_hub_session(&ctx)?),
+        HubStart::Resume => {
+            let saved = saved_hub_session(&ctx)?;
+            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
+            Some(saved)
+        }
         HubStart::Auto | HubStart::New => None,
     };
     // Below the presence check, and deliberately: one hub per address is the invariant, and
@@ -1198,17 +1208,24 @@ pub fn hub(
     // A hub that cannot be resumed later is still a hub, so failing to write this down is
     // said and then got past — refusing to start over it would trade a working hub for a
     // convenience.
-    if resumed.is_none()
-        && records
-        && let Err(e) = messaging::save_hub_session(
-            &ctx.repo.slug,
-            &ctx.repo.nwo,
-            ctx.repo.hub.as_deref(),
-            &ctx.repo.hub_name,
-            &session,
-        )
-    {
-        eprintln!("adjutant: {e}; this hub will not be resumable with --resume");
+    //
+    // A fresh hub whose runner records no session replaces what was saved with nothing, so
+    // that nothing can later reopen the conversation of the hub before it.
+    if resumed.is_none() {
+        let saved = match records {
+            true => messaging::save_hub_session(
+                &ctx.repo.slug,
+                &ctx.repo.nwo,
+                ctx.repo.hub.as_deref(),
+                &ctx.repo.hub_name,
+                &session,
+            )
+            .map(|_| ()),
+            false => messaging::forget_hub_session(&ctx.repo.slug),
+        };
+        if let Err(e) = saved {
+            eprintln!("adjutant: {e}; --resume may not reopen this hub");
+        }
     }
     match &resumed {
         Some(saved) => println!(
@@ -1424,12 +1441,19 @@ pub fn worker(
     // The address goes into the record here, at the last moment before this process stops
     // being a launcher. Everything the worker's agent later sends is addressed from it.
     messaging::register_worker(&worktree, &title, ctx.repo.hub.as_deref())?;
-    // Said and got past, as for the hub: a worker that cannot be resumed still works.
-    if let Some(session) = &fresh_session
-        && let Err(e) =
-            messaging::save_worker_session(&worktree, &title, ctx.repo.hub.as_deref(), session)
-    {
-        eprintln!("adjutant: {e}; this worker will not be resumable with --resume");
+    // Said and got past, as for the hub: a worker that cannot be resumed still works. And as
+    // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
+    if resumed.is_none() {
+        let saved = match &fresh_session {
+            Some(session) => {
+                messaging::save_worker_session(&worktree, &title, ctx.repo.hub.as_deref(), session)
+                    .map(|_| ())
+            }
+            None => messaging::forget_worker_session(&worktree),
+        };
+        if let Err(e) = saved {
+            eprintln!("adjutant: {e}; --resume may not reopen this worker");
+        }
     }
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on

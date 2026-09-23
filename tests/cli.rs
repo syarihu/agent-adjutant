@@ -3112,3 +3112,90 @@ fn a_worker_never_inherits_the_hubs_session() {
     );
     assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "[]");
 }
+
+#[test]
+fn a_resume_template_that_cannot_work_is_refused_before_a_tab_is_opened() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    fixture.ok(&["hub"]);
+    fixture.ok(&["worker", "--worktree", fixture.repo.to_str().unwrap()]);
+    set_config(
+        &fixture,
+        "hubResumeRunner",
+        "claude --continue {prompt}".into(),
+    );
+    set_config(
+        &fixture,
+        "agentResumeRunner",
+        "claude --continue {prompt}".into(),
+    );
+
+    // Not a dry run: the stub spawn writes a file when a tab is opened, and none must be.
+    let hub = fixture.cmd(&["hub", "--tab", "--resume"]);
+    let said = String::from_utf8_lossy(&hub.stderr).to_string();
+    assert!(!hub.status.success(), "{said}");
+    assert!(
+        said.contains("hubResumeRunner has no {sessionId}"),
+        "{said}"
+    );
+
+    let work = fixture.cmd(&[
+        "work",
+        "--resume",
+        "--worktree",
+        fixture.repo.to_str().unwrap(),
+    ]);
+    let said = String::from_utf8_lossy(&work.stderr).to_string();
+    assert!(!work.status.success(), "{said}");
+    assert!(
+        said.contains("agentResumeRunner has no {sessionId}"),
+        "{said}"
+    );
+    assert!(
+        !spawned.exists(),
+        "a tab was opened for a resume that cannot work"
+    );
+}
+
+#[test]
+fn a_fresh_start_that_records_nothing_forgets_what_the_one_before_saved() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let sid = started_hub_session(&fixture);
+    forge_last_alive(&fixture, SLUG, &sid, 60);
+    fixture.ok(&["worker", "--worktree", fixture.repo.to_str().unwrap()]);
+
+    set_config(&fixture, "hubRunner", "true {name} {prompt}".into());
+    set_config(&fixture, "agentRunner", "true {prompt}".into());
+    // `--new`, or the recent beat would bring the old hub back instead.
+    fixture.ok(&["hub", "--new"]);
+    fixture.ok(&["worker", "--worktree", fixture.repo.to_str().unwrap()]);
+
+    let sessions = fixture.state.join("sessions");
+    assert!(!sessions.join(format!("{SLUG}.json")).exists());
+    assert!(!sessions.join(format!("{SLUG}.alive")).exists());
+    assert!(
+        !fixture
+            .repo
+            .join(".claude")
+            .join("adjutant-session.json")
+            .exists()
+    );
+    assert!(
+        !fixture
+            .cmd(&["hub", "--resume", "--dry-run"])
+            .status
+            .success()
+    );
+    assert!(
+        !fixture
+            .cmd(&["worker", "--resume", "--dry-run"])
+            .status
+            .success()
+    );
+    // And a plain `adj hub` does not come back to the hub two starts ago either.
+    let plain = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!plain.contains(&sid), "{plain}");
+}
