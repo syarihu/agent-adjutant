@@ -656,44 +656,50 @@ pub fn is_starting(worktree: &Path, now: i64) -> bool {
         .is_some_and(|at| (0..STARTING_GRACE_SECS).contains(&(now - at)))
 }
 
-/// How long a dispatch lock is honoured before it is taken to be left over from a crash.
+/// How long a dispatch waits for another to finish counting before it gives up.
 const DISPATCH_LOCK_SECS: u64 = 10;
 
 /// Run `f` while holding this checkout's dispatch lock.
 ///
 /// Counting the slots and marking one taken are two steps, and two `adj work` run side by
 /// side — a hub batching its shell calls, or two hubs on one repository — would both count
-/// before either marked, and both start. The lock makes the pair one step. Taken with
-/// `create_new`, like the hub's record, and given up on after a few seconds rather than
-/// waited on forever: a lock left by a killed process must not stop every dispatch after it.
+/// before either marked, and both start. The lock makes the pair one step.
+///
+/// An advisory lock on an open file, for the reason `take_over` gives: a lock made of a
+/// file's existence has to guess when its holder died, and two callers guessing at once both
+/// get in. This one is released by the system when its holder exits, so a killed dispatch
+/// leaves nothing to clear. Waiting ends in an error rather than in taking the lock anyway.
 pub fn with_dispatch_lock<T>(main: &Path, f: impl FnOnce() -> T) -> Result<T, String> {
     let path = main.join(".claude").join("adjutant-dispatch.lock");
     parent_dir(&path)?;
+    // Never unlinked: removing it while another process holds it open would hand the next
+    // two callers two different locks.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(DISPATCH_LOCK_SECS);
     loop {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => break,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                let abandoned = std::fs::metadata(&path)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|at| at.elapsed().ok())
-                    .is_some_and(|age| age.as_secs() >= DISPATCH_LOCK_SECS);
-                if abandoned || std::time::Instant::now() >= deadline {
-                    let _ = std::fs::remove_file(&path);
-                    continue;
-                }
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            Err(e) => return Err(format!("cannot lock {}: {e}", path.display())),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "another dispatch has held {} for {DISPATCH_LOCK_SECS}s; try again",
+                    path.display()
+                ));
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(format!("cannot lock {}: {e}", path.display()));
+            }
         }
     }
     let answer = f();
-    let _ = std::fs::remove_file(&path);
+    drop(lock);
     Ok(answer)
 }
 
@@ -2804,20 +2810,29 @@ mod tests {
     }
 
     #[test]
-    fn a_dispatch_lock_left_by_a_killed_process_does_not_stop_the_next_dispatch() {
+    fn a_dispatch_lock_is_released_with_its_holder_and_keeps_others_out_meanwhile() {
         let dir = tempfile::tempdir().unwrap();
+        // A lock file left on disk is not a lock: only a handle holding it is.
         let lock = dir.path().join(".claude").join("adjutant-dispatch.lock");
         std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
-        let file = std::fs::File::create(&lock).unwrap();
-        file.set_modified(
-            std::time::SystemTime::now() - std::time::Duration::from_secs(DISPATCH_LOCK_SECS),
-        )
-        .unwrap();
-
+        std::fs::File::create(&lock).unwrap();
         let started = std::time::Instant::now();
         assert_eq!(with_dispatch_lock(dir.path(), || 7).unwrap(), 7);
-        assert!(started.elapsed() < std::time::Duration::from_secs(DISPATCH_LOCK_SECS));
-        // And released once done, so the one after that does not wait either.
-        assert!(!lock.exists());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+
+        // While one caller is inside, another handle on the same file cannot take it.
+        with_dispatch_lock(dir.path(), || {
+            let other = std::fs::OpenOptions::new().write(true).open(&lock).unwrap();
+            assert!(matches!(
+                other.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+        })
+        .unwrap();
+
+        // And once it is out, the next one does not wait.
+        let started = std::time::Instant::now();
+        with_dispatch_lock(dir.path(), || ()).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 }
