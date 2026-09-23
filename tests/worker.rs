@@ -250,3 +250,25 @@ fn a_tab_that_failed_to_open_gives_its_slot_back() {
             .exists()
     );
 }
+
+#[test]
+fn a_worker_turned_away_by_one_already_running_gives_back_the_slot_it_was_marked_with() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-5");
+    just_dispatched(&worktree);
+    // The worker already there: this test process, which is certainly running.
+    let pid = std::process::id();
+    std::fs::write(
+        std::path::Path::new(&worktree).join(".claude/adjutant-worker.json"),
+        serde_json::json!({"pid": pid, "title": "WID-5", "psStarted": ps_started(pid)}).to_string(),
+    )
+    .unwrap();
+
+    let out = fixture.ok(&["worker", "--worktree", &worktree, "--title", "WID-5"]);
+    assert!(out.contains("already running"), "{out}");
+    assert!(
+        !std::path::Path::new(&worktree)
+            .join(".claude/adjutant-worker-starting.json")
+            .exists()
+    );
+}

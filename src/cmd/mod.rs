@@ -417,7 +417,7 @@ fn claim_worker_slot(
     let main = std::path::Path::new(&ctx.repo.main);
     messaging::with_dispatch_lock(main, || {
         let busy =
-            messaging::busy_worktrees(&repo::linked_worktrees(&ctx.repo.main), Some(worktree));
+            messaging::busy_worktrees(&repo::linked_worktrees(&ctx.repo.main)?, Some(worktree));
         if busy.len() >= max as usize {
             return Ok(Some(format!(
                 "worker limit reached: {} of maxWorkers {max} are running ({}). \
@@ -1463,6 +1463,10 @@ pub fn worker(
             "a worker is already running in this worktree (pid {})",
             status.pid.unwrap_or(0)
         );
+        // `adj work` marked this worktree on the way here, and nobody is going to register
+        // over it. Left, it would hold a second slot for the grace period after the running
+        // worker ends.
+        let _ = messaging::unmark_worker_starting(&worktree);
         return Ok(());
     }
 

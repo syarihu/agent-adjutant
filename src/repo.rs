@@ -94,18 +94,25 @@ pub fn main_worktree(start: Option<&Path>) -> Result<String, String> {
 /// The worktrees hanging off `main`, the main checkout itself left out, as absolute paths.
 ///
 /// Left out because the main checkout is where the hub sits, never a worker, and every
-/// caller here is asking about workers. Empty when git cannot answer: the question is always
-/// "which of these is busy", and no list is read as none busy rather than as an error.
-pub fn linked_worktrees(main: &str) -> Vec<String> {
-    let Ok(out) = git(&["worktree", "list", "--porcelain"], Some(Path::new(main))) else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&out.stdout)
+/// caller here is asking about workers.
+///
+/// An error when git cannot answer, rather than an empty list: the question is "which of
+/// these is busy", and a list that failed to come back read as "none" would let a dispatch
+/// past `maxWorkers` whenever git hiccupped.
+pub fn linked_worktrees(main: &str) -> Result<Vec<String>, String> {
+    let out = git(&["worktree", "list", "--porcelain"], Some(Path::new(main)))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cannot list the worktrees of {main}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|line| line.strip_prefix("worktree "))
         .filter(|path| Path::new(path) != Path::new(main))
         .map(str::to_string)
-        .collect()
+        .collect())
 }
 
 /// `owner/name` from a remote URL.
@@ -368,6 +375,14 @@ fn normalise(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_worktree_list_git_cannot_give_is_an_error_not_an_empty_list() {
+        // Empty would read as "no worker is running here", which is what lets a dispatch
+        // past the limit.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(linked_worktrees(&dir.path().to_string_lossy()).is_err());
+    }
 
     #[test]
     fn nwo_takes_the_last_two_segments_of_every_url_shape() {

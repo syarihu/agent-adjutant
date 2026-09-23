@@ -273,7 +273,9 @@ fn state(server: &Server) -> Value {
 
     let now = messaging::now_secs();
     let mut busy = 0;
+    // The board shows what it can; `adj work` is the one that refuses on a failed listing.
     let workers: Vec<Value> = crate::repo::linked_worktrees(&repo.main)
+        .unwrap_or_default()
         .into_iter()
         .map(|path| {
             let status = messaging::worker_status(Path::new(&path));
