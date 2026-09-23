@@ -145,9 +145,12 @@ adj hub --resume --hub ALPHA-233  # a parent task's hub — the identifier is ne
 adj worker --resume               # in a worktree: the worker that was working there
 ```
 
-Every start makes up a session id and hands it to the agent (`--session-id {sessionId}` in
-the default runners). The id is saved beside the records, not in them: the hub's under
-`sessions/` in the state directory, the worker's in the worktree's
+A fresh start through a runner that takes `{sessionId}` (the default ones do, as
+`--session-id {sessionId}`) makes up a session id, hands it to the agent and saves it. A
+resume reuses the id that was saved rather than making a new one. A fresh start through a
+runner without `{sessionId}` gets no id, and clears whatever the start before it saved, so
+nothing can reopen a conversation two starts ago. The id is saved beside the records, not in
+them: the hub's under `sessions/` in the state directory, the worker's in the worktree's
 `.claude/adjutant-session.json`. That is why `hub-stop` and `close`, which clear the records,
 leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
 (Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
@@ -258,7 +261,9 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
-different answer. `terminal` and the `wake` family merge key by key, so a repository can
+different answer. The two settings that are not commands take their own values instead:
+`startupDashboard` is `true` / `false`, and `hubAutoResumeHours` is a number, turned off by
+`0` — a `false` there is reported in `warnings` and the default is used. `terminal` and the `wake` family merge key by key, so a repository can
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
 
