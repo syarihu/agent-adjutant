@@ -908,6 +908,12 @@ gh pr list -R <codeRepo> --search "review-requested:@me" --json number,title,url
 Cross-reference worktrees against tasks by issue key so the user can see which tasks are
 already started.
 
+**The main checkout is not one of the worktrees.** Both lists include it: proctor as the row
+with `isMain: true`, `git worktree list` as its first line. Drop that row before
+cross-referencing — left in while the hub sits on a task branch, it lists the hub's own
+checkout under `[Worktrees]` and marks that task as started. Go by the marker, not by comparing
+paths with `adjutant_config`'s `main`, as in Step 1.
+
 **Project item id はこの表に出さない**（人には無意味）。エージェントの報告に付いてくる機械行
 から拾って、「2. 着手を宣言する」で使う。
 

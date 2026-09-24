@@ -1189,15 +1189,20 @@ mod tests {
     /// `git worktree list` as its first line — and nothing that read them said to drop it. The
     /// cleanup then weighs the hub's own checkout, the hand-over offers it as a worktree to
     /// work in, and the subtask collector matches it by branch the moment the hub is left on a
-    /// task branch, so a worker is opened where the hub runs. All three carry the same clause,
+    /// task branch, so a worker is opened where the hub runs. Each carries the same clause,
     /// or the list means two things in one file. The dashboard's `[Worktrees]` block reads the
-    /// same lists and is not covered here yet.
+    /// same lists and would show the hub's checkout as a started task, so it carries it too.
     #[test]
     fn every_reader_of_the_worktree_list_leaves_the_main_checkout_out() {
         let raw = find("adj-hub").unwrap().raw_content;
         let flowed =
             |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
         let readers = [
+            (
+                "dashboard",
+                flowed(&step(raw, "### Step 3: Display")),
+                "Themaincheckoutisnotoneoftheworktrees",
+            ),
             (
                 "cleanup",
                 flowed(&step(
