@@ -137,13 +137,28 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
 /// so that it is absolute — against the directory of the command giving it, not of some
 /// later one — and matches what git prints once the worktree is created there.
 fn resolved_worktree(path: &str) -> String {
-    use std::path::{Component, PathBuf};
     let path = config::expand_home(path);
-    let absolute = std::path::absolute(&path).unwrap_or(path);
+    let mut current = std::path::absolute(&path).unwrap_or(path);
+    // Until it stops changing: stepping back over a part that does not exist can land on
+    // one that does — a symlink, say — which only the next pass resolves. Bounded, since a
+    // path has only so many parts to settle.
+    for _ in 0..16 {
+        let next = resolve_once(&current);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current.to_string_lossy().to_string()
+}
+
+/// One pass of `resolved_worktree`: the longest leading part that exists is resolved by the
+/// system, `..` and symlinks and all. What follows does not exist yet, so there is nothing
+/// to follow through it: `..` there steps back up and `.` is dropped, which is what git does
+/// when it creates it.
+fn resolve_once(absolute: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
     let parts: Vec<Component> = absolute.components().collect();
-    // The longest leading part that exists is resolved by the system, `..` and symlinks and
-    // all. What follows does not exist yet, so there is nothing to follow through it: `..`
-    // there steps back up and `.` is dropped, which is what git does when it creates it.
     for split in (1..=parts.len()).rev() {
         let head: PathBuf = parts[..split].iter().collect();
         let Ok(mut resolved) = head.canonicalize() else {
@@ -158,9 +173,9 @@ fn resolved_worktree(path: &str) -> String {
                 _ => {}
             }
         }
-        return resolved.to_string_lossy().to_string();
+        return resolved;
     }
-    absolute.to_string_lossy().to_string()
+    absolute.to_path_buf()
 }
 
 /// One of a record's text fields as an update gives it. `null` and `""` clear it; anything

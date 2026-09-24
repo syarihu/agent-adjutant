@@ -796,3 +796,31 @@ fn a_dot_dot_in_the_part_of_a_worktree_not_created_yet_steps_back_up() {
         "{added}"
     );
 }
+
+#[test]
+fn a_symlink_reached_by_stepping_back_over_a_missing_part_is_resolved_too() {
+    let fixture = Fixture::new(QUIET);
+    let base = std::fs::canonicalize(fixture.repo.parent().unwrap()).unwrap();
+    let real = base.join("real-target");
+    std::fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink(&real, base.join("to-real")).unwrap();
+    let given = base
+        .join("not-there")
+        .join("..")
+        .join("to-real")
+        .join("wid-18");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        given.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(
+        added["task"]["worktree"],
+        real.join("wid-18").to_str().unwrap(),
+        "{added}"
+    );
+}
