@@ -544,3 +544,133 @@ fn an_identifier_that_reads_like_a_flag_is_handed_down_as_one_argument() {
         "-x"
     );
 }
+
+fn set_config(fixture: &Fixture, key: &str, value: serde_json::Value) {
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config[key] = value;
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+}
+
+/// `agentEnv` may name the identifier, as a default. The command that starts an agent then
+/// claims the hub the agent is going to address, rather than the repository's own.
+///
+/// Before, a plain `adj hub` claimed the repository's record, inbox and session name while
+/// its agent was handed the configured identifier, and so read an inbox nobody was writing
+/// to. And a worker, which never looked at the variable, registered under one hub while its
+/// agent reported to the other.
+#[test]
+fn an_identifier_agent_env_names_is_the_one_the_launch_claims() {
+    let fixture = Fixture::new(QUIET);
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["repos"]["acme/widget"]["agentEnv"] = serde_json::json!({"ADJUTANT_HUB": FEATURE});
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+    let worktree = fixture.repo.to_str().unwrap();
+
+    let launch = fixture.ok(&["hub", "--dry-run"]);
+    assert!(
+        launch.contains(&format!("claude -n {FEATURE_HUB}")),
+        "{launch}"
+    );
+    assert!(
+        launch.contains(&format!("ADJUTANT_HUB={FEATURE} ")),
+        "{launch}"
+    );
+    // Once: the configured assignment is replaced by the claimed one, not repeated.
+    assert_eq!(launch.matches("ADJUTANT_HUB=").count(), 1, "{launch}");
+
+    let work = fixture.ok(&["work", "--worktree", worktree, "--dry-run"]);
+    assert!(work.contains(&format!("--hub={FEATURE}")), "{work}");
+
+    let worker = fixture.ok(&["worker", "--worktree", worktree, "--dry-run"]);
+    assert!(
+        worker.contains(&format!("ADJUTANT_HUB={FEATURE} ")),
+        "{worker}"
+    );
+    assert_eq!(worker.matches("ADJUTANT_HUB=").count(), 1, "{worker}");
+
+    // A default, and nothing more: what was typed, and what the process was started with,
+    // still outrank it — and the agent is handed that instead of the configured one.
+    let flagged = fixture.ok(&["hub", "--hub", "wid-958", "--dry-run"]);
+    let inherited = fixture
+        .command(["hub", "--dry-run"])
+        .env("ADJUTANT_HUB", "wid-958")
+        .output()
+        .unwrap();
+    let inherited = String::from_utf8_lossy(&inherited.stdout).to_string();
+    for line in [&flagged, &inherited] {
+        assert!(line.contains("ADJUTANT_HUB=wid-958 "), "{line}");
+        assert!(!line.contains(&format!("ADJUTANT_HUB={FEATURE}")), "{line}");
+        assert!(!line.contains(FEATURE_HUB), "{line}");
+    }
+    let worker = fixture.ok(&[
+        "worker",
+        "--worktree",
+        worktree,
+        "--hub",
+        "wid-958",
+        "--dry-run",
+    ]);
+    assert!(worker.contains("ADJUTANT_HUB=wid-958 "), "{worker}");
+    assert!(
+        !worker.contains(&format!("ADJUTANT_HUB={FEATURE}")),
+        "{worker}"
+    );
+}
+
+/// A worker's agent reads the hub the worker registered under, whatever the tab inherited.
+///
+/// A terminal template that carries its environment into the tab — tmux does — hands the
+/// agent the `ADJUTANT_HUB` of whichever hub ran `adj work`. That outranks the record in
+/// the worktree, so every report would go to that hub instead of the one named on the line.
+/// Run through to the exec rather than a dry run, because what matters is what the agent
+/// actually sees.
+#[test]
+fn a_worker_hands_its_agent_the_hub_it_registered_under_not_the_one_it_inherited() {
+    let fixture = Fixture::new(QUIET);
+    let seen = fixture.repo.join("seen.txt");
+    let echo = format!(
+        "sh -c 'echo \"[$ADJUTANT_HUB]\"' > {} ; true {{sessionId}} {{prompt}}",
+        shell_quoted(&seen.to_string_lossy())
+    );
+    set_config(&fixture, "agentRunner", echo.clone().into());
+    set_config(&fixture, "agentResumeRunner", echo.into());
+    let worktree = fixture.repo.to_str().unwrap();
+    let record = fixture.repo.join(".claude").join("adjutant-worker.json");
+    let read = |path: &Path| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+
+    let out = fixture
+        .command(["worker", "--worktree", worktree, "--hub", FEATURE])
+        .env("ADJUTANT_HUB", "someone-else")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(read(&record)["hub"], FEATURE);
+    assert_eq!(
+        std::fs::read_to_string(&seen).unwrap().trim(),
+        format!("[{FEATURE}]")
+    );
+
+    // A worker the repository's own hub dispatched records no identifier, and resumed from
+    // a tab that inherited one, its agent must not be handed that one either.
+    fixture.ok(&["worker", "--worktree", worktree]);
+    let out = fixture
+        .command(["worker", "--resume"])
+        .env("ADJUTANT_HUB", "someone-else")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(read(&record).get("hub").is_none(), "{}", read(&record));
+    assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "[]");
+}

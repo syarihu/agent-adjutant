@@ -178,7 +178,8 @@ enum Commands {
         /// Take the tab's title from this task record instead of --title
         #[arg(long, value_name = "ID", conflicts_with_all = ["title", "resume"])]
         task: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
+        /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
+        /// worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
         /// What the worker is told on startup (default: read .claude/task-brief.md; with
@@ -201,8 +202,9 @@ enum Commands {
         /// Default with --resume: the title the worker was started with
         #[arg(long)]
         title: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not
-        /// read here. With --resume: the hub that dispatched the saved session)
+        /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
+        /// worktree's own record is not read here. With --resume: the hub that dispatched the
+        /// saved session)
         #[arg(long)]
         hub: Option<String>,
         /// What the worker is told on startup (default: read .claude/task-brief.md; with
@@ -297,7 +299,8 @@ enum Commands {
         repo: Option<String>,
         #[arg(long)]
         dry_run: bool,
-        /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
+        /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
+        /// worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
         /// Open a tab and start it there, instead of becoming it in this one
