@@ -45,6 +45,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
     let fixture = Fixture::new(QUIET);
     let worktree = fixture.repo.parent().unwrap().join("widget-wid-1");
     let added = Command::new("git")
+        .hermetic()
         .args([
             "worktree",
             "add",
@@ -117,6 +118,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
     ] {
         assert!(
             Command::new("git")
+                .hermetic()
                 .args(&args)
                 .output()
                 .unwrap()

@@ -537,6 +537,7 @@ fn reopening_a_worker_is_held_to_max_workers_like_starting_one() {
     for name in ["wid-1", "wid-2"] {
         let path = fixture.repo.parent().unwrap().join(name);
         let out = std::process::Command::new("git")
+            .hermetic()
             .args(["worktree", "add", "-q", "-b", name])
             .arg(&path)
             .current_dir(&fixture.repo)
