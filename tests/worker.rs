@@ -439,12 +439,26 @@ fn a_worktree_name_or_issue_url_that_could_break_out_of_a_quote_is_refused() {
             "https://github.com/acme/widget/issues/1'; touch pwned; '",
         ],
         vec!["--issue-url", "file:///etc/passwd"],
+        vec!["--issue-url", "https://"],
+        vec!["--worktree-name", ".."],
+        vec!["--worktree-name", "-x"],
+        vec!["--worktree-name", "a.lock"],
     ] {
         let mut all = vec!["task", "add", "--body", "x"];
         all.extend(&args);
         let out = fixture.cmd(&all);
         assert!(!out.status.success(), "{args:?} was accepted");
     }
+    // A refusal leaves nothing behind: the id is claimed only once the values pass.
+    let tasks = fixture.state.join("tasks");
+    let left: Vec<_> = std::fs::read_dir(&tasks)
+        .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(
+        left.iter()
+            .all(|p| p.is_dir() && std::fs::read_dir(p).unwrap().next().is_none()),
+        "{left:?}"
+    );
     fixture.ok(&[
         "task",
         "add",

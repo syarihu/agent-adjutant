@@ -38,23 +38,38 @@ fn derive_title(input: &Value) -> Option<String> {
 /// line: the worktree name becomes a path and a branch, and the issue URL is quoted as it is.
 /// Checked here, where they come in, rather than in every command the procedures write — an
 /// apostrophe in either would close the quote around it and run the rest as shell.
-fn check_typed_values(task: &Task) -> Result<(), String> {
-    if let Some(name) = &task.worktree_name
-        && !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-    {
-        return Err(format!(
-            "a worktree name may only use letters, digits, '.', '_' and '-': {name}"
-        ));
-    }
+fn check_typed_values(input: &Value) -> Result<(), String> {
     // An empty field is a form left blank, not a value.
-    if let Some(url) = task.issue_url.as_deref().filter(|u| !u.is_empty()) {
-        let scheme = url.starts_with("https://") || url.starts_with("http://");
+    let typed = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+    };
+    if let Some(name) = typed("worktreeName") {
+        let charset = name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        // What git refuses in a branch name, among what the charset lets through. Saved, such a
+        // name would sit in the queue until the hub failed to create its branch.
+        let branchable =
+            !name.starts_with(['.', '-']) && !name.contains("..") && !name.ends_with(".lock");
+        if !(charset && branchable) {
+            return Err(format!(
+                "a worktree name may only use letters, digits, '.', '_' and '-', \
+                 and cannot start with '.' or '-', contain '..' or end in '.lock': {name}"
+            ));
+        }
+    }
+    if let Some(url) = typed("issueUrl") {
+        let rest = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"));
+        let host = rest.and_then(|r| r.split('/').next()).unwrap_or("");
         let plain = !url
             .chars()
             .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
-        if !(scheme && plain) {
+        if host.is_empty() || !plain {
             return Err(format!("not an issue URL: {url}"));
         }
     }
@@ -65,6 +80,9 @@ fn check_typed_values(task: &Task) -> Result<(), String> {
 pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let stamp = stamp();
     let title = derive_title(input).ok_or("a task needs content or a title")?;
+    // Before the id is claimed: claiming writes a reservation, and a refusal after it would
+    // leave that behind.
+    check_typed_values(input)?;
     let id = task::claim_id(&dir(ctx), &stamp, &title)?;
     let mut defaults = with_defaults(input, &id, &stamp)?;
     defaults["title"] = json!(title);
@@ -75,7 +93,6 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
-    check_typed_values(&task)?;
     task.order = next_order(ctx);
 
     // Written before the message is sent, and never the other way round: the record is what
