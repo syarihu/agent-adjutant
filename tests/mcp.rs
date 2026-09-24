@@ -113,6 +113,7 @@ fn a_report_sent_through_the_server_lands_where_the_cli_looks_for_it() {
     // is working in, so the server's own directory is nobody's address.
     let worktree = fixture.repo.parent().unwrap().join("widget-wid-2");
     let added = Command::new("git")
+        .hermetic()
         .args([
             "worktree",
             "add",

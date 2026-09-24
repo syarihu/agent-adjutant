@@ -133,6 +133,7 @@ fn one_worker_at_a_time() -> Fixture {
 fn linked_worktree(fixture: &Fixture, name: &str) -> String {
     let path = fixture.repo.parent().unwrap().join(name);
     let out = std::process::Command::new("git")
+        .hermetic()
         .args(["worktree", "add", "-q", "-b", name])
         .arg(&path)
         .current_dir(&fixture.repo)
