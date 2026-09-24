@@ -175,3 +175,125 @@ fn answering_a_gate_writes_the_time_onto_its_task() {
         "{shown}"
     );
 }
+
+#[test]
+fn a_record_is_kept_without_waiting_and_an_answer_to_it_reaches_the_outbox() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = fixture.repo.to_str().unwrap();
+    let payload_file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "diff",
+            "wait": false,
+            "title": "セルフレビュー: 2ラウンドで収束",
+            "worktree": worktree,
+            "reviewRounds": [
+                { "engine": "claude", "must": 1, "falsePositives": 1 },
+                { "engine": "claude" },
+            ],
+            "findings": [{
+                "severity": "must",
+                "location": "src/gate.rs:10",
+                "text": "unwrap on a missing file",
+                "outcome": "fixed",
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let opened = fixture.json(&[
+        "gate",
+        "open",
+        "--file",
+        payload_file.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(opened["wait"], false, "{opened}");
+    assert!(
+        opened["note"].as_str().unwrap().contains("Do not wait"),
+        "{opened}"
+    );
+    let id = opened["gate"]["id"].as_str().unwrap().to_string();
+    assert!(id.ends_with("-diff-record"), "{id}");
+
+    // Stored, and asks nobody for anything.
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let shown = fixture.json(&["gate", "show", "--id", &id]);
+    assert_eq!(shown["reviewRounds"][0]["falsePositives"], 1, "{shown}");
+    assert_eq!(shown["findings"][0]["outcome"], "fixed", "{shown}");
+
+    // Only sending it back means anything to a worker that is not waiting.
+    let refused = fixture.cmd(&["gate", "answer", "--id", &id, "--decision", "approve"]);
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("only be answered with changes"),
+        "{refused:?}"
+    );
+    let refused = fixture.cmd(&[
+        "gate",
+        "answer",
+        "--id",
+        &id,
+        "--decision",
+        "changes",
+        "--choice",
+        "a",
+    ]);
+    assert!(!refused.status.success(), "{refused:?}");
+
+    fixture.ok(&[
+        "gate",
+        "answer",
+        "--id",
+        &id,
+        "--decision",
+        "changes",
+        "--comment",
+        "テストを足してほしいのだ",
+    ]);
+    let outbox = fixture.ok(&["outbox", "--worktree", worktree]);
+    assert!(outbox.contains(&format!("[gate {id}] changes")), "{outbox}");
+    assert!(outbox.contains("(diff, 記録)"), "{outbox}");
+    assert!(outbox.contains("テストを足してほしいのだ"), "{outbox}");
+
+    // And the record stays, with the answer on it.
+    let shown = fixture.json(&["gate", "show", "--id", &id]);
+    assert_eq!(shown["answers"][0]["decision"], "changes", "{shown}");
+    assert_eq!(
+        shown["answers"][0]["comment"], "テストを足してほしいのだ",
+        "{shown}"
+    );
+    assert!(shown["decision"].is_null(), "{shown}");
+}
+
+#[test]
+fn a_plan_cannot_be_kept_as_a_record() {
+    // A plan always waits: nothing is written before a person has seen it.
+    let fixture = Fixture::new(QUIET);
+    let payload_file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "plan",
+            "wait": false,
+            "title": "設計方針の確認",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = fixture.cmd(&["gate", "open", "--file", payload_file.to_str().unwrap()]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("cannot be kept as a record"),
+        "{out:?}"
+    );
+}

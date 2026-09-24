@@ -87,17 +87,18 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
 | `adjutant hub-stop` | clear this repo's hub record |
 
-Agent-side (`adjutant mcp`), the same machinery as seven tools and three prompts:
+Agent-side (`adjutant mcp`), the same machinery as eight tools and three prompts:
 
 - **prompts** — `adj-hub` (run the hub), `adj-worker` (take a task from brief to handover),
   `adj-report` (hand a bug you found to the hub). Claude Code exposes these as
   `/mcp__adjutant__adj-hub` and so on.
 
 - **tools** — `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`,
-  `adjutant_tell`, `adjutant_outbox`, `adjutant_skill`. The last one serves the same
-  procedure text as the prompts, tailored to the target agent format (such as Claude Code's
-  `AskUserQuestion` or Antigravity's `ask_question`), because MCP prompt support is uneven
-  across agents and a procedure nobody can fetch is a procedure nobody follows.
+  `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_skill`. The last one
+  serves the same procedure text as the prompts, tailored to the target agent format (such
+  as Claude Code's `AskUserQuestion` or Antigravity's `ask_question`), because MCP prompt
+  support is uneven across agents and a procedure nobody can fetch is a procedure nobody
+  follows.
 
 The names are short where a person types them and long where something reads them back:
 `adj` on the command line and `adj-…` for the prompts, against `adjutant` for the MCP server
@@ -230,7 +231,7 @@ symptom is the hub going quiet.
   "mcp__adjutant__adjutant_config", "mcp__adjutant__adjutant_hub_status",
   "mcp__adjutant__adjutant_send", "mcp__adjutant__adjutant_pending",
   "mcp__adjutant__adjutant_tell", "mcp__adjutant__adjutant_outbox",
-  "mcp__adjutant__adjutant_skill"
+  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_skill"
 ]}
 ```
 
@@ -427,6 +428,15 @@ gate. Leaving is not failing.
 succeeding: with nothing serving, a gate is a message into a directory no one opens, so the
 procedure falls back to asking in its own tab. **A worker must never wait on a queue nobody
 is watching.**
+
+A `diff` or `verify` gate can also be kept as a record with `"wait": false`, for a review or
+a check with nothing in it for a person. It is written to `records/` beside `answered/`
+rather than to the open queue, so it is not counted in 要対応, and the command tells the
+worker to go on. A person can still send one back with `changes`: the answer reaches the
+worktree's outbox like any other, and the record stays, with the answer appended to it.
+Both kinds of gate take structured fields beside the prose — `reviewRounds` and `findings`
+for a diff, `commands` and `manual` for a check, `problem` and `goal` for a plan — and
+`/api/state` hands each live task its records and the plan a person last approved.
 
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.

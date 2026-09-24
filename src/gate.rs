@@ -63,6 +63,15 @@ impl Kind {
         matches!(self, Kind::Dispatch | Kind::Issue)
     }
 
+    /// Whether a gate of this kind may be kept as a record instead of waited on.
+    ///
+    /// Only the two a worker opens after its own checks have run: the review and the check
+    /// can have nothing in them for a person. A plan always waits, and the hub's and the
+    /// question kinds exist to be answered.
+    pub fn can_be_recorded(self) -> bool {
+        matches!(self, Kind::Diff | Kind::Verify)
+    }
+
     /// What the buttons are, when the payload does not say.
     pub fn default_options(self) -> Vec<String> {
         let options: &[&str] = match self {
@@ -73,6 +82,94 @@ impl Kind {
         };
         options.iter().map(|o| o.to_string()).collect()
     }
+}
+
+/// How bad a review finding is. The same three words the worker's review loop reports in, so
+/// a record reads the way the rounds were run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Severity {
+    /// A defect if merged.
+    Must,
+    /// Correct, and could be better.
+    Want,
+    /// Not what the task asked for.
+    Scope,
+}
+
+/// What became of a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Outcome {
+    /// Still there: not fixed, and not ruled out.
+    Open,
+    Fixed,
+    /// Checked against the code and ruled a false positive. The reason goes with it.
+    Declined,
+}
+
+/// One round of the worker's own review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewRound {
+    /// Who read the diff: `claude`, `codex`, ...
+    pub engine: String,
+    #[serde(default)]
+    pub must: u32,
+    #[serde(default)]
+    pub want: u32,
+    #[serde(default)]
+    pub scope: u32,
+    #[serde(default)]
+    pub false_positives: u32,
+}
+
+/// One thing a review round raised, and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Finding {
+    pub severity: Severity,
+    /// `file:line`, or whatever the reviewer pointed at.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub location: String,
+    pub text: String,
+    pub outcome: Outcome,
+    /// Why it was declined. A false positive with no reason is one the next reader has to
+    /// re-check from scratch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunResult {
+    Pass,
+    Fail,
+}
+
+/// One `verify` command as it was run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRun {
+    pub command: String,
+    pub result: RunResult,
+    /// How long it took, as the worker measured it (`42s`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<String>,
+    /// What it printed, or the tail of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+}
+
+/// One answer to a record. A record stays where it is when it is answered, so the answers
+/// are appended rather than written over the gate's own `decision`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Answer {
+    pub decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    pub answered_at: String,
 }
 
 /// One of the designs an agent is asking a person to choose between.
@@ -136,6 +233,29 @@ pub struct Gate {
     /// become a conversation and a conversation is faster where it is not posted.
     #[serde(default)]
     pub rounds: u32,
+    // ── the structured attachments, by kind ──
+    /// `plan`: what is wrong today, from the request and the issue the worker read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    /// `plan`: what done looks like.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    /// `diff`: the worker's own review, one entry per round. Not `rounds`, which already
+    /// counts how often this gate has been round-tripped with a person.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_rounds: Vec<ReviewRound>,
+    /// `diff`: what those rounds raised.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
+    /// `verify`: the commands that were run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<CommandRun>,
+    /// `verify`: the checks left for a person.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manual: Vec<String>,
+    /// `false` for a record: written down for the board, while the worker carries on.
+    #[serde(default = "waits", skip_serializing_if = "is_waiting")]
+    pub wait: bool,
     pub opened_at: String,
     // ── written when it is answered ──
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,6 +266,17 @@ pub struct Gate {
     pub comment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered_at: Option<String>,
+    /// A record's answers, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub answers: Vec<Answer>,
+}
+
+fn waits() -> bool {
+    true
+}
+
+fn is_waiting(wait: &bool) -> bool {
+    *wait
 }
 
 /// Where this hub's open gates wait.
@@ -160,6 +291,12 @@ pub fn answered_dir(state_dir: &Path, slug: &str) -> PathBuf {
     dir(state_dir, slug).join("answered")
 }
 
+/// Where a gate kept as a record lives. Beside `answered/` rather than in the open queue, so
+/// nothing that counts what is waiting for a person counts it.
+pub fn records_dir(state_dir: &Path, slug: &str) -> PathBuf {
+    dir(state_dir, slug).join("records")
+}
+
 pub fn path_of(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
 }
@@ -170,8 +307,18 @@ pub fn path_of(dir: &Path, id: &str) -> PathBuf {
 /// pieces of work in the same second is ordinary, and the loser of a check-then-write would
 /// overwrite a gate somebody is in the middle of reading.
 pub fn claim_id(dir: &Path, stamp: &str, kind: Kind) -> Result<String, String> {
+    claim(dir, format!("{stamp}-{}", kind.as_str()))
+}
+
+/// `20260922T041233Z-diff-record`. Named apart from an open gate's id rather than claimed in
+/// both directories: an answer finds its gate by id alone, and a record and a gate opened in
+/// the same second must not be mistaken for each other.
+pub fn claim_record_id(dir: &Path, stamp: &str, kind: Kind) -> Result<String, String> {
+    claim(dir, format!("{stamp}-{}-record", kind.as_str()))
+}
+
+fn claim(dir: &Path, base: String) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let base = format!("{stamp}-{}", kind.as_str());
     for seq in 1..1000 {
         let id = if seq == 1 {
             base.clone()
@@ -212,12 +359,36 @@ pub fn load(dir: &Path, id: &str) -> Result<Gate, String> {
 }
 
 /// Every gate still waiting for a person, oldest first — which is the order they should be
-/// worked through.
+/// worked through. Given the records directory instead, every record, in the same order.
 pub fn list(dir: &Path) -> Vec<Gate> {
+    list_where(dir, |_| true)
+}
+
+/// The gates of one kind, told apart by their file names before any is read. For the
+/// archive, which only grows: the board asks it for plans on every poll, and parsing every
+/// diff ever answered to find them would cost more each day.
+pub fn list_of_kind(dir: &Path, kind: Kind) -> Vec<Gate> {
+    // `{stamp}-{kind}`, `{stamp}-{kind}-{seq}` or `{stamp}-{kind}-record`. No kind's name
+    // begins another's, so the prefix is enough; the kind is checked again once parsed.
+    list_where(dir, |id| {
+        id.split_once('-')
+            .is_some_and(|(_, rest)| rest.starts_with(kind.as_str()))
+    })
+    .into_iter()
+    .filter(|g| g.kind == kind)
+    .collect()
+}
+
+fn list_where(dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<Gate> {
     let mut gates: Vec<Gate> = match std::fs::read_dir(dir) {
         Ok(entries) => entries
             .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .filter(|e| {
+                e.path()
+                    .file_stem()
+                    .is_some_and(|stem| wanted(&stem.to_string_lossy()))
+            })
             .filter_map(|e| std::fs::read_to_string(e.path()).ok())
             .filter_map(|text| serde_json::from_str::<Gate>(&text).ok())
             .collect(),
@@ -269,8 +440,11 @@ pub fn answer_body(
             .unwrap_or(choice);
         out.push_str(&format!("## 選ばれた案   {label}({choice})\n"));
     }
+    // A record said as one, so the worker knows the person went back to something it had
+    // already moved past rather than something it is waiting on.
+    let record = if gate.wait { "" } else { ", 記録" };
     out.push_str(&format!(
-        "## gate       {} ({})\n",
+        "## gate       {} ({}{record})\n",
         gate.id,
         gate.kind.as_str()
     ));
@@ -315,11 +489,19 @@ mod tests {
             }],
             options: vec!["approve".to_string(), "changes".to_string()],
             rounds: 0,
+            problem: None,
+            goal: None,
+            review_rounds: Vec::new(),
+            findings: Vec::new(),
+            commands: Vec::new(),
+            manual: Vec::new(),
+            wait: true,
             opened_at: "20260922T041233Z".to_string(),
             decision: None,
             choice: None,
             comment: None,
             answered_at: None,
+            answers: Vec::new(),
         }
     }
 
@@ -364,6 +546,26 @@ mod tests {
         }
         let ids: Vec<String> = list(dir.path()).into_iter().map(|g| g.id).collect();
         assert_eq!(ids, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn listing_by_kind_reads_only_that_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        for (id, kind) in [
+            ("20260922T01Z-plan", Kind::Plan),
+            ("20260922T02Z-plan-2", Kind::Plan),
+            ("20260922T03Z-diff", Kind::Diff),
+        ] {
+            let mut gate = gate(kind);
+            gate.id = id.to_string();
+            save(dir.path(), &gate).unwrap();
+        }
+        let ids: Vec<String> = list_of_kind(dir.path(), Kind::Plan)
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
+        assert_eq!(ids.len(), 2, "{ids:?}");
+        assert!(ids.iter().all(|id| id.contains("-plan")), "{ids:?}");
     }
 
     /// The `answered` subdirectory lives inside the gate directory, so it must not read as
@@ -417,6 +619,67 @@ mod tests {
     fn a_missing_comment_is_said_rather_than_left_out() {
         let body = answer_body(&gate(Kind::Diff), "approve", None, None);
         assert!(body.contains("## コメント\n\n(なし)"), "{body}");
+    }
+
+    #[test]
+    fn a_record_s_id_is_told_apart_from_a_gate_s() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            claim_record_id(dir.path(), "20260922T041233Z", Kind::Diff).unwrap(),
+            "20260922T041233Z-diff-record"
+        );
+    }
+
+    /// The structured fields are what the board draws its tables from, so they have to come
+    /// back out exactly as the worker wrote them.
+    #[test]
+    fn a_record_with_its_structured_fields_reads_back_the_same() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut gate = gate(Kind::Diff);
+        gate.wait = false;
+        gate.review_rounds = vec![ReviewRound {
+            engine: "claude".to_string(),
+            must: 2,
+            want: 1,
+            scope: 0,
+            false_positives: 1,
+        }];
+        gate.findings = vec![Finding {
+            severity: Severity::Must,
+            location: "src/gate.rs:10".to_string(),
+            text: "unwrap on a missing file".to_string(),
+            outcome: Outcome::Declined,
+            reason: Some("the file is created just above".to_string()),
+        }];
+        gate.answers = vec![Answer {
+            decision: "changes".to_string(),
+            comment: Some("もう一度見てほしいのだ".to_string()),
+            answered_at: "20260922T050000Z".to_string(),
+        }];
+        save(dir.path(), &gate).unwrap();
+        assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
+
+        let json = serde_json::to_value(&gate).unwrap();
+        assert_eq!(json["wait"], false);
+        assert_eq!(json["reviewRounds"][0]["falsePositives"], 1);
+        assert_eq!(json["findings"][0]["outcome"], "declined");
+    }
+
+    /// A gate written before records existed has no `wait`, and waits.
+    #[test]
+    fn a_gate_without_wait_is_one_that_waits() {
+        let mut json = serde_json::to_value(gate(Kind::Plan)).unwrap();
+        assert!(json.get("wait").is_none(), "{json}");
+        json.as_object_mut().unwrap().remove("wait");
+        assert!(serde_json::from_value::<Gate>(json).unwrap().wait);
+    }
+
+    #[test]
+    fn an_answer_to_a_record_says_it_is_one() {
+        let mut gate = gate(Kind::Verify);
+        gate.wait = false;
+        let body = answer_body(&gate, "changes", None, Some("直してほしいのだ"));
+        assert!(body.contains("(verify, 記録)"), "{body}");
     }
 
     /// A report is read, not approved, so it must not come with an Approve button.

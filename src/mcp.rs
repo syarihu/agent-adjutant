@@ -265,6 +265,40 @@ fn tool_definitions() -> Value {
             },
         },
         {
+            "name": "adjutant_gate_open",
+            "description": "Put something in front of a person on the board, the same as `adj gate open`: the arguments are the gate's payload. By default the gate waits — end your turn and read `adjutant_outbox` when woken; `server` says whether a board is up to see it at all, and when it is `down` ask in your own tab instead. With `wait: false` (diff and verify only) it is kept as a record: nobody is asked, and you go on with your work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["plan", "diff", "verify", "dispatch", "issue", "question", "result"] },
+                    "title": { "type": "string", "description": "What this is, in one line. Most of what the board shows." },
+                    "task": { "type": "string", "description": "The task record id from the brief, when there is one." },
+                    "worktree": { "type": "string", "description": "Where the answer goes. Default: the worktree `cwd` is in." },
+                    "wait": { "type": "boolean", "description": "false to keep a diff or verify gate as a record instead of waiting on it. Default: true." },
+                    "facts": { "type": "array", "items": { "type": "string" }, "description": "True whatever is decided: rounds run, tests passed, lines changed." },
+                    "focus": { "type": "string", "description": "What the person has to decide. Enough to answer from alone." },
+                    "decided": { "type": "string", "description": "What is settled. Shown folded away." },
+                    "unsure": { "type": "string", "description": "Where your confidence ran out." },
+                    "body": { "type": "string", "description": "A report, for a result gate." },
+                    "run": { "type": "string", "description": "How to run it, for verify." },
+                    "diff": { "type": "string", "description": "The diff, for diff." },
+                    "choices": { "type": "array", "items": { "type": "object" }, "description": "Designs to choose between: id, label, why, points, recommended." },
+                    "options": { "type": "array", "items": { "type": "string" }, "description": "The buttons. Default: by kind." },
+                    "rounds": { "type": "integer", "description": "How many times this same point has gone back and forth with a person." },
+                    "problem": { "type": "string", "description": "plan: what is wrong today, from the request and the issue." },
+                    "goal": { "type": "string", "description": "plan: what done looks like." },
+                    "reviewRounds": { "type": "array", "items": { "type": "object" }, "description": "diff: one per review round — engine, must, want, scope, falsePositives." },
+                    "findings": { "type": "array", "items": { "type": "object" }, "description": "diff: severity (must | want | scope), location, text, outcome (open | fixed | declined), reason when declined." },
+                    "commands": { "type": "array", "items": { "type": "object" }, "description": "verify: command, result (pass | fail), time, output." },
+                    "manual": { "type": "array", "items": { "type": "string" }, "description": "verify: the checks left for a person." },
+                    "repo": repo_property(),
+                    "hub": hub_property(),
+                    "cwd": cwd_property(),
+                },
+                "required": ["kind", "title"],
+            },
+        },
+        {
             "name": "adjutant_skill",
             "description": "The full text of one of adjutant's procedures: adj-hub (running the hub), adj-worker (taking a task from brief to handover), adj-report (handing a bug you found to the hub). Same text the MCP prompts serve; use this tool when prompts are not available to you.",
             "inputSchema": {
@@ -483,6 +517,25 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 }
                 other => Err(format!("action must be read or clear: {other}")),
             }
+        }
+        "adjutant_gate_open" => {
+            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let mut payload = args.clone();
+            let fields = payload
+                .as_object_mut()
+                .ok_or("arguments must be an object")?;
+            for key in ["repo", "hub", "cwd"] {
+                fields.remove(key);
+            }
+            // From the caller's `cwd`, for the reason `adjutant_send` gives: the server's own
+            // directory is not where the worker is standing, and this is where the answer goes.
+            if !fields.contains_key("worktree") {
+                let here = repo::current_worktree(cwd_param(args).as_deref())
+                    .ok_or("not inside a worktree: pass worktree or cwd")?;
+                fields.insert("worktree".to_string(), json!(here));
+            }
+            let (gate, served) = crate::cmd::gate_open_payload(&ctx, &payload)?;
+            Ok(crate::cmd::gate_open_json(&gate, served))
         }
         "adjutant_skill" => {
             let name = args["name"].as_str().unwrap_or("");
@@ -942,7 +995,7 @@ mod tests {
     fn every_advertised_tool_is_one_the_dispatcher_knows() {
         // Every tool here is called for real, and several of them read the config and the
         // state directory. Without this the test answered about the developer's own
-        // machine — harmless while all seven happen to be read-only, and a fixture dropped
+        // machine — harmless while they all happened to be read-only, and a fixture dropped
         // into a live hub's inbox the day one of them is not.
         let _sandbox = crate::testing::Sandbox::empty();
         let listed = call("tools/list", json!({}));
