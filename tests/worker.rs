@@ -620,3 +620,207 @@ fn a_note_and_a_tab_title_given_as_a_dash_are_read_from_stdin() {
         "{out:?}"
     );
 }
+
+/// A worker record naming this test process, which is certainly running.
+fn a_running_worker_in(worktree: &str) {
+    let pid = std::process::id();
+    let dir = std::path::Path::new(worktree).join(".claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("adjutant-worker.json"),
+        serde_json::json!({"pid": pid, "title": "WID-13", "psStarted": ps_started(pid)})
+            .to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_worker_says_which_phase_it_is_in_and_a_typo_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-13");
+    // Nobody registered there yet: there is no run of a worker to describe.
+    assert!(
+        !fixture
+            .cmd(&["phase", "--set", "plan", "--worktree", &worktree])
+            .status
+            .success()
+    );
+
+    a_running_worker_in(&worktree);
+    fixture.ok(&["phase", "--set", "self-review", "--worktree", &worktree]);
+    assert_eq!(
+        fixture.ok(&["phase", "--worktree", &worktree]).trim(),
+        "self-review"
+    );
+    assert!(
+        !fixture
+            .cmd(&["phase", "--set", "reviewing", "--worktree", &worktree])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn a_workers_tab_is_raised_through_the_focus_template() {
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "terminal": {"focus": "raise {pid} {title}"}, "repos": {}}"#,
+    );
+    let worktree = linked_worktree(&fixture, "wid-14");
+    // Nothing running there: exit 1, the same answer `adj focus` gives for a hub that is down.
+    let none = fixture.cmd(&["focus", "--worktree", &worktree, "--dry-run"]);
+    assert_eq!(none.status.code(), Some(1), "{none:?}");
+
+    a_running_worker_in(&worktree);
+    let out = fixture.ok(&["focus", "--worktree", &worktree, "--dry-run"]);
+    assert!(
+        out.contains(&format!("raise {} WID-13", std::process::id())),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_tasks_worktree_is_stored_the_way_git_names_it() {
+    // The board matches a task to its worker by this string. Stored through a symlink, it
+    // read as a worker that was not there.
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-15");
+    let link = fixture.repo.parent().unwrap().join("via-link");
+    std::os::unix::fs::symlink(&worktree, &link).unwrap();
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        link.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(added["task"]["worktree"], worktree.as_str(), "{added}");
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    let updated = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--worktree",
+        link.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(updated["task"]["worktree"], worktree.as_str(), "{updated}");
+}
+
+#[test]
+fn a_stored_worktree_is_left_alone_by_an_update_that_does_not_give_one() {
+    // Resolved when given, against the directory of the command that gave it. An update run
+    // from somewhere else must not read the stored path against its own directory.
+    let fixture = Fixture::new(QUIET);
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        "not-yet/wt",
+        "--json",
+    ]);
+    let stored = added["task"]["worktree"].as_str().unwrap().to_string();
+    assert!(
+        stored.starts_with('/'),
+        "made absolute where it was given: {stored}"
+    );
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    // Somewhere else inside the repository, where the same relative path does exist.
+    let elsewhere = fixture.repo.join("sub");
+    std::fs::create_dir_all(elsewhere.join("not-yet/wt")).unwrap();
+    let out = fixture
+        .command([
+            "task",
+            "update",
+            "--id",
+            &id,
+            "--status",
+            "dispatched",
+            "--json",
+        ])
+        .current_dir(&elsewhere)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let updated: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(updated["task"]["worktree"], stored.as_str(), "{updated}");
+}
+
+#[test]
+fn a_worktree_not_created_yet_is_stored_as_git_will_name_it() {
+    // Resolved through the part of it that exists, so a path through a symlink matches what
+    // `git worktree list` prints once the worktree is created there.
+    let fixture = Fixture::new(QUIET);
+    let real = fixture.repo.parent().unwrap().join("real-base");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = fixture.repo.parent().unwrap().join("link-base");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        link.join("wid-16").to_str().unwrap(),
+        "--json",
+    ]);
+    let expected = std::fs::canonicalize(&real).unwrap().join("wid-16");
+    assert_eq!(
+        added["task"]["worktree"],
+        expected.to_str().unwrap(),
+        "{added}"
+    );
+}
+
+#[test]
+fn a_dot_dot_in_the_part_of_a_worktree_not_created_yet_steps_back_up() {
+    let fixture = Fixture::new(QUIET);
+    let base = std::fs::canonicalize(fixture.repo.parent().unwrap()).unwrap();
+    let given = base.join("not-there").join("..").join("wid-17");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        given.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(
+        added["task"]["worktree"],
+        base.join("wid-17").to_str().unwrap(),
+        "{added}"
+    );
+}
+
+#[test]
+fn a_symlink_reached_by_stepping_back_over_a_missing_part_is_resolved_too() {
+    let fixture = Fixture::new(QUIET);
+    let base = std::fs::canonicalize(fixture.repo.parent().unwrap()).unwrap();
+    let real = base.join("real-target");
+    std::fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink(&real, base.join("to-real")).unwrap();
+    let given = base
+        .join("not-there")
+        .join("..")
+        .join("to-real")
+        .join("wid-18");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        given.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(
+        added["task"]["worktree"],
+        real.join("wid-18").to_str().unwrap(),
+        "{added}"
+    );
+}

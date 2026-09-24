@@ -669,6 +669,69 @@ pub fn focus(
     Ok(true)
 }
 
+/// Bring the tab of the worker in `worktree` to the front, through `terminal.focus` like the
+/// hub's. `Ok(false)` when no worker is running there — nothing to raise.
+pub fn focus_worker(
+    settings: &Settings,
+    worktree: &std::path::Path,
+    dry_run: bool,
+) -> Result<Option<terminal::Performed>, String> {
+    let status = messaging::worker_status(worktree);
+    let Some(pid) = status.pid.filter(|_| status.present) else {
+        return Ok(None);
+    };
+    // The name the tab actually carries, as `close` hands it over: `spawn` put the record's
+    // title through `sanitise_title`, and a template that finds a tab by name needs that.
+    let title = terminal::sanitise_title(
+        status.title.as_deref().unwrap_or_default(),
+        worktree
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    );
+    terminal::focus(settings.terminal.focus.as_deref(), pid, &title, dry_run).map(Some)
+}
+
+pub fn focus_worker_cmd(
+    repo_arg: Option<&str>,
+    worktree: &str,
+    quiet: bool,
+    dry_run: bool,
+) -> Result<bool, String> {
+    let settings = settings_for(repo_arg);
+    let worktree = config::expand_home(worktree);
+    let Some(done) = focus_worker(&settings, &worktree, dry_run)? else {
+        if !quiet {
+            println!("no worker is running in {}", worktree.display());
+        }
+        return Ok(false);
+    };
+    if dry_run && !done.script.is_empty() {
+        println!("{}", done.script);
+    } else if !quiet && (dry_run || !done.ran) {
+        // Nothing to show as a script means nothing would run: say why rather than print a
+        // blank line.
+        println!("({})", done.description);
+    }
+    Ok(true)
+}
+
+/// `adj phase`: set the step the worker here is in, or say which it is.
+pub fn phase(worktree: Option<&str>, set: Option<&str>) -> Result<(), String> {
+    let worktree = worker_worktree(worktree)?;
+    match set {
+        Some(phase) => {
+            messaging::set_worker_phase(&worktree, phase)?;
+            println!("phase: {phase}");
+        }
+        None => match messaging::worker_status(&worktree).phase {
+            Some(phase) => println!("{phase}"),
+            None => println!("(none)"),
+        },
+    }
+    Ok(())
+}
+
 /// How long to wait for a closed tab's worker to actually be gone, and how often to look.
 ///
 /// Closing a tab hangs its session up and the process in it then unwinds, which is quick but

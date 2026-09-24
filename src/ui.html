@@ -70,6 +70,9 @@ main { flex:1; overflow:hidden; position:relative; }
 .col.drop-ok { outline:2px dashed var(--good); outline-offset:1px; }
 .col .empty { color:var(--muted); padding:6px 4px; }
 
+.card.stuck { border:2px solid var(--critical); }
+.col > .more { border:1px dashed var(--border); background:transparent; color:var(--muted);
+  border-radius:8px; padding:6px; font-size:11.5px; cursor:pointer; width:100%; margin-top:6px; }
 .card { background:var(--surface-1); border:1px solid var(--border); border-radius:8px;
   padding:8px 10px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:5px;
   text-align:left; width:100%; min-width:0; cursor:pointer; transition:border-color .15s, box-shadow .15s; }
@@ -372,6 +375,7 @@ async function api(path, options = {}) {
 }
 
 let lastStateJson = '';
+let lastMinute = null;
 let seenGateIds = null;
 
 function updateNotifyButton() {
@@ -440,9 +444,17 @@ async function refresh(force = false) {
   try {
     const next = await api('/api/state');
     checkNewGates(next.gates);
-    const nextJson = JSON.stringify(next);
-    if (!force && nextJson === lastStateJson) return;
+    // Compared without the server's clock, which changes on every poll: with it in, every
+    // refresh redrew the page, and a comment being typed into a gate lost its IME
+    // composition every two seconds. The clock only moves the elapsed times on the board, so
+    // the board — which has nothing to type into — is redrawn for it once a minute.
+    const { now, ...rest } = next;
+    const nextJson = JSON.stringify(rest);
+    const minute = Math.floor((now || 0) / 60);
+    const clockOnly = nextJson === lastStateJson && minute !== lastMinute && view === 'board';
+    if (!force && nextJson === lastStateJson && !clockOnly) return;
     lastStateJson = nextJson;
+    lastMinute = minute;
     state = next;
     if (window.__from) return;
     render();
@@ -479,8 +491,87 @@ function render() {
   renderReview();
 }
 
+/* What `adj phase --set` writes, in the words a card shows. */
+const PHASE_LABEL = { plan:'計画', implement:'実装', 'self-review':'セルフレビュー', verify:'動作確認',
+                      pr:'PR', review:'レビュー対応', report:'報告' };
+const workerOf = t => t.worktree && (state.workers || []).find(w => w.worktree === t.worktree);
+const minutesLabel = mins => mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.floor(mins / 60)}時間` : `${Math.floor(mins / 1440)}日`;
+/* Minutes since the worker entered its phase, by the server's clock so a laptop that slept
+   does not make every card look stuck. */
+const phaseMinutes = w => w && w.phaseAt != null && state.now != null
+  ? Math.max(0, Math.floor((state.now - w.phaseAt) / 60)) : null;
+const stampSecs = stamp => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
+};
+/* Minutes the worker has had the ball: since it entered its phase, or since a person last
+   answered its gate, whichever is later. */
+const workerMinutes = (task, w) => {
+  const mins = phaseMinutes(w);
+  const answered = stampSecs(task.gateAnsweredAt);
+  if (mins == null || answered == null || state.now == null) return mins;
+  return Math.min(mins, Math.max(0, Math.floor((state.now - answered) / 60)));
+};
+
+/* Why a card is stuck, or null. A badge rather than a column: moved to a column of its own,
+   the card would lose the column that says where it got to. */
+function stuckOf(task) {
+  if (!['dispatched', 'pr'].includes(task.status) || !task.worktree) return null;
+  const w = workerOf(task);
+  // The worker is gone and nothing will move this card: the one thing a person must hear.
+  // Not in the first two minutes, while a worker that was just dispatched is still opening.
+  if (!w || !w.present) return Date.now() - updatedMs(task) < 120000 ? null : 'worker 停止';
+  // Time only counts while the ball is the worker's. A card waiting on a person's answer to a
+  // gate, or on reviewers once its PR is open, is not the worker being stuck — flagging those
+  // would bury the ones that are.
+  if (openGate(task) || task.status === 'pr') return null;
+  const mins = workerMinutes(task, w);
+  const limit = state.stuckAfterMinutes;
+  if (mins != null && limit > 0 && mins >= limit) return `${minutesLabel(mins)} 同じ工程`;
+  return null;
+}
+
+/* Done cards older than this fold away. The records stay; the column is for
+   what finished recently, not an archive to scroll past. */
+const DONE_SHOWN_HOURS = 24;
+let showOlderDone = false;
+const updatedMs = t => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(t.updatedAt || '');
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : Date.now();
+};
+
+/* The buttons a card has for the worker behind it. Each runs on the server through the same
+   templates the commands use; the log line says which command that was. */
+async function focusHub() {
+  const line = 'adj focus';
+  try {
+    const data = await api('/api/hub/focus', { method: 'POST', body: '{}' });
+    note(line, false, data.present ? (data.ran ? 'hub のタブを前に出しました' : 'hub のタブが見つかりませんでした') : 'hub は動いていません');
+  } catch (e) { note(`${line} → ${e.message}`, true); }
+}
+
+async function worktreeAct(action, worktree) {
+  const line = { focus: `adj focus --worktree ${worktree}`, ide: `adj ide --worktree ${worktree}`,
+                 close: `adj close --worktree ${worktree}` }[action];
+  if (action === 'close' && !confirm(`${worktree.split('/').pop()} の worker のタブを閉じます。worker は止まります（worktree は残ります）。`)) return;
+  try {
+    const data = await api(`/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
+    const why = action === 'focus' ? (data.present ? (data.ran ? 'タブを前に出しました' : 'worker のタブが見つかりませんでした') : 'worker は動いていません')
+              : action === 'close' ? (data.closed ? 'タブを閉じました' : 'まだ閉じていません（確認待ちかもしれません）')
+              : 'エディタで開きました';
+    note(line, false, why);
+    await refresh();
+  } catch (e) { note(`${line} → ${e.message}`, true); }
+}
+
 function columnEl(col) {
-  const items = (state.tasks || []).filter(t => columnOf(t) === col.id);
+  let items = (state.tasks || []).filter(t => columnOf(t) === col.id);
+  let older = [];
+  if (col.id === 'done') {
+    const cutoff = Date.now() - DONE_SHOWN_HOURS * 3600 * 1000;
+    older = items.filter(t => updatedMs(t) < cutoff);
+    if (!showOlderDone) items = items.filter(t => updatedMs(t) >= cutoff);
+  }
   const el = document.createElement('section');
   el.className = 'col' + (col.id === 'attention' ? ' attention' : '');
   el.dataset.col = col.id;
@@ -507,6 +598,11 @@ function columnEl(col) {
   // says 0 above four cards is a column nobody believes again.
   const shownCards = el.querySelectorAll('.card').length;
   if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
+  if (older.length) {
+    el.insertAdjacentHTML('beforeend',
+      `<button type="button" class="more">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
+    el.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
+  }
   // Slots rather than cards: a worker parked at a gate sits in 要対応 and still holds one,
   // and a worker still starting up holds one before it shows anywhere.
   const slots = state.workerSlots || {};
@@ -561,11 +657,24 @@ function cardEl(task, col) {
       <span>${ago(gate.openedAt)}から待ち</span></div>`;
   }
   const meta = [DONE_WHEN[task.doneWhen] || task.doneWhen];
+  // Only for a card that is the worker's current run: an old done card for the same worktree
+  // would otherwise pick up the next worker's phase and buttons.
+  const live = ['dispatched', 'pr'].includes(task.status);
+  const worker = live ? workerOf(task) : null;
+  if (worker && worker.present && worker.phase) {
+    const mins = phaseMinutes(worker);
+    meta.push(`${esc(PHASE_LABEL[worker.phase] || worker.phase)}${mins != null ? `（${minutesLabel(mins)}）` : ''}`);
+  }
   if (col === 'queued') meta.push(`↕ ${task.order}`);
   if (task.worktree) meta.push(esc(task.worktree.split('/').pop()));
   if (task.pr) meta.push(esc(task.pr));
   if (!task.autoStart) meta.push('着手前に確認');
   h += `<div class="meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>`;
+  const stuck = stuckOf(task);
+  if (stuck) {
+    el.classList.add('stuck');
+    h += `<div class="meta"><span class="state bad"><span>⏱</span>${esc(stuck)}</span></div>`;
+  }
   if (task.issueUrl) h += `<div class="mono">${esc(task.issueUrl)}</div>`;
   if (task.note) {
     if (task.status === 'done') {
@@ -578,6 +687,10 @@ function cardEl(task, col) {
   const acts = [];
   if (col === 'backlog') acts.push(`<button type="button" data-hand="${esc(task.id)}">渡す →</button>`);
   if (task.worktree) acts.push(`<button type="button" data-ide="${esc(task.worktree)}">IDE</button>`);
+  if (worker && worker.present) {
+    acts.push(`<button type="button" data-focus="${esc(task.worktree)}">タブ</button>`);
+    acts.push(`<button type="button" data-close="${esc(task.worktree)}">閉じる</button>`);
+  }
   if (acts.length) {
     h += `<div class="acts">${acts.join('')}</div>`;
   }
@@ -586,7 +699,11 @@ function cardEl(task, col) {
   el.querySelectorAll('[data-hand]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); hand(b.dataset.hand); }));
   el.querySelectorAll('[data-ide]').forEach(b =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); cmd(`adj ide --worktree ${b.dataset.ide}`); }));
+    b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('ide', b.dataset.ide); }));
+  el.querySelectorAll('[data-focus]').forEach(b =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('focus', b.dataset.focus); }));
+  el.querySelectorAll('[data-close]').forEach(b =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('close', b.dataset.close); }));
 
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.tag')) return;
@@ -721,6 +838,8 @@ function renderDrawer() {
       <div class="d-value mono2" style="word-break:break-all">${esc(task.worktree)}</div>
       <div style="margin-top:6px">
         <button class="iconbtn" data-ide="${esc(task.worktree)}">IDE で開く</button>
+        ${['dispatched', 'pr'].includes(task.status) && workerOf(task)?.present ? `<button class="iconbtn" data-focus="${esc(task.worktree)}">タブを前に出す</button>
+        <button class="iconbtn" data-close="${esc(task.worktree)}">タブを閉じる</button>` : ''}
       </div>
     </div>`;
   }
@@ -767,7 +886,11 @@ function renderDrawer() {
   h += `</div>`;
   drawer.innerHTML = h;
   drawer.querySelectorAll('[data-ide]').forEach(b =>
-    b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
+    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+  drawer.querySelectorAll('[data-focus]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
+  drawer.querySelectorAll('[data-close]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
   drawer.querySelectorAll('[data-hand]').forEach(b =>
     b.addEventListener('click', () => hand(b.dataset.hand)));
   drawer.querySelectorAll('[data-move]').forEach(b =>
@@ -864,10 +987,6 @@ async function submitForm(e) {
     note(`${line} → ${err.message}`, true);
   }
 }
-
-/* Buttons that are only a shell command: shown as what they would run, until slice 5 wires
-   them to the terminal templates. */
-function cmd(line) { note(line, false, '(将来的にここから実行可能にする予定)'); }
 
 function note(line, isError, why) {
   log.unshift({ line, isError, why });
@@ -1185,7 +1304,7 @@ function renderReview() {
       <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
   pane.innerHTML = h;
   pane.querySelectorAll('.work button[data-ide]').forEach(b =>
-    b.addEventListener('click', () => cmd(`adj ide --worktree ${b.dataset.ide}`)));
+    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
   pane.querySelectorAll('.pick[data-choice]').forEach(b =>
     b.addEventListener('click', () => answer('choice', b.dataset.choice)));
   const newCommentEl = document.getElementById('gate-comment');
@@ -1222,7 +1341,9 @@ async function answer(decision, choice) {
 function talk() {
   const g = (state.gates || []).find(x => x.id === focused);
   if (!g) return;
-  cmd(`terminal.focus (worktree ${g.worktree})`);
+  // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
+  // hub's.
+  if (['dispatch', 'issue'].includes(g.kind)) focusHub(); else worktreeAct('focus', g.worktree);
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 

@@ -116,6 +116,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
+    task.worktree = task.worktree.as_deref().map(resolved_worktree);
     task.order = next_order(ctx);
 
     // Written before the message is sent, and never the other way round: the record is what
@@ -127,6 +128,54 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         _ => None,
     };
     Ok((task, handed))
+}
+
+/// A worktree path as `git worktree list` prints it: absolute, symlinks resolved. The board
+/// matches a task to its worker by this string, and `./wt` or `/tmp/…` against git's
+/// `/private/tmp/…` would read as a worker that is not there. A path that does not exist
+/// (yet) is resolved through the nearest part of it that does, with the rest put back on,
+/// so that it is absolute — against the directory of the command giving it, not of some
+/// later one — and matches what git prints once the worktree is created there.
+fn resolved_worktree(path: &str) -> String {
+    let path = config::expand_home(path);
+    let mut current = std::path::absolute(&path).unwrap_or(path);
+    // Until it stops changing: stepping back over a part that does not exist can land on
+    // one that does — a symlink, say — which only the next pass resolves. Bounded, since a
+    // path has only so many parts to settle.
+    for _ in 0..16 {
+        let next = resolve_once(&current);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current.to_string_lossy().to_string()
+}
+
+/// One pass of `resolved_worktree`: the longest leading part that exists is resolved by the
+/// system, `..` and symlinks and all. What follows does not exist yet, so there is nothing
+/// to follow through it: `..` there steps back up and `.` is dropped, which is what git does
+/// when it creates it.
+fn resolve_once(absolute: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+    let parts: Vec<Component> = absolute.components().collect();
+    for split in (1..=parts.len()).rev() {
+        let head: PathBuf = parts[..split].iter().collect();
+        let Ok(mut resolved) = head.canonicalize() else {
+            continue;
+        };
+        for part in &parts[split..] {
+            match part {
+                Component::ParentDir => {
+                    resolved.pop();
+                }
+                Component::Normal(name) => resolved.push(name),
+                _ => {}
+            }
+        }
+        return resolved;
+    }
+    absolute.to_path_buf()
 }
 
 /// One of a record's text fields as an update gives it. `null` and `""` clear it; anything
@@ -142,7 +191,32 @@ fn text_field(key: &str, value: &Value) -> Result<Option<String>, String> {
 }
 
 /// Change a record, and hand it over if this is the change that queued it.
+/// Hold the write lock of one task record until the returned handle is dropped.
+///
+/// A change is a read of the whole record and a write of the whole record, and two of them
+/// at once — the hub updating a task while a gate for it is answered on the board — would
+/// each write back what they read, and the later would undo the earlier. An advisory lock
+/// on an open file, like the dispatch lock: the system lets it go if its holder dies, so
+/// there is nothing to clear by hand. Held only across a load and a save, so waiting on it
+/// is short.
+pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
+    let dir = dir(ctx);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Beside the record, and not named `.json`, so the listing never reads it as a task.
+    let path = dir.join(format!("{id}.lock"));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
+    Ok(file)
+}
+
 pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {
+    let lock = lock_task(ctx, id)?;
     let mut task = task::load(&dir(ctx), id)?;
     let was = task.status;
 
@@ -171,8 +245,15 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
             *field = text_field(key, value)?;
         }
     }
+    // Only a worktree given in this update: one already stored was resolved when it was
+    // given, against the directory of the command that gave it, and re-resolving it here
+    // would read it against wherever this update happens to be run from.
+    if input.get("worktree").is_some() {
+        task.worktree = task.worktree.as_deref().map(resolved_worktree);
+    }
     task.updated_at = stamp();
     task::save(&dir(ctx), &task)?;
+    drop(lock);
 
     // Handing over is a *transition*, not a status: re-sending on every save would put one
     // task in the inbox once for every time somebody dragged its card.

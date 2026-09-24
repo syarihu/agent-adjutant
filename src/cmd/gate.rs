@@ -139,6 +139,7 @@ pub fn answer(
         .map(str::to_string);
     gate.answered_at = Some(stamp());
     gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
+    note_answered(ctx, &gate);
     Ok((gate, told))
 }
 
@@ -156,7 +157,27 @@ pub fn close(ctx: &Context, id: &str, comment: Option<&str>) -> Result<Gate, Str
         .map(str::to_string);
     gate.answered_at = Some(stamp());
     gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
+    note_answered(ctx, &gate);
     Ok(gate)
+}
+
+/// Write the answer's time onto the gate's task, for the board's stuck badge. Best effort:
+/// the answer has been delivered and archived by now, and a task record that is missing or
+/// unwritable must not turn that into a failure.
+fn note_answered(ctx: &Context, gate: &Gate) {
+    let (Some(id), Some(at)) = (&gate.task, &gate.answered_at) else {
+        return;
+    };
+    let dir = super::task::dir(ctx);
+    // Under the task's lock, like `task::update`: a whole-record write racing another would
+    // undo whichever landed first.
+    let Ok(_lock) = super::task::lock_task(ctx, id) else {
+        return;
+    };
+    if let Ok(mut task) = crate::task::load(&dir, id) {
+        task.gate_answered_at = Some(at.clone());
+        let _ = crate::task::save(&dir, &task);
+    }
 }
 
 // ── the subcommands ──────────────────────────────────────────────────

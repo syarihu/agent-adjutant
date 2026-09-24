@@ -126,6 +126,12 @@ pub struct Task {
     /// to reply to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// When a gate for this task was last answered or closed. The board counts the worker's
+    /// time in a phase from here when it is later than the phase's start: waiting on a person
+    /// is not the worker being stuck. Kept on the record, written as the gate is answered, so
+    /// the board does not have to read the whole archive of answered gates on every poll.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_answered_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -324,6 +330,7 @@ mod tests {
                 issue: None,
                 pr: None,
                 note: None,
+                gate_answered_at: None,
                 created_at: stamp.to_string(),
                 updated_at: stamp.to_string(),
             }

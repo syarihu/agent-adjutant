@@ -129,3 +129,49 @@ fn a_dispatch_gate_without_its_task_is_refused() {
             .is_empty()
     );
 }
+
+#[test]
+fn answering_a_gate_writes_the_time_onto_its_task() {
+    // The board counts a worker's stuck time from here, so time spent waiting on a person
+    // does not turn the card red the moment they answer.
+    let fixture = Fixture::new(QUIET);
+    let added = fixture.json(&["task", "add", "--body", "WID-8", "--json"]);
+    let task = added["task"]["id"].as_str().unwrap().to_string();
+    assert!(added["task"]["gateAnsweredAt"].is_null(), "{added}");
+
+    let payload_file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "plan",
+            "task": task,
+            "title": "設計方針の確認",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&[
+        "gate",
+        "open",
+        "--file",
+        payload_file.to_str().unwrap(),
+        "--json",
+    ]);
+    let id = opened["gate"]["id"].as_str().unwrap().to_string();
+    let answered = fixture.json(&[
+        "gate",
+        "answer",
+        "--id",
+        &id,
+        "--decision",
+        "approve",
+        "--json",
+    ]);
+
+    let shown = fixture.json(&["task", "show", "--id", &task]);
+    assert_eq!(
+        shown["gateAnsweredAt"], answered["gate"]["answeredAt"],
+        "{shown}"
+    );
+}

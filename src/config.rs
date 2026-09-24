@@ -54,7 +54,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-const SETTING_KEYS: [&str; 15] = [
+const SETTING_KEYS: [&str; 16] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -83,7 +83,15 @@ const SETTING_KEYS: [&str; 15] = [
     // How many workers may run at once. A property of the machine — its memory, its CPU, the
     // agent's rate limit — and not of any one repository's work.
     "maxWorkers",
+    // How long a worker may stay in one phase before the board flags it. About how somebody
+    // works, like the two above it.
+    "stuckAfterMinutes",
 ];
+
+/// How long a worker may sit in one phase before the board calls it stuck, when nothing is
+/// configured. Long enough for a review round or a slow build; short enough that a worker
+/// that stopped at lunch is noticed in the afternoon.
+pub const DEFAULT_STUCK_AFTER_MINUTES: f64 = 120.0;
 
 /// The window a plain `adj hub` resumes in, when nothing is configured.
 ///
@@ -117,7 +125,7 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
         // fell through to the string default below, and every `true` anybody wrote was
         // reported as the wrong shape and dropped — a setting that warns when used correctly.
         "startupDashboard" => &["true", "false"],
-        "hubAutoResumeHours" | "maxWorkers" => &["a number"],
+        "hubAutoResumeHours" | "maxWorkers" | "stuckAfterMinutes" => &["a number"],
         _ => &["a string"],
     }
 }
@@ -530,6 +538,9 @@ pub struct Settings {
     /// `None` = no limit, which is what an empty config has always meant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_workers: Option<u32>,
+    /// Minutes in one phase after which the board marks a worker as stuck. `0` turns the
+    /// badge off; a dead worker is flagged regardless.
+    pub stuck_after_minutes: f64,
 }
 
 impl Default for Settings {
@@ -549,6 +560,7 @@ impl Default for Settings {
             startup_dashboard: true,
             hub_auto_resume_hours: DEFAULT_HUB_AUTO_RESUME_HOURS,
             max_workers: None,
+            stuck_after_minutes: DEFAULT_STUCK_AFTER_MINUTES,
         }
     }
 }
@@ -772,6 +784,7 @@ fn resolve_settings(
         startup_dashboard: startup_dashboard(configured_dashboard.as_ref(), startup_flag),
         hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
         max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
+        stuck_after_minutes: stuck_after_minutes(pick("stuckAfterMinutes").as_ref(), warnings),
     }
 }
 
@@ -817,6 +830,25 @@ fn auto_resume_hours(configured: Option<&Value>, warnings: &mut Vec<String>) -> 
             DEFAULT_HUB_AUTO_RESUME_HOURS
         }
         None => DEFAULT_HUB_AUTO_RESUME_HOURS,
+    }
+}
+
+/// The stuck threshold, in minutes. Negative or not finite is said and replaced by the
+/// default, as `hubAutoResumeHours` does; `0` is the way to turn it off.
+fn stuck_after_minutes(configured: Option<&Value>, warnings: &mut Vec<String>) -> f64 {
+    let Some(value) = configured else {
+        return DEFAULT_STUCK_AFTER_MINUTES;
+    };
+    match value.as_f64() {
+        Some(minutes) if minutes.is_finite() && minutes >= 0.0 => minutes,
+        // A non-number was already reported by `check_shapes`.
+        Some(_) => {
+            warnings.push(format!(
+                "stuckAfterMinutes is {value} but has to be 0 or more: using {DEFAULT_STUCK_AFTER_MINUTES}"
+            ));
+            DEFAULT_STUCK_AFTER_MINUTES
+        }
+        None => DEFAULT_STUCK_AFTER_MINUTES,
     }
 }
 
@@ -1213,7 +1245,7 @@ mod tests {
             json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                    "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
                    "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
-                   "maxWorkers": 3,
+                   "maxWorkers": 3, "stuckAfterMinutes": 30,
                    "hubResumeRunner": "again {name} {sessionId}",
                    "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false,
                    "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
@@ -1233,6 +1265,7 @@ mod tests {
             "startupDashboard",
             "hubAutoResumeHours",
             "maxWorkers",
+            "stuckAfterMinutes",
         ] {
             assert!(text.get(key).is_some(), "{key} is missing from {text}");
         }
@@ -1248,6 +1281,7 @@ mod tests {
             "agent_env",
             "startup_dashboard",
             "max_workers",
+            "stuck_after_minutes",
         ] {
             assert!(
                 text.get(key).is_none(),
@@ -1744,6 +1778,17 @@ mod tests {
             DEFAULT_HUB_AUTO_RESUME_HOURS
         );
         assert!(warning_about(&warnings, "hubAutoResumeHours").contains("a number"));
+    }
+
+    #[test]
+    fn the_stuck_threshold_is_minutes_and_falls_back_when_it_cannot_be_one() {
+        let (_, settings, _) = resolve(a_repo(json!({})), "acme/app");
+        assert_eq!(settings.stuck_after_minutes, DEFAULT_STUCK_AFTER_MINUTES);
+        let (_, settings, _) = resolve(a_repo(json!({"stuckAfterMinutes": 0})), "acme/app");
+        assert_eq!(settings.stuck_after_minutes, 0.0);
+        let (_, settings, warnings) = resolve(a_repo(json!({"stuckAfterMinutes": -5})), "acme/app");
+        assert_eq!(settings.stuck_after_minutes, DEFAULT_STUCK_AFTER_MINUTES);
+        assert!(warning_about(&warnings, "stuckAfterMinutes").contains("0 or more"));
     }
 
     #[test]
