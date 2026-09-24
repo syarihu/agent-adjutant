@@ -335,12 +335,19 @@ fn title_command(settings: &Settings, title: &str) -> Option<String> {
     if settings.terminal.title.is_off() || title.trim().is_empty() {
         return None;
     }
-    Some(crate::template::sh_join(&[
-        exe_path(),
-        "title".to_string(),
-        "--title".to_string(),
-        title.to_string(),
-    ]))
+    // stdin closed: `adjutant title` reads a title of `-` from stdin, and in a new tab stdin is
+    // the terminal — a task titled `-` would sit there waiting for input, and the worker after
+    // it would never start.
+    Some(format!(
+        "{} < /dev/null",
+        crate::template::sh_join(&[
+            exe_path(),
+            "title".to_string(),
+            // One word, `--title=…`: a title starting with `--` given as the next word is read
+            // by clap as an option of its own, and `--help` would print help instead.
+            format!("--title={title}"),
+        ])
+    ))
 }
 
 pub fn spawn(
@@ -468,15 +475,29 @@ fn spawn_worker(
     Ok(0)
 }
 
-pub fn work(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    worktree: &str,
-    title: &str,
-    prompt: Option<&str>,
-    resume: bool,
-    dry_run: bool,
-) -> Result<i32, String> {
+pub struct WorkArgs<'a> {
+    pub repo: Option<&'a str>,
+    pub hub: Option<&'a str>,
+    pub worktree: &'a str,
+    pub title: &'a str,
+    /// The task record to take the title from, when `title` is empty.
+    pub task: Option<&'a str>,
+    pub prompt: Option<&'a str>,
+    pub resume: bool,
+    pub dry_run: bool,
+}
+
+pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
+    let WorkArgs {
+        repo: repo_arg,
+        hub: hub_arg,
+        worktree,
+        title,
+        task: task_id,
+        prompt,
+        resume,
+        dry_run,
+    } = *args;
     if resume {
         return work_resumed(repo_arg, hub_arg, worktree, title, prompt, dry_run);
     }
@@ -484,6 +505,17 @@ pub fn work(
     // The dispatching side: the identifier being handed to the new worker is this caller's
     // own, never one read out of some worktree it happens to be standing in.
     let ctx = context_as(repo_arg, hub_arg)?;
+    // Named after the task's record rather than a title typed on the command line. The title
+    // comes from an issue or a report, and quoted into the hub's shell it could close the
+    // quote; the record's id is one this tool generated.
+    let from_record;
+    let title = match task_id {
+        Some(id) if title.is_empty() => {
+            from_record = crate::task::load(&task::dir(&ctx), id)?.title;
+            from_record.as_str()
+        }
+        _ => title,
+    };
     let worktree = config::expand_home(worktree).to_string_lossy().to_string();
     // Asked here and not left to the spawn, because marking the slot writes into the
     // worktree and would create the very directory the spawn checks for — a mistyped path
@@ -504,10 +536,10 @@ pub fn work(
         "worker".to_string(),
         "--worktree".to_string(),
         worktree.clone(),
-        "--title".to_string(),
-        title.to_string(),
-        "--prompt".to_string(),
-        prompt.to_string(),
+        // `=` rather than a separate word, as in `title_command`: a title from an issue that
+        // starts with `--` would otherwise be parsed as an option and the worker never start.
+        format!("--title={title}"),
+        format!("--prompt={prompt}"),
     ]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
@@ -580,12 +612,10 @@ fn work_resumed(
         worktree.clone(),
     ]);
     if !title.is_empty() {
-        parts.push("--title".to_string());
-        parts.push(title.to_string());
+        parts.push(format!("--title={title}"));
     }
     if let Some(prompt) = prompt {
-        parts.push("--prompt".to_string());
-        parts.push(prompt.to_string());
+        parts.push(format!("--prompt={prompt}"));
     }
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
@@ -880,7 +910,8 @@ pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result
 /// else needs it, because a spawned tab is named at spawn time.
 pub fn set_title(repo_arg: Option<&str>, title: &str, dry_run: bool) -> Result<(), String> {
     let settings = settings_for(repo_arg);
-    let done = terminal::set_title(&settings.terminal.title, title, dry_run)?;
+    let title = dash_is_stdin(title)?;
+    let done = terminal::set_title(&settings.terminal.title, &title, dry_run)?;
     if dry_run {
         println!("{}", done.script);
     } else {
@@ -1733,6 +1764,23 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
 }
 
 // ── shared ───────────────────────────────────────────────────────────
+
+/// A value given as `-` is read from stdin, trailing newlines dropped.
+///
+/// For text that came from somewhere else — a task's title, the reason a start failed, a
+/// comment typed on the board. On a command line it has to be quoted, and whatever quote is
+/// chosen, the text can close it and run the rest as shell. Written to a file by the agent's
+/// file tool and redirected in, it never passes through the shell at all.
+fn dash_is_stdin(value: &str) -> Result<String, String> {
+    if value != "-" {
+        return Ok(value.to_string());
+    }
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("cannot read stdin: {e}"))?;
+    Ok(buf.trim_end_matches(['\n', '\r']).to_string())
+}
 
 /// The message body, from the flag or from stdin. Long reports do not belong on a command
 /// line, and the two ways in should behave identically.

@@ -473,3 +473,150 @@ fn a_worktree_name_or_issue_url_that_could_break_out_of_a_quote_is_refused() {
         "https://github.com/acme/widget/issues/1",
     ]);
 }
+
+/// Run with `input` on stdin, the way the procedures redirect a file in.
+fn with_stdin(fixture: &Fixture, args: &[&str], input: &str) -> std::process::Output {
+    use std::io::Write;
+    let mut child = fixture
+        .command(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn a_worker_tab_is_named_after_its_task_record_so_the_title_never_touches_the_shell() {
+    let fixture = Fixture::new(CODEX);
+    let worktree = linked_worktree(&fixture, "wid-11");
+    let title = "WID-11 it's broken; touch pwned";
+    let added = with_stdin(
+        &fixture,
+        &[
+            "task",
+            "add",
+            "--body",
+            "-",
+            "--waiting-in",
+            &worktree,
+            "--json",
+        ],
+        &format!("{title}\n\nsummary\n"),
+    );
+    assert!(added.status.success(), "{added:?}");
+    let added: serde_json::Value = serde_json::from_slice(&added.stdout).unwrap();
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+
+    let out = fixture.ok(&["work", "--worktree", &worktree, "--task", &id, "--dry-run"]);
+    // Quoted by adjutant for the terminal, and so present as one argument rather than run.
+    assert!(out.contains("WID-11 it"), "{out}");
+    // The tab names itself with stdin closed: a title of `-` would otherwise be read from the
+    // terminal, and the worker behind it would never start.
+    assert!(out.contains("< /dev/null"), "{out}");
+
+    // A title that looks like an option stays the title's value: passed as its own word,
+    // `--help` would be read by clap in the new tab and the worker would never start.
+    let dashed = with_stdin(
+        &fixture,
+        &[
+            "task",
+            "add",
+            "--body",
+            "-",
+            "--waiting-in",
+            &worktree,
+            "--json",
+        ],
+        "--help\n",
+    );
+    let dashed: serde_json::Value = serde_json::from_slice(&dashed.stdout).unwrap();
+    let dashed_id = dashed["task"]["id"].as_str().unwrap().to_string();
+    let out = fixture.ok(&[
+        "work",
+        "--worktree",
+        &worktree,
+        "--task",
+        &dashed_id,
+        "--dry-run",
+    ]);
+    assert!(out.contains("--title=--help"), "{out}");
+    assert!(!out.contains("--title --help"), "{out}");
+
+    // One or the other: a --task beside --title or --resume would go unchecked.
+    for extra in [["--title", "x"].as_slice(), ["--resume"].as_slice()] {
+        let mut args = vec![
+            "work",
+            "--worktree",
+            worktree.as_str(),
+            "--task",
+            id.as_str(),
+        ];
+        args.extend_from_slice(extra);
+        args.push("--dry-run");
+        assert!(
+            !fixture.cmd(&args).status.success(),
+            "{extra:?} was taken with --task"
+        );
+    }
+
+    let missing = fixture.cmd(&[
+        "work",
+        "--worktree",
+        &worktree,
+        "--task",
+        "nope",
+        "--dry-run",
+    ]);
+    assert!(!missing.status.success(), "{missing:?}");
+}
+
+#[test]
+fn a_note_and_a_tab_title_given_as_a_dash_are_read_from_stdin() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-12");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        &worktree,
+        "--json",
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+
+    let reason = "着手できなかったのだ: fatal: 'origin/x' is not a commit; $(date)\n";
+    let out = with_stdin(
+        &fixture,
+        &["task", "update", "--id", &id, "--note", "-", "--json"],
+        reason,
+    );
+    assert!(out.status.success(), "{out:?}");
+    let updated: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(updated["task"]["note"], reason.trim_end());
+
+    // A title template of its own, because the built-in writes to this process's terminal and
+    // prints nothing where there is none — which is every CI runner.
+    let titled = Fixture::new(
+        r#"{"notification": "true", "terminal": {"title": "tmux rename-window {title}"}, "repos": {}}"#,
+    );
+    let out = with_stdin(
+        &titled,
+        &["title", "--title", "-", "--dry-run"],
+        "WID-12 it's a tab\n",
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        r#"tmux rename-window 'WID-12 it'\''s a tab'"#,
+        "{out:?}"
+    );
+}

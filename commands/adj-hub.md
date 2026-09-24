@@ -343,7 +343,8 @@ worker に渡ることになる。この経路はあちらの fetch を飛ばし
 
 - **repo・item id** — 「2. 着手を宣言する」の assign とボードの更新に使う（あちらは
   「選択したタスクなら item id は手元にある」「二度引かない」と書いている）。
-- **title・URL** — 指示書の `{task_title}` と `{task_url}`、`adjutant work --title` もこの title。
+- **title・URL** — 指示書の `{task_title}` と `{task_url}`、Step 2 で作るタスクレコードのタイトルもこの
+  title（`adjutant work` はそのレコードから `--task` で名乗るので、title をコマンド行に書かない）。
   「4. worker を起動する」の Step 1 が「タイトルは『1. タスクを選ぶ』が持っている」と書いている
   のはあちらの経路の話で、**この経路はそこを通らない**。
 - **解決したブランチ** — `git worktree add -b` に渡すのはこの値で、**「3. worktree を作る」で
@@ -1190,7 +1191,7 @@ inflates the hub transcript for every task it dispatches.
 
   読ませたら消す。`.claude/` が gitignore されていないリポジトリでは、残すと worker の差分に乗る。
 
-  **タイトルと要約はシェルに触れさせない。** どちらもタスクや報告から来た文字列で、コマンド行に
+  **タイトルと要約はシェルに触れさせない。**（「タスクの文字列をシェルに通さない」） どちらもタスクや報告から来た文字列で、コマンド行に
   置けば `'` でクォートが閉じ、heredoc に置けば区切り文字と同じ行でそこが閉じて、その先がシェル
   として走る。ファイルに書いて標準入力から読ませれば、中身が何であってもただの文字。
   1行目がそのままカードのタイトルになる（指示書を書くのと同じく、`.claude/` の下なので差分に出ない）。
@@ -1214,15 +1215,25 @@ inflates the hub transcript for every task it dispatches.
 
 ```bash
 adj task update --id {task_id} --status dispatched --worktree '{worktree}' --note ''
-adjutant work --worktree '{worktree}' --title '{task_title}'
+adjutant work --worktree '{worktree}' --task {task_id}
 ```
 
 - **順番はこの通り。** `adjutant work` はタブを開いたらすぐ返り、worker の完了を待たない。立てた
   あとに `dispatched` を書くと、その間に worker が `pr` にしていた場合に巻き戻してしまう。
-- **終了コード 3 以外で失敗したら**、queued に戻して `--note '着手できなかったのだ: {理由}'` を書く
-  （`adj task update --id {task_id} --status queued --no-hand-over --note '…'`）。`--no-hand-over` は、
-  queued への遷移で自分の受信箱に依頼が届かないようにするため。このメモが付いたものは待ちから
-  引くときに飛ばされる。
+- **タイトルはコマンド行に書かない。** `--task` でレコードのタイトルがタブの名前になる。タイトルは
+  Issue や報告から来た文字列で、`--title '…'` と書けば `'` でクォートが閉じ、その先がシェルとして
+  走る。id はこのツールが振った値なので、そのまま書いてよい。
+- **終了コード 3 以外で失敗したら**、queued に戻して「着手できなかったのだ: {理由}」を note に書く。
+  理由はエラーメッセージを引くことが多いので、これもコマンド行に置かない — 「タスクの文字列を
+  シェルに通さない」のとおり、ファイルに書いて `--note -` で読ませる:
+
+  ```bash
+  adj task update --id {task_id} --status queued --no-hand-over --note - < '{main}/.claude/task-note-{task_id}.md' \
+    && rm '{main}/.claude/task-note-{task_id}.md'
+  ```
+
+  `--no-hand-over` は、queued への遷移で自分の受信箱に依頼が届かないようにするため。このメモが
+  付いたものは待ちから引くときに飛ばされる。
 
 - **終了コード 3 は失敗ではなく「枠待ち」。** config の `maxWorkers` だけ worker が走っていると、
   `adjutant work` は何も立てずに 3 で返る。worktree と指示書は**消さずにそのまま残す** —
@@ -1271,9 +1282,9 @@ adjutant work --worktree '{worktree}' --title '{task_title}'
   この経路を通らないから。**`~` は書かない**（読む側で展開がぶれる）。
   設定ディレクトリを分けると MCP サーバーもそのディレクトリ側になる。そのディレクトリで
   一度も承認していなければ最初のセッションで承認を聞かれる。worker がそこで止まるのは想定内。
-- **タイトルは加工せずそのまま渡す。** 引用符もバックスラッシュも全角も `adjutant work` が
-  面倒を見る（シェルとターミナルの二重クォート、全角15/半角30への切り詰め、空なら worktree の
-  ディレクトリ名へのフォールバック）。ここで自分で削ったり切ったりしない。
+- **タイトルは加工しない。** レコードのタイトルをそのまま使い、引用符もバックスラッシュも全角も
+  `adjutant work` が面倒を見る（ターミナルに渡すときのクォート、全角15/半角30への切り詰め、空なら
+  worktree のディレクトリ名へのフォールバック）。ここで自分で削ったり切ったりしない。
 - **プロンプトは位置引数**で、TUI の補完を通らない。指示書を開かせているのは
   「読んで」という指示文そのものなので、消さない。
 - 新しいタブは**対話シェル**で走るので、PATH・hooks は全部読み込まれている。
@@ -1527,8 +1538,10 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
 - **`## 着手` が「着手前に確認がほしい」なら、worker を立てる前に `dispatch` の gate を開く。**
   依頼したのは板の前に居る人なので、聞く先も板にする:
 
-  ```bash
-  adj gate open --json <<'JSON'
+  中身は JSON で、`{main}/.claude/gate-{task_id}.json` にファイルを書くツールで書く（タイトルは
+  タスクから来た文字列なので、heredoc に置かない —「タスクの文字列をシェルに通さない」）:
+
+  ```json
   {
     "kind": "dispatch",
     "task": "{task_id}",
@@ -1536,7 +1549,10 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
     "focus": "この内容で着手していいか決めてほしいのだ。",
     "decided": "- 種類: {種類}\n- 完了条件: {完了条件}\n- 分岐元: {分岐元}\n- worktree 名: {worktree 名}"
   }
-  JSON
+  ```
+
+  ```bash
+  adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'
   ```
 
   返った `server` が `up` なら、レコードは queued のまま `--note '着手の確認待ち（板の要対応）'` を
@@ -1553,8 +1569,11 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
 
   ```bash
   adj task update --id {task_id} --issue {issue url}   # status は Step 3 で dispatched にしてある
-  adj task update --id {task_id} --note '着手できなかったのだ: {理由}'   # 取れなかったとき
+  adj task update --id {task_id} --note - < '{main}/.claude/task-note-{task_id}.md' \
+    && rm '{main}/.claude/task-note-{task_id}.md'   # 取れなかったとき
   ```
+
+  取れなかったときの「着手できなかったのだ: {理由}」は、Step 3 と同じくファイルに書いて読ませる。
 
   `## task` 行の値が `{task_id}`。**これを落とすと、渡した人からは「board に置いたのに
   何も起きない」ようにしか見えない。**
@@ -1583,8 +1602,9 @@ hub が開いた gate（`dispatch`）に人が板で答えると、答えは hub
   `--auto-start true` を先に打つのは、`maxWorkers` で断られて枠待ちに回っても、次に引いたときに
   同じことを聞き直さないため。
 - **`changes`** — コメントを読む。分岐元や worktree 名のように、着手の条件が変わるだけなら
-  反映して、`approve` と同じく着手する。まだ着手するなと読めるなら、コメントを `--note` に書いて
-  `--status backlog` に戻す（人のボールに返す。queued に置いたままだと、枠が空くたびに同じ gate を
+  反映して、`approve` と同じく着手する。まだ着手するなと読めるなら、コメントを note に書いて
+  `--status backlog` に戻す。コメントは人が板に打った文字列なので、ファイルに書いて `--note -` で
+  読ませる（`adj task update --id {task_id} --status backlog --note - < '{main}/.claude/task-note-{task_id}.md' && rm '{main}/.claude/task-note-{task_id}.md'`）（人のボールに返す。queued に置いたままだと、枠が空くたびに同じ gate を
   開き直すことになる）。
 - **`reject`** — `adj task update --id {task_id} --status cancelled`。
 - 済んだら ack する。
@@ -1782,6 +1802,31 @@ Atlassian MCP (`mcp__atlassian__*`) 経由。ソースの設定はこれだけ:
 
 ---
 
+## タスクの文字列をシェルに通さない
+
+Issue や報告、板から来た文字列（タイトル、要約、エラーの理由、人のコメント）は、**コマンド行に
+置かない。** シングルクォートで囲めば中の `'` で閉じ、heredoc に置けば区切り文字と同じ行で閉じて、
+その先がシェルとして走る。どちらを選んでも中身次第で破れる。
+
+代わりに、**ファイルを書くツールで**ファイルに書き（`echo` や heredoc を使わない）、`-` を受け付ける
+オプションに標準入力として渡す。読ませたら消す:
+
+| 渡すもの | オプション | ファイル |
+| --- | --- | --- |
+| タスクの本文（タイトル＋要約） | `adj task add --body -` | `{worktree}/.claude/task-summary.md` |
+| note（着手できなかった理由、gate のコメント） | `adj task update --note -` | `{main}/.claude/task-note-{task_id}.md` |
+| dispatch gate の中身（JSON） | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
+| hub のタブのタイトル | `adjutant title --title -` | `{main}/.claude/tab-title-{hub 名}.txt` |
+
+`{main}` は hub が立っているメインチェックアウトの絶対パス。ファイル名にタスクの id か hub 名を
+入れるのは、1つのリポジトリに hub が何本か立っていると（親タスクの hub）、同じ main チェックアウトの
+同じファイルを取り合うから。`.claude/` が gitignore されていないリポジトリでは消し忘れると差分に
+出るので、必ず `&& rm` まで1行で打つ。
+
+worker のタブの名前は `adjutant work --task {task_id}` でレコードから取るので、ファイルも要らない。
+パスや id、ブランチ名のように git やこのツールが作った値は、これまでどおりコマンド行に書いてよい
+（板から入る worktree 名と Issue URL は、受け付けるときに検査してある）。
+
 ## Appendix — tab title
 
 Two lines: what the work is, and where it is.
@@ -1793,8 +1838,11 @@ Two lines: what the work is, and where it is.
 このタブ（hub 自身）だけは自分で名乗る必要があって、それは:
 
 ```bash
-adjutant title --title '{line1}'
+adjutant title --title - < '{main}/.claude/tab-title-{hub 名}.txt' && rm '{main}/.claude/tab-title-{hub 名}.txt'
 ```
+
+1行目はタスクのタイトルから作るので、コマンド行に置かずにファイルに書いて読ませる
+（「タスクの文字列をシェルに通さない」）。
 
 **エスケープシーケンスもターミナル固有のコマンドもここに書かない。** 何を実行するかは
 `settings.terminal.title`（既定は自分の tty に OSC を書く）が持っていて、2行タイトルを作る
