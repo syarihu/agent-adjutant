@@ -1180,17 +1180,17 @@ inflates the hub transcript for every task it dispatches.
   来た依頼なら `## task` 行の id。それ以外（worker の別件報告、タブで頼まれたもの）は、worktree が
   できたこの時点でレコードを作って、返った id を書く:
 
-  ```bash
-  adj task add --body - --issue-url '{issue url}' --done-when {完了条件} --waiting-in '{worktree}' --json <<'BODY'
-  {task_title}
+  まず `{worktree}/.claude/task-summary.md` に、1行目をタイトル、空行を挟んで要約を書く。
+  **ファイルを書くツールで書き、`echo` や heredoc などシェルを通さない。** そのうえで:
 
-  {依頼の要約}
-  BODY
+  ```bash
+  adj task add --body - --issue-url '{issue url}' --done-when {完了条件} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md'
   ```
 
-  **タイトルと要約はコマンド行に置かない。** どちらもタスクや報告から来た文字列で、`'` が
-  入っていればシングルクォートが閉じて、その先がシェルとして走る。クォート付きの heredoc
-  （`<<'BODY'`）の中は何も解釈されないので、そこに書く。1行目がそのままカードのタイトルになる。
+  **タイトルと要約はシェルに触れさせない。** どちらもタスクや報告から来た文字列で、コマンド行に
+  置けば `'` でクォートが閉じ、heredoc に置けば区切り文字と同じ行でそこが閉じて、その先がシェル
+  として走る。ファイルに書いて標準入力から読ませれば、中身が何であってもただの文字。
+  1行目がそのままカードのタイトルになる（指示書を書くのと同じく、`.claude/` の下なので差分に出ない）。
 
   `--done-when` は指示書の 完了条件 行と同じもの（「PR作成まで」→ `pr`、「動作確認待ちで引き渡しまで」→
   `verify`、「調査だけ」→ `report-only`）。省くと `pr` と記録され、板が調査だけのタスクを
