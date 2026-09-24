@@ -508,7 +508,7 @@ const stampSecs = stamp => {
    answered its gate, whichever is later. */
 const workerMinutes = (task, w) => {
   const mins = phaseMinutes(w);
-  const answered = stampSecs((state.lastAnswered || {})[task.id]);
+  const answered = stampSecs(task.gateAnsweredAt);
   if (mins == null || answered == null || state.now == null) return mins;
   return Math.min(mins, Math.max(0, Math.floor((state.now - answered) / 60)));
 };

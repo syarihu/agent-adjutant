@@ -132,11 +132,13 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
 
 /// A worktree path as `git worktree list` prints it: absolute, symlinks resolved. The board
 /// matches a task to its worker by this string, and `./wt` or `/tmp/…` against git's
-/// `/private/tmp/…` would read as a worker that is not there. Left as given when it does
-/// not exist (yet), since a record may be written before its worktree.
+/// `/private/tmp/…` would read as a worker that is not there. A path that does not exist
+/// (yet) is still made absolute, against the directory of the command giving it, so that no
+/// later command reads it against its own.
 fn resolved_worktree(path: &str) -> String {
     let path = config::expand_home(path);
     path.canonicalize()
+        .or_else(|_| std::path::absolute(&path))
         .unwrap_or(path)
         .to_string_lossy()
         .to_string()
@@ -184,7 +186,12 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
             *field = text_field(key, value)?;
         }
     }
-    task.worktree = task.worktree.as_deref().map(resolved_worktree);
+    // Only a worktree given in this update: one already stored was resolved when it was
+    // given, against the directory of the command that gave it, and re-resolving it here
+    // would read it against wherever this update happens to be run from.
+    if input.get("worktree").is_some() {
+        task.worktree = task.worktree.as_deref().map(resolved_worktree);
+    }
     task.updated_at = stamp();
     task::save(&dir(ctx), &task)?;
 

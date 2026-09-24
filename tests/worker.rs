@@ -708,3 +708,44 @@ fn a_tasks_worktree_is_stored_the_way_git_names_it() {
     ]);
     assert_eq!(updated["task"]["worktree"], worktree.as_str(), "{updated}");
 }
+
+#[test]
+fn a_stored_worktree_is_left_alone_by_an_update_that_does_not_give_one() {
+    // Resolved when given, against the directory of the command that gave it. An update run
+    // from somewhere else must not read the stored path against its own directory.
+    let fixture = Fixture::new(QUIET);
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        "not-yet/wt",
+        "--json",
+    ]);
+    let stored = added["task"]["worktree"].as_str().unwrap().to_string();
+    assert!(
+        stored.starts_with('/'),
+        "made absolute where it was given: {stored}"
+    );
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    // Somewhere else inside the repository, where the same relative path does exist.
+    let elsewhere = fixture.repo.join("sub");
+    std::fs::create_dir_all(elsewhere.join("not-yet/wt")).unwrap();
+    let out = fixture
+        .command([
+            "task",
+            "update",
+            "--id",
+            &id,
+            "--status",
+            "dispatched",
+            "--json",
+        ])
+        .current_dir(&elsewhere)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let updated: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(updated["task"]["worktree"], stored.as_str(), "{updated}");
+}
