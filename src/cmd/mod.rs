@@ -242,6 +242,16 @@ pub struct Delivered {
 /// function: the three steps are one rule, and a second copy of it is a second set of
 /// conditions about when to wake and when to notify — drifting from the day it is written.
 pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<Delivered, String> {
+    deliver_to_hub_announcing(ctx, message, true)
+}
+
+/// `deliver_to_hub`, choosing whether to tell the person. Not when they are the sender: a
+/// decision made on the board a moment ago does not need a banner to say it was made.
+pub fn deliver_to_hub_announcing(
+    ctx: &Context,
+    message: &Message,
+    announce: bool,
+) -> Result<Delivered, String> {
     let subject =
         messaging::header_value(&messaging::render_message(message), "subject").unwrap_or_default();
     let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, message)?;
@@ -270,7 +280,9 @@ pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<Delivered, Str
     // whether or not the hub was poked. `tell` runs the other way, hub to worker: a worker
     // that was successfully woken needs no human, so there the notification is what happens
     // when waking did not.
-    if let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject) {
+    if announce
+        && let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject)
+    {
         let _ = terminal::run_shell(&command);
     }
     Ok(Delivered { delivery, woken })

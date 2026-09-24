@@ -205,6 +205,7 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
    | `needs-user` | hub 自身（ユーザーの判断待ち） | 人がこのタブに居るときに中身を見せて聞く |
    | `done` | worker（タスクが終わったので片付けてほしい） | Dashboard の Step 1 の「1件だけの片付け」 |
    | `next` | 人間（ダッシュボードの「次を流す」） | 「worker の枠が空いたら次を流す」 |
+   | `gate` | 人間（hub が開いた gate への答え） | 「hub が開いた gate の答え」 |
 
    **対応付けは `subject` の先頭に置いた識別子でやる。** hub が聞き返すときは
    `subject` を `[質問 {YYYYMMDD-HHMMSS}] …` の形にして、同じ文字列を `question` の控えにも書く。
@@ -785,6 +786,11 @@ git worktree remove <path>
 git branch -D <branch>
 ```
 
+Before removing each one, look up its task (`adj task list --worktree <path> --json`, the
+records whose `status` is `dispatched` or `pr`), and after it is gone set them `done` with
+`adj task update --id {id} --status done` — the same as 「1件だけの片付け」, or the card stays
+on the board as in progress.
+
 Then run the repo's `onWorktreeRemove` commands from the config, substituting `{worktree}`
 (full path) and `{name}` (directory name). That hook is where editor-specific cleanup lives
 (e.g. dropping the entry from Android Studio's `recentProjects.xml`) — adjutant itself knows
@@ -809,8 +815,11 @@ nothing about any editor.
    生きているので必ず false になる。proctor が無ければ hub は worktree の外に居るので
    `git -C <worktree> status --porcelain`。**未 push コミットは proctor が答えないので、
    どちらの場合も** `git -C <worktree> log --branches --not --remotes --oneline` で見る。
-3. **全部緑なら、タブを先に閉じてから worktree を消す。** 生きている worker はその worktree を
-   掴んでいるので、閉じないと `git worktree remove` が失敗する:
+3. **全部緑なら、その worktree のタスクの id を控えてから、タブを先に閉じて worktree を消す。**
+   id は `adj task list --worktree <path> --json` で引き、`status` が `dispatched` か `pr` のものを
+   取る（同じパスの worktree を作り直していると、前の `done` や `cancelled` も返ってくる）。消した
+   あとは worktree が無いので、先に引いておく。生きている worker はその worktree を掴んでいるので、閉じないと
+   `git worktree remove` が失敗する:
 
    ```bash
    adjutant close --worktree <path> && git worktree remove <path>
@@ -828,6 +837,9 @@ nothing about any editor.
    （`git log <base>..<branch>` が空。調査だけの依頼はこれ）なら残す意味が無いので同じく消す。
    それ以外は残す。**この判定は hub のメインチェックアウトから打つ** — worktree を消したあとに
    `git -C <worktree>` は使えない。そのあと config の `onWorktreeRemove`（上と同じ）。
+
+   **消せたら、控えた id のタスクを `done` にする**（`adj task update --id {id} --status done`）。
+   これをしないとカードは「進行中」か「レビュー中」に残り続ける。消さなかったとき（4）は触らない。
 4. **1つでも引っかかったら消さない。** worker はまだ生きているので、`adjutant_tell` で
    「何が引っかかったか」を返して worktree を残す。片付けるかどうかは worker 側で決め直す。
 5. **タブを閉じたあとに `adjutant_tell` を送らない。** 読む相手が居ない。伝えることがあれば
@@ -848,8 +860,9 @@ nothing about any editor.
 
 1. `adj task list --status queued --json` を並び順（板の「待ち」と同じ）に見て、**着手できる
    最初の1件**を取る。次のものは飛ばす — 先頭に居座ると、後ろが永久に流れない:
-   - `autoStart: false`（着手前に確認がほしい）で、人がこのタブに居ないもの。起動時は必ず飛ばす
-     （起動時に `AskUserQuestion` を開かない）
+   - `autoStart: false`（着手前に確認がほしい）もの。まだその task の `dispatch` gate が開いて
+     いなければ（`adj gate list --json` の `task` で見る）、ここで開いてから飛ばす（開き方は
+     「ダッシュボードから来た依頼」）。着手はその答えが届いてから
    - `note` が「着手できなかったのだ: …」のもの。人が理由を見て直すまで引かない
 
    1件も無ければ何もしない。
@@ -1156,6 +1169,17 @@ inflates the hub transcript for every task it dispatches.
   **ただし親タスクの hub はここが常に埋まる** — 識別子がその親なので、渡されていない扱いにしない
   （「親タスクの hub」の「dispatch には自分の親タスクを載せる」）。
   **サブタスクだからといって分岐元を変えない** — 分岐元は別の行で、指定されたときだけ動く。
+- **タスクレコードを先に持つ。** 指示書の タスクレコード 行は必ず id にする。ダッシュボードから
+  来た依頼なら `## task` 行の id。それ以外（worker の別件報告、タブで頼まれたもの）は、worktree が
+  できたこの時点でレコードを作って、返った id を書く:
+
+  ```bash
+  adj task add --title '{task_title}' --body '{依頼の要約}' --issue-url '{issue url}' --waiting-in '{worktree}' --json
+  ```
+
+  **板に出ない worker を作らないため。** 入口がどこであっても、立っている worker には板のカードが
+  1枚ある。レコードが無いと worker は gate を開いてもカードに結びつけられず、PR を出しても
+  「レビュー中」に進められない。`--waiting-in` は受信箱に何も送らない（送り先は hub 自身）。
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
   it is; if it is not, write the brief outside the worktree instead — and then **change the
   path in Step 3's prompt to match**, because that prompt names `.claude/task-brief.md`
@@ -1167,20 +1191,27 @@ inflates the hub transcript for every task it dispatches.
 adjutant work --worktree '{worktree}' --title '{task_title}'
 ```
 
-- **終了コード 3 は失敗ではなく「枠待ち」。** config の `maxWorkers` だけ worker が走っていると、
-  `adjutant work` は何も立てずに 3 で返る。worktree と指示書は**消さずにそのまま残す** —
-  次に引いたときは Step 3 だけやり直せば済む。そのうえでタスクを待ちに置く:
+- **立ったらレコードを `dispatched` にする**（`{task_id}` は Step 2 の タスクレコード 行）。
+  `--note ''` は枠待ちで積んだときの note を消すため:
 
   ```bash
-  # ダッシュボードから来た依頼（`## task` 行がある）: status は queued のまま
-  adj task update --id {task_id} --worktree '{worktree}' --note 'worker の枠待ち（worktree は用意済み）'
-  # それ以外（worker の別件報告、タブで頼まれたもの）: レコードを作って待ちに積む
-  adj task add --title '{task_title}' --body '{依頼の要約}' --issue-url '{issue url}' --waiting-in '{worktree}'
+  adj task update --id {task_id} --status dispatched --worktree '{worktree}' --note ''
   ```
 
-  **待ちの置き場所はタスクレコードだけ。** レコードを作らずに流すと、枠が空いても誰にも
-  引かれない。`--waiting-in` は `--queue` と違って受信箱に何も送らない（送り先は hub 自身で、
-  作業中の自分を起こすことになる）。人には「枠待ちで積んだ」と1行伝える。
+- **終了コード 3 以外で失敗したら**、レコードに `--note '着手できなかったのだ: {理由}'` を書く。
+  worktree の書いてある queued のレコードは「枠待ち」と読まれて、次に枠が空いたときにまた
+  立てられてしまう。このメモが付いたものは待ちから引くときに飛ばされる。
+
+- **終了コード 3 は失敗ではなく「枠待ち」。** config の `maxWorkers` だけ worker が走っていると、
+  `adjutant work` は何も立てずに 3 で返る。worktree と指示書は**消さずにそのまま残す** —
+  次に引いたときは Step 3 だけやり直せば済む。レコードは queued のまま、note だけ書く:
+
+  ```bash
+  adj task update --id {task_id} --worktree '{worktree}' --note 'worker の枠待ち（worktree は用意済み）'
+  ```
+
+  **待ちの置き場所はタスクレコードだけ。** Step 2 でレコードを作ってあるので、枠が空けば
+  「worker の枠が空いたら次を流す」が引く。人には「枠待ちで積んだ」と1行伝える。
 
   **`adjutant work` は1本ずつ打つ。** 並べて同時に打っても枠の数え方は壊れない（数えて印を
   付けるまでをロックしている）が、どれが断られたかを1本ずつ読むほうが取り違えない。
@@ -1197,9 +1228,14 @@ adjutant work --worktree '{worktree}' --title '{task_title}'
   で、その worktree に保存された会話を新しいタブで開き直す（タイトルも、報告先の hub も保存された
   ものを使う）。保存されたセッションが無ければエラーになるので、そのときだけ通常の `adjutant work` で
   立て直す。**終了コード 3 はこのエラーではない**（枠待ち）。通常の `adjutant work` に落とさず、
-  上の「終了コード 3」と同じく待ちに積んで、`note` に再開であることを書く:
-  `adj task update --id {task_id} --note 'worker の枠待ち（--resume で再開する）'`
-  （レコードが無ければ `--waiting-in` で作ってから）。
+  待ちに積んで、`note` に再開であることを書く。レコードは `dispatched` か `pr` のはずなので、
+  status も queued に戻す — そうしないと待ちから引く側に拾われない:
+  `adj task update --id {task_id} --status queued --no-hand-over --note 'worker の枠待ち（--resume で再開する）'`
+  （`--no-hand-over` は、queued への遷移で自分の受信箱に依頼が届かないようにするため。
+  レコードが無ければ `--waiting-in` で作ってから）。
+  再開で立ったら、上の `dispatched` の代わりに、**レコードに `pr` が書いてあれば `--status pr`**、
+  無ければ `--status dispatched` に戻す（`--note ''` も付ける）。PR を出したあとの worker を
+  「進行中」に巻き戻さないため。
 - **worker も hub も、手が止まらない権限で立てる。** worker は worktree に閉じて最後まで
   走り切るのが仕事なので、1手ごとに確認を取って止まると意味がない。hub も同じで、
   **承認を待っている hub は受信箱を読んでいない hub**であり、そのタブは誰も見ていない
@@ -1467,9 +1503,28 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
   worktree 名・着手の可否は、フォームが渡す前に聞いてある。本文の `##` 行がその答えそのもの。
   **聞き返す先も無い** — 依頼元はセッションではなくブラウザで、`adjutant_tell` の宛先が無い。
   足りないものがあったら Step 5 の `--note` に書いて残す。
-- **`## 着手` が「着手前に確認がほしい」なら、worker を立てる前にユーザーに聞く。**
-  ただし**起動直後は聞かない**（「起動時にやること」の 5）。人がこのタブに居ないときは、
-  `--note` に「着手の確認待ちなのだ」と書いて queued のまま置いておく。
+- **`## 着手` が「着手前に確認がほしい」なら、worker を立てる前に `dispatch` の gate を開く。**
+  依頼したのは板の前に居る人なので、聞く先も板にする:
+
+  ```bash
+  adj gate open --json <<'JSON'
+  {
+    "kind": "dispatch",
+    "task": "{task_id}",
+    "title": "着手確認: {task_title}",
+    "focus": "この内容で着手していいか決めてほしいのだ。",
+    "decided": "- 種類: {種類}\n- 完了条件: {完了条件}\n- 分岐元: {分岐元}\n- worktree 名: {worktree 名}"
+  }
+  JSON
+  ```
+
+  返った `server` が `up` なら、レコードは queued のまま `--note '着手の確認待ち（板の要対応）'` を
+  書いて次へ行く。答えは `kind: gate` で受信箱に届く（「hub が開いた gate の答え」）。
+  **起動直後でも開いてよい** — `AskUserQuestion` と違って hub は止まらない。
+  `down` なら板が無いので、開いた gate は `adj gate close --id {gate id}` ですぐ閉じる（残すと、
+  あとで板を立てたときに答えの要らない確認が要対応に並ぶ）。そのうえで、人がこのタブに居るとき
+  だけ `AskUserQuestion` で聞く。居ないときは `--note` に「着手の確認待ちなのだ」と書いて queued の
+  まま置いておく（起動直後は聞かない — 「起動時にやること」の 5）。
 - **Step 5（返信する）の宛先がレコードになる。** `adjutant_tell` の相手がいないので、
   代わりに `adj task update` でタスクレコードに書き戻す。これが板に映る:
 
@@ -1489,6 +1544,27 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
   指示書はもうあるので、Step 3 の `adjutant work` だけを打つ。
 
 - 受信箱のメッセージは、レコードに書き戻してから ack する。
+
+### hub が開いた gate の答え（`kind: gate`）
+
+hub が開いた gate（`dispatch`）に人が板で答えると、答えは hub の受信箱に届く。worker の gate と
+違って outbox には行かない（hub は outbox を読まない）。`subject` は `[gate {id}] {判定}`、本文に
+判定・コメントと、**どのタスクの話かを示す `## task` 行**がある。gate は答えた時点でしまわれて
+いるので、`adj gate show` では引けない — 本文の `## task` だけが手がかり。
+
+**まず `adj task show --id {task_id}` を読む。** `status` が `queued` でなければ何もしない（その間に
+人が板で動かした、またはタブで聞いて着手済み）。`queued` なら判定で分ける:
+
+- **`approve`** — 先に `adj task update --id {task_id} --auto-start true` を打ってから、
+  「ダッシュボードから来た依頼」を Step 2 から回す。確認はもう済んだので gate を開き直さない。
+  `--auto-start true` を先に打つのは、`maxWorkers` で断られて枠待ちに回っても、次に引いたときに
+  同じことを聞き直さないため。
+- **`changes`** — コメントを読む。分岐元や worktree 名のように、着手の条件が変わるだけなら
+  反映して、`approve` と同じく着手する。まだ着手するなと読めるなら、コメントを `--note` に書いて
+  `--status backlog` に戻す（人のボールに返す。queued に置いたままだと、枠が空くたびに同じ gate を
+  開き直すことになる）。
+- **`reject`** — `adj task update --id {task_id} --status cancelled`。
+- 済んだら ack する。
 
 ### ユーザーに聞く必要が出たとき
 
@@ -1842,8 +1918,9 @@ worker はそれを引きに行って空振りする。**ここで起票はし�
 - 親タスク: {parent_task}
   （このタスクの親にあたるタスクの URL なのだ。無ければ `-` なのだ）
 - タスクレコード: {task_record}
-  （ダッシュボードから来た依頼なら `## task` 行の id なのだ。無ければ `-` なのだ。
-  gate を開くときに `task` に入れると、板の上でカードと結びつくのだ）
+  （板のカードの id なのだ。ダッシュボードから来た依頼なら `## task` 行の id、それ以外は Step 2 で
+  作ったレコードの id なのだ。gate を開くときに `task` に入れると、板の上でカードと結びつくのだ。
+  PR を出したら `adj task update --id {task_record} --status pr --pr <URL>` でカードを進めるのだ）
 - 完了条件: {PR作成まで / 動作確認待ちで引き渡しまで / 調査だけ（報告して終わり）}
   （hub がユーザーから受けた依頼をそのまま書くのだ。「PR作成まで」でなければ PR は作らないのだ。
   「調査だけ」なら実装もコミットも Issue の起票・更新もしないのだ）

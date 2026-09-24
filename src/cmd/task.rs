@@ -72,6 +72,11 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
     if let Some(order) = input.get("order").and_then(Value::as_u64) {
         task.order = order as u32;
     }
+    // Set by the hub when a person approved a task that asked to be confirmed first, so that
+    // being turned away for a slot afterwards does not put the same question to them again.
+    if let Some(auto_start) = input.get("autoStart").and_then(Value::as_bool) {
+        task.auto_start = auto_start;
+    }
     for (key, field) in [
         ("worktree", &mut task.worktree),
         ("issue", &mut task.issue),
@@ -80,8 +85,10 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
     ] {
         if let Some(value) = input.get(key) {
             // An explicit `null` clears; an absent key leaves it alone. Without the
-            // distinction there is no way to take back a worktree the hub wrote down.
-            *field = value.as_str().map(str::to_string);
+            // distinction there is no way to take back a worktree the hub wrote down. An
+            // empty string clears too, since a command line has no way to say `null` — and a
+            // "waiting for a slot" note has to go once the worker starts.
+            *field = value.as_str().filter(|v| !v.is_empty()).map(str::to_string);
         }
     }
     task.updated_at = stamp();
@@ -89,7 +96,13 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
 
     // Handing over is a *transition*, not a status: re-sending on every save would put one
     // task in the inbox once for every time somebody dragged its card.
-    let handed = if was != Status::Queued && task.status == Status::Queued {
+    // Not when the hub is the one queueing it: the inbox it would land in is its own. That is
+    // a resumed worker turned away for a slot, whose record was `dispatched` or `pr`.
+    let hand = input
+        .get("handOver")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let handed = if hand && was != Status::Queued && task.status == Status::Queued {
         Some(hand_over(ctx, &task)?)
     } else {
         None
@@ -198,13 +211,14 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         "autoStart": !args.ask_first,
         "status": if args.queue || args.waiting_in.is_some() { "queued" } else { "backlog" },
     });
-    // The hub writing down work it could not start yet. Queued, so the next free slot takes
-    // it; but not handed over, because the inbox it would land in is the caller's own, and a
-    // hub that messages itself is woken mid-turn to be told what it just did.
+    // The hub writing down work it has prepared a worktree for: before it starts the worker,
+    // so the brief can carry the id, or after `adj work` turned it away for want of a slot.
+    // Queued either way, so a free slot can take it; but not handed over, because the inbox
+    // it would land in is the caller's own, and a hub that messages itself is woken mid-turn
+    // to be told what it just did.
     if let Some(worktree) = args.waiting_in {
         let worktree = config::expand_home(worktree).to_string_lossy().to_string();
         input["worktree"] = json!(worktree);
-        input["note"] = json!("worker の枠待ち（worktree は用意済み）");
         input["handOver"] = json!(false);
     }
     if let Some(title) = args.title {
@@ -233,6 +247,8 @@ pub struct UpdateArgs<'a> {
     pub issue: Option<&'a str>,
     pub pr: Option<&'a str>,
     pub note: Option<&'a str>,
+    pub auto_start: Option<bool>,
+    pub no_hand_over: bool,
     pub json: bool,
 }
 
@@ -254,6 +270,12 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     if let Some(order) = args.order {
         fields.insert("order".to_string(), json!(order));
     }
+    if let Some(auto_start) = args.auto_start {
+        fields.insert("autoStart".to_string(), json!(auto_start));
+    }
+    if args.no_hand_over {
+        fields.insert("handOver".to_string(), json!(false));
+    }
     let (task, handed) = update(&ctx, args.id, &input)?;
     if args.json {
         println!(
@@ -271,6 +293,7 @@ pub fn list(
     repo: Option<&str>,
     hub: Option<&str>,
     status: Option<&str>,
+    worktree: Option<&str>,
     as_json: bool,
 ) -> Result<(), String> {
     let ctx = super::context(repo, hub)?;
@@ -278,9 +301,20 @@ pub fn list(
         Some(text) => Some(Status::parse(text).ok_or(format!("no such status: {text}"))?),
         None => None,
     };
+    // Compared resolved: the hub names the worktree as `git worktree list` printed it, and
+    // the record holds whatever path it was written with.
+    let resolved = |path: &str| {
+        let path = config::expand_home(path);
+        path.canonicalize().unwrap_or(path)
+    };
+    let at = worktree.map(resolved);
     let tasks: Vec<Task> = task::list(&dir(&ctx))
         .into_iter()
         .filter(|t| wanted.is_none_or(|w| t.status == w))
+        .filter(|t| {
+            at.as_ref()
+                .is_none_or(|at| t.worktree.as_deref().map(resolved).as_ref() == Some(at))
+        })
         .collect();
 
     if as_json {

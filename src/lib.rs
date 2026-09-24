@@ -138,7 +138,7 @@ enum Commands {
         /// Who is sending: your session or worktree name
         #[arg(long)]
         from: Option<String>,
-        /// report | question | answer | ack | done | needs-user | request | next
+        /// report | question | answer | ack | done | needs-user | request | next | gate
         #[arg(long, default_value = "report")]
         kind: String,
         /// One line stating the conclusion
@@ -431,7 +431,7 @@ enum GateAction {
         #[arg(long)]
         id: String,
     },
-    /// Hand the ball back: deliver the decision to that worktree's outbox
+    /// Hand the ball back: deliver the decision to that worktree's outbox, or to the hub's inbox for a gate the hub opened
     Answer {
         #[arg(long)]
         repo: Option<String>,
@@ -504,7 +504,7 @@ enum TaskAction {
         #[arg(long)]
         queue: bool,
         /// Queue it with this worktree already made, sending the hub nothing — for the hub
-        /// itself, when `adj work` refused because maxWorkers were running
+        /// itself, writing down work it is about to start or that is waiting for a slot
         #[arg(long, value_name = "WORKTREE", conflicts_with = "queue")]
         waiting_in: Option<String>,
         #[arg(long)]
@@ -519,6 +519,9 @@ enum TaskAction {
         /// backlog | queued | dispatched | pr | done | cancelled
         #[arg(long)]
         status: Option<String>,
+        /// Only the tasks being worked on in this worktree
+        #[arg(long)]
+        worktree: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -549,9 +552,15 @@ enum TaskAction {
         issue: Option<String>,
         #[arg(long)]
         pr: Option<String>,
-        /// Why it could not be taken, when that is the answer
+        /// Why it could not be taken, when that is the answer ('' clears it)
         #[arg(long)]
         note: Option<String>,
+        /// Whether the hub may start it without asking first
+        #[arg(long, value_name = "true|false")]
+        auto_start: Option<bool>,
+        /// Queue it without putting a request in the hub's inbox — for the hub itself
+        #[arg(long)]
+        no_hand_over: bool,
         #[arg(long)]
         json: bool,
     },
@@ -826,8 +835,15 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             repo,
             hub,
             status,
+            worktree,
             json,
-        } => cmd::task_list(repo.as_deref(), hub.as_deref(), status.as_deref(), *json),
+        } => cmd::task_list(
+            repo.as_deref(),
+            hub.as_deref(),
+            status.as_deref(),
+            worktree.as_deref(),
+            *json,
+        ),
         TaskAction::Show { repo, hub, id } => cmd::task_show(repo.as_deref(), hub.as_deref(), id),
         TaskAction::Update {
             repo,
@@ -839,6 +855,8 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             issue,
             pr,
             note,
+            auto_start,
+            no_hand_over,
             json,
         } => cmd::task_update(&cmd::UpdateArgs {
             repo: repo.as_deref(),
@@ -850,6 +868,8 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             issue: issue.as_deref(),
             pr: pr.as_deref(),
             note: note.as_deref(),
+            auto_start: *auto_start,
+            no_hand_over: *no_hand_over,
             json: *json,
         }),
     }

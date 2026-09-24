@@ -52,6 +52,17 @@ impl Kind {
         }
     }
 
+    /// Whether the hub opened this rather than a worker. The hub reads its inbox and never
+    /// an outbox, so the answer has to be delivered there instead — to the outbox of the
+    /// main checkout it would sit unread.
+    ///
+    /// Decided by kind because the kind already says who is asking: whether to start a task
+    /// and whether to file an issue are the hub's questions, and nothing a worker asks about.
+    /// A kind that either side could open would need the opener written into the gate.
+    pub fn answered_by_hub(self) -> bool {
+        matches!(self, Kind::Dispatch | Kind::Issue)
+    }
+
     /// What the buttons are, when the payload does not say.
     pub fn default_options(self) -> Vec<String> {
         let options: &[&str] = match self {
@@ -263,6 +274,11 @@ pub fn answer_body(
         gate.id,
         gate.kind.as_str()
     ));
+    // By the time this is read the gate has been archived, so `adj gate show` no longer
+    // finds it. The hub has to know which task it just decided on from the message alone.
+    if let Some(task) = &gate.task {
+        out.push_str(&format!("## task       {task}\n"));
+    }
     match comment.map(str::trim).filter(|c| !c.is_empty()) {
         Some(comment) => out.push_str(&format!("\n## コメント\n\n{comment}\n")),
         // Said rather than left out: an agent that sees no comment section has to work out

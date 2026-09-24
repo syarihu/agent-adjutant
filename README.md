@@ -362,6 +362,13 @@ The record is also the referee: a card dragged back to the backlog sets `status`
 the hub reads it once more just before it starts, so a task pulled back while its message
 was still in the inbox does not get picked up anyway.
 
+Every worker has a record, whichever way its task came in. A task the hub starts from a
+worker's report or from its own tab gets one written before the brief (`adjutant task add
+--waiting-in <worktree>`, which queues it without messaging the hub), so the brief can name
+it. The record then moves with the work: the worker sets `pr` when it opens its pull request,
+and the hub sets `done` when it removes the worktree. A card the board shows as in progress is
+a worker that is actually running.
+
 ### Gates
 
 A gate is the other half: something an agent has prepared for a person to look at, and the
@@ -379,6 +386,11 @@ scrolled past the first by the time you have read it.
 The answer goes back out through that worktree's outbox and pokes the worker, which is
 `adjutant tell` and nothing new. That path already survives the worker having died: the
 answer simply waits there for whoever starts one next.
+
+The hub opens gates too: a task handed over with "confirm before starting" becomes a
+`dispatch` gate, and the card sits in 要対応 until someone answers. The hub reads its inbox
+rather than an outbox, so the answer to a gate the hub opened is delivered there, as a
+`gate` message.
 
 **A gate is one question, one decision and one comment.** Past two rounds it has become a
 conversation, and a conversation is faster in the tab than through an outbox — so the board

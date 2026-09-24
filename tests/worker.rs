@@ -283,3 +283,109 @@ fn a_worker_in_the_main_checkout_counts_against_max_workers_too() {
     let out = fixture.cmd(&["work", "--worktree", &next, "--title", "WID-6", "--dry-run"]);
     assert_eq!(out.status.code(), Some(3), "{out:?}");
 }
+
+#[test]
+fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-7");
+    let other = linked_worktree(&fixture, "wid-8");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "WID-7",
+        "--body",
+        "x",
+        "--waiting-in",
+        &worktree,
+        "--json",
+    ]);
+    fixture.ok(&[
+        "task",
+        "add",
+        "--title",
+        "WID-8",
+        "--body",
+        "y",
+        "--waiting-in",
+        &other,
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    // No note of its own: the same record is written before a worker starts, not only when
+    // one was turned away.
+    assert!(added["task"]["note"].is_null(), "{added}");
+
+    // Asked by worktree, which is all the hub has in hand when a worker reports done.
+    let found = fixture.json(&["task", "list", "--worktree", &worktree, "--json"]);
+    let found = found.as_array().unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["id"], id.as_str());
+
+    fixture.ok(&["task", "update", "--id", &id, "--note", "worker の枠待ち"]);
+    // A command line cannot say null, and the note has to go once the worker starts.
+    let updated = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "dispatched",
+        "--note",
+        "",
+        "--json",
+    ]);
+    assert!(updated["task"]["note"].is_null(), "{updated}");
+    // Neither record ever went to the hub: the hub is the one writing them.
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+}
+
+#[test]
+fn the_hub_can_requeue_a_task_without_messaging_itself_and_mark_one_approved() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-9");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "WID-9",
+        "--body",
+        "z",
+        "--ask-first",
+        "--waiting-in",
+        &worktree,
+        "--json",
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(added["task"]["autoStart"], false, "{added}");
+
+    // Approved on the board: from here the queue may start it without asking again.
+    let approved = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--auto-start",
+        "true",
+        "--json",
+    ]);
+    assert_eq!(approved["task"]["autoStart"], true, "{approved}");
+
+    // A resumed worker turned away for a slot goes back to queued. The hub is the one doing
+    // it, so nothing may land in its own inbox.
+    fixture.ok(&["task", "update", "--id", &id, "--status", "dispatched"]);
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "queued",
+        "--no-hand-over",
+    ]);
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+
+    // Without the flag, queueing is still a hand-over — the board relies on that.
+    fixture.ok(&["task", "update", "--id", &id, "--status", "dispatched"]);
+    fixture.ok(&["task", "update", "--id", &id, "--status", "queued"]);
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 1);
+}

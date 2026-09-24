@@ -91,13 +91,32 @@ pub fn answer(
 
     let subject = gate::answer_subject(&gate, decision);
     let body = gate::answer_body(&gate, decision, choice, comment);
-    let told = super::deliver_to_worker(
-        ctx,
-        std::path::Path::new(&gate.worktree),
-        &ctx.repo.hub_name,
-        &subject,
-        &body,
-    )?;
+    let told = if gate.kind.answered_by_hub() {
+        // `gate` rather than `answer`: the hub pairs an `answer` with a question it asked a
+        // worker, and this is a person deciding on something the hub put on the board.
+        let message = crate::messaging::Message {
+            from: "dashboard".to_string(),
+            // None, for the reason `task::hand_over` gives.
+            worktree: None,
+            kind: "gate".to_string(),
+            subject: subject.clone(),
+            body: body.clone(),
+        };
+        let handed = super::deliver_to_hub_announcing(ctx, &message, false)?;
+        super::Told {
+            path: handed.delivery.path,
+            present: handed.delivery.present,
+            woken: handed.woken,
+        }
+    } else {
+        super::deliver_to_worker(
+            ctx,
+            std::path::Path::new(&gate.worktree),
+            &ctx.repo.hub_name,
+            &subject,
+            &body,
+        )?
+    };
 
     // Archived after delivery, not before: if the outbox could not be written the gate is
     // still open, and the person can try again rather than losing what they were shown.
@@ -161,7 +180,9 @@ pub fn open_cmd(
         return Ok(());
     }
     println!("{} — {}", gate.id, gate.title);
-    if served {
+    if served && gate.kind.answered_by_hub() {
+        println!("Waiting on the board. The answer arrives in your inbox as `kind: gate`.");
+    } else if served {
         println!("Waiting on the board. Read `adj outbox` when you are woken.");
     } else {
         // Not an error: the gate is written either way, and the caller decides what to do
@@ -234,6 +255,18 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     }
     println!("{} → {}", gate.id, args.decision);
     println!("wrote {}", told.path.display());
+    if gate.kind.answered_by_hub() {
+        match (told.present, told.woken) {
+            (true, true) => println!("Woke the hub."),
+            (true, false) => {
+                println!("The hub is running; it will read this the next time it checks its inbox.")
+            }
+            (false, _) => println!(
+                "The hub is not running. The answer waits in its inbox for the next time it starts."
+            ),
+        }
+        return Ok(());
+    }
     match (told.present, told.woken) {
         (true, true) => println!("Woke the worker."),
         (true, false) => {
