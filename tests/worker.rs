@@ -775,3 +775,24 @@ fn a_worktree_not_created_yet_is_stored_as_git_will_name_it() {
         "{added}"
     );
 }
+
+#[test]
+fn a_dot_dot_in_the_part_of_a_worktree_not_created_yet_steps_back_up() {
+    let fixture = Fixture::new(QUIET);
+    let base = std::fs::canonicalize(fixture.repo.parent().unwrap()).unwrap();
+    let given = base.join("not-there").join("..").join("wid-17");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        given.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(
+        added["task"]["worktree"],
+        base.join("wid-17").to_str().unwrap(),
+        "{added}"
+    );
+}

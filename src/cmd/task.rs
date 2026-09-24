@@ -137,27 +137,30 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
 /// so that it is absolute — against the directory of the command giving it, not of some
 /// later one — and matches what git prints once the worktree is created there.
 fn resolved_worktree(path: &str) -> String {
+    use std::path::{Component, PathBuf};
     let path = config::expand_home(path);
     let absolute = std::path::absolute(&path).unwrap_or(path);
-    let mut existing = absolute.as_path();
-    let mut rest = Vec::new();
-    let resolved = loop {
-        if let Ok(real) = existing.canonicalize() {
-            break rest
-                .iter()
-                .rev()
-                .fold(real, |acc: std::path::PathBuf, part| acc.join(part));
-        }
-        match (existing.parent(), existing.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_os_string());
-                existing = parent;
+    let parts: Vec<Component> = absolute.components().collect();
+    // The longest leading part that exists is resolved by the system, `..` and symlinks and
+    // all. What follows does not exist yet, so there is nothing to follow through it: `..`
+    // there steps back up and `.` is dropped, which is what git does when it creates it.
+    for split in (1..=parts.len()).rev() {
+        let head: PathBuf = parts[..split].iter().collect();
+        let Ok(mut resolved) = head.canonicalize() else {
+            continue;
+        };
+        for part in &parts[split..] {
+            match part {
+                Component::ParentDir => {
+                    resolved.pop();
+                }
+                Component::Normal(name) => resolved.push(name),
+                _ => {}
             }
-            // Nothing of it exists, not even the root: keep what we were given.
-            _ => break absolute.clone(),
         }
-    };
-    resolved.to_string_lossy().to_string()
+        return resolved.to_string_lossy().to_string();
+    }
+    absolute.to_string_lossy().to_string()
 }
 
 /// One of a record's text fields as an update gives it. `null` and `""` clear it; anything
