@@ -336,12 +336,15 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
     let mut input = json!({});
     let fields = input.as_object_mut().expect("just built");
+    // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
+    // comment typed on the board — and does not belong inside quotes on a command line.
+    let note = args.note.map(super::dash_is_stdin).transpose()?;
     for (key, value) in [
         ("status", args.status),
         ("worktree", args.worktree),
         ("issue", args.issue),
         ("pr", args.pr),
-        ("note", args.note),
+        ("note", note.as_deref()),
     ] {
         if let Some(value) = value {
             fields.insert(key.to_string(), json!(value));

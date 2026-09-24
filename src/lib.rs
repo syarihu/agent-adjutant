@@ -175,6 +175,9 @@ enum Commands {
         worktree: String,
         #[arg(long, default_value = "")]
         title: String,
+        /// Take the tab's title from this task record instead of --title
+        #[arg(long, value_name = "ID", conflicts_with_all = ["title", "resume"])]
+        task: Option<String>,
         /// Which hub of the repository (default: $ADJUTANT_HUB; a worktree's own record is not read here)
         #[arg(long)]
         hub: Option<String>,
@@ -326,6 +329,7 @@ enum Commands {
     Title {
         #[arg(long)]
         repo: Option<String>,
+        /// `-` reads it from stdin
         #[arg(long)]
         title: String,
         #[arg(long)]
@@ -552,7 +556,7 @@ enum TaskAction {
         issue: Option<String>,
         #[arg(long)]
         pr: Option<String>,
-        /// Why it could not be taken, when that is the answer ('' clears it)
+        /// Why it could not be taken, when that is the answer ('' clears it, - reads stdin)
         #[arg(long)]
         note: Option<String>,
         /// Whether the hub may start it without asking first
@@ -631,18 +635,20 @@ pub fn run() -> ! {
             hub,
             worktree,
             title,
+            task,
             prompt,
             resume,
             dry_run,
-        } => cmd::work(
-            repo.as_deref(),
-            hub.as_deref(),
+        } => cmd::work(&cmd::WorkArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
             worktree,
             title,
-            prompt.as_deref(),
-            *resume,
-            *dry_run,
-        ),
+            task: task.as_deref(),
+            prompt: prompt.as_deref(),
+            resume: *resume,
+            dry_run: *dry_run,
+        }),
         // Exit 1 when the hub is not running, so a shell can branch on it without parsing
         // anything this prints.
         Commands::Worker {

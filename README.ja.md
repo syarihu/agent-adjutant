@@ -56,7 +56,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
 | `adjutant send --subject … --body …` | hub にメッセージを送信（本文は stdin 可） |
-| `adjutant work --worktree … --title … [--resume]` | 新しいタブを開いて worker を起動（`--resume` はその worktree に保存されたセッションを再開）。`maxWorkers` の数だけ worker が動いていると、何も起動せずに終了コード 3 で返る |
+| `adjutant work --worktree … (--title … \| --task <id>) [--resume]` | 新しいタブを開いて worker を起動（`--task` はタスクレコードのタイトルでタブを名乗る。Issue 由来のタイトルをコマンド行にクォートして書かずに済む。`--resume` はその worktree に保存されたセッションを再開）。`maxWorkers` の数だけ worker が動いていると、何も起動せずに終了コード 3 で返る |
 | `adjutant worker --worktree … [--resume]` | 自身を worker として起動（`work` のタブ内で実行されるコマンド。worktree の中で `--resume` を付けると保存されたセッションを再開） |
 | `adjutant tell --worktree … --subject …` | 指定 worktree の worker にメッセージを送信 |
 | `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
