@@ -1228,20 +1228,28 @@ mod tests {
                 text.contains(clause),
                 "the {reader} counts the main checkout as a worktree: {text}"
             );
-            // Identified by path against the resolved `main`, with the marker each list
-            // carries named, so neither list is read by position alone. Looked for right
-            // after the clause: the collector brief names `adjutant_config` earlier for the
-            // settings, which would satisfy a search of the whole section.
+            // Identified by the marker each list carries, not by comparing paths with the
+            // resolved `main`: proctor prints paths with symlinks resolved and git may not, so
+            // the same checkout can be two strings. Looked for right after the clause: the
+            // collector brief names `adjutant_config` earlier for the settings, which would
+            // satisfy a search of the whole section.
             let near: String = text[text.find(clause).unwrap()..]
                 .chars()
-                .take(250)
+                .take(400)
                 .collect();
-            for marker in ["`isMain:true`", "`adjutant_config`"] {
-                assert!(
-                    near.contains(marker),
-                    "the {reader} does not say how to recognise the main checkout ({marker}): {text}"
-                );
-            }
+            assert!(
+                near.contains("`isMain:true`"),
+                "the {reader} does not name proctor's marker for the main checkout: {text}"
+            );
+            assert!(
+                near.contains("firstline") || near.contains("先頭行"),
+                "the {reader} does not say the main checkout is git's first line: {text}"
+            );
+            assert!(
+                near.contains("notbycomparingpathswith`adjutant_config`")
+                    || near.contains("`adjutant_config`の`main`とのパス一致では探さない"),
+                "the {reader} leaves the main checkout to be found by path equality: {text}"
+            );
         }
         // Dropped before matching, not after: a main checkout left in the collector's list
         // would otherwise surface again among the worktrees that matched no child.
