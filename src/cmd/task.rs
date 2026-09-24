@@ -50,14 +50,23 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
         let charset = name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-        // What git refuses in a branch name, among what the charset lets through. Saved, such a
-        // name would sit in the queue until the hub failed to create its branch.
-        let branchable =
-            !name.starts_with(['.', '-']) && !name.contains("..") && !name.ends_with(".lock");
-        if !(charset && branchable) {
+        if !charset {
             return Err(format!(
-                "a worktree name may only use letters, digits, '.', '_' and '-', \
-                 and cannot start with '.' or '-', contain '..' or end in '.lock': {name}"
+                "a worktree name may only use letters, digits, '.', '_' and '-': {name}"
+            ));
+        }
+        // Whether it can name a branch is git's to say, not a list kept here: saved, a name git
+        // refuses would sit in the queue until the hub failed to create its branch. Asked with
+        // the name alone, which `branchPattern` puts after a prefix — a name that fails on its
+        // own fails there too. A leading '-' is refused first so git cannot read it as a flag.
+        let branchable = !name.starts_with('-')
+            && std::process::Command::new("git")
+                .args(["check-ref-format", "--branch", name])
+                .output()
+                .is_ok_and(|out| out.status.success());
+        if !branchable {
+            return Err(format!(
+                "git cannot name a branch after this worktree name: {name}"
             ));
         }
     }
@@ -65,11 +74,20 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
         let rest = url
             .strip_prefix("https://")
             .or_else(|| url.strip_prefix("http://"));
-        let host = rest.and_then(|r| r.split('/').next()).unwrap_or("");
+        // The host is what is left of the authority once a port is taken off. Checked as a
+        // name rather than as "some text before the path", which `https://:8080/` passed.
+        let host = rest
+            .and_then(|r| r.split(['/', '?', '#']).next())
+            .map(|authority| authority.split(':').next().unwrap_or(""))
+            .unwrap_or("");
+        let named = !host.is_empty()
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'));
         let plain = !url
             .chars()
             .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
-        if host.is_empty() || !plain {
+        if !named || !plain {
             return Err(format!("not an issue URL: {url}"));
         }
     }

@@ -443,6 +443,8 @@ fn a_worktree_name_or_issue_url_that_could_break_out_of_a_quote_is_refused() {
         vec!["--worktree-name", ".."],
         vec!["--worktree-name", "-x"],
         vec!["--worktree-name", "a.lock"],
+        vec!["--worktree-name", "topic."],
+        vec!["--issue-url", "https://:8080/acme/widget/issues/1"],
     ] {
         let mut all = vec!["task", "add", "--body", "x"];
         all.extend(&args);
