@@ -1174,8 +1174,12 @@ inflates the hub transcript for every task it dispatches.
   できたこの時点でレコードを作って、返った id を書く:
 
   ```bash
-  adj task add --title '{task_title}' --body '{依頼の要約}' --issue-url '{issue url}' --waiting-in '{worktree}' --json
+  adj task add --title '{task_title}' --body '{依頼の要約}' --issue-url '{issue url}' --done-when {完了条件} --waiting-in '{worktree}' --json
   ```
+
+  `--done-when` は指示書の 完了条件 行と同じもの（「PR作成まで」→ `pr`、「動作確認待ちで引き渡しまで」→
+  `verify`、「調査だけ」→ `report-only`）。省くと `pr` と記録され、板が調査だけのタスクを
+  「PR まで行くもの」と見せる。
 
   **板に出ない worker を作らないため。** 入口がどこであっても、立っている worker には板のカードが
   1枚ある。レコードが無いと worker は gate を開いてもカードに結びつけられず、PR を出しても
@@ -1187,27 +1191,27 @@ inflates the hub transcript for every task it dispatches.
 
 **Step 3 — spawn the worker tab.** 1コマンドで引き渡しは終わり。あとからポーリングするものは無い。
 
+**立てる前にレコードを `dispatched` にする**（`{task_id}` は Step 2 の タスクレコード 行）。
+`--note ''` は枠待ちで積んだときの note を消すため:
+
 ```bash
+adj task update --id {task_id} --status dispatched --worktree '{worktree}' --note ''
 adjutant work --worktree '{worktree}' --title '{task_title}'
 ```
 
-- **立ったらレコードを `dispatched` にする**（`{task_id}` は Step 2 の タスクレコード 行）。
-  `--note ''` は枠待ちで積んだときの note を消すため:
-
-  ```bash
-  adj task update --id {task_id} --status dispatched --worktree '{worktree}' --note ''
-  ```
-
-- **終了コード 3 以外で失敗したら**、レコードに `--note '着手できなかったのだ: {理由}'` を書く。
-  worktree の書いてある queued のレコードは「枠待ち」と読まれて、次に枠が空いたときにまた
-  立てられてしまう。このメモが付いたものは待ちから引くときに飛ばされる。
+- **順番はこの通り。** `adjutant work` はタブを開いたらすぐ返り、worker の完了を待たない。立てた
+  あとに `dispatched` を書くと、その間に worker が `pr` にしていた場合に巻き戻してしまう。
+- **終了コード 3 以外で失敗したら**、queued に戻して `--note '着手できなかったのだ: {理由}'` を書く
+  （`adj task update --id {task_id} --status queued --no-hand-over --note '…'`）。`--no-hand-over` は、
+  queued への遷移で自分の受信箱に依頼が届かないようにするため。このメモが付いたものは待ちから
+  引くときに飛ばされる。
 
 - **終了コード 3 は失敗ではなく「枠待ち」。** config の `maxWorkers` だけ worker が走っていると、
   `adjutant work` は何も立てずに 3 で返る。worktree と指示書は**消さずにそのまま残す** —
-  次に引いたときは Step 3 だけやり直せば済む。レコードは queued のまま、note だけ書く:
+  次に引いたときは Step 3 だけやり直せば済む。レコードを queued に戻して note を書く:
 
   ```bash
-  adj task update --id {task_id} --worktree '{worktree}' --note 'worker の枠待ち（worktree は用意済み）'
+  adj task update --id {task_id} --status queued --no-hand-over --note 'worker の枠待ち（worktree は用意済み）'
   ```
 
   **待ちの置き場所はタスクレコードだけ。** Step 2 でレコードを作ってあるので、枠が空けば
@@ -1231,11 +1235,10 @@ adjutant work --worktree '{worktree}' --title '{task_title}'
   待ちに積んで、`note` に再開であることを書く。レコードは `dispatched` か `pr` のはずなので、
   status も queued に戻す — そうしないと待ちから引く側に拾われない:
   `adj task update --id {task_id} --status queued --no-hand-over --note 'worker の枠待ち（--resume で再開する）'`
-  （`--no-hand-over` は、queued への遷移で自分の受信箱に依頼が届かないようにするため。
-  レコードが無ければ `--waiting-in` で作ってから）。
-  再開で立ったら、上の `dispatched` の代わりに、**レコードに `pr` が書いてあれば `--status pr`**、
-  無ければ `--status dispatched` に戻す（`--note ''` も付ける）。PR を出したあとの worker を
-  「進行中」に巻き戻さないため。
+  （レコードが無ければ `--waiting-in` で作ってから）。
+  再開するときも**立てる前に** status を書く。上の `dispatched` の代わりに、**レコードに `pr` が
+  書いてあれば `--status pr`**、無ければ `--status dispatched`（`--note ''` も付ける）。PR を出した
+  あとの worker を「進行中」に巻き戻さないため。断られたら上と同じく queued に戻す。
 - **worker も hub も、手が止まらない権限で立てる。** worker は worktree に閉じて最後まで
   走り切るのが仕事なので、1手ごとに確認を取って止まると意味がない。hub も同じで、
   **承認を待っている hub は受信箱を読んでいない hub**であり、そのタブは誰も見ていない
@@ -1523,13 +1526,15 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
   **起動直後でも開いてよい** — `AskUserQuestion` と違って hub は止まらない。
   `down` なら板が無いので、開いた gate は `adj gate close --id {gate id}` ですぐ閉じる（残すと、
   あとで板を立てたときに答えの要らない確認が要対応に並ぶ）。そのうえで、人がこのタブに居るとき
-  だけ `AskUserQuestion` で聞く。居ないときは `--note` に「着手の確認待ちなのだ」と書いて queued の
+  だけ `AskUserQuestion` で聞く。着手してよいと答えが返ったら、着手する前に
+  `adj task update --id {task_id} --auto-start true` を打つ（板で `approve` されたときと同じ理由 —
+  枠待ちに回っても聞き直さないため）。居ないときは `--note` に「着手の確認待ちなのだ」と書いて queued の
   まま置いておく（起動直後は聞かない — 「起動時にやること」の 5）。
 - **Step 5（返信する）の宛先がレコードになる。** `adjutant_tell` の相手がいないので、
   代わりに `adj task update` でタスクレコードに書き戻す。これが板に映る:
 
   ```bash
-  adj task update --id {task_id} --status dispatched --worktree {worktree の絶対パス} --issue {issue url}
+  adj task update --id {task_id} --issue {issue url}   # status は Step 3 で dispatched にしてある
   adj task update --id {task_id} --note '着手できなかったのだ: {理由}'   # 取れなかったとき
   ```
 
@@ -1899,9 +1904,10 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
 そのまま書く。worker はこれでチケットを読みに行く道具を決めるので、**落とさない** — URL から
 推測させると、Jira のチケットを `gh issue view` で引きに行って空振りする。
 
-**`{task_record}` はダッシュボード由来の依頼にだけ入る。** 人が直接タブで頼んだ依頼や、worker の
-報告から起票したものにはレコードが無いので `-`。**推測で埋めない** — 存在しない id を渡された
-worker は、開いた gate を board 上のどのカードにも結びつけられない。
+**`{task_record}` は必ず実在する id にする。** ダッシュボード由来の依頼なら `## task` 行の id、
+人が直接タブで頼んだ依頼や worker の報告から起票したものは「4. worker を起動する」の Step 2 で
+作ったレコードの id。**推測で埋めない** — 存在しない id を渡された worker は、開いた gate を board 上の
+どのカードにも結びつけられず、PR を出してもカードを「レビュー中」に進められない。
 
 **Issue の無い依頼（調査だけ）では `{task_id}` と `{tracker}` を `-` にする。** `{task_url}` の
 代わりに、ユーザーの依頼文をそのまま「作業対象」に置く。チケットが無いのに URL の形を作ると、

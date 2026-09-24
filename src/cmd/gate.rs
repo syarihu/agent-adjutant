@@ -48,6 +48,17 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         return Err("a gate needs a title".to_string());
     }
 
+    // A dispatch gate asks whether to start a task, and its answer is acted on by reading the
+    // task out of the message. Without one the hub would be told "approve" and not what.
+    if kind == Kind::Dispatch
+        && payload
+            .get("task")
+            .and_then(Value::as_str)
+            .is_none_or(|t| t.trim().is_empty())
+    {
+        return Err("a dispatch gate needs the task it asks about".to_string());
+    }
+
     // The payload may name the worktree; otherwise it is derived from where the caller
     // stands. This is the address the answer is delivered to, so an agent that mistypes it
     // waits on an outbox nobody writes to.

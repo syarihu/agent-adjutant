@@ -98,3 +98,34 @@ fn an_answer_to_a_gate_the_hub_opened_goes_to_the_hubs_inbox() {
     let outbox = fixture.ok(&["outbox", "--worktree", fixture.repo.to_str().unwrap()]);
     assert_eq!(outbox.trim(), "(empty)");
 }
+
+#[test]
+fn a_dispatch_gate_without_its_task_is_refused() {
+    // Its answer is acted on by reading the task out of the message; without one the hub is
+    // told "approve" and not what.
+    let fixture = Fixture::new(QUIET);
+    let payload_file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "dispatch",
+            "title": "着手確認",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = fixture.cmd(&["gate", "open", "--file", payload_file.to_str().unwrap()]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("needs the task"),
+        "{out:?}"
+    );
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
