@@ -43,9 +43,24 @@ pub struct RepoInfo {
     pub nwo_source: &'static str,
 }
 
-fn git(args: &[&str], cwd: Option<&Path>) -> Result<std::process::Output, String> {
+/// The variables with which git is told which repository to use, ahead of the directory it is
+/// started in.
+///
+/// Every question asked here is about the repository a directory belongs to, so git has to
+/// find it from that directory. Git exports `GIT_DIR` to the hooks it runs, and a person can
+/// have one set; left in place, any of these would answer for another checkout — its hub
+/// name, its inbox, its worker count — with nothing reporting the swap. `GIT_INDEX_FILE`,
+/// `GIT_OBJECT_DIRECTORY` and the like stay: they do not choose the repository.
+pub(crate) const REPOSITORY_LOCATION_ENV: [&str; 3] =
+    ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"];
+
+/// Git, answering for the repository `cwd` (or the current directory) is in.
+pub(crate) fn git(args: &[&str], cwd: Option<&Path>) -> Result<std::process::Output, String> {
     let mut cmd = Command::new("git");
     cmd.args(args);
+    for name in REPOSITORY_LOCATION_ENV {
+        cmd.env_remove(name);
+    }
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
@@ -375,6 +390,33 @@ fn normalise(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_s_repository_location_variables_do_not_move_the_current_worktree() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let here = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        crate::testing::init_repo(here.path(), "main");
+        crate::testing::init_repo(other.path(), "main");
+        // git reports the resolved path, and macOS puts tempdirs behind /private.
+        let here = std::fs::canonicalize(here.path()).unwrap();
+        let other = std::fs::canonicalize(other.path()).unwrap();
+        let other_git = other.join(".git");
+
+        for name in REPOSITORY_LOCATION_ENV {
+            let value = if name == "GIT_WORK_TREE" {
+                &other
+            } else {
+                &other_git
+            };
+            let _var = crate::testing::EnvVar::set(&sandbox, name, value);
+            assert_eq!(
+                current_worktree(Some(&here)).as_deref(),
+                Some(here.to_string_lossy().as_ref()),
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn a_worktree_list_git_cannot_give_is_an_error_not_an_empty_list() {

@@ -57,6 +57,13 @@ pub(crate) mod testing {
                 // `startupDashboard` resolve to `false` no matter what its fixture said —
                 // and the settings tests would fail for a reason nothing in them mentions.
                 std::env::remove_var(crate::config::STARTUP_DASHBOARD_ENV);
+                // `cargo test` run from a git hook inherits `GIT_DIR`, and a test that sets
+                // up a repository with git directly would then set up the developer's own.
+                // Cleared here too so that one a test set and failed to take back ends with
+                // the next sandbox.
+                for name in crate::repo::REPOSITORY_LOCATION_ENV {
+                    std::env::remove_var(name);
+                }
             }
             Sandbox {
                 _dir: dir,
@@ -67,6 +74,41 @@ pub(crate) mod testing {
         /// For tests that only care about where messages go.
         pub fn empty() -> Self {
             Sandbox::new("{\"repos\": {}}")
+        }
+    }
+
+    /// A repository at `dir` on `branch`, set up through `repo::git` so that a variable a
+    /// test has already exported cannot send the setup somewhere else.
+    pub fn init_repo(dir: &std::path::Path, branch: &str) {
+        let out = crate::repo::git(&["init", "-q", "-b", branch], Some(dir)).unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// A variable set for as long as this lives, and removed after.
+    ///
+    /// Borrows the `Sandbox` for as long as it lives, so that it is only ever set while the
+    /// environment lock is held: the variable is process-global, and a test running beside
+    /// this one would see it.
+    pub struct EnvVar<'a>(&'static str, std::marker::PhantomData<&'a Sandbox>);
+
+    impl<'a> EnvVar<'a> {
+        pub fn set(
+            _sandbox: &'a Sandbox,
+            name: &'static str,
+            value: impl AsRef<std::ffi::OsStr>,
+        ) -> Self {
+            unsafe { std::env::set_var(name, value) };
+            EnvVar(name, std::marker::PhantomData)
+        }
+    }
+
+    impl Drop for EnvVar<'_> {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var(self.0) };
         }
     }
 }

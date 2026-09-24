@@ -353,10 +353,7 @@ fn settings_now(server: &Server) -> crate::config::Settings {
 }
 
 fn branch_of(worktree: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", worktree, "branch", "--show-current"])
-        .output()
-        .ok()?;
+    let output = crate::repo::git(&["-C", worktree, "branch", "--show-current"], None).ok()?;
     let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!name.is_empty()).then_some(name)
 }
@@ -501,6 +498,21 @@ mod tests {
                 .collect(),
             body: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_worktree_s_branch_is_its_own_whatever_git_dir_names() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let here = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        crate::testing::init_repo(here.path(), "mine");
+        crate::testing::init_repo(other.path(), "theirs");
+
+        let _var = crate::testing::EnvVar::set(&sandbox, "GIT_DIR", other.path().join(".git"));
+        assert_eq!(
+            branch_of(&here.path().to_string_lossy()).as_deref(),
+            Some("mine")
+        );
     }
 
     const TOKEN: &str = "s3cret";

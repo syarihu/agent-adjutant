@@ -23,6 +23,7 @@ fn a_worktree_answers_for_the_repository_it_belongs_to() {
     let fixture = Fixture::new(QUIET);
     let worktree = fixture.repo.parent().unwrap().join("widget-wid-1");
     let out = Command::new("git")
+        .hermetic()
         .args([
             "worktree",
             "add",
@@ -53,6 +54,56 @@ fn a_worktree_answers_for_the_repository_it_belongs_to() {
         info["main"].as_str().unwrap(),
         fixture.repo.to_string_lossy()
     );
+}
+
+/// Git exports `GIT_DIR` to the hooks it runs, and a person can have one set. Honoured, it
+/// would hand this repository's hub name, inbox and config entry to whichever checkout it
+/// names.
+#[test]
+fn git_s_repository_location_variables_do_not_move_the_repository() {
+    let fixture = Fixture::new(QUIET);
+    let other = fixture.repo.parent().unwrap().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    for args in [
+        vec!["init", "-q", "-b", "main"],
+        vec!["remote", "add", "origin", "git@github.com:acme/other.git"],
+    ] {
+        let out = Command::new("git")
+            .hermetic()
+            .args(&args)
+            .current_dir(&other)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let other_git = other.join(".git");
+
+    // `GIT_WORK_TREE` is left to the unit test on `current_worktree`: nothing `hub-name`
+    // prints goes through the one question it moves.
+    for name in ["GIT_DIR", "GIT_COMMON_DIR"] {
+        let out = fixture
+            .command(["hub-name", "--json"])
+            .env(name, &other_git)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let info: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(info["nwo"], "acme/widget", "{name}");
+        assert_eq!(info["hubName"], HUB, "{name}");
+        assert_eq!(
+            info["main"].as_str().unwrap(),
+            fixture.repo.to_string_lossy(),
+            "{name}"
+        );
+    }
 }
 
 /// The compatibility lock, from the outside.
@@ -232,6 +283,7 @@ fn a_worker_carries_the_hub_that_dispatched_it_into_its_worktree() {
     // `exec` an agent over this test.
     let worktree = fixture.repo.parent().unwrap().join("widget-wid-957");
     let added = Command::new("git")
+        .hermetic()
         .args([
             "worktree",
             "add",
@@ -291,6 +343,7 @@ fn a_record_left_in_a_worktree_never_decides_which_hub_is_being_started() {
     let fixture = Fixture::new(CODEX);
     let worktree = fixture.repo.parent().unwrap().join("widget-wid-957");
     let added = Command::new("git")
+        .hermetic()
         .args([
             "worktree",
             "add",
@@ -367,6 +420,7 @@ fn a_record_that_cannot_be_read_refuses_to_guess_which_hub_to_address() {
     let fixture = Fixture::new(QUIET);
     let worktree = fixture.repo.parent().unwrap().join("widget-wid-957");
     let added = Command::new("git")
+        .hermetic()
         .args([
             "worktree",
             "add",
