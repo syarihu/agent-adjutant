@@ -777,6 +777,11 @@ worktree proctor could not read reports zeros, which means "unknown", not "empty
 If proctor is unavailable, fall back to: `git worktree list`, then for each branch
 `gh pr list -R <codeRepo> --head <branch> --state merged --json number,title,url`.
 
+**The main checkout is not one of the worktrees.** Both lists include it: proctor as the row
+with `isMain: true`, `git worktree list` as its first line. Drop the row whose path is
+`adjutant_config`'s `main` before reading the rest — it is where the hub itself runs and where
+every other worktree is cut from, so it is never offered for cleanup.
+
 hub は worktree の中に立たないので、「自分の足元だけは消せない」問題は起きない。**片付けは
 hub の仕事**で、ここが唯一の削除経路。
 
@@ -1637,8 +1642,11 @@ hub が開いた gate（`dispatch`）に人が板で答えると、答えは hub
 
 hub は worktree に入らないので、ここでできるのは**渡すこと**だけ。
 
-1. worktree を一覧する（`proctor worktree ls --json`、無ければ `git worktree list`）。無ければ
-   そう言って待機に戻る。
+1. worktree を一覧する（`proctor worktree ls --json`、無ければ `git worktree list`）。
+   **メインチェックアウトは worktree に数えない。** どちらの一覧にも載っていて、proctor なら
+   `isMain: true` の行、`git worktree list` なら先頭行がそれ。パスが `adjutant_config` の `main` と
+   同じ行を外してから読む。hub 自身が立っている場所なので、ここで選ばせると worker がそこで開く。
+   外したあとに1件も無ければ、そう言って待機に戻る。
 2. `AskUserQuestion` でどれかを選ばせる。
 3. **どのトラッカーのタスクか**を割り出す: ブランチ名からキー（`ALPHA-233` / `ABC-819`）を取り、
    そのキーを持つソースを探す — `github` 系なら `issueKeys` の逆引き、`jira` / `linear` なら
@@ -1918,7 +1926,11 @@ worker への指示書と同じで、手順は写さず `adj-hub` の手順書�
   `adj worktree-path` が返す `branch`（`linear` だけは `gitBranchName`）なのだ。
   **形を自分で組み立てないのだ**
 - worktree も同じ要領で1件1行にするのだ（`proctor worktree ls --json`、無ければ
-  `git worktree list`）。どのサブタスクのものかは**解決したブランチとの文字列一致**で決めるのだ
+  `git worktree list`）。**メインチェックアウトは worktree に数えないのだ** — どちらの一覧にも
+  載っていて、proctor なら `isMain: true` の行、`git worktree list` なら先頭行がそれなのだ。
+  パスが `adjutant_config` の `main` と同じ行を先に外すのだ。hub がタスクのブランチに居ると
+  そのサブタスクに当たって、「worktree がある」と読まれて hub の足元で worker が開くのだ。
+  どのサブタスクのものかは**解決したブランチとの文字列一致**で決めるのだ
   （`refs/heads/` が付いていたら外してから比べるのだ）。**キーが入っているかで探さないのだ** —
   `ALPHA-1` が `ALPHA-10` の worktree に当たってしまうのだ。**どのサブタスクにも当たらなかった
   worktree は、まとめて1行で報告に入れるのだ** — 規約がずれている印で、黙って捨てると

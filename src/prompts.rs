@@ -1185,6 +1185,77 @@ mod tests {
         );
     }
 
+    /// Both worktree lists include the main checkout — proctor as the `isMain` row,
+    /// `git worktree list` as its first line — and nothing that read them said to drop it. The
+    /// cleanup then weighs the hub's own checkout, the hand-over offers it as a worktree to
+    /// work in, and the subtask collector matches it by branch the moment the hub is left on a
+    /// task branch, so a worker is opened where the hub runs. All three carry the same clause,
+    /// or the list means two things in one file. The dashboard's `[Worktrees]` block reads the
+    /// same lists and is not covered here yet.
+    #[test]
+    fn every_reader_of_the_worktree_list_leaves_the_main_checkout_out() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let flowed =
+            |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+        let readers = [
+            (
+                "cleanup",
+                flowed(&step(
+                    raw,
+                    "### Step 1: Offer to clean up finished worktrees",
+                )),
+                "Themaincheckoutisnotoneoftheworktrees",
+            ),
+            (
+                "hand-over",
+                flowed(&section(
+                    raw,
+                    "## 既存の worktree に手を入れたいと言われたら",
+                )),
+                "メインチェックアウトはworktreeに数えない。",
+            ),
+            (
+                "subtask collector",
+                flowed(&section(
+                    raw,
+                    "## Appendix — 親タスク収集エージェントへの指示書",
+                )),
+                "メインチェックアウトはworktreeに数えないのだ",
+            ),
+        ];
+        for (reader, text, clause) in &readers {
+            assert!(
+                text.contains(clause),
+                "the {reader} counts the main checkout as a worktree: {text}"
+            );
+            // Identified by path against the resolved `main`, with the marker each list
+            // carries named, so neither list is read by position alone. Looked for right
+            // after the clause: the collector brief names `adjutant_config` earlier for the
+            // settings, which would satisfy a search of the whole section.
+            let near: String = text[text.find(clause).unwrap()..]
+                .chars()
+                .take(250)
+                .collect();
+            for marker in ["`isMain:true`", "`adjutant_config`"] {
+                assert!(
+                    near.contains(marker),
+                    "the {reader} does not say how to recognise the main checkout ({marker}): {text}"
+                );
+            }
+        }
+        // Dropped before matching, not after: a main checkout left in the collector's list
+        // would otherwise surface again among the worktrees that matched no child.
+        let brief = flowed(&section(
+            raw,
+            "## Appendix — 親タスク収集エージェントへの指示書",
+        ));
+        before(
+            &brief,
+            "メインチェックアウトはworktreeに数えないのだ",
+            "解決したブランチとの文字列一致",
+        );
+    }
+
     /// A source with no board says a task is started with a label, and that has to arrive.
     ///
     /// 「ボード上で着手済みのもの」 is the whole in-progress test the classification had, and a
