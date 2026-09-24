@@ -122,7 +122,19 @@ Nothing has to repeat the identifier afterwards. `adj hub --hub <id>` puts `ADJU
 the command line it starts the agent with, so every `adj` call and every MCP tool call that
 agent makes addresses the hub it is; and `adj work` writes the identifier into the worktree
 it opens, so a worker reporting from there reaches the hub that dispatched it without being
-told where to send.
+told where to send. `adj worker` puts the identifier it registered under on its agent's
+command line too, and takes an inherited `ADJUTANT_HUB` out of the environment first: a
+terminal template that passes its environment on (tmux does) would otherwise hand the agent
+the identifier of whichever hub opened the tab, which outranks the record.
+
+`agentEnv` may name `ADJUTANT_HUB`. It is a default: `hub`, `work` and `worker` take it when
+neither `--hub` nor the environment says anything, and claim that hub rather than the
+repository's own, so the command and the agent it starts agree on one address. A flag or an
+inherited `ADJUTANT_HUB` still wins, and replaces the configured value on the agent's line.
+Stop a running hub of the repository before adding the key: from then on a plain `adj hub`
+looks for, and starts, the configured hub instead, and `adj work` files new workers under it.
+The commands that address a hub (`send`, `pending`, `hub-stop` and the rest) do not read
+`agentEnv`, so from a shell that is not the hub's own, pass `--hub` or set `ADJUTANT_HUB`.
 
 `--no-dashboard` and `--dashboard` ride the same channel: they become
 `ADJUTANT_STARTUP_DASHBOARD` on that command line, and `adjutant config` folds the value in

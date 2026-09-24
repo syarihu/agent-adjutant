@@ -279,6 +279,26 @@ pub fn resolve_in(
         Some(arg) => (arg.to_string(), "argument"),
         None => name_with_owner(&main),
     };
+    repo_info(main, nwo, source, hub_arg)
+}
+
+impl RepoInfo {
+    /// The same repository, at the address of hub `hub_arg` — the repository's own hub when
+    /// that is `None`, whatever this one was addressed at.
+    ///
+    /// Separate from `resolve` because the identifier is not always known before the
+    /// repository is: `agentEnv` can name one, and it is looked up under `owner/name`.
+    pub fn addressed(self, hub_arg: Option<&str>) -> Result<RepoInfo, String> {
+        repo_info(self.main, self.nwo, self.nwo_source, hub_arg)
+    }
+}
+
+fn repo_info(
+    main: String,
+    nwo: String,
+    source: &'static str,
+    hub_arg: Option<&str>,
+) -> Result<RepoInfo, String> {
     // Blank is absent, here as well as at every gate in front of this one: an identifier
     // that is only whitespace would otherwise be a hub that exists, has an address nobody
     // can type twice, and is invisible in every listing.

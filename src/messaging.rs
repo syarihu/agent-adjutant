@@ -462,6 +462,21 @@ pub fn hub_id_told(explicit: Option<&str>) -> Option<String> {
     said(explicit).or_else(|| said(std::env::var(HUB_ENV).ok().as_deref()))
 }
 
+/// The identifier `agentEnv` hands the agent, when it names one: the last assignment, since
+/// that is the one an `env` line leaves standing.
+///
+/// A command that starts or registers a hub asks this after `hub_id_told` comes back empty.
+/// Asked any later, the command would claim one hub's record, inbox and session name while
+/// the agent it starts is given another's address — and every report either side sends would
+/// go where the other is not reading.
+pub fn hub_id_configured(agent_env: &[(String, String)]) -> Option<String> {
+    agent_env
+        .iter()
+        .rev()
+        .find(|(key, _)| key == HUB_ENV)
+        .and_then(|(_, value)| said(Some(value.as_str())))
+}
+
 /// Which hub this invocation is addressing, asked once and in one place.
 ///
 /// Three answers, in the order of how specific the claim is:

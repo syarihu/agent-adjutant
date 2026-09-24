@@ -48,11 +48,45 @@ pub fn context(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context,
 /// registering in the worktree its tab was opened at, would both read a record that belongs
 /// to somebody else — or, for the worker, the one it is a moment away from overwriting. See
 /// `messaging::hub_id_told`.
+///
+/// Told nothing, it takes the identifier `agentEnv` names, because that is the one the agent
+/// it starts will be given. Only then: a flag or `ADJUTANT_HUB` outranks the config, and
+/// `agent_env` puts the answer back on the agent's line so the two still agree.
 fn context_as(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context, String> {
-    context_of(repo::resolve(
-        repo_arg,
-        messaging::hub_id_told(hub_arg).as_deref(),
-    )?)
+    let told = messaging::hub_id_told(hub_arg);
+    let ctx = context_of(repo::resolve(repo_arg, told.as_deref())?)?;
+    if told.is_some() {
+        return Ok(ctx);
+    }
+    match messaging::hub_id_configured(&ctx.settings.agent_env) {
+        Some(hub) => Ok(Context {
+            repo: ctx.repo.addressed(Some(&hub))?,
+            ..ctx
+        }),
+        None => Ok(ctx),
+    }
+}
+
+/// The environment an agent is started with: `agentEnv`, with `ADJUTANT_HUB` set to the hub
+/// this invocation claimed and to nothing else.
+///
+/// Replaced rather than appended after the config, so that an agent started for the
+/// repository's own hub is not handed an identifier the config names — the resumed worker of
+/// a hub that predates the key is one. The launch also removes the variable from the
+/// environment it passes on (see `hub` and `worker`), so a value inherited from whatever
+/// opened the tab is never the one the agent reads.
+fn agent_env(ctx: &Context) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = ctx
+        .settings
+        .agent_env
+        .iter()
+        .filter(|(key, _)| key != messaging::HUB_ENV)
+        .cloned()
+        .collect();
+    if let Some(hub) = &ctx.repo.hub {
+        env.push((messaging::HUB_ENV.to_string(), hub.clone()));
+    }
+    env
 }
 
 /// The same, for a command that needs the settings and the checkout and no hub at all.
@@ -1111,20 +1145,16 @@ fn go_to_running_hub(
 
 /// The environment the hub's agent is started with.
 ///
-/// `agentEnv` as configured, and then the two things this invocation was told that the agent
-/// has no other way to learn: which hub it is, and whether it was asked to collect the
-/// dashboard at startup. Appended rather than merged so that ours is the later assignment on
-/// the `env` line and therefore the one that takes: a config naming either variable is
-/// describing a default, not overruling the flag that was just typed.
+/// `agent_env`, and then whether this invocation was asked to collect the dashboard at
+/// startup — the one other thing the agent has no way to learn. Appended so that ours is the
+/// later assignment on the `env` line and therefore the one that takes: a config naming the
+/// variable is describing a default, not overruling the flag that was just typed.
 ///
-/// Neither is added when it was not asked for, and that is deliberate rather than tidy: the
-/// command line a plain `adj hub` prints has to stay exactly what it printed before, or every
-/// existing dry run, doc and expectation of it is wrong.
+/// Neither the hub nor the dashboard is added when it was not asked for, and that is
+/// deliberate rather than tidy: the command line a plain `adj hub` prints has to stay exactly
+/// what it printed before, or every existing dry run, doc and expectation of it is wrong.
 fn hub_env(ctx: &Context, dashboard: Option<bool>) -> Vec<(String, String)> {
-    let mut env = ctx.settings.agent_env.clone();
-    if let Some(hub) = &ctx.repo.hub {
-        env.push((messaging::HUB_ENV.to_string(), hub.clone()));
-    }
+    let mut env = agent_env(ctx);
     // Appended for the reason above, and absent when no flag was typed for the reason above
     // that: `--dashboard` and `--no-dashboard` are this invocation overruling the standing
     // `startupDashboard`, and a variable set unconditionally would make every hub's command
@@ -1418,6 +1448,7 @@ pub fn hub(
         .arg("-c")
         .arg(&command)
         .env_remove(messaging::HUB_SESSION_ENV)
+        .env_remove(messaging::HUB_ENV)
         .exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
     let _ = messaging::unregister_hub(&ctx.repo.slug);
@@ -1594,7 +1625,7 @@ pub fn worker(
             )?;
             let command = runner::worker_resume_command(
                 template,
-                &ctx.settings.agent_env,
+                &agent_env(&ctx),
                 &saved.session_id,
                 prompt.unwrap_or(runner::WORKER_RESUME_PROMPT),
                 &worktree_text,
@@ -1606,7 +1637,7 @@ pub fn worker(
             let session = messaging::new_session_id()?;
             let command = runner::worker_command(
                 ctx.settings.agent_runner.as_deref(),
-                &ctx.settings.agent_env,
+                &agent_env(&ctx),
                 &session,
                 prompt.unwrap_or(runner::WORKER_STARTUP_PROMPT),
                 &worktree_text,
@@ -1648,10 +1679,15 @@ pub fn worker(
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on
     // would otherwise hand the hub's session to this agent's MCP server, which would then
     // keep saying the hub is alive for as long as the worker runs.
+    //
+    // Nor is it whichever hub opened the tab. `ADJUTANT_HUB` outranks the record written
+    // above, so an inherited one would send every report to the hub that dispatched the
+    // tab rather than the one this worker registered under; the line carries the right one.
     let error = std::process::Command::new("sh")
         .arg("-c")
         .arg(&command)
         .env_remove(messaging::HUB_SESSION_ENV)
+        .env_remove(messaging::HUB_ENV)
         .exec();
     let _ = messaging::unregister_worker(&worktree);
     Err(format!("cannot start the worker: {error}"))
