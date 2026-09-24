@@ -437,6 +437,11 @@ worktree's outbox like any other, and the record stays, with the answer appended
 Both kinds of gate take structured fields beside the prose — `reviewRounds` and `findings`
 for a diff, `commands` and `manual` for a check, `problem` and `goal` for a plan — and
 `/api/state` hands each live task its records and the plan a person last approved.
+The worker's procedure decides between the two by rule: a diff or a check waits only when
+the review hit its round limit with a must open, `verify` failed and could not be fixed,
+there is something only a person can check, the worker wrote something under `unsure`, or
+the task's stop point covers it. A gate that waits says which of those fired in
+`stoppedBy` (`round-limit`, `verify-failed`, `manual-check`, `unsure`, `stop-at`).
 
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.

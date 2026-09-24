@@ -108,6 +108,24 @@ pub enum Outcome {
     Declined,
 }
 
+/// Why a `diff` or `verify` gate waits on a person rather than being kept as a record. The
+/// worker's procedure names the same five rules, and a gate that stops it says which fired,
+/// so the board can tell a stop that needs a person from one the task was handed over with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StopRule {
+    /// The review rounds hit `selfReviewRounds` with a must still open.
+    RoundLimit,
+    /// `verify` failed and the worker could not fix it.
+    VerifyFailed,
+    /// Something only a person can check, such as a screen change.
+    ManualCheck,
+    /// The worker wrote down where its confidence ran out.
+    Unsure,
+    /// The task's stop point covers this gate.
+    StopAt,
+}
+
 /// One round of the worker's own review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -253,6 +271,9 @@ pub struct Gate {
     /// `verify`: the checks left for a person.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub manual: Vec<String>,
+    /// `diff` / `verify`: the rules that made this gate wait rather than be kept as a record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopped_by: Vec<StopRule>,
     /// `false` for a record: written down for the board, while the worker carries on.
     #[serde(default = "waits", skip_serializing_if = "is_waiting")]
     pub wait: bool,
@@ -495,6 +516,7 @@ mod tests {
             findings: Vec::new(),
             commands: Vec::new(),
             manual: Vec::new(),
+            stopped_by: Vec::new(),
             wait: true,
             opened_at: "20260922T041233Z".to_string(),
             decision: None,

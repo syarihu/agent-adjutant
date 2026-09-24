@@ -291,6 +291,7 @@ fn tool_definitions() -> Value {
                     "findings": { "type": "array", "items": { "type": "object" }, "description": "diff: severity (must | want | scope), location, text, outcome (open | fixed | declined), reason when declined." },
                     "commands": { "type": "array", "items": { "type": "object" }, "description": "verify: command, result (pass | fail), time, output." },
                     "manual": { "type": "array", "items": { "type": "string" }, "description": "verify: the checks left for a person." },
+                    "stoppedBy": { "type": "array", "items": { "type": "string" }, "description": "diff / verify that waits: the rules that made it stop rather than be kept as a record — round-limit, verify-failed, manual-check, unsure, stop-at." },
                     "repo": repo_property(),
                     "hub": hub_property(),
                     "cwd": cwd_property(),

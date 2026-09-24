@@ -91,6 +91,29 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
             kind.as_str()
         ));
     }
+    if payload
+        .get("stoppedBy")
+        .is_some_and(|v| !v.is_null() && !v.is_array())
+    {
+        return Err("stoppedBy must be a list of rules".to_string());
+    }
+    // Why a gate stops only means something where it could have been a record instead, and
+    // a record that says why it stopped the worker is one of the two statements being false.
+    if payload
+        .get("stoppedBy")
+        .and_then(Value::as_array)
+        .is_some_and(|rules| !rules.is_empty())
+    {
+        if !kind.can_be_recorded() {
+            return Err(format!(
+                "a {} gate always waits; stoppedBy is for diff and verify",
+                kind.as_str()
+            ));
+        }
+        if !wait {
+            return Err("a record does not stop the worker; drop stoppedBy or wait".to_string());
+        }
+    }
 
     // The payload may name the worktree; otherwise it is derived from where the caller
     // stands. This is the address the answer is delivered to, so an agent that mistypes it

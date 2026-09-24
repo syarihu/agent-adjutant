@@ -297,3 +297,61 @@ fn a_plan_cannot_be_kept_as_a_record() {
         "{out:?}"
     );
 }
+
+#[test]
+fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
+    // The board shows why a worker stopped. A plan always stops, and a record did not stop
+    // anything, so a reason on either is a payload contradicting itself.
+    let fixture = Fixture::new(QUIET);
+    let open = |payload: serde_json::Value| {
+        let file = fixture.repo.join("gate.json");
+        let mut payload = payload;
+        payload["worktree"] = serde_json::json!(fixture.repo.to_str().unwrap());
+        std::fs::write(&file, payload.to_string()).unwrap();
+        fixture.cmd(&["gate", "open", "--file", file.to_str().unwrap(), "--json"])
+    };
+
+    let out = open(serde_json::json!({
+        "kind": "verify",
+        "title": "動作確認",
+        "stoppedBy": ["manual-check", "stop-at"],
+    }));
+    assert!(out.status.success(), "{out:?}");
+    let opened: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        opened["gate"]["stoppedBy"],
+        serde_json::json!(["manual-check", "stop-at"])
+    );
+
+    for (payload, says) in [
+        (
+            serde_json::json!({ "kind": "diff", "wait": false, "title": "差分", "stoppedBy": ["unsure"] }),
+            "a record does not stop the worker",
+        ),
+        (
+            serde_json::json!({ "kind": "plan", "title": "計画", "stoppedBy": ["stop-at"] }),
+            "stoppedBy is for diff and verify",
+        ),
+        (
+            serde_json::json!({ "kind": "diff", "title": "差分", "stoppedBy": ["just-because"] }),
+            "bad gate",
+        ),
+        (
+            serde_json::json!({ "kind": "diff", "title": "差分", "stoppedBy": "unsure" }),
+            "stoppedBy must be a list",
+        ),
+    ] {
+        let out = open(payload.clone());
+        assert!(!out.status.success(), "{payload}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(says),
+            "{payload}: {out:?}"
+        );
+    }
+
+    // A record with an empty list says nothing false, and is kept.
+    let out = open(serde_json::json!({
+        "kind": "diff", "wait": false, "title": "差分", "stoppedBy": [],
+    }));
+    assert!(out.status.success(), "{out:?}");
+}
