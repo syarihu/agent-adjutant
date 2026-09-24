@@ -339,7 +339,31 @@ fn state(server: &Server) -> Value {
         "now": now,
         "pending": pending,
         "gates": gate::list(&super::gate::dir(&server.ctx)),
+        "lastAnswered": last_answered(server),
     })
+}
+
+/// When each task's gate was last answered, by task id. The board counts a worker's time in
+/// a phase from the later of this and the phase's start: time spent waiting on a person's
+/// answer is not the worker being stuck, and without this a gate left open for hours turned
+/// its card red the moment it was answered.
+fn last_answered(server: &Server) -> Value {
+    let answered = gate::answered_dir(&messaging::state_dir(), &server.ctx.repo.slug);
+    let mut latest: serde_json::Map<String, Value> = serde_json::Map::new();
+    for g in gate::list(&answered) {
+        let (Some(task), Some(at)) = (g.task, g.answered_at) else {
+            continue;
+        };
+        // The stamps are `YYYYMMDDTHHMMSSZ`, so the later one is the greater string.
+        if latest
+            .get(&task)
+            .and_then(Value::as_str)
+            .is_none_or(|seen| at.as_str() > seen)
+        {
+            latest.insert(task, json!(at));
+        }
+    }
+    Value::Object(latest)
 }
 
 /// The settings as `adj work` would read them now. Resolved on every poll rather than taken

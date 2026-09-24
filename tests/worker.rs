@@ -677,3 +677,34 @@ fn a_workers_tab_is_raised_through_the_focus_template() {
         "{out}"
     );
 }
+
+#[test]
+fn a_tasks_worktree_is_stored_the_way_git_names_it() {
+    // The board matches a task to its worker by this string. Stored through a symlink, it
+    // read as a worker that was not there.
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-15");
+    let link = fixture.repo.parent().unwrap().join("via-link");
+    std::os::unix::fs::symlink(&worktree, &link).unwrap();
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        link.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(added["task"]["worktree"], worktree.as_str(), "{added}");
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    let updated = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--worktree",
+        link.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(updated["task"]["worktree"], worktree.as_str(), "{updated}");
+}

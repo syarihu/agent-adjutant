@@ -116,6 +116,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
+    task.worktree = task.worktree.as_deref().map(resolved_worktree);
     task.order = next_order(ctx);
 
     // Written before the message is sent, and never the other way round: the record is what
@@ -127,6 +128,18 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         _ => None,
     };
     Ok((task, handed))
+}
+
+/// A worktree path as `git worktree list` prints it: absolute, symlinks resolved. The board
+/// matches a task to its worker by this string, and `./wt` or `/tmp/…` against git's
+/// `/private/tmp/…` would read as a worker that is not there. Left as given when it does
+/// not exist (yet), since a record may be written before its worktree.
+fn resolved_worktree(path: &str) -> String {
+    let path = config::expand_home(path);
+    path.canonicalize()
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
 }
 
 /// One of a record's text fields as an update gives it. `null` and `""` clear it; anything
@@ -171,6 +184,7 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
             *field = text_field(key, value)?;
         }
     }
+    task.worktree = task.worktree.as_deref().map(resolved_worktree);
     task.updated_at = stamp();
     task::save(&dir(ctx), &task)?;
 

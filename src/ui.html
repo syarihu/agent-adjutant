@@ -500,6 +500,18 @@ const minutesLabel = mins => mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.fl
    does not make every card look stuck. */
 const phaseMinutes = w => w && w.phaseAt != null && state.now != null
   ? Math.max(0, Math.floor((state.now - w.phaseAt) / 60)) : null;
+const stampSecs = stamp => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
+};
+/* Minutes the worker has had the ball: since it entered its phase, or since a person last
+   answered its gate, whichever is later. */
+const workerMinutes = (task, w) => {
+  const mins = phaseMinutes(w);
+  const answered = stampSecs((state.lastAnswered || {})[task.id]);
+  if (mins == null || answered == null || state.now == null) return mins;
+  return Math.min(mins, Math.max(0, Math.floor((state.now - answered) / 60)));
+};
 
 /* Why a card is stuck, or null. A badge rather than a column: moved to a column of its own,
    the card would lose the column that says where it got to. */
@@ -513,7 +525,7 @@ function stuckOf(task) {
   // gate, or on reviewers once its PR is open, is not the worker being stuck — flagging those
   // would bury the ones that are.
   if (openGate(task) || task.status === 'pr') return null;
-  const mins = phaseMinutes(w);
+  const mins = workerMinutes(task, w);
   const limit = state.stuckAfterMinutes;
   if (mins != null && limit > 0 && mins >= limit) return `${minutesLabel(mins)} 同じ工程`;
   return null;
