@@ -169,6 +169,11 @@ fn note_answered(ctx: &Context, gate: &Gate) {
         return;
     };
     let dir = super::task::dir(ctx);
+    // Under the task's lock, like `task::update`: a whole-record write racing another would
+    // undo whichever landed first.
+    let Ok(_lock) = super::task::lock_task(ctx, id) else {
+        return;
+    };
     if let Ok(mut task) = crate::task::load(&dir, id) {
         task.gate_answered_at = Some(at.clone());
         let _ = crate::task::save(&dir, &task);

@@ -749,3 +749,29 @@ fn a_stored_worktree_is_left_alone_by_an_update_that_does_not_give_one() {
     let updated: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(updated["task"]["worktree"], stored.as_str(), "{updated}");
 }
+
+#[test]
+fn a_worktree_not_created_yet_is_stored_as_git_will_name_it() {
+    // Resolved through the part of it that exists, so a path through a symlink matches what
+    // `git worktree list` prints once the worktree is created there.
+    let fixture = Fixture::new(QUIET);
+    let real = fixture.repo.parent().unwrap().join("real-base");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = fixture.repo.parent().unwrap().join("link-base");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--waiting-in",
+        link.join("wid-16").to_str().unwrap(),
+        "--json",
+    ]);
+    let expected = std::fs::canonicalize(&real).unwrap().join("wid-16");
+    assert_eq!(
+        added["task"]["worktree"],
+        expected.to_str().unwrap(),
+        "{added}"
+    );
+}

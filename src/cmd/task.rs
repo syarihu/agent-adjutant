@@ -133,15 +133,31 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
 /// A worktree path as `git worktree list` prints it: absolute, symlinks resolved. The board
 /// matches a task to its worker by this string, and `./wt` or `/tmp/…` against git's
 /// `/private/tmp/…` would read as a worker that is not there. A path that does not exist
-/// (yet) is still made absolute, against the directory of the command giving it, so that no
-/// later command reads it against its own.
+/// (yet) is resolved through the nearest part of it that does, with the rest put back on,
+/// so that it is absolute — against the directory of the command giving it, not of some
+/// later one — and matches what git prints once the worktree is created there.
 fn resolved_worktree(path: &str) -> String {
     let path = config::expand_home(path);
-    path.canonicalize()
-        .or_else(|_| std::path::absolute(&path))
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    let absolute = std::path::absolute(&path).unwrap_or(path);
+    let mut existing = absolute.as_path();
+    let mut rest = Vec::new();
+    let resolved = loop {
+        if let Ok(real) = existing.canonicalize() {
+            break rest
+                .iter()
+                .rev()
+                .fold(real, |acc: std::path::PathBuf, part| acc.join(part));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                existing = parent;
+            }
+            // Nothing of it exists, not even the root: keep what we were given.
+            _ => break absolute.clone(),
+        }
+    };
+    resolved.to_string_lossy().to_string()
 }
 
 /// One of a record's text fields as an update gives it. `null` and `""` clear it; anything
@@ -157,7 +173,32 @@ fn text_field(key: &str, value: &Value) -> Result<Option<String>, String> {
 }
 
 /// Change a record, and hand it over if this is the change that queued it.
+/// Hold the write lock of one task record until the returned handle is dropped.
+///
+/// A change is a read of the whole record and a write of the whole record, and two of them
+/// at once — the hub updating a task while a gate for it is answered on the board — would
+/// each write back what they read, and the later would undo the earlier. An advisory lock
+/// on an open file, like the dispatch lock: the system lets it go if its holder dies, so
+/// there is nothing to clear by hand. Held only across a load and a save, so waiting on it
+/// is short.
+pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
+    let dir = dir(ctx);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Beside the record, and not named `.json`, so the listing never reads it as a task.
+    let path = dir.join(format!("{id}.lock"));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
+    Ok(file)
+}
+
 pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {
+    let lock = lock_task(ctx, id)?;
     let mut task = task::load(&dir(ctx), id)?;
     let was = task.status;
 
@@ -194,6 +235,7 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
     }
     task.updated_at = stamp();
     task::save(&dir(ctx), &task)?;
+    drop(lock);
 
     // Handing over is a *transition*, not a status: re-sending on every save would put one
     // task in the inbox once for every time somebody dragged its card.
