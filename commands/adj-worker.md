@@ -178,11 +178,17 @@ hub が worktree を作るときに走らせた `postCreate` が gitignore さ�
    worker には気づく手立てがこれしか無い。**直せなかったらここで止めてユーザーに言う**（step 5 以降に
    進まない）。base が誤ったままレビューを頼むと、bot は巨大な誤 diff を読み、base を直しても
    レビューは再実行されないので、§6 がその誤レビューをトリアージすることになる。
-5. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
-6. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
+5. **板のカードを「レビュー中」に進める。** 指示書の タスクレコード 行が `-` でなければ:
+   ```bash
+   adj task update --id {タスクレコード} --status pr --pr <PR の URL>
+   ```
+   これを打たないと、PR が開いたあともカードは「進行中」に残る。板を見ている人には、レビューを
+   待っているのか作業中なのか区別がつかない。
+6. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
+7. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
    フォールバック: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f 'reviewers[]=Copilot'`
-7. PR の URL を出す。
-8. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
+8. PR の URL を出す。
+9. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
    `github-project` なら `gh project item-edit` にそのソースの `projectFields.inReviewOptionId` を
    渡す。**`inReviewOptionId` を持たないボードには何もしない** — Status を PR の状態で自動更新して
    いるボードでは、手で動かすのが害になるので、キーを置かないことでそれを表している。

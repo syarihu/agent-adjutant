@@ -34,10 +34,78 @@ fn derive_title(input: &Value) -> Option<String> {
     if title.is_empty() { None } else { Some(title) }
 }
 
+/// Refuse the two values a person types on the board that the hub later puts on a command
+/// line: the worktree name becomes a path and a branch, and the issue URL is quoted as it is.
+/// Checked here, where they come in, rather than in every command the procedures write — an
+/// apostrophe in either would close the quote around it and run the rest as shell.
+fn check_typed_values(input: &Value) -> Result<(), String> {
+    // An empty field is a form left blank, not a value.
+    let typed = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+    };
+    if let Some(name) = typed("worktreeName") {
+        let charset = name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !charset {
+            return Err(format!(
+                "a worktree name may only use letters, digits, '.', '_' and '-': {name}"
+            ));
+        }
+        // Whether it can name a branch is git's to say, not a list kept here: saved, a name git
+        // refuses would sit in the queue until the hub failed to create its branch. Asked with
+        // the name alone, which `branchPattern` puts after a prefix — a name that fails on its
+        // own fails there too. A leading '-' is refused first so git cannot read it as a flag.
+        let branchable = !name.starts_with('-')
+            && std::process::Command::new("git")
+                .args(["check-ref-format", "--branch", name])
+                .output()
+                .is_ok_and(|out| out.status.success());
+        if !branchable {
+            return Err(format!(
+                "git cannot name a branch after this worktree name: {name}"
+            ));
+        }
+    }
+    if let Some(url) = typed("issueUrl") {
+        let rest = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"));
+        // The host is what is left of the authority once a port is taken off. Checked as a
+        // name rather than as "some text before the path", which `https://:8080/` passed.
+        // A port, when there is one, is digits.
+        let authority = rest
+            .and_then(|r| r.split(['/', '?', '#']).next())
+            .unwrap_or("");
+        let (host, port) = match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        };
+        let named = !host.is_empty()
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+            && port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+        let plain = !url
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
+        if !named || !plain {
+            return Err(format!("not an issue URL: {url}"));
+        }
+    }
+    Ok(())
+}
+
 /// Write a new record, and hand it over if it was created already queued.
 pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let stamp = stamp();
     let title = derive_title(input).ok_or("a task needs content or a title")?;
+    // Before the id is claimed: claiming writes a reservation, and a refusal after it would
+    // leave that behind.
+    check_typed_values(input)?;
     let id = task::claim_id(&dir(ctx), &stamp, &title)?;
     let mut defaults = with_defaults(input, &id, &stamp)?;
     defaults["title"] = json!(title);
@@ -61,6 +129,18 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
     Ok((task, handed))
 }
 
+/// One of a record's text fields as an update gives it. `null` and `""` clear it; anything
+/// that is not a string is refused rather than read as "clear" — `{"pr": 42}` from a mistaken
+/// caller would otherwise wipe the URL it meant to set.
+fn text_field(key: &str, value: &Value) -> Result<Option<String>, String> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(v) if v.is_empty() => Ok(None),
+        Value::String(v) => Ok(Some(v.clone())),
+        other => Err(format!("{key} has to be a string or null, not {other}")),
+    }
+}
+
 /// Change a record, and hand it over if this is the change that queued it.
 pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let mut task = task::load(&dir(ctx), id)?;
@@ -72,6 +152,11 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
     if let Some(order) = input.get("order").and_then(Value::as_u64) {
         task.order = order as u32;
     }
+    // Set by the hub when a person approved a task that asked to be confirmed first, so that
+    // being turned away for a slot afterwards does not put the same question to them again.
+    if let Some(auto_start) = input.get("autoStart").and_then(Value::as_bool) {
+        task.auto_start = auto_start;
+    }
     for (key, field) in [
         ("worktree", &mut task.worktree),
         ("issue", &mut task.issue),
@@ -80,8 +165,10 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
     ] {
         if let Some(value) = input.get(key) {
             // An explicit `null` clears; an absent key leaves it alone. Without the
-            // distinction there is no way to take back a worktree the hub wrote down.
-            *field = value.as_str().map(str::to_string);
+            // distinction there is no way to take back a worktree the hub wrote down. An
+            // empty string clears too, since a command line has no way to say `null` — and a
+            // "waiting for a slot" note has to go once the worker starts.
+            *field = text_field(key, value)?;
         }
     }
     task.updated_at = stamp();
@@ -89,7 +176,13 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
 
     // Handing over is a *transition*, not a status: re-sending on every save would put one
     // task in the inbox once for every time somebody dragged its card.
-    let handed = if was != Status::Queued && task.status == Status::Queued {
+    // Not when the hub is the one queueing it: the inbox it would land in is its own. That is
+    // a resumed worker turned away for a slot, whose record was `dispatched` or `pr`.
+    let hand = input
+        .get("handOver")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let handed = if hand && was != Status::Queued && task.status == Status::Queued {
         Some(hand_over(ctx, &task)?)
     } else {
         None
@@ -198,13 +291,14 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         "autoStart": !args.ask_first,
         "status": if args.queue || args.waiting_in.is_some() { "queued" } else { "backlog" },
     });
-    // The hub writing down work it could not start yet. Queued, so the next free slot takes
-    // it; but not handed over, because the inbox it would land in is the caller's own, and a
-    // hub that messages itself is woken mid-turn to be told what it just did.
+    // The hub writing down work it has prepared a worktree for: before it starts the worker,
+    // so the brief can carry the id, or after `adj work` turned it away for want of a slot.
+    // Queued either way, so a free slot can take it; but not handed over, because the inbox
+    // it would land in is the caller's own, and a hub that messages itself is woken mid-turn
+    // to be told what it just did.
     if let Some(worktree) = args.waiting_in {
         let worktree = config::expand_home(worktree).to_string_lossy().to_string();
         input["worktree"] = json!(worktree);
-        input["note"] = json!("worker の枠待ち（worktree は用意済み）");
         input["handOver"] = json!(false);
     }
     if let Some(title) = args.title {
@@ -233,6 +327,8 @@ pub struct UpdateArgs<'a> {
     pub issue: Option<&'a str>,
     pub pr: Option<&'a str>,
     pub note: Option<&'a str>,
+    pub auto_start: Option<bool>,
+    pub no_hand_over: bool,
     pub json: bool,
 }
 
@@ -254,6 +350,12 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     if let Some(order) = args.order {
         fields.insert("order".to_string(), json!(order));
     }
+    if let Some(auto_start) = args.auto_start {
+        fields.insert("autoStart".to_string(), json!(auto_start));
+    }
+    if args.no_hand_over {
+        fields.insert("handOver".to_string(), json!(false));
+    }
     let (task, handed) = update(&ctx, args.id, &input)?;
     if args.json {
         println!(
@@ -271,6 +373,7 @@ pub fn list(
     repo: Option<&str>,
     hub: Option<&str>,
     status: Option<&str>,
+    worktree: Option<&str>,
     as_json: bool,
 ) -> Result<(), String> {
     let ctx = super::context(repo, hub)?;
@@ -278,9 +381,20 @@ pub fn list(
         Some(text) => Some(Status::parse(text).ok_or(format!("no such status: {text}"))?),
         None => None,
     };
+    // Compared resolved: the hub names the worktree as `git worktree list` printed it, and
+    // the record holds whatever path it was written with.
+    let resolved = |path: &str| {
+        let path = config::expand_home(path);
+        path.canonicalize().unwrap_or(path)
+    };
+    let at = worktree.map(resolved);
     let tasks: Vec<Task> = task::list(&dir(&ctx))
         .into_iter()
         .filter(|t| wanted.is_none_or(|w| t.status == w))
+        .filter(|t| {
+            at.as_ref()
+                .is_none_or(|at| t.worktree.as_deref().map(resolved).as_ref() == Some(at))
+        })
         .collect();
 
     if as_json {
@@ -375,6 +489,21 @@ mod tests {
         let input = json!({ "body": long_line });
         let derived = derive_title(&input).expect("derived");
         assert_eq!(derived.len(), 80);
+    }
+
+    #[test]
+    fn a_text_field_is_cleared_by_null_or_empty_and_refused_as_anything_else() {
+        assert_eq!(
+            text_field("pr", &json!("https://x/pull/1"))
+                .unwrap()
+                .as_deref(),
+            Some("https://x/pull/1")
+        );
+        assert_eq!(text_field("pr", &json!(null)).unwrap(), None);
+        assert_eq!(text_field("note", &json!("")).unwrap(), None);
+        for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
+            assert!(text_field("pr", &bad).is_err(), "{bad} was taken");
+        }
     }
 
     #[test]

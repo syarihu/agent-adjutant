@@ -283,3 +283,193 @@ fn a_worker_in_the_main_checkout_counts_against_max_workers_too() {
     let out = fixture.cmd(&["work", "--worktree", &next, "--title", "WID-6", "--dry-run"]);
     assert_eq!(out.status.code(), Some(3), "{out:?}");
 }
+
+#[test]
+fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-7");
+    let other = linked_worktree(&fixture, "wid-8");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "WID-7",
+        "--body",
+        "x",
+        "--waiting-in",
+        &worktree,
+        "--json",
+    ]);
+    fixture.ok(&[
+        "task",
+        "add",
+        "--title",
+        "WID-8",
+        "--body",
+        "y",
+        "--waiting-in",
+        &other,
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    // No note of its own: the same record is written before a worker starts, not only when
+    // one was turned away.
+    assert!(added["task"]["note"].is_null(), "{added}");
+
+    // Asked by worktree, which is all the hub has in hand when a worker reports done.
+    let found = fixture.json(&["task", "list", "--worktree", &worktree, "--json"]);
+    let found = found.as_array().unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["id"], id.as_str());
+
+    fixture.ok(&["task", "update", "--id", &id, "--note", "worker の枠待ち"]);
+    // A command line cannot say null, and the note has to go once the worker starts.
+    let updated = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "dispatched",
+        "--note",
+        "",
+        "--json",
+    ]);
+    assert!(updated["task"]["note"].is_null(), "{updated}");
+    // Neither record ever went to the hub: the hub is the one writing them.
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+}
+
+#[test]
+fn the_hub_can_requeue_a_task_without_messaging_itself_and_mark_one_approved() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-9");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "WID-9",
+        "--body",
+        "z",
+        "--ask-first",
+        "--waiting-in",
+        &worktree,
+        "--json",
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(added["task"]["autoStart"], false, "{added}");
+
+    // Approved on the board: from here the queue may start it without asking again.
+    let approved = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--auto-start",
+        "true",
+        "--json",
+    ]);
+    assert_eq!(approved["task"]["autoStart"], true, "{approved}");
+
+    // A resumed worker turned away for a slot goes back to queued. The hub is the one doing
+    // it, so nothing may land in its own inbox.
+    fixture.ok(&["task", "update", "--id", &id, "--status", "dispatched"]);
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "queued",
+        "--no-hand-over",
+    ]);
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+
+    // Without the flag, queueing is still a hand-over — the board relies on that.
+    fixture.ok(&["task", "update", "--id", &id, "--status", "dispatched"]);
+    fixture.ok(&["task", "update", "--id", &id, "--status", "queued"]);
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 1);
+}
+
+#[test]
+fn a_task_body_given_as_a_dash_is_read_from_stdin_and_nothing_in_it_is_run() {
+    // How the hub writes a record: the title and summary come from a task or a report, so
+    // they go through a quoted heredoc rather than onto the command line.
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-10");
+    let mut child = fixture
+        .command([
+            "task",
+            "add",
+            "--body",
+            "-",
+            "--done-when",
+            "report-only",
+            "--waiting-in",
+            &worktree,
+            "--json",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"WID-10 it's broken; touch pwned\n\nsummary with 'quotes' and $(date)\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let added: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(added["task"]["title"], "WID-10 it's broken; touch pwned");
+    assert_eq!(added["task"]["doneWhen"], "report-only");
+    assert!(added["task"]["body"].as_str().unwrap().contains("$(date)"));
+}
+
+#[test]
+fn a_worktree_name_or_issue_url_that_could_break_out_of_a_quote_is_refused() {
+    // Both are typed on the board and later quoted into commands the hub runs.
+    let fixture = Fixture::new(QUIET);
+    for args in [
+        vec!["--worktree-name", "x'; touch pwned; '"],
+        vec!["--worktree-name", "has space"],
+        vec![
+            "--issue-url",
+            "https://github.com/acme/widget/issues/1'; touch pwned; '",
+        ],
+        vec!["--issue-url", "file:///etc/passwd"],
+        vec!["--issue-url", "https://"],
+        vec!["--worktree-name", ".."],
+        vec!["--worktree-name", "-x"],
+        vec!["--worktree-name", "a.lock"],
+        vec!["--worktree-name", "topic."],
+        vec!["--issue-url", "https://:8080/acme/widget/issues/1"],
+        vec!["--issue-url", "https://github.com:abc/acme/widget/issues/1"],
+    ] {
+        let mut all = vec!["task", "add", "--body", "x"];
+        all.extend(&args);
+        let out = fixture.cmd(&all);
+        assert!(!out.status.success(), "{args:?} was accepted");
+    }
+    // A refusal leaves nothing behind: the id is claimed only once the values pass.
+    let tasks = fixture.state.join("tasks");
+    let left: Vec<_> = std::fs::read_dir(&tasks)
+        .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(
+        left.iter()
+            .all(|p| p.is_dir() && std::fs::read_dir(p).unwrap().next().is_none()),
+        "{left:?}"
+    );
+    fixture.ok(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--worktree-name",
+        "login-retry.2_b",
+        "--issue-url",
+        "https://github.com/acme/widget/issues/1",
+    ]);
+}
