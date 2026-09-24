@@ -244,6 +244,10 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
             reply(out, update_task(server, req.tail(), &req.body))
         }
         ("POST", "/api/hub/next") => reply(out, nudge_hub(server)),
+        ("POST", "/api/hub/focus") => reply(out, focus_hub(server)),
+        ("POST", path) if path.starts_with("/api/worktrees/") => {
+            reply(out, act_on_worktree(server, req.tail(), &req.body))
+        }
         ("POST", path) if path.starts_with("/api/gates/") => {
             reply(out, answer_gate(server, req.tail(), &req.body))
         }
@@ -272,6 +276,7 @@ fn state(server: &Server) -> Value {
         .collect();
 
     let now = messaging::now_secs();
+    let settings = settings_now(server);
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
     let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
@@ -292,6 +297,8 @@ fn state(server: &Server) -> Value {
                 "present": status.present,
                 "stale": status.stale,
                 "title": status.title,
+                "phase": status.phase,
+                "phaseAt": status.phase_at,
             })
         })
         .collect();
@@ -325,21 +332,24 @@ fn state(server: &Server) -> Value {
         // starting up holds one — so the header and the refusal cannot disagree.
         "workerSlots": {
             "busy": busy,
-            "max": max_workers(server),
+            "max": settings.max_workers,
         },
+        // Minutes in one phase before a card is flagged. `0` = never.
+        "stuckAfterMinutes": settings.stuck_after_minutes,
+        "now": now,
         "pending": pending,
         "gates": gate::list(&super::gate::dir(&server.ctx)),
     })
 }
 
-/// `maxWorkers` as `adj work` would read it now. Resolved on every poll rather than taken
-/// from the settings the server started with, because `adj work` reads the config each time
-/// it runs, and a limit changed under a running board would otherwise show one number while
+/// The settings as `adj work` would read them now. Resolved on every poll rather than taken
+/// from the ones the server started with, because `adj work` reads the config each time it
+/// runs, and a limit changed under a running board would otherwise show one number while
 /// dispatches are refused by another.
-fn max_workers(server: &Server) -> Option<u32> {
+fn settings_now(server: &Server) -> crate::config::Settings {
     crate::config::resolve_config(&server.ctx.repo.nwo)
-        .map(|resolved| resolved.settings.max_workers)
-        .unwrap_or(server.ctx.settings.max_workers)
+        .map(|resolved| resolved.settings)
+        .unwrap_or_else(|_| server.ctx.settings.clone())
 }
 
 fn branch_of(worktree: &str) -> Option<String> {
@@ -363,6 +373,64 @@ fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
     let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
     let (task, handed) = super::task::update(&server.ctx, id, &input)?;
     Ok(json!({ "task": task, "handed": handed_json(handed) }))
+}
+
+/// The three buttons a card has for the worker behind it: raise its tab, open its worktree in
+/// the editor, close its tab. All through the same templates the commands use.
+///
+/// Only a worktree of this checkout is acted on. The path comes from the page, and these run
+/// commands — `ide` a template of the person's own choosing — so a path the board did not
+/// list is refused rather than handed on.
+fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Result<Value, String> {
+    let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let worktree = input
+        .get("worktree")
+        .and_then(Value::as_str)
+        .ok_or("a worktree is required")?;
+    let known = crate::repo::linked_worktrees(&server.ctx.repo.main)?;
+    if !known.iter().any(|w| w == worktree) {
+        return Err(format!("not a worktree of this repository: {worktree}"));
+    }
+    let path = Path::new(worktree);
+    let settings = settings_now(server);
+    match action {
+        "focus" => {
+            let done = super::focus_worker(&settings, path, false)?;
+            Ok(json!({
+                "present": done.is_some(),
+                "ran": done.as_ref().is_some_and(|d| d.ran),
+            }))
+        }
+        "ide" => {
+            let command = crate::ide::open_command(settings.ide.as_deref(), worktree)
+                .ok_or("ide is not set: put your editor command in the config's ide key")?;
+            crate::terminal::run_shell(&command)?;
+            Ok(json!({ "ran": true }))
+        }
+        "close" => {
+            let closed = super::close(Some(&server.ctx.repo.nwo), worktree, true, false)?;
+            Ok(json!({ "closed": closed }))
+        }
+        other => Err(format!("no such action: {other}")),
+    }
+}
+
+/// Raise the hub's tab: 「タブで話す」 on a gate the hub opened, which sits in the main
+/// checkout where there is no worker to raise.
+fn focus_hub(server: &Server) -> Result<Value, String> {
+    let repo = &server.ctx.repo;
+    let status = messaging::hub_status(&repo.slug, &repo.hub_name);
+    let Some(pid) = status.pid.filter(|_| status.present) else {
+        return Ok(json!({ "present": false, "ran": false }));
+    };
+    let settings = settings_now(server);
+    let done = crate::terminal::focus(
+        settings.terminal.focus.as_deref(),
+        pid,
+        &repo.hub_name,
+        false,
+    )?;
+    Ok(json!({ "present": true, "ran": done.ran }))
 }
 
 fn nudge_hub(server: &Server) -> Result<Value, String> {

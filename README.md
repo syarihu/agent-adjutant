@@ -75,7 +75,8 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant tell --worktree … --subject …` | leave a message for that worktree's worker |
 | `adjutant outbox [--clear]` | what the hub has left for the worker here |
 | `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
-| `adjutant focus` | raise the running hub's tab; exit 1 if there is none |
+| `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
+| `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `review` / `report`), or show it |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
@@ -259,6 +260,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `hubAutoResumeHours` | — (a number, `0` to turn it off) | `3` |
 | `startupDashboard` | — (`true` / `false`) | `true` |
 | | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
+| `stuckAfterMinutes` | — (a number, `0` to turn it off) | `120` |
+| | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless* |
 | `maxWorkers` | — (a whole number, 1 or more) | no limit |
 | | | *counted per checkout; a worker parked at a gate or still starting up takes a slot, a dead one does not* |
 
@@ -361,6 +364,16 @@ task update --id … --status dispatched --worktree …` — and that is what th
 The record is also the referee: a card dragged back to the backlog sets `status` there, and
 the hub reads it once more just before it starts, so a task pulled back while its message
 was still in the inbox does not get picked up anyway.
+
+A card with a worker behind it shows the step the worker says it is in (`adjutant phase
+--set`, one line at the top of each section of the worker's procedure) and how long it has
+been there, and has buttons to raise the worker's tab, open the worktree in the editor, and
+close the tab. They run `terminal.focus`, `ide` and `terminal.close`, the same templates the
+commands use, and only on a worktree of this checkout. A card goes red when its worker has
+stopped, or has sat in one step for `stuckAfterMinutes` — a badge rather than a column, so the
+card keeps the column that says how far it got. Time counts only while the ball is the
+worker's: a card waiting on a gate or on its pull request's reviewers is not flagged for it.
+Done cards fold away after a day; the records stay.
 
 Every worker has a record, whichever way its task came in. A task the hub starts from a
 worker's report or from its own tab gets one written before the brief (`adjutant task add

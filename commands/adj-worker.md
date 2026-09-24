@@ -10,6 +10,10 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
 
 ## 立ち位置
 
+- **節に入るたびに `adj phase --set <phase>` を1回打つ。** 板のカードがいまどこに居るかと、同じ所に
+  どれだけ居るか（長すぎると「詰まり」として赤くなる）をこれで見せる。打ち忘れても作業は止まらないが、
+  カードは前の節で止まって見える。値は `plan` / `implement` / `self-review` / `verify` / `pr` /
+  `review` / `report` のどれか。各節の頭にどれを打つか書いてある。
 - いまの cwd がその worktree。素の `git` と相対パスでいい。`git -C <絶対パス>` は要らない。
 - **`EnterWorktree` は使わない。** もう中にいる。
 - **`isolation: worktree` は禁止。** いま立っている worktree の下にもう1つ掘ってしまう。
@@ -44,6 +48,8 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
   `repo`（= `<codeRepo>`）も同じ出力に入っている。スキーマは配布物の `config.example.json`。
 
 ## 1. Plan
+
+`adj phase --set plan`
 
 1. タスクを読む。読み方は指示書の「作業対象」に書いてあるトラッカーで決まる:
    - `github` / `github-project` — `gh issue view <n> -R <指示書の URL の repo> --json title,body,comments`。
@@ -97,6 +103,8 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
 
 ## 2. Implement
 
+`adj phase --set implement`
+
 承認された計画を、いまの cwd で直接実装する。`isolation: worktree` も新しい worktree も要らない
 — すでに作業すべき場所に立っている。サブエージェントは、サブエージェントが要る用途にだけ使う:
 機械的な大量置換と、ツール出力を自分の文脈に入れたくない調査。
@@ -112,6 +120,8 @@ worktree の絶対パスとそこから出ないこと / 背景＝要件と関�
   立て直すと、直させた経緯が消える。
 
 ## 3. セルフレビュー
+
+`adj phase --set self-review`
 
 下の **「Appendix — セルフレビューのループ」** を、収束するまで回す。ラウンドごとの
 要約を報告してから次に進む。
@@ -135,6 +145,8 @@ prefix は付けない。メッセージの言語はそのリポジトリの直�
 
 ## 4. 動作確認のために引き渡す
 
+`adj phase --set verify`
+
 **引き渡す前に、§7 の棚卸しを1回やる。** 通りがかりで見た別件はここで出す。
 
 「Appendix — 人間に見せて待つ（gate）」の `kind: "verify"` で引き渡す。`focus` に
@@ -152,6 +164,8 @@ hub が worktree を作るときに走らせた `postCreate` が gitignore さ�
 **終わったあと**: 動作確認が済んでこの worktree に用が無くなったら、§9 で片付けを頼む。
 
 ## 5. PR を作る（頼まれたときだけ）
+
+`adj phase --set pr`
 
 指示書の完了条件が「PR作成まで」のとき、またはユーザーに直接頼まれたときだけ。
 
@@ -196,6 +210,8 @@ hub が worktree を作るときに走らせた `postCreate` が gitignore さ�
 **終わったあと**: レビュー対応（§6）まで終わってこの worktree に用が無くなったら、§9 で片付けを頼む。
 
 ## 6. レビュー指摘の対応
+
+`adj phase --set review`
 
 人間のレビューと bot のレビューの両方をここで捌く。Copilot はトリアージと修正の上ではただの
 レビュアーの1人で、唯一違うのは返信の扱い（step 6）。
@@ -267,6 +283,8 @@ hub がやる。
 届かない経路が無いので、送る前の在席確認も要らない。
 
 ## 8. 調査だけを頼まれたとき
+
+`adj phase --set report`
 
 指示書の完了条件が「調査だけ（報告して終わり）」のときはこちら。実装タスクの手順（§2 実装 /
 §3 セルフレビュー / §5 PR）は**飛ばす**。直すものが無いので、レビューする差分も出す PR も無い。

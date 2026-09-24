@@ -254,18 +254,30 @@ enum Commands {
         #[arg(long)]
         clear: bool,
     },
-    /// Bring this repository's running hub to the front; exit 1 if it is not running
+    /// Bring this repository's running hub (or, with --worktree, a worker) to the front; exit 1 if it is not running
     Focus {
         #[arg(long)]
         repo: Option<String>,
         /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
         #[arg(long)]
         hub: Option<String>,
+        /// Bring the worker in this worktree to the front instead of the hub
+        #[arg(long, conflicts_with = "hub")]
+        worktree: Option<String>,
         /// Say nothing, use the exit code
         #[arg(long)]
         quiet: bool,
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Say which step the worker in this worktree is in, or show it
+    Phase {
+        /// plan | implement | self-review | verify | pr | review | report
+        #[arg(long, value_name = "PHASE")]
+        set: Option<String>,
+        /// Default: the worktree this is run from
+        #[arg(long)]
+        worktree: Option<String>,
     },
     /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
     Close {
@@ -703,11 +715,23 @@ pub fn run() -> ! {
         Commands::Outbox { worktree, clear } => cmd::outbox(worktree.as_deref(), *clear).map(|_| 0),
         Commands::Focus {
             repo,
+            hub: _,
+            worktree: Some(worktree),
+            quiet,
+            dry_run,
+        } => cmd::focus_worker_cmd(repo.as_deref(), worktree, *quiet, *dry_run)
+            .map(|found| i32::from(!found)),
+        Commands::Focus {
+            repo,
             hub,
+            worktree: None,
             quiet,
             dry_run,
         } => cmd::focus(repo.as_deref(), hub.as_deref(), *quiet, *dry_run)
             .map(|found| i32::from(!found)),
+        Commands::Phase { set, worktree } => {
+            cmd::phase(worktree.as_deref(), set.as_deref()).map(|_| 0)
+        }
         Commands::Close {
             repo,
             worktree,

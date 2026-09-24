@@ -620,3 +620,60 @@ fn a_note_and_a_tab_title_given_as_a_dash_are_read_from_stdin() {
         "{out:?}"
     );
 }
+
+/// A worker record naming this test process, which is certainly running.
+fn a_running_worker_in(worktree: &str) {
+    let pid = std::process::id();
+    let dir = std::path::Path::new(worktree).join(".claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("adjutant-worker.json"),
+        serde_json::json!({"pid": pid, "title": "WID-13", "psStarted": ps_started(pid)})
+            .to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_worker_says_which_phase_it_is_in_and_a_typo_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-13");
+    // Nobody registered there yet: there is no run of a worker to describe.
+    assert!(
+        !fixture
+            .cmd(&["phase", "--set", "plan", "--worktree", &worktree])
+            .status
+            .success()
+    );
+
+    a_running_worker_in(&worktree);
+    fixture.ok(&["phase", "--set", "self-review", "--worktree", &worktree]);
+    assert_eq!(
+        fixture.ok(&["phase", "--worktree", &worktree]).trim(),
+        "self-review"
+    );
+    assert!(
+        !fixture
+            .cmd(&["phase", "--set", "reviewing", "--worktree", &worktree])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn a_workers_tab_is_raised_through_the_focus_template() {
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "terminal": {"focus": "raise {pid} {title}"}, "repos": {}}"#,
+    );
+    let worktree = linked_worktree(&fixture, "wid-14");
+    // Nothing running there: exit 1, the same answer `adj focus` gives for a hub that is down.
+    let none = fixture.cmd(&["focus", "--worktree", &worktree, "--dry-run"]);
+    assert_eq!(none.status.code(), Some(1), "{none:?}");
+
+    a_running_worker_in(&worktree);
+    let out = fixture.ok(&["focus", "--worktree", &worktree, "--dry-run"]);
+    assert!(
+        out.contains(&format!("raise {} WID-13", std::process::id())),
+        "{out}"
+    );
+}

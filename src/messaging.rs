@@ -580,6 +580,48 @@ pub struct WorkerStatus {
     pub pid: Option<u32>,
     pub title: Option<String>,
     pub stale: bool,
+    /// What the worker last said it was doing (`adj phase --set`), and since when.
+    pub phase: Option<String>,
+    pub phase_at: Option<i64>,
+}
+
+/// The steps a worker says it is in. A fixed list so the board can show them in order and a
+/// typo is refused rather than shown as a phase of its own.
+pub const PHASES: [&str; 7] = [
+    "plan",
+    "implement",
+    "self-review",
+    "verify",
+    "pr",
+    "review",
+    "report",
+];
+
+/// Write down which step the worker in `worktree` is in, and when it got there.
+///
+/// Into the worker's own record rather than the task's, because the phase belongs to this
+/// run of the worker: a worker started again in the same worktree starts without one, as its
+/// record is written fresh. The time is what the board measures "stuck" from.
+pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
+    if !PHASES.contains(&phase) {
+        return Err(format!(
+            "no such phase: {phase} (one of {})",
+            PHASES.join(", ")
+        ));
+    }
+    let path = worker_record_path(worktree);
+    let Some(mut record) = read_json(&path) else {
+        return Err(format!(
+            "no worker is registered in {}: `adj phase` is for the worker running there",
+            worktree.display()
+        ));
+    };
+    let fields = record
+        .as_object_mut()
+        .ok_or_else(|| format!("cannot read the worker record at {}", path.display()))?;
+    fields.insert("phase".to_string(), json!(phase));
+    fields.insert("phaseAt".to_string(), json!(now_secs()));
+    write_json(&path, &record)
 }
 
 /// Record this process as the worker for `worktree`, before `exec`ing the agent over it —
@@ -738,6 +780,8 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         pid: None,
         title: None,
         stale: false,
+        phase: None,
+        phase_at: None,
     };
     let Some(record) = read_json(&worker_record_path(worktree)) else {
         return status;
@@ -752,6 +796,11 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         .get("title")
         .and_then(Value::as_str)
         .map(str::to_string);
+    status.phase = record
+        .get("phase")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    status.phase_at = record.get("phaseAt").and_then(Value::as_i64);
     // A worker's command line carries nothing distinctive — it is whatever agent the config
     // names — so the start time is the only anchor available here, and with none the
     // question narrows to whether that pid is there at all.
@@ -2879,5 +2928,32 @@ mod tests {
         let started = std::time::Instant::now();
         with_dispatch_lock(dir.path(), || ()).unwrap();
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_phase_is_written_into_the_workers_own_record_and_a_typo_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        // Nobody registered: there is no run of a worker to describe.
+        assert!(set_worker_phase(worktree, "plan").is_err());
+
+        register_worker(worktree, "WID-957", None).unwrap();
+        set_worker_phase(worktree, "implement").unwrap();
+        let status = worker_status(worktree);
+        assert_eq!(status.phase.as_deref(), Some("implement"));
+        assert!(
+            status
+                .phase_at
+                .is_some_and(|at| (now_secs() - at).abs() < 5)
+        );
+        assert!(
+            status.present,
+            "writing the phase must not disturb the record"
+        );
+
+        assert!(set_worker_phase(worktree, "implementing").is_err());
+        // A worker started again writes its record fresh, and starts without a phase.
+        register_worker(worktree, "WID-957", None).unwrap();
+        assert_eq!(worker_status(worktree).phase, None);
     }
 }
