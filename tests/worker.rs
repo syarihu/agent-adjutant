@@ -429,6 +429,44 @@ fn a_task_body_given_as_a_dash_is_read_from_stdin_and_nothing_in_it_is_run() {
 }
 
 #[test]
+fn a_task_carries_the_stop_point_it_was_handed_over_with() {
+    let fixture = Fixture::new(QUIET);
+    let plain = fixture.json(&["task", "add", "--body", "x", "--json"]);
+    assert_eq!(plain["task"]["stopAt"], "plan");
+    let all = fixture.json(&["task", "add", "--body", "x", "--stop-at", "all", "--json"]);
+    assert_eq!(all["task"]["stopAt"], "all");
+
+    // Queued, so the hub is told where it stops as well as the record holding it.
+    fixture.ok(&["task", "add", "--body", "x", "--stop-at", "diff", "--queue"]);
+    let pending = fixture.json(&["pending", "--json"]);
+    let name = pending["messages"][0]["name"].as_str().unwrap();
+    let body = fixture.ok(&["pending", "--read", name]);
+    assert!(body.contains("## 止める所     diff（"), "{body}");
+
+    // Refused before an id is claimed, so no empty reservation is left behind.
+    let files = || {
+        std::fs::read_dir(fixture.state.join("tasks"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .flat_map(|slug| {
+                std::fs::read_dir(slug.path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .count()
+    };
+    let before = files();
+    let out = fixture.cmd(&["task", "add", "--body", "x", "--stop-at", "verify"]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no such stop point"),
+        "{out:?}"
+    );
+    assert_eq!(files(), before);
+}
+
+#[test]
 fn a_worktree_name_or_issue_url_that_could_break_out_of_a_quote_is_refused() {
     // Both are typed on the board and later quoted into commands the hub runs.
     let fixture = Fixture::new(QUIET);

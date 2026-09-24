@@ -560,6 +560,7 @@ mod tests {
             body: String::new(),
             issue_url: None,
             done_when: task::DoneWhen::Pr,
+            stop_at: task::StopAt::Plan,
             base: None,
             parent: None,
             worktree_name: None,

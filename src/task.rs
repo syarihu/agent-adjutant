@@ -40,6 +40,33 @@ pub enum DoneWhen {
     Review,
 }
 
+/// Which gates wait on a person. The rest are kept as records the worker leaves and carries
+/// on past. Chosen by whoever hands the task over, because whether anybody wants to look at
+/// the diff or the check depends on the task, and the worker has no way to tell.
+///
+/// Each step includes the one before it: nobody asks to look at the check but not the diff.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StopAt {
+    /// The plan only. The default, and what every task did before there was a choice.
+    #[default]
+    Plan,
+    /// The plan and the diff.
+    Diff,
+    /// The plan, the diff and the check.
+    All,
+}
+
+impl StopAt {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StopAt::Plan => "plan",
+            StopAt::Diff => "diff",
+            StopAt::All => "all",
+        }
+    }
+}
+
 /// Six states, and no more.
 ///
 /// There is deliberately no `gate` here. Whether a task is waiting on a human is answered
@@ -97,6 +124,9 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_url: Option<String>,
     pub done_when: DoneWhen,
+    /// Absent in a record written before there was a choice, which is what `Plan` means.
+    #[serde(default)]
+    pub stop_at: StopAt,
     /// What this one dispatch should branch from. `None` = the repository's `baseBranch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
@@ -279,6 +309,17 @@ pub fn render_request(task: &Task) -> String {
             DoneWhen::Review => "レビュー対応まで",
         }
     ));
+    // The value itself goes first: the hub passes it on as `--stop-at` and into the brief,
+    // and the gloss is for whoever reads the message.
+    out.push_str(&format!(
+        "## 止める所     {}（{}）\n",
+        task.stop_at.as_str(),
+        match task.stop_at {
+            StopAt::Plan => "計画の承認だけ待つ",
+            StopAt::Diff => "計画の承認と差分レビューを待つ",
+            StopAt::All => "計画の承認・差分レビュー・動作確認を待つ",
+        }
+    ));
     let line = |label: &str, value: Option<&str>| format!("## {label}{}\n", value.unwrap_or("-"));
     out.push_str(&line("Issue      ", task.issue_url.as_deref()));
     out.push_str(&line("分岐元      ", task.base.as_deref()));
@@ -320,6 +361,7 @@ mod tests {
                 body: String::new(),
                 issue_url: None,
                 done_when,
+                stop_at: StopAt::default(),
                 base: None,
                 parent: None,
                 worktree_name: None,
@@ -465,5 +507,32 @@ mod tests {
         let body = render_request(&sample());
         assert!(body.contains("## 分岐元      -"), "{body}");
         assert!(body.contains("## 親タスク    -"), "{body}");
+    }
+
+    /// The hub copies the stop point into the brief, so the message has to say it — and say
+    /// the default out loud rather than leave the line off.
+    #[test]
+    fn the_request_body_says_where_the_task_stops() {
+        let mut task = sample();
+        assert!(
+            render_request(&task).contains("## 止める所     plan（"),
+            "{}",
+            render_request(&task)
+        );
+        task.stop_at = StopAt::All;
+        assert!(
+            render_request(&task).contains("## 止める所     all（"),
+            "{}",
+            render_request(&task)
+        );
+    }
+
+    /// A record written before the field existed stopped at the plan, and still does.
+    #[test]
+    fn a_record_without_a_stop_point_stops_at_the_plan() {
+        let mut value = serde_json::to_value(sample()).unwrap();
+        value.as_object_mut().unwrap().remove("stopAt");
+        let task: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(task.stop_at, StopAt::Plan);
     }
 }
