@@ -117,3 +117,169 @@ fn naming_this_tab_is_replaceable_and_can_be_turned_off() {
     let off = Fixture::new(r#"{"terminal": {"title": false}, "repos": {}}"#);
     assert_eq!(off.ok(&["title", "--title", "x", "--dry-run"]).trim(), "");
 }
+
+// ── maxWorkers ──
+
+/// `QUIET` with a limit of one worker.
+fn one_worker_at_a_time() -> Fixture {
+    Fixture::new(&QUIET.replacen(
+        r#""notification": "true","#,
+        r#""notification": "true", "maxWorkers": 1,"#,
+        1,
+    ))
+}
+
+/// A linked worktree of the fixture's repository, as git prints it.
+fn linked_worktree(fixture: &Fixture, name: &str) -> String {
+    let path = fixture.repo.parent().unwrap().join(name);
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", "-q", "-b", name])
+        .arg(&path)
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::canonicalize(path)
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+}
+
+/// What `adj work` leaves behind before the tab has had time to register anyone.
+fn just_dispatched(worktree: &str) {
+    let dir = std::path::Path::new(worktree).join(".claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        dir.join("adjutant-worker-starting.json"),
+        format!(r#"{{"at": {now}}}"#),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_dispatch_past_max_workers_starts_nothing_and_says_so_with_its_own_exit_code() {
+    let fixture = one_worker_at_a_time();
+    let busy = linked_worktree(&fixture, "wid-1");
+    let next = linked_worktree(&fixture, "wid-2");
+
+    // A free slot: the dry run goes through, and leaves no mark — it started nothing.
+    fixture.ok(&["work", "--worktree", &next, "--title", "WID-2", "--dry-run"]);
+    assert!(
+        !std::path::Path::new(&next)
+            .join(".claude/adjutant-worker-starting.json")
+            .exists()
+    );
+
+    // One worker dispatched and not registered yet is already the one allowed.
+    just_dispatched(&busy);
+    let out = fixture.cmd(&["work", "--worktree", &next, "--title", "WID-2", "--dry-run"]);
+    // 3 rather than 1: the hub answers "full" by queueing the task, and any other failure
+    // by reporting it.
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("worker limit reached"), "{said}");
+    assert!(said.contains(&busy), "{said}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+
+    // The worktree being dispatched into is taking a slot, not competing for one.
+    fixture.ok(&["work", "--worktree", &busy, "--title", "WID-1", "--dry-run"]);
+}
+
+#[test]
+fn a_task_waiting_for_a_slot_is_queued_with_its_worktree_and_sends_the_hub_nothing() {
+    let fixture = one_worker_at_a_time();
+    let worktree = linked_worktree(&fixture, "wid-3");
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "WID-3",
+        "--body",
+        "画像が潰れる",
+        "--waiting-in",
+        &worktree,
+        "--json",
+    ]);
+    assert_eq!(added["task"]["status"], "queued", "{added}");
+    assert_eq!(added["task"]["worktree"], worktree.as_str(), "{added}");
+    assert!(added["handed"].is_null(), "{added}");
+    // The hub writing this down is the hub that would read it.
+    assert_eq!(fixture.json(&["pending", "--json"])["count"], 0);
+}
+
+#[test]
+fn a_worktree_that_does_not_exist_is_refused_rather_than_made() {
+    // Marking the slot writes into the worktree, and a write that made its directories
+    // would turn a mistyped path into a tab opened in an empty directory.
+    let fixture = Fixture::new(QUIET);
+    let missing = fixture.repo.parent().unwrap().join("typo");
+    let out = fixture.cmd(&[
+        "work",
+        "--worktree",
+        missing.to_str().unwrap(),
+        "--title",
+        "x",
+    ]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no such directory"),
+        "{out:?}"
+    );
+    assert!(!missing.exists());
+}
+
+#[test]
+fn a_tab_that_failed_to_open_gives_its_slot_back() {
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "terminal": {"spawn": "false {cwd} {command}"}, "repos": {}}"#,
+    );
+    let worktree = linked_worktree(&fixture, "wid-4");
+    let out = fixture.cmd(&["work", "--worktree", &worktree, "--title", "WID-4"]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        !std::path::Path::new(&worktree)
+            .join(".claude/adjutant-worker-starting.json")
+            .exists()
+    );
+}
+
+#[test]
+fn a_worker_turned_away_by_one_already_running_gives_back_the_slot_it_was_marked_with() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-5");
+    just_dispatched(&worktree);
+    // The worker already there: this test process, which is certainly running.
+    let pid = std::process::id();
+    std::fs::write(
+        std::path::Path::new(&worktree).join(".claude/adjutant-worker.json"),
+        serde_json::json!({"pid": pid, "title": "WID-5", "psStarted": ps_started(pid)}).to_string(),
+    )
+    .unwrap();
+
+    let out = fixture.ok(&["worker", "--worktree", &worktree, "--title", "WID-5"]);
+    assert!(out.contains("already running"), "{out}");
+    assert!(
+        !std::path::Path::new(&worktree)
+            .join(".claude/adjutant-worker-starting.json")
+            .exists()
+    );
+}
+
+#[test]
+fn a_worker_in_the_main_checkout_counts_against_max_workers_too() {
+    // Not where workers are meant to go, but `adj work` does not refuse it, so leaving it
+    // out of the count would let one more start than the limit says.
+    let fixture = one_worker_at_a_time();
+    let next = linked_worktree(&fixture, "wid-6");
+    just_dispatched(fixture.repo.to_str().unwrap());
+    let out = fixture.cmd(&["work", "--worktree", &next, "--title", "WID-6", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+}

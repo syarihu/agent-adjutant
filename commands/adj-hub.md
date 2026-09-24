@@ -204,6 +204,7 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
    | `question` | hub 自身（聞き返して答えを待っている報告の控え） | 対になる `answer` が来ていれば再開。無ければ ack せずに置いておく |
    | `needs-user` | hub 自身（ユーザーの判断待ち） | 人がこのタブに居るときに中身を見せて聞く |
    | `done` | worker（タスクが終わったので片付けてほしい） | Dashboard の Step 1 の「1件だけの片付け」 |
+   | `next` | 人間（ダッシュボードの「次を流す」） | 「worker の枠が空いたら次を流す」 |
 
    **対応付けは `subject` の先頭に置いた識別子でやる。** hub が聞き返すときは
    `subject` を `[質問 {YYYYMMDD-HHMMSS}] …` の形にして、同じ文字列を `question` の控えにも書く。
@@ -211,6 +212,10 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
    人に見せるのは `report` と `needs-user` だけで、対が揃った分は聞かずに進めていい。
 
    本文は `adjutant_pending` の `action: read` で1件ずつ取る（一覧は `subject` までしか返さない）。
+
+   `settings.maxWorkers` があるときは、受信箱が空になったら「worker の枠が空いたら次を流す」を
+   1回やる。枠待ちで積んだタスクの依頼はもう ack 済みなので、受信箱を読むだけでは流れない
+   （`maxWorkers` が無ければ枠待ちは起きないので、やらない）。
 5. **待機に入る。** 受信箱が空なら、step 3 のブロックの直後に1行書いて**そのターンを終える**。
    その1行は step 3 で収集を出したかどうかで変わる:
 
@@ -831,6 +836,30 @@ nothing about any editor.
    すでに承認しているし、hub のタブに人が居るとは限らない。代わりに「同時に何件も来たとき」の
    処理ログに1行残す。
 7. 済んだら `adjutant_pending` の `action: ack`。
+8. **`settings.maxWorkers` があるときは、最後に「worker の枠が空いたら次を流す」を1回やる。**
+   worker が1本減ったので、枠待ちのタスクがあればここで引かれる。4 で消さなかったときは
+   worker が残っているので飛ばしていい。
+
+#### worker の枠が空いたら次を流す
+
+`done` の片付けの最後、起動時、`kind: next` が届いたときにやる。どれも `settings.maxWorkers` が
+あるときだけ（`next` だけは無くても受ける — 人が押したので）。**引くのは1件だけ。** 複数空いて
+いても1件にするのは、worker が `done` を送るたびにここへ来るので、それで足りるから。
+
+1. `adj task list --status queued --json` を並び順（板の「待ち」と同じ）に見て、**着手できる
+   最初の1件**を取る。次のものは飛ばす — 先頭に居座ると、後ろが永久に流れない:
+   - `autoStart: false`（着手前に確認がほしい）で、人がこのタブに居ないもの。起動時は必ず飛ばす
+     （起動時に `AskUserQuestion` を開かない）
+   - `note` が「着手できなかったのだ: …」のもの。人が理由を見て直すまで引かない
+
+   1件も無ければ何もしない。
+2. そのレコードを「ダッシュボードから来た依頼」として回す（`adj task show` の確認も同じ）。
+   `worktree` が書いてあれば Step 3 だけ、無ければ Step 2 から。`note` が「--resume で再開する」
+   なら `adjutant work --resume` で立てる（通常の `adjutant work` で立てると、保存された会話が
+   消える）。
+3. `adjutant work` がまた 3 で返ったら、枠はまだ埋まっている。レコードはそのまま、
+   **次の1件は引かない**。`done` を送らずに落ちた worker の分は、人が板の「次を流す」で
+   ここを起こす。
 
 ### Step 2: Collect
 
@@ -1138,6 +1167,24 @@ inflates the hub transcript for every task it dispatches.
 adjutant work --worktree '{worktree}' --title '{task_title}'
 ```
 
+- **終了コード 3 は失敗ではなく「枠待ち」。** config の `maxWorkers` だけ worker が走っていると、
+  `adjutant work` は何も立てずに 3 で返る。worktree と指示書は**消さずにそのまま残す** —
+  次に引いたときは Step 3 だけやり直せば済む。そのうえでタスクを待ちに置く:
+
+  ```bash
+  # ダッシュボードから来た依頼（`## task` 行がある）: status は queued のまま
+  adj task update --id {task_id} --worktree '{worktree}' --note 'worker の枠待ち（worktree は用意済み）'
+  # それ以外（worker の別件報告、タブで頼まれたもの）: レコードを作って待ちに積む
+  adj task add --title '{task_title}' --body '{依頼の要約}' --issue-url '{issue url}' --waiting-in '{worktree}'
+  ```
+
+  **待ちの置き場所はタスクレコードだけ。** レコードを作らずに流すと、枠が空いても誰にも
+  引かれない。`--waiting-in` は `--queue` と違って受信箱に何も送らない（送り先は hub 自身で、
+  作業中の自分を起こすことになる）。人には「枠待ちで積んだ」と1行伝える。
+
+  **`adjutant work` は1本ずつ打つ。** 並べて同時に打っても枠の数え方は壊れない（数えて印を
+  付けるまでをロックしている）が、どれが断られたかを1本ずつ読むほうが取り違えない。
+
 - **どのエージェントで立てるかは設定が持っている。** `adjutant work` が
   `settings.agentRunner`（既定は Claude Code を Auto Mode で起動）と `settings.agentEnv` を
   読んで組み立てる。**この手順書に起動コマンドを書かない** — 書いた瞬間、設定を変えても
@@ -1149,7 +1196,10 @@ adjutant work --worktree '{worktree}' --title '{task_title}'
 - **worker が落ちた worktree は作り直さずに再開させる。** `adjutant work --resume --worktree '{worktree}'`
   で、その worktree に保存された会話を新しいタブで開き直す（タイトルも、報告先の hub も保存された
   ものを使う）。保存されたセッションが無ければエラーになるので、そのときだけ通常の `adjutant work` で
-  立て直す。
+  立て直す。**終了コード 3 はこのエラーではない**（枠待ち）。通常の `adjutant work` に落とさず、
+  上の「終了コード 3」と同じく待ちに積んで、`note` に再開であることを書く:
+  `adj task update --id {task_id} --note 'worker の枠待ち（--resume で再開する）'`
+  （レコードが無ければ `--waiting-in` で作ってから）。
 - **worker も hub も、手が止まらない権限で立てる。** worker は worktree に閉じて最後まで
   走り切るのが仕事なので、1手ごとに確認を取って止まると意味がない。hub も同じで、
   **承認を待っている hub は受信箱を読んでいない hub**であり、そのタブは誰も見ていない
@@ -1431,10 +1481,12 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
   `## task` 行の値が `{task_id}`。**これを落とすと、渡した人からは「board に置いたのに
   何も起きない」ようにしか見えない。**
 
-- **着手する直前に `adj task show --id {task_id}` を1回読む。** 人が board 上でそのカードを
-  Backlog に引き戻していたら `status` が `backlog` に戻っている。そのときは**着手せず**、
-  1行残して次へ行く。受信箱のメッセージと board の操作は別経路なので、**レコードの `status` が
-  審判**。
+- **着手する直前に `adj task show --id {task_id}` を1回読む。** `status` が `queued` でなければ
+  **着手せず**、1行残して次へ行く。人が board 上でカードを Backlog に引き戻していれば `backlog`、
+  「次を流す」で先に着手済みなら `dispatched` になっている。受信箱のメッセージと board の操作は
+  別経路なので、**レコードの `status` が審判**。
+- **`worktree` が書いてあるレコードは枠待ちで積んだもの**（Step 3 の終了コード 3）。worktree と
+  指示書はもうあるので、Step 3 の `adjutant work` だけを打つ。
 
 - 受信箱のメッセージは、レコードに書き戻してから ack する。
 

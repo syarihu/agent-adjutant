@@ -603,11 +603,132 @@ pub fn register_worker(worktree: &Path, title: &str, hub: Option<&str>) -> Resul
         fields.insert("hub".to_string(), json!(hub));
     }
     write_json(&path, &record)?;
+    // The slot is held by the record from here on. Failing to drop the marker only keeps it
+    // counted until the grace runs out, which the record would have done anyway.
+    let _ = unmark_worker_starting(worktree);
     Ok(path)
 }
 
 pub fn unregister_worker(worktree: &Path) -> Result<(), String> {
     remove_if_present(&worker_record_path(worktree))
+}
+
+/// How long a worker that was dispatched but has not registered yet still holds its slot.
+///
+/// Registration happens inside the new tab, seconds after `adj work` returns. A hub that
+/// dispatches three in one turn would otherwise count none of the first two and go past the
+/// limit. A minute covers a slow terminal; past that the tab most likely never started, and
+/// a slot held for a worker that does not exist is the one mistake a limit must not make.
+pub const STARTING_GRACE_SECS: i64 = 60;
+
+/// Written by `adj work` just before it opens the tab, removed when the worker registers.
+pub fn starting_marker_path(worktree: &Path) -> PathBuf {
+    worktree
+        .join(".claude")
+        .join("adjutant-worker-starting.json")
+}
+
+pub fn mark_worker_starting(worktree: &Path) -> Result<(), String> {
+    write_json(
+        &starting_marker_path(worktree),
+        &json!({ "at": now_secs() }),
+    )
+}
+
+pub fn unmark_worker_starting(worktree: &Path) -> Result<(), String> {
+    remove_if_present(&starting_marker_path(worktree))
+}
+
+/// Whether `worktree` holds a worker slot: a worker that is there, or one dispatched less
+/// than `STARTING_GRACE_SECS` ago that has not said so yet. A worker parked at a gate holds
+/// its slot like any other — it is still a process on this machine — and a dead one does not.
+///
+/// "Dead" means `worker_liveness` said `Gone`, not merely that presence could not be shown:
+/// when `ps` cannot answer, or the record has no start time to match against, the worker
+/// may well be running, and counting it free is how a limit is overshot. Counting it busy
+/// only delays a dispatch, and not for long — a pid that is no longer running is `Gone`
+/// whatever else the record lacks.
+pub fn holds_worker_slot(worktree: &Path, now: i64) -> bool {
+    let registered = match read_worker(worktree) {
+        WorkerRecord::Named(worker) => worker_liveness(&worker) != Liveness::Gone,
+        // Neither names a process that could be running.
+        WorkerRecord::Absent | WorkerRecord::Unreadable => false,
+    };
+    registered || is_starting(worktree, now)
+}
+
+/// The half of `holds_worker_slot` that is not a `ps` call, for a caller that already has
+/// the worker's status in hand.
+pub fn is_starting(worktree: &Path, now: i64) -> bool {
+    read_json(&starting_marker_path(worktree))
+        .and_then(|marker| marker.get("at").and_then(Value::as_i64))
+        // Bounded below as well: a clock set back after the dispatch would otherwise hold
+        // the slot for as long as it was moved.
+        .is_some_and(|at| (0..STARTING_GRACE_SECS).contains(&(now - at)))
+}
+
+/// How long a dispatch waits for another to finish counting before it gives up.
+const DISPATCH_LOCK_SECS: u64 = 10;
+
+/// Run `f` while holding this checkout's dispatch lock.
+///
+/// Counting the slots and marking one taken are two steps, and two `adj work` run side by
+/// side — a hub batching its shell calls, or two hubs on one repository — would both count
+/// before either marked, and both start. The lock makes the pair one step.
+///
+/// An advisory lock on an open file, for the reason `take_over` gives: a lock made of a
+/// file's existence has to guess when its holder died, and two callers guessing at once both
+/// get in. This one is released by the system when its holder exits, so a killed dispatch
+/// leaves nothing to clear. Waiting ends in an error rather than in taking the lock anyway.
+pub fn with_dispatch_lock<T>(main: &Path, f: impl FnOnce() -> T) -> Result<T, String> {
+    let path = main.join(".claude").join("adjutant-dispatch.lock");
+    parent_dir(&path)?;
+    // Never unlinked: removing it while another process holds it open would hand the next
+    // two callers two different locks.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(DISPATCH_LOCK_SECS);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "another dispatch has held {} for {DISPATCH_LOCK_SECS}s; try again",
+                    path.display()
+                ));
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(format!("cannot lock {}: {e}", path.display()));
+            }
+        }
+    }
+    let answer = f();
+    drop(lock);
+    Ok(answer)
+}
+
+/// The worktrees among `worktrees` holding a worker slot, `except` left out — the one about
+/// to be dispatched into, which is taking a slot rather than competing for one.
+pub fn busy_worktrees(worktrees: &[String], except: Option<&Path>) -> Vec<String> {
+    let now = now_secs();
+    // Compared resolved, because git answers with the real path and a caller may be holding
+    // one through a symlink — `/tmp` against `/private/tmp` on a Mac — and a worktree that
+    // failed to match itself would count against its own dispatch.
+    let resolved = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let except = except.map(resolved);
+    worktrees
+        .iter()
+        .filter(|path| except.as_deref() != Some(resolved(Path::new(path.as_str())).as_path()))
+        .filter(|path| holds_worker_slot(Path::new(path.as_str()), now))
+        .cloned()
+        .collect()
 }
 
 pub fn worker_status(worktree: &Path) -> WorkerStatus {
@@ -621,7 +742,12 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
     let Some(record) = read_json(&worker_record_path(worktree)) else {
         return status;
     };
-    status.pid = record.get("pid").and_then(Value::as_u64).map(|p| p as u32);
+    // Checked, as `read_worker` checks it: truncated, `4294967297` would be pid 1 and read
+    // as a worker that is there, while the slot count reads the same record as nobody.
+    status.pid = record
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|p| u32::try_from(p).ok());
     status.title = record
         .get("title")
         .and_then(Value::as_str)
@@ -2640,5 +2766,118 @@ mod tests {
         // And once they are done, the next claim gets it.
         drop(lock);
         claim_ours("acme-widget", &name);
+    }
+
+    // ── worker slots ─────────────────────────────────────────────────
+
+    #[test]
+    fn a_worker_that_is_there_holds_a_slot_and_a_dead_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        assert!(!holds_worker_slot(worktree, now_secs()));
+
+        register_worker(worktree, "WID-957", None).unwrap();
+        assert!(holds_worker_slot(worktree, now_secs()));
+
+        // A pid that is not running. Counting it would hold the slot for good, since nothing
+        // is left to send the `done` that would free it. A process that has been and gone
+        // rather than a made-up number: `ps` refuses a pid out of range, which is `CannotTell`.
+        let mut exited = std::process::Command::new("true").spawn().unwrap();
+        let pid = exited.id();
+        exited.wait().unwrap();
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": pid, "title": "WID-957", "psStarted": "Thu Jan  1 00:00:00 1970"}),
+        )
+        .unwrap();
+        assert!(!holds_worker_slot(worktree, now_secs()));
+
+        // A running pid with no start time to check it against cannot be told from whatever
+        // inherited the number. Counted busy: a free slot that was not is how a limit is
+        // overshot, and this holds only until that pid stops.
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": std::process::id(), "title": "WID-957"}),
+        )
+        .unwrap();
+        assert!(holds_worker_slot(worktree, now_secs()));
+    }
+
+    #[test]
+    fn a_pid_out_of_range_is_nobody_to_the_status_as_well_as_to_the_slot_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        write_json(
+            &worker_record_path(worktree),
+            &json!({"pid": 4294967297u64, "title": "WID-957"}),
+        )
+        .unwrap();
+        let status = worker_status(worktree);
+        assert_eq!(status.pid, None);
+        assert!(!status.present);
+        assert!(!holds_worker_slot(worktree, now_secs()));
+    }
+
+    #[test]
+    fn a_worker_still_starting_holds_a_slot_until_it_registers_or_the_grace_runs_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        mark_worker_starting(worktree).unwrap();
+        let now = now_secs();
+        // Not registered yet, which is every worker in the seconds after `adj work` returns.
+        assert!(holds_worker_slot(worktree, now));
+        // A tab that never opened stops counting.
+        assert!(!holds_worker_slot(worktree, now + STARTING_GRACE_SECS));
+        // Nor does a marker from the future, which is a clock set back since the dispatch.
+        assert!(!holds_worker_slot(worktree, now - 3600));
+
+        // Registering takes the marker away: from then on the record answers.
+        register_worker(worktree, "WID-957", None).unwrap();
+        assert!(!starting_marker_path(worktree).exists());
+        unregister_worker(worktree).unwrap();
+        assert!(!holds_worker_slot(worktree, now));
+    }
+
+    #[test]
+    fn the_worktree_being_dispatched_into_does_not_count_against_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        for worktree in [&a, &b] {
+            mark_worker_starting(worktree).unwrap();
+        }
+        let listed: Vec<String> = [&a, &b]
+            .iter()
+            .map(|p| p.canonicalize().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(busy_worktrees(&listed, None).len(), 2);
+        // Named the way a caller might hold it, not the way git prints it.
+        assert_eq!(busy_worktrees(&listed, Some(&a)), vec![listed[1].clone()]);
+    }
+
+    #[test]
+    fn a_dispatch_lock_is_released_with_its_holder_and_keeps_others_out_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        // A lock file left on disk is not a lock: only a handle holding it is.
+        let lock = dir.path().join(".claude").join("adjutant-dispatch.lock");
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        std::fs::File::create(&lock).unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(with_dispatch_lock(dir.path(), || 7).unwrap(), 7);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+
+        // While one caller is inside, another handle on the same file cannot take it.
+        with_dispatch_lock(dir.path(), || {
+            let other = std::fs::OpenOptions::new().write(true).open(&lock).unwrap();
+            assert!(matches!(
+                other.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+        })
+        .unwrap();
+
+        // And once it is out, the next one does not wait.
+        let started = std::time::Instant::now();
+        with_dispatch_lock(dir.path(), || ()).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 }

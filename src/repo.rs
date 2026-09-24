@@ -91,6 +91,30 @@ pub fn main_worktree(start: Option<&Path>) -> Result<String, String> {
     Err("cannot locate the main checkout".to_string())
 }
 
+/// The worktrees hanging off `main`, the main checkout itself left out, as absolute paths.
+///
+/// Left out because the main checkout is where the hub sits rather than a worker. A caller
+/// that has to account for a worker put there anyway adds it back itself.
+///
+/// An error when git cannot answer, rather than an empty list: the question is "which of
+/// these is busy", and a list that failed to come back read as "none" would let a dispatch
+/// past `maxWorkers` whenever git hiccupped.
+pub fn linked_worktrees(main: &str) -> Result<Vec<String>, String> {
+    let out = git(&["worktree", "list", "--porcelain"], Some(Path::new(main)))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cannot list the worktrees of {main}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .filter(|path| Path::new(path) != Path::new(main))
+        .map(str::to_string)
+        .collect())
+}
+
 /// `owner/name` from a remote URL.
 ///
 /// Taking the *last two* path segments makes `git@host:o/r`, `https://host/o/r`,
@@ -351,6 +375,14 @@ fn normalise(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_worktree_list_git_cannot_give_is_an_error_not_an_empty_list() {
+        // Empty would read as "no worker is running here", which is what lets a dispatch
+        // past the limit.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(linked_worktrees(&dir.path().to_string_lossy()).is_err());
+    }
 
     #[test]
     fn nwo_takes_the_last_two_segments_of_every_url_shape() {

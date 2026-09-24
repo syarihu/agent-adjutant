@@ -56,7 +56,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
 | `adjutant send --subject … --body …` | hub にメッセージを送信（本文は stdin 可） |
-| `adjutant work --worktree … --title … [--resume]` | 新しいタブを開いて worker を起動（`--resume` はその worktree に保存されたセッションを再開） |
+| `adjutant work --worktree … --title … [--resume]` | 新しいタブを開いて worker を起動（`--resume` はその worktree に保存されたセッションを再開）。`maxWorkers` の数だけ worker が動いていると、何も起動せずに終了コード 3 で返る |
 | `adjutant worker --worktree … [--resume]` | 自身を worker として起動（`work` のタブ内で実行されるコマンド。worktree の中で `--resume` を付けると保存されたセッションを再開） |
 | `adjutant tell --worktree … --subject …` | 指定 worktree の worker にメッセージを送信 |
 | `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
@@ -160,9 +160,10 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
 | `hubAutoResumeHours` | なし（数値。`0` で無効） | `3`（この時間以内に終了した hub は `adj hub` で自動的に再開する） |
+| `maxWorkers` | なし（1以上の整数） | 制限なし（チェックアウトごとに数える。gate で待っている worker と起動中の worker は枠を使い、止まった worker は使わない） |
 | `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
 
-キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。ただしコマンドではない2つの設定は別の値を取ります。`startupDashboard` は `true` / `false` で、`hubAutoResumeHours` は数値です。`hubAutoResumeHours` を無効にするには `0` を指定します。`false` を指定すると `warnings` に報告され、既定値が使われます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
+キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。ただしコマンドではない2つの設定は別の値を取ります。`startupDashboard` は `true` / `false` で、`hubAutoResumeHours` は数値です。`hubAutoResumeHours` を無効にするには `0` を指定します。`false` を指定すると `warnings` に報告され、既定値が使われます。`maxWorkers` は整数で、それ以外の値は `warnings` に報告されて制限なしになります。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
 
 `{pid}` と `{tty}` は OS 側から見たセッションの名前（プロセスIDと、そのセッションが載っている端末デバイス `ttys004`）であって、**ターミナル自身の pane / window の id ではありません**。そのため `focus` / `close` / `wake` のテンプレートは、動く前にその id を自分で引き当てる必要があります。`{pid}` を pane id を期待する引数（`--pane-id` など）に渡すと別の番号空間を指すことになり、その番号を持っていた無関係な pane に対して動作します。id 解決を行うラッパースクリプトを指定してください。`close` を「実行できたら成功」とみなさないのも同じ理由です。テンプレートは終了コードだけで判断されるため、adjutant は close 後に**その worker が実際に居なくなったこと**を確認してから記録を消し、居たままなら exit 1 を返します。
 

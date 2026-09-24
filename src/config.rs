@@ -54,7 +54,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-const SETTING_KEYS: [&str; 14] = [
+const SETTING_KEYS: [&str; 15] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -80,6 +80,9 @@ const SETTING_KEYS: [&str; 14] = [
     // How recently a hub has to have ended for a plain `adj hub` to bring it back rather than
     // start a new one. About how somebody works, like the one above.
     "hubAutoResumeHours",
+    // How many workers may run at once. A property of the machine — its memory, its CPU, the
+    // agent's rate limit — and not of any one repository's work.
+    "maxWorkers",
 ];
 
 /// The window a plain `adj hub` resumes in, when nothing is configured.
@@ -114,7 +117,7 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
         // fell through to the string default below, and every `true` anybody wrote was
         // reported as the wrong shape and dropped — a setting that warns when used correctly.
         "startupDashboard" => &["true", "false"],
-        "hubAutoResumeHours" => &["a number"],
+        "hubAutoResumeHours" | "maxWorkers" => &["a number"],
         _ => &["a string"],
     }
 }
@@ -523,6 +526,10 @@ pub struct Settings {
     /// How many hours after a hub ended a plain `adj hub` resumes it instead of starting a
     /// new one. `0` turns that off, leaving `--resume` as the only way back.
     pub hub_auto_resume_hours: f64,
+    /// How many live workers one checkout may have at once. `adj work` refuses past it.
+    /// `None` = no limit, which is what an empty config has always meant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_workers: Option<u32>,
 }
 
 impl Default for Settings {
@@ -541,6 +548,7 @@ impl Default for Settings {
             worktree_pattern: None,
             startup_dashboard: true,
             hub_auto_resume_hours: DEFAULT_HUB_AUTO_RESUME_HOURS,
+            max_workers: None,
         }
     }
 }
@@ -763,6 +771,7 @@ fn resolve_settings(
         // hub reading a `settings` block that disagrees with the flag it was started under.
         startup_dashboard: startup_dashboard(configured_dashboard.as_ref(), startup_flag),
         hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
+        max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
     }
 }
 
@@ -808,6 +817,26 @@ fn auto_resume_hours(configured: Option<&Value>, warnings: &mut Vec<String>) -> 
             DEFAULT_HUB_AUTO_RESUME_HOURS
         }
         None => DEFAULT_HUB_AUTO_RESUME_HOURS,
+    }
+}
+
+/// The worker limit. Anything but a whole number of 1 or more is said and dropped, and dropped
+/// means no limit: `0` would refuse every dispatch, which nobody writes on purpose, and
+/// rounding `2.5` either way is guessing at what was meant.
+fn max_workers(configured: Option<&Value>, warnings: &mut Vec<String>) -> Option<u32> {
+    let value = configured?;
+    // A non-number was already reported by `check_shapes`.
+    if !value.is_number() {
+        return None;
+    }
+    match value.as_u64().filter(|n| *n >= 1).map(u32::try_from) {
+        Some(Ok(n)) => Some(n),
+        _ => {
+            warnings.push(format!(
+                "maxWorkers is {value} but has to be a whole number of 1 or more: not limiting workers"
+            ));
+            None
+        }
     }
 }
 
@@ -1184,6 +1213,7 @@ mod tests {
             json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                    "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
                    "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
+                   "maxWorkers": 3,
                    "hubResumeRunner": "again {name} {sessionId}",
                    "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false,
                    "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
@@ -1202,6 +1232,7 @@ mod tests {
             "agentEnv",
             "startupDashboard",
             "hubAutoResumeHours",
+            "maxWorkers",
         ] {
             assert!(text.get(key).is_some(), "{key} is missing from {text}");
         }
@@ -1216,6 +1247,7 @@ mod tests {
             "worktree_pattern",
             "agent_env",
             "startup_dashboard",
+            "max_workers",
         ] {
             assert!(
                 text.get(key).is_none(),
@@ -1712,6 +1744,29 @@ mod tests {
             DEFAULT_HUB_AUTO_RESUME_HOURS
         );
         assert!(warning_about(&warnings, "hubAutoResumeHours").contains("a number"));
+    }
+
+    #[test]
+    fn the_worker_limit_is_a_whole_number_and_anything_else_means_no_limit() {
+        let (_, settings, _) = resolve(a_repo(json!({})), "acme/app");
+        assert_eq!(settings.max_workers, None);
+
+        let (_, settings, warnings) = resolve(a_repo(json!({"maxWorkers": 4})), "acme/app");
+        assert_eq!(settings.max_workers, Some(4));
+        assert!(
+            !warnings.iter().any(|w| w.contains("maxWorkers")),
+            "{warnings:?}"
+        );
+
+        for bad in [json!(0), json!(-1), json!(2.5)] {
+            let (_, settings, warnings) = resolve(a_repo(json!({"maxWorkers": bad})), "acme/app");
+            assert_eq!(settings.max_workers, None, "{bad}");
+            assert!(warning_about(&warnings, "maxWorkers").contains("1 or more"));
+        }
+
+        let (_, settings, warnings) = resolve(a_repo(json!({"maxWorkers": "4"})), "acme/app");
+        assert_eq!(settings.max_workers, None);
+        assert!(warning_about(&warnings, "maxWorkers").contains("a number"));
     }
 
     #[test]

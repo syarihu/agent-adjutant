@@ -9,6 +9,7 @@
 use serde_json::{Value, json};
 
 use super::{Context, Delivered};
+use crate::config;
 use crate::messaging::{self, Message};
 use crate::task::{self, Status, Task};
 
@@ -40,6 +41,12 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
     let id = task::claim_id(&dir(ctx), &stamp, &title)?;
     let mut defaults = with_defaults(input, &id, &stamp)?;
     defaults["title"] = json!(title);
+    // An instruction to this function rather than part of the record.
+    let hand = defaults
+        .as_object_mut()
+        .and_then(|fields| fields.remove("handOver"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
     task.order = next_order(ctx);
 
@@ -48,7 +55,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
     // task nothing can look up.
     task::save(&dir(ctx), &task)?;
     let handed = match task.status {
-        Status::Queued => Some(hand_over(ctx, &task)?),
+        Status::Queued if hand => Some(hand_over(ctx, &task)?),
         _ => None,
     };
     Ok((task, handed))
@@ -106,6 +113,24 @@ pub fn hand_over(ctx: &Context, task: &Task) -> Result<Delivered, String> {
     super::deliver_to_hub(ctx, &message)
 }
 
+/// Ask the hub to start the next queued task if a worker slot is free.
+///
+/// For the one case the hub's own procedure cannot see: a worker that died without sending
+/// `done`. Its slot came free and nothing woke the hub to say so. A message rather than a
+/// bare wake, because a hub that is woken and finds its inbox empty goes straight back to
+/// waiting — and one that is not running should find this waiting when it starts.
+pub fn nudge(ctx: &Context) -> Result<Delivered, String> {
+    let message = Message {
+        from: "dashboard".to_string(),
+        // None, for the reason `hand_over` gives.
+        worktree: None,
+        kind: "next".to_string(),
+        subject: "start the next queued task if a worker slot is free".to_string(),
+        body: String::new(),
+    };
+    super::deliver_to_hub(ctx, &message)
+}
+
 fn next_order(ctx: &Context) -> u32 {
     task::list(&dir(ctx))
         .iter()
@@ -155,6 +180,7 @@ pub struct AddArgs<'a> {
     pub worktree_name: Option<&'a str>,
     pub ask_first: bool,
     pub queue: bool,
+    pub waiting_in: Option<&'a str>,
     pub json: bool,
 }
 
@@ -170,8 +196,17 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         "parent": args.parent,
         "worktreeName": args.worktree_name,
         "autoStart": !args.ask_first,
-        "status": if args.queue { "queued" } else { "backlog" },
+        "status": if args.queue || args.waiting_in.is_some() { "queued" } else { "backlog" },
     });
+    // The hub writing down work it could not start yet. Queued, so the next free slot takes
+    // it; but not handed over, because the inbox it would land in is the caller's own, and a
+    // hub that messages itself is woken mid-turn to be told what it just did.
+    if let Some(worktree) = args.waiting_in {
+        let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+        input["worktree"] = json!(worktree);
+        input["note"] = json!("worker の枠待ち（worktree は用意済み）");
+        input["handOver"] = json!(false);
+    }
     if let Some(title) = args.title {
         input["title"] = json!(title);
     }

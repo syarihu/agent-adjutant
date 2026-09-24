@@ -70,7 +70,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant config` | the resolved config for this repo, as JSON |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |
 | `adjutant send --subject … --body …` | hand a message to the hub (body may come on stdin) |
-| `adjutant work --worktree … --title … [--resume]` | open a tab and start a worker there (`--resume`: reopen the worker session saved in that worktree) |
+| `adjutant work --worktree … --title … [--resume]` | open a tab and start a worker there (`--resume`: reopen the worker session saved in that worktree). Exits 3 without starting anything when `maxWorkers` workers are already running |
 | `adjutant worker --worktree … [--resume]` | become the worker (what `work` opens a tab to run; `--resume` inside a worktree reopens its saved session) |
 | `adjutant tell --worktree … --subject …` | leave a message for that worktree's worker |
 | `adjutant outbox [--clear]` | what the hub has left for the worker here |
@@ -259,11 +259,14 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `hubAutoResumeHours` | — (a number, `0` to turn it off) | `3` |
 | `startupDashboard` | — (`true` / `false`) | `true` |
 | | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
+| `maxWorkers` | — (a whole number, 1 or more) | no limit |
+| | | *counted per checkout; a worker parked at a gate or still starting up takes a slot, a dead one does not* |
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
 different answer. The two settings that are not commands take their own values instead:
-`startupDashboard` is `true` / `false`, and `hubAutoResumeHours` is a number, turned off by
-`0` — a `false` there is reported in `warnings` and the default is used. `terminal` and the `wake` family merge key by key, so a repository can
+`startupDashboard` is `true` / `false`, `hubAutoResumeHours` is a number, turned off by
+`0` — a `false` there is reported in `warnings` and the default is used — and `maxWorkers`
+is a whole number, where anything else is reported and means no limit. `terminal` and the `wake` family merge key by key, so a repository can
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
 
