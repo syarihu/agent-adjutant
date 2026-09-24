@@ -779,6 +779,11 @@ If proctor is unavailable, fall back to: `git worktree list`, then for each bran
 hub は worktree の中に立たないので、「自分の足元だけは消せない」問題は起きない。**片付けは
 hub の仕事**で、ここが唯一の削除経路。
 
+**Leave out any worktree a queued task is waiting in** (`adj task list --worktree <path>
+--json` has a record whose `status` is `queued`). A worktree prepared for a worker that was
+turned away for a slot has no commits and no session, so it looks removable — but the queue
+will start a worker there when a slot frees up.
+
 Show the removable ones and ask whether to clean up. On yes, for each:
 
 ```bash
@@ -867,7 +872,9 @@ nothing about any editor.
 
    1件も無ければ何もしない。
 2. そのレコードを「ダッシュボードから来た依頼」として回す（`adj task show` の確認も同じ）。
-   `worktree` が書いてあれば Step 3 だけ、無ければ Step 2 から。`note` が「--resume で再開する」
+   `worktree` が書いてあって、その worktree が**まだある**なら Step 3 だけ。書いていない、または
+   消えていたら（`git worktree list` に無い）、「4. worker を起動する」の worktree を作るところから
+   やり直す。`note` が「--resume で再開する」
    なら `adjutant work --resume` で立てる（通常の `adjutant work` で立てると、保存された会話が
    消える）。
 3. `adjutant work` がまた 3 で返ったら、枠はまだ埋まっている。レコードはそのまま、
@@ -1546,7 +1553,7 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
   「次を流す」で先に着手済みなら `dispatched` になっている。受信箱のメッセージと board の操作は
   別経路なので、**レコードの `status` が審判**。
 - **`worktree` が書いてあるレコードは枠待ちで積んだもの**（Step 3 の終了コード 3）。worktree と
-  指示書はもうあるので、Step 3 の `adjutant work` だけを打つ。
+  指示書がまだあれば、Step 3 の `adjutant work` だけを打つ。worktree が消えていたら作り直す。
 
 - 受信箱のメッセージは、レコードに書き戻してから ack する。
 
