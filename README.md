@@ -443,6 +443,15 @@ there is something only a person can check, the worker wrote something under `un
 the task's stop point covers it. A gate that waits says which of those fired in
 `stoppedBy` (`round-limit`, `verify-failed`, `manual-check`, `unsure`, `stop-at`).
 
+On the board, a card carries a chip for the latest review and check its worker recorded
+(`レビュー 3R ✓ 収束`, `verify ✓`, `手で見る 2件`; a failure is red and marked ✗), with a dot
+until the record has been opened. Which records have been opened is kept in the browser's
+localStorage: it is one reader's state, not the task's. The drawer lists each record with a
+short summary and a button that opens it in full, where it can be sent back with a comment
+— that answer goes to the worktree's outbox. A gate that stopped the worker says which rule
+stopped it, on the card, in the drawer and in the review view. The new-task form takes the
+stop point.
+
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.
 Anything that changes state needs it in a header as well, and needs an `Origin` naming this

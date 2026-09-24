@@ -90,6 +90,15 @@ main { flex:1; overflow:hidden; position:relative; }
   -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; }
 .card .state { white-space:normal; overflow-wrap:anywhere; align-items:flex-start; }
 .card .state > span:first-child { flex:none; }
+.card .stopwhy { font-size:11.5px; color:var(--ink-2); overflow-wrap:anywhere; }
+.card .stopwhy.bad { color:var(--critical); }
+.chips { display:flex; flex-wrap:wrap; gap:4px; }
+.chip { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; font-size:11px;
+  color:var(--ink-2); border:1px solid var(--border); border-radius:999px; padding:0 7px;
+  background:transparent; }
+.chip.good { color:var(--good); border-color:color-mix(in oklab,var(--border) 40%,var(--good)); }
+.chip.bad { color:var(--critical); border-color:var(--critical); }
+.unread { width:7px; height:7px; border-radius:50%; background:var(--accent); flex:none; }
 .card .acts { display:flex; gap:4px; flex-wrap:wrap; margin-top:2px; }
 .card .acts button { border:1px solid var(--border); background:transparent; color:var(--ink-2);
   border-radius:5px; padding:1px 7px; font-size:11px; }
@@ -117,6 +126,14 @@ main { flex:1; overflow:hidden; position:relative; }
   border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
 #task-drawer .d-gate-banner button { align-self:flex-start; border:0; background:var(--accent); color:#fff;
   border-radius:6px; padding:4px 10px; font-weight:600; font-size:12px; cursor:pointer; }
+#task-drawer .d-record { display:flex; flex-direction:column; gap:4px; padding:8px 0;
+  border-top:1px solid var(--hairline); }
+#task-drawer .d-label + .d-record { border-top:0; padding-top:2px; }
+#task-drawer .d-record .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+#task-drawer .d-record .sum { font-size:12.5px; color:var(--ink); overflow-wrap:anywhere; }
+#task-drawer .d-record .sum.bad { color:var(--critical); }
+#task-drawer .d-record .when { font-size:11.5px; color:var(--muted); }
+#task-drawer .d-record button { align-self:flex-start; }
 
 
 /* ── the review view ── */
@@ -302,6 +319,12 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
               <option value="verify">動作確認まで</option>
               <option value="pr" selected>PR 作成まで</option>
               <option value="review">レビュー対応まで</option>
+            </select></label>
+          <label class="field"><span>止める所</span>
+            <select name="stopAt">
+              <option value="plan" selected>計画の承認だけ待つ</option>
+              <option value="diff">計画と差分レビューを待つ</option>
+              <option value="all">計画・差分・動作確認を待つ</option>
             </select></label>
           <label class="field"><span>分岐元</span>
             <input type="text" name="base" placeholder="既定 (baseBranch)"></label>
@@ -634,6 +657,90 @@ function columnEl(col) {
 }
 
 const DONE_WHEN = { 'report-only':'調査のみ', verify:'動作確認まで', pr:'PR作成まで', review:'レビュー対応まで' };
+const STOP_AT = { plan:'計画の承認だけ待つ', diff:'計画と差分レビューを待つ', all:'計画・差分・動作確認を待つ' };
+
+/* The rules a worker's procedure stops a diff or verify gate by, in the words the board
+   shows. The second value marks the two that mean something went wrong, rather than that a
+   person was asked for. */
+const STOP_RULE = {
+  'round-limit':   ['レビューが上限ラウンドに達して must が残った', true],
+  'verify-failed': ['verify が失敗して直せなかった', true],
+  'manual-check':  ['人が見る確認がある', false],
+  'unsure':        ['迷っている点がある', false],
+  'stop-at':       ['タスクの止める所に含まれている', false],
+};
+const stopWhy = g => (g.stoppedBy || []).map(r => (STOP_RULE[r] || [r])[0]);
+const stopBad = g => (g.stoppedBy || []).some(r => STOP_RULE[r]?.[1]);
+
+/* ── records: what a worker wrote down without stopping ──
+   Which ones a person has opened lives in this browser's localStorage. It is one person's
+   reading, not the task's state: writing it to the server would give a second reader's
+   board a dot they never cleared, and the worker nothing it could use. */
+const SEEN_KEY = () => `adj.seenRecords.${state.repo || ''}`;
+let seenCache = null, seenCacheKey = null;
+function seenRecords() {
+  if (seenCache && seenCacheKey === SEEN_KEY()) return seenCache;
+  seenCacheKey = SEEN_KEY();
+  try { seenCache = new Set(JSON.parse(localStorage.getItem(SEEN_KEY()) || '[]')); }
+  catch { seenCache = new Set(); }
+  return seenCache;
+}
+const isUnread = r => !seenRecords().has(r.id);
+function markSeen(id) {
+  const seen = seenRecords();
+  if (seen.has(id)) return;
+  seen.add(id);
+  // Only the ids still on the board: a finished task's records leave /api/state, and the list
+  // would otherwise only grow.
+  const live = new Set(allRecords().map(r => r.id));
+  try { localStorage.setItem(SEEN_KEY(), JSON.stringify([...seen].filter(x => live.has(x)))); }
+  catch { /* private mode or full: the dot comes back next load, nothing worse */ }
+}
+const allRecords = () => (state.tasks || []).flatMap(t => t.records || []);
+const recordById = id => allRecords().find(r => r.id === id);
+
+/* One record in a few words, and whether it went well: `[text, tone]`, tone being `good`,
+   `bad` or ''. Tone always comes with ✓ or ✗ in the text, so colour never says it alone. */
+function recordSummary(r) {
+  if (r.kind === 'diff') {
+    const rounds = r.reviewRounds || [];
+    const openMust = (r.findings || []).filter(f => f.severity === 'must' && f.outcome === 'open').length;
+    const last = rounds[rounds.length - 1];
+    if (openMust) return [`レビュー ${rounds.length ? `${rounds.length}R ` : ''}✗ must 残り ${openMust}件`, 'bad'];
+    if (!rounds.length) return ['レビュー', ''];
+    // Converged is a last round with no must in it; anything else stopped short.
+    return last.must ? [`レビュー ${rounds.length}R ✗ 未収束`, 'bad'] : [`レビュー ${rounds.length}R ✓ 収束`, 'good'];
+  }
+  if (r.kind === 'verify') {
+    const commands = r.commands || [];
+    const failed = commands.filter(c => c.result === 'fail').length;
+    if (!commands.length) return ['動作確認', ''];
+    return failed ? [`verify ✗ ${failed}件失敗`, 'bad'] : ['verify ✓', 'good'];
+  }
+  return [kindOf(r.kind)[0], ''];
+}
+
+/* The chips a card carries: the latest record of each kind, since a review done again after a
+   send-back replaces the one before it, and the checks it left for a person. */
+function chipsOf(task) {
+  const latest = {};
+  for (const r of task.records || []) latest[r.kind] = r;
+  const chips = [];
+  for (const r of Object.values(latest)) {
+    const [text, tone] = recordSummary(r);
+    chips.push({ id: r.id, text: text + ((r.answers || []).length ? ' ↩' : ''), tone, unread: isUnread(r) });
+    if (r.kind === 'verify' && (r.manual || []).length) {
+      chips.push({ id: r.id, text: `手で見る ${r.manual.length}件`, tone: '', unread: false });
+    }
+  }
+  return chips;
+}
+
+function openRecord(id) {
+  focused = id;
+  setView('review');
+  renderReview();
+}
 
 function cardEl(task, col) {
   const el = document.createElement('div');
@@ -655,6 +762,16 @@ function cardEl(task, col) {
     const [label, colour] = kindOf(gate.kind);
     h += `<div class="meta"><span class="tag" onclick="event.stopPropagation();goToGate('${gate.id}')" style="cursor:pointer" title="クリックしてレビュー画面を開く"><span class="dot" style="background:${colour}"></span>${label}</span>
       <span>${ago(gate.openedAt)}から待ち</span></div>`;
+    const why = stopWhy(gate);
+    if (why.length) {
+      h += `<div class="stopwhy${stopBad(gate) ? ' bad' : ''}">${stopBad(gate) ? '⚠ ' : ''}止めた理由: ${esc(why.join(' / '))}</div>`;
+    }
+  }
+  const chips = chipsOf(task);
+  if (chips.length) {
+    h += `<div class="chips">${chips.map(c =>
+      `<button type="button" class="chip${c.tone ? ' ' + c.tone : ''}" data-record="${esc(c.id)}" title="${c.unread ? '未読 — ' : ''}クリックして記録を開く">` +
+      `${c.unread ? '<span class="unread" aria-label="未読"></span>' : ''}${esc(c.text)}</button>`).join('')}</div>`;
   }
   const meta = [DONE_WHEN[task.doneWhen] || task.doneWhen];
   // Only for a card that is the worker's current run: an old done card for the same worktree
@@ -704,6 +821,8 @@ function cardEl(task, col) {
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('focus', b.dataset.focus); }));
   el.querySelectorAll('[data-close]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('close', b.dataset.close); }));
+  el.querySelectorAll('[data-record]').forEach(b =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); openRecord(b.dataset.record); }));
 
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.tag')) return;
@@ -798,8 +917,33 @@ function renderDrawer() {
         <span style="font-weight:600;font-size:13px">${esc(gate.title)}</span>
       </div>
       <div style="color:var(--ink-2);font-size:12px">${ago(gate.openedAt)}から確認待ち</div>
+      ${stopWhy(gate).length ? `<div class="state${stopBad(gate) ? ' bad' : ''}" style="font-size:12px;white-space:normal"><span>${stopBad(gate) ? '⚠' : '■'}</span>止めた理由: ${esc(stopWhy(gate).join(' / '))}</div>` : ''}
       <button type="button" onclick="goToGate('${gate.id}')">レビュー画面で判定する →</button>
     </div>`;
+  }
+
+  // Newest first: the one the worker left last is the one that describes where it is now.
+  const records = [...(task.records || [])].reverse();
+  if (records.length) {
+    h += `<div class="d-section"><div class="d-label">記録（止めずに進んだもの）</div>` +
+      records.map(r => {
+        const [label, colour] = kindOf(r.kind);
+        const [text, tone] = recordSummary(r);
+        const bits = [];
+        if ((r.findings || []).length) {
+          const declined = r.findings.filter(f => f.outcome === 'declined').length;
+          bits.push(`指摘 ${r.findings.length}件` + (declined ? `（誤検知 ${declined}件）` : ''));
+        }
+        if ((r.manual || []).length) bits.push(`手で見る ${r.manual.length}件`);
+        if ((r.answers || []).length) bits.push(`差し戻し ${r.answers.length}回`);
+        return `<div class="d-record">
+          <div class="row">${isUnread(r) ? '<span class="unread" aria-label="未読"></span>' : ''}
+            <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+            <span class="sum${tone === 'bad' ? ' bad' : ''}">${esc(text)}</span></div>
+          <div class="when">${ago(r.openedAt)}に記録${bits.length ? ' · ' + esc(bits.join(' · ')) : ''}</div>
+          <button type="button" class="iconbtn" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
+        </div>`;
+      }).join('') + `</div>`;
   }
 
   if (task.note) {
@@ -868,9 +1012,15 @@ function renderDrawer() {
     h += `</div>`;
   }
 
-  h += `<div class="d-section">
-    <div class="d-label">着手設定</div>
-    <div class="d-value">${task.autoStart ? '確認なしで着手' : '着手前に確認が必要'}</div>
+  h += `<div class="d-grid">
+    <div class="d-section">
+      <div class="d-label">止める所</div>
+      <div class="d-value">${esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)}</div>
+    </div>
+    <div class="d-section">
+      <div class="d-label">着手設定</div>
+      <div class="d-value">${task.autoStart ? '確認なしで着手' : '着手前に確認が必要'}</div>
+    </div>
   </div>`;
 
   const acts = [];
@@ -895,6 +1045,8 @@ function renderDrawer() {
     b.addEventListener('click', () => hand(b.dataset.hand)));
   drawer.querySelectorAll('[data-move]').forEach(b =>
     b.addEventListener('click', () => move(b.dataset.move, b.dataset.to)));
+  drawer.querySelectorAll('[data-record]').forEach(b =>
+    b.addEventListener('click', () => openRecord(b.dataset.record)));
 }
 
 
@@ -969,6 +1121,7 @@ async function submitForm(e) {
     body: bodyText,
     kind: f.get('kind'),
     doneWhen: f.get('doneWhen'),
+    stopAt: f.get('stopAt'),
     autoStart: f.get('autoStart') === 'true',
     status,
   };
@@ -977,7 +1130,8 @@ async function submitForm(e) {
     const value = (f.get(key) || '').trim();
     if (value) body[key] = value;
   }
-  const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` + (status === 'queued' ? ' --queue' : '');
+  const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` +
+    (body.stopAt && body.stopAt !== 'plan' ? ` --stop-at ${body.stopAt}` : '') + (status === 'queued' ? ' --queue' : '');
   try {
     const data = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
     note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));
@@ -1238,32 +1392,45 @@ function renderReview() {
     rail.appendChild(b);
   }
 
-  const g = gates.find(x => x.id === focused) || gates[0];
+  // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
+  // is what waits on a person, and a record does not.
+  const g = gates.find(x => x.id === focused) || recordById(focused) || gates[0];
   if (!g) {
     pane.innerHTML = '<div class="empty-state">対応待ちの判定はありません。<br>ボード画面でお待ちください。</div>';
     if (view === 'review') location.hash = '';
     return;
   }
+  // Whether this is what was on screen: a comment is only carried across a redraw of the same one.
+  const same = g.id === focused;
   focused = g.id;
+  const record = g.wait === false;
+  if (record && view === 'review') markSeen(g.id);
   // A permalink, so "反映しといたから見てね" can point at this one card.
   if (view === 'review') location.hash = 'gate/' + g.id;
 
   const wasDecidedOpen = pane.querySelector('details.decided')?.open;
   const commentEl = document.getElementById('gate-comment');
-  const commentVal = commentEl ? commentEl.value : '';
+  // A comment written for something that has since left the board (a gate answered elsewhere,
+  // a record whose task finished) is not carried over to whatever is shown in its place.
+  const commentVal = commentEl && same ? commentEl.value : '';
   const isCommentFocused = document.activeElement === commentEl;
   const paneScroll = pane.scrollTop;
 
   const [label, colour] = kindOf(g.kind);
   let h = `<h1>${esc(g.title)}</h1><div class="sub">
     <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+    ${record ? '<span class="tag">記録 — worker は止まらずに進んだ</span>' : ''}
     <span class="mono2">${esc(g.worktree.split('/').pop())}</span>
-    <span>${ago(g.openedAt)}から待ち</span>
+    <span>${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'}</span>
     <span class="mono2" style="color:var(--muted)">#gate/${esc(g.id)}</span></div>`;
 
+  if (stopWhy(g).length) {
+    h += `<div class="panel"><h3>止めた理由</h3><ul>${stopWhy(g).map(w =>
+      `<li${stopBad(g) ? ' style="color:var(--critical)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>`;
+  }
   // verify is not a judgement — it is the door to work that happens outside the browser,
   // so the way in comes first and the buttons wait at the bottom for the way back.
-  if (g.kind === 'verify') {
+  if (g.kind === 'verify' && !record) {
     h += `<div class="work">
       <button class="big" data-ide="${esc(g.worktree)}">IDE で開く</button>
       <span class="mono2">${esc(g.worktree)}</span>
@@ -1282,11 +1449,26 @@ function renderReview() {
         <button class="pick" data-choice="${esc(c.id)}">これで進める</button>
       </div>`).join('') + `</div></div>`;
   }
+  h += structuredPanels(g);
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
   if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
   if (g.decided) h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+
+  if (record) {
+    h += `<div class="panel"><h3>差し戻す</h3>` +
+      ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
+        `<li><span style="color:var(--muted)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
+      `<div class="field" style="margin-bottom:12px"><span>コメント(何を直してほしいか)</span>
+        <textarea id="gate-comment"></textarea></div>
+      <div class="decide"><button class="changes" onclick="answer('changes')">差し戻す</button></div>
+      <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+        worker はこの記録を残して先に進んでいます。差し戻すと <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。記録はそのまま残り、差し戻しが追記されます。</p></div>`;
+    pane.innerHTML = h;
+    restoreComment(pane, commentVal, isCommentFocused, paneScroll);
+    return;
+  }
 
   h += `<div class="panel"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
     // Past two rounds a gate has become a conversation, and a conversation is faster where
@@ -1307,18 +1489,71 @@ function renderReview() {
     b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
   pane.querySelectorAll('.pick[data-choice]').forEach(b =>
     b.addEventListener('click', () => answer('choice', b.dataset.choice)));
-  const newCommentEl = document.getElementById('gate-comment');
-  if (newCommentEl) {
-    if (commentVal) newCommentEl.value = commentVal;
-    if (isCommentFocused) newCommentEl.focus();
+  restoreComment(pane, commentVal, isCommentFocused, paneScroll);
+}
+
+/* What a redraw would otherwise lose: the comment being typed, and where the pane was. */
+function restoreComment(pane, value, wasFocused, scroll) {
+  const el = document.getElementById('gate-comment');
+  if (el) {
+    if (value) el.value = value;
+    if (wasFocused) el.focus();
   }
-  pane.scrollTop = paneScroll;
+  pane.scrollTop = scroll;
+}
+
+/* The structured fields a diff or verify gate carries beside its prose, open or recorded. */
+const OUTCOME = { open:['未対応', 0], fixed:['修正済', 1], declined:['誤検知', 2] };
+function structuredPanels(g) {
+  let h = '';
+  const rounds = g.reviewRounds || [];
+  if (rounds.length) {
+    h += `<div class="panel"><h3>セルフレビュー ${rounds.length}ラウンド</h3><div class="body"><table>
+      <tr><th>R</th><th>エンジン</th><th>must</th><th>want</th><th>scope</th><th>誤検知</th></tr>` +
+      rounds.map((r, i) => `<tr><td>R${i + 1}</td><td>${esc(r.engine)}</td><td>${r.must || 0}</td>` +
+        `<td>${r.want || 0}</td><td>${r.scope || 0}</td><td>${r.falsePositives || 0}</td></tr>`).join('') +
+      `</table></div></div>`;
+  }
+  const findings = [...(g.findings || [])]
+    .sort((a, b) => (OUTCOME[a.outcome]?.[1] ?? 3) - (OUTCOME[b.outcome]?.[1] ?? 3));
+  if (findings.length) {
+    h += `<div class="panel"><h3>指摘</h3><div class="body"><ul>` +
+      findings.map(f => {
+        const openMust = f.outcome === 'open' && f.severity === 'must';
+        return `<li${openMust ? ' style="color:var(--critical)"' : ''}><b>[${esc(f.severity)}]</b> ` +
+          `${f.location ? `<code>${esc(f.location)}</code> ` : ''}${esc(f.text)} — ` +
+          `${esc(OUTCOME[f.outcome]?.[0] || f.outcome)}${f.reason ? `（${esc(f.reason)}）` : ''}</li>`;
+      }).join('') + `</ul></div></div>`;
+  }
+  const commands = g.commands || [];
+  if (commands.length) {
+    h += `<div class="panel"><h3>verify</h3>` + commands.map(c => {
+      const failed = c.result === 'fail';
+      const head = `<span class="state ${failed ? 'bad' : 'good'}"><span>${failed ? '✗' : '✓'}</span>` +
+        `<code>${esc(c.command)}</code></span>${c.time ? ` <span style="color:var(--muted)">${esc(c.time)}</span>` : ''}`;
+      // A failure is what a person came to read, so it comes open; a pass stays folded.
+      return c.output
+        ? `<details${failed ? ' open' : ''} style="margin-bottom:6px"><summary style="cursor:pointer">${head}</summary>` +
+          `<div class="diff" style="margin-top:6px"><div>${esc(c.output).split('\n').join('</div><div>')}</div></div></details>`
+        : `<div style="margin-bottom:6px">${head}</div>`;
+    }).join('') + `</div>`;
+  }
+  if ((g.manual || []).length) {
+    h += `<div class="panel"><h3>人が見る確認</h3><ul>${g.manual.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
+  }
+  return h;
 }
 
 async function answer(decision, choice) {
-  const g = (state.gates || []).find(x => x.id === focused);
+  const g = (state.gates || []).find(x => x.id === focused) || recordById(focused);
   if (!g) return;
   const comment = document.getElementById('gate-comment')?.value.trim();
+  // Sending back something the worker has moved past, without saying what is wrong, gives it
+  // nothing to act on.
+  if (g.wait === false && !comment) {
+    note(`adj gate answer --id ${g.id} --decision changes`, true, '差し戻す理由をコメントに書いてください');
+    return;
+  }
   const line = `adj gate answer --id ${g.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
   try {
     const data = await api(`/api/gates/${encodeURIComponent(g.id)}`, {
@@ -1331,7 +1566,9 @@ async function answer(decision, choice) {
       : `${g.worktree.split('/').pop()} の outbox に追記` +
         (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
-    focused = null;
+    // A record stays, with this answer appended, so it stays in view to show that it went.
+    if (g.wait === false) document.getElementById('gate-comment').value = '';
+    else focused = null;
     await refresh();
   } catch (e) { note(line, true, e.message); }
 }
@@ -1374,6 +1611,9 @@ document.addEventListener('keydown', e => {
   const i = gates.findIndex(g => g.id === focused);
   if (e.key === 'j' && i < gates.length - 1) { focused = gates[i + 1].id; renderReview(); }
   if (e.key === 'k' && i > 0) { focused = gates[i - 1].id; renderReview(); }
+  // A record on screen is not in the queue these keys work through, and approving one is not
+  // something a record can take.
+  if (i < 0) return;
   if (e.key === 'a') answer((gates[i]?.options || ['approve'])[0]);
   if (e.key === 'r') answer((gates[i]?.options || [, 'changes'])[1] || 'changes');
   if (e.key === 'c') closeGate();
@@ -1386,6 +1626,13 @@ function setView(v) {
   document.getElementById('tab-board').setAttribute('aria-selected', String(v === 'board'));
   document.getElementById('tab-review').setAttribute('aria-selected', String(v === 'review'));
   if (v !== 'board') closeDrawer();
+  else {
+    // Back from reading a record: the review tab is for the queue, so it opens on what waits
+    // rather than on the record read last.
+    if (!(state.gates || []).some(g => g.id === focused)) focused = null;
+    // And the record's unread dot has to go now, not on the next change of state.
+    render();
+  }
 }
 
 
