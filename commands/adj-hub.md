@@ -1184,8 +1184,11 @@ inflates the hub transcript for every task it dispatches.
   **ファイルを書くツールで書き、`echo` や heredoc などシェルを通さない。** そのうえで:
 
   ```bash
-  adj task add --body - --issue-url '{issue url}' --done-when {完了条件} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md'
+  adj task add --body - --issue-url '{issue url}' --done-when {完了条件} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md' \
+    && rm '{worktree}/.claude/task-summary.md'
   ```
+
+  読ませたら消す。`.claude/` が gitignore されていないリポジトリでは、残すと worker の差分に乗る。
 
   **タイトルと要約はシェルに触れさせない。** どちらもタスクや報告から来た文字列で、コマンド行に
   置けば `'` でクォートが閉じ、heredoc に置けば区切り文字と同じ行でそこが閉じて、その先がシェル

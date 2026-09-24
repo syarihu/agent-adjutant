@@ -426,3 +426,33 @@ fn a_task_body_given_as_a_dash_is_read_from_stdin_and_nothing_in_it_is_run() {
     assert_eq!(added["task"]["doneWhen"], "report-only");
     assert!(added["task"]["body"].as_str().unwrap().contains("$(date)"));
 }
+
+#[test]
+fn a_worktree_name_or_issue_url_that_could_break_out_of_a_quote_is_refused() {
+    // Both are typed on the board and later quoted into commands the hub runs.
+    let fixture = Fixture::new(QUIET);
+    for args in [
+        vec!["--worktree-name", "x'; touch pwned; '"],
+        vec!["--worktree-name", "has space"],
+        vec![
+            "--issue-url",
+            "https://github.com/acme/widget/issues/1'; touch pwned; '",
+        ],
+        vec!["--issue-url", "file:///etc/passwd"],
+    ] {
+        let mut all = vec!["task", "add", "--body", "x"];
+        all.extend(&args);
+        let out = fixture.cmd(&all);
+        assert!(!out.status.success(), "{args:?} was accepted");
+    }
+    fixture.ok(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--worktree-name",
+        "login-retry.2_b",
+        "--issue-url",
+        "https://github.com/acme/widget/issues/1",
+    ]);
+}

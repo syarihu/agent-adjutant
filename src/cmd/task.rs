@@ -34,6 +34,33 @@ fn derive_title(input: &Value) -> Option<String> {
     if title.is_empty() { None } else { Some(title) }
 }
 
+/// Refuse the two values a person types on the board that the hub later puts on a command
+/// line: the worktree name becomes a path and a branch, and the issue URL is quoted as it is.
+/// Checked here, where they come in, rather than in every command the procedures write — an
+/// apostrophe in either would close the quote around it and run the rest as shell.
+fn check_typed_values(task: &Task) -> Result<(), String> {
+    if let Some(name) = &task.worktree_name
+        && !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "a worktree name may only use letters, digits, '.', '_' and '-': {name}"
+        ));
+    }
+    // An empty field is a form left blank, not a value.
+    if let Some(url) = task.issue_url.as_deref().filter(|u| !u.is_empty()) {
+        let scheme = url.starts_with("https://") || url.starts_with("http://");
+        let plain = !url
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
+        if !(scheme && plain) {
+            return Err(format!("not an issue URL: {url}"));
+        }
+    }
+    Ok(())
+}
+
 /// Write a new record, and hand it over if it was created already queued.
 pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let stamp = stamp();
@@ -48,6 +75,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
+    check_typed_values(&task)?;
     task.order = next_order(ctx);
 
     // Written before the message is sent, and never the other way round: the record is what
