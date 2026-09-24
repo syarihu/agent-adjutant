@@ -76,14 +76,19 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
             .or_else(|| url.strip_prefix("http://"));
         // The host is what is left of the authority once a port is taken off. Checked as a
         // name rather than as "some text before the path", which `https://:8080/` passed.
-        let host = rest
+        // A port, when there is one, is digits.
+        let authority = rest
             .and_then(|r| r.split(['/', '?', '#']).next())
-            .map(|authority| authority.split(':').next().unwrap_or(""))
             .unwrap_or("");
+        let (host, port) = match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        };
         let named = !host.is_empty()
             && host
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'));
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+            && port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
         let plain = !url
             .chars()
             .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
@@ -124,6 +129,18 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
     Ok((task, handed))
 }
 
+/// One of a record's text fields as an update gives it. `null` and `""` clear it; anything
+/// that is not a string is refused rather than read as "clear" — `{"pr": 42}` from a mistaken
+/// caller would otherwise wipe the URL it meant to set.
+fn text_field(key: &str, value: &Value) -> Result<Option<String>, String> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(v) if v.is_empty() => Ok(None),
+        Value::String(v) => Ok(Some(v.clone())),
+        other => Err(format!("{key} has to be a string or null, not {other}")),
+    }
+}
+
 /// Change a record, and hand it over if this is the change that queued it.
 pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let mut task = task::load(&dir(ctx), id)?;
@@ -151,7 +168,7 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
             // distinction there is no way to take back a worktree the hub wrote down. An
             // empty string clears too, since a command line has no way to say `null` — and a
             // "waiting for a slot" note has to go once the worker starts.
-            *field = value.as_str().filter(|v| !v.is_empty()).map(str::to_string);
+            *field = text_field(key, value)?;
         }
     }
     task.updated_at = stamp();
@@ -472,6 +489,21 @@ mod tests {
         let input = json!({ "body": long_line });
         let derived = derive_title(&input).expect("derived");
         assert_eq!(derived.len(), 80);
+    }
+
+    #[test]
+    fn a_text_field_is_cleared_by_null_or_empty_and_refused_as_anything_else() {
+        assert_eq!(
+            text_field("pr", &json!("https://x/pull/1"))
+                .unwrap()
+                .as_deref(),
+            Some("https://x/pull/1")
+        );
+        assert_eq!(text_field("pr", &json!(null)).unwrap(), None);
+        assert_eq!(text_field("note", &json!("")).unwrap(), None);
+        for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
+            assert!(text_field("pr", &bad).is_err(), "{bad} was taken");
+        }
     }
 
     #[test]
