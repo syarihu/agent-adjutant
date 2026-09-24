@@ -1738,8 +1738,10 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
 /// line, and the two ways in should behave identically.
 fn read_body(body: Option<&str>) -> Result<String, String> {
     let body = match body {
-        Some(body) => body.to_string(),
-        None => {
+        // `-` is stdin, as `task add --help` says and as most tools read it. Taken literally
+        // it became a body of one dash, and the card's title with it.
+        Some(body) if body != "-" => body.to_string(),
+        _ => {
             let mut buf = String::new();
             std::io::stdin()
                 .read_to_string(&mut buf)

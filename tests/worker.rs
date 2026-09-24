@@ -389,3 +389,40 @@ fn the_hub_can_requeue_a_task_without_messaging_itself_and_mark_one_approved() {
     fixture.ok(&["task", "update", "--id", &id, "--status", "queued"]);
     assert_eq!(fixture.json(&["pending", "--json"])["count"], 1);
 }
+
+#[test]
+fn a_task_body_given_as_a_dash_is_read_from_stdin_and_nothing_in_it_is_run() {
+    // How the hub writes a record: the title and summary come from a task or a report, so
+    // they go through a quoted heredoc rather than onto the command line.
+    let fixture = Fixture::new(QUIET);
+    let worktree = linked_worktree(&fixture, "wid-10");
+    let mut child = fixture
+        .command([
+            "task",
+            "add",
+            "--body",
+            "-",
+            "--done-when",
+            "report-only",
+            "--waiting-in",
+            &worktree,
+            "--json",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"WID-10 it's broken; touch pwned\n\nsummary with 'quotes' and $(date)\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let added: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(added["task"]["title"], "WID-10 it's broken; touch pwned");
+    assert_eq!(added["task"]["doneWhen"], "report-only");
+    assert!(added["task"]["body"].as_str().unwrap().contains("$(date)"));
+}
