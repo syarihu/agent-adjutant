@@ -70,7 +70,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant config` | the resolved config for this repo, as JSON |
 | `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |
 | `adjutant send --subject … --body …` | hand a message to the hub (body may come on stdin) |
-| `adjutant work --worktree … (--title … \| --task <id>) [--resume]` | open a tab and start a worker there (`--task`: name the tab after that task record, so a title from an issue never has to be quoted onto a command line; `--resume`: reopen the worker session saved in that worktree). Exits 3 without starting anything when `maxWorkers` workers are already running |
+| `adjutant work --worktree … (--title … \| --task <id> \| --resume)` | open a tab and start a worker there (`--task`: name the tab after that task record, so a title from an issue never has to be quoted onto a command line; `--resume`: reopen the worker session saved in that worktree). Exits 3 without starting anything when `maxWorkers` workers are already running |
 | `adjutant worker --worktree … [--resume]` | become the worker (what `work` opens a tab to run; `--resume` inside a worktree reopens its saved session) |
 | `adjutant tell --worktree … --subject …` | leave a message for that worktree's worker |
 | `adjutant outbox [--clear]` | what the hub has left for the worker here |

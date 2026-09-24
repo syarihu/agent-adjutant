@@ -343,8 +343,9 @@ fn title_command(settings: &Settings, title: &str) -> Option<String> {
         crate::template::sh_join(&[
             exe_path(),
             "title".to_string(),
-            "--title".to_string(),
-            title.to_string(),
+            // One word, `--title=…`: a title starting with `--` given as the next word is read
+            // by clap as an option of its own, and `--help` would print help instead.
+            format!("--title={title}"),
         ])
     ))
 }
@@ -535,10 +536,10 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
         "worker".to_string(),
         "--worktree".to_string(),
         worktree.clone(),
-        "--title".to_string(),
-        title.to_string(),
-        "--prompt".to_string(),
-        prompt.to_string(),
+        // `=` rather than a separate word, as in `title_command`: a title from an issue that
+        // starts with `--` would otherwise be parsed as an option and the worker never start.
+        format!("--title={title}"),
+        format!("--prompt={prompt}"),
     ]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
@@ -611,12 +612,10 @@ fn work_resumed(
         worktree.clone(),
     ]);
     if !title.is_empty() {
-        parts.push("--title".to_string());
-        parts.push(title.to_string());
+        parts.push(format!("--title={title}"));
     }
     if let Some(prompt) = prompt {
-        parts.push("--prompt".to_string());
-        parts.push(prompt.to_string());
+        parts.push(format!("--prompt={prompt}"));
     }
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());

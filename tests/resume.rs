@@ -254,7 +254,7 @@ fn work_resume_opens_a_tab_that_resumes_and_leaves_the_hub_to_the_saved_session(
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(line.contains(" worker --resume --worktree "), "{line}");
-    assert!(line.contains("--title WID-1"), "{line}");
+    assert!(line.contains("--title=WID-1"), "{line}");
     assert!(!line.contains("--hub"), "{line}");
 }
 

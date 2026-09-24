@@ -522,6 +522,34 @@ fn a_worker_tab_is_named_after_its_task_record_so_the_title_never_touches_the_sh
     // terminal, and the worker behind it would never start.
     assert!(out.contains("< /dev/null"), "{out}");
 
+    // A title that looks like an option stays the title's value: passed as its own word,
+    // `--help` would be read by clap in the new tab and the worker would never start.
+    let dashed = with_stdin(
+        &fixture,
+        &[
+            "task",
+            "add",
+            "--body",
+            "-",
+            "--waiting-in",
+            &worktree,
+            "--json",
+        ],
+        "--help\n",
+    );
+    let dashed: serde_json::Value = serde_json::from_slice(&dashed.stdout).unwrap();
+    let dashed_id = dashed["task"]["id"].as_str().unwrap().to_string();
+    let out = fixture.ok(&[
+        "work",
+        "--worktree",
+        &worktree,
+        "--task",
+        &dashed_id,
+        "--dry-run",
+    ]);
+    assert!(out.contains("--title=--help"), "{out}");
+    assert!(!out.contains("--title --help"), "{out}");
+
     // One or the other: a --task beside --title or --resume would go unchecked.
     for extra in [["--title", "x"].as_slice(), ["--resume"].as_slice()] {
         let mut args = vec![
@@ -575,14 +603,20 @@ fn a_note_and_a_tab_title_given_as_a_dash_are_read_from_stdin() {
     let updated: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(updated["task"]["note"], reason.trim_end());
 
+    // A title template of its own, because the built-in writes to this process's terminal and
+    // prints nothing where there is none — which is every CI runner.
+    let titled = Fixture::new(
+        r#"{"notification": "true", "terminal": {"title": "tmux rename-window {title}"}, "repos": {}}"#,
+    );
     let out = with_stdin(
-        &fixture,
+        &titled,
         &["title", "--title", "-", "--dry-run"],
         "WID-12 it's a tab\n",
     );
     assert!(out.status.success(), "{out:?}");
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("WID-12 it"),
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        r#"tmux rename-window 'WID-12 it'\''s a tab'"#,
         "{out:?}"
     );
 }
