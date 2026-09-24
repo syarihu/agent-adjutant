@@ -768,11 +768,15 @@ pub fn phase(worktree: Option<&str>, set: Option<&str>) -> Result<(), String> {
 
 /// How long to wait for a closed tab's worker to actually be gone, and how often to look.
 ///
-/// Closing a tab hangs its session up and the process in it then unwinds, which is quick but
-/// not instant — a single look straight afterwards would call a live worker gone. Two
-/// seconds is far longer than an agent takes to die and far shorter than anyone would wait
-/// for a cleanup step, and a worker still there after it is a worker that is not going.
-const GONE_BUDGET: Duration = Duration::from_secs(2);
+/// Closing a tab hangs its session up and the process in it then unwinds, which is not
+/// instant — a single look straight afterwards would call a live worker gone. How long the
+/// unwinding takes is the agent's business: a Claude Code session routinely needs more than
+/// two seconds, and a budget shorter than that reports a worker whose tab is already closed
+/// as still there. The budget only costs anything when the process really does stay, and a
+/// terminal waiting for someone to confirm the close does not answer sooner for being
+/// given less time, so it is set well past how long an agent takes rather than close to it.
+/// Polling keeps the common case — gone at the first few looks — as quick as before.
+const GONE_BUDGET: Duration = Duration::from_secs(10);
 const GONE_POLL: Duration = Duration::from_millis(100);
 
 /// Wait for a worker to be gone, and answer with what was actually seen.
@@ -1977,7 +1981,7 @@ mod tests {
 
     /// What `close` acts on is the worker's own absence rather than anything the close
     /// command said. Waiting for that has to be bounded, must not read "cannot tell" as
-    /// "gone", and must not cost a real two seconds every time it is tested.
+    /// "gone", and must not spend the real budget every time it is tested.
     #[test]
     fn waiting_for_a_worker_to_go_looks_again_but_not_forever() {
         let budget = Duration::from_secs(2);
