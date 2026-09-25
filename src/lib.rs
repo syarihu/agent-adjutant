@@ -628,6 +628,9 @@ enum TaskAction {
         /// Why it could not be taken, when that is the answer ('' clears it, - reads stdin)
         #[arg(long)]
         note: Option<String>,
+        /// Handover instruction for the agent when queued ('' clears it, - reads stdin)
+        #[arg(long)]
+        instruction: Option<String>,
         /// Whether the hub may start it without asking first
         #[arg(long, value_name = "true|false")]
         auto_start: Option<bool>,
@@ -947,6 +950,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             issue,
             pr,
             note,
+            instruction,
             auto_start,
             no_hand_over,
             json,
@@ -960,6 +964,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             issue: issue.as_deref(),
             pr: pr.as_deref(),
             note: note.as_deref(),
+            instruction: instruction.as_deref(),
             auto_start: *auto_start,
             no_hand_over: *no_hand_over,
             json: *json,

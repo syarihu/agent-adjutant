@@ -613,6 +613,7 @@ mod tests {
             issue: None,
             pr: None,
             note: None,
+            instruction: None,
             gate_answered_at: None,
             created_at: "20260922T000000Z".to_string(),
             updated_at: "20260922T000000Z".to_string(),
