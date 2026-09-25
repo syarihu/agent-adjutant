@@ -177,6 +177,10 @@ pub struct CommandRun {
     /// What it printed, or the tail of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    /// How many runs it took to reach `result`. Above one, it failed first and was fixed: a
+    /// pass the board marks, since the first run is the one that says something was wrong.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u32>,
 }
 
 /// One answer to a record. A record stays where it is when it is answered, so the answers

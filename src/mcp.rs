@@ -289,7 +289,7 @@ fn tool_definitions() -> Value {
                     "goal": { "type": "string", "description": "plan: what done looks like." },
                     "reviewRounds": { "type": "array", "items": { "type": "object" }, "description": "diff: one per review round — engine, must, want, scope, falsePositives." },
                     "findings": { "type": "array", "items": { "type": "object" }, "description": "diff: severity (must | want | scope), location, text, outcome (open | fixed | declined), reason when declined." },
-                    "commands": { "type": "array", "items": { "type": "object" }, "description": "verify: command, result (pass | fail), time, output." },
+                    "commands": { "type": "array", "items": { "type": "object" }, "description": "verify: command, result (pass | fail), time, output, attempts (runs it took; above 1 when it failed first)." },
                     "manual": { "type": "array", "items": { "type": "string" }, "description": "verify: the checks left for a person." },
                     "stoppedBy": { "type": "array", "items": { "type": "string" }, "description": "diff / verify that waits: the rules that made it stop rather than be kept as a record — round-limit, verify-failed, manual-check, unsure, stop-at." },
                     "repo": repo_property(),

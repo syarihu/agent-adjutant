@@ -229,6 +229,40 @@ details.decided[open] summary { margin-bottom:8px; }
 .tabs button[aria-selected="true"] { background:var(--surface-1); color:var(--ink); font-weight:600;
   box-shadow:var(--shadow); }
 
+/* ── the full view of one task ── */
+#task-view { display:none; height:100%; }
+#task-view.on { display:grid; grid-template-columns:1fr; }
+#task-view.on.with-rail { grid-template-columns:272px 1fr; }
+#task-view .tv-main { overflow:auto; min-width:0; }
+.tv-top { position:sticky; top:0; z-index:2; background:var(--plane); border-bottom:1px solid var(--hairline);
+  padding:10px 22px 0; display:flex; flex-direction:column; gap:6px; }
+.tv-top .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
+.tv-top h1 { margin:0; font-size:17px; flex:1; min-width:0; overflow-wrap:anywhere; line-height:1.4; }
+.tv-tabs { display:flex; gap:2px; flex-wrap:wrap; }
+.tv-tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:6px 12px;
+  color:var(--ink-2); display:inline-flex; align-items:center; gap:5px; }
+.tv-tabs button[aria-selected="true"] { border-bottom-color:var(--ink); color:var(--ink); font-weight:600; }
+.tv-body { padding:18px 22px 28px; max-width:980px; }
+.tv-wait { border:1px solid var(--accent); background:color-mix(in oklab,var(--surface-1) 85%,var(--accent));
+  border-radius:9px; padding:10px 14px; margin-bottom:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.tv-wait .bad { color:var(--critical); }
+.source { color:var(--muted); font-size:11.5px; margin-top:4px; }
+.kv { display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; margin:0; }
+.kv dt { color:var(--muted); font-size:12px; }
+.kv dd { margin:0; overflow-wrap:anywhere; }
+.timeline { list-style:none; margin:0; padding:0; }
+.timeline li { display:grid; grid-template-columns:96px 1fr; gap:12px; padding:8px 0; border-top:1px solid var(--hairline); }
+.timeline li:first-child { border-top:0; }
+.timeline .at { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.timeline .what { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.timeline .what > div { overflow-wrap:anywhere; }
+.timeline .who { color:var(--muted); font-size:11.5px; }
+.linkish { border:0; background:transparent; padding:0; color:var(--accent); text-align:left; }
+.linkish:hover { text-decoration:underline; }
+.checklist { list-style:none; margin:0; padding:0; }
+.checklist li { padding:3px 0; }
+.checklist li::before { content:'☐'; margin-right:8px; color:var(--muted); }
+
 footer { border-top:1px solid var(--hairline); background:var(--surface-1); padding:7px 14px;
   max-height:96px; overflow:auto; }
 footer .cap { color:var(--muted); font-size:11px; margin-bottom:3px; }
@@ -285,6 +319,7 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
     <aside id="task-drawer" class="hidden"></aside>
   </div>
   <div id="review"><div class="rail"></div><div class="pane"></div></div>
+  <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
 </main>
 
 <footer>
@@ -512,6 +547,7 @@ function render() {
   updateNotifyButton();
   renderDrawer();
   renderReview();
+  renderTaskView();
 }
 
 /* What `adj phase --set` writes, in the words a card shows. */
@@ -736,7 +772,10 @@ function chipsOf(task) {
   return chips;
 }
 
+/* A record opens in its task's full view, on the tab for its kind and showing that one. */
 function openRecord(id) {
+  const r = recordById(id);
+  if (r && r.task) return openTask(r.task, TAB_OF_KIND[r.kind] || 'history', id);
   focused = id;
   setView('review');
   renderReview();
@@ -904,6 +943,7 @@ function renderDrawer() {
       <div style="flex:1;min-width:0">
         <span class="tag" style="margin-bottom:6px">${colObj ? colObj.label : task.status}</span>
         <h2>${esc(task.title)}</h2>
+        <button type="button" class="iconbtn" style="margin-top:8px" data-full="${esc(task.id)}">全体を開く →</button>
       </div>
       <button class="d-close" onclick="closeDrawer()" title="閉じる (Esc)">✕</button>
     </div>
@@ -1047,6 +1087,8 @@ function renderDrawer() {
     b.addEventListener('click', () => move(b.dataset.move, b.dataset.to)));
   drawer.querySelectorAll('[data-record]').forEach(b =>
     b.addEventListener('click', () => openRecord(b.dataset.record)));
+  drawer.querySelectorAll('[data-full]').forEach(b =>
+    b.addEventListener('click', () => openTask(b.dataset.full)));
 }
 
 
@@ -1366,14 +1408,60 @@ const renderDiff = d => esc(d).split('\n').map(l => {
   return `<div class="${cls}">${l || ' '}</div>`;
 }).join('');
 
+/* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
+   the `data-gate` around it, so the same panel works in the review view and a task's view. */
 const BUTTONS = {
-  approve: g => `<button class="approve" onclick="answer('approve')">${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</button>`,
-  changes: g => `<button class="changes" onclick="answer('changes')">${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</button>`,
-  reject:  () => `<button class="reject" onclick="answer('reject')">却下</button>`,
-  ack:     () => `<button class="approve" onclick="answer('ack')">了解(閉じる)</button>`,
-  ask:     () => `<button class="changes" onclick="answer('ask')">追加で聞く</button>`,
-  answer:  () => `<button class="approve" onclick="answer('answer')">これで返す</button>`,
+  approve: g => `<button class="approve" data-act="approve">${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</button>`,
+  changes: g => `<button class="changes" data-act="changes">${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</button>`,
+  reject:  () => `<button class="reject" data-act="reject">却下</button>`,
+  ack:     () => `<button class="approve" data-act="ack">了解(閉じる)</button>`,
+  ask:     () => `<button class="changes" data-act="ask">追加で聞く</button>`,
+  answer:  () => `<button class="approve" data-act="answer">これで返す</button>`,
 };
+
+/* The part of a gate a person acts on: the send-back form for a record, the decision for a
+   gate that waits. */
+function decideHtml(g) {
+  if (g.wait === false) {
+    return `<div class="panel" data-gate="${esc(g.id)}"><h3>差し戻す</h3>` +
+      ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
+        `<li><span style="color:var(--muted)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
+      `<div class="field" style="margin-bottom:12px"><span>コメント(何を直してほしいか)</span>
+        <textarea class="gate-comment"></textarea></div>
+      <div class="decide"><button class="changes" data-act="changes">差し戻す</button></div>
+      <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+        worker はこの記録を残して先に進んでいます。差し戻すと <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。記録はそのまま残り、差し戻しが追記されます。</p></div>`;
+  }
+  return `<div class="panel" data-gate="${esc(g.id)}"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
+    // Past two rounds a gate has become a conversation, and a conversation is faster where
+    // it is not posted.
+    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復しています。<b>タブで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</div>` : '') +
+    `<div class="field" style="margin-bottom:12px"><span>コメント(修正指示・追加で聞きたいことはここに)</span>
+      <textarea class="gate-comment"></textarea></div>
+    <div class="decide">${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
+      <button class="talk" data-act="talk">タブで話す</button>
+      <button class="close" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">解決済みとして閉じる</button></div>
+    <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+      ${['dispatch', 'issue'].includes(g.kind)
+        ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
+        : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
+      <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
+}
+
+/* The buttons `decideHtml` and a gate's choices draw, wired to the gate they sit in. */
+function bindDecide(root) {
+  root.querySelectorAll('[data-gate] [data-act]').forEach(b => b.addEventListener('click', () => {
+    const id = b.closest('[data-gate]').dataset.gate;
+    const act = b.dataset.act;
+    if (act === 'talk') talk(id);
+    else if (act === 'close') closeGate(id);
+    else answer(act, undefined, id);
+  }));
+  root.querySelectorAll('[data-gate] .pick[data-choice]').forEach(b =>
+    b.addEventListener('click', () => answer('choice', b.dataset.choice, b.closest('[data-gate]').dataset.gate)));
+  root.querySelectorAll('button[data-ide]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+}
 
 function renderReview() {
   const rail = document.querySelector('#review .rail');
@@ -1409,7 +1497,7 @@ function renderReview() {
   if (view === 'review') location.hash = 'gate/' + g.id;
 
   const wasDecidedOpen = pane.querySelector('details.decided')?.open;
-  const commentEl = document.getElementById('gate-comment');
+  const commentEl = pane.querySelector('.gate-comment');
   // A comment written for something that has since left the board (a gate answered elsewhere,
   // a record whose task finished) is not carried over to whatever is shown in its place.
   const commentVal = commentEl && same ? commentEl.value : '';
@@ -1440,15 +1528,7 @@ function renderReview() {
     h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
   }
   if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  if (g.choices?.length) {
-    h += `<div class="panel"><h3>選択肢</h3><div class="choices">` +
-      g.choices.map(c => `<div class="choice${c.recommended ? ' rec' : ''}">
-        ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}
-        <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
-        <ul>${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-        <button class="pick" data-choice="${esc(c.id)}">これで進める</button>
-      </div>`).join('') + `</div></div>`;
-  }
+  h += choicesHtml(g, !record);
   h += structuredPanels(g);
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
@@ -1456,45 +1536,28 @@ function renderReview() {
   if (g.decided) h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
 
-  if (record) {
-    h += `<div class="panel"><h3>差し戻す</h3>` +
-      ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
-        `<li><span style="color:var(--muted)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
-      `<div class="field" style="margin-bottom:12px"><span>コメント(何を直してほしいか)</span>
-        <textarea id="gate-comment"></textarea></div>
-      <div class="decide"><button class="changes" onclick="answer('changes')">差し戻す</button></div>
-      <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
-        worker はこの記録を残して先に進んでいます。差し戻すと <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。記録はそのまま残り、差し戻しが追記されます。</p></div>`;
-    pane.innerHTML = h;
-    restoreComment(pane, commentVal, isCommentFocused, paneScroll);
-    return;
-  }
-
-  h += `<div class="panel"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
-    // Past two rounds a gate has become a conversation, and a conversation is faster where
-    // it is not posted.
-    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復しています。<b>タブで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</div>` : '') +
-    `<div class="field" style="margin-bottom:12px"><span>コメント(修正指示・追加で聞きたいことはここに)</span>
-      <textarea id="gate-comment"></textarea></div>
-    <div class="decide">${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
-      <button class="talk" onclick="talk()">タブで話す</button>
-      <button class="close" onclick="closeGate()" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">解決済みとして閉じる</button></div>
-    <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
-      ${['dispatch', 'issue'].includes(g.kind)
-        ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
-        : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
-      <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
+  h += decideHtml(g);
   pane.innerHTML = h;
-  pane.querySelectorAll('.work button[data-ide]').forEach(b =>
-    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
-  pane.querySelectorAll('.pick[data-choice]').forEach(b =>
-    b.addEventListener('click', () => answer('choice', b.dataset.choice)));
+  bindDecide(pane);
   restoreComment(pane, commentVal, isCommentFocused, paneScroll);
+}
+
+/* A gate's designs side by side. Only an open gate can still be answered with one; once
+   answered, the one picked is marked instead. */
+function choicesHtml(g, pickable) {
+  if (!g.choices?.length) return '';
+  return `<div class="panel"${pickable ? ` data-gate="${esc(g.id)}"` : ''}><h3>選択肢</h3><div class="choices">` +
+    g.choices.map(c => `<div class="choice${c.recommended ? ' rec' : ''}">
+      ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}${g.choice === c.id ? '<span class="rec-tag" style="color:var(--good)">✓ 選ばれた案</span>' : ''}
+      <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
+      <ul>${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+      ${pickable ? `<button class="pick" data-choice="${esc(c.id)}">これで進める</button>` : ''}
+    </div>`).join('') + `</div></div>`;
 }
 
 /* What a redraw would otherwise lose: the comment being typed, and where the pane was. */
 function restoreComment(pane, value, wasFocused, scroll) {
-  const el = document.getElementById('gate-comment');
+  const el = pane.querySelector('.gate-comment');
   if (el) {
     if (value) el.value = value;
     if (wasFocused) el.focus();
@@ -1504,7 +1567,9 @@ function restoreComment(pane, value, wasFocused, scroll) {
 
 /* The structured fields a diff or verify gate carries beside its prose, open or recorded. */
 const OUTCOME = { open:['未対応', 0], fixed:['修正済', 1], declined:['誤検知', 2] };
-function structuredPanels(g) {
+const structuredPanels = g => reviewPanels(g) + checkPanels(g);
+
+function reviewPanels(g) {
   let h = '';
   const rounds = g.reviewRounds || [];
   if (rounds.length) {
@@ -1514,23 +1579,39 @@ function structuredPanels(g) {
         `<td>${r.want || 0}</td><td>${r.scope || 0}</td><td>${r.falsePositives || 0}</td></tr>`).join('') +
       `</table></div></div>`;
   }
-  const findings = [...(g.findings || [])]
-    .sort((a, b) => (OUTCOME[a.outcome]?.[1] ?? 3) - (OUTCOME[b.outcome]?.[1] ?? 3));
+  // Open first, since those are what is left; then fixed; then the false positives, each with
+  // why it was declined.
+  const findings = g.findings || [];
   if (findings.length) {
-    h += `<div class="panel"><h3>指摘</h3><div class="body"><ul>` +
-      findings.map(f => {
-        const openMust = f.outcome === 'open' && f.severity === 'must';
-        return `<li${openMust ? ' style="color:var(--critical)"' : ''}><b>[${esc(f.severity)}]</b> ` +
-          `${f.location ? `<code>${esc(f.location)}</code> ` : ''}${esc(f.text)} — ` +
-          `${esc(OUTCOME[f.outcome]?.[0] || f.outcome)}${f.reason ? `（${esc(f.reason)}）` : ''}</li>`;
-      }).join('') + `</ul></div></div>`;
+    const groups = [...Object.keys(OUTCOME), ...new Set(findings.map(f => f.outcome).filter(o => !OUTCOME[o]))];
+    h += `<div class="panel"><h3>指摘 ${findings.length}件</h3><div class="body">` +
+      groups.map(outcome => {
+        const mine = findings.filter(f => f.outcome === outcome);
+        if (!mine.length) return '';
+        return `<h5>${esc(OUTCOME[outcome]?.[0] || outcome)} ${mine.length}件</h5><ul>` + mine.map(f => {
+          const openMust = f.outcome === 'open' && f.severity === 'must';
+          return `<li${openMust ? ' style="color:var(--critical)"' : ''}><b>[${esc(f.severity)}]</b> ` +
+            `${f.location ? `<code>${esc(f.location)}</code> ` : ''}${esc(f.text)}` +
+            `${f.reason ? `<br><span style="color:var(--ink-2)">${f.outcome === 'declined' ? '却下の理由' : '理由'}: ${esc(f.reason)}</span>` : ''}</li>`;
+        }).join('') + '</ul>';
+      }).join('') + `</div></div>`;
   }
+  return h;
+}
+
+function checkPanels(g) {
+  let h = '';
   const commands = g.commands || [];
   if (commands.length) {
     h += `<div class="panel"><h3>verify</h3>` + commands.map(c => {
       const failed = c.result === 'fail';
+      // A pass that took more than one run failed first: the first run is the one that said
+      // something was wrong, so it is marked rather than shown as a plain pass.
+      const retried = !failed && (c.attempts || 1) > 1;
       const head = `<span class="state ${failed ? 'bad' : 'good'}"><span>${failed ? '✗' : '✓'}</span>` +
-        `<code>${esc(c.command)}</code></span>${c.time ? ` <span style="color:var(--muted)">${esc(c.time)}</span>` : ''}`;
+        `<code>${esc(c.command)}</code></span>` +
+        (retried ? ` <span class="tag" title="1回目は失敗して、直してから通った">${c.attempts}回目で通過</span>` : '') +
+        (c.time ? ` <span style="color:var(--muted)">${esc(c.time)}</span>` : '');
       // A failure is what a person came to read, so it comes open; a pass stays folded.
       return c.output
         ? `<details${failed ? ' open' : ''} style="margin-bottom:6px"><summary style="cursor:pointer">${head}</summary>` +
@@ -1539,15 +1620,20 @@ function structuredPanels(g) {
     }).join('') + `</div>`;
   }
   if ((g.manual || []).length) {
-    h += `<div class="panel"><h3>人が見る確認</h3><ul>${g.manual.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
+    h += `<div class="panel"><h3>人が見る確認</h3><ul class="checklist">${g.manual.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
   }
   return h;
 }
 
-async function answer(decision, choice) {
-  const g = (state.gates || []).find(x => x.id === focused) || recordById(focused);
+/* The comment box of the view on screen. The review view and a task's view can both hold one
+   at once, the hidden one included, so it is looked up inside the one being shown. */
+const commentBox = () => document.querySelector(view === 'task' ? '#task-view .gate-comment' : '#review .gate-comment');
+
+async function answer(decision, choice, id = focused) {
+  const g = (state.gates || []).find(x => x.id === id) || recordById(id);
   if (!g) return;
-  const comment = document.getElementById('gate-comment')?.value.trim();
+  const box = commentBox();
+  const comment = box?.value.trim();
   // Sending back something the worker has moved past, without saying what is wrong, gives it
   // nothing to act on.
   if (g.wait === false && !comment) {
@@ -1567,16 +1653,16 @@ async function answer(decision, choice) {
         (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
     // A record stays, with this answer appended, so it stays in view to show that it went.
-    if (g.wait === false) document.getElementById('gate-comment').value = '';
-    else focused = null;
+    if (g.wait === false && box) box.value = '';
+    else if (focused === g.id) focused = null;
     await refresh();
   } catch (e) { note(line, true, e.message); }
 }
 
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
    the ball is still with the human until they come back and close it. */
-function talk() {
-  const g = (state.gates || []).find(x => x.id === focused);
+function talk(id = focused) {
+  const g = (state.gates || []).find(x => x.id === id);
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
   // hub's.
@@ -1584,23 +1670,486 @@ function talk() {
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
-async function closeGate() {
-  const g = (state.gates || []).find(x => x.id === focused);
+async function closeGate(id = focused) {
+  const g = (state.gates || []).find(x => x.id === id);
   if (!g) return;
-  const comment = document.getElementById('gate-comment')?.value.trim();
+  const comment = commentBox()?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
   try {
     await api(`/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
-    focused = null;
+    if (focused === g.id) focused = null;
     await refresh();
   } catch (e) { note(line, true, e.message); }
 }
 
+// ── the full view of one task ─────────────────────────────────────────
+
+const TASK_TABS = [['overview', '概要'], ['review', 'コードレビュー'], ['check', '動作確認'], ['history', '経過']];
+/* The tab a gate of each kind is read in. The other kinds are the hub's or a question, and
+   show only in 経過. */
+const TAB_OF_KIND = { plan:'overview', diff:'review', verify:'check' };
+const KIND_OF_TAB = { overview:'plan', review:'diff', check:'verify' };
+const DECISION = { approve:'承認した', changes:'修正を指示した', reject:'却下した', choice:'案を選んだ',
+                   ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた' };
+
+/* `pick` is the gate a tab shows when a person chose one from 経過; otherwise a tab shows the
+   one waiting, else the latest. */
+let taskView = { id: null, tab: 'overview', pick: {} };
+
+function openTask(id, tab = 'overview', gateId = null) {
+  taskView = { id, tab, pick: gateId ? { [tab]: gateId } : {} };
+  // Back on the board, the drawer is open on the task that was being read.
+  selectedTaskId = id;
+  setView('task');
+}
+
+function backToBoard() {
+  setView('board');
+}
+
+/* What a task's gates left in the archive, read when its view opens rather than on every
+   poll: the archive only grows. Read again when a gate of the task has been answered since,
+   which is when it can have changed. */
+const histories = {};
+const historyFailed = new Set();
+function historyOf(task) {
+  const key = `${task.gateAnsweredAt || ''}|${openGate(task)?.id || ''}|${task.status}`;
+  let entry = histories[task.id];
+  if (!entry || entry.key !== key) {
+    entry = histories[task.id] = { key, answered: entry?.answered || [], records: entry?.records || [], loaded: !!entry?.loaded };
+    const mine = entry;
+    api(`/api/tasks/${encodeURIComponent(task.id)}/history`).then(data => {
+      if (histories[task.id] !== mine) return;
+      mine.answered = data.answered || [];
+      mine.records = data.records || [];
+      mine.loaded = true;
+      historyFailed.delete(task.id);
+      if (view === 'task' && taskView.id === task.id) renderTaskView();
+    }).catch(e => {
+      // Asked for again on the next redraw rather than left marked as read.
+      if (histories[task.id] === mine) delete histories[task.id];
+      // Said once per run of failures, so the retries below do not push the log of what was
+      // done off the footer.
+      if (!historyFailed.has(task.id)) note(`経過を取得できませんでした: ${e.message}`, true);
+      historyFailed.add(task.id);
+      // Nothing else redraws a quiet board, so the view asks again itself — while no comment
+      // is being typed, since a redraw would cut an IME composition short.
+      setTimeout(() => {
+        if (view === 'task' && taskView.id === task.id && !document.activeElement?.matches('textarea')) renderTaskView();
+      }, 30000);
+    });
+  }
+  return entry;
+}
+
+/* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
+   task's records come from /api/state, which is polled, so a send-back shows at once. */
+function gatesOf(task) {
+  const h = historyOf(task);
+  const byId = new Map();
+  const add = g => g && byId.set(g.id, g);
+  h.answered.forEach(add);
+  add(task.approvedPlan);
+  (task.records || h.records).forEach(add);
+  (state.gates || []).filter(g => g.task === task.id).forEach(add);
+  return [...byId.values()].sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || ''));
+}
+
+const isWaiting = g => (state.gates || []).some(x => x.id === g.id);
+
+/* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. */
+function gateForTab(task, tab, all) {
+  const picked = taskView.pick[tab] && all.find(g => g.id === taskView.pick[tab]);
+  if (picked) return picked;
+  const ofKind = all.filter(g => g.kind === KIND_OF_TAB[tab]);
+  return ofKind.find(isWaiting) || ofKind[ofKind.length - 1] || null;
+}
+
+/* `20260922T041233Z` in the reader's own time: 9/22 13:12. */
+function when(stamp) {
+  const secs = stampSecs(stamp);
+  if (secs == null) return stamp || '';
+  const d = new Date(secs * 1000);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/* The files a unified diff touches, with the lines each gained and lost. */
+function filesOf(diff) {
+  const files = [];
+  let cur = null, inHeader = false;
+  for (const l of (diff || '').split('\n')) {
+    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(l);
+    if (m) { cur = { path: m[2], add: 0, del: 0 }; files.push(cur); inHeader = true; continue; }
+    if (l.startsWith('@@')) { inHeader = false; continue; }
+    // A removed line that begins `--` is content, not a header: headers end at the first hunk.
+    if (!cur || inHeader) continue;
+    if (l.startsWith('+')) cur.add++;
+    else if (l.startsWith('-')) cur.del++;
+  }
+  return files;
+}
+
+/* One line saying where a gate stands: waiting, recorded, or answered and how. */
+function gateStatusHtml(g) {
+  if (isWaiting(g)) return `<span class="state warn"><span>⏳</span>${ago(g.openedAt)}から人の判定を待っている</span>`;
+  if (g.wait === false) {
+    const sent = (g.answers || []).length;
+    return `<span class="state good"><span>●</span>${ago(g.openedAt)}に記録 — worker は止まらずに進んだ${sent ? `（差し戻し ${sent}回）` : ''}</span>`;
+  }
+  if (g.decision) {
+    const bad = ['changes', 'reject'].includes(g.decision);
+    return `<span class="state ${bad ? 'bad' : 'good'}"><span>${bad ? '↩' : '✓'}</span>` +
+      `<span title="${esc(when(g.answeredAt))}">${ago(g.answeredAt)}に人が${esc(DECISION[g.decision] || g.decision)}</span></span>` +
+      (g.comment ? ` <span style="color:var(--ink-2)">— ${esc(g.comment)}</span>` : '');
+  }
+  return '';
+}
+
+/* The head of a tab showing one gate: its title, where it stands, and a way to see the others
+   of its kind when there are several. */
+function gateHeadHtml(g, all) {
+  const same = all.filter(x => x.kind === g.kind);
+  let h = `<div class="panel"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">` +
+    `<b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(g.title)}</b>` +
+    `<span class="mono2" style="color:var(--muted)">${esc(when(g.openedAt))}</span></div>` +
+    `<div style="margin-top:4px">${gateStatusHtml(g)}</div>`;
+  if (stopWhy(g).length) {
+    h += `<div class="state${stopBad(g) ? ' bad' : ''}" style="margin-top:4px;white-space:normal"><span>${stopBad(g) ? '⚠' : '■'}</span>止めた理由: ${esc(stopWhy(g).join(' / '))}</div>`;
+  }
+  if (same.length > 1) {
+    h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
+      `<span style="color:var(--muted);font-size:12px">このタスクの${esc(kindOf(g.kind)[0])} ${same.length}件:</span>` +
+      same.map((x, i) => `<button type="button" class="chip${x.id === g.id ? ' good' : ''}" data-pick="${esc(x.id)}">` +
+        `${i + 1}. ${esc(when(x.openedAt))}${x.wait === false ? ' 記録' : isWaiting(x) ? ' 待ち' : ''}</button>`).join('') + `</div>`;
+  }
+  return h + `</div>`;
+}
+
+/* The three frames, for a gate read in a task's view. */
+function framesHtml(g) {
+  let h = '';
+  if (g.facts?.length) h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
+  if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
+  return h;
+}
+
+/* The part of a tab a person acts on, when the gate shown can still take an answer: a gate
+   waiting now, or a live task's record. A finished task's records have nowhere to go back to. */
+function actHtml(g) {
+  if (isWaiting(g) || (g.wait === false && recordById(g.id))) return decideHtml(g);
+  return '';
+}
+
+function overviewTab(task, all) {
+  const plans = all.filter(g => g.kind === 'plan');
+  const plan = gateShownIn(task, 'overview', all);
+  let h = '';
+
+  // Where each came from: the plan's own words when the worker wrote them, otherwise the
+  // request as it was handed over.
+  const source = task.issueUrl
+    ? `Issue <a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer">${esc(task.issueUrl)}</a>`
+    : '依頼文';
+  const fromPlan = plan && `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの`;
+  h += `<div class="panel"><h3>問題</h3>`;
+  if (plan?.problem) h += `<div class="body">${md(plan.problem)}</div><div class="source">出典: ${fromPlan}</div>`;
+  else if (task.body) h += `<div class="body">${md(task.body)}</div><div class="source">出典: 渡したときの依頼文（計画に problem がまだ無い）</div>`;
+  else h += `<div style="color:var(--muted)">まだ書かれていない${task.issueUrl ? ` — ${source}` : ''}</div>`;
+  h += `</div><div class="panel"><h3>ゴール</h3>`;
+  if (plan?.goal) h += `<div class="body">${md(plan.goal)}</div><div class="source">出典: ${fromPlan}</div>`;
+  else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
+  h += `</div>`;
+
+  h += `<div class="panel"><h3>計画</h3>`;
+  if (!plan) {
+    h += `<div style="color:var(--muted)">計画はまだ出ていない</div></div>`;
+  } else {
+    // Who approved it: a plan gate is answered only by a person, on the board or with
+    // `adj gate answer`; the gate does not record which one.
+    const approved = ['approve', 'choice'].includes(plan.decision);
+    h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(plan.title)}</b></div>` +
+      `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn"><span>⏳</span>${ago(plan.openedAt)}から承認待ち</span>`
+        : approved ? `<span class="state good"><span>✓</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
+          (plan.comment ? ` <span style="color:var(--ink-2)">— ${esc(plan.comment)}</span>` : '')
+        : gateStatusHtml(plan)}</div>`;
+    if (plans.length > 1) {
+      h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
+        `<span style="color:var(--muted);font-size:12px">計画 ${plans.length}件:</span>` +
+        plans.map((x, i) => `<button type="button" class="chip${x.id === plan.id ? ' good' : ''}" data-pick="${esc(x.id)}">` +
+          `${i + 1}. ${esc(when(x.openedAt))}${isWaiting(x) ? ' 待ち' : x.decision ? ` ${esc(DECISION[x.decision] || x.decision)}` : ''}</button>`).join('') + `</div>`;
+    }
+    if (plan.focus) h += `<div class="body frame-focus" style="margin-top:10px">${md(plan.focus)}</div>`;
+    h += `</div>`;
+    if (plan.facts?.length) h += `<div class="panel"><h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+    if (plan.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(plan.body)}</div></div>`;
+    h += choicesHtml(plan, isWaiting(plan));
+    if (plan.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
+    if (plan.decided) h += `<div class="panel"><h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
+    h += actHtml(plan);
+  }
+
+  const rows = [
+    ['タスクID', `<span class="mono2">${esc(task.id)}</span>`],
+    ['完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')],
+    ['止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)],
+    ['着手設定', task.autoStart ? '確認なしで着手' : '着手前に確認が必要'],
+  ];
+  if (task.issueUrl) rows.push(['Issue', `<a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(task.issueUrl)}</a>`]);
+  if (task.pr) rows.push(['PR', /^https?:\/\//.test(task.pr) ? `<a href="${esc(task.pr)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(task.pr)}</a>` : esc(task.pr)]);
+  if (task.parent) rows.push(['親タスク', esc(task.parent)]);
+  if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
+  if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);
+  if (task.worktree) rows.push(['worktree', `<span class="mono2">${esc(task.worktree)}</span> <button type="button" class="iconbtn" data-ide="${esc(task.worktree)}">IDE で開く</button>`]);
+  rows.push(['作成', `${esc(when(task.createdAt))}（${ago(task.createdAt)}）`]);
+  if (task.note) rows.push(['ノート', `<span style="white-space:pre-wrap">${esc(task.note)}</span>`]);
+  h += `<div class="panel"><h3>詳細</h3><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
+  return h;
+}
+
+function reviewTab(task, all) {
+  const g = gateForTab(task, 'review', all);
+  if (!g) return `<div class="empty-state">コードレビューはまだ無い。worker がセルフレビューを終えると、ここに出る。</div>`;
+  let h = gateHeadHtml(g, all) + framesHtml(g) + reviewPanels(g);
+  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  const files = filesOf(g.diff);
+  if (files.length) {
+    h += `<div class="panel"><h3>ファイル ${files.length}件</h3><div class="body"><table>` +
+      `<tr><th>ファイル</th><th>追加</th><th>削除</th></tr>` +
+      files.map(f => `<tr><td><code>${esc(f.path)}</code></td><td style="color:var(--good)">+${f.add}</td><td style="color:var(--critical)">−${f.del}</td></tr>`).join('') +
+      `</table></div></div>`;
+  }
+  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  return h + actHtml(g);
+}
+
+function checkTab(task, all) {
+  const g = gateForTab(task, 'check', all);
+  if (!g) return `<div class="empty-state">動作確認はまだ無い。worker が verify を回すと、ここに出る。</div>`;
+  let h = gateHeadHtml(g, all);
+  if (isWaiting(g)) {
+    h += `<div class="work">
+      <button class="big" data-ide="${esc(g.worktree)}">IDE で開く</button>
+      <span class="mono2">${esc(g.worktree)}</span>
+      <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
+  }
+  h += framesHtml(g) + checkPanels(g);
+  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
+  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  return h + actHtml(g);
+}
+
+/* All of one gate, for the kinds that have no tab of their own (a report, a question, the hub's
+   gates): picked from 経過 and shown above it, so nothing a gate carried is left unreadable. */
+function gateDetailHtml(g, all) {
+  let h = `<div class="panel" style="border-color:var(--accent)"><div style="display:flex;gap:8px;align-items:center">` +
+    `<span class="tag"><span class="dot" style="background:${kindOf(g.kind)[1]}"></span>${esc(kindOf(g.kind)[0])}</span>` +
+    `<span style="flex:1"></span><button type="button" class="iconbtn" data-unpick>閉じる</button></div></div>`;
+  h += gateHeadHtml(g, all) + framesHtml(g) + choicesHtml(g, isWaiting(g)) + reviewPanels(g) + checkPanels(g);
+  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
+  if (g.decided) h += `<div class="panel"><h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>`;
+  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  return h + actHtml(g);
+}
+
+/* In time order: what waited on a person, what was only recorded, and what people did. The
+   worker's phase is not kept as a history — only the one it is in now — so it closes the
+   list rather than running through it. */
+function historyTab(task, all) {
+  const events = [];
+  const push = (stamp, html, gateId) => events.push({ at: stampSecs(stamp) ?? 0, stamp, html, gateId });
+  push(task.createdAt, `<div>タスクを作成</div><div class="who">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '')} · ${esc(STOP_AT[task.stopAt || 'plan'] || '')}</div>`);
+  for (const g of all) {
+    const [label, colour] = kindOf(g.kind);
+    const tag = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>`;
+    const title = `<button type="button" class="linkish" data-open="${esc(g.id)}">${esc(g.title)}</button>`;
+    const why = stopWhy(g).length ? `<div class="who"${stopBad(g) ? ' style="color:var(--critical)"' : ''}>止めた理由: ${esc(stopWhy(g).join(' / '))}</div>` : '';
+    const opened = g.wait === false ? 'worker が記録して、止まらずに進んだ'
+      : isWaiting(g) ? 'worker が人を待っている' : 'worker が人を待った';
+    let extra = '';
+    if (g.kind === 'diff' || g.kind === 'verify') {
+      const [text, tone] = recordSummary(g);
+      extra = ` <span class="${tone === 'bad' ? 'state bad' : tone === 'good' ? 'state good' : ''}">${esc(text)}</span>`;
+    }
+    push(g.openedAt, `<div>${tag} ${title}${extra}</div><div class="who">${opened}</div>${why}`, g.id);
+    if (g.answeredAt && g.decision) {
+      push(g.answeredAt, `<div>人が${esc(DECISION[g.decision] || g.decision)} — ${esc(label)}「${esc(g.title)}」</div>` +
+        (g.comment ? `<div class="who">${esc(g.comment)}</div>` : ''), g.id);
+    }
+    for (const a of g.answers || []) {
+      push(a.answeredAt, `<div>人が差し戻した — ${esc(label)}の記録「${esc(g.title)}」</div>` +
+        (a.comment ? `<div class="who">${esc(a.comment)}</div>` : ''), g.id);
+    }
+  }
+  events.sort((a, b) => a.at - b.at);
+  const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task) : null;
+  const picked = taskView.pick.history && all.find(g => g.id === taskView.pick.history);
+  let h = picked ? gateDetailHtml(picked, all) : '';
+  h += `<div class="panel"><h3>経過</h3><ol class="timeline">` + events.map(e =>
+    `<li><span class="at" title="${esc(ago(e.stamp))}">${esc(when(e.stamp))}</span><div class="what">${e.html}</div></li>`).join('');
+  if (worker && worker.present && worker.phase) {
+    const mins = phaseMinutes(worker);
+    h += `<li><span class="at">いま</span><div class="what"><div>worker は${esc(PHASE_LABEL[worker.phase] || worker.phase)}` +
+      `${mins != null ? `（${minutesLabel(mins)}前から）` : ''}</div></div></li>`;
+  }
+  h += `</ol>`;
+  if (!histories[task.id]?.loaded) h += `<div class="source">回答済みのものを読み込んでいる…</div>`;
+  return h + `</div>`;
+}
+
+let taskViewShown = null;
+function renderTaskView() {
+  const root = document.getElementById('task-view');
+  if (view !== 'task') return;
+  const rail = root.querySelector('.rail');
+  const main = root.querySelector('.tv-main');
+  const task = (state.tasks || []).find(t => t.id === taskView.id);
+  if (!task) {
+    rail.classList.add('hidden');
+    root.classList.remove('with-rail');
+    main.innerHTML = `<div class="tv-top"><div class="row"><button type="button" class="iconbtn" data-back>← ボード</button></div></div>` +
+      `<div class="empty-state">このタスクは見つからない。${state.tasks?.length ? '取り消されたか、別のリポジトリのもの' : '読み込み中'}なのかもしれない。</div>`;
+    main.querySelector('[data-back]').addEventListener('click', backToBoard);
+    return;
+  }
+  // Replaced rather than pushed: nothing listens for the back button, and a tab switch that
+  // left an entry would make it change the address without changing the page.
+  history.replaceState(null, '', `#task/${encodeURIComponent(task.id)}/${taskView.tab}`);
+
+  // The queue beside the task only while the task is on it: otherwise the list is about
+  // something else, and the page is better spent on the task.
+  const onQueue = columnOf(task) === 'attention';
+  root.classList.toggle('with-rail', onQueue);
+  rail.classList.toggle('hidden', !onQueue);
+  if (onQueue) {
+    const gates = state.gates || [];
+    rail.innerHTML = `<h2>要対応 ${gates.length} 件</h2>`;
+    for (const g of gates) {
+      const [label, colour] = kindOf(g.kind);
+      const b = document.createElement('button');
+      b.className = 'item';
+      b.setAttribute('aria-current', String(g.task === task.id));
+      b.innerHTML = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+        <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
+      const owner = g.task && (state.tasks || []).find(t => t.id === g.task);
+      b.onclick = () => owner ? openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id) : goToGate(g.id);
+      rail.appendChild(b);
+    }
+  }
+
+  const all = gatesOf(task);
+  const shown = gateShownIn(task, taskView.tab, all);
+  // Read before the tabs are drawn, so the one open now does not keep its dot.
+  if (shown && shown.wait === false && recordById(shown.id)) markSeen(shown.id);
+  const colObj = COLUMNS.find(c => c.id === columnOf(task));
+  const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task) : null;
+  const count = kind => all.filter(g => g.kind === kind).length;
+  const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && recordById(g.id) && isUnread(g));
+  let h = `<div class="tv-top">
+    <div class="row">
+      <button type="button" class="iconbtn" data-back title="ボードに戻る (Esc)">← ボード</button>
+      <h1>${esc(task.title)}</h1>
+    </div>
+    <div class="row" style="font-size:12px;color:var(--ink-2)">
+      <span class="tag">${esc(colObj ? colObj.label : task.status)}</span>
+      ${worker && worker.present && worker.phase ? `<span>${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
+      ${task.worktree ? `<span class="mono2">${esc(task.worktree.split('/').pop())}</span>` : ''}
+      ${stuckOf(task) ? `<span class="state bad"><span>⏱</span>${esc(stuckOf(task))}</span>` : ''}
+    </div>
+    <div class="tv-tabs" role="tablist">${TASK_TABS.map(([id, label]) => {
+      const kind = KIND_OF_TAB[id];
+      const n = kind && kind !== 'plan' ? count(kind) : 0;
+      return `<button role="tab" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
+        `${kind && unreadIn(kind) ? '<span class="unread" aria-label="未読"></span>' : ''}${label}${n ? ` <span style="color:var(--muted)">${n}</span>` : ''}</button>`;
+    }).join('')}</div>
+  </div><div class="tv-body">`;
+
+  // A gate waiting on a person comes first whichever tab is open: it is the ball.
+  const waiting = openGate(task);
+  if (waiting) {
+    const [label, colour] = kindOf(waiting.kind);
+    const tab = TAB_OF_KIND[waiting.kind] || 'history';
+    const here = tab === taskView.tab && gateShownIn(task, tab, all)?.id === waiting.id;
+    h += `<div class="tv-wait"><span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+      <b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(waiting.title)}</b>
+      <span style="color:var(--ink-2);font-size:12px">${ago(waiting.openedAt)}から待ち</span>
+      ${stopWhy(waiting).length ? `<span class="${stopBad(waiting) ? 'bad' : ''}" style="font-size:12px;width:100%">${stopBad(waiting) ? '⚠ ' : ''}止めた理由: ${esc(stopWhy(waiting).join(' / '))}</span>` : ''}
+      ${here ? '<span style="color:var(--ink-2);font-size:12px;width:100%">判定はこのページの下にある</span>'
+        : `<button type="button" class="primary" data-judge="${esc(waiting.id)}">判定する →</button>`}</div>`;
+  }
+
+  h += { overview: overviewTab, review: reviewTab, check: checkTab, history: historyTab }[taskView.tab](task, all);
+  h += `</div>`;
+
+  // Whether this is what was on screen: a comment is only carried across a redraw of the same one.
+  const commentEl = main.querySelector('.gate-comment');
+  const same = shown && taskViewShown === `${task.id}/${taskView.tab}/${shown.id}`;
+  const commentVal = commentEl && same ? commentEl.value : '';
+  const isCommentFocused = document.activeElement === commentEl;
+  const scroll = taskViewShown?.startsWith(`${task.id}/${taskView.tab}/`) ? main.scrollTop : 0;
+  taskViewShown = `${task.id}/${taskView.tab}/${shown?.id || ''}`;
+  const openDetails = [...main.querySelectorAll('details')].map(d => d.open);
+
+  main.innerHTML = h;
+  if (same) main.querySelectorAll('details').forEach((d, i) => { if (openDetails[i] != null) d.open = openDetails[i]; });
+  main.querySelector('[data-back]').addEventListener('click', backToBoard);
+  main.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+    taskView.tab = b.dataset.tab;
+    renderTaskView();
+  }));
+  main.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', () => {
+    taskView.pick[taskView.tab] = b.dataset.pick;
+    renderTaskView();
+  }));
+  main.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+    const g = all.find(x => x.id === b.dataset.open);
+    if (!g) return;
+    const tab = TAB_OF_KIND[g.kind] || 'history';
+    taskView.tab = tab;
+    taskView.pick[tab] = g.id;
+    renderTaskView();
+  }));
+  main.querySelectorAll('[data-unpick]').forEach(b => b.addEventListener('click', () => {
+    delete taskView.pick[taskView.tab];
+    renderTaskView();
+  }));
+  main.querySelectorAll('[data-judge]').forEach(b => b.addEventListener('click', () => {
+    const tab = TAB_OF_KIND[waiting.kind] || 'history';
+    taskView.tab = tab;
+    taskView.pick[tab] = waiting.id;
+    renderTaskView();
+  }));
+  bindDecide(main);
+  restoreComment(main, commentVal, isCommentFocused, scroll);
+}
+
+/* The gate a tab has on screen, if it shows one. */
+function gateShownIn(task, tab, all) {
+  if (tab === 'history') return (taskView.pick.history && all.find(g => g.id === taskView.pick.history)) || null;
+  if (tab === 'overview') {
+    // The plan being worked to is the one approved last; a plan waiting now is the one to judge.
+    // /api/state names it only for a live task, so a finished one finds it the same way.
+    const plans = all.filter(g => g.kind === 'plan');
+    const approved = plans.filter(g => ['approve', 'choice'].includes(g.decision))
+      .sort((a, b) => (a.answeredAt || '').localeCompare(b.answeredAt || '')).pop();
+    return (taskView.pick.overview && all.find(g => g.id === taskView.pick.overview))
+      || plans.find(isWaiting) || task.approvedPlan || approved || plans[plans.length - 1] || null;
+  }
+  return gateForTab(task, tab, all);
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape' && view === 'task' && !e.target.matches('textarea,input,select')) {
+    backToBoard();
+    return;
+  }
+  if (e.key === 'Escape' && view === 'board') {
     if (selectedTaskId) {
       closeDrawer();
       return;
@@ -1623,10 +2172,18 @@ function setView(v) {
   view = v;
   document.getElementById('board-view').style.display = v === 'board' ? 'flex' : 'none';
   document.getElementById('review').classList.toggle('on', v === 'review');
-  document.getElementById('tab-board').setAttribute('aria-selected', String(v === 'board'));
+  document.getElementById('task-view').classList.toggle('on', v === 'task');
+  // A task's view is reached from the board and goes back to it, so the board tab stays lit.
+  document.getElementById('tab-board').setAttribute('aria-selected', String(v !== 'review'));
   document.getElementById('tab-review').setAttribute('aria-selected', String(v === 'review'));
-  if (v !== 'board') closeDrawer();
+  if (v === 'task') {
+    taskViewShown = null;
+    // The drawer stays selected underneath, for the way back.
+    renderDrawer();
+    renderTaskView();
+  } else if (v !== 'board') closeDrawer();
   else {
+    if (location.hash.startsWith('#task/')) history.replaceState(null, '', location.pathname + location.search);
     // Back from reading a record: the review tab is for the queue, so it opens on what waits
     // rather than on the record read last.
     if (!(state.gates || []).some(g => g.id === focused)) focused = null;
@@ -1645,7 +2202,11 @@ function toggleTheme() {
 note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
 // Opening #gate/<id> lands straight on that card — the shape a notification's click takes.
 const deep = location.hash.match(/^#gate\/(.+)$/);
-if (deep) { focused = deep[1]; setView('review'); } else { setView('board'); }
+// And #task/<id>/<tab> on one task's view.
+const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);
+if (deep) { focused = deep[1]; setView('review'); }
+else if (deepTask) openTask(decodeURIComponent(deepTask[1]), TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
+else { setView('board'); }
 refresh();
 updateNotifyButton();
 // The server holds no clock, so the page carries one: it asks, nothing pushes.
