@@ -387,12 +387,26 @@ fn claim(dir: &Path, base: String) -> Result<String, String> {
     Err(format!("no free gate id for {base}"))
 }
 
+/// Write a gate, replacing whatever is at its name in one step.
+///
+/// A record is written again each time it is answered, while the board reads it every few
+/// seconds and nothing it reads through takes the writer's lock. Written in place, a reader
+/// could catch it half-written and drop it from the listing, and a write cut short would
+/// leave it unreadable for good. Staged beside it and renamed over it, the name never points
+/// at a partial file.
 pub fn save(dir: &Path, gate: &Gate) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let path = path_of(dir, &gate.id);
     let json = serde_json::to_string_pretty(gate).map_err(|e| e.to_string())?;
-    std::fs::write(&path, format!("{json}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    // Not named `.json`, so a listing never reads a staged file as a gate. The pid keeps two
+    // processes writing the same gate from staging into each other's file.
+    let staged = dir.join(format!(".{}.{}.tmp", gate.id, std::process::id()));
+    std::fs::write(&staged, format!("{json}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", staged.display()))?;
+    std::fs::rename(&staged, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&staged);
+        format!("cannot write {}: {e}", path.display())
+    })?;
     Ok(path)
 }
 
@@ -556,6 +570,22 @@ mod tests {
         let gate = gate(Kind::Plan);
         save(dir.path(), &gate).unwrap();
         assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
+    }
+
+    /// Written again over itself, a gate leaves nothing staged behind and still reads back.
+    #[test]
+    fn saving_over_a_gate_replaces_it_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut gate = gate(Kind::Diff);
+        save(dir.path(), &gate).unwrap();
+        gate.title = "書き直した".to_string();
+        save(dir.path(), &gate).unwrap();
+        assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, [format!("{}.json", gate.id)]);
     }
 
     /// Two pieces of work finishing in the same second is ordinary, and the loser of a
