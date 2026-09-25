@@ -118,7 +118,8 @@ async function refresh(force = false) {
     // Compared without the server's clock, which changes on every poll: with it in, every
     // refresh redrew the page, and a comment being typed into a gate lost its IME
     // composition every two seconds. The clock only moves the elapsed times on the board, so
-    // the board — which has nothing to type into — is redrawn for it once a minute.
+    // the board is redrawn for it once a minute. Its one box to type into, the instruction in
+    // the side sheet, is kept across a redraw (renderHandForm).
     const { now, ...rest } = next;
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);

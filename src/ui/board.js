@@ -541,14 +541,16 @@ function goToQueue() {
 function renderDrawer() {
   const drawer = document.getElementById('task-drawer');
   if (!drawer) return;
-  if (!selectedTaskId || view !== 'board') {
+  const task = selectedTaskId && (state.tasks || []).find(t => t.id === selectedTaskId);
+  if (!task) {
+    // Closed, not just out of view: what was typed for the task goes with it.
     drawer.classList.add('hidden');
+    document.getElementById('drawer-body')?.replaceChildren();
+    selectedTaskId = null;
     return;
   }
-  const task = (state.tasks || []).find(t => t.id === selectedTaskId);
-  if (!task) {
+  if (view !== 'board') {
     drawer.classList.add('hidden');
-    selectedTaskId = null;
     return;
   }
   drawer.classList.remove('hidden');
@@ -569,11 +571,11 @@ function renderDrawer() {
   const expandBtn = document.getElementById('drawer-expand-btn');
   if (expandBtn) expandBtn.onclick = () => openTask(task.id);
 
-  let body = '';
+  let head = '';
 
   if (gate) {
     const [label] = kindOf(gate.kind);
-    body += `
+    head += `
       <div class="m3-card-attention-box">
         <div style="font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px;">
           <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
@@ -589,19 +591,7 @@ function renderDrawer() {
     `;
   }
 
-  if (colId === 'backlog') {
-    body += `
-      <div class="m3-filled-card" style="display:flex;flex-direction:column;gap:8px;">
-        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;">キューへの受け渡し</div>
-        <label for="drawer-instruction" style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);">エージェントへの申し送り（指示）</label>
-        <textarea id="drawer-instruction" placeholder="追加の指示や申し送りがあれば入力（任意）..." style="width:100%;box-sizing:border-box;border-radius:var(--md-shape-corner-xs);border:1px solid var(--md-sys-color-outline-variant);padding:8px 10px;background:var(--md-sys-color-surface-container-high);color:var(--md-sys-color-on-surface);font-size:12.5px;font-family:inherit;resize:vertical;min-height:60px;">${esc(task.instruction || '')}</textarea>
-        <button class="btn-m3-primary" style="width:100%" data-drawer-hand="${esc(task.id)}">
-          <span class="material-symbols-outlined" style="font-size:16px;">send</span>
-          <span>待機キューに渡す</span>
-        </button>
-      </div>
-    `;
-  }
+  let body = '';
 
   // Newest first: the one the worker left last is the one that describes where it is now.
   const records = recordsOf(task).reverse();
@@ -708,40 +698,76 @@ function renderDrawer() {
 
   const drawerBody = document.getElementById('drawer-body');
   if (drawerBody) {
-    drawerBody.innerHTML = body;
-    drawerBody.querySelectorAll('[data-record]').forEach(b =>
-      b.addEventListener('click', () => openRecord(b.dataset.record)));
-    drawerBody.querySelectorAll('[data-judge]').forEach(b =>
-      b.addEventListener('click', () => judgeGate(b.dataset.judge)));
-    // A gate in 経過 opens where the task view reads it, rather than being repeated here.
-    drawerBody.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
-      const g = all.find(x => x.id === b.dataset.open);
-      if (g) openTask(task.id, TAB_OF_KIND[g.kind] || 'history', g.id);
-    }));
-    drawerBody.querySelectorAll('[data-history]').forEach(b =>
-      b.addEventListener('click', () => openTask(b.dataset.history, 'history')));
-    drawerBody.querySelectorAll('[data-focus]').forEach(b =>
-      b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
-    drawerBody.querySelectorAll('[data-ide]').forEach(b =>
-      b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
-    drawerBody.querySelectorAll('[data-close]').forEach(b =>
-      b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
-    drawerBody.querySelectorAll('[data-drawer-hand]').forEach(b =>
-      b.addEventListener('click', () => {
-        const textarea = document.getElementById('drawer-instruction');
-        const instruction = textarea ? textarea.value.trim() : '';
-        hand(b.dataset.drawerHand, instruction);
+    const [headEl, formEl, restEl] = drawerParts(drawerBody);
+    headEl.innerHTML = head;
+    restEl.innerHTML = body;
+    for (const part of [headEl, restEl]) {
+      part.querySelectorAll('[data-record]').forEach(b =>
+        b.addEventListener('click', () => openRecord(b.dataset.record)));
+      part.querySelectorAll('[data-judge]').forEach(b =>
+        b.addEventListener('click', () => judgeGate(b.dataset.judge)));
+      // A gate in 経過 opens where the task view reads it, rather than being repeated here.
+      part.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+        const g = all.find(x => x.id === b.dataset.open);
+        if (g) openTask(task.id, TAB_OF_KIND[g.kind] || 'history', g.id);
       }));
-    const drawerTextarea = document.getElementById('drawer-instruction');
-    if (drawerTextarea) {
-      drawerTextarea.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
-          e.preventDefault();
-          hand(task.id, drawerTextarea.value.trim());
-        }
-      });
+      part.querySelectorAll('[data-history]').forEach(b =>
+        b.addEventListener('click', () => openTask(b.dataset.history, 'history')));
+      part.querySelectorAll('[data-focus]').forEach(b =>
+        b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
+      part.querySelectorAll('[data-ide]').forEach(b =>
+        b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+      part.querySelectorAll('[data-close]').forEach(b =>
+        b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
     }
+    renderHandForm(formEl, colId === 'backlog' ? task : null);
   }
+}
+
+/* The side sheet's body in three parts: what waits on the person, the hand-over form, and the
+   rest. Each part is display:contents, so the body's gap still spaces the cards inside them. */
+function drawerParts(drawerBody) {
+  if (drawerBody.childElementCount !== 3) {
+    drawerBody.innerHTML = '<div style="display:contents"></div>'.repeat(3);
+  }
+  return [...drawerBody.children];
+}
+
+/* The hand-over form of a backlog task. The board redraws once a minute and on every change of
+   state, and a textarea built again loses what is typed into it, the caret, and an IME
+   composition in progress. So the form is built again only for another task, or when the saved
+   instruction changed and nothing has been typed over the one shown. */
+function renderHandForm(el, task) {
+  if (!task) {
+    el.innerHTML = '';
+    delete el.dataset.task;
+    return;
+  }
+  const saved = task.instruction || '';
+  const kept = el.querySelector('#drawer-instruction');
+  if (kept && el.dataset.task === task.id && (el.dataset.saved === saved || kept.value !== el.dataset.saved)) return;
+  el.dataset.task = task.id;
+  el.dataset.saved = saved;
+  el.innerHTML = `
+      <div class="m3-filled-card" style="display:flex;flex-direction:column;gap:8px;">
+        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;">キューへの受け渡し</div>
+        <label for="drawer-instruction" style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);">エージェントへの申し送り（指示）</label>
+        <textarea id="drawer-instruction" placeholder="追加の指示や申し送りがあれば入力（任意）..." style="width:100%;box-sizing:border-box;border-radius:var(--md-shape-corner-xs);border:1px solid var(--md-sys-color-outline-variant);padding:8px 10px;background:var(--md-sys-color-surface-container-high);color:var(--md-sys-color-on-surface);font-size:12.5px;font-family:inherit;resize:vertical;min-height:60px;">${esc(saved)}</textarea>
+        <button class="btn-m3-primary" style="width:100%" data-drawer-hand="${esc(task.id)}">
+          <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+          <span>待機キューに渡す</span>
+        </button>
+      </div>
+    `;
+  const textarea = el.querySelector('#drawer-instruction');
+  el.querySelector('[data-drawer-hand]').addEventListener('click', () =>
+    hand(task.id, textarea.value.trim()));
+  textarea.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      hand(task.id, textarea.value.trim());
+    }
+  });
 }
 
 
