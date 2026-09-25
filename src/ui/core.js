@@ -154,7 +154,7 @@ function render() {
   document.title = (mine ? `(${mine}) ` : '') + 'adj';
   updateNotifyButton();
   renderDrawer();
-  renderReview();
+  redrawReview();
   redrawTaskView();
 }
 

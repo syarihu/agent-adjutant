@@ -327,7 +327,29 @@ function switchReviewTab(tabName) {
 }
 window.switchReviewTab = switchReviewTab;
 
+/* A redraw that came while a comment was being typed in the review view, held until the box
+   is left, as the task view does: replacing the markup under the box cuts an IME composition
+   short even when the text is put back. A person's own action still redraws at once. */
+let reviewHeld = false;
+function redrawReview() {
+  if (document.activeElement?.matches('#review .gate-comment')) {
+    reviewHeld = true;
+    return;
+  }
+  renderReview();
+}
+document.getElementById('review').addEventListener('focusout', e => {
+  if (!reviewHeld || !e.target.matches('.gate-comment')) return;
+  // After the focus has moved: a click on a button redraws through its own handler, and this
+  // one should not draw over it with the old state.
+  setTimeout(() => {
+    if (!reviewHeld || document.activeElement?.matches('#review .gate-comment')) return;
+    renderReview();
+  });
+});
+
 function renderReview() {
+  reviewHeld = false;
   const rail = document.querySelector('#review .rail');
   const pane = document.querySelector('#review .pane');
   const gates = state.gates || [];
