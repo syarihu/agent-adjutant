@@ -363,9 +363,6 @@ function renderReview() {
         <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">inbox</span>
         <span>要対応 (${gates.length})</span>
       </div>
-      <div style="font-size:11px;font-weight:normal;color:var(--md-sys-color-outline)">
-        <kbd>j</kbd><kbd>k</kbd> 移動 &nbsp;<kbd>a</kbd> 承認 &nbsp;<kbd>r</kbd> 修正 &nbsp;<kbd>c</kbd> 閉じる
-      </div>
     </div>
     <div class="review-inbox-list"></div>
   `;
