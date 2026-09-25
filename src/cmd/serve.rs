@@ -22,8 +22,27 @@ use crate::messaging;
 use crate::task;
 
 /// The page. One file, no build step, no network fetches — it is read from the binary and
-/// runs from there.
-const UI_HTML: &str = include_str!("../ui.html");
+/// runs from there. The source is kept in pieces under `src/ui/` only so it can be read; they
+/// are joined here in order, so the browser still gets a single page and every request it
+/// makes still carries the token. The scripts share one global scope, so their order matters.
+const UI_HTML: &str = concat!(
+    include_str!("../ui/page-head.html"),
+    include_str!("../ui/tokens.css"),
+    include_str!("../ui/components.css"),
+    include_str!("../ui/shell.css"),
+    include_str!("../ui/board.css"),
+    include_str!("../ui/review.css"),
+    include_str!("../ui/task-view.css"),
+    include_str!("../ui/console-and-dialog.css"),
+    include_str!("../ui/page-body.html"),
+    include_str!("../ui/core.js"),
+    include_str!("../ui/board.js"),
+    include_str!("../ui/actions.js"),
+    include_str!("../ui/review.js"),
+    include_str!("../ui/task-view.js"),
+    include_str!("../ui/main.js"),
+    include_str!("../ui/page-end.html"),
+);
 
 pub const DEFAULT_PORT: u16 = 4577;
 
@@ -562,6 +581,28 @@ fn open_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_page_pieces_join_into_one_document() {
+        // A piece left out or put out of order shows here rather than as a blank page.
+        assert!(UI_HTML.starts_with("<!DOCTYPE html>"));
+        assert!(UI_HTML.trim_end().ends_with("</html>"));
+        for tag in [
+            "<style>",
+            "</style>",
+            "<script>",
+            "</script>",
+            "<body>",
+            "</body>",
+        ] {
+            assert_eq!(UI_HTML.matches(tag).count(), 1, "{tag}");
+        }
+        let at = |tag: &str| UI_HTML.find(tag).unwrap();
+        assert!(at("<style>") < at("</style>"));
+        assert!(at("</style>") < at("<body>"));
+        assert!(at("<script>") < at("</script>"));
+        assert!(at("</script>") < at("</body>"));
+    }
 
     fn request(method: &str, path: &str, headers: &[(&str, &str)]) -> Request {
         Request {

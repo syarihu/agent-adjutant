@@ -1,0 +1,229 @@
+</style>
+</head>
+<body>
+
+<aside id="nav-rail">
+  <div class="rail-brand">
+    <div class="brand-badge">adj</div>
+    <div class="repo-info">
+      <span class="repo-title" id="repo">…</span>
+      <span class="repo-sub">agent-adjutant</span>
+    </div>
+  </div>
+
+  <button class="m3-fab-extended" onclick="openForm()">
+    <span class="material-symbols-outlined" aria-hidden="true">add</span>
+    <span>新しいタスク</span>
+  </button>
+
+  <div class="rail-destinations">
+    <button class="rail-item" id="nav-board" aria-current="page" onclick="setView('board')">
+      <span class="material-symbols-outlined">view_kanban</span>
+      <span>カンバンボード</span>
+    </button>
+    <button class="rail-item" id="nav-review" onclick="goToQueue()">
+      <span class="material-symbols-outlined">mark_chat_unread</span>
+      <span>要対応レビュー</span>
+      <span class="rail-badge" id="gate-count">0</span>
+    </button>
+  </div>
+
+  <div class="rail-footer">
+    <div class="status-pill-group">
+      <div class="status-row">
+        <span style="font-weight:700">自律 hub</span>
+        <span id="hub" class="state warn">…</span>
+      </div>
+      <div class="status-row" id="inbox-row" style="display:none">
+        <span>受信箱</span>
+        <span id="inbox" class="state warn"></span>
+      </div>
+    </div>
+    <div class="rail-tools">
+      <button class="tool-btn" id="btn-notify" onclick="toggleNotify()" title="デスクトップ通知を設定">
+        <span class="material-symbols-outlined">notifications</span>
+      </button>
+      <button class="tool-btn" onclick="toggleTheme()" title="テーマ切替">
+        <span class="material-symbols-outlined">dark_mode</span>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<div id="app-main">
+  <header class="top-app-bar">
+    <div class="page-title-area">
+      <h1 class="page-title" id="page-title">タスクボード</h1>
+      <span class="page-subtitle" id="page-subtitle">バックグラウンド worker との協調作業カンバン</span>
+    </div>
+
+    <div class="filter-chip-group">
+      <button class="m3-filter-chip active" id="chip-filter-all" aria-pressed="true" onclick="setBoardFilter('all', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">apps</span>
+        <span>すべて</span>
+      </button>
+      <button class="m3-filter-chip" id="chip-filter-mine" aria-pressed="false" onclick="setBoardFilter('mine', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">person</span>
+        <span>あなたのボール</span>
+      </button>
+      <button class="m3-filter-chip" id="chip-filter-worker" aria-pressed="false" onclick="setBoardFilter('worker', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">smart_toy</span>
+        <span>worker 作業中</span>
+      </button>
+    </div>
+
+    <div class="top-bar-actions">
+      <button class="btn-m3-tonal" style="padding:6px 12px;font-size:12px;" onclick="nudgeHub()" title="adj send --kind next (着手を促す)">
+        <span class="material-symbols-outlined" style="font-size:16px;">bolt</span>
+        <span>着手を促す</span>
+      </button>
+      <button class="tool-btn" onclick="refreshAll()" title="再同期 (adj refresh)">
+        <span class="material-symbols-outlined">refresh</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div id="board-view">
+      <div id="board"></div>
+      <aside id="task-drawer" class="hidden">
+        <div class="sidesheet-header">
+          <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1">
+            <div id="drawer-badges" style="display:flex;align-items:center;gap:6px"></div>
+            <h2 id="drawer-title" style="font-size:16px;font-weight:700;line-height:1.4"></h2>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button class="tool-btn" id="drawer-expand-btn" title="詳細画面を開く">
+              <span class="material-symbols-outlined">open_in_full</span>
+            </button>
+            <button class="tool-btn" onclick="closeDrawer()" title="閉じる">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="sidesheet-body" id="drawer-body"></div>
+      </aside>
+    </div>
+    <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
+    <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
+  </main>
+
+  <footer id="m3-bottom-sheet">
+    <button type="button" class="sheet-handle-bar" aria-expanded="false" onclick="toggleBottomSheet()">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+        <strong style="font-size:12px;">CLI連携コンソール</strong>
+        <span style="font-size:11px;color:var(--md-sys-color-on-surface-variant)">UI操作と <code>adj</code> コマンドの対応ログ</span>
+      </div>
+      <div class="sheet-pill"></div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="sheet-latest-cmd" style="font-family:var(--font-mono);font-size:11px;color:var(--md-sys-color-outline)">adj serve</span>
+        <span id="sheet-toggle-icon" style="font-size:11px;font-weight:700">▲ 開く</span>
+      </div>
+    </button>
+    <div class="sheet-content">
+      <ol id="log" style="list-style:none;display:flex;flex-direction:column;gap:4px;"></ol>
+    </div>
+  </footer>
+</div>
+
+<dialog id="form">
+  <form method="dialog" onsubmit="submitForm(event)">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">add_task</span>
+        <span>タスクを渡す</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" onclick="document.getElementById('form').close()" title="閉じる">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <fieldset>
+        <legend>種類</legend>
+        <div class="radios">
+          <label><input type="radio" name="kind" value="start" checked onchange="syncForm()">Issue に着手</label>
+          <label><input type="radio" name="kind" value="file-and-start" onchange="syncForm()">起票して着手</label>
+          <label><input type="radio" name="kind" value="investigate" onchange="syncForm()">調査だけ</label>
+        </div>
+      </fieldset>
+      <label class="field"><span>内容</span>
+        <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力"></textarea></label>
+      <label class="field" id="f-issue"><span>Issue URL</span>
+        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233"></label>
+      <details class="more">
+        <summary>詳細(省略可)</summary>
+        <div class="grid">
+          <label class="field"><span>タイトル</span>
+            <input type="text" name="title" placeholder="省略時は内容の1行目"></label>
+          <label class="field"><span>完了条件</span>
+            <select name="doneWhen">
+              <option value="report-only">調査のみ(報告して終わり)</option>
+              <option value="verify">動作確認まで</option>
+              <option value="pr" selected>PR 作成まで</option>
+              <option value="review">レビュー対応まで</option>
+            </select></label>
+          <label class="field"><span>止める所</span>
+            <select name="stopAt">
+              <option value="plan" selected>計画の承認だけ待つ</option>
+              <option value="diff">計画と差分レビューを待つ</option>
+              <option value="all">計画・差分・動作確認を待つ</option>
+            </select></label>
+          <label class="field"><span>分岐元</span>
+            <input type="text" name="base" placeholder="既定 (baseBranch)"></label>
+          <label class="field"><span>親タスク(URL)</span>
+            <input type="text" name="parent" placeholder="https://…/issues/200">
+            <span class="note">キーではなく URL を指定</span></label>
+          <label class="field" id="f-wtname"><span>worktree 名</span>
+            <input type="text" name="worktreeName" placeholder="login-retry">
+            <span class="note">Issue が無いときは必須</span></label>
+        </div>
+        <fieldset style="padding-top:12px">
+          <legend>着手</legend>
+          <div class="radios">
+            <label><input type="radio" name="autoStart" value="true" checked>確認なしで着手</label>
+            <label><input type="radio" name="autoStart" value="false">着手前に確認したい</label>
+          </div>
+        </fieldset>
+      </details>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" onclick="document.getElementById('form').close()">やめる</button>
+      <button type="submit" class="btn-m3-tonal" name="act" value="backlog">Backlog に置く</button>
+      <button type="submit" class="btn-m3-primary" name="act" value="queued">
+        <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+        <span>いま渡す</span>
+      </button>
+    </div>
+</dialog>
+
+<dialog id="handover-dialog">
+  <form method="dialog" id="handover-form" onsubmit="submitHandover(event)">
+    <div class="head" style="justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">forward_to_inbox</span>
+        <span>キューに渡す</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" id="handover-close-btn" onclick="closeHandoverDialog()" title="閉じる">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <div id="handover-task-title" style="font-size:13.5px;font-weight:600;color:var(--md-sys-color-on-surface);background:var(--md-sys-color-surface-container);padding:10px 14px;border-radius:var(--md-shape-corner-sm);line-height:1.4;"></div>
+      <label class="field">
+        <span>エージェントへの申し送り（指示）</span>
+        <textarea id="handover-instruction" placeholder="着手にあたってエージェントに伝えたい前提条件や追加指示があれば入力（空欄でも渡せます）..." rows="4"></textarea>
+        <span class="note">⌘+Enter / Ctrl+Enter で送信</span>
+      </label>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" id="handover-cancel-btn" onclick="closeHandoverDialog()">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="handover-submit-btn">
+        <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+        <span>キューに渡す</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<script>
