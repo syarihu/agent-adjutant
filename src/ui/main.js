@@ -20,25 +20,8 @@ document.addEventListener('keydown', e => {
       return;
     }
   }
-  if (view !== 'review' || e.target.matches('textarea,input,select')) return;
-  const gates = state.gates || [];
-  const i = gates.findIndex(g => g.id === focused);
-  if (e.key === 'j' && i < gates.length - 1) {
-    focused = gates[i + 1].id;
-    reviewActiveTab = TAB_OF_KIND[gates[i + 1].kind] || 'overview';
-    renderReview();
-  }
-  if (e.key === 'k' && i > 0) {
-    focused = gates[i - 1].id;
-    reviewActiveTab = TAB_OF_KIND[gates[i - 1].kind] || 'overview';
-    renderReview();
-  }
-  // A record on screen is not in the queue these keys work through, and approving one is not
-  // something a record can take.
-  if (i < 0) return;
-  if (e.key === 'a') answer((gates[i]?.options || ['approve'])[0]);
-  if (e.key === 'r') answer((gates[i]?.options || [, 'changes'])[1] || 'changes');
-  if (e.key === 'c') closeGate();
+  // The review view has no single-key shortcuts. A bare `c` closed the gate on screen, so a
+  // Cmd+C to copy from it closed it too; answering stays a click on a button.
 });
 
 function setView(v) {
