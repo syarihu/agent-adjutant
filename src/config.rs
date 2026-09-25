@@ -21,6 +21,10 @@ pub fn builtin_defaults() -> Map<String, Value> {
         "reviewEngine": "auto",
         "selfReviewRounds": 5,
         "draftPr": true,
+        // Whether the worker asks before requesting a Copilot review on the PR it opens.
+        // Separate from `reviewBots`, which names the reviews to wait for, not whether to
+        // ask for one.
+        "copilotReview": "ask",
         "issueKeys": {},
         "verify": [],
         "postCreate": [],
@@ -1076,6 +1080,17 @@ pub fn resolve_from_value(
         }
     }
 
+    // The hub copies this into the worker brief verbatim, and the worker falls back to asking
+    // on anything it does not recognise. Without a warning, a typo such as "alway" would
+    // quietly keep the question coming while the person believes it is switched off.
+    if let Some(value) = resolved.get("copilotReview")
+        && !matches!(value.as_str(), Some("ask" | "always" | "never"))
+    {
+        warnings.push(format!(
+            "copilotReview {value} is not one of ask, always, never: treated as ask"
+        ));
+    }
+
     // A github issue with no key has no branch name, so it silently drops out of the list.
     // jira and linear carry their own key and never need issueKeys.
     for (index, source) in sources.iter().enumerate() {
@@ -1235,6 +1250,54 @@ mod tests {
         assert_eq!(config["reviewEffort"], "high");
         assert_eq!(config["selfReviewRounds"], 5);
         assert_eq!(config["baseBranch"], "auto");
+        assert_eq!(config["copilotReview"], "ask");
+    }
+
+    #[test]
+    fn copilot_review_is_set_per_repo_over_defaults() {
+        let (config, _, warnings) = resolve(
+            json!({
+                "defaults": {"copilotReview": "never"},
+                "repos": {
+                    "acme/app": {"taskSource": "github", "issueRepo": "acme/app",
+                        "issueKeys": {"acme/app": "WID"}, "ide": "code",
+                        "copilotReview": "always"},
+                    "acme/lib": {"taskSource": "github", "issueRepo": "acme/lib",
+                        "issueKeys": {"acme/lib": "XYZ"}, "ide": "code"}
+                }
+            }),
+            "acme/app",
+        );
+        assert_eq!(config.unwrap()["copilotReview"], "always");
+        assert!(!warnings.iter().any(|w| w.contains("copilotReview")));
+
+        let (config, _, _) = resolve(
+            json!({
+                "defaults": {"copilotReview": "never"},
+                "repos": {"acme/lib": {"taskSource": "github", "issueRepo": "acme/lib",
+                    "issueKeys": {"acme/lib": "XYZ"}, "ide": "code"}}
+            }),
+            "acme/lib",
+        );
+        assert_eq!(config.unwrap()["copilotReview"], "never");
+    }
+
+    #[test]
+    fn an_unknown_copilot_review_value_is_reported() {
+        for value in [json!("alway"), json!(true)] {
+            let (_, _, warnings) = resolve(
+                json!({"repos": {"acme/app": {"taskSource": "github", "issueRepo": "acme/app",
+                       "issueKeys": {"acme/app": "WID"}, "ide": "code",
+                       "copilotReview": value}}}),
+                "acme/app",
+            );
+            assert!(
+                warnings
+                    .iter()
+                    .any(|w| w.contains("copilotReview") && w.contains("treated as ask")),
+                "no warning for {value}: {warnings:?}"
+            );
+        }
     }
 
     #[test]
