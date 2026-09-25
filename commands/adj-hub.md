@@ -151,7 +151,7 @@ proctor pattern that bakes one key in (`{user}/ALPHA-{issue}`) cannot serve a se
 
 以下を**1回のツールブロックにまとめて**出す。どれも他の結果を待たない。
 
-- `adjutant_config` — このリポジトリの解決済み設定。`repo` / `main` / `hubName` / `registered` /
+- `adjutant_config` — このリポジトリの解決済み設定。`repo` / `main` / `hubName` / `board` / `registered` /
   `warnings` / `settings` / `config` が1発で返る。**設定ファイルを自分で読み直さない。**
 - `adjutant_pending` — 受信箱に溜まっている報告
 - `adjutant_refresh` — PR を持つタスクのレコードを PR の状態に合わせる。マージ済みの PR のタスクだけが
@@ -229,6 +229,11 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
      見せない。「待機中なのだ（一覧は集めてないのだ。「一覧」と言えば集めるのだ）」のように、
      **集めていないことと、頼めば集まることを1行で**書いて終える。前者だけだと人は待ち続けるし、
      後者が無いと一覧の出し方がこの画面のどこにも無い。
+
+   Context の `adjutant_config` の `board` が `null` でなければ、**その `url` を同じ1行に入れる**
+   （「待機中なのだ（…）。板は {url} なのだ」）。board はこの hub の MCP サーバーが hub と同じ寿命で
+   立てているので、人が開く場所はそこしかない。**ブラウザは開かない** — hub は何度も立ち上がる。
+   `null` なら何も書かない（`settings.hubServe` が `false` か、手で `adj serve` を立てる運用）。
 
    Context の `adjutant_refresh` が何か返していれば、同じ1行に短く混ぜる。`done` にした件数と、
    `closed`・`unreadable` の PR（どちらも人が決めることなので、URL を出す）、`failed`（マージ済みなのに

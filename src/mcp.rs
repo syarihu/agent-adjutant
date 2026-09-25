@@ -355,6 +355,9 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 "main": info.main,
                 "hub": info.hub,
                 "hubName": info.hub_name,
+                // The board running for this hub, or null. Read from its record, so one
+                // started by hand with `adj serve` is found as well as the hub's own.
+                "board": crate::cmd::board_url(&info.slug).map(|url| json!({ "url": url })),
                 "registered": resolved.registered,
                 "configPath": resolved.config_path,
                 "warnings": resolved.warnings,
@@ -624,8 +627,89 @@ fn start_heartbeat() -> Option<(String, String)> {
     Some((slug, session))
 }
 
+/// How long a hub's MCP server gives a board that is still recorded as running to go away,
+/// and how often it looks. A reconnect starts this server again inside the same session,
+/// and the server it replaces — whose board that is — may take a moment to exit and let go
+/// of the port. A board still there after this was started by somebody else, and is left
+/// to serve.
+const BOARD_HANDOVER: std::time::Duration = std::time::Duration::from_secs(5);
+const BOARD_HANDOVER_STEP: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// The slug of the hub whose board this server serves, if any — `ADJUTANT_HUB_SERVE`, put
+/// on the line `adj hub` execs when `hubServe` is on.
+fn hub_serve() -> Option<String> {
+    let value = std::env::var(messaging::HUB_SERVE_ENV).ok()?;
+    let slug = value.trim();
+    (!slug.is_empty()).then(|| slug.to_string())
+}
+
+/// The hub `slug` names, resolved the way `adj serve` resolves it from where it stands: the
+/// hub runs in the main checkout, and a hub for a parent task has `ADJUTANT_HUB` on its line.
+/// A slug that does not come out the same is a server started somewhere else than the hub
+/// it was told about, and serving whatever it resolved to would put up the wrong board.
+fn hub_board_context(slug: &str) -> Result<crate::cmd::Context, String> {
+    let ctx = crate::cmd::context(None, None)?;
+    if ctx.repo.slug != slug {
+        return Err(format!(
+            "this server resolves to {} rather than {slug}",
+            ctx.repo.slug
+        ));
+    }
+    Ok(ctx)
+}
+
+/// Serve the board of the hub this server was started for, when it was started for one.
+///
+/// Before the loop rather than beside it, so that the URL is on record by the time the hub's
+/// first `adjutant_config` asks for it. Everything goes to stderr: stdout is the protocol.
+/// A board that cannot be served is said and got past — the hub works without one, as it
+/// always has.
+fn start_board() {
+    let Some(slug) = hub_serve() else {
+        return;
+    };
+    let served = hub_board_context(&slug).and_then(crate::cmd::serve_for_hub);
+    match served {
+        Ok(Some(url)) => say_serving(&url),
+        Ok(None) => {
+            std::thread::spawn(move || take_over_board(&slug));
+        }
+        Err(e) => eprintln!("adjutant: not serving the board: {e}"),
+    }
+}
+
+/// Where the board is, without the token: this line lands in the client's log of the server,
+/// which is the kind of file that gets attached to a bug report. The hub gets the whole URL
+/// from `adjutant_config`.
+fn say_serving(url: &str) {
+    let place = url.split('?').next().unwrap_or(url);
+    eprintln!("adjutant: serving the board at {place}");
+}
+
+/// Wait out a board that is recorded as running, then serve one — or, if it outlasts
+/// `BOARD_HANDOVER`, leave it be.
+fn take_over_board(slug: &str) {
+    let mut waited = std::time::Duration::ZERO;
+    while waited < BOARD_HANDOVER {
+        std::thread::sleep(BOARD_HANDOVER_STEP);
+        waited += BOARD_HANDOVER_STEP;
+        if crate::cmd::board_running(slug).is_some() {
+            continue;
+        }
+        match hub_board_context(slug).and_then(crate::cmd::serve_for_hub) {
+            Ok(Some(url)) => say_serving(&url),
+            // Another server got there between the check and the bind.
+            Ok(None) => {}
+            Err(e) => eprintln!("adjutant: not serving the board: {e}"),
+        }
+        return;
+    }
+    eprintln!("adjutant: a board for this hub is already running; leaving it be");
+}
+
 pub fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let heartbeat = start_heartbeat();
+    start_board();
     let served = serve_stdio();
     // The client closed the pipe: the session is ending now, which is a better answer than
     // the last beat. Written on the way out whatever the loop ended with.

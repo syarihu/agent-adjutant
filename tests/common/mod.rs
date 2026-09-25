@@ -36,12 +36,14 @@ pub const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-pub const AMBIENT: [&str; 6] = [
+pub const AMBIENT: [&str; 7] = [
     "ADJUTANT_HUB",
     "ADJUTANT_STARTUP_DASHBOARD",
     // A hub's MCP server beats for the session this names; a test child that inherited it
     // would be beating for the hub `cargo test` was typed in.
     "ADJUTANT_HUB_SESSION",
+    // And would serve that hub's board, on a real port, from inside the test.
+    "ADJUTANT_HUB_SERVE",
     // `cargo test` run from a git hook has these pointing at the developer's own checkout,
     // and a fixture set up with git would be set up there instead of in its tempdir.
     "GIT_DIR",

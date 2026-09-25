@@ -1077,6 +1077,13 @@ pub fn hub_session_path(slug: &str) -> PathBuf {
 /// runs under every session on the machine that has it registered — and which one.
 pub const HUB_SESSION_ENV: &str = "ADJUTANT_HUB_SESSION";
 
+/// Carried on the hub's command line like `HUB_SESSION_ENV`, and holding the hub's slug:
+/// it is what tells the MCP server under the agent to serve that hub's board. A variable of
+/// its own rather than the session one, because that one is left off for a runner that
+/// records no session, and such a hub still wants its board. Left off when `hubServe` is
+/// `false`.
+pub const HUB_SERVE_ENV: &str = "ADJUTANT_HUB_SERVE";
+
 /// The value of `HUB_SESSION_ENV` for this hub. Neither half can contain a `/`: a slug is
 /// lowercase, digits and `-`, and a session id is whatever the runner was handed, which is
 /// made up here.
