@@ -1761,8 +1761,15 @@ function gatesOf(task) {
   add(task.approvedPlan);
   (task.records || h.records).forEach(add);
   (state.gates || []).filter(g => g.task === task.id).forEach(add);
-  return [...byId.values()].sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || ''));
+  // Same-second ties go by the sequence at the end of the id, as `recordsOf` orders them, so
+  // the latest of a kind is the one claimed last.
+  return [...byId.values()].sort((a, b) =>
+    (a.openedAt || '').localeCompare(b.openedAt || '') || claimSeq(a) - claimSeq(b));
 }
+
+/* The order a gate or record was claimed in within its second: `…-diff-2`, `…-record-2`, and
+   none for the first. */
+const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 
 const isWaiting = g => (state.gates || []).some(x => x.id === g.id);
 
