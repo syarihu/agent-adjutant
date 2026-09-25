@@ -2743,7 +2743,7 @@ function renderReview() {
   const taskBranch = parentTask ? parentTask.branch : '';
   const taskWorktree = parentTask ? parentTask.worktree : g.worktree;
   const taskDoneWhen = parentTask ? (DONE_WHEN[parentTask.doneWhen] || parentTask.doneWhen) : '—';
-  const taskIssue = parentTask?.issueUrl;
+  const taskIssue = httpUrl(parentTask?.issueUrl);
 
   const gateTargetTab = TAB_OF_KIND[g.kind] || null;
   const [gateLabel, gateColour] = kindOf(g.kind);
@@ -2756,7 +2756,7 @@ function renderReview() {
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         ${parentTask ? `<span class="m3-pill pill-blue">${esc(columnOf(parentTask))}</span>` : ''}
         <span style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-outline);">${esc(taskId)}</span>
-        ${taskIssue ? `<a href="${esc(taskIssue)}" target="_blank" style="margin-left:auto;font-size:12px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(taskIssue.split('/').pop())}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>` : ''}
+        ${taskIssue ? `<a href="${esc(taskIssue)}" target="_blank" rel="noopener noreferrer" style="margin-left:auto;font-size:12px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(issueNumberOf(taskIssue))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>` : ''}
       </div>
       <h1 style="font-size:22px;font-weight:800;color:var(--md-sys-color-on-surface);margin:2px 0 0;line-height:1.3;">${esc(taskTitle)}</h1>
       <div style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
@@ -3278,6 +3278,10 @@ function actHtml(g) {
    stored as given, and `esc` keeps it from breaking the markup but not from being a
    `javascript:` link. */
 const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
+// The number at the end of an issue URL, ignoring a query, a fragment, or a trailing slash.
+function issueNumberOf(url) {
+  try { return new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; }
+}
 
 function overviewTab(task, all) {
   const plans = all.filter(g => g.kind === 'plan');
