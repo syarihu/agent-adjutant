@@ -2336,12 +2336,24 @@ function renderDrawer() {
 
   body += `
     <div class="m3-filled-card">
-      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">基本情報</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12.5px;">
-        <div><span style="color:var(--md-sys-color-outline)">完了条件:</span> <strong>${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')}</strong></div>
-        <div><span style="color:var(--md-sys-color-outline)">確認ポイント:</span> <strong>${esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—')}</strong></div>
-        <div><span style="color:var(--md-sys-color-outline)">ブランチ:</span> <code style="font-family:var(--font-mono)">${esc(task.branch || '—')}</code></div>
-        <div><span style="color:var(--md-sys-color-outline)">worktree:</span> <code style="font-family:var(--font-mono)">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code></div>
+      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">基本情報</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12.5px;">
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">完了条件</span>
+          <strong style="color:var(--md-sys-color-on-surface);">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')}</strong>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">確認ポイント</span>
+          <strong style="color:var(--md-sys-color-on-surface);">${esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—')}</strong>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">ブランチ</span>
+          <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.branch || '—')}</code>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">worktree</span>
+          <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code>
+        </div>
       </div>
     </div>
   `;
