@@ -17,8 +17,45 @@ pub fn dir(ctx: &Context) -> PathBuf {
     gate::dir(&messaging::state_dir(), &ctx.repo.slug)
 }
 
-fn answered_dir(ctx: &Context) -> PathBuf {
+pub fn answered_dir(ctx: &Context) -> PathBuf {
     gate::answered_dir(&messaging::state_dir(), &ctx.repo.slug)
+}
+
+pub fn records_dir(ctx: &Context) -> PathBuf {
+    gate::records_dir(&messaging::state_dir(), &ctx.repo.slug)
+}
+
+/// A gate by id, open or kept as a record. Open first: that is what an id usually names, and
+/// a record's id cannot be an open gate's (see `gate::claim_record_id`).
+fn find(ctx: &Context, id: &str) -> Result<Gate, String> {
+    // Only a missing file falls through: one that is there and broken says so, rather than
+    // reading as an id that does not exist.
+    if gate::path_of(&dir(ctx), id).exists() {
+        return gate::load(&dir(ctx), id);
+    }
+    if gate::path_of(&records_dir(ctx), id).exists() {
+        return gate::load(&records_dir(ctx), id);
+    }
+    Err(format!("no open gate or record: {id}"))
+}
+
+/// Hold the write lock of one record until the returned handle is dropped. The same advisory
+/// lock `task::lock_task` takes, for the same reason: appending an answer is a read and a
+/// write of the whole file, and two at once would each write back what they read.
+fn lock_record(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
+    let dir = records_dir(ctx);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Not named `.json`, so the listing never reads it as a record.
+    let path = dir.join(format!("{id}.lock"));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
+    Ok(file)
 }
 
 fn stamp() -> String {
@@ -31,6 +68,9 @@ fn stamp() -> String {
 /// succeeding: with no dashboard running, a gate is a message into a directory nobody
 /// opens, and an agent that waited on one would wait for ever. The procedure branches on
 /// it and falls back to asking in its own tab.
+///
+/// With `"wait": false` the gate is kept as a record instead: written beside the open queue
+/// rather than in it, so it asks nobody for anything, and the caller goes on with its work.
 pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     let kind = payload
         .get("kind")
@@ -59,6 +99,67 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         return Err("a dispatch gate needs the task it asks about".to_string());
     }
 
+    let wait = match payload.get("wait") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(wait)) => *wait,
+        Some(_) => return Err("wait must be true or false".to_string()),
+    };
+    if !wait && !kind.can_be_recorded() {
+        return Err(format!(
+            "a {} gate cannot be kept as a record; only diff and verify can",
+            kind.as_str()
+        ));
+    }
+    // `null` too: serde's default covers a missing field, not a present one of the wrong
+    // type, and a refusal from serde comes after the id is claimed.
+    if payload.get("stoppedBy").is_some_and(|v| !v.is_array()) {
+        return Err("stoppedBy must be a list of rules".to_string());
+    }
+    // A diff or verify gate that waits does so because a rule fired, and the board shows
+    // which. One that names none leaves a person looking at a stop nobody can explain.
+    if wait
+        && kind.can_be_recorded()
+        && payload
+            .get("stoppedBy")
+            .and_then(Value::as_array)
+            .is_none_or(|rules| rules.is_empty())
+    {
+        return Err(format!(
+            "a waiting {} gate needs stoppedBy; keep it as a record with \"wait\": false if no rule stopped it",
+            kind.as_str()
+        ));
+    }
+    // Why a gate stops only means something where it could have been a record instead, and
+    // a record that says why it stopped the worker is one of the two statements being false.
+    if payload
+        .get("stoppedBy")
+        .and_then(Value::as_array)
+        .is_some_and(|rules| !rules.is_empty())
+    {
+        if !kind.can_be_recorded() {
+            return Err(format!(
+                "a {} gate always waits; stoppedBy is for diff and verify",
+                kind.as_str()
+            ));
+        }
+        if !wait {
+            return Err("a record does not stop the worker; drop stoppedBy or wait".to_string());
+        }
+        // Read here rather than left to serde below, which runs after the id is claimed and
+        // would leave an empty gate file behind for an unknown rule.
+        for rule in &payload["stoppedBy"].as_array().cloned().unwrap_or_default() {
+            let parsed: gate::StopRule = serde_json::from_value(rule.clone())
+                .map_err(|_| format!("no such stop rule: {rule}"))?;
+            if !parsed.applies_to(kind) {
+                return Err(format!(
+                    "{} cannot stop a {} gate",
+                    parsed.as_str(),
+                    kind.as_str()
+                ));
+            }
+        }
+    }
+
     // The payload may name the worktree; otherwise it is derived from where the caller
     // stands. This is the address the answer is delivered to, so an agent that mistypes it
     // waits on an outbox nobody writes to.
@@ -69,7 +170,12 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     };
 
     let stamp = stamp();
-    let id = gate::claim_id(&dir(ctx), &stamp, kind)?;
+    let home = if wait { dir(ctx) } else { records_dir(ctx) };
+    let id = if wait {
+        gate::claim_id(&home, &stamp, kind)?
+    } else {
+        gate::claim_record_id(&home, &stamp, kind)?
+    };
 
     let mut value = payload.clone();
     let fields = value.as_object_mut().ok_or("expected an object")?;
@@ -79,13 +185,20 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     fields
         .entry("options")
         .or_insert(json!(kind.default_options()));
+    fields.insert("wait".to_string(), json!(wait));
+    // A record's answers are appended by whoever answers it, never brought in with it.
+    fields.remove("answers");
     let gate: Gate = serde_json::from_value(value).map_err(|e| format!("bad gate: {e}"))?;
 
-    gate::save(&dir(ctx), &gate)?;
+    gate::save(&home, &gate)?;
     Ok((gate, super::serve::running(&ctx.repo.slug).is_some()))
 }
 
 /// Hand the ball back. The gate leaves the queue and the answer lands in the outbox.
+///
+/// A record can be answered too, with `changes` only: a person sending back a review the
+/// worker had already moved past. The answer reaches the worker the same way, and the record
+/// stays where it is with the answer appended, so what was sent back is still readable.
 pub fn answer(
     ctx: &Context,
     id: &str,
@@ -93,7 +206,19 @@ pub fn answer(
     choice: Option<&str>,
     comment: Option<&str>,
 ) -> Result<(Gate, super::Told), String> {
-    let mut gate = gate::load(&dir(ctx), id)?;
+    let mut gate = find(ctx, id)?;
+    // Nothing else means anything to a worker that is not waiting: an approval of a record
+    // would wake it to be told to carry on with what it is already doing.
+    if !gate.wait && (decision != "changes" || choice.is_some()) {
+        return Err(format!(
+            "a record can only be answered with changes, not {decision}{}",
+            if choice.is_some() {
+                " and a choice"
+            } else {
+                ""
+            }
+        ));
+    }
     if let Some(choice) = choice
         && !gate.choices.iter().any(|c| c.id == choice)
     {
@@ -129,17 +254,38 @@ pub fn answer(
         )?
     };
 
+    let comment = comment
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
+    if !gate.wait {
+        let at = stamp();
+        // Read again under the record's lock rather than appended to the copy loaded before
+        // delivery: the board and `adj gate answer` can send the same record back at once,
+        // and the second write would otherwise drop the first answer the worker has already
+        // been given.
+        let lock = lock_record(ctx, id)?;
+        let mut gate = gate::load(&records_dir(ctx), id).unwrap_or(gate);
+        gate.answers.push(gate::Answer {
+            decision: decision.to_string(),
+            comment,
+            answered_at: at.clone(),
+        });
+        gate::save(&records_dir(ctx), &gate)?;
+        drop(lock);
+        note_answered(ctx, gate.task.as_deref(), &at);
+        return Ok((gate, told));
+    }
+
     // Archived after delivery, not before: if the outbox could not be written the gate is
     // still open, and the person can try again rather than losing what they were shown.
     gate.decision = Some(decision.to_string());
     gate.choice = choice.map(str::to_string);
-    gate.comment = comment
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-        .map(str::to_string);
-    gate.answered_at = Some(stamp());
+    gate.comment = comment;
+    let at = stamp();
+    gate.answered_at = Some(at.clone());
     gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
-    note_answered(ctx, &gate);
+    note_answered(ctx, gate.task.as_deref(), &at);
     Ok((gate, told))
 }
 
@@ -155,17 +301,18 @@ pub fn close(ctx: &Context, id: &str, comment: Option<&str>) -> Result<Gate, Str
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .map(str::to_string);
-    gate.answered_at = Some(stamp());
+    let at = stamp();
+    gate.answered_at = Some(at.clone());
     gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
-    note_answered(ctx, &gate);
+    note_answered(ctx, gate.task.as_deref(), &at);
     Ok(gate)
 }
 
 /// Write the answer's time onto the gate's task, for the board's stuck badge. Best effort:
 /// the answer has been delivered and archived by now, and a task record that is missing or
 /// unwritable must not turn that into a failure.
-fn note_answered(ctx: &Context, gate: &Gate) {
-    let (Some(id), Some(at)) = (&gate.task, &gate.answered_at) else {
+fn note_answered(ctx: &Context, task: Option<&str>, at: &str) {
+    let Some(id) = task else {
         return;
     };
     let dir = super::task::dir(ctx);
@@ -175,7 +322,7 @@ fn note_answered(ctx: &Context, gate: &Gate) {
         return;
     };
     if let Ok(mut task) = crate::task::load(&dir, id) {
-        task.gate_answered_at = Some(at.clone());
+        task.gate_answered_at = Some(at.to_string());
         let _ = crate::task::save(&dir, &task);
     }
 }
@@ -205,14 +352,13 @@ pub fn open_cmd(
     let (gate, served) = open(&ctx, &payload)?;
 
     if as_json {
-        println!(
-            "{}",
-            json!({ "gate": gate, "server": if served { "up" } else { "down" } })
-        );
+        println!("{}", open_json(&gate, served));
         return Ok(());
     }
     println!("{} — {}", gate.id, gate.title);
-    if served && gate.kind.answered_by_hub() {
+    if !gate.wait {
+        println!("{RECORDED}");
+    } else if served && gate.kind.answered_by_hub() {
         println!("Waiting on the board. The answer arrives in your inbox as `kind: gate`.");
     } else if served {
         println!("Waiting on the board. Read `adj outbox` when you are woken.");
@@ -225,6 +371,23 @@ pub fn open_cmd(
         );
     }
     Ok(())
+}
+
+/// What a caller that kept a record is told. Said, because the procedure it follows has
+/// always ended its turn after opening a gate.
+const RECORDED: &str = "Kept as a record: nobody is asked to answer it. Do not wait; go on \
+                        with your work. If a person sends it back, the answer arrives in \
+                        `adj outbox`.";
+
+/// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
+/// branch on it the same way whichever it used.
+pub fn open_json(gate: &Gate, served: bool) -> Value {
+    let mut out = json!({ "gate": gate, "server": if served { "up" } else { "down" } });
+    if !gate.wait {
+        out["wait"] = json!(false);
+        out["note"] = json!(RECORDED);
+    }
+    out
 }
 
 pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
@@ -252,7 +415,7 @@ pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), 
 
 pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
     let ctx = super::context(repo, hub)?;
-    let gate = gate::load(&dir(&ctx), id)?;
+    let gate = find(&ctx, id)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&gate).map_err(|e| e.to_string())?

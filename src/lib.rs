@@ -547,6 +547,9 @@ enum TaskAction {
         /// report-only | verify | pr | review
         #[arg(long, default_value = "pr")]
         done_when: String,
+        /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify)
+        #[arg(long, default_value = "plan")]
+        stop_at: String,
         #[arg(long)]
         issue_url: Option<String>,
         /// What this one dispatch should branch from
@@ -882,6 +885,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             body,
             kind,
             done_when,
+            stop_at,
             issue_url,
             base,
             parent,
@@ -897,6 +901,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             body: body.as_deref(),
             kind,
             done_when,
+            stop_at,
             issue_url: issue_url.as_deref(),
             base: base.as_deref(),
             parent: parent.as_deref(),

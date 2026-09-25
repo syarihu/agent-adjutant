@@ -102,3 +102,58 @@ fn skill_rejects_unknown_agent() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("invalid value 'invalid-agent'"));
 }
+
+/// The worker decides between waiting on a person and leaving a record by rules written in
+/// its procedure. Those rules name a flag and a field the binary has to accept, and the
+/// examples are what a worker copies, so both are checked against the real command.
+#[test]
+fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
+    let text = std::fs::read_to_string(format!(
+        "{}/commands/adj-worker.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    for needle in [
+        "\"wait\": false",
+        "`stoppedBy`",
+        "`round-limit`",
+        "`verify-failed`",
+        "`manual-check`",
+        "`unsure`",
+        "`stop-at`",
+        "止める所",
+        "`problem`",
+        "`goal`",
+    ] {
+        assert!(text.contains(needle), "adj-worker.md does not say {needle}");
+    }
+
+    // Every `adj gate open` example, opened as written. serde drops a key it does not know,
+    // so a misspelt field would open without complaint and vanish; each key has to come back.
+    let fixture = Fixture::new(QUIET);
+    let mut opened = 0;
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find("adj gate open --json <<'JSON'\n") {
+        let body = &rest[start..];
+        let body = &body[body.find('\n').unwrap() + 1..];
+        let end = body
+            .find("\nJSON\n")
+            .expect("an example without its JSON terminator");
+        let mut example: serde_json::Value = serde_json::from_str(&body[..end])
+            .unwrap_or_else(|e| panic!("an example is not JSON: {e}\n{}", &body[..end]));
+        rest = &body[end..];
+
+        example["worktree"] = serde_json::json!(fixture.repo.to_str().unwrap());
+        let file = fixture.repo.join("gate.json");
+        std::fs::write(&file, example.to_string()).unwrap();
+        let out = fixture.json(&["gate", "open", "--file", file.to_str().unwrap(), "--json"]);
+        for key in example.as_object().unwrap().keys() {
+            assert!(
+                out["gate"].get(key).is_some(),
+                "the example's {key} did not survive being opened: {out}"
+            );
+        }
+        opened += 1;
+    }
+    assert!(opened >= 3, "found only {opened} gate examples");
+}

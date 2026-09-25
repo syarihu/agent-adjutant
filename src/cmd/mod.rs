@@ -20,7 +20,8 @@ mod task;
 
 pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
-    open_cmd as gate_open, show as gate_show,
+    open as gate_open_payload, open_cmd as gate_open, open_json as gate_open_json,
+    show as gate_show,
 };
 pub use serve::{DEFAULT_PORT, serve};
 pub use task::{
@@ -99,7 +100,7 @@ fn context_without_hub(repo_arg: Option<&str>) -> Result<Context, String> {
     context_of(repo::resolve(repo_arg, None)?)
 }
 
-fn context_of(repo: RepoInfo) -> Result<Context, String> {
+pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
     // By `owner/name` and nothing else. The hub identifier moves the address; it must not
     // move the lookup, or asking for a second hub of a registered repository would answer
     // with an unregistered one — no task sources, no issue keys, no verify command.

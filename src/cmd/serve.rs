@@ -239,6 +239,9 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/" | "/index.html") => http::html(out, UI_HTML),
         ("GET", "/api/state") => http::json(out, 200, &state(server).to_string()),
+        ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/history") => {
+            reply(out, task_history(server, path))
+        }
         ("POST", "/api/tasks") => reply(out, create_task(server, &req.body)),
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
@@ -270,10 +273,11 @@ fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result
 fn state(server: &Server) -> Value {
     let repo = &server.ctx.repo;
     let hub = messaging::hub_status(&repo.slug, &repo.hub_name);
-    let tasks: Vec<Value> = task::list(&super::task::dir(&server.ctx))
-        .iter()
-        .filter_map(|t| serde_json::to_value(t).ok())
-        .collect();
+    let tasks = with_records(
+        task::list(&super::task::dir(&server.ctx)),
+        gate::list(&super::gate::records_dir(&server.ctx)),
+        gate::list_of_kind(&super::gate::answered_dir(&server.ctx), gate::Kind::Plan),
+    );
 
     let now = messaging::now_secs();
     let settings = settings_now(server);
@@ -339,6 +343,73 @@ fn state(server: &Server) -> Value {
         "now": now,
         "pending": pending,
         "gates": gate::list(&super::gate::dir(&server.ctx)),
+    })
+}
+
+/// The tasks as the board reads them, each live one with what its worker recorded without
+/// stopping (`records`, oldest first) and the plan a person approved (`approvedPlan`, whose
+/// `answeredAt` is when).
+///
+/// Joined here rather than written onto the task record: a record belongs to the gate
+/// directory, and a copy on the task would be a second place for it that can disagree.
+/// A finished task gets neither — nobody reads its card for them, and the archive only grows.
+fn with_records(
+    tasks: Vec<task::Task>,
+    records: Vec<gate::Gate>,
+    answered: Vec<gate::Gate>,
+) -> Vec<Value> {
+    tasks
+        .into_iter()
+        .filter_map(|t| {
+            let live = !matches!(t.status, task::Status::Done | task::Status::Cancelled);
+            let mut value = serde_json::to_value(&t).ok()?;
+            if live {
+                let mine = |g: &&gate::Gate| g.task.as_deref() == Some(t.id.as_str());
+                let records: Vec<&gate::Gate> = records.iter().filter(mine).collect();
+                // The latest, because a plan sent back with `changes` is opened again, and the
+                // one that was approved last is the one being worked to.
+                let plan = answered
+                    .iter()
+                    .filter(mine)
+                    .filter(|g| g.kind == gate::Kind::Plan)
+                    .filter(|g| matches!(g.decision.as_deref(), Some("approve" | "choice")))
+                    .max_by(|a, b| a.answered_at.cmp(&b.answered_at));
+                value["records"] = json!(records);
+                value["approvedPlan"] = json!(plan);
+            }
+            Some(value)
+        })
+        .collect()
+}
+
+/// Everything one task's gates left behind, for its full view: the gates a person answered
+/// (`answered`) and the records its worker kept (`records`), each oldest first.
+///
+/// Asked for by the page when it opens the view rather than joined into `/api/state`: the
+/// archive only grows, and reading all of it on every poll would cost more each day. The
+/// records are here as well as on the task in `/api/state` because a finished task's are not
+/// there, and a review is meant to stay readable after the work is done.
+fn task_history(server: &Server, path: &str) -> Result<Value, String> {
+    let id = history_id(path).ok_or("no such task")?;
+    Ok(history_of(
+        id,
+        gate::list(&super::gate::answered_dir(&server.ctx)),
+        gate::list(&super::gate::records_dir(&server.ctx)),
+    ))
+}
+
+/// The task id in `/api/tasks/{id}/history`, when there is exactly one.
+fn history_id(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/tasks/")
+        .and_then(|rest| rest.strip_suffix("/history"))
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate::Gate>) -> Value {
+    let mine = |g: &gate::Gate| g.task.as_deref() == Some(id);
+    json!({
+        "answered": answered.into_iter().filter(mine).collect::<Vec<_>>(),
+        "records": records.into_iter().filter(mine).collect::<Vec<_>>(),
     })
 }
 
@@ -513,6 +584,128 @@ mod tests {
             branch_of(&here.path().to_string_lossy()).as_deref(),
             Some("mine")
         );
+    }
+
+    fn a_task(id: &str, status: task::Status) -> task::Task {
+        task::Task {
+            id: id.to_string(),
+            kind: task::Kind::Start,
+            title: id.to_string(),
+            body: String::new(),
+            issue_url: None,
+            done_when: task::DoneWhen::Pr,
+            stop_at: task::StopAt::Plan,
+            base: None,
+            parent: None,
+            worktree_name: None,
+            auto_start: true,
+            order: 0,
+            status,
+            worktree: None,
+            issue: None,
+            pr: None,
+            note: None,
+            gate_answered_at: None,
+            created_at: "20260922T000000Z".to_string(),
+            updated_at: "20260922T000000Z".to_string(),
+        }
+    }
+
+    fn a_gate(id: &str, kind: gate::Kind, task: &str) -> gate::Gate {
+        serde_json::from_value(json!({
+            "id": id,
+            "kind": kind,
+            "worktree": "/tmp/wt",
+            "task": task,
+            "title": id,
+            "openedAt": "20260922T010000Z",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_live_task_carries_its_records_and_the_plan_approved_last() {
+        let mut record = a_gate("r1", gate::Kind::Diff, "t1");
+        record.wait = false;
+        let others = a_gate("r2", gate::Kind::Verify, "t2");
+        let answered = |id: &str, decision: &str, at: &str| {
+            let mut g = a_gate(id, gate::Kind::Plan, "t1");
+            g.decision = Some(decision.to_string());
+            g.answered_at = Some(at.to_string());
+            g
+        };
+        let tasks = with_records(
+            vec![a_task("t1", task::Status::Dispatched)],
+            vec![record, others],
+            vec![
+                answered("p-old", "approve", "20260922T020000Z"),
+                answered("p-new", "approve", "20260922T040000Z"),
+                // Sent back later still: not what was approved.
+                answered("p-sent-back", "changes", "20260922T050000Z"),
+            ],
+        );
+        let ids: Vec<&str> = tasks[0]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["r1"]);
+        assert_eq!(tasks[0]["approvedPlan"]["id"], "p-new");
+        assert_eq!(tasks[0]["approvedPlan"]["answeredAt"], "20260922T040000Z");
+    }
+
+    #[test]
+    fn a_task_with_no_approved_plan_says_so_and_a_finished_one_carries_nothing() {
+        let tasks = with_records(
+            vec![
+                a_task("t1", task::Status::Queued),
+                a_task("t2", task::Status::Done),
+            ],
+            vec![a_gate("r2", gate::Kind::Diff, "t2")],
+            Vec::new(),
+        );
+        assert_eq!(tasks[0]["records"], json!([]));
+        assert!(tasks[0]["approvedPlan"].is_null());
+        assert!(tasks[1].get("records").is_none(), "{}", tasks[1]);
+    }
+
+    #[test]
+    fn a_task_s_history_is_its_own_answered_gates_and_records_of_every_kind() {
+        let mut diff = a_gate("20260922T010000Z-diff", gate::Kind::Diff, "t1");
+        diff.decision = Some("changes".to_string());
+        let mut plan = a_gate("20260922T000000Z-plan", gate::Kind::Plan, "t1");
+        plan.opened_at = "20260922T000000Z".to_string();
+        let theirs = a_gate("20260922T020000Z-verify", gate::Kind::Verify, "t2");
+        let mut record = a_gate("20260922T030000Z-verify-record", gate::Kind::Verify, "t1");
+        record.wait = false;
+
+        let history = history_of("t1", vec![plan, diff, theirs.clone()], vec![record, theirs]);
+        let ids = |key: &str| -> Vec<String> {
+            history[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|g| g["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            ids("answered"),
+            ["20260922T000000Z-plan", "20260922T010000Z-diff"]
+        );
+        assert_eq!(ids("records"), ["20260922T030000Z-verify-record"]);
+    }
+
+    #[test]
+    fn a_history_path_names_one_task() {
+        assert_eq!(history_id("/api/tasks/t1/history"), Some("t1"));
+        for bad in [
+            "/api/tasks//history",
+            "/api/tasks/a/b/history",
+            "/api/tasks/t1",
+        ] {
+            assert_eq!(history_id(bad), None, "{bad}");
+        }
     }
 
     const TOKEN: &str = "s3cret";

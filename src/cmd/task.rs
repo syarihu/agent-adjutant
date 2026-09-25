@@ -70,6 +70,17 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
             ));
         }
     }
+    // Not typed, but refused here all the same: past this point the id is claimed, and a
+    // value serde turns away afterwards would leave the reservation behind.
+    if let Some(stop_at) = typed("stopAt") {
+        serde_json::from_value::<task::StopAt>(json!(stop_at))
+            .map_err(|_| format!("no such stop point: {stop_at} (plan, diff or all)"))?;
+    } else if input
+        .get("stopAt")
+        .is_some_and(|v| !v.is_null() && !v.is_string())
+    {
+        return Err(format!("no such stop point: {}", input["stopAt"]));
+    }
     if let Some(url) = typed("issueUrl") {
         let rest = url
             .strip_prefix("https://")
@@ -324,6 +335,16 @@ fn with_defaults(input: &Value, id: &str, stamp: &str) -> Result<Value, String> 
     fields.insert("updatedAt".to_string(), json!(stamp));
     fields.entry("kind").or_insert(json!("start"));
     fields.entry("doneWhen").or_insert(json!("pr"));
+    // `null` and `""` too: a form sends the field whether or not anything was picked in it.
+    if fields
+        .get("stopAt")
+        .is_none_or(|v| v.is_null() || v.as_str() == Some(""))
+    {
+        fields.insert(
+            "stopAt".to_string(),
+            json!(task::StopAt::default().as_str()),
+        );
+    }
     fields.entry("autoStart").or_insert(json!(true));
     fields.entry("status").or_insert(json!("backlog"));
     fields.entry("body").or_insert(json!(""));
@@ -348,6 +369,7 @@ pub struct AddArgs<'a> {
     pub body: Option<&'a str>,
     pub kind: &'a str,
     pub done_when: &'a str,
+    pub stop_at: &'a str,
     pub issue_url: Option<&'a str>,
     pub base: Option<&'a str>,
     pub parent: Option<&'a str>,
@@ -365,6 +387,7 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         "body": body,
         "kind": args.kind,
         "doneWhen": args.done_when,
+        "stopAt": args.stop_at,
         "issueUrl": args.issue_url,
         "base": args.base,
         "parent": args.parent,
@@ -573,6 +596,24 @@ mod tests {
         let input = json!({ "body": long_line });
         let derived = derive_title(&input).expect("derived");
         assert_eq!(derived.len(), 80);
+    }
+
+    /// A form sends the stop point whether or not one was picked, and nothing picked is the
+    /// default rather than a refusal.
+    #[test]
+    fn a_stop_point_left_blank_is_the_default_and_anything_unknown_is_refused() {
+        for blank in [json!({}), json!({"stopAt": null}), json!({"stopAt": ""})] {
+            assert!(check_typed_values(&blank).is_ok(), "{blank}");
+            let filled = with_defaults(&blank, "t", "20260922T000000Z").unwrap();
+            assert_eq!(filled["stopAt"], "plan", "{blank}");
+        }
+        assert_eq!(
+            with_defaults(&json!({"stopAt": "all"}), "t", "20260922T000000Z").unwrap()["stopAt"],
+            "all"
+        );
+        for bad in [json!({"stopAt": "verify"}), json!({"stopAt": 1})] {
+            assert!(check_typed_values(&bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

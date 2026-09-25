@@ -68,7 +68,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
         !procedure.starts_with("---"),
         "frontmatter leaked into the procedure"
     );
-    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 8);
 
     let hub = tool_result(&replies[4]);
     assert_eq!(hub["hubName"], HUB);
@@ -261,4 +261,46 @@ fn install_mcp_rejects_unknown_target() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("target must be claude-code, agy, or json"));
+}
+
+#[test]
+fn a_record_kept_through_the_server_is_one_the_cli_can_show() {
+    let fixture = Fixture::new(QUIET);
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({"name": "adjutant_gate_open", "arguments": {
+                "kind": "verify",
+                "wait": false,
+                "title": "cargo test が通った",
+                "commands": [{ "command": "cargo test", "result": "pass", "time": "42s" }],
+                "manual": ["画面の文言を見る"],
+                // What a client that fills in every property sends for one it has no value
+                // for. Taken as absent, not as an address.
+                "worktree": "",
+                "cwd": fixture.repo.to_str().unwrap(),
+            }}),
+        )],
+    );
+    let opened = tool_result(&replies[0]);
+    assert_eq!(opened["wait"], false, "{opened}");
+    let id = opened["gate"]["id"].as_str().unwrap();
+    // The answer's address is where the caller stands, not where the server does.
+    assert_eq!(
+        opened["gate"]["worktree"],
+        fixture.repo.to_string_lossy().to_string()
+    );
+
+    let shown = fixture.json(&["gate", "show", "--id", id]);
+    assert_eq!(shown["commands"][0]["result"], "pass", "{shown}");
+    assert_eq!(shown["manual"][0], "画面の文言を見る", "{shown}");
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
