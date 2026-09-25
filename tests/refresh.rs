@@ -219,27 +219,20 @@ fn a_done_or_cancelled_task_is_not_asked_about() {
 fn without_gh_every_task_is_left_alone_and_said_to_be_unreadable() {
     let fixture = Fixture::new(QUIET);
     let id = task_with_pr(&fixture, "merged", "pr", &format!("{PULL}/1"));
-    let empty = fixture.repo.join("no-bin");
-    std::fs::create_dir_all(&empty).unwrap();
-    // Only what the binary needs besides `gh`: `git`, found where the system keeps it.
+    // Only what the binary needs besides `gh`: `git`, linked into a directory of its own.
+    // Not the directory `git` lives in, which is where `gh` is often installed too — on a CI
+    // runner both are in /usr/bin — and a PATH through it would still find `gh`.
     let git = Command::new("sh")
         .args(["-c", "command -v git"])
         .output()
         .unwrap();
-    let git_dir = std::path::Path::new(String::from_utf8_lossy(&git.stdout).trim())
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    if git_dir.join("gh").exists() {
-        // `gh` lives beside `git` here, so a PATH without one would not have the other.
-        return;
-    }
+    let git = PathBuf::from(String::from_utf8_lossy(&git.stdout).trim());
+    let only_git = fixture.repo.join("git-only-bin");
+    std::fs::create_dir_all(&only_git).unwrap();
+    std::os::unix::fs::symlink(&git, only_git.join("git")).unwrap();
     let out = fixture
         .command(["task", "refresh", "--json"])
-        .env(
-            "PATH",
-            format!("{}:{}", empty.to_string_lossy(), git_dir.to_string_lossy()),
-        )
+        .env("PATH", &only_git)
         .output()
         .unwrap();
     assert!(
