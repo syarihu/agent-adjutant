@@ -92,7 +92,7 @@ function setView(v) {
   } else if (v !== 'board') {
     closeDrawer();
   } else {
-    if (location.hash.startsWith('#task/')) history.replaceState(null, '', location.pathname + location.search);
+    if (/^#(task|gate)\//.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     if (!(state.gates || []).some(g => g.id === focused)) focused = null;
     render();
   }
