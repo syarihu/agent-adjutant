@@ -558,6 +558,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--md-sys-color-surface);
   padding: 10px 20px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
@@ -579,8 +580,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 /* M3 Filter Chips */
+.top-bar-actions { display: flex; align-items: center; gap: 8px; margin-left: 8px; }
 .filter-chip-group {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-left: auto;
@@ -613,6 +616,8 @@ main { flex: 1; overflow: hidden; position: relative; }
 @media (max-width: 900px) {
   #board-view { position: relative; }
   #board-view #task-drawer { position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%; }
+  /* When the top bar wraps, its actions stay on the right of their own line. */
+  .top-bar-actions { margin-left: auto; }
 }
 
 /* ── M3 Expressive Kanban Board ── */
@@ -833,6 +838,9 @@ main { flex: 1; overflow: hidden; position: relative; }
   border-radius: 50%;
   border: 1px solid var(--md-sys-color-primary);
   animation: pulse-ring 1.8s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot::after { animation: none; }
 }
 @keyframes pulse-ring {
   0% { transform: scale(1); opacity: 1; }
@@ -1149,7 +1157,7 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
       </button>
     </div>
 
-    <div style="display:flex;align-items:center;gap:8px;margin-left:8px;">
+    <div class="top-bar-actions">
       <button class="btn-m3-tonal" style="padding:6px 12px;font-size:12px;" onclick="nudgeHub()" title="adj send --kind next (着手を促す)">
         <span class="material-symbols-outlined" style="font-size:16px;">bolt</span>
         <span>着手を促す</span>
