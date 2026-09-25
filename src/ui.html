@@ -739,6 +739,8 @@ window.addEventListener('storage', e => {
   if (e.key !== SEEN_KEY()) return;
   seenCache = null;
   if (view === 'board') render();
+  // A task view marks its tabs with the same dots.
+  else if (view === 'task') redrawTaskView();
 });
 const allRecords = () => (state.tasks || []).flatMap(t => t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
