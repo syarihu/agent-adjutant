@@ -56,13 +56,30 @@ function historyOf(task) {
   return entry;
 }
 
-/* Redraws what shows a task's history: its view, or the side sheet open on it. Not the side
-   sheet while its instruction box is being typed in, which the redraw would empty; the next
-   redraw of the board draws it. */
+/* Redraws what shows a task's history: its view, or the side sheet open on it. The side sheet
+   is held while its instruction box is being typed in, which the redraw would empty, and
+   drawn when the box is left. */
+let drawerHistoryHeld = false;
 function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
-  if (view === 'board' && selectedTaskId === id && !document.activeElement?.matches('#drawer-instruction')) renderDrawer();
+  if (view !== 'board' || selectedTaskId !== id) return;
+  if (document.activeElement?.matches('#drawer-instruction')) {
+    drawerHistoryHeld = true;
+    return;
+  }
+  drawerHistoryHeld = false;
+  renderDrawer();
 }
+document.getElementById('task-drawer').addEventListener('focusout', e => {
+  if (!drawerHistoryHeld || !e.target.matches('#drawer-instruction')) return;
+  // After the focus has moved, as the task view does: a click on 待機キューに渡す goes through
+  // its own handler first.
+  setTimeout(() => {
+    if (!drawerHistoryHeld || document.activeElement?.matches('#drawer-instruction')) return;
+    drawerHistoryHeld = false;
+    if (view === 'board' && selectedTaskId) renderDrawer();
+  });
+});
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
    task's records come from /api/state, which is polled, so a send-back shows at once. */
