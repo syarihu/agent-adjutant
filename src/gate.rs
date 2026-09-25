@@ -126,6 +126,29 @@ pub enum StopRule {
     StopAt,
 }
 
+impl StopRule {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StopRule::RoundLimit => "round-limit",
+            StopRule::VerifyFailed => "verify-failed",
+            StopRule::ManualCheck => "manual-check",
+            StopRule::Unsure => "unsure",
+            StopRule::StopAt => "stop-at",
+        }
+    }
+
+    /// Whether this rule can be why a gate of `kind` stopped. The same table the worker's
+    /// procedure decides by: the review's round limit is the diff's, a check left for a
+    /// person is the verify's, and the rest can stop either.
+    pub fn applies_to(self, kind: Kind) -> bool {
+        match self {
+            StopRule::RoundLimit => kind == Kind::Diff,
+            StopRule::ManualCheck => kind == Kind::Verify,
+            StopRule::VerifyFailed | StopRule::Unsure | StopRule::StopAt => kind.can_be_recorded(),
+        }
+    }
+}
+
 /// One round of the worker's own review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
