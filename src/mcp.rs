@@ -529,7 +529,13 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             }
             // From the caller's `cwd`, for the reason `adjutant_send` gives: the server's own
             // directory is not where the worker is standing, and this is where the answer goes.
-            if !fields.contains_key("worktree") {
+            // A client that fills in every advertised property sends `null` or `""` for one it
+            // has no value for; either is as good as absent.
+            let given = fields
+                .get("worktree")
+                .and_then(Value::as_str)
+                .is_some_and(|w| !w.trim().is_empty());
+            if !given {
                 let here = repo::current_worktree(cwd_param(args).as_deref())
                     .ok_or("not inside a worktree: pass worktree or cwd")?;
                 fields.insert("worktree".to_string(), json!(here));
