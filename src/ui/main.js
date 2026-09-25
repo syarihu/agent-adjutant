@@ -5,6 +5,8 @@ document.addEventListener('keydown', e => {
       closeHandoverDialog();
       return;
     }
+    // The dialog closes itself on Escape; the side sheet it was opened from stays.
+    if (document.getElementById('close-dialog').open) return;
     const formDialog = document.getElementById('form');
     if (formDialog && formDialog.open) {
       formDialog.close();
