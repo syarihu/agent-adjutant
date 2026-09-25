@@ -2474,12 +2474,7 @@ function renderDrawer() {
 async function move(id, to, before) {
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task || !canDrop(columnOf(task), to)) return;
-  if (columnOf(task) === 'backlog' && to === 'queued') {
-    const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id);
-    const at = before ? queue.findIndex(t => t.id === before) : queue.length;
-    const order = at < 0 ? queue.length + 1 : at + 1;
-    return openHandoverDialog(id, order);
-  }
+  if (columnOf(task) === 'backlog' && to === 'queued') return openHandoverDialog(id, before);
   if (to === 'backlog') {
     await update(id, { status:'backlog' },
       `adj task update --id ${id} --status backlog`,
@@ -2487,21 +2482,51 @@ async function move(id, to, before) {
     return;
   }
   // Reordering inside 待ち: the dropped card takes the position of the one it landed on.
-  const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id);
-  const at = before ? queue.findIndex(t => t.id === before) : queue.length;
-  const order = at < 0 ? queue.length + 1 : at + 1;
+  const order = await queueOrder(id, before);
+  if (order == null) return;
   await update(id, { order }, `adj task update --id ${id} --order ${order}`,
     'hub がキューの先頭から取得する順序です');
 }
 
-let handoverTargetTaskId = null;
-let handoverTargetOrder = null;
+/* The order that puts a task just before `before` in 待ち, or at its end without one.
+   Orders are not positions: a new task takes the highest order of every task plus one, so the
+   queue can read 12, 15, 20. The task takes the gap below the one it lands on. When there is
+   no gap, that one and the ones after it move down first, so no two queued tasks share an
+   order. Null when moving them failed. */
+async function queueOrder(id, before) {
+  const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  const at = before ? queue.findIndex(t => t.id === before) : -1;
+  if (at < 0) return (queue.length ? (queue[queue.length - 1].order || 0) : 0) + 1;
+  const floor = at > 0 ? (queue[at - 1].order || 0) + 1 : 0;
+  const target = queue[at].order || 0;
+  if (target > floor) return target - 1;
+  let next = floor + 1;
+  for (const t of queue.slice(at)) {
+    if ((t.order || 0) >= next) break;
+    const line = `adj task update --id ${t.id} --order ${next}`;
+    try {
+      await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+        method:'POST', body: JSON.stringify({ order: next }),
+      });
+      note(line, false, '間に入れる場所を空けるため後ろへずらしました');
+    } catch (e) {
+      note(`${line} → ${e.message}`, true);
+      return null;
+    }
+    next++;
+  }
+  return floor;
+}
 
-function openHandoverDialog(id, order = null) {
+let handoverTargetTaskId = null;
+let handoverTargetBefore = null;
+
+function openHandoverDialog(id, before = null) {
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task) return;
   handoverTargetTaskId = id;
-  handoverTargetOrder = order;
+  handoverTargetBefore = before;
   const dialog = document.getElementById('handover-dialog');
   const titleEl = document.getElementById('handover-task-title');
   const textarea = document.getElementById('handover-instruction');
@@ -2525,30 +2550,33 @@ function closeHandoverDialog() {
   const dialog = document.getElementById('handover-dialog');
   if (dialog && dialog.open) dialog.close();
   handoverTargetTaskId = null;
-  handoverTargetOrder = null;
+  handoverTargetBefore = null;
 }
 
-function submitHandover(e) {
+async function submitHandover(e) {
   if (e) e.preventDefault();
   if (!handoverTargetTaskId) return;
   const textarea = document.getElementById('handover-instruction');
   const instruction = textarea ? textarea.value.trim() : '';
   const id = handoverTargetTaskId;
-  const order = handoverTargetOrder;
+  const before = handoverTargetBefore;
   closeHandoverDialog();
+  // Dropped onto a card: the place is made in the queue just before it is handed over.
+  const order = before ? await queueOrder(id, before) : null;
+  if (before && order == null) return;
   hand(id, instruction, order);
 }
 
 async function hand(id, instruction = null, order = null) {
   const body = { status:'queued' };
-  if (instruction != null && instruction.trim() !== '') {
-    body.instruction = instruction.trim();
-  }
+  // A string came from a field the person saw, so an empty one clears the instruction kept on
+  // the task. Null is a hand-over with no field on screen, which leaves it as it was.
+  if (instruction != null) body.instruction = instruction.trim();
   if (order != null) {
     body.order = order;
   }
-  const cmd = body.instruction
-    ? `adj task update --id ${id} --status queued --instruction -`
+  const cmd = body.instruction ? `adj task update --id ${id} --status queued --instruction -`
+    : body.instruction === '' ? `adj task update --id ${id} --status queued --instruction ''`
     : `adj task update --id ${id} --status queued`;
   await update(id, body, cmd,
     'レコードを queued にして、受信箱に kind:request を配置し hubWake を実行します');
