@@ -480,7 +480,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface);
 }
-.rail-item[aria-selected="true"] {
+.rail-item[aria-current="page"] {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
   font-weight: 700;
@@ -610,6 +610,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 main { flex: 1; overflow: hidden; position: relative; }
 #board-view { display: flex; height: 100%; width: 100%; min-width: 0; overflow: hidden; }
+@media (max-width: 900px) {
+  #board-view { position: relative; }
+  #board-view #task-drawer { position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%; }
+}
 
 /* ── M3 Expressive Kanban Board ── */
 #board {
@@ -1085,16 +1089,16 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
   </div>
 
   <button class="m3-fab-extended" onclick="openForm()">
-    <span class="material-symbols-outlined">add</span>
+    <span class="material-symbols-outlined" aria-hidden="true">add</span>
     <span>新しいタスク</span>
   </button>
 
   <div class="rail-destinations">
-    <button class="rail-item" id="nav-board" aria-selected="true" onclick="setView('board')">
+    <button class="rail-item" id="nav-board" aria-current="page" onclick="setView('board')">
       <span class="material-symbols-outlined">view_kanban</span>
       <span>カンバンボード</span>
     </button>
-    <button class="rail-item" id="nav-review" aria-selected="false" onclick="goToQueue()">
+    <button class="rail-item" id="nav-review" onclick="goToQueue()">
       <span class="material-symbols-outlined">mark_chat_unread</span>
       <span>要対応レビュー</span>
       <span class="rail-badge" id="gate-count">0</span>
@@ -1131,16 +1135,16 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
     </div>
 
     <div class="filter-chip-group">
-      <button class="m3-filter-chip active" id="chip-filter-all" onclick="setBoardFilter('all', this)">
-        <span class="material-symbols-outlined" style="font-size:16px;">apps</span>
+      <button class="m3-filter-chip active" id="chip-filter-all" aria-pressed="true" onclick="setBoardFilter('all', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">apps</span>
         <span>すべて</span>
       </button>
-      <button class="m3-filter-chip" id="chip-filter-mine" onclick="setBoardFilter('mine', this)">
-        <span class="material-symbols-outlined" style="font-size:16px;">person</span>
+      <button class="m3-filter-chip" id="chip-filter-mine" aria-pressed="false" onclick="setBoardFilter('mine', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">person</span>
         <span>あなたのボール</span>
       </button>
-      <button class="m3-filter-chip" id="chip-filter-worker" onclick="setBoardFilter('worker', this)">
-        <span class="material-symbols-outlined" style="font-size:16px;">smart_toy</span>
+      <button class="m3-filter-chip" id="chip-filter-worker" aria-pressed="false" onclick="setBoardFilter('worker', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">smart_toy</span>
         <span>worker 作業中</span>
       </button>
     </div>
@@ -1515,8 +1519,10 @@ let currentActiveFilter = 'all';
 
 function setBoardFilter(filter, btn) {
   currentActiveFilter = filter;
-  document.querySelectorAll('.m3-filter-chip').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.m3-filter-chip').forEach(b => {
+    b.classList.toggle('active', b === btn);
+    b.setAttribute('aria-pressed', String(b === btn));
+  });
   const board = document.getElementById('board');
   if (board) {
     board.innerHTML = '';
@@ -1804,6 +1810,7 @@ function cardEl(task, col) {
       <div class="card-button-row">
         ${task.worktree ? `<button class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
         ${task.worktree ? `<button class="m3-icon-button" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
+        ${task.worktree && worker && worker.present ? `<button class="m3-icon-button" title="workerのタブを閉じる" data-close="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">close</span><span>閉じる</span></button>` : ''}
         ${col === 'backlog' ? `<button class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
       </div>
     </div>
@@ -1820,6 +1827,8 @@ function cardEl(task, col) {
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('ide', b.dataset.ide); }));
   el.querySelectorAll('[data-focus]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('focus', b.dataset.focus); }));
+  el.querySelectorAll('[data-close]').forEach(b =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('close', b.dataset.close); }));
   el.querySelectorAll('[data-gate]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); judgeGate(b.dataset.gate); }));
   el.querySelectorAll('[data-record]').forEach(b =>
@@ -1936,7 +1945,7 @@ function renderDrawer() {
         </div>
         <div style="font-size:12.5px;">${esc(gate.title)}</div>
         ${stopWhy(gate).length ? `<div style="font-size:11.5px;margin-top:2px;">止めた理由: ${esc(stopWhy(gate).join(' / '))}</div>` : ''}
-        <button class="btn-m3-primary" style="margin-top:6px;align-self:flex-start;" onclick="judgeGate('${gate.id}')">
+        <button class="btn-m3-primary" style="margin-top:6px;align-self:flex-start;" data-judge="${esc(gate.id)}">
           <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span>
           <span>判定画面を開く</span>
         </button>
@@ -1947,7 +1956,7 @@ function renderDrawer() {
   if (colId === 'backlog') {
     body += `
       <div>
-        <button class="btn-m3-tonal" style="width:100%" onclick="hand('${esc(task.id)}')">
+        <button class="btn-m3-tonal" style="width:100%" data-drawer-hand="${esc(task.id)}">
           <span class="material-symbols-outlined" style="font-size:16px;">send</span>
           <span>待機キューに渡す</span>
         </button>
@@ -2004,6 +2013,10 @@ function renderDrawer() {
             <span class="material-symbols-outlined" style="font-size:16px;">code</span>
             <span>IDE で開く</span>
           </button>
+          ${workerOf(task)?.present ? `<button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-close="${esc(task.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+            <span>タブを閉じる</span>
+          </button>` : ''}
         </div>
       </div>
     `;
@@ -2023,10 +2036,16 @@ function renderDrawer() {
     drawerBody.innerHTML = body;
     drawerBody.querySelectorAll('[data-record]').forEach(b =>
       b.addEventListener('click', () => openRecord(b.dataset.record)));
+    drawerBody.querySelectorAll('[data-judge]').forEach(b =>
+      b.addEventListener('click', () => judgeGate(b.dataset.judge)));
+    drawerBody.querySelectorAll('[data-drawer-hand]').forEach(b =>
+      b.addEventListener('click', () => hand(b.dataset.drawerHand)));
     drawerBody.querySelectorAll('[data-focus]').forEach(b =>
       b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
     drawerBody.querySelectorAll('[data-ide]').forEach(b =>
       b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+    drawerBody.querySelectorAll('[data-close]').forEach(b =>
+      b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
   }
 }
 
@@ -2156,7 +2175,10 @@ function note(line, isError, why) {
     `<li class="${l.isError ? 'err' : ''}"><b>${l.isError ? '!' : '$'}</b> ${esc(l.line)}` +
     (l.why ? `   <span style="color:var(--muted)">— ${esc(l.why)}</span>` : '') + '</li>').join('');
   const latestCmd = document.getElementById('sheet-latest-cmd');
-  if (latestCmd) latestCmd.textContent = line;
+  if (latestCmd) {
+    latestCmd.textContent = line;
+    latestCmd.style.color = isError ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-outline)';
+  }
 }
 
 // ── the review view ───────────────────────────────────────────────────
@@ -3195,8 +3217,10 @@ function setView(v) {
   // Navigation rail active states
   const navBoard = document.getElementById('nav-board');
   const navReview = document.getElementById('nav-review');
-  if (navBoard) navBoard.setAttribute('aria-selected', String(v === 'board'));
-  if (navReview) navReview.setAttribute('aria-selected', String(v === 'review'));
+  for (const [nav, on] of [[navBoard, v === 'board'], [navReview, v === 'review']]) {
+    if (!nav) continue;
+    if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
+  }
 
   // Top App Bar title updates
   const pageTitle = document.getElementById('page-title');
@@ -3240,15 +3264,6 @@ function toggleBottomSheet() {
   if (icon) icon.textContent = isOpen ? '▼ 閉じる' : '▲ 開く';
   const handleBar = sheet.querySelector('.sheet-handle-bar');
   if (handleBar) handleBar.setAttribute('aria-expanded', String(isOpen));
-}
-
-async function nudgeHub() {
-  const line = 'adj send --kind next';
-  try {
-    const data = await api('/api/hub/next', { method: 'POST' });
-    note(line, false, 'hub に着手を促しました' + handedNote({ present: data.present, woken: data.woken }));
-    await refresh();
-  } catch (e) { note(`${line} → ${e.message}`, true); }
 }
 
 async function refreshAll() {
