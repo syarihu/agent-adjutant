@@ -110,10 +110,9 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
             kind.as_str()
         ));
     }
-    if payload
-        .get("stoppedBy")
-        .is_some_and(|v| !v.is_null() && !v.is_array())
-    {
+    // `null` too: serde's default covers a missing field, not a present one of the wrong
+    // type, and a refusal from serde comes after the id is claimed.
+    if payload.get("stoppedBy").is_some_and(|v| !v.is_array()) {
         return Err("stoppedBy must be a list of rules".to_string());
     }
     // A diff or verify gate that waits does so because a rule fired, and the board shows
