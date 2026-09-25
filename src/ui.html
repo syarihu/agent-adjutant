@@ -1729,8 +1729,8 @@ function historyOf(task) {
       historyFailed.delete(task.id);
       if (view === 'task' && taskView.id === task.id) renderTaskView();
     }).catch(e => {
-      // Asked for again on the next redraw rather than left marked as read.
-      if (histories[task.id] === mine) delete histories[task.id];
+      // Asked for again on the next redraw, keeping what was read before on screen meanwhile.
+      if (histories[task.id] === mine) mine.key = null;
       // Said once per run of failures, so the retries below do not push the log of what was
       // done off the footer.
       if (!historyFailed.has(task.id)) note(`経過を取得できませんでした: ${e.message}`, true);
@@ -1948,7 +1948,7 @@ function checkTab(task, all) {
    gates): picked from 経過 and shown above it, so nothing a gate carried is left unreadable. */
 function gateDetailHtml(g, all) {
   let h = `<div class="panel" style="border-color:var(--accent)"><div style="display:flex;gap:8px;align-items:center">` +
-    `<span class="tag"><span class="dot" style="background:${kindOf(g.kind)[1]}"></span>${esc(kindOf(g.kind)[0])}</span>` +
+    `<span class="tag"><span class="dot" style="background:${esc(kindOf(g.kind)[1])}"></span>${esc(kindOf(g.kind)[0])}</span>` +
     `<span style="flex:1"></span><button type="button" class="iconbtn" data-unpick>閉じる</button></div></div>`;
   h += gateHeadHtml(g, all) + framesHtml(g) + choicesHtml(g, isWaiting(g)) + reviewPanels(g) + checkPanels(g);
   if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
@@ -1967,7 +1967,7 @@ function historyTab(task, all) {
   push(task.createdAt, `<div>タスクを作成</div><div class="who">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '')} · ${esc(STOP_AT[task.stopAt || 'plan'] || '')}</div>`);
   for (const g of all) {
     const [label, colour] = kindOf(g.kind);
-    const tag = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>`;
+    const tag = `<span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>`;
     const title = `<button type="button" class="linkish" data-open="${esc(g.id)}">${esc(g.title)}</button>`;
     const why = stopWhy(g).length ? `<div class="who"${stopBad(g) ? ' style="color:var(--critical)"' : ''}>止めた理由: ${esc(stopWhy(g).join(' / '))}</div>` : '';
     const opened = g.wait === false ? 'worker が記録して、止まらずに進んだ'
@@ -2035,7 +2035,7 @@ function renderTaskView() {
       const b = document.createElement('button');
       b.className = 'item';
       b.setAttribute('aria-current', String(g.task === task.id));
-      b.innerHTML = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+      b.innerHTML = `<span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>
         <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
       const owner = g.task && (state.tasks || []).find(t => t.id === g.task);
       b.onclick = () => owner ? openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id) : goToGate(g.id);
@@ -2076,7 +2076,7 @@ function renderTaskView() {
     const [label, colour] = kindOf(waiting.kind);
     const tab = TAB_OF_KIND[waiting.kind] || 'history';
     const here = tab === taskView.tab && gateShownIn(task, tab, all)?.id === waiting.id;
-    h += `<div class="tv-wait"><span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
+    h += `<div class="tv-wait"><span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>
       <b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(waiting.title)}</b>
       <span style="color:var(--ink-2);font-size:12px">${ago(waiting.openedAt)}から待ち</span>
       ${stopWhy(waiting).length ? `<span class="${stopBad(waiting) ? 'bad' : ''}" style="font-size:12px;width:100%">${stopBad(waiting) ? '⚠ ' : ''}止めた理由: ${esc(stopWhy(waiting).join(' / '))}</span>` : ''}
