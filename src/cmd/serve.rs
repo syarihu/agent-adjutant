@@ -360,6 +360,10 @@ fn state(server: &Server) -> Value {
         },
         // Minutes in one phase before a card is flagged. `0` = never.
         "stuckAfterMinutes": settings.stuck_after_minutes,
+        // Whether the IDE buttons can do anything, and where to set it when they cannot. Read
+        // on every poll, so an `ide` written into the config shows up without a restart.
+        "ideConfigured": crate::ide::configured(settings.ide.as_deref()),
+        "configPath": crate::config::config_path().to_string_lossy(),
         "now": now,
         "pending": pending,
         "gates": gate::list(&super::gate::dir(&server.ctx)),

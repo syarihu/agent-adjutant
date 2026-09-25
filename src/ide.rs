@@ -7,13 +7,18 @@
 
 use crate::template::{Sub, render};
 
+/// Whether an editor is configured at all: a blank `ide` is the same as none.
+pub fn configured(ide: Option<&str>) -> bool {
+    ide.is_some_and(|ide| !ide.trim().is_empty())
+}
+
 /// The command line that opens `worktree`, or `None` when no editor is configured. `None`
 /// means "ask" — guessing puts the user in the wrong editor, which is worse than a question.
 pub fn open_command(ide: Option<&str>, worktree: &str) -> Option<String> {
-    let ide = ide?.trim();
-    if ide.is_empty() {
+    if !configured(ide) {
         return None;
     }
+    let ide = ide?.trim();
     if ide.contains("{worktree}") {
         return Some(render(ide, &[("worktree", Sub::Quoted(worktree))]));
     }
@@ -55,5 +60,13 @@ mod tests {
     fn no_editor_means_ask_rather_than_guess() {
         assert_eq!(open_command(None, "/wt"), None);
         assert_eq!(open_command(Some("  "), "/wt"), None);
+    }
+
+    #[test]
+    fn a_blank_editor_is_not_configured() {
+        assert!(configured(Some("code")));
+        assert!(!configured(None));
+        assert!(!configured(Some("")));
+        assert!(!configured(Some("  ")));
     }
 }

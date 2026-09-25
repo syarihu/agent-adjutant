@@ -250,7 +250,7 @@ function decideHtml(g) {
             <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
             <span>ターミナルで話す</span>
           </button>
-          <button class="m3-icon-button" style="padding:8px 14px" data-ide="${esc(g.worktree)}">
+          <button class="m3-icon-button" style="padding:8px 14px" title="${ideTitle()}" data-ide="${esc(g.worktree)}">
             <span class="material-symbols-outlined" style="font-size:16px;">code</span>
             <span>IDEで開く</span>
           </button>
@@ -279,7 +279,7 @@ function decideHtml(g) {
         <span>ターミナルで話す</span>
       </button>
       ${g.worktree ? `
-        <button class="m3-icon-button" style="padding:8px 14px" data-ide="${esc(g.worktree)}">
+        <button class="m3-icon-button" style="padding:8px 14px" title="${ideTitle()}" data-ide="${esc(g.worktree)}">
           <span class="material-symbols-outlined" style="font-size:16px;">code</span>
           <span>IDEで開く</span>
         </button>
@@ -452,7 +452,7 @@ function renderReview() {
               <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
               <span>端末</span>
             </button>
-            <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" data-ide="${esc(taskWorktree)}">
+            <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="${ideTitle()}" data-ide="${esc(taskWorktree)}">
               <span class="material-symbols-outlined" style="font-size:14px;">code</span>
               <span>IDE</span>
             </button>
@@ -569,7 +569,7 @@ function renderReview() {
   } else if (reviewActiveTab === 'check') {
     if (g.kind === 'verify' && !record) {
       h += `<div class="work">
-        <button class="big" data-ide="${esc(g.worktree)}">
+        <button class="big" title="${ideTitle()}" data-ide="${esc(g.worktree)}">
           <span class="material-symbols-outlined" style="font-size:16px;vertical-align:text-bottom;margin-right:4px;">code</span>
           <span>IDE で開く</span>
         </button>

@@ -60,6 +60,8 @@ async function focusHub() {
 async function worktreeAct(action, worktree) {
   const line = { focus: `adj focus --worktree ${worktree}`, ide: `adj ide --worktree ${worktree}`,
                  close: `adj close --worktree ${worktree}` }[action];
+  // With no editor configured the server can only refuse, so say how to set one instead.
+  if (action === 'ide' && !ideReady()) { openIdeDialog(); return; }
   if (action === 'close' && !confirm(`${worktree.split('/').pop()} の worker のタブを閉じます。worker は止まります（worktree は残ります）。`)) return;
   try {
     const data = await api(`/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
@@ -444,7 +446,7 @@ function cardEl(task, col) {
         </div>
         <div class="card-button-row">
           ${task.worktree ? `<button class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
-          ${task.worktree ? `<button class="m3-icon-button" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
+          ${task.worktree ? `<button class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
           ${worker && worker.present ? `<button class="m3-icon-button" style="color:var(--md-sys-color-error);" title="workerを終了" data-close="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">close</span><span>閉じる</span></button>` : ''}
           ${col === 'backlog' ? `<button class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
         </div>
@@ -665,7 +667,7 @@ function renderDrawer() {
             <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
             <span>ターミナル前面表示</span>
           </button>
-          <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-ide="${esc(task.worktree)}">
+          <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" title="${ideTitle()}" data-ide="${esc(task.worktree)}">
             <span class="material-symbols-outlined" style="font-size:16px;">code</span>
             <span>IDE で開く</span>
           </button>

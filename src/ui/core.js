@@ -32,6 +32,11 @@ const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+/* Missing before the first poll, when no button has been drawn yet: read as configured so a
+   state without the key never dims them. */
+const ideReady = () => state.ideConfigured !== false;
+const ideTitle = () => ideReady() ? 'IDEでworktreeを開く' : 'エディタが未設定です（押すと設定方法を表示します）';
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     ...options,
@@ -142,6 +147,8 @@ function render() {
   const waiting = (state.pending || []).length;
   document.getElementById('inbox').innerHTML = waiting
     ? `<span class="material-symbols-outlined" style="font-size:14px;vertical-align:text-bottom;">mail</span><span>受信箱 ${waiting} 件(hub が未読)</span>` : '';
+
+  document.body.classList.toggle('ide-unset', !ideReady());
 
   const board = document.getElementById('board');
   board.innerHTML = '';

@@ -55,6 +55,12 @@ async function queueOrder(id, before) {
 let handoverTargetTaskId = null;
 let handoverTargetBefore = null;
 
+/* Opened by an IDE button while no editor is configured: what to write, and where. */
+function openIdeDialog() {
+  document.getElementById('ide-config-path').textContent = state.configPath || '';
+  document.getElementById('ide-dialog').showModal();
+}
+
 function openHandoverDialog(id, before = null) {
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task) return;

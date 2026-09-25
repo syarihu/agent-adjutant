@@ -96,6 +96,22 @@ dialog .foot {
   justify-content: flex-end;
   background: var(--md-sys-color-surface-container-high);
 }
+/* With no editor configured the IDE buttons stay clickable — they open the dialog that says
+   how to set one — but look unavailable. */
+body.ide-unset [data-ide] { opacity: 0.5; }
+body.ide-unset [data-ide]:hover { opacity: 0.8; }
+.ide-help { font-size: 13.5px; line-height: 1.6; }
+.ide-help .label { font-size: 12.5px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); margin-bottom: 4px; }
+.ide-help ul { margin: 0; padding-left: 20px; }
+.ide-help code { font-family: var(--font-mono); font-size: 12.5px; }
+.ide-help .path { word-break: break-all; }
+.ide-help pre {
+  margin: 8px 0 0;
+  padding: 10px 14px;
+  font: 12.5px/1.5 var(--font-mono);
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-shape-corner-sm);
+}
 fieldset { border: 0; margin: 0; padding: 0; }
 legend { padding: 0 0 8px; color: var(--md-sys-color-on-surface-variant); font-size: 12.5px; font-weight: 600; }
 .radios { display: flex; gap: 8px; flex-wrap: wrap; }
