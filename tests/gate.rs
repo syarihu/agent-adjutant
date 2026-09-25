@@ -340,6 +340,14 @@ fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
             serde_json::json!({ "kind": "diff", "title": "差分", "stoppedBy": "unsure" }),
             "stoppedBy must be a list",
         ),
+        (
+            serde_json::json!({ "kind": "diff", "title": "差分" }),
+            "a waiting diff gate needs stoppedBy",
+        ),
+        (
+            serde_json::json!({ "kind": "verify", "title": "動作確認", "stoppedBy": [] }),
+            "a waiting verify gate needs stoppedBy",
+        ),
     ] {
         let out = open(payload.clone());
         assert!(!out.status.success(), "{payload}: {out:?}");

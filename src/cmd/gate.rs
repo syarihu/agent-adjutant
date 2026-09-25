@@ -97,6 +97,20 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     {
         return Err("stoppedBy must be a list of rules".to_string());
     }
+    // A diff or verify gate that waits does so because a rule fired, and the board shows
+    // which. One that names none leaves a person looking at a stop nobody can explain.
+    if wait
+        && kind.can_be_recorded()
+        && payload
+            .get("stoppedBy")
+            .and_then(Value::as_array)
+            .is_none_or(|rules| rules.is_empty())
+    {
+        return Err(format!(
+            "a waiting {} gate needs stoppedBy; keep it as a record with \"wait\": false if no rule stopped it",
+            kind.as_str()
+        ));
+    }
     // Why a gate stops only means something where it could have been a record instead, and
     // a record that says why it stopped the worker is one of the two statements being false.
     if payload
