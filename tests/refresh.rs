@@ -9,8 +9,9 @@ const PULL: &str = "https://github.com/acme/widget/pull";
 
 /// A `gh` that knows four pull requests, and writes down every one it is asked about.
 ///
-/// 1 is merged, 2 is open, 3 was closed without merging, and anything else fails the way
-/// `gh` does for a PR it cannot find.
+/// 1 is merged, 2 is open, 3 was closed without merging, 5 is merged but its record is
+/// removed while `gh` is answering, and anything else fails the way `gh` does for a PR it
+/// cannot find.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
     std::fs::create_dir_all(&stubs).unwrap();
@@ -25,6 +26,7 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
              {PULL}/1) echo MERGED ;;\n\
              {PULL}/2) echo OPEN ;;\n\
              {PULL}/3) echo CLOSED ;;\n\
+             {PULL}/5) grep -l '/pull/5\"' \"$ADJUTANT_STATE_DIR\"/tasks/*/*.json | xargs rm; echo MERGED ;;\n\
              *) echo 'GraphQL: Could not resolve to a PullRequest' >&2; exit 1 ;;\n\
              esac\n",
             asked = shell_quoted(&asked.to_string_lossy()),
@@ -154,6 +156,39 @@ fn every_record_gets_its_own_answer_past_the_first_batch() {
         let want = if *pr == 1 { "done" } else { "pr" };
         assert_eq!(status_of(&fixture, id), want, "{id}");
     }
+}
+
+/// One record that cannot be moved does not take the others with it: the ones that were
+/// moved are still reported, and the one that failed says why.
+#[test]
+fn a_record_that_cannot_be_moved_is_reported_and_the_rest_still_move() {
+    let fixture = Fixture::new(QUIET);
+    let gone = task_with_pr(&fixture, "gone", "pr", &format!("{PULL}/5"));
+    let merged = task_with_pr(&fixture, "merged", "pr", &format!("{PULL}/1"));
+    let (path, _) = stub_gh(&fixture);
+
+    let out = fixture
+        .command(["task", "refresh", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(ids(&result["done"]), [merged.as_str()], "{result}");
+    assert_eq!(ids(&result["failed"]), [gone.as_str()], "{result}");
+    assert!(
+        result["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("no such task"),
+        "{result}"
+    );
+    assert!(ids(&result["skipped"]).is_empty(), "{result}");
+    assert_eq!(status_of(&fixture, &merged), "done");
 }
 
 /// A finished record is not looked up at all: there is nothing its PR could change.

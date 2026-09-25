@@ -426,6 +426,10 @@ pub struct Checked {
     /// Whether this refresh moved the record to `done`. `false` for a merged PR whose record
     /// somebody else changed while `gh` was being asked.
     pub moved: bool,
+    /// Why a merged PR's record could not be moved: it was removed while `gh` was being
+    /// asked, or it could not be read back or written. One record that fails does not stop
+    /// the rest, so the ones already moved are still reported as moved.
+    pub failed: Option<String>,
 }
 
 /// Bring the records up to date with their pull requests: every one that has a `pr` and is
@@ -469,24 +473,36 @@ pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
                 task,
                 state,
                 moved: false,
+                failed: None,
             });
             continue;
         }
         // Read again under the lock: `gh` took a while, and a record somebody moved or
         // pointed at another PR in the meantime is theirs, not this answer's.
-        let lock = lock_task(ctx, &task.id)?;
-        let mut now = task::load(&dir, &task.id)?;
-        let moved = now.pr == task.pr && now.status == task.status;
-        if moved {
-            now.status = Status::Done;
-            now.updated_at = stamp();
-            task::save(&dir, &now)?;
-        }
-        drop(lock);
-        checked.push(Checked {
-            task: now,
-            state,
-            moved,
+        let move_it = || -> Result<(Task, bool), String> {
+            let _lock = lock_task(ctx, &task.id)?;
+            let mut now = task::load(&dir, &task.id)?;
+            let moved = now.pr == task.pr && now.status == task.status;
+            if moved {
+                now.status = Status::Done;
+                now.updated_at = stamp();
+                task::save(&dir, &now)?;
+            }
+            Ok((now, moved))
+        };
+        checked.push(match move_it() {
+            Ok((now, moved)) => Checked {
+                task: now,
+                state,
+                moved,
+                failed: None,
+            },
+            Err(why) => Checked {
+                task,
+                state,
+                moved: false,
+                failed: Some(why),
+            },
         });
     }
     Ok(checked)
@@ -506,6 +522,9 @@ pub fn refresh_json(checked: &[Checked]) -> Value {
         if let PrState::Unreadable(why) = &c.state {
             out["error"] = json!(why);
         }
+        if let Some(why) = &c.failed {
+            out["error"] = json!(why);
+        }
         out
     };
     let with = |pick: fn(&Checked) -> bool| -> Vec<Value> {
@@ -517,7 +536,9 @@ pub fn refresh_json(checked: &[Checked]) -> Value {
         "closed": with(|c| c.state == PrState::Closed),
         "unreadable": with(|c| matches!(c.state, PrState::Unreadable(_))),
         // Merged, but the record changed while `gh` was being asked, so it was left as it is.
-        "skipped": with(|c| c.state == PrState::Merged && !c.moved),
+        "skipped": with(|c| c.state == PrState::Merged && !c.moved && c.failed.is_none()),
+        // Merged, but the record could not be moved. `error` says why.
+        "failed": with(|c| c.failed.is_some()),
     })
 }
 
@@ -752,6 +773,10 @@ pub fn refresh_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Resu
     }
     for c in &checked {
         let what = match (&c.state, c.moved) {
+            _ if c.failed.is_some() => format!(
+                "merged, but the record could not be moved: {}",
+                c.failed.as_deref().unwrap_or_default()
+            ),
             (_, true) => "done".to_string(),
             (PrState::Merged, false) => {
                 "merged, but the record changed meanwhile; left alone".to_string()
