@@ -279,6 +279,44 @@ mod tests {
         );
     }
 
+    /// Whether to request a Copilot review is decided by the brief's line, which the hub fills
+    /// from `copilotReview`. Each side has to spell the label the same way, and the worker has
+    /// to cover every value the config accepts — a value it does not branch on falls through
+    /// to whatever the prose happens to say next.
+    #[test]
+    fn the_copilot_review_request_follows_the_brief() {
+        let worker = section(find("adj-worker").unwrap().raw_content, "## 5. ");
+        let flowed: String = worker.chars().filter(|c| !c.is_whitespace()).collect();
+        let reads_line = flowed
+            .find("指示書の「Copilotレビュー依頼」行")
+            .expect("the PR step does not say which brief line decides the Copilot review");
+        for value in ["`ask`", "`always`", "`never`"] {
+            assert!(
+                flowed.contains(value),
+                "the PR step does not branch on {value}: {worker}"
+            );
+        }
+        // A brief without the line (one the hub did not write) keeps the old behaviour.
+        assert!(
+            flowed.contains("この3つ以外の値なら`ask`として扱う"),
+            "the PR step does not say what a missing or unknown value means: {worker}"
+        );
+        // The branch sits between the base check and the request, so the base is still
+        // corrected before a review can be asked for.
+        let checks_base = flowed.find("baseRefName").unwrap();
+        let requests = flowed.find("request_copilot_review").unwrap();
+        assert!(
+            checks_base < reads_line && reads_line < requests,
+            "the Copilot branch is not between the base check and the request"
+        );
+
+        let hub = find("adj-hub").unwrap().raw_content;
+        assert!(
+            hub.contains("- Copilot レビュー依頼: {copilot_review}"),
+            "the brief template no longer writes the line the worker is told to read"
+        );
+    }
+
     /// A `gh pr create` with nothing to base it on is the defect itself, not just one
     /// wording of it: the flag is easy to drop when the surrounding prose is rewritten.
     ///

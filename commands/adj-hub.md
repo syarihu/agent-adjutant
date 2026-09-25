@@ -100,7 +100,7 @@ at the repo-entry level**, in `issueKeys`:
 
 | | キー |
 | --- | --- |
-| **リポジトリエントリ直下** | `issueKeys`, `issueCreate` (`adj-hub` 用), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr` |
+| **リポジトリエントリ直下** | `issueKeys`, `issueCreate` (`adj-hub` 用), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr`, `copilotReview` |
 | **ソースごと** | `type` (フラット形式での `taskSource`), `projectOwner`, `projectNumber`, `projectFields`, `issueRepo` (`github` 型のみ), `branchPattern`, `worktreeName`, `linear`, `jira` |
 | **このマシンの設定** | `ide`, `terminal`, `notification`, `wake` / `hubWake` / `workerWake`, `agentRunner`, `hubRunner`, `agentEnv`, `worktreePattern`, `startupDashboard` |
 
@@ -1188,6 +1188,9 @@ inflates the hub transcript for every task it dispatches.
   ユーザーが「差分も見たい」「動作確認まで見たい」と言ったときだけ `diff` / `all`、
   何も言われていなければ `plan`。worker が差分と動作確認で人を待つかをこの行で決めるので、
   推測で `all` に上げない（上げると、見る人がいないタスクが要対応に並ぶ）。
+- **Copilot レビュー依頼 行も書く。** `adjutant_config` の `copilotReview`（`ask` / `always` /
+  `never`）をそのまま写す。`defaults` と `repos.<repo>` のマージは済んでいるので、自分で解決し直さない。
+  worker は PR を出したあと、この行で Copilot にレビューを頼むか・頼む前に聞くかを決める。
 - **「調査だけ」のときは PR も Issue 更新もさせない。** 成果はそのタブのユーザーに出させる
   （指示書の「報告先」がそう書いてある）。ここで自分に報告させると、報告が二重になる。
 - **親タスクを渡されているなら 親タスク 行に書く。** 大きな作業を割ったサブタスクの1つや、
@@ -2029,6 +2032,9 @@ worker はそれを引きに行って空振りする。**ここで起票はし�
 - 止める所: {plan / diff / all}
   （どの gate で人を待つかなのだ。`plan` は計画の承認だけ、`diff` は計画と差分レビュー、
   `all` は計画・差分レビュー・動作確認なのだ）
+- Copilot レビュー依頼: {copilot_review}
+  （PR を出したあと Copilot にレビューを頼むかなのだ。`ask` は毎回聞く、`always` は聞かずに頼む、
+  `never` は聞かずに頼まないのだ）
 - 報告先: **このタブのユーザー**なのだ。成果を hub に送らないのだ — hub は振り分け役で、
   受け取っても読ませる先が無いのだ。hub に自分から送るのはこの2つだけなのだ:
   (a) `adj-report` の手順で投げる**別件の**不具合、(b) 作業が終わったあとの片付け依頼。

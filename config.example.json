@@ -35,6 +35,8 @@
     "reviewEngine": "auto",
     "//draftPr": "Open pull requests as drafts. The worker marks one ready only once its own review rounds have converged.",
     "draftPr": true,
+    "//copilotReview": "Whether a worker asks Copilot to review the pull request it opens: \"ask\" asks the person every time, \"always\" requests the review without asking, \"never\" neither asks nor requests. Not the same thing as reviewBots, which names the reviews a worker waits for once they have been requested. Any other value is reported in `warnings` and treated as \"ask\".",
+    "copilotReview": "ask",
 
     "//agentRunner": "Command that starts a worker. Default: claude --session-id {sessionId} --permission-mode auto {prompt}. Placeholders: {sessionId} {prompt} {worktree} {title}. {sessionId} is a fresh id saved in the worktree so `adj worker --resume` can reopen this exact session; a template without it starts workers that cannot be resumed. Examples: codex exec {prompt} | agy --dangerously-skip-permissions -i {prompt}",
     "//agentResumeRunner": "Command that reopens a worker's saved session (`adj worker --resume`, `adj work --resume`). Default: claude --resume {sessionId} --permission-mode auto {prompt}. Same placeholders as agentRunner, and {sessionId} is required: without it the agent cannot be told which session to reopen, so --resume refuses to run.",

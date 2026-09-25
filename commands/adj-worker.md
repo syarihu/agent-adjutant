@@ -46,7 +46,7 @@ hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを�
   `ide` / `draftPr` / `verify` / `taskSources[].projectFields`。**`taskSources` は常に配列**で、
   **どのソースの `projectFields` か**は「指示書の URL の repo が乗っているボード =
   `projectFields` を持つソース」で決める。指示書が運ぶのは作業対象・親タスク・ブランチ・
-  ベース・完了条件・止める所・`verify` だけなので、**それ以外は自分でここから引く**。
+  ベース・完了条件・止める所・Copilot レビュー依頼・`verify` だけなので、**それ以外は自分でここから引く**。
   `repo`（= `<codeRepo>`）も同じ出力に入っている。スキーマは配布物の `config.example.json`。
 
 ## 1. Plan
@@ -223,7 +223,14 @@ prefix は付けない。メッセージの言語はそのリポジトリの直�
    ```
    これを打たないと、PR が開いたあともカードは「進行中」に残る。板を見ている人には、レビューを
    待っているのか作業中なのか区別がつかない。
-6. `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
+6. **Copilot にレビューを頼むかは、指示書の「Copilot レビュー依頼」行で決める。** hub が config の
+   `copilotReview` を解決して書いている:
+   - `ask` — `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
+   - `always` — 聞かずに step 7 で頼む。
+   - `never` — 聞かず、頼みもしない。step 7 を飛ばす。
+   行が無い、`-`、またはこの3つ以外の値なら `ask` として扱う。既存の worktree への引き渡しのように
+   hub がこの行を書かなかった指示書でも、今までどおり聞いてから頼むことになる。
+   `reviewBots` はどの bot のレビューを待つかの設定で、頼むかどうかはこの行だけで決まる。
 7. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
    フォールバック: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f 'reviewers[]=Copilot'`
 8. PR の URL を出す。
