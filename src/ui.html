@@ -3741,7 +3741,7 @@ function renderTaskView() {
       const n = kind && kind !== 'plan' ? count(kind) : 0;
       const icon = id === 'overview' ? 'description' : id === 'review' ? 'rate_review' : id === 'check' ? 'fact_check' : 'history';
       return `<button role="tab" id="tv-tab-${id}" class="m3-seg-tab${id === taskView.tab ? ' active' : ''}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
-        `<span class="material-symbols-outlined">${icon}</span>` +
+        `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
         `<span>${label}</span>` +
         (n ? ` <span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${n}</span>` : '') +
         (kind && unreadIn(kind) ? '<span class="m3-tab-badge">新着</span>' : '') +
@@ -3837,17 +3837,14 @@ function gateShownIn(task, tab, all) {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && view === 'task' && !e.target.matches('textarea,input,select')) {
-    backToBoard();
-    return;
-  }
   if (e.key === 'Escape') {
     const formDialog = document.getElementById('form');
     if (formDialog && formDialog.open) {
       formDialog.close();
       return;
     }
-    if (view === 'task') {
+    // Escape in a comment box must not leave the task and drop what was typed.
+    if (view === 'task' && !e.target.matches('textarea,input,select')) {
       backToBoard();
       return;
     }
