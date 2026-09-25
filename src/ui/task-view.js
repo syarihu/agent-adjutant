@@ -172,6 +172,10 @@ const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
 function issueNumberOf(url) {
   try { return new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; }
 }
+// The number of a pull request URL, also when it points at a tab of it (`…/pull/82/files`).
+function prNumberOf(url) {
+  try { return /\/pull\/(\d+)/.exec(new URL(url).pathname)?.[1] || ''; } catch { return ''; }
+}
 
 function overviewTab(task, all) {
   const plans = all.filter(g => g.kind === 'plan');

@@ -379,7 +379,8 @@ function cardEl(task, col) {
   }
   const prUrl = httpUrl(task.pr);
   if (prUrl) {
-    metaBadges.push(`<a href="${esc(prUrl)}" target="_blank" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く"><span class="material-symbols-outlined" style="font-size:12px;">merge</span>PR</a>`);
+    const prNumber = prNumberOf(prUrl);
+    metaBadges.push(`<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く (${esc(prUrl)})"><span class="material-symbols-outlined" style="font-size:12px;">merge</span>PR${prNumber ? ` #${esc(prNumber)}` : ''}</a>`);
   }
   if (metaBadges.length) {
     h += `<div style="display:flex;flex-wrap:wrap;gap:4px;">${metaBadges.join('')}</div>`;
@@ -626,6 +627,7 @@ function renderDrawer() {
       }).join('') + `</div>`;
   }
 
+  const drawerPrUrl = httpUrl(task.pr);
   body += `
     <div class="m3-filled-card">
       <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">基本情報</div>
@@ -646,6 +648,10 @@ function renderDrawer() {
           <span style="color:var(--md-sys-color-outline);font-size:11px;">worktree</span>
           <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code>
         </div>
+        ${drawerPrUrl ? `<div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">PR</span>
+          <a href="${esc(drawerPrUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(drawerPrUrl)}" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>${prNumberOf(drawerPrUrl) ? `#${esc(prNumberOf(drawerPrUrl))}` : 'PR を開く'}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>
+        </div>` : ''}
       </div>
     </div>
   `;
