@@ -1263,6 +1263,8 @@ footer { border-top:1px solid var(--hairline); background:var(--surface-1); padd
 dialog {
   border: none;
   border-radius: var(--md-shape-corner-xl);
+  /* The global reset zeroes margins, which would pin a modal dialog to the top left. */
+  margin: auto;
   padding: 0;
   background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface);
