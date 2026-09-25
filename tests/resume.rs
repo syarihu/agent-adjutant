@@ -269,6 +269,17 @@ fn the_hub_tells_its_mcp_server_which_session_it_is() {
 }
 
 #[test]
+fn the_hub_tells_its_mcp_server_to_serve_its_board_unless_told_not_to() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.ok(&["hub", "--dry-run"]);
+    assert!(out.contains(&format!("ADJUTANT_HUB_SERVE={SLUG}")), "{out}");
+
+    set_config(&fixture, "hubServe", false.into());
+    let off = fixture.ok(&["hub", "--dry-run"]);
+    assert!(!off.contains("ADJUTANT_HUB_SERVE"), "{off}");
+}
+
+#[test]
 fn a_plain_hub_comes_back_to_a_session_that_ended_recently() {
     let fixture = Fixture::new(QUIET);
     let spawned = fixture.repo.join("spawned.txt");
@@ -390,7 +401,7 @@ fn a_worker_never_inherits_the_hubs_session() {
         &fixture,
         "agentRunner",
         format!(
-            "sh -c 'echo \"[$ADJUTANT_HUB_SESSION]\"' > {} ; true {{sessionId}} {{prompt}}",
+            "sh -c 'echo \"[$ADJUTANT_HUB_SESSION$ADJUTANT_HUB_SERVE]\"' > {} ; true {{sessionId}} {{prompt}}",
             shell_quoted(&seen.to_string_lossy())
         )
         .into(),
@@ -398,6 +409,7 @@ fn a_worker_never_inherits_the_hubs_session() {
     let out = fixture
         .command(["worker", "--worktree", fixture.repo.to_str().unwrap()])
         .env("ADJUTANT_HUB_SESSION", format!("{SLUG}/the-hubs-session"))
+        .env("ADJUTANT_HUB_SERVE", SLUG)
         .output()
         .unwrap();
     assert!(

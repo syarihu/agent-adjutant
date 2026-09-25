@@ -82,7 +82,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
-| `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) |
+| `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
 | `adjutant task add\|list\|show\|update\|refresh` | the records that board is a view of (`refresh`: move the ones whose PR was merged to done) |
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -274,6 +274,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `hubAutoResumeHours` | — (a number, `0` to turn it off) | `3` |
 | `startupDashboard` | — (`true` / `false`) | `true` |
 | | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
+| `hubServe` | — (`true` / `false`) | `true` |
+| | | *`false` leaves the board to `adj serve`, started by hand* |
 | `stuckAfterMinutes` | — (a number, `0` to turn it off) | `120` |
 | | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless* |
 | `maxWorkers` | — (a whole number, 1 or more) | no limit |
@@ -281,7 +283,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
 different answer. The two settings that are not commands take their own values instead:
-`startupDashboard` is `true` / `false`, `hubAutoResumeHours` is a number, turned off by
+`startupDashboard` and `hubServe` are `true` / `false`, `hubAutoResumeHours` is a number, turned off by
 `0` — a `false` there is reported in `warnings` and the default is used — and `maxWorkers`
 is a whole number, where anything else is reported and means no limit. `terminal` and the `wake` family merge key by key, so a repository can
 change one half without restating the other. A setting of the wrong type is dropped *and*
@@ -366,6 +368,18 @@ could already do — handing a task over writes a `request` into the hub's inbox
 tab, through the same code `adjutant send` runs, so waking and notifying cannot drift between
 the two callers. The page says so out loud: a strip along the bottom prints the command each
 action maps to.
+
+**The hub serves it.** The MCP server started under a hub (`adj hub` puts
+`ADJUTANT_HUB_SERVE` on the agent's line) serves that hub's board for as long as it runs, and
+since that server lives exactly as long as the hub's session, the board stops when the hub
+does. It takes `127.0.0.1:4577` when that is free and any free port when it is not, so two hubs
+— of one repository or of two — can each have theirs. 4577 goes to whichever hub started
+first, so go by the URL the hub gives rather than a bookmark of that port. A hub for a parent task serves its own
+board, scoped to it, as `adj serve --hub` does. The hub reads the URL from `board` in
+`adjutant_config` (and `adj config`) and says it as it goes to wait. If a board for the hub is
+already running, started by hand, it is left alone. `hubServe: false` turns this off, and a
+hub whose agent has no adjutant MCP server gets no board; for both, `adj serve` is the way.
+Nothing opens a browser.
 
 **It holds no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
 arrives because a person clicked. The page asks for state every two seconds, which is the

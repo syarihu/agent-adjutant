@@ -58,7 +58,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-const SETTING_KEYS: [&str; 16] = [
+const SETTING_KEYS: [&str; 17] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -81,6 +81,10 @@ const SETTING_KEYS: [&str; 16] = [
     // the repository holds — and it is here rather than in the prompt because the prompt is
     // the same text on every machine.
     "startupDashboard",
+    // Whether a hub's MCP server serves that hub's board. About the machine — whether a
+    // local port may be opened, and whether somebody runs `adj serve` themselves — like the
+    // one above.
+    "hubServe",
     // How recently a hub has to have ended for a plain `adj hub` to bring it back rather than
     // start a new one. About how somebody works, like the one above.
     "hubAutoResumeHours",
@@ -128,7 +132,7 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
         // The one knob that is a yes/no rather than a command line. Without its own arm it
         // fell through to the string default below, and every `true` anybody wrote was
         // reported as the wrong shape and dropped — a setting that warns when used correctly.
-        "startupDashboard" => &["true", "false"],
+        "startupDashboard" | "hubServe" => &["true", "false"],
         "hubAutoResumeHours" | "maxWorkers" | "stuckAfterMinutes" => &["a number"],
         _ => &["a string"],
     }
@@ -535,6 +539,11 @@ pub struct Settings {
     /// the prompt read "absent" and "off" as the same thing. That reversal is silent — a hub
     /// that simply never collects, on the machine that changed nothing.
     pub startup_dashboard: bool,
+    /// Whether the MCP server started under a hub also serves that hub's board, for as long
+    /// as the hub runs. Off leaves the board to `adj serve`, started by hand.
+    ///
+    /// Never skipped when serialising, for the reason given for `startup_dashboard`.
+    pub hub_serve: bool,
     /// How many hours after a hub ended a plain `adj hub` resumes it instead of starting a
     /// new one. `0` turns that off, leaving `--resume` as the only way back.
     pub hub_auto_resume_hours: f64,
@@ -562,6 +571,7 @@ impl Default for Settings {
             ide: None,
             worktree_pattern: None,
             startup_dashboard: true,
+            hub_serve: true,
             hub_auto_resume_hours: DEFAULT_HUB_AUTO_RESUME_HOURS,
             max_workers: None,
             stuck_after_minutes: DEFAULT_STUCK_AFTER_MINUTES,
@@ -786,6 +796,8 @@ fn resolve_settings(
         // agent asks the tool — resolving the override in the command layer would leave the
         // hub reading a `settings` block that disagrees with the flag it was started under.
         startup_dashboard: startup_dashboard(configured_dashboard.as_ref(), startup_flag),
+        // A non-boolean was already reported by `check_shapes`, and falls back to the default.
+        hub_serve: pick("hubServe").and_then(|v| v.as_bool()).unwrap_or(true),
         hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
         max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
         stuck_after_minutes: stuck_after_minutes(pick("stuckAfterMinutes").as_ref(), warnings),
@@ -1310,7 +1322,7 @@ mod tests {
                    "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
                    "maxWorkers": 3, "stuckAfterMinutes": 30,
                    "hubResumeRunner": "again {name} {sessionId}",
-                   "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false,
+                   "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false, "hubServe": false,
                    "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
                    "repos": {}}),
             "acme/app",
@@ -1326,6 +1338,7 @@ mod tests {
             "worktreePattern",
             "agentEnv",
             "startupDashboard",
+            "hubServe",
             "hubAutoResumeHours",
             "maxWorkers",
             "stuckAfterMinutes",
@@ -1343,6 +1356,7 @@ mod tests {
             "worktree_pattern",
             "agent_env",
             "startup_dashboard",
+            "hub_serve",
             "max_workers",
             "stuck_after_minutes",
         ] {

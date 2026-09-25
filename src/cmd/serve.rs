@@ -61,44 +61,112 @@ pub fn serve(
     open: bool,
 ) -> Result<(), String> {
     let ctx = super::context(repo_arg, hub_arg)?;
-    let token = token()?;
-
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
         format!(
             "cannot listen on 127.0.0.1:{port}: {e}\n\
              (a dashboard may already be running — try opening http://127.0.0.1:{port}/)"
         )
     })?;
-    // Asked back rather than echoed: `--port 0` is how a second one gets a free port, and
-    // the number it got is the only way to reach it.
-    let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-    let url = format!("http://127.0.0.1:{port}/?token={token}");
-
-    record(&ctx.repo.slug, port)?;
-    println!("adj serve: {} — {url}", ctx.repo.nwo);
+    let board = Board::new(ctx, listener)?;
+    let url = board.url();
+    println!("adj serve: {} — {url}", board.server.ctx.repo.nwo);
     println!("The token is in the URL. Anything without it gets a 403.");
     if open {
         open_browser(&url);
     }
+    board.run();
+    Ok(())
+}
 
-    let server = Arc::new(Server { ctx, token, port });
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let server = Arc::clone(&server);
-                // A thread per connection, because this one is long-lived and a browser
-                // holds several at once: an accept loop that serves them one at a time
-                // deadlocks the moment a second tab is opened.
-                std::thread::spawn(move || {
-                    if let Err(e) = handle(&server, stream) {
-                        eprintln!("adj serve: connection error: {e}");
-                    }
-                });
+/// Serve the board of the hub `ctx` addresses from inside that hub's MCP server, and hand
+/// back its URL. `Ok(None)` when a board for the hub is already running — one somebody
+/// started by hand with `adj serve` is left to go on serving, rather than joined by a second.
+///
+/// The socket and the record are both in place before this returns, so a tool call that
+/// asks for the URL straight after finds it; only the accept loop goes to a thread, and it
+/// ends with the process — which is the point: the MCP server lives exactly as long as the
+/// hub's session does.
+///
+/// Nothing here writes to stdout. In that process stdout carries JSON-RPC, and a stray line
+/// on it breaks the protocol for the whole session.
+pub fn serve_for_hub(ctx: super::Context) -> Result<Option<String>, String> {
+    if running(&ctx.repo.slug).is_some() {
+        return Ok(None);
+    }
+    let listener =
+        bind_preferring(DEFAULT_PORT).map_err(|e| format!("cannot listen on 127.0.0.1: {e}"))?;
+    let board = Board::new(ctx, listener)?;
+    let url = board.url();
+    std::thread::spawn(move || board.run());
+    Ok(Some(url))
+}
+
+/// `port` on the loopback address, or any free port when `port` is taken — a second hub of
+/// the same repository, a hub of another one, or something that is not ours at all. Only
+/// "in use" falls back: any other failure would fail on a free port too.
+fn bind_preferring(port: u16) -> std::io::Result<TcpListener> {
+    match TcpListener::bind(("127.0.0.1", port)) {
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => TcpListener::bind(("127.0.0.1", 0)),
+        bound => bound,
+    }
+}
+
+/// A board with its socket bound and its record written, not yet answering.
+struct Board {
+    server: Arc<Server>,
+    listener: TcpListener,
+}
+
+impl Board {
+    fn new(ctx: super::Context, listener: TcpListener) -> Result<Board, String> {
+        let token = token()?;
+        // Asked back rather than taken from the caller: port 0 is how a board gets a free
+        // port, and the number it got is the only way to reach it.
+        let port = listener
+            .local_addr()
+            .map(|a| a.port())
+            .map_err(|e| format!("cannot read the board's port: {e}"))?;
+        record(&ctx.repo.slug, port)?;
+        Ok(Board {
+            server: Arc::new(Server { ctx, token, port }),
+            listener,
+        })
+    }
+
+    fn url(&self) -> String {
+        board_url(self.server.port, &self.server.token)
+    }
+
+    fn run(self) {
+        for stream in self.listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let server = Arc::clone(&self.server);
+                    // A thread per connection, because this one is long-lived and a browser
+                    // holds several at once: an accept loop that serves them one at a time
+                    // deadlocks the moment a second tab is opened.
+                    std::thread::spawn(move || {
+                        if let Err(e) = handle(&server, stream) {
+                            eprintln!("adj serve: connection error: {e}");
+                        }
+                    });
+                }
+                Err(e) => eprintln!("adj serve: accept error: {e}"),
             }
-            Err(e) => eprintln!("adj serve: accept error: {e}"),
         }
     }
-    Ok(())
+}
+
+fn board_url(port: u16, token: &str) -> String {
+    format!("http://127.0.0.1:{port}/?token={token}")
+}
+
+/// The URL of the board running for `slug`, or `None` when none is. Whoever started it —
+/// the hub's MCP server or a person with `adj serve` — the port is in its record and the
+/// token is the one every board on this machine shares.
+pub fn url(slug: &str) -> Option<String> {
+    let port = running(slug)?;
+    Some(board_url(port, &stored_token()?))
 }
 
 // ── is anybody serving? ──────────────────────────────────────────────
@@ -197,28 +265,62 @@ fn is_own_origin(origin: &str, port: u16) -> bool {
 /// Stored beside the rest of the state rather than handed out on each start: the URL is
 /// meant to be a bookmark, and a token that changed every run would break it daily.
 fn token() -> Result<String, String> {
-    let path = messaging::state_dir().join("dashboard-token");
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        let existing = existing.trim().to_string();
-        if !existing.is_empty() {
-            return Ok(existing);
-        }
+    if let Some(existing) = stored_token() {
+        return Ok(existing);
     }
+    let path = token_path();
     let token = random_hex();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, format!("{token}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    // Written in full to a file of our own first, then put in place with a link, which
+    // fails if the file is already there: hubs of two repositories can start their boards at
+    // the same moment on a fresh machine, and neither may ever see the other's token half
+    // written. The one whose token was replaced would go on checking a secret that no URL
+    // handed out any more carries. The loser reads the winner's.
+    let staged = path.with_file_name(format!("dashboard-token.{}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     // Readable by its owner alone: every other user on the machine can otherwise read the
     // file and post to the endpoints.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    Ok(token)
+    options
+        .open(&staged)
+        .and_then(|mut file| file.write_all(format!("{token}\n").as_bytes()))
+        .map_err(|e| format!("cannot write {}: {e}", staged.display()))?;
+    let placed = match std::fs::hard_link(&staged, &path) {
+        Ok(()) => Ok(token),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match stored_token() {
+            Some(theirs) => Ok(theirs),
+            // An empty file is no token at all, and is replaced as it always was — by a
+            // rename, so the replacement is whole and owner-only too. Read back afterwards,
+            // since another start may be replacing it at the same time and the last one in
+            // is the one every URL will carry.
+            None => std::fs::rename(&staged, &path)
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))
+                .map(|()| stored_token().unwrap_or(token)),
+        },
+        Err(e) => Err(format!("cannot write {}: {e}", path.display())),
+    };
+    let _ = std::fs::remove_file(&staged);
+    placed
+}
+
+fn token_path() -> PathBuf {
+    messaging::state_dir().join("dashboard-token")
+}
+
+/// The token already on disk, without making one: asking for a URL must not be what
+/// creates the secret a board was never started with.
+fn stored_token() -> Option<String> {
+    let existing = std::fs::read_to_string(token_path()).ok()?;
+    let existing = existing.trim().to_string();
+    (!existing.is_empty()).then_some(existing)
 }
 
 fn random_hex() -> String {
@@ -764,6 +866,16 @@ mod tests {
 
     const TOKEN: &str = "s3cret";
     const PORT: u16 = 4577;
+
+    #[test]
+    fn a_taken_port_falls_back_to_a_free_one() {
+        let taken = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let second = bind_preferring(port).unwrap();
+        let got = second.local_addr().unwrap().port();
+        assert_ne!(got, port);
+        assert_ne!(got, 0);
+    }
 
     #[test]
     fn the_page_opens_with_the_token_in_the_url() {

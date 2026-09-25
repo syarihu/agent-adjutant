@@ -23,7 +23,7 @@ pub use gate::{
     open as gate_open_payload, open_cmd as gate_open, open_json as gate_open_json,
     show as gate_show,
 };
-pub use serve::{DEFAULT_PORT, serve};
+pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{
     AddArgs, UpdateArgs, add as task_add, list as task_list, refresh as task_refresh,
     refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
@@ -170,6 +170,7 @@ pub fn show_config(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), 
             "main": ctx.repo.main,
             "hub": ctx.repo.hub,
             "hubName": ctx.repo.hub_name,
+            "board": board_url(&ctx.repo.slug).map(|url| json!({ "url": url })),
             "registered": ctx.resolved.registered,
             "configPath": ctx.resolved.config_path,
             "warnings": ctx.resolved.warnings,
@@ -1375,6 +1376,12 @@ pub fn hub(
             messaging::hub_session_env(&ctx.repo.slug, &session),
         ));
     }
+    // The board this hub is served by, for the same MCP server: it lives exactly as long as
+    // the session, so the board stops when the hub does and nothing has to watch for that.
+    // `adj hub` itself cannot, since it `exec`s the agent and is gone.
+    if ctx.settings.hub_serve {
+        env.push((messaging::HUB_SERVE_ENV.to_string(), ctx.repo.slug.clone()));
+    }
     let mut command = match &resumed {
         Some(_) => runner::hub_resume_command(
             resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?,
@@ -1454,6 +1461,7 @@ pub fn hub(
         .arg("-c")
         .arg(&command)
         .env_remove(messaging::HUB_SESSION_ENV)
+        .env_remove(messaging::HUB_SERVE_ENV)
         .env_remove(messaging::HUB_ENV)
         .exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
@@ -1684,7 +1692,8 @@ pub fn worker(
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on
     // would otherwise hand the hub's session to this agent's MCP server, which would then
-    // keep saying the hub is alive for as long as the worker runs.
+    // keep saying the hub is alive for as long as the worker runs — and the hub's board
+    // marker, which would have it try to serve the hub's board.
     //
     // Nor is it whichever hub opened the tab. `ADJUTANT_HUB` outranks the record written
     // above, so an inherited one would send every report to the hub that dispatched the
@@ -1693,6 +1702,7 @@ pub fn worker(
         .arg("-c")
         .arg(&command)
         .env_remove(messaging::HUB_SESSION_ENV)
+        .env_remove(messaging::HUB_SERVE_ENV)
         .env_remove(messaging::HUB_ENV)
         .exec();
     let _ = messaging::unregister_worker(&worktree);

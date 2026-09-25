@@ -304,3 +304,155 @@ fn a_record_kept_through_the_server_is_one_the_cli_can_show() {
             .is_empty()
     );
 }
+
+/// An MCP server started with a hub's line, talked to until it has said where the board is.
+/// Returns the child, still running, and what `adjutant_config` answered.
+fn hub_mcp(fixture: &Fixture, slug: &str) -> (std::process::Child, serde_json::Value) {
+    hub_mcp_as(fixture, None, slug)
+}
+
+/// The same, for a hub named `hub` — `adj hub --hub` puts it on the line as `ADJUTANT_HUB`.
+fn hub_mcp_as(
+    fixture: &Fixture,
+    hub: Option<&str>,
+    slug: &str,
+) -> (std::process::Child, serde_json::Value) {
+    let mut command = fixture.command(["mcp"]);
+    if let Some(hub) = hub {
+        command.env("ADJUTANT_HUB", hub);
+    }
+    let mut child = command
+        .env("ADJUTANT_HUB_SERVE", slug)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let call = request(
+        1,
+        "tools/call",
+        serde_json::json!({"name": "adjutant_config", "arguments": {}}),
+    );
+    writeln!(child.stdin.as_mut().unwrap(), "{call}").unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(child.stdout.as_mut().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_str(&line).expect(&line);
+    (child, tool_result(&reply))
+}
+
+/// `GET` the board's page, and answer with the status line.
+fn fetch(url: &str) -> String {
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, path) = rest.split_once('/').unwrap();
+    let mut stream = std::net::TcpStream::connect(host).unwrap();
+    write!(
+        stream,
+        "GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut status = String::new();
+    std::io::BufReader::new(stream)
+        .read_line(&mut status)
+        .unwrap();
+    status
+}
+
+#[test]
+fn a_hub_s_mcp_server_serves_its_board_for_as_long_as_it_runs() {
+    let fixture = Fixture::new(QUIET);
+    let (mut child, config) = hub_mcp(&fixture, SLUG);
+    let url = config["board"]["url"]
+        .as_str()
+        .expect("no board")
+        .to_string();
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+    assert!(url.contains("?token="), "{url}");
+    assert!(fetch(&url).contains(" 200 "), "{url}");
+
+    // The session ends: the pipe closes, the server exits, and the board goes with it.
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(fixture.json(&["config"])["board"].is_null());
+    assert!(std::net::TcpStream::connect(url.split('/').nth(2).unwrap()).is_err());
+}
+
+#[test]
+fn only_a_server_started_for_this_hub_serves_a_board() {
+    // No marker: every other session on the machine.
+    let fixture = Fixture::new(QUIET);
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({"name": "adjutant_config", "arguments": {}}),
+        )],
+    );
+    assert!(tool_result(&replies[0])["board"].is_null());
+    assert!(!fixture.state.join("dashboards").exists());
+
+    // A marker naming a hub this server does not resolve to.
+    let (mut child, config) = hub_mcp(&fixture, FEATURE_SLUG);
+    assert!(config["board"].is_null(), "{config}");
+    drop(child.stdin.take());
+    child.wait().unwrap();
+    assert!(!fixture.state.join("dashboards").exists());
+}
+
+#[test]
+fn a_hub_for_a_parent_task_serves_a_board_of_its_own() {
+    let fixture = Fixture::new(QUIET);
+    let (mut child, config) = hub_mcp_as(&fixture, Some(FEATURE), FEATURE_SLUG);
+    let url = config["board"]["url"]
+        .as_str()
+        .expect("no board")
+        .to_string();
+    assert!(fetch(&url).contains(" 200 "), "{url}");
+    // Recorded under that hub's slug, and the repository's own hub has none.
+    assert!(
+        fixture
+            .state
+            .join("dashboards")
+            .join(format!("{FEATURE_SLUG}.json"))
+            .exists()
+    );
+    assert_eq!(
+        fixture.json(&["config", "--hub", FEATURE])["board"]["url"],
+        url.as_str()
+    );
+    assert!(fixture.json(&["config"])["board"].is_null());
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+#[test]
+fn a_board_already_running_for_the_hub_is_left_to_serve() {
+    let fixture = Fixture::new(QUIET);
+    let mut by_hand = fixture
+        .command(["serve", "--port", "0", "--no-open"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::io::BufReader::new(by_hand.stdout.as_mut().unwrap())
+        .read_line(&mut said)
+        .unwrap();
+    let theirs = said.split(" — ").nth(1).unwrap().trim().to_string();
+
+    let (mut child, config) = hub_mcp(&fixture, SLUG);
+    assert_eq!(config["board"]["url"], theirs.as_str());
+    drop(child.stdin.take());
+    child.wait().unwrap();
+    // Still the hand-started one, still answering.
+    assert_eq!(fixture.json(&["config"])["board"]["url"], theirs.as_str());
+    assert!(fetch(&theirs).contains(" 200 "));
+    by_hand.kill().unwrap();
+    by_hand.wait().unwrap();
+}
