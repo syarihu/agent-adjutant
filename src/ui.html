@@ -1121,35 +1121,36 @@ details.decided[open] summary { margin-bottom: 8px; }
 /* ── the full view of one task ── */
 #task-view { display:none; height:100%; }
 #task-view.on { display:grid; grid-template-columns:1fr; }
-#task-view.on.with-rail { grid-template-columns:272px 1fr; }
+#task-view.on.with-rail { grid-template-columns:320px 1fr; }
 #task-view .tv-main { overflow:auto; min-width:0; }
-.tv-top { position:sticky; top:0; z-index:2; background:var(--plane); border-bottom:1px solid var(--hairline);
-  padding:10px 22px 0; display:flex; flex-direction:column; gap:6px; }
-.tv-top .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
-.tv-top h1 { margin:0; font-size:17px; flex:1; min-width:0; overflow-wrap:anywhere; line-height:1.4; }
+.tv-top { position:sticky; top:0; z-index:2; background:var(--md-sys-color-surface); border-bottom:1px solid var(--md-sys-color-outline-variant);
+  padding:16px 36px 0; display:flex; flex-direction:column; gap:10px; }
+.tv-top .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; min-width:0; }
+.tv-top h1 { margin:0; font-size:20px; font-weight:800; color:var(--md-sys-color-on-surface); flex:1; min-width:0; overflow-wrap:anywhere; line-height:1.35; }
 .tv-tabs { display:flex; gap:2px; flex-wrap:wrap; }
-.tv-tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:6px 12px;
-  color:var(--ink-2); display:inline-flex; align-items:center; gap:5px; }
-.tv-tabs button[aria-selected="true"] { border-bottom-color:var(--ink); color:var(--ink); font-weight:600; }
-.tv-body { padding:18px 22px 28px; max-width:980px; }
-.tv-wait { border:1px solid var(--accent); background:color-mix(in oklab,var(--surface-1) 85%,var(--accent));
-  border-radius:9px; padding:10px 14px; margin-bottom:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.tv-wait .bad { color:var(--critical); }
-.source { color:var(--muted); font-size:11.5px; margin-top:4px; }
+.tv-tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:8px 16px;
+  color:var(--md-sys-color-on-surface-variant); display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-weight:600; font-size:13px; }
+.tv-tabs button[aria-selected="true"] { border-bottom-color:var(--md-sys-color-primary); color:var(--md-sys-color-primary); font-weight:700; }
+.tv-body { padding:24px 36px 80px; max-width:1080px; margin:0 auto; width:100%; box-sizing:border-box; }
+.tv-wait { border:1px solid var(--md-sys-color-primary); background:color-mix(in oklab,var(--md-sys-color-surface) 88%,var(--md-sys-color-primary-container));
+  border-radius:var(--md-shape-corner-lg); padding:14px 18px; margin-bottom:16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.tv-wait .bad { color:var(--md-sys-color-error); }
+.source { color:var(--md-sys-color-outline); font-size:11.5px; margin-top:6px; }
 .kv { display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; margin:0; }
-.kv dt { color:var(--muted); font-size:12px; }
+.kv dt { color:var(--md-sys-color-outline); font-size:12px; }
 .kv dd { margin:0; overflow-wrap:anywhere; }
 .timeline { list-style:none; margin:0; padding:0; }
-.timeline li { display:grid; grid-template-columns:96px 1fr; gap:12px; padding:8px 0; border-top:1px solid var(--hairline); }
+.timeline li { display:grid; grid-template-columns:110px 1fr; gap:14px; padding:10px 0; border-top:1px solid var(--md-sys-color-outline-variant); }
 .timeline li:first-child { border-top:0; }
-.timeline .at { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
-.timeline .what { display:flex; flex-direction:column; gap:3px; min-width:0; }
-.timeline .what > div { overflow-wrap:anywhere; }
-.timeline .who { color:var(--muted); font-size:11.5px; }
-.linkish { border:0; background:transparent; padding:0; color:var(--accent); text-align:left; }
+.timeline .at { color:var(--md-sys-color-outline); font-size:12px; font-variant-numeric:tabular-nums; font-family:var(--font-mono); }
+.timeline .what { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.timeline .what > div { overflow-wrap:anywhere; font-size:13px; }
+.timeline .who { color:var(--md-sys-color-on-surface-variant); font-size:12px; }
+.linkish { border:0; background:transparent; padding:0; color:var(--md-sys-color-primary); text-align:left; cursor:pointer; font-weight:600; }
 .linkish:hover { text-decoration:underline; }
-.checklist { list-style:none; margin:0; padding:0; }
-.checklist li { padding:3px 0; }
+.checklist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.checklist li { display:flex; align-items:flex-start; gap:8px; font-size:13px; }
+.checklist li input[type="checkbox"] { margin-top:3px; cursor:pointer; }
 
 footer { border-top:1px solid var(--hairline); background:var(--surface-1); padding:7px 14px;
   max-height:96px; overflow:auto; }
@@ -1203,30 +1204,90 @@ footer { border-top:1px solid var(--hairline); background:var(--surface-1); padd
 #log li b { color: var(--md-sys-color-on-surface); font-weight: 700; }
 #log li.err { color: var(--md-sys-color-error); }
 
-dialog { border:1px solid var(--border); border-radius:12px; padding:0; background:var(--surface-1);
-  color:var(--ink); width:min(560px,94vw); box-shadow:0 12px 40px rgba(0,0,0,.28); }
-dialog::backdrop { background:rgba(11,11,11,.38); }
-dialog .head { padding:14px 18px; border-bottom:1px solid var(--hairline); font-weight:660; }
-dialog .body { padding:16px 18px; display:flex; flex-direction:column; gap:14px; }
-dialog .foot { padding:12px 18px; border-top:1px solid var(--hairline); display:flex; gap:8px;
-  justify-content:flex-end; }
-fieldset { border:0; margin:0; padding:0; }
-legend { padding:0 0 6px; color:var(--ink-2); font-size:12px; }
-.radios { display:flex; gap:6px; flex-wrap:wrap; }
-.radios label { border:1px solid var(--border); border-radius:999px; padding:4px 11px;
-  color:var(--ink-2); cursor:pointer; }
-.radios input { position:absolute; opacity:0; pointer-events:none; }
-.radios label:has(input:checked) { border-color:var(--ink); color:var(--ink); font-weight:600;
-  background:var(--surface-2); }
-.field { display:flex; flex-direction:column; gap:5px; }
-.field > span { color:var(--ink-2); font-size:12px; }
-.field .note { color:var(--muted); font-size:11px; }
-textarea,input[type=text],select { width:100%; font:inherit; color:var(--ink);
-  background:var(--surface-1); border:1px solid var(--border); border-radius:7px; padding:7px 9px; }
-textarea { resize:vertical; min-height:84px; }
-details.more summary { color:var(--ink-2); cursor:pointer; font-size:12px; }
-details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding-top:12px; }
-.hidden { display:none !important; }
+dialog {
+  border: none;
+  border-radius: var(--md-shape-corner-xl);
+  padding: 0;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  width: min(580px, 94vw);
+  box-shadow: var(--md-elevation-3);
+  overflow: hidden;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+}
+dialog .head {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+dialog .body {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 75vh;
+  overflow-y: auto;
+}
+dialog .foot {
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  background: var(--md-sys-color-surface-container-high);
+}
+fieldset { border: 0; margin: 0; padding: 0; }
+legend { padding: 0 0 8px; color: var(--md-sys-color-on-surface-variant); font-size: 12.5px; font-weight: 600; }
+.radios { display: flex; gap: 8px; flex-wrap: wrap; }
+.radios label {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-full);
+  padding: 6px 14px;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--md-motion-duration-short2) var(--md-motion-easing-standard);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.radios input { position: absolute; opacity: 0; pointer-events: none; }
+.radios label:has(input:checked) {
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-primary-container);
+  font-weight: 700;
+}
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { color: var(--md-sys-color-on-surface-variant); font-size: 12px; font-weight: 600; }
+.field .note { color: var(--md-sys-color-outline); font-size: 11px; }
+textarea, input[type=text], select {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px;
+  font-size: 13.5px;
+}
+textarea:focus, input[type=text]:focus, select:focus {
+  outline: 2px solid var(--md-sys-color-primary);
+  border-color: transparent;
+}
+textarea { resize: vertical; min-height: 84px; }
+details.more summary { color: var(--md-sys-color-primary); cursor: pointer; font-size: 13px; font-weight: 600; }
+details.more .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-top: 14px; }
+.hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -1358,7 +1419,15 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
 
 <dialog id="form">
   <form method="dialog" onsubmit="submitForm(event)">
-    <div class="head">タスクを渡す</div>
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">add_task</span>
+        <span>タスクを渡す</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" onclick="document.getElementById('form').close()" title="閉じる">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
     <div class="body">
       <fieldset>
         <legend>種類</legend>
@@ -1409,9 +1478,12 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
       </details>
     </div>
     <div class="foot">
-      <button type="button" class="iconbtn" onclick="document.getElementById('form').close()">やめる</button>
-      <button type="submit" class="iconbtn" name="act" value="backlog">Backlog に置く</button>
-      <button type="submit" class="primary" name="act" value="queued">いま渡す</button>
+      <button type="button" class="btn-m3-text" onclick="document.getElementById('form').close()">やめる</button>
+      <button type="submit" class="btn-m3-tonal" name="act" value="backlog">Backlog に置く</button>
+      <button type="submit" class="btn-m3-primary" name="act" value="queued">
+        <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+        <span>いま渡す</span>
+      </button>
     </div>
   </form>
 </dialog>
@@ -1472,13 +1544,13 @@ function updateNotifyButton() {
     return;
   }
   if (Notification.permission === 'granted') {
-    btn.textContent = '🔔 通知ON';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
     btn.title = '確認依頼のデスクトップ通知が有効です';
   } else if (Notification.permission === 'denied') {
-    btn.textContent = '🔕 通知OFF';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
-    btn.textContent = '🔔 通知を許可';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications</span><span>通知を許可</span>';
     btn.title = '確認依頼が届いたときにデスクトップ通知を受け取る';
   }
 }
@@ -1554,13 +1626,13 @@ function render() {
   const hubEl = document.getElementById('hub');
   hubEl.className = 'state ' + (hub.present ? 'good' : hub.stale ? 'bad' : 'warn');
   hubEl.innerHTML = hub.present
-    ? '<span>●</span>hub 稼働中'
-    : hub.stale ? '<span>⚠</span>hub の記録が残っているが止まっている'
-                : '<span>○</span>hub は止まっている';
+    ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-success);">check_circle</span><span>hub 稼働中</span>'
+    : hub.stale ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">error</span><span>hub の記録が残っているが止まっている</span>'
+                : '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">radio_button_unchecked</span><span>hub は止まっている</span>';
 
   const waiting = (state.pending || []).length;
   document.getElementById('inbox').innerHTML = waiting
-    ? `<span>✉</span>受信箱 ${waiting} 件(hub が未読)` : '';
+    ? `<span class="material-symbols-outlined" style="font-size:14px;vertical-align:text-bottom;">mail</span><span>受信箱 ${waiting} 件(hub が未読)</span>` : '';
 
   const board = document.getElementById('board');
   board.innerHTML = '';
@@ -3223,16 +3295,16 @@ function filesOf(diff) {
 
 /* One line saying where a gate stands: waiting, recorded, or answered and how. */
 function gateStatusHtml(g) {
-  if (isWaiting(g)) return `<span class="state warn"><span>⏳</span>${ago(g.openedAt)}から人の判定を待っている</span>`;
+  if (isWaiting(g)) return `<span class="state warn" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">hourglass_empty</span><span>${ago(g.openedAt)}から人の判定を待っている</span></span>`;
   if (g.wait === false) {
     const sent = (g.answers || []).length;
-    return `<span class="state good"><span>●</span>${ago(g.openedAt)}に記録 — worker は止まらずに進んだ${sent ? `（差し戻し ${sent}回）` : ''}</span>`;
+    return `<span class="state good" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-success);">check_circle</span><span>${ago(g.openedAt)}に記録 — worker は止まらずに進んだ${sent ? `（差し戻し ${sent}回）` : ''}</span></span>`;
   }
   if (g.decision) {
     const bad = ['changes', 'reject'].includes(g.decision);
-    return `<span class="state ${bad ? 'bad' : 'good'}"><span>${bad ? '↩' : '✓'}</span>` +
+    return `<span class="state ${bad ? 'bad' : 'good'}" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:${bad ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-success)'};">${bad ? 'replay' : 'check_circle'}</span>` +
       `<span title="${esc(when(g.answeredAt))}">${ago(g.answeredAt)}に人が${esc(DECISION[g.decision] || g.decision)}</span></span>` +
-      (g.comment ? ` <span style="color:var(--ink-2)">— ${esc(g.comment)}</span>` : '');
+      (g.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(g.comment)}</span>` : '');
   }
   return '';
 }
@@ -3243,14 +3315,14 @@ function gateHeadHtml(g, all) {
   const same = all.filter(x => x.kind === g.kind);
   let h = `<div class="panel"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">` +
     `<b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(g.title)}</b>` +
-    `<span class="mono2" style="color:var(--muted)">${esc(when(g.openedAt))}</span></div>` +
+    `<span class="mono2" style="color:var(--md-sys-color-outline)">${esc(when(g.openedAt))}</span></div>` +
     `<div style="margin-top:4px">${gateStatusHtml(g)}</div>`;
   if (stopWhy(g).length) {
-    h += `<div class="state${stopBad(g) ? ' bad' : ''}" style="margin-top:4px;white-space:normal"><span>${stopBad(g) ? '⚠' : '■'}</span>止めた理由: ${esc(stopWhy(g).join(' / '))}</div>`;
+    h += `<div class="state${stopBad(g) ? ' bad' : ''}" style="margin-top:6px;white-space:normal;display:flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:16px;color:${stopBad(g) ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-warning)'};">${stopBad(g) ? 'error' : 'warning'}</span><span>止めた理由: ${esc(stopWhy(g).join(' / '))}</span></div>`;
   }
   if (same.length > 1) {
     h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
-      `<span style="color:var(--muted);font-size:12px">このタスクの${esc(kindOf(g.kind)[0])} ${same.length}件:</span>` +
+      `<span style="color:var(--md-sys-color-outline);font-size:12px">このタスクの${esc(kindOf(g.kind)[0])} ${same.length}件:</span>` +
       same.map((x, i) => `<button type="button" class="chip${x.id === g.id ? ' good' : ''}" data-pick="${esc(x.id)}">` +
         `${i + 1}. ${esc(when(x.openedAt))}${x.wait === false ? ' 記録' : isWaiting(x) ? ' 待ち' : ''}</button>`).join('') + `</div>`;
   }
@@ -3260,9 +3332,9 @@ function gateHeadHtml(g, all) {
 /* The three frames, for a gate read in a task's view. */
 function framesHtml(g) {
   let h = '';
-  if (g.facts?.length) h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-  if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
+  if (g.facts?.length) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  if (g.focus) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>確認してほしい点</span></h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
+  if (g.unsure) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
   return h;
 }
 
@@ -3311,9 +3383,9 @@ function overviewTab(task, all) {
     // `adj gate answer`; the gate does not record which one.
     const approved = ['approve', 'choice'].includes(plan.decision);
     h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(plan.title)}</b></div>` +
-      `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn"><span>⏳</span>${ago(plan.openedAt)}から承認待ち</span>`
-        : approved ? `<span class="state good"><span>✓</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
-          (plan.comment ? ` <span style="color:var(--ink-2)">— ${esc(plan.comment)}</span>` : '')
+      `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">hourglass_empty</span><span>${ago(plan.openedAt)}から承認待ち</span></span>`
+        : approved ? `<span class="state good" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-success);">check_circle</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
+          (plan.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(plan.comment)}</span>` : '')
         : gateStatusHtml(plan)}</div>`;
     if (plans.length > 1) {
       h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
@@ -3480,7 +3552,7 @@ function renderTaskView() {
   if (!task) {
     rail.classList.add('hidden');
     root.classList.remove('with-rail');
-    main.innerHTML = `<div class="tv-top"><div class="row"><button type="button" class="iconbtn" data-back>← ボード</button></div></div>` +
+    main.innerHTML = `<div class="tv-top"><div class="row"><button type="button" class="btn-m3-tonal" data-back style="padding:6px 14px;border-radius:var(--md-shape-corner-full);display:inline-flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span><span>ボード</span></button></div></div>` +
       `<div class="empty-state">このタスクは見つからない。${state.tasks?.length ? '取り消されたか、別のリポジトリのもの' : '読み込み中'}なのかもしれない。</div>`;
     main.querySelector('[data-back]').addEventListener('click', backToBoard);
     return;
@@ -3518,23 +3590,45 @@ function renderTaskView() {
   const count = kind => all.filter(g => g.kind === kind).length;
   const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && recordById(g.id) && isUnread(g));
   let h = `<div class="tv-top">
-    <div class="row">
-      <button type="button" class="iconbtn" data-back title="ボードに戻る (Esc)">← ボード</button>
-      <h1>${esc(task.title)}</h1>
+    <div class="row" style="display:flex;align-items:center;gap:12px;">
+      <button type="button" class="btn-m3-tonal" data-back title="ボードに戻る (Esc)" style="padding:6px 14px;border-radius:var(--md-shape-corner-full);display:inline-flex;align-items:center;gap:6px;">
+        <span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span>
+        <span>ボード</span>
+      </button>
+      <h1 style="flex:1;min-width:0;font-size:20px;font-weight:800;color:var(--md-sys-color-on-surface);margin:0;line-height:1.35;">${esc(task.title)}</h1>
+      ${task.issueUrl ? `<a href="${esc(task.issueUrl)}" target="_blank" style="font-size:13px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(task.issueUrl.split('/').pop())}</span><span class="material-symbols-outlined" style="font-size:16px;">open_in_new</span></a>` : ''}
     </div>
-    <div class="row" style="font-size:12px;color:var(--ink-2)">
-      <span class="tag">${esc(colObj ? colObj.label : task.status)}</span>
-      ${worker && worker.present && worker.phase ? `<span>${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
-      ${task.worktree ? `<span class="mono2">${esc(task.worktree.split('/').pop())}</span>` : ''}
-      ${stuckOf(task) ? `<span class="state bad"><span>⏱</span>${esc(stuckOf(task))}</span>` : ''}
+    <div class="row" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>
+      ${worker && worker.present && worker.phase ? `<span style="font-size:12px;color:var(--md-sys-color-primary);font-weight:600;">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
+      ${task.worktree ? `<span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.worktree.split('/').pop())}</code></span>` : ''}
+      ${task.branch ? `<span>ブランチ: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.branch)}</code></span>` : ''}
+      ${stuckOf(task) ? `<span class="m3-pill pill-critical" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuckOf(task))}</span></span>` : ''}
+      ${task.worktree ? `
+        <span style="display:inline-flex;gap:6px;margin-left:auto;">
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" onclick="worktreeAct('focus', '${esc(task.worktree)}')">
+            <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
+            <span>端末</span>
+          </button>
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" onclick="worktreeAct('ide', '${esc(task.worktree)}')">
+            <span class="material-symbols-outlined" style="font-size:14px;">code</span>
+            <span>IDE</span>
+          </button>
+        </span>
+      ` : ''}
     </div>
-    <div class="tv-tabs" role="tablist">${TASK_TABS.map(([id, label]) => {
+    <div class="m3-segmented-tabs" role="tablist" style="margin-top:6px;margin-bottom:12px;">${TASK_TABS.map(([id, label]) => {
       const kind = KIND_OF_TAB[id];
       const n = kind && kind !== 'plan' ? count(kind) : 0;
-      return `<button role="tab" id="tv-tab-${id}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
-        `${kind && unreadIn(kind) ? '<span class="unread" aria-label="未読"></span>' : ''}${label}${n ? ` <span style="color:var(--muted)">${n}</span>` : ''}</button>`;
+      const icon = id === 'overview' ? 'description' : id === 'review' ? 'rate_review' : id === 'check' ? 'fact_check' : 'history';
+      return `<button role="tab" id="tv-tab-${id}" class="m3-seg-tab${id === taskView.tab ? ' active' : ''}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
+        `<span class="material-symbols-outlined">${icon}</span>` +
+        `<span>${label}</span>` +
+        (n ? ` <span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${n}</span>` : '') +
+        (kind && unreadIn(kind) ? '<span class="m3-tab-badge">新着</span>' : '') +
+        `</button>`;
     }).join('')}</div>
-  </div><div class="tv-body" id="tv-panel" role="tabpanel" aria-labelledby="tv-tab-${taskView.tab}">`;
+  </div><div class="tv-body pane" id="tv-panel" role="tabpanel" aria-labelledby="tv-tab-${taskView.tab}" style="padding:24px 36px 80px;max-width:1080px;margin:0 auto;width:100%;">`;
 
   // A gate waiting on a person comes first whichever tab is open: it is the ball.
   const waiting = openGate(task);
@@ -3542,12 +3636,21 @@ function renderTaskView() {
     const [label, colour] = kindOf(waiting.kind);
     const tab = TAB_OF_KIND[waiting.kind] || 'history';
     const here = tab === taskView.tab && gateShownIn(task, tab, all)?.id === waiting.id;
-    h += `<div class="tv-wait"><span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>
-      <b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(waiting.title)}</b>
-      <span style="color:var(--ink-2);font-size:12px">${ago(waiting.openedAt)}から待ち</span>
-      ${stopWhy(waiting).length ? `<span class="${stopBad(waiting) ? 'bad' : ''}" style="font-size:12px;width:100%">${stopBad(waiting) ? '⚠ ' : ''}止めた理由: ${esc(stopWhy(waiting).join(' / '))}</span>` : ''}
-      ${here ? `<span style="color:var(--ink-2);font-size:12px;width:100%">判定は${tab === 'review' ? 'この下、差分より前' : 'このページの下'}にある</span>`
-        : `<button type="button" class="primary" data-judge="${esc(waiting.id)}">判定する →</button>`}</div>`;
+    h += `
+      <div class="m3-card-attention-box" style="padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-outlined" style="font-size:18px;">pending_actions</span>
+            <span>【${esc(label)}】あなたの判定待ち</span>
+          </div>
+          <span style="font-size:11.5px;opacity:.9">${ago(waiting.openedAt)}から待ち (ID: ${esc(waiting.id)})</span>
+        </div>
+        ${stopWhy(waiting).length ? `<div style="font-size:12.5px;"><strong>止めた理由:</strong> <ul style="margin:4px 0 0;padding-left:18px;">${stopWhy(waiting).map(w => `<li${stopBad(waiting) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+        ${waiting.focus ? `<div style="font-size:12.5px;background:rgba(0,0,0,.04);padding:8px 12px;border-radius:var(--md-shape-corner-xs);"><strong>確認してほしい点:</strong> ${md(waiting.focus)}</div>` : ''}
+        ${here ? `<div style="font-size:12px;color:var(--md-sys-color-outline);display:flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span><span>判定パネルは${tab === 'review' ? 'この下、差分より前' : 'このページの下'}にあります</span></div>`
+          : `<div><button type="button" class="btn-m3-tonal" data-judge="${esc(waiting.id)}" style="padding:4px 12px;font-size:12px;border-radius:var(--md-shape-corner-full);"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>判定対象タブを開く</span></button></div>`}
+      </div>
+    `;
   }
 
   h += { overview: overviewTab, review: reviewTab, check: checkTab, history: historyTab }[taskView.tab](task, all);
@@ -3615,8 +3718,17 @@ document.addEventListener('keydown', e => {
     backToBoard();
     return;
   }
-  if (e.key === 'Escape' && view === 'board') {
-    if (selectedTaskId) {
+  if (e.key === 'Escape') {
+    const formDialog = document.getElementById('form');
+    if (formDialog && formDialog.open) {
+      formDialog.close();
+      return;
+    }
+    if (view === 'task') {
+      backToBoard();
+      return;
+    }
+    if (view === 'board' && selectedTaskId) {
       closeDrawer();
       return;
     }
