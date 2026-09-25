@@ -881,97 +881,242 @@ main { flex: 1; overflow: hidden; position: relative; }
 
 
 /* ── the review view ── */
-#review { display:none; height:100%; padding:0; color:var(--ink); }
-#review.on { display:grid; grid-template-columns:272px 1fr; }
-.rail { border-right:1px solid var(--hairline); background:var(--surface-1); overflow:auto; padding:10px; }
-.rail h2 { margin:0 0 8px 4px; font-size:12px; color:var(--ink-2); font-weight:600; }
-.rail kbd { font:11px/1 ui-monospace,Menlo,monospace; border:1px solid var(--border);
-  border-bottom-width:2px; border-radius:4px; padding:1px 4px; color:var(--muted); }
-.rail .item { width:100%; text-align:left; border:1px solid transparent; background:transparent;
-  border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:4px; }
-.rail .item:hover { background:var(--surface-2); }
-.rail .item[aria-current="true"] { background:var(--surface-2); border-color:var(--border); }
-.rail .item .t { font-weight:600; }
-.rail .item .w { color:var(--muted); font-size:12px; }
-.pane { overflow:auto; padding:18px 22px 28px; max-width:980px; }
-.pane h1 { font-size:17px; margin:0 0 2px; }
-.pane .sub { color:var(--ink-2); margin-bottom:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-.tag { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; font-size:11px;
-  color:var(--ink-2); border:1px solid var(--border); border-radius:999px; padding:0 7px; }
-.tag .dot { width:7px; height:7px; border-radius:50%; flex:none; }
-.panel { background:var(--surface-1); border:1px solid var(--border); border-radius:10px;
-  padding:14px 16px; margin-bottom:14px; }
-.panel h3 { margin:0 0 8px; font-size:12px; color:var(--muted); font-weight:640;
-  letter-spacing:.04em; text-transform:uppercase; }
-.panel > ul { margin:0; padding-left:18px; }
-.frame-focus { border-left:3px solid var(--accent); padding-left:12px; }
-.body h3 { margin:18px 0 8px; font-size:14px; font-weight:700; color:var(--ink); }
-.body h3:first-child { margin-top:0; }
-.body h4 { margin:15px 0 6px; font-size:13px; font-weight:660; color:var(--ink); }
-.body h4:first-child { margin-top:0; }
-.body h5 { margin:13px 0 5px; font-size:12.5px; font-weight:640; color:var(--ink); }
-.body h5:first-child { margin-top:0; }
-.body p { margin:0 0 9px; line-height:1.6; }
-.body ul, .body ol { margin:0 0 10px; padding-left:20px; line-height:1.6; }
-.body li { margin:3px 0; }
-.body hr { border:0; border-top:1px solid var(--hairline); margin:16px 0; }
-.body blockquote { margin:0 0 10px; padding:6px 12px; border-left:3px solid var(--accent);
-  background:var(--surface-2); border-radius:0 6px 6px 0; color:var(--ink-2); }
-.body blockquote p { margin:0; }
-.body pre { background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
-  padding:10px 12px; overflow:auto; margin:0 0 10px; }
-.body pre code { background:transparent; padding:0; font:12px/1.5 ui-monospace,Menlo,monospace; border-radius:0; }
-.body table { width:100%; border-collapse:collapse; margin:10px 0 14px; font-size:12px; }
-.body th, .body td { border:1px solid var(--border); padding:6px 10px; text-align:left; vertical-align:top; }
-.body th { background:var(--surface-2); font-weight:640; color:var(--ink); white-space:nowrap; }
-.body a { color:var(--accent); text-decoration:none; }
-.body a:hover { text-decoration:underline; }
-.body del { color:var(--muted); text-decoration:line-through; }
-.body > :last-child { margin-bottom:0; }
-.body code { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--surface-2);
-  padding:1px 5px; border-radius:4px; }
-details.decided summary { color:var(--muted); cursor:pointer; font-size:12px; }
-details.decided[open] summary { margin-bottom:8px; }
-.choices { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.choice { border:1px solid var(--border); border-radius:9px; padding:12px 14px;
-  background:var(--surface-2); display:flex; flex-direction:column; gap:8px; }
-.choice.rec { border-color:var(--accent); }
-.choice .rec-tag { font-size:11px; color:var(--accent); font-weight:640; }
-.choice h4 { margin:0; font-size:13px; }
-.choice .why { color:var(--ink-2); font-size:12px; margin:0; }
-.choice ul { margin:0; padding-left:17px; font-size:12px; color:var(--ink-2); }
-.choice .pick { margin-top:auto; border:1px solid var(--ink); background:transparent;
-  border-radius:7px; padding:6px 10px; font-weight:600; }
-.work { border:1px solid var(--good); border-radius:9px; padding:12px 14px; display:flex;
-  align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
-.work .big { border:0; background:var(--good); color:var(--md-sys-color-on-success); border-radius:7px; padding:8px 15px; font-weight:640; }
-.mono2 { font:12px ui-monospace,Menlo,monospace; color:var(--ink-2); }
-.diff { font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--surface-2);
-  border-radius:8px; padding:8px 0; overflow:auto; }
-.diff div { padding:0 12px; white-space:pre; }
-.diff .h { color:var(--muted); }
-.diff .a { color:var(--good); background:color-mix(in oklab,var(--surface-2) 86%,var(--good)); }
-.diff .d { color:var(--critical); background:color-mix(in oklab,var(--surface-2) 86%,var(--critical)); }
-.hint-bar { border:1px solid var(--warning); border-radius:8px; padding:8px 12px; margin-bottom:12px;
-  color:var(--ink-2); font-size:12px; }
-.decide { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.decide .approve { border:0; background:var(--good); color:var(--md-sys-color-on-success); border-radius:7px; padding:7px 14px; font-weight:640; }
-.decide .changes { border:1px solid var(--warning); background:transparent; color:var(--ink);
-  border-radius:7px; padding:6px 13px; font-weight:600; }
-.decide .reject { border:1px solid var(--border); background:transparent; color:var(--ink-2);
-  border-radius:7px; padding:6px 13px; }
-.decide .talk { border:1px solid var(--accent); background:transparent; color:var(--accent);
-  border-radius:7px; padding:6px 13px; font-weight:600; }
-.decide .close { border:1px solid var(--border); background:transparent; color:var(--ink-2);
-  border-radius:7px; padding:6px 13px; }
-.decide .close:hover { border-color:var(--ink-2); color:var(--ink); }
-.empty-state { padding:40px; color:var(--muted); }
-.badge-count { display:inline-block; min-width:16px; margin-left:6px; padding:0 4px;
-  border-radius:999px; background:var(--accent); color:var(--md-sys-color-on-primary); font-size:11px; font-weight:700; text-align:center; }
-.tabs { display:flex; gap:2px; background:var(--surface-2); padding:2px; border-radius:8px; }
-.tabs button { border:0; background:transparent; padding:4px 12px; border-radius:6px; color:var(--ink-2); }
-.tabs button[aria-selected="true"] { background:var(--surface-1); color:var(--ink); font-weight:600;
-  box-shadow:var(--shadow); }
+#review { display:none; height:100%; padding:0; color:var(--md-sys-color-on-surface); }
+#review.on { display:grid; grid-template-columns:320px 1fr; }
+.review-inbox-pane, .rail {
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.review-inbox-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  font-weight: 800;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.review-inbox-header kbd, .rail kbd {
+  font: 11px/1 ui-monospace,Menlo,monospace;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-xs);
+  padding: 2px 4px;
+  color: var(--md-sys-color-outline);
+  background: var(--md-sys-color-surface-container);
+}
+.review-inbox-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.review-inbox-item, .rail .item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: pointer;
+  color: inherit;
+  transition: background var(--md-motion-duration-short2) var(--md-motion-easing-standard);
+}
+.review-inbox-item:hover, .rail .item:hover {
+  background: var(--md-sys-color-surface-container);
+}
+.review-inbox-item.selected, .review-inbox-item[aria-current="true"], .rail .item[aria-current="true"] {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border-color: transparent;
+}
+.review-inbox-item .t, .rail .item .t { font-weight: 700; font-size: 13px; line-height: 1.35; }
+.review-inbox-item .w, .rail .item .w { color: var(--md-sys-color-outline); font-size: 11.5px; }
+
+.review-detail-pane, .pane {
+  overflow-y: auto;
+  padding: 24px 36px 80px;
+  max-width: 1080px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-sizing: border-box;
+}
+.pane h1 { font-size: 20px; font-weight: 800; margin: 0 0 4px; color: var(--md-sys-color-on-surface); }
+.pane .sub { color: var(--md-sys-color-on-surface-variant); margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 12px; }
+
+.tag { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px;
+  color: var(--md-sys-color-on-surface-variant); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-full); padding: 2px 8px; }
+.tag .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+.panel {
+  background: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-lg);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+.panel h3 {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--md-sys-color-primary);
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel > ul { margin: 0; padding-left: 18px; }
+.frame-focus {
+  border-left: 3px solid var(--md-sys-color-primary);
+  padding-left: 12px;
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: 0 var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0;
+  padding: 8px 12px;
+}
+.body h3 { margin: 18px 0 8px; font-size: 14px; font-weight: 700; color: var(--md-sys-color-on-surface); }
+.body h3:first-child { margin-top: 0; }
+.body h4 { margin: 15px 0 6px; font-size: 13px; font-weight: 660; color: var(--md-sys-color-on-surface); }
+.body h4:first-child { margin-top: 0; }
+.body h5 { margin: 13px 0 5px; font-size: 12.5px; font-weight: 640; color: var(--md-sys-color-on-surface); }
+.body h5:first-child { margin-top: 0; }
+.body p { margin: 0 0 9px; line-height: 1.6; }
+.body ul, .body ol { margin: 0 0 10px; padding-left: 20px; line-height: 1.6; }
+.body li { margin: 3px 0; }
+.body hr { border: 0; border-top: 1px solid var(--md-sys-color-outline-variant); margin: 16px 0; }
+.body blockquote { margin: 0 0 10px; padding: 6px 12px; border-left: 3px solid var(--md-sys-color-primary);
+  background: var(--md-sys-color-surface-container-low); border-radius: 0 var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0; color: var(--md-sys-color-on-surface-variant); }
+.body blockquote p { margin: 0; }
+.body pre { background: var(--md-sys-color-surface-container-lowest); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
+.body pre code { background: transparent; padding: 0; font: 12px/1.5 var(--font-mono); border-radius: 0; }
+.body table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 12px; }
+.body th, .body td { border: 1px solid var(--md-sys-color-outline-variant); padding: 8px 12px; text-align: left; vertical-align: top; }
+.body th { background: var(--md-sys-color-surface-container-high); font-weight: 700; color: var(--md-sys-color-on-surface); white-space: nowrap; }
+.body a { color: var(--md-sys-color-primary); text-decoration: none; }
+.body a:hover { text-decoration: underline; }
+.body del { color: var(--md-sys-color-outline); text-decoration: line-through; }
+.body > :last-child { margin-bottom: 0; }
+.body code { font: 12px/1.5 var(--font-mono); background: var(--md-sys-color-surface-container-high);
+  padding: 2px 6px; border-radius: 4px; }
+details.decided summary { color: var(--md-sys-color-outline); cursor: pointer; font-size: 12px; }
+details.decided[open] summary { margin-bottom: 8px; }
+
+/* Choices */
+.choices-container, .choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.m3-choice-card, .choice {
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-shape-corner-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 2px solid transparent;
+}
+.m3-choice-card.recommended, .m3-choice-card.rec, .choice.rec {
+  border-color: var(--md-sys-color-primary);
+  background: color-mix(in oklab, var(--md-sys-color-surface-container) 85%, var(--md-sys-color-primary-container));
+}
+.choice .rec-tag { font-size: 11px; color: var(--md-sys-color-primary); font-weight: 700; }
+.choice h4 { margin: 0; font-size: 14px; }
+.choice .why { color: var(--md-sys-color-on-surface-variant); font-size: 12px; margin: 0; }
+.choice ul { margin: 0; padding-left: 17px; font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+.m3-btn-pick, .choice .pick {
+  margin-top: auto;
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  padding: 8px 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  transition: box-shadow var(--md-motion-duration-short2) var(--md-motion-easing-standard);
+}
+.m3-btn-pick:hover, .choice .pick:hover {
+  box-shadow: var(--md-elevation-1);
+}
+
+.work { border: 1px solid var(--md-sys-color-success); border-radius: var(--md-shape-corner-lg); padding: 12px 16px; display: flex;
+  align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; background: var(--md-sys-color-surface-container); }
+.work .big { border: 0; background: var(--md-sys-color-success); color: #fff; border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
+.mono2 { font: 12px var(--font-mono); color: var(--md-sys-color-on-surface-variant); }
+.diff { font: 12px/1.65 var(--font-mono); background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); padding: 8px 0; overflow: auto; }
+.diff div { padding: 0 14px; white-space: pre; }
+.diff .h { color: var(--md-sys-color-outline); }
+.diff .a { color: var(--md-sys-color-success); background: color-mix(in oklab, var(--md-sys-color-surface-container-lowest) 82%, var(--md-sys-color-success)); }
+.diff .d { color: var(--md-sys-color-error); background: color-mix(in oklab, var(--md-sys-color-surface-container-lowest) 82%, var(--md-sys-color-error)); }
+.hint-bar { border: 1px solid var(--md-sys-color-warning); border-radius: var(--md-shape-corner-md); padding: 8px 12px; margin-bottom: 12px;
+  color: var(--md-sys-color-on-surface-variant); font-size: 12px; background: color-mix(in oklab, var(--md-sys-color-surface) 90%, var(--md-sys-color-warning-container)); }
+
+/* Decision Floating Dock */
+.decision-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--md-sys-color-surface-container-high);
+  border: 2px solid var(--md-sys-color-primary);
+  border-radius: var(--md-shape-corner-xl);
+  padding: 20px;
+  box-shadow: var(--md-elevation-3);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.decision-dock textarea, .decision-dock .gate-comment {
+  width: 100%;
+  min-height: 80px;
+  padding: 12px;
+  border-radius: var(--md-shape-corner-md);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface);
+  font-family: inherit;
+  font-size: 13.5px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.decision-dock textarea:focus, .decision-dock .gate-comment:focus {
+  outline: 2px solid var(--md-sys-color-primary);
+  border-color: transparent;
+}
+.decide { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.decide .approve { border: 0; background: var(--md-sys-color-success); color: #fff; border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
+.decide .changes { border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; font-weight: 600; cursor: pointer; }
+.decide .reject { border: 0; background: transparent; color: var(--md-sys-color-error);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; cursor: pointer; }
+.decide .talk { border: 1px solid var(--md-sys-color-primary); background: transparent; color: var(--md-sys-color-primary);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; font-weight: 600; cursor: pointer; }
+.decide .close { border: 0; background: transparent; color: var(--md-sys-color-outline);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; cursor: pointer; }
+.decide .close:hover { color: var(--md-sys-color-on-surface); }
+.empty-state { padding: 40px; color: var(--md-sys-color-outline); text-align: center; }
+.badge-count { display: inline-block; min-width: 16px; margin-left: 6px; padding: 0 4px;
+  border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-size: 11px; font-weight: 700; text-align: center; }
+.tabs { display: flex; gap: 2px; background: var(--md-sys-color-surface-container-high); padding: 2px; border-radius: var(--md-shape-corner-md); }
+.tabs button { border: 0; background: transparent; padding: 6px 14px; border-radius: var(--md-shape-corner-sm); color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-weight: 600;
+  box-shadow: var(--md-elevation-1); }
 
 /* ── the full view of one task ── */
 #task-view { display:none; height:100%; }
@@ -1189,7 +1334,7 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
         <div class="sidesheet-body" id="drawer-body"></div>
       </aside>
     </div>
-    <div id="review"><div class="rail"></div><div class="pane"></div></div>
+    <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
   </main>
 
@@ -2408,41 +2553,88 @@ const renderDiff = d => esc(d).split('\n').map(l => {
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
    the `data-gate` around it, so the same panel works in the review view and a task's view. */
 const BUTTONS = {
-  approve: g => `<button class="approve" data-act="approve">${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</button>`,
-  changes: g => `<button class="changes" data-act="changes">${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</button>`,
-  reject:  () => `<button class="reject" data-act="reject">却下</button>`,
-  ack:     () => `<button class="approve" data-act="ack">了解(閉じる)</button>`,
-  ask:     () => `<button class="changes" data-act="ask">追加で聞く</button>`,
-  answer:  () => `<button class="approve" data-act="answer">これで返す</button>`,
+  approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:#fff"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</span></button>`,
+  changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</span></button>`,
+  reject:  () => `<button class="btn-m3-text reject" data-act="reject" style="color:var(--md-sys-color-error);"><span class="material-symbols-outlined" style="font-size:16px;">cancel</span><span>却下</span></button>`,
+  ack:     () => `<button class="btn-m3-primary approve" data-act="ack"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>了解(閉じる)</span></button>`,
+  ask:     () => `<button class="btn-m3-tonal changes" data-act="ask"><span class="material-symbols-outlined" style="font-size:16px;">help</span><span>追加で聞く</span></button>`,
+  answer:  () => `<button class="btn-m3-primary approve" data-act="answer"><span class="material-symbols-outlined" style="font-size:16px;">send</span><span>これで返す</span></button>`,
 };
 
 /* The part of a gate a person acts on: the send-back form for a record, the decision for a
    gate that waits. */
 function decideHtml(g) {
   if (g.wait === false) {
-    return `<div class="panel" data-gate="${esc(g.id)}"><h3>差し戻す</h3>` +
+    return `<div class="decision-dock panel" data-gate="${esc(g.id)}">
+      <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
+        <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">replay</span>
+        <span>差し戻す</span>
+      </h3>` +
       ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
-        `<li><span style="color:var(--muted)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
-      `<div class="field" style="margin-bottom:12px"><span>コメント(何を直してほしいか)</span>
-        <textarea class="gate-comment"></textarea></div>
-      <div class="decide"><button class="changes" data-act="changes">差し戻す</button></div>
-      <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+        `<li><span style="color:var(--md-sys-color-outline)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
+      `<div class="field" style="margin-bottom:12px">
+        <label style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px;display:block;">コメント（何を直してほしいか）</label>
+        <textarea class="gate-comment" placeholder="差し戻す理由を入力してください..."></textarea>
+      </div>
+      <div class="decide">
+        <button class="btn-m3-tonal changes" data-act="changes">
+          <span class="material-symbols-outlined" style="font-size:16px;">replay</span>
+          <span>差し戻す</span>
+        </button>
+        ${g.worktree ? `
+          <button class="m3-icon-button" style="padding:8px 14px" data-focus="${esc(g.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+            <span>ターミナルで話す</span>
+          </button>
+          <button class="m3-icon-button" style="padding:8px 14px" data-ide="${esc(g.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">code</span>
+            <span>IDEで開く</span>
+          </button>
+        ` : ''}
+      </div>
+      <p style="color:var(--md-sys-color-outline);font-size:11.5px;margin-top:10px">
         worker はこの記録を残して先に進んでいます。差し戻すと <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。記録はそのまま残り、差し戻しが追記されます。</p></div>`;
   }
-  return `<div class="panel" data-gate="${esc(g.id)}"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
-    // Past two rounds a gate has become a conversation, and a conversation is faster where
-    // it is not posted.
-    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復しています。<b>タブで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</div>` : '') +
-    `<div class="field" style="margin-bottom:12px"><span>コメント(修正指示・追加で聞きたいことはここに)</span>
-      <textarea class="gate-comment"></textarea></div>
-    <div class="decide">${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
-      <button class="talk" data-act="talk">タブで話す</button>
-      <button class="close" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">解決済みとして閉じる</button></div>
-    <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
-      ${['dispatch', 'issue'].includes(g.kind)
-        ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
-        : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
-      <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
+  return `<div class="decision-dock panel" data-gate="${esc(g.id)}">
+    <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
+      <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">gavel</span>
+      <span>${g.kind === 'verify' ? '確かめたら（判定）' : 'あなたの判定・指示'}</span>
+    </h3>` +
+    ((g.rounds || 0) >= 2 ? `<div class="hint-bar" style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">warning</span>
+      <span>ここまで ${g.rounds} 往復しています。<b>ターミナルで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</span>
+    </div>` : '') +
+    `<div class="field" style="margin-bottom:12px">
+      <label style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px;display:block;">コメント（修正指示・追加で聞きたいことはここに）</label>
+      <textarea class="gate-comment" placeholder="修正指示や質問があれば入力してください（承認の場合は空欄でも可）..."></textarea>
+    </div>
+    <div class="decide">
+      ${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
+      <button class="m3-icon-button talk" style="padding:8px 14px" data-act="talk">
+        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+        <span>ターミナルで話す</span>
+      </button>
+      ${g.worktree ? `
+        <button class="m3-icon-button" style="padding:8px 14px" data-ide="${esc(g.worktree)}">
+          <span class="material-symbols-outlined" style="font-size:16px;">code</span>
+          <span>IDEで開く</span>
+        </button>
+      ` : ''}
+      <button class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">
+        <span class="material-symbols-outlined" style="font-size:16px;">done_all</span>
+        <span>解決済みとして閉じる</span>
+      </button>
+    </div>
+    <div style="font-size:11.5px;color:var(--md-sys-color-outline);display:flex;align-items:flex-start;gap:6px;margin-top:8px;">
+      <span class="material-symbols-outlined" style="font-size:14px;margin-top:2px;">info</span>
+      <span>
+        ${['dispatch', 'issue'].includes(g.kind)
+          ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
+          : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
+        <b>「ターミナルで話す」</b>は gate を開いたまま worker タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。
+      </span>
+    </div>
+  </div>`;
 }
 
 /* The buttons `decideHtml` and a gate's choices draw, wired to the gate they sit in. */
@@ -2458,30 +2650,72 @@ function bindDecide(root) {
     b.addEventListener('click', () => answer('choice', b.dataset.choice, b.closest('[data-gate]').dataset.gate)));
   root.querySelectorAll('button[data-ide]').forEach(b =>
     b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+  root.querySelectorAll('button[data-focus]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
 }
+
+let reviewActiveTab = 'overview';
+function switchReviewTab(tabName) {
+  reviewActiveTab = tabName;
+  renderReview();
+}
+window.switchReviewTab = switchReviewTab;
 
 function renderReview() {
   const rail = document.querySelector('#review .rail');
   const pane = document.querySelector('#review .pane');
   const gates = state.gates || [];
 
-  rail.innerHTML = `<h2>要対応 ${gates.length} 件 &nbsp;<kbd>j</kbd><kbd>k</kbd> 移動 <kbd>a</kbd> 承認 <kbd>r</kbd> 修正 <kbd>c</kbd> 閉じる</h2>`;
+  rail.className = 'review-inbox-pane rail';
+  pane.className = 'review-detail-pane pane';
+
+  rail.innerHTML = `
+    <div class="review-inbox-header">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">inbox</span>
+        <span>要対応 (${gates.length})</span>
+      </div>
+      <div style="font-size:11px;font-weight:normal;color:var(--md-sys-color-outline)">
+        <kbd>j</kbd><kbd>k</kbd> 移動 &nbsp;<kbd>a</kbd> 承認 &nbsp;<kbd>r</kbd> 修正 &nbsp;<kbd>c</kbd> 閉じる
+      </div>
+    </div>
+    <div class="review-inbox-list"></div>
+  `;
+  const listEl = rail.querySelector('.review-inbox-list');
+
   for (const g of gates) {
+    const isCur = (g.id === focused);
     const [label, colour] = kindOf(g.kind);
     const b = document.createElement('button');
-    b.className = 'item';
-    b.setAttribute('aria-current', String(g.id === focused));
-    b.innerHTML = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
-      <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
-    b.onclick = () => { focused = g.id; renderReview(); };
-    rail.appendChild(b);
+    b.className = 'review-inbox-item item' + (isCur ? ' selected' : '');
+    b.setAttribute('aria-current', String(isCur));
+    b.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="m3-pill ${g.kind === 'plan' ? 'pill-blue' : g.kind === 'diff' ? 'pill-purple' : 'pill-warn'}">${label}</span>
+        <span class="w" style="font-size:11px;color:var(--md-sys-color-outline);margin-left:auto;">${ago(g.openedAt)}</span>
+      </div>
+      <div class="t" style="font-weight:700;font-size:13px;line-height:1.35;">${esc(g.title)}</div>
+      <div style="font-size:11px;color:var(--md-sys-color-outline);font-family:var(--font-mono);">${esc(g.worktree ? g.worktree.split('/').pop() : '')}</div>
+    `;
+    b.onclick = () => {
+      focused = g.id;
+      reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
+      renderReview();
+    };
+    listEl.appendChild(b);
   }
 
   // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
   // is what waits on a person, and a record does not.
   const g = gates.find(x => x.id === focused) || recordById(focused) || gates[0];
   if (!g) {
-    pane.innerHTML = '<div class="empty-state">対応待ちの判定はありません。<br>ボード画面でお待ちください。</div>';
+    pane.innerHTML = `
+      <div class="empty-state" style="padding:80px 20px;text-align:center;">
+        <span class="material-symbols-outlined" style="font-size:48px;color:var(--md-sys-color-outline);opacity:.5;margin-bottom:12px;display:block;">done_all</span>
+        <div style="font-size:15px;font-weight:700;color:var(--md-sys-color-on-surface);">現在、対応待ちの判定はありません</div>
+        <div style="font-size:13px;color:var(--md-sys-color-outline);margin-top:6px;">ボード画面でお待ちください</div>
+      </div>
+    `;
     if (view === 'review') location.hash = '';
     return;
   }
@@ -2491,52 +2725,208 @@ function renderReview() {
   // A permalink, so "反映しといたから見てね" can point at this one card.
   if (view === 'review') location.hash = 'gate/' + g.id;
 
+  if (pane.dataset.shown !== g.id) {
+    reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
+  }
+
   const wasDecidedOpen = pane.querySelector('details.decided')?.open;
   const commentEl = pane.querySelector('.gate-comment');
-  // A comment written for something that has since left the board (a gate answered elsewhere,
-  // a record whose task finished) is not carried over to whatever is shown in its place.
-  // Compared with what the pane last drew, not with `focused`: a click on another item has
-  // already moved `focused` to it by the time this runs.
   const commentVal = commentEl && pane.dataset.shown === g.id ? commentEl.value : '';
   const isCommentFocused = document.activeElement === commentEl;
   const paneScroll = pane.scrollTop;
 
-  const [label, colour] = kindOf(g.kind);
-  let h = `<h1>${esc(g.title)}</h1><div class="sub">
-    <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
-    ${record ? '<span class="tag">記録 — worker は止まらずに進んだ</span>' : ''}
-    <span class="mono2">${esc(g.worktree.split('/').pop())}</span>
-    <span>${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'}</span>
-    <span class="mono2" style="color:var(--muted)">#gate/${esc(g.id)}</span></div>`;
+  const parentTask = (state.tasks || []).find(t => t.id === g.task) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree);
+  const taskTitle = parentTask ? parentTask.title : g.title;
+  const taskId = parentTask ? parentTask.id : (g.task || g.id);
+  const taskBranch = parentTask ? parentTask.branch : '';
+  const taskWorktree = parentTask ? parentTask.worktree : g.worktree;
+  const taskDoneWhen = parentTask ? (DONE_WHEN[parentTask.doneWhen] || parentTask.doneWhen) : '—';
+  const taskIssue = parentTask?.issueUrl;
 
+  const gateTargetTab = TAB_OF_KIND[g.kind] || null;
+  const [gateLabel, gateColour] = kindOf(g.kind);
+
+  let h = '';
+
+  // ── 1. 対象タスクの基本ヘッダー ──
+  h += `
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        ${parentTask ? `<span class="m3-pill pill-blue">${esc(columnOf(parentTask))}</span>` : ''}
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-outline);">${esc(taskId)}</span>
+        ${taskIssue ? `<a href="${esc(taskIssue)}" target="_blank" style="margin-left:auto;font-size:12px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(taskIssue.split('/').pop())}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>` : ''}
+      </div>
+      <h1 style="font-size:22px;font-weight:800;color:var(--md-sys-color-on-surface);margin:2px 0 0;line-height:1.3;">${esc(taskTitle)}</h1>
+      <div style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+        <span>ブランチ: <code style="font-family:var(--font-mono);font-size:12px;">${esc(taskBranch || '—')}</code></span>
+        <span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(taskWorktree ? taskWorktree.split('/').pop() : '—')}</code></span>
+        <span>完了条件: <strong>${esc(taskDoneWhen)}</strong></span>
+        ${taskWorktree ? `
+          <span style="display:inline-flex;gap:6px;margin-left:auto;">
+            <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" data-focus="${esc(taskWorktree)}">
+              <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
+              <span>端末</span>
+            </button>
+            <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" data-ide="${esc(taskWorktree)}">
+              <span class="material-symbols-outlined" style="font-size:14px;">code</span>
+              <span>IDE</span>
+            </button>
+          </span>
+        ` : ''}
+      </div>
+    </div>
+  `;
+
+  // ── 2. 現在の確認待ち（Gate）アラートバナー ──
+  h += `
+    <div class="m3-card-attention-box" style="padding:14px 18px;display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px;">
+          <span class="material-symbols-outlined" style="font-size:18px;">${record ? 'history' : 'pending_actions'}</span>
+          <span>【${esc(gateLabel)}】${record ? '記録 — worker は止まらずに進んだ' : 'あなたの判定待ち'}</span>
+        </div>
+        <span style="font-size:11.5px;opacity:.9">${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'} (ID: ${esc(g.id)})</span>
+      </div>
+  `;
   if (stopWhy(g).length) {
-    h += `<div class="panel"><h3>止めた理由</h3><ul>${stopWhy(g).map(w =>
-      `<li${stopBad(g) ? ' style="color:var(--critical)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>`;
+    h += `
+      <div style="font-size:12.5px;">
+        <strong>止めた理由:</strong>
+        <ul style="margin:4px 0 0;padding-left:18px;">${stopWhy(g).map(w =>
+          `<li${stopBad(g) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul>
+      </div>
+    `;
   }
-  // verify is not a judgement — it is the door to work that happens outside the browser,
-  // so the way in comes first and the buttons wait at the bottom for the way back.
-  if (g.kind === 'verify' && !record) {
-    h += `<div class="work">
-      <button class="big" data-ide="${esc(g.worktree)}">IDE で開く</button>
-      <span class="mono2">${esc(g.worktree)}</span>
-      <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
+  if (g.focus) {
+    h += `
+      <div style="font-size:12.5px;background:rgba(0,0,0,.04);padding:8px 12px;border-radius:var(--md-shape-corner-xs);">
+        <strong>確認してほしい点:</strong> ${md(g.focus)}
+      </div>
+    `;
   }
-  if (g.facts?.length) {
-    h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  if (gateTargetTab && reviewActiveTab !== gateTargetTab) {
+    const targetTabLabel = gateTargetTab === 'overview' ? '概要・計画' : gateTargetTab === 'review' ? 'コードレビュー' : '動作確認';
+    h += `
+      <div style="margin-top:2px;">
+        <button class="btn-m3-tonal" style="padding:4px 12px;font-size:12px;border-radius:var(--md-shape-corner-full);" onclick="switchReviewTab('${gateTargetTab}')">
+          <span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span>
+          <span>判定対象タブ（${targetTabLabel}）を見る</span>
+        </button>
+      </div>
+    `;
   }
-  if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  h += choicesHtml(g, !record);
-  h += structuredPanels(g);
-  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
-  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
-  if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
-  if (g.decided) h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
-  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  h += `</div>`;
 
+  // ── 3. M3 Segmented Tabs (4つのタブ) ──
+  h += `
+    <div class="m3-segmented-tabs">
+      <button class="m3-seg-tab ${reviewActiveTab === 'overview' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'overview'}" onclick="switchReviewTab('overview')">
+        <span class="material-symbols-outlined">description</span>
+        <span>概要・計画</span>
+        ${gateTargetTab === 'overview' && !record ? '<span class="m3-tab-badge">要判定</span>' : ''}
+      </button>
+      <button class="m3-seg-tab ${reviewActiveTab === 'review' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'review'}" onclick="switchReviewTab('review')">
+        <span class="material-symbols-outlined">rate_review</span>
+        <span>コードレビュー</span>
+        ${gateTargetTab === 'review' && !record ? '<span class="m3-tab-badge">要判定</span>' : ''}
+      </button>
+      <button class="m3-seg-tab ${reviewActiveTab === 'check' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'check'}" onclick="switchReviewTab('check')">
+        <span class="material-symbols-outlined">fact_check</span>
+        <span>動作確認 (Verify)</span>
+        ${gateTargetTab === 'check' && !record ? '<span class="m3-tab-badge">要判定</span>' : ''}
+      </button>
+      <button class="m3-seg-tab ${reviewActiveTab === 'history' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'history'}" onclick="switchReviewTab('history')">
+        <span class="material-symbols-outlined">history</span>
+        <span>タイムライン・全履歴</span>
+      </button>
+    </div>
+  `;
+
+  // ── 4. タブ別コンテンツ領域 ──
+  h += `<div style="display:flex;flex-direction:column;gap:18px;">`;
+
+  if (reviewActiveTab === 'overview') {
+    if (parentTask?.body) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">assignment</span><span>依頼内容 / 要件プロンプト</span></h3>
+        <div class="body">${md(parentTask.body)}</div>
+      </div>`;
+    }
+    if (g.body && g.body !== parentTask?.body) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">report</span><span>Gate 報告</span></h3>
+        <div class="body">${md(g.body)}</div>
+      </div>`;
+    }
+    if (g.facts?.length) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3>
+        <ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+      </div>`;
+    }
+    if (g.unsure) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3>
+        <div class="body">${md(g.unsure)}</div>
+      </div>`;
+    }
+    h += choicesHtml(g, !record);
+  } else if (reviewActiveTab === 'review') {
+    h += reviewPanels(g);
+    if (g.diff) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">difference</span><span>コード差分 (Diff)</span></h3>
+        <div class="diff">${renderDiff(g.diff)}</div>
+      </div>`;
+    } else if (!g.findings?.length && !g.reviewRounds?.length) {
+      h += `<div class="empty-state" style="padding:40px;text-align:center;">この Gate に記録されたコード差分はありません。</div>`;
+    }
+  } else if (reviewActiveTab === 'check') {
+    if (g.kind === 'verify' && !record) {
+      h += `<div class="work">
+        <button class="big" data-ide="${esc(g.worktree)}">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:text-bottom;margin-right:4px;">code</span>
+          <span>IDE で開く</span>
+        </button>
+        <span class="mono2">${esc(g.worktree)}</span>
+        <span style="color:var(--md-sys-color-on-surface-variant);font-size:12px;">— 確認後、下のパネルで判定してください</span></div>`;
+    }
+    h += checkPanels(g);
+    if (g.run) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">play_arrow</span><span>動かし方</span></h3>
+        <div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div>
+      </div>`;
+    }
+  } else if (reviewActiveTab === 'history') {
+    if (g.decided) {
+      h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
+    }
+    if (parentTask) {
+      h += historyTab(parentTask, gatesOf(parentTask));
+    } else {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">history</span><span>Gate 履歴</span></h3>
+        <div style="font-size:13px;line-height:1.8;">
+          <div><strong style="color:var(--md-sys-color-outline);">${when(g.openedAt)}:</strong> 【${esc(gateLabel)}】Gate をオープン — 人間の判定待ち</div>
+          ${(g.answers || []).map(a => `<div><strong style="color:var(--md-sys-color-outline);">${when(a.answeredAt)}:</strong> 人が差し戻し — ${esc(a.comment || '')}</div>`).join('')}
+        </div>
+      </div>`;
+    }
+  }
+
+  h += `</div>`;
+
+  // ── 5. Decision Dock (最下部判定パネル) ──
   h += decideHtml(g);
+
   pane.innerHTML = h;
   pane.dataset.shown = g.id;
   bindDecide(pane);
+  pane.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+    focused = b.dataset.open;
+    renderReview();
+  }));
   restoreComment(pane, commentVal, isCommentFocused, paneScroll);
 }
 
@@ -2544,13 +2934,23 @@ function renderReview() {
    answered, the one picked is marked instead. */
 function choicesHtml(g, pickable) {
   if (!g.choices?.length) return '';
-  return `<div class="panel"${pickable ? ` data-gate="${esc(g.id)}"` : ''}><h3>選択肢</h3><div class="choices">` +
-    g.choices.map(c => `<div class="choice${c.recommended ? ' rec' : ''}">
-      ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}${g.choice === c.id ? '<span class="rec-tag" style="color:var(--good)">✓ 選ばれた案</span>' : ''}
-      <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
-      <ul>${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-      ${pickable ? `<button class="pick" data-choice="${esc(c.id)}">これで進める</button>` : ''}
-    </div>`).join('') + `</div></div>`;
+  return `<div class="panel"${pickable ? ` data-gate="${esc(g.id)}"` : ''}>
+    <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
+      <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>
+      <span>AI からの提案・選択肢</span>
+    </h3>
+    <div class="choices-container choices">` +
+    g.choices.map(c => `
+      <div class="m3-choice-card choice${c.recommended ? ' recommended rec' : ''}">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${c.recommended ? '<span class="m3-pill pill-blue rec-tag" style="align-self:flex-start;display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">auto_awesome</span><span>AI の推し案</span></span>' : ''}
+          ${g.choice === c.id ? '<span class="m3-pill pill-good" style="align-self:flex-start;display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">check_circle</span><span>選ばれた案</span></span>' : ''}
+        </div>
+        <h4 style="margin:0;font-size:14px;font-weight:700;">${esc(c.label)}</h4>
+        ${c.why ? `<p class="why" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0;">${esc(c.why)}</p>` : ''}
+        <ul style="padding-left:18px;font-size:12px;line-height:1.6;margin:0;">${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        ${pickable ? `<button class="m3-btn-pick pick" data-choice="${esc(c.id)}"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>この案で進める</span></button>` : ''}
+      </div>`).join('') + `</div></div>`;
 }
 
 /* What a redraw would otherwise lose: the comment being typed, and where the pane was. */
@@ -2571,7 +2971,9 @@ function reviewPanels(g) {
   let h = '';
   const rounds = g.reviewRounds || [];
   if (rounds.length) {
-    h += `<div class="panel"><h3>セルフレビュー ${rounds.length}ラウンド</h3><div class="body"><table>
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">rate_review</span><span>セルフレビュー ${rounds.length}ラウンド</span></h3>
+      <div class="body"><table>
       <tr><th>R</th><th>エンジン</th><th>must</th><th>want</th><th>scope</th><th>誤検知</th></tr>` +
       rounds.map((r, i) => `<tr><td>R${i + 1}</td><td>${esc(r.engine)}</td><td>${r.must || 0}</td>` +
         `<td>${r.want || 0}</td><td>${r.scope || 0}</td><td>${r.falsePositives || 0}</td></tr>`).join('') +
@@ -2582,15 +2984,18 @@ function reviewPanels(g) {
   const findings = g.findings || [];
   if (findings.length) {
     const groups = [...Object.keys(OUTCOME), ...new Set(findings.map(f => f.outcome).filter(o => !OUTCOME[o]))];
-    h += `<div class="panel"><h3>指摘 ${findings.length}件</h3><div class="body">` +
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">rule</span><span>指摘 ${findings.length}件</span></h3>
+      <div class="body">` +
       groups.map(outcome => {
         const mine = findings.filter(f => f.outcome === outcome);
         if (!mine.length) return '';
-        return `<h5>${esc(OUTCOME[outcome]?.[0] || outcome)} ${mine.length}件</h5><ul>` + mine.map(f => {
+        return `<h5>${esc(OUTCOME[outcome]?.[0] || outcome)} ${mine.length}件</h5><ul style="padding-left:20px;line-height:1.7;">` + mine.map(f => {
           const openMust = f.outcome === 'open' && f.severity === 'must';
-          return `<li${openMust ? ' style="color:var(--critical)"' : ''}><b>[${esc(f.severity)}]</b> ` +
-            `${f.location ? `<code>${esc(f.location)}</code> ` : ''}${esc(f.text)}` +
-            `${f.reason ? `<br><span style="color:var(--ink-2)">${f.outcome === 'declined' ? '却下の理由' : '理由'}: ${esc(f.reason)}</span>` : ''}</li>`;
+          return `<li${openMust ? ' style="color:var(--md-sys-color-error);font-weight:600;"' : ''}>` +
+            `<span class="m3-pill ${f.severity === 'must' ? 'pill-critical' : 'pill-gray'}" style="font-size:10px;padding:1px 6px;margin-right:6px;">${esc(f.severity)}</span>` +
+            `${f.location ? `<code style="font-family:var(--font-mono);font-size:11px;background:var(--md-sys-color-surface-container-high);padding:2px 6px;border-radius:4px;margin-right:6px;">${esc(f.location)}</code> ` : ''}${esc(f.text)}` +
+            `${f.reason ? `<br><span style="color:var(--md-sys-color-outline);font-size:12px;">${f.outcome === 'declined' ? '却下の理由' : '理由'}: ${esc(f.reason)}</span>` : ''}</li>`;
         }).join('') + '</ul>';
       }).join('') + `</div></div>`;
   }
@@ -2601,24 +3006,27 @@ function checkPanels(g) {
   let h = '';
   const commands = g.commands || [];
   if (commands.length) {
-    h += `<div class="panel"><h3>verify</h3>` + commands.map(c => {
-      const failed = c.result === 'fail';
-      // A pass that took more than one run failed first: the first run is the one that said
-      // something was wrong, so it is marked rather than shown as a plain pass.
-      const retried = !failed && (c.attempts || 1) > 1;
-      const head = `<span class="state ${failed ? 'bad' : 'good'}"><span>${failed ? '✗' : '✓'}</span>` +
-        `<code>${esc(c.command)}</code></span>` +
-        (retried ? ` <span class="tag" title="1回目は失敗して、直してから通った">${c.attempts}回目で通過</span>` : '') +
-        (c.time ? ` <span style="color:var(--muted)">${esc(c.time)}</span>` : '');
-      // A failure is what a person came to read, so it comes open; a pass stays folded.
-      return c.output
-        ? `<details${failed ? ' open' : ''} style="margin-bottom:6px"><summary style="cursor:pointer">${head}</summary>` +
-          `<div class="diff" style="margin-top:6px"><div>${esc(c.output).split('\n').join('</div><div>')}</div></div></details>`
-        : `<div style="margin-bottom:6px">${head}</div>`;
-    }).join('') + `</div>`;
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">fact_check</span><span>Verify 実行結果</span></h3>` +
+      commands.map(c => {
+        const failed = c.result === 'fail';
+        const retried = !failed && (c.attempts || 1) > 1;
+        const head = `<span class="state ${failed ? 'bad' : 'good'}" style="display:inline-flex;align-items:center;gap:6px;">` +
+          `<span class="material-symbols-outlined" style="font-size:16px;color:${failed ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-success)'};">${failed ? 'cancel' : 'check_circle'}</span>` +
+          `<code style="font-family:var(--font-mono);font-weight:600;">${esc(c.command)}</code></span>` +
+          (retried ? ` <span class="m3-pill pill-warn" style="font-size:11px;" title="1回目は失敗して、直してから通った">${c.attempts}回目で通過</span>` : '') +
+          (c.time ? ` <span style="color:var(--md-sys-color-outline);font-size:12px;margin-left:auto;">${esc(c.time)}</span>` : '');
+        return c.output
+          ? `<details${failed ? ' open' : ''} style="margin-bottom:8px;background:var(--md-sys-color-surface-container-low);padding:8px 12px;border-radius:var(--md-shape-corner-sm);"><summary style="cursor:pointer;list-style:none;display:flex;align-items:center;">${head}</summary>` +
+            `<div class="diff" style="margin-top:8px;"><div>${esc(c.output).split('\n').join('</div><div>')}</div></div></details>`
+          : `<div style="margin-bottom:8px;background:var(--md-sys-color-surface-container-low);padding:8px 12px;border-radius:var(--md-shape-corner-sm);display:flex;align-items:center;">${head}</div>`;
+      }).join('') + `</div>`;
   }
   if ((g.manual || []).length) {
-    h += `<div class="panel"><h3>人が見る確認</h3><ul class="checklist">${g.manual.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>人が見る確認項目</span></h3>
+      <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map(m =>
+        `<li style="display:flex;align-items:flex-start;gap:8px;font-size:13px;"><input type="checkbox" style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></li>`).join('')}</ul></div>`;
   }
   return h;
 }
@@ -3196,8 +3604,16 @@ document.addEventListener('keydown', e => {
   if (view !== 'review' || e.target.matches('textarea,input,select')) return;
   const gates = state.gates || [];
   const i = gates.findIndex(g => g.id === focused);
-  if (e.key === 'j' && i < gates.length - 1) { focused = gates[i + 1].id; renderReview(); }
-  if (e.key === 'k' && i > 0) { focused = gates[i - 1].id; renderReview(); }
+  if (e.key === 'j' && i < gates.length - 1) {
+    focused = gates[i + 1].id;
+    reviewActiveTab = TAB_OF_KIND[gates[i + 1].kind] || 'overview';
+    renderReview();
+  }
+  if (e.key === 'k' && i > 0) {
+    focused = gates[i - 1].id;
+    reviewActiveTab = TAB_OF_KIND[gates[i - 1].kind] || 'overview';
+    renderReview();
+  }
   // A record on screen is not in the queue these keys work through, and approving one is not
   // something a record can take.
   if (i < 0) return;
