@@ -334,7 +334,15 @@ fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
         ),
         (
             serde_json::json!({ "kind": "diff", "title": "差分", "stoppedBy": ["just-because"] }),
-            "bad gate",
+            "no such stop rule",
+        ),
+        (
+            serde_json::json!({ "kind": "verify", "title": "動作確認", "stoppedBy": ["round-limit"] }),
+            "round-limit cannot stop a verify gate",
+        ),
+        (
+            serde_json::json!({ "kind": "diff", "title": "差分", "stoppedBy": ["manual-check"] }),
+            "manual-check cannot stop a diff gate",
         ),
         (
             serde_json::json!({ "kind": "diff", "title": "差分", "stoppedBy": "unsure" }),

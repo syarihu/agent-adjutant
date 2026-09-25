@@ -127,6 +127,19 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         if !wait {
             return Err("a record does not stop the worker; drop stoppedBy or wait".to_string());
         }
+        // Read here rather than left to serde below, which runs after the id is claimed and
+        // would leave an empty gate file behind for an unknown rule.
+        for rule in &payload["stoppedBy"].as_array().cloned().unwrap_or_default() {
+            let parsed: gate::StopRule = serde_json::from_value(rule.clone())
+                .map_err(|_| format!("no such stop rule: {rule}"))?;
+            if !parsed.applies_to(kind) {
+                return Err(format!(
+                    "{} cannot stop a {} gate",
+                    parsed.as_str(),
+                    kind.as_str()
+                ));
+            }
+        }
     }
 
     // The payload may name the worktree; otherwise it is derived from where the caller
