@@ -316,6 +316,211 @@ pub fn nudge(ctx: &Context) -> Result<Delivered, String> {
     super::deliver_to_hub(ctx, &message)
 }
 
+/// What GitHub says about a pull request a record points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrState {
+    Open,
+    /// Closed without being merged. The work may have gone on in another PR, so this is not
+    /// read as "done" or as "cancelled": a person says which.
+    Closed,
+    Merged,
+    /// `gh` could not say: not installed, not signed in, no such PR, or an answer this does
+    /// not recognise. Why, in `gh`'s own words where it gave any.
+    Unreadable(String),
+}
+
+impl PrState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            PrState::Open => "open",
+            PrState::Closed => "closed",
+            PrState::Merged => "merged",
+            PrState::Unreadable(_) => "unreadable",
+        }
+    }
+}
+
+/// `gh pr view --json state -q .state` prints one word. Anything else is not guessed at.
+fn parse_pr_state(stdout: &str) -> PrState {
+    match stdout.trim() {
+        "OPEN" => PrState::Open,
+        "CLOSED" => PrState::Closed,
+        "MERGED" => PrState::Merged,
+        other => PrState::Unreadable(format!("gh answered {other:?}")),
+    }
+}
+
+/// How long a whole refresh may spend waiting on `gh`. The hub asks in the block it starts
+/// with, and the MCP server answers one request at a time, so a `gh` that hangs — no network,
+/// a login prompt — would hold up every other answer in that block with it. One deadline for
+/// the lot rather than one per PR, so the wait does not grow with the number of records.
+const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How many `gh` run at once. Enough that a few dozen records answer in a few round trips;
+/// few enough that GitHub does not read the burst as abuse and refuse some of them, which
+/// would come back as PRs nobody can read.
+const GH_AT_ONCE: usize = 8;
+
+/// Ask `gh` about one pull request.
+///
+/// From the main checkout, so a record that holds a bare number rather than a URL is read
+/// against this repository rather than whichever directory the caller happens to be in.
+fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> PrState {
+    // A value that starts with '-' would reach `gh` as a flag.
+    if pr.starts_with('-') {
+        return PrState::Unreadable(format!("not a pull request: {pr}"));
+    }
+    let mut child = match std::process::Command::new("gh")
+        .args(["pr", "view", pr, "--json", "state", "-q", ".state"])
+        .current_dir(main)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => return PrState::Unreadable(format!("cannot run gh: {e}")),
+    };
+    // Polled rather than waited on: what `gh` prints here is a word or an error line, far
+    // short of filling a pipe, so it can sit unread until the process is done.
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return PrState::Unreadable(format!(
+                    "gh did not answer within the {}s a refresh allows",
+                    GH_TIMEOUT.as_secs()
+                ));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return PrState::Unreadable(format!("cannot wait for gh: {e}"));
+            }
+        }
+    }
+    let out = match child.wait_with_output() {
+        Ok(out) => out,
+        Err(e) => return PrState::Unreadable(format!("cannot read gh: {e}")),
+    };
+    if !out.status.success() {
+        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return PrState::Unreadable(if said.is_empty() {
+            format!("gh exited with {}", out.status)
+        } else {
+            said
+        });
+    }
+    parse_pr_state(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// One record `refresh` looked at, and what came of it.
+pub struct Checked {
+    pub task: Task,
+    pub state: PrState,
+    /// Whether this refresh moved the record to `done`. `false` for a merged PR whose record
+    /// somebody else changed while `gh` was being asked.
+    pub moved: bool,
+}
+
+/// Bring the records up to date with their pull requests: every one that has a `pr` and is
+/// not finished is asked about, and the ones whose PR was merged are moved to `done`.
+///
+/// Nothing else is changed. A PR still open is still in review; one closed without merging
+/// may have been replaced by another, which only a person knows; one `gh` cannot read is
+/// not evidence of anything. Those are returned for the caller to report.
+pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
+    let dir = dir(ctx);
+    let candidates: Vec<Task> = task::list(&dir)
+        .into_iter()
+        .filter(|t| !matches!(t.status, Status::Done | Status::Cancelled))
+        .filter(|t| t.pr.is_some())
+        .collect();
+    // A few at a time rather than one by one: each answer is a round trip to GitHub, and
+    // the board and the hub's first block both wait on the whole.
+    let deadline = std::time::Instant::now() + GH_TIMEOUT;
+    let mut states: Vec<PrState> = Vec::with_capacity(candidates.len());
+    for batch in candidates.chunks(GH_AT_ONCE) {
+        std::thread::scope(|scope| {
+            let asks: Vec<_> = batch
+                .iter()
+                .map(|t| {
+                    let pr = t.pr.as_deref().unwrap_or_default();
+                    let main = ctx.repo.main.as_str();
+                    scope.spawn(move || ask_pr_state(main, pr, deadline))
+                })
+                .collect();
+            states.extend(asks.into_iter().map(|ask| {
+                ask.join()
+                    .unwrap_or_else(|_| PrState::Unreadable("the check panicked".to_string()))
+            }));
+        });
+    }
+
+    let mut checked = Vec::new();
+    for (task, state) in candidates.into_iter().zip(states) {
+        if state != PrState::Merged {
+            checked.push(Checked {
+                task,
+                state,
+                moved: false,
+            });
+            continue;
+        }
+        // Read again under the lock: `gh` took a while, and a record somebody moved or
+        // pointed at another PR in the meantime is theirs, not this answer's.
+        let lock = lock_task(ctx, &task.id)?;
+        let mut now = task::load(&dir, &task.id)?;
+        let moved = now.pr == task.pr && now.status == task.status;
+        if moved {
+            now.status = Status::Done;
+            now.updated_at = stamp();
+            task::save(&dir, &now)?;
+        }
+        drop(lock);
+        checked.push(Checked {
+            task: now,
+            state,
+            moved,
+        });
+    }
+    Ok(checked)
+}
+
+/// `refresh`'s answer as the MCP tool and the board hand it on: sorted by what happened, so
+/// a reader finds what changed without going through what did not.
+pub fn refresh_json(checked: &[Checked]) -> Value {
+    let entry = |c: &Checked| {
+        let mut out = json!({
+            "id": c.task.id,
+            "title": c.task.title,
+            "pr": c.task.pr,
+            "status": c.task.status.as_str(),
+            "state": c.state.as_str(),
+        });
+        if let PrState::Unreadable(why) = &c.state {
+            out["error"] = json!(why);
+        }
+        out
+    };
+    let with = |pick: fn(&Checked) -> bool| -> Vec<Value> {
+        checked.iter().filter(|c| pick(c)).map(entry).collect()
+    };
+    json!({
+        "done": with(|c| c.moved),
+        "open": with(|c| c.state == PrState::Open),
+        "closed": with(|c| c.state == PrState::Closed),
+        "unreadable": with(|c| matches!(c.state, PrState::Unreadable(_))),
+        // Merged, but the record changed while `gh` was being asked, so it was left as it is.
+        "skipped": with(|c| c.state == PrState::Merged && !c.moved),
+    })
+}
+
 fn next_order(ctx: &Context) -> u32 {
     task::list(&dir(ctx))
         .iter()
@@ -534,6 +739,37 @@ pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), Strin
     Ok(())
 }
 
+pub fn refresh_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
+    let ctx = super::context(repo, hub)?;
+    let checked = refresh(&ctx)?;
+    if as_json {
+        println!("{}", refresh_json(&checked));
+        return Ok(());
+    }
+    if checked.is_empty() {
+        println!("No task is waiting on a pull request.");
+        return Ok(());
+    }
+    for c in &checked {
+        let what = match (&c.state, c.moved) {
+            (_, true) => "done".to_string(),
+            (PrState::Merged, false) => {
+                "merged, but the record changed meanwhile; left alone".to_string()
+            }
+            (PrState::Unreadable(why), _) => format!("unreadable: {why}"),
+            (state, _) => format!("{}; left alone", state.as_str()),
+        };
+        println!(
+            "{:<10} {}  {}  {}",
+            c.task.status.as_str(),
+            c.task.id,
+            c.task.pr.as_deref().unwrap_or("-"),
+            what
+        );
+    }
+    Ok(())
+}
+
 fn handed_json(handed: &Option<Delivered>) -> Value {
     match handed {
         Some(d) => json!({
@@ -629,6 +865,28 @@ mod tests {
         for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
             assert!(text_field("pr", &bad).is_err(), "{bad} was taken");
         }
+    }
+
+    #[test]
+    fn a_pr_state_is_read_from_gh_s_one_word_and_nothing_else_is_guessed_at() {
+        assert_eq!(parse_pr_state("MERGED\n"), PrState::Merged);
+        assert_eq!(parse_pr_state("OPEN\n"), PrState::Open);
+        assert_eq!(parse_pr_state("CLOSED"), PrState::Closed);
+        for odd in ["", "merged", "{\"state\":\"MERGED\"}", "DRAFT"] {
+            assert!(
+                matches!(parse_pr_state(odd), PrState::Unreadable(_)),
+                "{odd:?} was read as a state"
+            );
+        }
+    }
+
+    /// A value that would reach `gh` as a flag is refused before `gh` is run at all.
+    #[test]
+    fn a_pr_that_looks_like_a_flag_is_not_handed_to_gh() {
+        assert!(matches!(
+            ask_pr_state(".", "--web", std::time::Instant::now()),
+            PrState::Unreadable(why) if why.contains("--web")
+        ));
     }
 
     #[test]

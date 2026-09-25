@@ -25,7 +25,8 @@ pub use gate::{
 };
 pub use serve::{DEFAULT_PORT, serve};
 pub use task::{
-    AddArgs, UpdateArgs, add as task_add, list as task_list, show as task_show,
+    AddArgs, UpdateArgs, add as task_add, list as task_list, refresh as task_refresh,
+    refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
     update_cmd as task_update,
 };
 

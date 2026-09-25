@@ -83,19 +83,19 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) |
-| `adjutant task add\|list\|show\|update` | the records that board is a view of |
+| `adjutant task add\|list\|show\|update\|refresh` | the records that board is a view of (`refresh`: move the ones whose PR was merged to done) |
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
 | `adjutant hub-stop` | clear this repo's hub record |
 
-Agent-side (`adjutant mcp`), the same machinery as eight tools and three prompts:
+Agent-side (`adjutant mcp`), the same machinery as nine tools and three prompts:
 
 - **prompts** — `adj-hub` (run the hub), `adj-worker` (take a task from brief to handover),
   `adj-report` (hand a bug you found to the hub). Claude Code exposes these as
   `/mcp__adjutant__adj-hub` and so on.
 
 - **tools** — `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`,
-  `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_skill`. The last one
-  serves the same procedure text as the prompts, tailored to the target agent format (such
+  `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_refresh`,
+  `adjutant_skill`. The last one serves the same procedure text as the prompts, tailored to the target agent format (such
   as Claude Code's `AskUserQuestion` or Antigravity's `ask_question`), because MCP prompt
   support is uneven across agents and a procedure nobody can fetch is a procedure nobody
   follows.
@@ -231,7 +231,8 @@ symptom is the hub going quiet.
   "mcp__adjutant__adjutant_config", "mcp__adjutant__adjutant_hub_status",
   "mcp__adjutant__adjutant_send", "mcp__adjutant__adjutant_pending",
   "mcp__adjutant__adjutant_tell", "mcp__adjutant__adjutant_outbox",
-  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_skill"
+  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_refresh",
+  "mcp__adjutant__adjutant_skill"
 ]}
 ```
 
@@ -394,6 +395,13 @@ worker's report or from its own tab gets one written before the brief (`adjutant
 it. The record then moves with the work: the worker sets `pr` when it opens its pull request,
 and the hub sets `done` when it removes the worktree. A card the board shows as in progress is
 a worker that is actually running.
+
+A worktree can also go away without the hub, and then nothing would move a merged PR's card
+out of review. `adjutant task refresh` (the `adjutant_refresh` tool, or 「PR を確認」 on the
+board's review column) asks `gh` about the PR of every record that is not finished, and moves
+the ones whose PR was merged to `done`. A PR that is open, closed without merging, or that `gh`
+cannot read is left alone and listed instead: a closed PR may have been replaced by another,
+and only a person knows. The hub runs it once when it starts; nothing runs it on a timer.
 
 ### Gates
 
