@@ -39,6 +39,25 @@ fn find(ctx: &Context, id: &str) -> Result<Gate, String> {
     Err(format!("no open gate or record: {id}"))
 }
 
+/// Hold the write lock of one record until the returned handle is dropped. The same advisory
+/// lock `task::lock_task` takes, for the same reason: appending an answer is a read and a
+/// write of the whole file, and two at once would each write back what they read.
+fn lock_record(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
+    let dir = records_dir(ctx);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Not named `.json`, so the listing never reads it as a record.
+    let path = dir.join(format!("{id}.lock"));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
+    Ok(file)
+}
+
 fn stamp() -> String {
     messaging::utc_stamp(messaging::now_secs())
 }
@@ -242,9 +261,11 @@ pub fn answer(
         .map(str::to_string);
     if !gate.wait {
         let at = stamp();
-        // Read again rather than appended to the copy loaded before delivery: the board and
-        // `adj gate answer` can send the same record back at once, and the second write would
-        // otherwise drop the first answer the worker has already been given.
+        // Read again under the record's lock rather than appended to the copy loaded before
+        // delivery: the board and `adj gate answer` can send the same record back at once,
+        // and the second write would otherwise drop the first answer the worker has already
+        // been given.
+        let lock = lock_record(ctx, id)?;
         let mut gate = gate::load(&records_dir(ctx), id).unwrap_or(gate);
         gate.answers.push(gate::Answer {
             decision: decision.to_string(),
@@ -252,6 +273,7 @@ pub fn answer(
             answered_at: at.clone(),
         });
         gate::save(&records_dir(ctx), &gate)?;
+        drop(lock);
         note_answered(ctx, gate.task.as_deref(), &at);
         return Ok((gate, told));
     }

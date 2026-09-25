@@ -734,6 +734,12 @@ function markSeen(id) {
 }
 const allRecords = () => (state.tasks || []).flatMap(t => t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
+/* A task's records oldest first. The server sorts by `openedAt` alone, which is to the second,
+   so two records opened in the same second come in directory order; the sequence at the end of
+   the id (`…-record-2`, none for the first) is the order they were claimed in. */
+const recordSeq = r => +(/-record-(\d+)$/.exec(r.id)?.[1] || 1);
+const recordsOf = task => [...(task.records || [])].sort((a, b) =>
+  (a.openedAt || '').localeCompare(b.openedAt || '') || recordSeq(a) - recordSeq(b));
 
 /* One record in a few words, and whether it went well: `[text, tone]`, tone being `good`,
    `bad` or ''. Tone always comes with ✓ or ✗ in the text, so colour never says it alone. */
@@ -760,7 +766,7 @@ function recordSummary(r) {
    send-back replaces the one before it, and the checks it left for a person. */
 function chipsOf(task) {
   const latest = {};
-  for (const r of task.records || []) latest[r.kind] = r;
+  for (const r of recordsOf(task)) latest[r.kind] = r;
   const chips = [];
   for (const r of Object.values(latest)) {
     const [text, tone] = recordSummary(r);
@@ -963,7 +969,7 @@ function renderDrawer() {
   }
 
   // Newest first: the one the worker left last is the one that describes where it is now.
-  const records = [...(task.records || [])].reverse();
+  const records = recordsOf(task).reverse();
   if (records.length) {
     h += `<div class="d-section"><div class="d-label">記録（止めずに進んだもの）</div>` +
       records.map(r => {
