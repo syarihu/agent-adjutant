@@ -1844,6 +1844,11 @@ function actHtml(g) {
   return '';
 }
 
+/* A URL a link may point at: http or https only. The issue URL is typed into a form and
+   stored as given, and `esc` keeps it from breaking the markup but not from being a
+   `javascript:` link. */
+const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
+
 function overviewTab(task, all) {
   const plans = all.filter(g => g.kind === 'plan');
   const plan = gateShownIn(task, 'overview', all);
@@ -1851,9 +1856,10 @@ function overviewTab(task, all) {
 
   // Where each came from: the plan's own words when the worker wrote them, otherwise the
   // request as it was handed over.
-  const source = task.issueUrl
-    ? `Issue <a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer">${esc(task.issueUrl)}</a>`
-    : '依頼文';
+  const issue = httpUrl(task.issueUrl);
+  const source = issue
+    ? `Issue <a href="${esc(issue)}" target="_blank" rel="noopener noreferrer">${esc(issue)}</a>`
+    : task.issueUrl ? `Issue ${esc(task.issueUrl)}` : '依頼文';
   const fromPlan = plan && `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの`;
   h += `<div class="panel"><h3>問題</h3>`;
   if (plan?.problem) h += `<div class="body">${md(plan.problem)}</div><div class="source">出典: ${fromPlan}</div>`;
@@ -1898,8 +1904,9 @@ function overviewTab(task, all) {
     ['止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)],
     ['着手設定', task.autoStart ? '確認なしで着手' : '着手前に確認が必要'],
   ];
-  if (task.issueUrl) rows.push(['Issue', `<a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(task.issueUrl)}</a>`]);
-  if (task.pr) rows.push(['PR', /^https?:\/\//.test(task.pr) ? `<a href="${esc(task.pr)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(task.pr)}</a>` : esc(task.pr)]);
+  const link = u => httpUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(u)}</a>` : esc(u);
+  if (task.issueUrl) rows.push(['Issue', link(task.issueUrl)]);
+  if (task.pr) rows.push(['PR', link(task.pr)]);
   if (task.parent) rows.push(['親タスク', esc(task.parent)]);
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
   if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);
@@ -2204,8 +2211,12 @@ note('adj serve', false, 'このボードの操作は既存の adj コマンド�
 const deep = location.hash.match(/^#gate\/(.+)$/);
 // And #task/<id>/<tab> on one task's view.
 const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);
+// A malformed escape in a hand-edited link would throw here, before the polling below starts,
+// and leave a page that never loads: such a link opens the board instead.
+let deepTaskId = null;
+try { deepTaskId = deepTask && decodeURIComponent(deepTask[1]); } catch { deepTaskId = null; }
 if (deep) { focused = deep[1]; setView('review'); }
-else if (deepTask) openTask(decodeURIComponent(deepTask[1]), TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
+else if (deepTaskId) openTask(deepTaskId, TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
 else { setView('board'); }
 refresh();
 updateNotifyButton();
