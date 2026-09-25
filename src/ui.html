@@ -5,331 +5,1497 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>adj</title>
+
+<!-- Google Material Symbols Outlined -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+
 <style>
-/* Surfaces, ink and status are the reference palette. Status colours are reserved — they
-   never stand for anything but state, and they always ship with an icon and a label so the
-   colour is never the only carrier. */
+/* ── Material Design 3 (M3) Expressive Design System ── */
 :root {
   color-scheme: light;
-  --plane:#f9f9f7; --surface-1:#fcfcfb; --surface-2:#f2f1ed;
-  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
-  --border:rgba(11,11,11,.10); --hairline:#e1e0d9;
-  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --accent:#2a78d6;
-  --shadow:0 1px 2px rgba(11,11,11,.06),0 1px 1px rgba(11,11,11,.04);
+
+  /* Primary & Accents (Expressive Indigo/Blue) */
+  --md-sys-color-primary: #005ac1;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #d8e2ff;
+  --md-sys-color-on-primary-container: #001a41;
+
+  /* Secondary (Teal/Slate) */
+  --md-sys-color-secondary: #575e71;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #dbe2f9;
+  --md-sys-color-on-secondary-container: #141b2c;
+
+  /* Tertiary (Expressive Purple) */
+  --md-sys-color-tertiary: #715573;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #fbd7fc;
+  --md-sys-color-on-tertiary-container: #29132d;
+
+  /* Error / Critical */
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #ffdad6;
+  --md-sys-color-on-error-container: #410002;
+
+  /* Warning / Attention (M3 Expressive Honey Amber) */
+  --md-sys-color-warning: #7e5700;
+  --md-sys-color-on-warning: #ffffff;
+  --md-sys-color-warning-container: #ffdea9;
+  --md-sys-color-on-warning-container: #271900;
+
+  /* Success / Done */
+  --md-sys-color-success: #006d39;
+  --md-sys-color-on-success: #ffffff;
+  --md-sys-color-success-container: #99f7b3;
+  --md-sys-color-on-success-container: #00210d;
+
+  /* Surfaces & Containers (M3 Tonal Surface System) */
+  --md-sys-color-surface: #f9f9fc;
+  --md-sys-color-on-surface: #1a1c20;
+  --md-sys-color-on-surface-variant: #44474f;
+  --md-sys-color-outline: #74777f;
+  --md-sys-color-outline-variant: #c4c6d0;
+
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f3f3f7;
+  --md-sys-color-surface-container: #edeeF2;
+  --md-sys-color-surface-container-high: #e7e8ec;
+  --md-sys-color-surface-container-highest: #e1e2e6;
+
+  /* Elevation Shadows */
+  --md-elevation-1: 0 1px 3px 1px rgba(0,0,0,.08), 0 1px 2px 0 rgba(0,0,0,.05);
+  --md-elevation-2: 0 2px 6px 2px rgba(0,0,0,.08), 0 1px 2px 0 rgba(0,0,0,.06);
+  --md-elevation-3: 0 4px 12px 3px rgba(0,0,0,.08), 0 1px 3px 0 rgba(0,0,0,.06);
+  --md-elevation-4: 0 6px 16px 4px rgba(0,0,0,.10), 0 2px 4px 0 rgba(0,0,0,.08);
+
+  /* Shape Tokens (Expressive Rounded Geometry) */
+  --md-shape-corner-xs: 4px;
+  --md-shape-corner-sm: 8px;
+  --md-shape-corner-md: 12px;
+  --md-shape-corner-lg: 18px;
+  --md-shape-corner-xl: 26px;
+  --md-shape-corner-full: 9999px;
+
+  /* Fonts */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Legacy aliases for backward compatibility */
+  --plane: var(--md-sys-color-surface);
+  --surface-1: var(--md-sys-color-surface-container-lowest);
+  --surface-2: var(--md-sys-color-surface-container);
+  --ink: var(--md-sys-color-on-surface);
+  --ink-2: var(--md-sys-color-on-surface-variant);
+  --muted: var(--md-sys-color-on-surface-variant);
+  --border: var(--md-sys-color-outline-variant);
+  --hairline: var(--md-sys-color-outline-variant);
+  --good: var(--md-sys-color-success);
+  --warning: var(--md-sys-color-warning);
+  --critical: var(--md-sys-color-error);
+  --accent: var(--md-sys-color-primary);
+  --shadow: var(--md-elevation-1);
 }
-@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) {
-  color-scheme: dark;
-  --plane:#0d0d0d; --surface-1:#1a1a19; --surface-2:#232321;
-  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
-  --border:rgba(255,255,255,.10); --hairline:#2c2c2a;
-  --good:#0ca30c; --warning:#fab219; --critical:#e66767; --accent:#3987e5;
-  --shadow:0 1px 2px rgba(0,0,0,.5);
-} }
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --md-sys-color-primary: #a8c7fa;
+    --md-sys-color-on-primary: #002d68;
+    --md-sys-color-primary-container: #004394;
+    --md-sys-color-on-primary-container: #d8e2ff;
+
+    --md-sys-color-secondary: #bfc6dc;
+    --md-sys-color-on-secondary: #293041;
+    --md-sys-color-secondary-container: #3f4759;
+    --md-sys-color-on-secondary-container: #dbe2f9;
+
+    --md-sys-color-tertiary: #dfbbde;
+    --md-sys-color-on-tertiary: #402843;
+    --md-sys-color-tertiary-container: #583e5a;
+    --md-sys-color-on-tertiary-container: #fbd7fc;
+
+    --md-sys-color-error: #ffb4ab;
+    --md-sys-color-on-error: #690005;
+    --md-sys-color-error-container: #93000a;
+    --md-sys-color-on-error-container: #ffdad6;
+
+    --md-sys-color-warning: #ffba2e;
+    --md-sys-color-on-warning: #432c00;
+    --md-sys-color-warning-container: #5f4100;
+    --md-sys-color-on-warning-container: #ffdea9;
+
+    --md-sys-color-success: #74d994;
+    --md-sys-color-on-success: #00391b;
+    --md-sys-color-success-container: #005329;
+    --md-sys-color-on-success-container: #99f7b3;
+
+    --md-sys-color-surface: #111318;
+    --md-sys-color-on-surface: #e2e2e9;
+    --md-sys-color-on-surface-variant: #c4c6d0;
+    --md-sys-color-outline: #8e9099;
+    --md-sys-color-outline-variant: #44474f;
+
+    --md-sys-color-surface-container-lowest: #0c0e13;
+    --md-sys-color-surface-container-low: #1a1c20;
+    --md-sys-color-surface-container: #1e2025;
+    --md-sys-color-surface-container-high: #282a2f;
+    --md-sys-color-surface-container-highest: #33353a;
+
+    --md-elevation-1: 0 1px 3px 1px rgba(0,0,0,.3);
+    --md-elevation-2: 0 2px 6px 2px rgba(0,0,0,.35);
+    --md-elevation-3: 0 4px 12px 3px rgba(0,0,0,.4);
+    --md-elevation-4: 0 6px 16px 4px rgba(0,0,0,.45);
+  }
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane:#0d0d0d; --surface-1:#1a1a19; --surface-2:#232321;
-  --ink:#fff; --ink-2:#c3c2b7; --muted:#898781;
-  --border:rgba(255,255,255,.10); --hairline:#2c2c2a;
-  --good:#0ca30c; --warning:#fab219; --critical:#e66767; --accent:#3987e5;
-  --shadow:0 1px 2px rgba(0,0,0,.5);
+  --md-sys-color-primary: #a8c7fa;
+  --md-sys-color-on-primary: #002d68;
+  --md-sys-color-primary-container: #004394;
+  --md-sys-color-on-primary-container: #d8e2ff;
+
+  --md-sys-color-secondary: #bfc6dc;
+  --md-sys-color-on-secondary: #293041;
+  --md-sys-color-secondary-container: #3f4759;
+  --md-sys-color-on-secondary-container: #dbe2f9;
+
+  --md-sys-color-tertiary: #dfbbde;
+  --md-sys-color-on-tertiary: #402843;
+  --md-sys-color-tertiary-container: #583e5a;
+  --md-sys-color-on-tertiary-container: #fbd7fc;
+
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-on-error: #690005;
+  --md-sys-color-error-container: #93000a;
+  --md-sys-color-on-error-container: #ffdad6;
+
+  --md-sys-color-warning: #ffba2e;
+  --md-sys-color-on-warning: #432c00;
+  --md-sys-color-warning-container: #5f4100;
+  --md-sys-color-on-warning-container: #ffdea9;
+
+  --md-sys-color-success: #74d994;
+  --md-sys-color-on-success: #00391b;
+  --md-sys-color-success-container: #005329;
+  --md-sys-color-on-success-container: #99f7b3;
+
+  --md-sys-color-surface: #111318;
+  --md-sys-color-on-surface: #e2e2e9;
+  --md-sys-color-on-surface-variant: #c4c6d0;
+  --md-sys-color-outline: #8e9099;
+  --md-sys-color-outline-variant: #44474f;
+
+  --md-sys-color-surface-container-lowest: #0c0e13;
+  --md-sys-color-surface-container-low: #1a1c20;
+  --md-sys-color-surface-container: #1e2025;
+  --md-sys-color-surface-container-high: #282a2f;
+  --md-sys-color-surface-container-highest: #33353a;
 }
-* { box-sizing:border-box; }
-html,body { height:100%; }
-body { margin:0; background:var(--plane); color:var(--ink); display:flex; flex-direction:column;
-  font:13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; }
-button { font:inherit; color:inherit; cursor:pointer; }
 
-header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 14px;
-  background:var(--surface-1); border-bottom:1px solid var(--hairline); }
-.brand { font-weight:660; }
-.brand span { color:var(--muted); font-weight:400; margin-left:6px; }
-.spacer { flex:1; }
-.state { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
-.state.good { color:var(--good); } .state.warn { color:var(--ink-2); }
-.state.bad { color:var(--critical); }
-.iconbtn { border:1px solid var(--border); background:var(--surface-1); border-radius:6px;
-  padding:3px 8px; color:var(--ink-2); }
-.iconbtn:hover { background:var(--surface-2); }
-.primary { border:0; background:var(--ink); color:var(--plane); border-radius:6px;
-  padding:5px 12px; font-weight:600; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --md-sys-color-primary: #005ac1;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #d8e2ff;
+  --md-sys-color-on-primary-container: #001a41;
+  --md-sys-color-secondary: #575e71;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #dbe2f9;
+  --md-sys-color-on-secondary-container: #141b2c;
+  --md-sys-color-tertiary: #715573;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #fbd7fc;
+  --md-sys-color-on-tertiary-container: #29132d;
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #ffdad6;
+  --md-sys-color-on-error-container: #410002;
+  --md-sys-color-warning: #7e5700;
+  --md-sys-color-on-warning: #ffffff;
+  --md-sys-color-warning-container: #ffdea9;
+  --md-sys-color-on-warning-container: #271900;
+  --md-sys-color-success: #006d39;
+  --md-sys-color-on-success: #ffffff;
+  --md-sys-color-success-container: #99f7b3;
+  --md-sys-color-on-success-container: #00210d;
+  --md-sys-color-surface: #f9f9fc;
+  --md-sys-color-on-surface: #1a1c20;
+  --md-sys-color-on-surface-variant: #44474f;
+  --md-sys-color-outline: #74777f;
+  --md-sys-color-outline-variant: #c4c6d0;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f3f3f7;
+  --md-sys-color-surface-container: #edeeF2;
+  --md-sys-color-surface-container-high: #e7e8ec;
+  --md-sys-color-surface-container-highest: #e1e2e6;
+}
 
-main { flex:1; overflow:hidden; position:relative; }
-#board-view { display:flex; height:100%; width:100%; min-width:0; overflow:hidden; }
-#board { flex:1; min-width:0; display:flex; gap:12px; padding:14px; align-items:flex-start; overflow-x:auto; overflow-y:auto; }
-.col { flex:0 0 214px; min-width:0; display:flex; flex-direction:column; gap:8px; background:var(--surface-2);
-  border-radius:10px; padding:8px; min-height:110px; }
-.col.attention { background:color-mix(in oklab,var(--surface-2) 88%,var(--accent)); }
-.col > h2 { margin:0; padding:2px 4px 0; font-size:12px; font-weight:640; color:var(--ink-2);
-  display:flex; align-items:center; gap:6px; flex-wrap:wrap; white-space:nowrap; }
-.col > h2 .n { color:var(--muted); font-weight:400; font-variant-numeric:tabular-nums; }
-.col > h2 .hint { margin-left:auto; color:var(--muted); font-weight:400; font-size:11px; }
-.col > h2 .hint.full { color:var(--warning); }
-.col > h2 .next { border:1px solid var(--border); background:transparent; color:var(--ink-2);
-  border-radius:6px; padding:1px 7px; font-size:11px; cursor:pointer; }
-.col > h2 .next:hover { border-color:var(--ink-2); color:var(--ink); }
-.col.drop-ok { outline:2px dashed var(--good); outline-offset:1px; }
-.col .empty { color:var(--muted); padding:6px 4px; }
+/* ── M3 Base Utility Components ── */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
 
-.card.stuck { border:2px solid var(--critical); }
-.col > .more { border:1px dashed var(--border); background:transparent; color:var(--muted);
-  border-radius:8px; padding:6px; font-size:11.5px; cursor:pointer; width:100%; margin-top:6px; }
-.card { background:var(--surface-1); border:1px solid var(--border); border-radius:8px;
-  padding:8px 10px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:5px;
-  text-align:left; width:100%; min-width:0; cursor:pointer; transition:border-color .15s, box-shadow .15s; }
-.card:hover { border-color:var(--ink-2); }
-.card.selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
-.card[draggable="true"] { cursor:grab; }
-.card.dragging { opacity:.45; }
-.card.ghost { border-style:dashed; box-shadow:none; background:transparent; cursor:default; }
-.card .title { font-weight:600; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3;
-  -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; }
-.card .meta { display:flex; flex-wrap:wrap; gap:4px 8px; color:var(--ink-2); font-size:12px; }
-.card .mono { font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted);
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.card .note { font-size:12px; color:var(--ink-2); overflow-wrap:anywhere; display:-webkit-box;
-  -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.4; }
-.card .state { white-space:normal; overflow-wrap:anywhere; align-items:flex-start; }
-.card .state > span:first-child { flex:none; }
-.card .stopwhy { font-size:11.5px; color:var(--ink-2); overflow-wrap:anywhere; }
-.card .stopwhy.bad { color:var(--critical); }
-.chips { display:flex; flex-wrap:wrap; gap:4px; }
-.chip { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; font-size:11px;
-  color:var(--ink-2); border:1px solid var(--border); border-radius:999px; padding:0 7px;
-  background:transparent; }
-.chip.good { color:var(--good); border-color:color-mix(in oklab,var(--border) 40%,var(--good)); }
-.chip.bad { color:var(--critical); border-color:var(--critical); }
-.unread { width:7px; height:7px; border-radius:50%; background:var(--accent); flex:none; }
-.card .acts { display:flex; gap:4px; flex-wrap:wrap; margin-top:2px; }
-.card .acts button { border:1px solid var(--border); background:transparent; color:var(--ink-2);
-  border-radius:5px; padding:1px 7px; font-size:11px; }
-.card .acts button:hover { background:var(--surface-2); color:var(--ink); }
+.btn-m3-primary {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: 0;
+  padding: 8px 18px;
+  border-radius: var(--md-shape-corner-full);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: box-shadow .15s, opacity .15s;
+}
+.btn-m3-primary:hover {
+  box-shadow: var(--md-elevation-1);
+  opacity: .95;
+}
 
-/* ── task drawer (right sidebar) ── */
-#task-drawer { flex:0 0 380px; width:380px; max-width:90vw; height:100%; overflow-y:auto;
-  background:var(--surface-1); border-left:1px solid var(--border); box-shadow:-2px 0 16px rgba(0,0,0,.08);
-  display:flex; flex-direction:column; }
-#task-drawer.hidden { display:none !important; }
-#task-drawer .d-head { padding:14px 16px; border-bottom:1px solid var(--hairline); display:flex;
-  gap:10px; align-items:flex-start; }
-#task-drawer .d-head h2 { margin:0; font-size:15px; font-weight:640; line-height:1.4; flex:1;
-  overflow-wrap:anywhere; }
-#task-drawer .d-close { border:0; background:transparent; font-size:18px; line-height:1;
-  color:var(--muted); cursor:pointer; padding:2px 6px; border-radius:4px; }
-#task-drawer .d-close:hover { color:var(--ink); background:var(--surface-2); }
-#task-drawer .d-body { padding:16px; display:flex; flex-direction:column; gap:12px; flex:1; overflow-y:auto; }
-#task-drawer .d-section { background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
-  padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
-#task-drawer .d-label { font-size:11px; color:var(--muted); font-weight:640; text-transform:uppercase; letter-spacing:.04em; }
-#task-drawer .d-value { font-size:13px; color:var(--ink); overflow-wrap:anywhere; line-height:1.5; }
-#task-drawer .d-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-#task-drawer .d-gate-banner { border:1px solid var(--accent); background:color-mix(in oklab,var(--surface-1) 85%,var(--accent));
-  border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
-#task-drawer .d-gate-banner button { align-self:flex-start; border:0; background:var(--accent); color:#fff;
-  border-radius:6px; padding:4px 10px; font-weight:600; font-size:12px; cursor:pointer; }
-#task-drawer .d-record { display:flex; flex-direction:column; gap:4px; padding:8px 0;
-  border-top:1px solid var(--hairline); }
-#task-drawer .d-label + .d-record { border-top:0; padding-top:2px; }
-#task-drawer .d-record .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-#task-drawer .d-record .sum { font-size:12.5px; color:var(--ink); overflow-wrap:anywhere; }
-#task-drawer .d-record .sum.bad { color:var(--critical); }
-#task-drawer .d-record .when { font-size:11.5px; color:var(--muted); }
-#task-drawer .d-record button { align-self:flex-start; }
+.btn-m3-tonal {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border: 0;
+  padding: 8px 18px;
+  border-radius: var(--md-shape-corner-full);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-m3-tonal:hover {
+  background: color-mix(in srgb, var(--md-sys-color-secondary-container) 85%, black);
+}
+
+.btn-m3-text {
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  border: 0;
+  padding: 8px 12px;
+  border-radius: var(--md-shape-corner-full);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-m3-text:hover {
+  background: rgba(0, 90, 193, 0.08);
+}
+
+.m3-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: var(--md-shape-corner-full);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pill-blue    { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.pill-warn    { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.pill-good    { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+.pill-err     { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.pill-neutral { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
+.pill-purple  { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+
+.m3-card {
+  background: var(--md-sys-color-surface-container-lowest);
+  border-radius: var(--md-shape-corner-md);
+  padding: 14px;
+  box-shadow: var(--md-elevation-1);
+}
+.m3-filled-card {
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-shape-corner-md);
+  padding: 14px;
+}
+.m3-card-attention-box {
+  background: var(--md-sys-color-warning-container);
+  color: var(--md-sys-color-on-warning-container);
+  border-radius: var(--md-shape-corner-md);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.m3-segmented-tabs {
+  display: flex;
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: var(--md-shape-corner-full);
+  padding: 4px;
+  width: fit-content;
+}
+.m3-seg-tab {
+  background: transparent;
+  border: 0;
+  padding: 8px 18px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface-variant);
+  border-radius: var(--md-shape-corner-full);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.m3-seg-tab.active {
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface);
+  box-shadow: var(--md-elevation-1);
+}
+.m3-tab-badge {
+  background: var(--md-sys-color-warning);
+  color: var(--md-sys-color-on-warning);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: var(--md-shape-corner-full);
+  margin-left: 4px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; width: 100%; overflow: hidden; }
+body {
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  display: flex;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+
+/* ── M3 Navigation Rail / Drawer (Left Side) ── */
+#nav-rail {
+  width: 240px;
+  background: var(--md-sys-color-surface-container-low);
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  gap: 14px;
+  flex-shrink: 0;
+  z-index: 20;
+}
+
+.rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 10px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+.brand-badge {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-weight: 900;
+  font-size: 14px;
+  padding: 5px 9px;
+  border-radius: var(--md-shape-corner-md);
+  letter-spacing: -.02em;
+}
+.repo-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.repo-title {
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.repo-sub {
+  font-size: 11px;
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--font-mono);
+}
+
+/* M3 Extended Floating Action Button (FAB) */
+.m3-fab-extended {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border: 0;
+  border-radius: var(--md-shape-corner-lg);
+  padding: 12px 18px;
+  font-size: 13.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: var(--md-elevation-1);
+  transition: all .2s cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-fab-extended:hover {
+  box-shadow: var(--md-elevation-2);
+  transform: translateY(-1px);
+}
+
+/* Rail Navigation Destinations */
+.rail-destinations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--md-shape-corner-full);
+  color: var(--md-sys-color-on-surface-variant);
+  font-weight: 600;
+  font-size: 13px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: all .15s ease;
+  text-align: left;
+  text-decoration: none;
+}
+.rail-item:hover {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+.rail-item[aria-current="page"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-weight: 700;
+}
+.rail-badge {
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--md-shape-corner-full);
+  margin-left: auto;
+}
+
+/* Rail Footer (Status & Tools) */
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+.status-pill-group {
+  background: var(--md-sys-color-surface-container);
+  padding: 8px 10px;
+  border-radius: var(--md-shape-corner-md);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--md-sys-color-success);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--md-sys-color-success);
+}
+.rail-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tool-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  border-radius: var(--md-shape-corner-full);
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tool-btn:hover { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
+
+/* ── Main App Layout ── */
+#app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+}
+
+/* Top App Bar */
+.top-app-bar {
+  background: var(--md-sys-color-surface);
+  padding: 10px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  z-index: 10;
+  flex-shrink: 0;
+}
+.page-title-area {
+  display: flex;
+  flex-direction: column;
+}
+.page-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+.page-subtitle {
+  font-size: 11.5px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* M3 Filter Chips */
+.top-bar-actions { display: flex; align-items: center; gap: 8px; margin-left: 8px; }
+.filter-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.m3-filter-chip {
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-sm);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.m3-filter-chip:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+.m3-filter-chip.active {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  border-color: transparent;
+}
+
+main { flex: 1; overflow: hidden; position: relative; }
+#board-view { display: flex; height: 100%; width: 100%; min-width: 0; overflow: hidden; }
+@media (max-width: 900px) {
+  #board-view { position: relative; }
+  #board-view #task-drawer { position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%; }
+  /* When the top bar wraps, its actions stay on the right of their own line. */
+  .top-bar-actions { margin-left: auto; }
+}
+
+/* ── M3 Expressive Kanban Board ── */
+#board {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 14px;
+  padding: 16px;
+  align-items: flex-start;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.col {
+  flex: 0 0 240px;
+  width: 240px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: var(--md-shape-corner-lg);
+  padding: 10px;
+  min-height: 140px;
+  border: 1px solid transparent;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.col.attention {
+  background: color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface-container-low));
+}
+.col.drop-ok {
+  outline: 2px dashed var(--md-sys-color-primary);
+  outline-offset: 1px;
+}
+.col-empty-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 8px;
+  color: var(--md-sys-color-outline);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px dashed var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-md);
+  opacity: 0.6;
+}
+
+.col-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+.col-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.col-title-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13.5px;
+}
+.col-count-pill {
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: var(--md-shape-corner-full);
+}
+.col-subtext {
+  font-size: 11px;
+  color: var(--md-sys-color-outline);
+}
+.col-btn-nudge {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-primary);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--md-shape-corner-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.col-btn-nudge:hover {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.col > .more {
+  border: 1px dashed var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-outline);
+  border-radius: var(--md-shape-corner-sm);
+  padding: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* ── M3 Kanban Task Card ── */
+.card {
+  background: var(--md-sys-color-surface-container-lowest);
+  border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px;
+  box-shadow: var(--md-elevation-1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  position: relative;
+}
+.card:hover {
+  box-shadow: var(--md-elevation-2);
+  transform: translateY(-1px);
+  border-color: var(--md-sys-color-outline-variant);
+}
+.card.selected {
+  border-color: var(--md-sys-color-primary);
+  box-shadow: 0 0 0 2px var(--md-sys-color-primary), var(--md-elevation-2);
+}
+.card.attention-card {
+  border-left: 4px solid var(--md-sys-color-warning);
+}
+.card.stuck {
+  border: 2px solid var(--md-sys-color-error);
+}
+.card[draggable="true"] { cursor: grab; }
+.card.dragging { opacity: .4; }
+.card.ghost { border-style: dashed; box-shadow: none; background: transparent; cursor: default; }
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.card-task-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--md-sys-color-outline);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.card-issue-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+  text-decoration: none;
+  background: var(--md-sys-color-surface-container-high);
+  padding: 1px 6px;
+  border-radius: var(--md-shape-corner-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color .15s ease, color .15s ease;
+}
+.card-issue-link:hover {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.card .title {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--md-sys-color-on-surface);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-worker-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--md-sys-color-on-surface-variant);
+  background: var(--md-sys-color-surface-container-low);
+  padding: 4px 8px;
+  border-radius: var(--md-shape-corner-xs);
+}
+.card-footer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--md-sys-color-surface-container-high);
+}
+.card-meta-slug {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--md-sys-color-outline);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 1;
+}
+.card-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  margin-left: auto;
+}
+.m3-icon-button {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface-variant);
+  border-radius: var(--md-shape-corner-sm);
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: background-color .15s ease, color .15s ease;
+}
+.m3-icon-button:hover {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Worker live indicator pulse */
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary);
+  display: inline-block;
+  position: relative;
+}
+.pulse-dot::after {
+  content: '';
+  position: absolute;
+  top: -2px; left: -2px; right: -2px; bottom: -2px;
+  border-radius: 50%;
+  border: 1px solid var(--md-sys-color-primary);
+  animation: pulse-ring 1.8s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot::after { animation: none; }
+}
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* ── M3 Side Sheet (Task Quick Drawer / Inspection) ── */
+#task-drawer {
+  flex: 0 0 400px;
+  width: 400px;
+  max-width: 90vw;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--md-sys-color-surface-container-low);
+  border-left: 1px solid var(--md-sys-color-outline-variant);
+  box-shadow: var(--md-elevation-3);
+  display: flex;
+  flex-direction: column;
+  z-index: 30;
+}
+#task-drawer.hidden { display: none !important; }
+.sidesheet-header {
+  padding: 16px 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container);
+}
+.sidesheet-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  overflow-y: auto;
+}
 
 
 /* ── the review view ── */
-#review { display:none; height:100%; padding:0; color:var(--ink); }
-#review.on { display:grid; grid-template-columns:272px 1fr; }
-.rail { border-right:1px solid var(--hairline); background:var(--surface-1); overflow:auto; padding:10px; }
-.rail h2 { margin:0 0 8px 4px; font-size:12px; color:var(--ink-2); font-weight:600; }
-.rail kbd { font:11px/1 ui-monospace,Menlo,monospace; border:1px solid var(--border);
-  border-bottom-width:2px; border-radius:4px; padding:1px 4px; color:var(--muted); }
-.rail .item { width:100%; text-align:left; border:1px solid transparent; background:transparent;
-  border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:4px; }
-.rail .item:hover { background:var(--surface-2); }
-.rail .item[aria-current="true"] { background:var(--surface-2); border-color:var(--border); }
-.rail .item .t { font-weight:600; }
-.rail .item .w { color:var(--muted); font-size:12px; }
-.pane { overflow:auto; padding:18px 22px 28px; max-width:980px; }
-.pane h1 { font-size:17px; margin:0 0 2px; }
-.pane .sub { color:var(--ink-2); margin-bottom:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-.tag { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; font-size:11px;
-  color:var(--ink-2); border:1px solid var(--border); border-radius:999px; padding:0 7px; }
-.tag .dot { width:7px; height:7px; border-radius:50%; flex:none; }
-.panel { background:var(--surface-1); border:1px solid var(--border); border-radius:10px;
-  padding:14px 16px; margin-bottom:14px; }
-.panel h3 { margin:0 0 8px; font-size:12px; color:var(--muted); font-weight:640;
-  letter-spacing:.04em; text-transform:uppercase; }
-.panel > ul { margin:0; padding-left:18px; }
-.frame-focus { border-left:3px solid var(--accent); padding-left:12px; }
-.body h3 { margin:18px 0 8px; font-size:14px; font-weight:700; color:var(--ink); }
-.body h3:first-child { margin-top:0; }
-.body h4 { margin:15px 0 6px; font-size:13px; font-weight:660; color:var(--ink); }
-.body h4:first-child { margin-top:0; }
-.body h5 { margin:13px 0 5px; font-size:12.5px; font-weight:640; color:var(--ink); }
-.body h5:first-child { margin-top:0; }
-.body p { margin:0 0 9px; line-height:1.6; }
-.body ul, .body ol { margin:0 0 10px; padding-left:20px; line-height:1.6; }
-.body li { margin:3px 0; }
-.body hr { border:0; border-top:1px solid var(--hairline); margin:16px 0; }
-.body blockquote { margin:0 0 10px; padding:6px 12px; border-left:3px solid var(--accent);
-  background:var(--surface-2); border-radius:0 6px 6px 0; color:var(--ink-2); }
-.body blockquote p { margin:0; }
-.body pre { background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
-  padding:10px 12px; overflow:auto; margin:0 0 10px; }
-.body pre code { background:transparent; padding:0; font:12px/1.5 ui-monospace,Menlo,monospace; border-radius:0; }
-.body table { width:100%; border-collapse:collapse; margin:10px 0 14px; font-size:12px; }
-.body th, .body td { border:1px solid var(--border); padding:6px 10px; text-align:left; vertical-align:top; }
-.body th { background:var(--surface-2); font-weight:640; color:var(--ink); white-space:nowrap; }
-.body a { color:var(--accent); text-decoration:none; }
-.body a:hover { text-decoration:underline; }
-.body del { color:var(--muted); text-decoration:line-through; }
-.body > :last-child { margin-bottom:0; }
-.body code { font:12px/1.5 ui-monospace,Menlo,monospace; background:var(--surface-2);
-  padding:1px 5px; border-radius:4px; }
-details.decided summary { color:var(--muted); cursor:pointer; font-size:12px; }
-details.decided[open] summary { margin-bottom:8px; }
-.choices { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.choice { border:1px solid var(--border); border-radius:9px; padding:12px 14px;
-  background:var(--surface-2); display:flex; flex-direction:column; gap:8px; }
-.choice.rec { border-color:var(--accent); }
-.choice .rec-tag { font-size:11px; color:var(--accent); font-weight:640; }
-.choice h4 { margin:0; font-size:13px; }
-.choice .why { color:var(--ink-2); font-size:12px; margin:0; }
-.choice ul { margin:0; padding-left:17px; font-size:12px; color:var(--ink-2); }
-.choice .pick { margin-top:auto; border:1px solid var(--ink); background:transparent;
-  border-radius:7px; padding:6px 10px; font-weight:600; }
-.work { border:1px solid var(--good); border-radius:9px; padding:12px 14px; display:flex;
-  align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
-.work .big { border:0; background:var(--good); color:#fff; border-radius:7px; padding:8px 15px; font-weight:640; }
-.mono2 { font:12px ui-monospace,Menlo,monospace; color:var(--ink-2); }
-.diff { font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--surface-2);
-  border-radius:8px; padding:8px 0; overflow:auto; }
-.diff div { padding:0 12px; white-space:pre; }
-.diff .h { color:var(--muted); }
-.diff .a { color:var(--good); background:color-mix(in oklab,var(--surface-2) 86%,var(--good)); }
-.diff .d { color:var(--critical); background:color-mix(in oklab,var(--surface-2) 86%,var(--critical)); }
-.hint-bar { border:1px solid var(--warning); border-radius:8px; padding:8px 12px; margin-bottom:12px;
-  color:var(--ink-2); font-size:12px; }
-.decide { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.decide .approve { border:0; background:var(--good); color:#fff; border-radius:7px; padding:7px 14px; font-weight:640; }
-.decide .changes { border:1px solid var(--warning); background:transparent; color:var(--ink);
-  border-radius:7px; padding:6px 13px; font-weight:600; }
-.decide .reject { border:1px solid var(--border); background:transparent; color:var(--ink-2);
-  border-radius:7px; padding:6px 13px; }
-.decide .talk { border:1px solid var(--accent); background:transparent; color:var(--accent);
-  border-radius:7px; padding:6px 13px; font-weight:600; }
-.decide .close { border:1px solid var(--border); background:transparent; color:var(--ink-2);
-  border-radius:7px; padding:6px 13px; }
-.decide .close:hover { border-color:var(--ink-2); color:var(--ink); }
-.empty-state { padding:40px; color:var(--muted); }
-.badge-count { display:inline-block; min-width:16px; margin-left:6px; padding:0 4px;
-  border-radius:999px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; text-align:center; }
-.tabs { display:flex; gap:2px; background:var(--surface-2); padding:2px; border-radius:8px; }
-.tabs button { border:0; background:transparent; padding:4px 12px; border-radius:6px; color:var(--ink-2); }
-.tabs button[aria-selected="true"] { background:var(--surface-1); color:var(--ink); font-weight:600;
-  box-shadow:var(--shadow); }
+#review { display:none; height:100%; padding:0; color:var(--md-sys-color-on-surface); }
+#review.on { display:grid; grid-template-columns:320px 1fr; }
+.review-inbox-pane, .rail {
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.review-inbox-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  font-weight: 800;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.review-inbox-header kbd, .rail kbd {
+  font: 11px/1 ui-monospace,Menlo,monospace;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-xs);
+  padding: 2px 4px;
+  color: var(--md-sys-color-outline);
+  background: var(--md-sys-color-surface-container);
+}
+.review-inbox-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.review-inbox-item, .rail .item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: pointer;
+  color: inherit;
+  transition: background var(--md-motion-duration-short2) var(--md-motion-easing-standard);
+}
+.review-inbox-item:hover, .rail .item:hover {
+  background: var(--md-sys-color-surface-container);
+}
+.review-inbox-item.selected, .review-inbox-item[aria-current="true"], .rail .item[aria-current="true"] {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border-color: transparent;
+}
+.review-inbox-item .t, .rail .item .t { font-weight: 700; font-size: 13px; line-height: 1.35; }
+.review-inbox-item .w, .rail .item .w { color: var(--md-sys-color-outline); font-size: 11.5px; }
+
+.review-detail-pane, .pane {
+  overflow-y: auto;
+  padding: 24px 36px 80px;
+  max-width: 1080px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-sizing: border-box;
+}
+.pane h1 { font-size: 20px; font-weight: 800; margin: 0 0 4px; color: var(--md-sys-color-on-surface); }
+.pane .sub { color: var(--md-sys-color-on-surface-variant); margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 12px; }
+
+.tag { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px;
+  color: var(--md-sys-color-on-surface-variant); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-full); padding: 2px 8px; }
+.tag .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+.panel {
+  background: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-lg);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+.panel h3 {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--md-sys-color-primary);
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel > ul { margin: 0; padding-left: 18px; }
+.frame-focus {
+  border-left: 3px solid var(--md-sys-color-primary);
+  padding-left: 12px;
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: 0 var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0;
+  padding: 8px 12px;
+}
+.body h3 { margin: 18px 0 8px; font-size: 14px; font-weight: 700; color: var(--md-sys-color-on-surface); }
+.body h3:first-child { margin-top: 0; }
+.body h4 { margin: 15px 0 6px; font-size: 13px; font-weight: 660; color: var(--md-sys-color-on-surface); }
+.body h4:first-child { margin-top: 0; }
+.body h5 { margin: 13px 0 5px; font-size: 12.5px; font-weight: 640; color: var(--md-sys-color-on-surface); }
+.body h5:first-child { margin-top: 0; }
+.body p { margin: 0 0 9px; line-height: 1.6; }
+.body ul, .body ol { margin: 0 0 10px; padding-left: 20px; line-height: 1.6; }
+.body li { margin: 3px 0; }
+.body hr { border: 0; border-top: 1px solid var(--md-sys-color-outline-variant); margin: 16px 0; }
+.body blockquote { margin: 0 0 10px; padding: 6px 12px; border-left: 3px solid var(--md-sys-color-primary);
+  background: var(--md-sys-color-surface-container-low); border-radius: 0 var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0; color: var(--md-sys-color-on-surface-variant); }
+.body blockquote p { margin: 0; }
+.body pre { background: var(--md-sys-color-surface-container-lowest); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
+.body pre code { background: transparent; padding: 0; font: 12px/1.5 var(--font-mono); border-radius: 0; }
+.body table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 12px; }
+.body th, .body td { border: 1px solid var(--md-sys-color-outline-variant); padding: 8px 12px; text-align: left; vertical-align: top; }
+.body th { background: var(--md-sys-color-surface-container-high); font-weight: 700; color: var(--md-sys-color-on-surface); white-space: nowrap; }
+.body a { color: var(--md-sys-color-primary); text-decoration: none; }
+.body a:hover { text-decoration: underline; }
+.body del { color: var(--md-sys-color-outline); text-decoration: line-through; }
+.body > :last-child { margin-bottom: 0; }
+.body code { font: 12px/1.5 var(--font-mono); background: var(--md-sys-color-surface-container-high);
+  padding: 2px 6px; border-radius: 4px; }
+details.decided summary { color: var(--md-sys-color-outline); cursor: pointer; font-size: 12px; }
+details.decided[open] summary { margin-bottom: 8px; }
+
+/* Choices */
+.choices-container, .choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.m3-choice-card, .choice {
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-shape-corner-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 2px solid transparent;
+}
+.m3-choice-card.recommended, .m3-choice-card.rec, .choice.rec {
+  border-color: var(--md-sys-color-primary);
+  background: color-mix(in oklab, var(--md-sys-color-surface-container) 85%, var(--md-sys-color-primary-container));
+}
+.choice .rec-tag { font-size: 11px; color: var(--md-sys-color-primary); font-weight: 700; }
+.choice h4 { margin: 0; font-size: 14px; }
+.choice .why { color: var(--md-sys-color-on-surface-variant); font-size: 12px; margin: 0; }
+.choice ul { margin: 0; padding-left: 17px; font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+.m3-btn-pick, .choice .pick {
+  margin-top: auto;
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  padding: 8px 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  transition: box-shadow var(--md-motion-duration-short2) var(--md-motion-easing-standard);
+}
+.m3-btn-pick:hover, .choice .pick:hover {
+  box-shadow: var(--md-elevation-1);
+}
+
+.work { border: 1px solid var(--md-sys-color-success); border-radius: var(--md-shape-corner-lg); padding: 12px 16px; display: flex;
+  align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; background: var(--md-sys-color-surface-container); }
+.work .big { border: 0; background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
+.mono2 { font: 12px var(--font-mono); color: var(--md-sys-color-on-surface-variant); }
+.diff { font: 12px/1.65 var(--font-mono); background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); padding: 8px 0; overflow: auto; }
+.diff div { padding: 0 14px; white-space: pre; }
+.diff .h { color: var(--md-sys-color-outline); }
+.diff .a { color: var(--md-sys-color-success); background: color-mix(in oklab, var(--md-sys-color-surface-container-lowest) 82%, var(--md-sys-color-success)); }
+.diff .d { color: var(--md-sys-color-error); background: color-mix(in oklab, var(--md-sys-color-surface-container-lowest) 82%, var(--md-sys-color-error)); }
+.hint-bar { border: 1px solid var(--md-sys-color-warning); border-radius: var(--md-shape-corner-md); padding: 8px 12px; margin-bottom: 12px;
+  color: var(--md-sys-color-on-surface-variant); font-size: 12px; background: color-mix(in oklab, var(--md-sys-color-surface) 90%, var(--md-sys-color-warning-container)); }
+
+/* Decision Floating Dock */
+.decision-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--md-sys-color-surface-container-high);
+  border: 2px solid var(--md-sys-color-primary);
+  border-radius: var(--md-shape-corner-xl);
+  padding: 20px;
+  box-shadow: var(--md-elevation-3);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.decision-dock textarea, .decision-dock .gate-comment {
+  width: 100%;
+  min-height: 80px;
+  padding: 12px;
+  border-radius: var(--md-shape-corner-md);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface);
+  font-family: inherit;
+  font-size: 13.5px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.decision-dock textarea:focus, .decision-dock .gate-comment:focus {
+  outline: 2px solid var(--md-sys-color-primary);
+  border-color: transparent;
+}
+.decide { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.decide .approve { border: 0; background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
+.decide .changes { border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; font-weight: 600; cursor: pointer; }
+.decide .reject { border: 0; background: transparent; color: var(--md-sys-color-error);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; cursor: pointer; }
+.decide .talk { border: 1px solid var(--md-sys-color-primary); background: transparent; color: var(--md-sys-color-primary);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; font-weight: 600; cursor: pointer; }
+.decide .close { border: 0; background: transparent; color: var(--md-sys-color-outline);
+  border-radius: var(--md-shape-corner-full); padding: 8px 16px; cursor: pointer; }
+.decide .close:hover { color: var(--md-sys-color-on-surface); }
+.empty-state { padding: 40px; color: var(--md-sys-color-outline); text-align: center; }
+.badge-count { display: inline-block; min-width: 16px; margin-left: 6px; padding: 0 4px;
+  border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-size: 11px; font-weight: 700; text-align: center; }
+.tabs { display: flex; gap: 2px; background: var(--md-sys-color-surface-container-high); padding: 2px; border-radius: var(--md-shape-corner-md); }
+.tabs button { border: 0; background: transparent; padding: 6px 14px; border-radius: var(--md-shape-corner-sm); color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-weight: 600;
+  box-shadow: var(--md-elevation-1); }
 
 /* ── the full view of one task ── */
 #task-view { display:none; height:100%; }
 #task-view.on { display:grid; grid-template-columns:1fr; }
-#task-view.on.with-rail { grid-template-columns:272px 1fr; }
+#task-view.on.with-rail { grid-template-columns:320px 1fr; }
 #task-view .tv-main { overflow:auto; min-width:0; }
-.tv-top { position:sticky; top:0; z-index:2; background:var(--plane); border-bottom:1px solid var(--hairline);
-  padding:10px 22px 0; display:flex; flex-direction:column; gap:6px; }
-.tv-top .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
-.tv-top h1 { margin:0; font-size:17px; flex:1; min-width:0; overflow-wrap:anywhere; line-height:1.4; }
+.tv-top { position:sticky; top:0; z-index:2; background:var(--md-sys-color-surface); border-bottom:1px solid var(--md-sys-color-outline-variant);
+  padding:16px 36px 0; display:flex; flex-direction:column; gap:10px; }
+.tv-top .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; min-width:0; }
+.tv-top h1 { margin:0; font-size:20px; font-weight:800; color:var(--md-sys-color-on-surface); flex:1; min-width:0; overflow-wrap:anywhere; line-height:1.35; }
 .tv-tabs { display:flex; gap:2px; flex-wrap:wrap; }
-.tv-tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:6px 12px;
-  color:var(--ink-2); display:inline-flex; align-items:center; gap:5px; }
-.tv-tabs button[aria-selected="true"] { border-bottom-color:var(--ink); color:var(--ink); font-weight:600; }
-.tv-body { padding:18px 22px 28px; max-width:980px; }
-.tv-wait { border:1px solid var(--accent); background:color-mix(in oklab,var(--surface-1) 85%,var(--accent));
-  border-radius:9px; padding:10px 14px; margin-bottom:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.tv-wait .bad { color:var(--critical); }
-.source { color:var(--muted); font-size:11.5px; margin-top:4px; }
+.tv-tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:8px 16px;
+  color:var(--md-sys-color-on-surface-variant); display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-weight:600; font-size:13px; }
+.tv-tabs button[aria-selected="true"] { border-bottom-color:var(--md-sys-color-primary); color:var(--md-sys-color-primary); font-weight:700; }
+.tv-body { padding:24px 36px 80px; max-width:1080px; margin:0 auto; width:100%; box-sizing:border-box; }
+.tv-wait { border:1px solid var(--md-sys-color-primary); background:color-mix(in oklab,var(--md-sys-color-surface) 88%,var(--md-sys-color-primary-container));
+  border-radius:var(--md-shape-corner-lg); padding:14px 18px; margin-bottom:16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.tv-wait .bad { color:var(--md-sys-color-error); }
+.source { color:var(--md-sys-color-outline); font-size:11.5px; margin-top:6px; }
 .kv { display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; margin:0; }
-.kv dt { color:var(--muted); font-size:12px; }
+.kv dt { color:var(--md-sys-color-outline); font-size:12px; }
 .kv dd { margin:0; overflow-wrap:anywhere; }
 .timeline { list-style:none; margin:0; padding:0; }
-.timeline li { display:grid; grid-template-columns:96px 1fr; gap:12px; padding:8px 0; border-top:1px solid var(--hairline); }
+.timeline li { display:grid; grid-template-columns:110px 1fr; gap:14px; padding:10px 0; border-top:1px solid var(--md-sys-color-outline-variant); }
 .timeline li:first-child { border-top:0; }
-.timeline .at { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
-.timeline .what { display:flex; flex-direction:column; gap:3px; min-width:0; }
-.timeline .what > div { overflow-wrap:anywhere; }
-.timeline .who { color:var(--muted); font-size:11.5px; }
-.linkish { border:0; background:transparent; padding:0; color:var(--accent); text-align:left; }
+.timeline .at { color:var(--md-sys-color-outline); font-size:12px; font-variant-numeric:tabular-nums; font-family:var(--font-mono); }
+.timeline .what { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.timeline .what > div { overflow-wrap:anywhere; font-size:13px; }
+.timeline .who { color:var(--md-sys-color-on-surface-variant); font-size:12px; }
+.linkish { border:0; background:transparent; padding:0; color:var(--md-sys-color-primary); text-align:left; cursor:pointer; font-weight:600; }
 .linkish:hover { text-decoration:underline; }
-.checklist { list-style:none; margin:0; padding:0; }
-.checklist li { padding:3px 0; }
-.checklist li::before { content:'☐'; margin-right:8px; color:var(--muted); }
+.checklist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.checklist li { display:flex; align-items:flex-start; gap:8px; font-size:13px; }
+.checklist li input[type="checkbox"] { margin-top:3px; cursor:pointer; }
 
 footer { border-top:1px solid var(--hairline); background:var(--surface-1); padding:7px 14px;
   max-height:96px; overflow:auto; }
-footer .cap { color:var(--muted); font-size:11px; margin-bottom:3px; }
-footer ol { margin:0; padding:0; list-style:none; }
-footer li { font:11.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--ink-2); }
-footer li b { color:var(--ink); font-weight:600; }
-footer li.err { color:var(--critical); }
+/* ── M3 Bottom Sheet (CLI Log Console) ── */
+#m3-bottom-sheet {
+  flex-shrink: 0;
+  background: var(--md-sys-color-surface-container-high);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  box-shadow: var(--md-elevation-4);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--md-shape-corner-xl) var(--md-shape-corner-xl) 0 0;
+}
+.sheet-handle-bar {
+  padding: 8px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+.sheet-pill {
+  width: 32px;
+  height: 4px;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-outline);
+  opacity: .5;
+}
+.sheet-content {
+  display: none;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 10px 18px 14px;
+  background: var(--md-sys-color-surface-container-lowest);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+#m3-bottom-sheet.open .sheet-content {
+  display: block;
+}
+#log li {
+  font: 11.5px/1.7 var(--font-mono);
+  color: var(--md-sys-color-on-surface-variant);
+}
+#log li b { color: var(--md-sys-color-on-surface); font-weight: 700; }
+#log li.err { color: var(--md-sys-color-error); }
 
-dialog { border:1px solid var(--border); border-radius:12px; padding:0; background:var(--surface-1);
-  color:var(--ink); width:min(560px,94vw); box-shadow:0 12px 40px rgba(0,0,0,.28); }
-dialog::backdrop { background:rgba(11,11,11,.38); }
-dialog .head { padding:14px 18px; border-bottom:1px solid var(--hairline); font-weight:660; }
-dialog .body { padding:16px 18px; display:flex; flex-direction:column; gap:14px; }
-dialog .foot { padding:12px 18px; border-top:1px solid var(--hairline); display:flex; gap:8px;
-  justify-content:flex-end; }
-fieldset { border:0; margin:0; padding:0; }
-legend { padding:0 0 6px; color:var(--ink-2); font-size:12px; }
-.radios { display:flex; gap:6px; flex-wrap:wrap; }
-.radios label { border:1px solid var(--border); border-radius:999px; padding:4px 11px;
-  color:var(--ink-2); cursor:pointer; }
-.radios input { position:absolute; opacity:0; pointer-events:none; }
-.radios label:has(input:checked) { border-color:var(--ink); color:var(--ink); font-weight:600;
-  background:var(--surface-2); }
-.field { display:flex; flex-direction:column; gap:5px; }
-.field > span { color:var(--ink-2); font-size:12px; }
-.field .note { color:var(--muted); font-size:11px; }
-textarea,input[type=text],select { width:100%; font:inherit; color:var(--ink);
-  background:var(--surface-1); border:1px solid var(--border); border-radius:7px; padding:7px 9px; }
-textarea { resize:vertical; min-height:84px; }
-details.more summary { color:var(--ink-2); cursor:pointer; font-size:12px; }
-details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding-top:12px; }
-.hidden { display:none !important; }
+dialog {
+  border: none;
+  border-radius: var(--md-shape-corner-xl);
+  /* The global reset zeroes margins, which would pin a modal dialog to the top left. */
+  margin: auto;
+  padding: 0;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  width: min(580px, 94vw);
+  box-shadow: var(--md-elevation-3);
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+/* The whole dialog stays inside the viewport: only the body scrolls, so the header and the
+   submit buttons are always reachable. */
+dialog > form { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+}
+dialog .head {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+dialog .body {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+dialog .foot {
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  background: var(--md-sys-color-surface-container-high);
+}
+fieldset { border: 0; margin: 0; padding: 0; }
+legend { padding: 0 0 8px; color: var(--md-sys-color-on-surface-variant); font-size: 12.5px; font-weight: 600; }
+.radios { display: flex; gap: 8px; flex-wrap: wrap; }
+.radios label {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-full);
+  padding: 6px 14px;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--md-motion-duration-short2) var(--md-motion-easing-standard);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.radios input { position: absolute; opacity: 0; pointer-events: none; }
+.radios label:has(input:focus-visible) {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+.radios label:has(input:checked) {
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-primary-container);
+  font-weight: 700;
+}
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { color: var(--md-sys-color-on-surface-variant); font-size: 12px; font-weight: 600; }
+.field .note { color: var(--md-sys-color-outline); font-size: 11px; }
+textarea, input[type=text], select {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-md);
+  padding: 10px 12px;
+  font-size: 13.5px;
+}
+textarea:focus, input[type=text]:focus, select:focus {
+  outline: 2px solid var(--md-sys-color-primary);
+  border-color: transparent;
+}
+textarea { resize: vertical; min-height: 84px; }
+details.more summary { color: var(--md-sys-color-primary); cursor: pointer; font-size: 13px; font-weight: 600; }
+details.more .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-top: 14px; }
+.hidden { display: none !important; }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand">adj <span id="repo">…</span></div>
-  <div class="tabs" role="tablist">
-    <button role="tab" id="tab-board" aria-selected="true" onclick="setView('board')">ボード</button>
-    <button role="tab" id="tab-review" aria-selected="false" onclick="goToQueue()">レビュー<span class="badge-count" id="gate-count">0</span></button>
+<aside id="nav-rail">
+  <div class="rail-brand">
+    <div class="brand-badge">adj</div>
+    <div class="repo-info">
+      <span class="repo-title" id="repo">…</span>
+      <span class="repo-sub">agent-adjutant</span>
+    </div>
   </div>
-  <div class="spacer"></div>
-  <span id="hub" class="state warn">…</span>
-  <span id="inbox" class="state warn"></span>
-  <button class="iconbtn" id="btn-notify" onclick="toggleNotify()" aria-label="デスクトップ通知を設定する">🔔 通知</button>
-  <button class="iconbtn" onclick="toggleTheme()" aria-label="表示テーマを切り替える">◐ テーマ</button>
-  <button class="primary" onclick="openForm()">+ タスクを渡す</button>
-</header>
 
-<main>
-  <div id="board-view">
-    <div id="board"></div>
-    <aside id="task-drawer" class="hidden"></aside>
+  <button class="m3-fab-extended" onclick="openForm()">
+    <span class="material-symbols-outlined" aria-hidden="true">add</span>
+    <span>新しいタスク</span>
+  </button>
+
+  <div class="rail-destinations">
+    <button class="rail-item" id="nav-board" aria-current="page" onclick="setView('board')">
+      <span class="material-symbols-outlined">view_kanban</span>
+      <span>カンバンボード</span>
+    </button>
+    <button class="rail-item" id="nav-review" onclick="goToQueue()">
+      <span class="material-symbols-outlined">mark_chat_unread</span>
+      <span>要対応レビュー</span>
+      <span class="rail-badge" id="gate-count">0</span>
+    </button>
   </div>
-  <div id="review"><div class="rail"></div><div class="pane"></div></div>
-  <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
-</main>
 
-<footer>
-  <div class="cap">操作ログ — UI の操作がどの adj コマンドに落ちるか</div>
-  <ol id="log"></ol>
-</footer>
+  <div class="rail-footer">
+    <div class="status-pill-group">
+      <div class="status-row">
+        <span style="font-weight:700">自律 hub</span>
+        <span id="hub" class="state warn">…</span>
+      </div>
+      <div class="status-row" id="inbox-row" style="display:none">
+        <span>受信箱</span>
+        <span id="inbox" class="state warn"></span>
+      </div>
+    </div>
+    <div class="rail-tools">
+      <button class="tool-btn" id="btn-notify" onclick="toggleNotify()" title="デスクトップ通知を設定">
+        <span class="material-symbols-outlined">notifications</span>
+      </button>
+      <button class="tool-btn" onclick="toggleTheme()" title="テーマ切替">
+        <span class="material-symbols-outlined">dark_mode</span>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<div id="app-main">
+  <header class="top-app-bar">
+    <div class="page-title-area">
+      <h1 class="page-title" id="page-title">タスクボード</h1>
+      <span class="page-subtitle" id="page-subtitle">バックグラウンド worker との協調作業カンバン</span>
+    </div>
+
+    <div class="filter-chip-group">
+      <button class="m3-filter-chip active" id="chip-filter-all" aria-pressed="true" onclick="setBoardFilter('all', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">apps</span>
+        <span>すべて</span>
+      </button>
+      <button class="m3-filter-chip" id="chip-filter-mine" aria-pressed="false" onclick="setBoardFilter('mine', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">person</span>
+        <span>あなたのボール</span>
+      </button>
+      <button class="m3-filter-chip" id="chip-filter-worker" aria-pressed="false" onclick="setBoardFilter('worker', this)">
+        <span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">smart_toy</span>
+        <span>worker 作業中</span>
+      </button>
+    </div>
+
+    <div class="top-bar-actions">
+      <button class="btn-m3-tonal" style="padding:6px 12px;font-size:12px;" onclick="nudgeHub()" title="adj send --kind next (着手を促す)">
+        <span class="material-symbols-outlined" style="font-size:16px;">bolt</span>
+        <span>着手を促す</span>
+      </button>
+      <button class="tool-btn" onclick="refreshAll()" title="再同期 (adj refresh)">
+        <span class="material-symbols-outlined">refresh</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div id="board-view">
+      <div id="board"></div>
+      <aside id="task-drawer" class="hidden">
+        <div class="sidesheet-header">
+          <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1">
+            <div id="drawer-badges" style="display:flex;align-items:center;gap:6px"></div>
+            <h2 id="drawer-title" style="font-size:16px;font-weight:700;line-height:1.4"></h2>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button class="tool-btn" id="drawer-expand-btn" title="詳細画面を開く">
+              <span class="material-symbols-outlined">open_in_full</span>
+            </button>
+            <button class="tool-btn" onclick="closeDrawer()" title="閉じる">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="sidesheet-body" id="drawer-body"></div>
+      </aside>
+    </div>
+    <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
+    <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
+  </main>
+
+  <footer id="m3-bottom-sheet">
+    <button type="button" class="sheet-handle-bar" aria-expanded="false" onclick="toggleBottomSheet()">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+        <strong style="font-size:12px;">CLI連携コンソール</strong>
+        <span style="font-size:11px;color:var(--md-sys-color-on-surface-variant)">UI操作と <code>adj</code> コマンドの対応ログ</span>
+      </div>
+      <div class="sheet-pill"></div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="sheet-latest-cmd" style="font-family:var(--font-mono);font-size:11px;color:var(--md-sys-color-outline)">adj serve</span>
+        <span id="sheet-toggle-icon" style="font-size:11px;font-weight:700">▲ 開く</span>
+      </div>
+    </button>
+    <div class="sheet-content">
+      <ol id="log" style="list-style:none;display:flex;flex-direction:column;gap:4px;"></ol>
+    </div>
+  </footer>
+</div>
 
 <dialog id="form">
   <form method="dialog" onsubmit="submitForm(event)">
-    <div class="head">タスクを渡す</div>
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">add_task</span>
+        <span>タスクを渡す</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" onclick="document.getElementById('form').close()" title="閉じる">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
     <div class="body">
       <fieldset>
         <legend>種類</legend>
@@ -380,9 +1546,12 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
       </details>
     </div>
     <div class="foot">
-      <button type="button" class="iconbtn" onclick="document.getElementById('form').close()">やめる</button>
-      <button type="submit" class="iconbtn" name="act" value="backlog">Backlog に置く</button>
-      <button type="submit" class="primary" name="act" value="queued">いま渡す</button>
+      <button type="button" class="btn-m3-text" onclick="document.getElementById('form').close()">やめる</button>
+      <button type="submit" class="btn-m3-tonal" name="act" value="backlog">Backlog に置く</button>
+      <button type="submit" class="btn-m3-primary" name="act" value="queued">
+        <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+        <span>いま渡す</span>
+      </button>
     </div>
   </form>
 </dialog>
@@ -443,13 +1612,13 @@ function updateNotifyButton() {
     return;
   }
   if (Notification.permission === 'granted') {
-    btn.textContent = '🔔 通知ON';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
     btn.title = '確認依頼のデスクトップ通知が有効です';
   } else if (Notification.permission === 'denied') {
-    btn.textContent = '🔕 通知OFF';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
-    btn.textContent = '🔔 通知を許可';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications</span><span>通知を許可</span>';
     btn.title = '確認依頼が届いたときにデスクトップ通知を受け取る';
   }
 }
@@ -525,13 +1694,13 @@ function render() {
   const hubEl = document.getElementById('hub');
   hubEl.className = 'state ' + (hub.present ? 'good' : hub.stale ? 'bad' : 'warn');
   hubEl.innerHTML = hub.present
-    ? '<span>●</span>hub 稼働中'
-    : hub.stale ? '<span>⚠</span>hub の記録が残っているが止まっている'
-                : '<span>○</span>hub は止まっている';
+    ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-success);">check_circle</span><span>hub 稼働中</span>'
+    : hub.stale ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">error</span><span>hub の記録が残っているが止まっている</span>'
+                : '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">radio_button_unchecked</span><span>hub は止まっている</span>';
 
   const waiting = (state.pending || []).length;
   document.getElementById('inbox').innerHTML = waiting
-    ? `<span>✉</span>受信箱 ${waiting} 件(hub が未読)` : '';
+    ? `<span class="material-symbols-outlined" style="font-size:14px;vertical-align:text-bottom;">mail</span><span>受信箱 ${waiting} 件(hub が未読)</span>` : '';
 
   const board = document.getElementById('board');
   board.innerHTML = '';
@@ -621,8 +1790,49 @@ async function worktreeAct(action, worktree) {
   } catch (e) { note(`${line} → ${e.message}`, true); }
 }
 
+const COLUMN_ICONS = {
+  backlog: 'inventory_2',
+  queued: 'hourglass_top',
+  working: 'smart_toy',
+  attention: 'pending_actions',
+  pr: 'rate_review',
+  done: 'task_alt',
+};
+const COLUMN_SUBS = {
+  backlog: '未受付',
+  queued: '着手待ち',
+  working: 'AI作業中',
+  attention: '要判定',
+  pr: 'レビュー対応',
+  done: '完了済',
+};
+
+let currentActiveFilter = 'all';
+
+function setBoardFilter(filter, btn) {
+  currentActiveFilter = filter;
+  document.querySelectorAll('.m3-filter-chip').forEach(b => {
+    b.classList.toggle('active', b === btn);
+    b.setAttribute('aria-pressed', String(b === btn));
+  });
+  const board = document.getElementById('board');
+  if (board) {
+    board.innerHTML = '';
+    for (const col of COLUMNS) board.appendChild(columnEl(col));
+  }
+}
+
 function columnEl(col) {
   let items = (state.tasks || []).filter(t => columnOf(t) === col.id);
+  if (currentActiveFilter === 'mine') {
+    items = items.filter(t => openGate(t) || col.id === 'backlog');
+  } else if (currentActiveFilter === 'worker') {
+    items = items.filter(t => {
+      const w = workerOf(t);
+      return w && w.present;
+    });
+  }
+
   let older = [];
   if (col.id === 'done') {
     const cutoff = Date.now() - DONE_SHOWN_HOURS * 3600 * 1000;
@@ -634,55 +1844,55 @@ function columnEl(col) {
   el.dataset.col = col.id;
 
   for (const task of items) el.appendChild(cardEl(task, col.id));
-  // A worktree with a live worker and no record of why: the board would otherwise be a
-  // mirror that leaves things out. Slice 2 gives the hub a record for every dispatch.
-  if (col.id === 'working') {
+  if (col.id === 'working' && currentActiveFilter !== 'mine') {
     const known = new Set(items.map(t => t.worktree).filter(Boolean));
     for (const w of (state.workers || []).filter(w => w.present && !known.has(w.worktree))) {
       el.appendChild(ghostEl(w));
     }
   }
-  // A gate whose task has no record — a worker asking about something it picked up on the
-  // way — still belongs on the board. Leaving it out would make the count in the tab title
-  // disagree with the column under it.
   if (col.id === 'attention') {
     const shown = new Set(items.map(t => openGate(t)?.id).filter(Boolean));
-    for (const g of (state.gates || []).filter(g => !shown.has(g.id))) {
+    for (const g of (state.gates || []).filter(g => {
+      if (shown.has(g.id)) return false;
+      if (currentActiveFilter !== 'worker') return true;
+      const owner = (state.tasks || []).find(t => t.id === g.task);
+      return !owner || workerOf(owner)?.present;
+    })) {
       el.appendChild(gateCardEl(g));
     }
   }
-  // The count is what is on screen, not what one of the two sources holds: a column that
-  // says 0 above four cards is a column nobody believes again.
   const shownCards = el.querySelectorAll('.card').length;
-  if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
+  if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder"><span class="material-symbols-outlined" style="font-size:16px;">inbox</span><span>タスクなし</span></div>');
   if (older.length) {
     el.insertAdjacentHTML('beforeend',
       `<button type="button" class="more">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
     el.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
   }
-  // Slots rather than cards: a worker parked at a gate sits in 要対応 and still holds one,
-  // and a worker still starting up holds one before it shows anywhere.
-  const slots = state.workerSlots || {};
-  const busy = slots.busy ?? (state.workers || []).filter(w => w.present).length;
-  const full = slots.max != null && busy >= slots.max;
-  let hint = col.hint;
-  if (col.id === 'working') hint = slots.max != null ? `worker ${busy}/${slots.max}` + (full ? ' ⚠満' : '') : `worker ${busy}`;
-  if (col.id === 'attention') hint = 'あなたのボール';
-  // Only where there is something to start. The hub starts the next one itself when a worker
-  // reports done; this is for the worker that died without saying so.
-  const next = col.id === 'queued' && shownCards
-    ? '<button type="button" class="next" title="worker の枠が空いていれば、待ちの先頭を hub に着手させる">次を流す</button>'
+
+  const iconName = COLUMN_ICONS[col.id] || 'view_kanban';
+  const subText = COLUMN_SUBS[col.id] || col.hint || '';
+  const nextBtn = col.id === 'queued' && shownCards
+    ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手"><span class="material-symbols-outlined" style="font-size:14px;">bolt</span><span>次を流す</span></button>'
     : '';
-  // Where the cards it can move are. Nothing else asks GitHub about a PR, so a card whose PR
-  // was merged sits here until this is pressed or the hub starts. Shown with the column empty
-  // too: a record with a PR can be in 進行中 or 要対応 instead, and this is the only way to it.
-  const check = col.id === 'pr'
-    ? '<button type="button" class="next" title="PR がマージ済みのタスクを完了に移す(open・閉じた・読めない PR は触らない)">PR を確認</button>'
+  const checkBtn = col.id === 'pr'
+    ? '<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認"><span class="material-symbols-outlined" style="font-size:14px;">sync</span><span>PR確認</span></button>'
     : '';
-  el.insertAdjacentHTML('afterbegin',
-    `<h2>${col.label}<span class="n">${shownCards}</span>` +
-    (hint ? `<span class="hint${col.id === 'working' && full ? ' full' : ''}">${esc(hint)}</span>` : '') + next + check + '</h2>');
-  el.querySelector('h2 .next')?.addEventListener('click', col.id === 'pr' ? refreshPrs : nudgeHub);
+
+  const headerHtml = `
+    <div class="col-header">
+      <div class="col-header-top">
+        <div class="col-title-badge">
+          <span class="material-symbols-outlined" style="font-size:18px;">${iconName}</span>
+          <span>${esc(col.label)}</span>
+          <span class="col-count-pill">${shownCards}</span>
+        </div>
+        ${nextBtn}${checkBtn}
+      </div>
+      ${subText ? `<div class="col-subtext">${esc(subText)}</div>` : ''}
+    </div>
+  `;
+  el.insertAdjacentHTML('afterbegin', headerHtml);
+  el.querySelector('.col-btn-nudge')?.addEventListener('click', col.id === 'pr' ? refreshPrs : nudgeHub);
 
   el.addEventListener('dragover', e => {
     if (canDrop(window.__from, col.id)) { e.preventDefault(); el.classList.add('drop-ok'); }
@@ -803,7 +2013,8 @@ function openRecord(id) {
 
 function cardEl(task, col) {
   const el = document.createElement('div');
-  el.className = 'card' + (selectedTaskId === task.id ? ' selected' : '');
+  const gate = openGate(task);
+  el.className = 'card' + (selectedTaskId === task.id ? ' selected' : '') + (gate ? ' attention-card' : '');
   el.dataset.id = task.id;
   if ((ALLOWED[col] || []).length) {
     el.draggable = true;
@@ -815,63 +2026,147 @@ function cardEl(task, col) {
     el.addEventListener('dragend', () => { window.__from = null; render(); });
   }
 
-  const gate = openGate(task);
-  let h = `<div class="title">${esc(task.title)}</div>`;
-  if (gate) {
-    const [label, colour] = kindOf(gate.kind);
-    h += `<div class="meta"><span class="tag" onclick="event.stopPropagation();judgeGate('${gate.id}')" style="cursor:pointer" title="クリックして判定する"><span class="dot" style="background:${colour}"></span>${label}</span>
-      <span>${ago(gate.openedAt)}から待ち</span></div>`;
-    const why = stopWhy(gate);
-    if (why.length) {
-      h += `<div class="stopwhy${stopBad(gate) ? ' bad' : ''}">${stopBad(gate) ? '⚠ ' : ''}止めた理由: ${esc(why.join(' / '))}</div>`;
-    }
-  }
-  const chips = chipsOf(task);
-  if (chips.length) {
-    h += `<div class="chips">${chips.map(c =>
-      `<button type="button" class="chip${c.tone ? ' ' + c.tone : ''}" data-record="${esc(c.id)}" title="${c.unread ? '未読 — ' : ''}クリックして記録を開く">` +
-      `${c.unread ? '<span class="unread" aria-label="未読"></span>' : ''}${esc(c.text)}</button>`).join('')}</div>`;
-  }
-  const meta = [DONE_WHEN[task.doneWhen] || task.doneWhen];
-  // Only for a card that is the worker's current run: an old done card for the same worktree
-  // would otherwise pick up the next worker's phase and buttons.
   const live = ['dispatched', 'pr'].includes(task.status);
   const worker = live ? workerOf(task) : null;
+
+  let h = '';
+
+  // 1. Header row: Issue / ID & Status Pill
+  const doneLabel = DONE_WHEN[task.doneWhen] || task.doneWhen;
+  const donePillClass = task.doneWhen === 'report-only' ? 'pill-purple'
+    : task.doneWhen === 'verify' ? 'pill-warn'
+    : task.doneWhen === 'review' ? 'pill-blue'
+    : 'pill-neutral';
+
+  const issueUrl = httpUrl(task.issueUrl);
+  const issueNumber = issueUrl ? issueNumberOf(issueUrl) : null;
+
+  h += `
+    <div class="card-header-row">
+      ${issueNumber ? `
+        <a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
+          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
+          <span>${esc(issueNumber)}</span>
+        </a>
+      ` : `
+        <span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>
+      `}
+      ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
+    </div>
+  `;
+
+  // 2. Title
+  h += `<div class="title">${esc(task.title)}</div>`;
+
+  // 3. Gate Banner if present
+  if (gate) {
+    const [label] = kindOf(gate.kind);
+    const why = stopWhy(gate);
+    h += `
+      <button type="button" class="m3-card-attention-box" style="padding:8px 10px;font-size:12px;cursor:pointer;width:100%;text-align:inherit;border:none;font:inherit;" data-gate="${esc(gate.id)}" title="クリックして判定画面を開く">
+        <div style="display:flex;align-items:center;justify-content:space-between;font-weight:700;">
+          <span style="display:flex;align-items:center;gap:4px;">
+            <span class="material-symbols-outlined" style="font-size:15px;">pending_actions</span>
+            <span>【${esc(label)}】判定待ち</span>
+          </span>
+          <span style="font-size:11px;opacity:.9">${ago(gate.openedAt)}</span>
+        </div>
+        ${why.length ? `<div style="font-size:11px;margin-top:2px;">${esc(why.join(' / '))}</div>` : ''}
+      </button>
+    `;
+  }
+
+  // 4. Worker Live Status
   if (worker && worker.present && worker.phase) {
     const mins = phaseMinutes(worker);
-    meta.push(`${esc(PHASE_LABEL[worker.phase] || worker.phase)}${mins != null ? `（${minutesLabel(mins)}）` : ''}`);
+    h += `
+      <div class="card-worker-status">
+        <span class="pulse-dot"></span>
+        <span style="font-weight:700;">${esc(PHASE_LABEL[worker.phase] || worker.phase)}</span>
+        ${mins != null ? `<span style="color:var(--md-sys-color-outline);margin-left:auto;">${minutesLabel(mins)}</span>` : ''}
+      </div>
+    `;
   }
-  if (col === 'queued') meta.push(`↕ ${task.order}`);
-  if (task.worktree) meta.push(esc(task.worktree.split('/').pop()));
-  if (task.pr) meta.push(esc(task.pr));
-  if (!task.autoStart) meta.push('着手前に確認');
-  h += `<div class="meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>`;
-  const stuck = stuckOf(task);
-  if (stuck) {
-    el.classList.add('stuck');
-    h += `<div class="meta"><span class="state bad"><span>⏱</span>${esc(stuck)}</span></div>`;
+
+  // 5. Metadata tags (queued order, autoStart, PR, etc.)
+  const metaBadges = [];
+  if (col === 'queued' && task.order != null) {
+    metaBadges.push(`<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>`);
   }
-  if (task.issueUrl) h += `<div class="mono">${esc(task.issueUrl)}</div>`;
+  if (!task.autoStart) {
+    metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
+  }
+  const prUrl = httpUrl(task.pr);
+  if (prUrl) {
+    metaBadges.push(`<a href="${esc(prUrl)}" target="_blank" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く"><span class="material-symbols-outlined" style="font-size:12px;">merge</span>PR</a>`);
+  }
+  if (metaBadges.length) {
+    h += `<div style="display:flex;flex-wrap:wrap;gap:4px;">${metaBadges.join('')}</div>`;
+  }
+
+  // 6. Records / Chips
+  const chips = chipsOf(task);
+  if (chips.length) {
+    h += `<div class="chips" style="gap:4px;">${chips.map(c => {
+      const isGood = c.tone === 'good';
+      const isBad = c.tone === 'bad';
+      const pillClass = isGood ? 'pill-good' : isBad ? 'pill-err' : 'pill-warn';
+      const icon = isGood ? 'check_circle' : isBad ? 'cancel' : 'info';
+      return `<button type="button" class="m3-pill ${pillClass}" style="border:0;cursor:pointer;" data-record="${esc(c.id)}" title="${c.unread ? '未読 — ' : ''}クリックして記録を開く">
+        ${c.unread ? '<span style="width:5px;height:5px;border-radius:50%;background:currentColor;display:inline-block;margin-right:2px;"></span>' : ''}
+        <span class="material-symbols-outlined" style="font-size:13px;margin-right:2px;">${icon}</span>
+        <span>${esc(c.text)}</span>
+      </button>`;
+    }).join('')}</div>`;
+  }
+
+  // 7. Note / Alert
   if (task.note) {
     if (task.status === 'done') {
-      h += `<div class="note">${esc(task.note)}</div>`;
+      h += `<div style="font-size:11.5px;color:var(--md-sys-color-outline);overflow-wrap:anywhere;">${esc(task.note)}</div>`;
     } else {
-      h += `<div class="meta"><span class="state bad"><span>⚠</span>${esc(task.note)}</span></div>`;
+      h += `<div style="display:flex;align-items:flex-start;gap:4px;font-size:11.5px;color:var(--md-sys-color-error);font-weight:600;"><span class="material-symbols-outlined" style="font-size:14px;flex-shrink:0;">warning</span><span>${esc(task.note)}</span></div>`;
     }
   }
 
-  const acts = [];
-  if (col === 'backlog') acts.push(`<button type="button" data-hand="${esc(task.id)}">渡す →</button>`);
-  if (task.worktree) acts.push(`<button type="button" data-ide="${esc(task.worktree)}">IDE</button>`);
-  if (worker && worker.present) {
-    acts.push(`<button type="button" data-focus="${esc(task.worktree)}">タブ</button>`);
-    acts.push(`<button type="button" data-close="${esc(task.worktree)}">閉じる</button>`);
+  // 8. Stuck warning
+  const stuck = stuckOf(task);
+  if (stuck) {
+    el.classList.add('stuck');
+    h += `<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--md-sys-color-error);font-weight:700;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuck)}</span></div>`;
   }
-  if (acts.length) {
-    h += `<div class="acts">${acts.join('')}</div>`;
+
+  // 9. Footer row: slug / identifier & buttons
+  const worktreeSlug = task.worktree ? task.worktree.split('/').pop() : '';
+  const branchSlug = task.branch || '';
+
+  const hasSlug = worktreeSlug || branchSlug || (!issueNumber && task.id);
+  const hasButtons = task.worktree || (worker && worker.present) || col === 'backlog';
+
+  if (hasSlug || hasButtons) {
+    h += `
+      <div class="card-footer-row">
+        <div class="card-meta-slug" title="${esc(task.worktree || task.branch || task.id)}">
+          ${worktreeSlug ? `<span class="material-symbols-outlined" style="font-size:13px;">folder_open</span><span>${esc(worktreeSlug)}</span>`
+            : branchSlug ? `<span class="material-symbols-outlined" style="font-size:13px;">fork_right</span><span>${esc(branchSlug)}</span>`
+            : issueNumber ? `<span class="card-task-id" style="font-size:10px;">${esc(task.id)}</span>`
+            : ''}
+        </div>
+        <div class="card-button-row">
+          ${task.worktree ? `<button class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
+          ${task.worktree ? `<button class="m3-icon-button" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
+          ${worker && worker.present ? `<button class="m3-icon-button" style="color:var(--md-sys-color-error);" title="workerを終了" data-close="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">close</span><span>閉じる</span></button>` : ''}
+          ${col === 'backlog' ? `<button class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
+        </div>
+      </div>
+    `;
   }
-  h += `<div class="mono">${esc(task.id)}</div>`;
+
   el.innerHTML = h;
+  el.onclick = (e) => {
+    if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('.m3-card-attention-box')) return;
+    selectTask(task.id);
+  };
   el.querySelectorAll('[data-hand]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); hand(b.dataset.hand); }));
   el.querySelectorAll('[data-ide]').forEach(b =>
@@ -880,14 +2175,10 @@ function cardEl(task, col) {
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('focus', b.dataset.focus); }));
   el.querySelectorAll('[data-close]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('close', b.dataset.close); }));
+  el.querySelectorAll('[data-gate]').forEach(b =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); judgeGate(b.dataset.gate); }));
   el.querySelectorAll('[data-record]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); openRecord(b.dataset.record); }));
-
-  el.onclick = (e) => {
-    if (e.target.closest('button') || e.target.closest('.tag')) return;
-    selectTask(task.id);
-  };
-
   return el;
 }
 
@@ -962,13 +2253,11 @@ function renderDrawer() {
   if (!drawer) return;
   if (!selectedTaskId || view !== 'board') {
     drawer.classList.add('hidden');
-    drawer.innerHTML = '';
     return;
   }
   const task = (state.tasks || []).find(t => t.id === selectedTaskId);
   if (!task) {
     drawer.classList.add('hidden');
-    drawer.innerHTML = '';
     selectedTaskId = null;
     return;
   }
@@ -978,157 +2267,132 @@ function renderDrawer() {
   const colObj = COLUMNS.find(c => c.id === colId);
   const gate = openGate(task);
 
-  let h = `
-    <div class="d-head">
-      <div style="flex:1;min-width:0">
-        <span class="tag" style="margin-bottom:6px">${colObj ? colObj.label : task.status}</span>
-        <h2>${esc(task.title)}</h2>
-        <button type="button" class="iconbtn" style="margin-top:8px" data-full="${esc(task.id)}">全体を開く →</button>
-      </div>
-      <button class="d-close" onclick="closeDrawer()" title="閉じる (Esc)">✕</button>
-    </div>
-    <div class="d-body">`;
+  const badgesEl = document.getElementById('drawer-badges');
+  if (badgesEl) {
+    badgesEl.innerHTML = `
+      <span class="m3-pill ${gate ? 'pill-warn' : 'pill-blue'}">${colObj ? colObj.label : task.status}</span>
+      <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--md-sys-color-outline);margin-left:4px">${esc(task.id)}</span>
+    `;
+  }
+  const titleEl = document.getElementById('drawer-title');
+  if (titleEl) titleEl.textContent = task.title;
+  const expandBtn = document.getElementById('drawer-expand-btn');
+  if (expandBtn) expandBtn.onclick = () => openTask(task.id);
+
+  let body = '';
 
   if (gate) {
-    const [label, colour] = kindOf(gate.kind);
-    h += `<div class="d-gate-banner">
-      <div style="display:flex;align-items:center;gap:6px">
-        <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
-        <span style="font-weight:600;font-size:13px">${esc(gate.title)}</span>
+    const [label] = kindOf(gate.kind);
+    body += `
+      <div class="m3-card-attention-box">
+        <div style="font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px;">
+          <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
+          <span>【${esc(label)}】あなたの判断待ち</span>
+        </div>
+        <div style="font-size:12.5px;">${esc(gate.title)}</div>
+        ${stopWhy(gate).length ? `<div style="font-size:11.5px;margin-top:2px;">止めた理由: ${esc(stopWhy(gate).join(' / '))}</div>` : ''}
+        <button class="btn-m3-primary" style="margin-top:6px;align-self:flex-start;" data-judge="${esc(gate.id)}">
+          <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span>
+          <span>判定画面を開く</span>
+        </button>
       </div>
-      <div style="color:var(--ink-2);font-size:12px">${ago(gate.openedAt)}から確認待ち</div>
-      ${stopWhy(gate).length ? `<div class="state${stopBad(gate) ? ' bad' : ''}" style="font-size:12px;white-space:normal"><span>${stopBad(gate) ? '⚠' : '■'}</span>止めた理由: ${esc(stopWhy(gate).join(' / '))}</div>` : ''}
-      <button type="button" onclick="judgeGate('${gate.id}')">判定する →</button>
-    </div>`;
+    `;
+  }
+
+  if (colId === 'backlog') {
+    body += `
+      <div>
+        <button class="btn-m3-tonal" style="width:100%" data-drawer-hand="${esc(task.id)}">
+          <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+          <span>待機キューに渡す</span>
+        </button>
+      </div>
+    `;
   }
 
   // Newest first: the one the worker left last is the one that describes where it is now.
   const records = recordsOf(task).reverse();
   if (records.length) {
-    h += `<div class="d-section"><div class="d-label">記録（止めずに進んだもの）</div>` +
+    body += `<div class="m3-filled-card"><div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">記録（止めずに進んだもの）</div>` +
       records.map(r => {
-        const [label, colour] = kindOf(r.kind);
+        const [label] = kindOf(r.kind);
         const [text, tone] = recordSummary(r);
-        const bits = [];
-        if ((r.findings || []).length) {
-          const declined = r.findings.filter(f => f.outcome === 'declined').length;
-          bits.push(`指摘 ${r.findings.length}件` + (declined ? `（誤検知 ${declined}件）` : ''));
-        }
-        if ((r.manual || []).length) bits.push(`手で見る ${r.manual.length}件`);
-        if ((r.answers || []).length) bits.push(`差し戻し ${r.answers.length}回`);
-        return `<div class="d-record">
-          <div class="row">${isUnread(r) ? '<span class="unread" aria-label="未読"></span>' : ''}
-            <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
-            <span class="sum${tone === 'bad' ? ' bad' : ''}">${esc(text)}</span></div>
-          <div class="when">${ago(r.openedAt)}に記録${bits.length ? ' · ' + esc(bits.join(' · ')) : ''}</div>
-          <button type="button" class="iconbtn" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
+        const isGood = tone === 'good';
+        const isBad = tone === 'bad';
+        const pillClass = isGood ? 'pill-good' : isBad ? 'pill-err' : 'pill-warn';
+        const icon = isGood ? 'check_circle' : isBad ? 'cancel' : 'info';
+        return `<div class="d-record" style="display:flex;flex-direction:column;gap:4px;padding:8px 0;border-top:1px solid var(--md-sys-color-outline-variant);">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="m3-pill ${pillClass}">
+              <span class="material-symbols-outlined" style="font-size:12px;margin-right:2px;">${icon}</span>
+              <span>${esc(label)}: ${esc(text)}</span>
+            </span>
+          </div>
+          <div style="font-size:11px;color:var(--md-sys-color-outline);">${ago(r.openedAt)}に記録</div>
+          <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
         </div>`;
       }).join('') + `</div>`;
   }
 
-  if (task.note) {
-    h += `<div class="d-section">
-      <div class="d-label">ノート / 実行ログ</div>
-      <div class="d-value" style="white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12px">${esc(task.note)}</div>
-    </div>`;
-  }
-
-  h += `<div class="d-section">
-    <div class="d-label">タスクID</div>
-    <div class="d-value mono2">${esc(task.id)}</div>
-  </div>`;
-
-  h += `<div class="d-grid">
-    <div class="d-section">
-      <div class="d-label">完了条件</div>
-      <div class="d-value">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')}</div>
+  body += `
+    <div class="m3-filled-card">
+      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">基本情報</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12.5px;">
+        <div><span style="color:var(--md-sys-color-outline)">完了条件:</span> <strong>${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')}</strong></div>
+        <div><span style="color:var(--md-sys-color-outline)">確認ポイント:</span> <strong>${esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—')}</strong></div>
+        <div><span style="color:var(--md-sys-color-outline)">ブランチ:</span> <code style="font-family:var(--font-mono)">${esc(task.branch || '—')}</code></div>
+        <div><span style="color:var(--md-sys-color-outline)">worktree:</span> <code style="font-family:var(--font-mono)">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code></div>
+      </div>
     </div>
-    <div class="d-section">
-      <div class="d-label">優先順位 (order)</div>
-      <div class="d-value">${task.order != null ? task.order : '—'}</div>
-    </div>
-  </div>`;
-
-  if (task.issueUrl) {
-    h += `<div class="d-section">
-      <div class="d-label">Issue URL</div>
-      <div class="d-value"><a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);word-break:break-all">${esc(task.issueUrl)}</a></div>
-    </div>`;
-  }
+  `;
 
   if (task.worktree) {
-    h += `<div class="d-section">
-      <div class="d-label">worktree</div>
-      <div class="d-value mono2" style="word-break:break-all">${esc(task.worktree)}</div>
-      <div style="margin-top:6px">
-        <button class="iconbtn" data-ide="${esc(task.worktree)}">IDE で開く</button>
-        ${['dispatched', 'pr'].includes(task.status) && workerOf(task)?.present ? `<button class="iconbtn" data-focus="${esc(task.worktree)}">タブを前に出す</button>
-        <button class="iconbtn" data-close="${esc(task.worktree)}">タブを閉じる</button>` : ''}
+    body += `
+      <div class="m3-filled-card">
+        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">開発環境の操作</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-focus="${esc(task.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+            <span>ターミナル前面表示</span>
+          </button>
+          <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-ide="${esc(task.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">code</span>
+            <span>IDE で開く</span>
+          </button>
+          ${workerOf(task)?.present ? `<button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-close="${esc(task.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+            <span>タブを閉じる</span>
+          </button>` : ''}
+        </div>
       </div>
-    </div>`;
+    `;
   }
 
-  if (task.branch) {
-    h += `<div class="d-section">
-      <div class="d-label">ブランチ</div>
-      <div class="d-value mono2">${esc(task.branch)}</div>
-    </div>`;
+  if (task.body) {
+    body += `
+      <div class="m3-filled-card">
+        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">依頼内容・プロンプト</div>
+        <p style="font-size:13px;line-height:1.6;color:var(--md-sys-color-on-surface);white-space:pre-wrap;">${esc(task.body)}</p>
+      </div>
+    `;
   }
 
-  if (task.base || task.parent) {
-    h += `<div class="d-grid">`;
-    if (task.base) {
-      h += `<div class="d-section">
-        <div class="d-label">分岐元</div>
-        <div class="d-value mono2">${esc(task.base)}</div>
-      </div>`;
-    }
-    if (task.parent) {
-      h += `<div class="d-section">
-        <div class="d-label">親タスク</div>
-        <div class="d-value">${esc(task.parent)}</div>
-      </div>`;
-    }
-    h += `</div>`;
+  const drawerBody = document.getElementById('drawer-body');
+  if (drawerBody) {
+    drawerBody.innerHTML = body;
+    drawerBody.querySelectorAll('[data-record]').forEach(b =>
+      b.addEventListener('click', () => openRecord(b.dataset.record)));
+    drawerBody.querySelectorAll('[data-judge]').forEach(b =>
+      b.addEventListener('click', () => judgeGate(b.dataset.judge)));
+    drawerBody.querySelectorAll('[data-drawer-hand]').forEach(b =>
+      b.addEventListener('click', () => hand(b.dataset.drawerHand)));
+    drawerBody.querySelectorAll('[data-focus]').forEach(b =>
+      b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
+    drawerBody.querySelectorAll('[data-ide]').forEach(b =>
+      b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+    drawerBody.querySelectorAll('[data-close]').forEach(b =>
+      b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
   }
-
-  h += `<div class="d-grid">
-    <div class="d-section">
-      <div class="d-label">止める所</div>
-      <div class="d-value">${esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)}</div>
-    </div>
-    <div class="d-section">
-      <div class="d-label">着手設定</div>
-      <div class="d-value">${task.autoStart ? '確認なしで着手' : '着手前に確認が必要'}</div>
-    </div>
-  </div>`;
-
-  const acts = [];
-  if (colId === 'backlog') {
-    acts.push(`<button class="primary" style="width:100%;padding:8px" data-hand="${esc(task.id)}">待ちキューに渡す →</button>`);
-  } else if (colId === 'queued') {
-    acts.push(`<button class="iconbtn" style="width:100%;padding:8px" data-move="${esc(task.id)}" data-to="backlog">Backlog に戻す</button>`);
-  }
-  if (acts.length) {
-    h += `<div style="margin-top:auto;padding-top:10px">${acts.join('')}</div>`;
-  }
-
-  h += `</div>`;
-  drawer.innerHTML = h;
-  drawer.querySelectorAll('[data-ide]').forEach(b =>
-    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
-  drawer.querySelectorAll('[data-focus]').forEach(b =>
-    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
-  drawer.querySelectorAll('[data-close]').forEach(b =>
-    b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
-  drawer.querySelectorAll('[data-hand]').forEach(b =>
-    b.addEventListener('click', () => hand(b.dataset.hand)));
-  drawer.querySelectorAll('[data-move]').forEach(b =>
-    b.addEventListener('click', () => move(b.dataset.move, b.dataset.to)));
-  drawer.querySelectorAll('[data-record]').forEach(b =>
-    b.addEventListener('click', () => openRecord(b.dataset.record)));
-  drawer.querySelectorAll('[data-full]').forEach(b =>
-    b.addEventListener('click', () => openTask(b.dataset.full)));
 }
 
 
@@ -1256,6 +2520,11 @@ function note(line, isError, why) {
   document.getElementById('log').innerHTML = log.map(l =>
     `<li class="${l.isError ? 'err' : ''}"><b>${l.isError ? '!' : '$'}</b> ${esc(l.line)}` +
     (l.why ? `   <span style="color:var(--muted)">— ${esc(l.why)}</span>` : '') + '</li>').join('');
+  const latestCmd = document.getElementById('sheet-latest-cmd');
+  if (latestCmd) {
+    latestCmd.textContent = line;
+    latestCmd.style.color = isError ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-outline)';
+  }
 }
 
 // ── the review view ───────────────────────────────────────────────────
@@ -1477,41 +2746,88 @@ const renderDiff = d => esc(d).split('\n').map(l => {
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
    the `data-gate` around it, so the same panel works in the review view and a task's view. */
 const BUTTONS = {
-  approve: g => `<button class="approve" data-act="approve">${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</button>`,
-  changes: g => `<button class="changes" data-act="changes">${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</button>`,
-  reject:  () => `<button class="reject" data-act="reject">却下</button>`,
-  ack:     () => `<button class="approve" data-act="ack">了解(閉じる)</button>`,
-  ask:     () => `<button class="changes" data-act="ask">追加で聞く</button>`,
-  answer:  () => `<button class="approve" data-act="answer">これで返す</button>`,
+  approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</span></button>`,
+  changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</span></button>`,
+  reject:  () => `<button class="btn-m3-text reject" data-act="reject" style="color:var(--md-sys-color-error);"><span class="material-symbols-outlined" style="font-size:16px;">cancel</span><span>却下</span></button>`,
+  ack:     () => `<button class="btn-m3-primary approve" data-act="ack"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>了解(閉じる)</span></button>`,
+  ask:     () => `<button class="btn-m3-tonal changes" data-act="ask"><span class="material-symbols-outlined" style="font-size:16px;">help</span><span>追加で聞く</span></button>`,
+  answer:  () => `<button class="btn-m3-primary approve" data-act="answer"><span class="material-symbols-outlined" style="font-size:16px;">send</span><span>これで返す</span></button>`,
 };
 
 /* The part of a gate a person acts on: the send-back form for a record, the decision for a
    gate that waits. */
 function decideHtml(g) {
   if (g.wait === false) {
-    return `<div class="panel" data-gate="${esc(g.id)}"><h3>差し戻す</h3>` +
+    return `<div class="decision-dock panel" data-gate="${esc(g.id)}">
+      <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
+        <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">replay</span>
+        <span>差し戻す</span>
+      </h3>` +
       ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
-        `<li><span style="color:var(--muted)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
-      `<div class="field" style="margin-bottom:12px"><span>コメント(何を直してほしいか)</span>
-        <textarea class="gate-comment"></textarea></div>
-      <div class="decide"><button class="changes" data-act="changes">差し戻す</button></div>
-      <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+        `<li><span style="color:var(--md-sys-color-outline)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
+      `<div class="field" style="margin-bottom:12px">
+        <label style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px;display:block;">コメント（何を直してほしいか）</label>
+        <textarea class="gate-comment" placeholder="差し戻す理由を入力してください..."></textarea>
+      </div>
+      <div class="decide">
+        <button class="btn-m3-tonal changes" data-act="changes">
+          <span class="material-symbols-outlined" style="font-size:16px;">replay</span>
+          <span>差し戻す</span>
+        </button>
+        ${g.worktree ? `
+          <button class="m3-icon-button" style="padding:8px 14px" data-focus="${esc(g.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+            <span>ターミナルで話す</span>
+          </button>
+          <button class="m3-icon-button" style="padding:8px 14px" data-ide="${esc(g.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">code</span>
+            <span>IDEで開く</span>
+          </button>
+        ` : ''}
+      </div>
+      <p style="color:var(--md-sys-color-outline);font-size:11.5px;margin-top:10px">
         worker はこの記録を残して先に進んでいます。差し戻すと <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。記録はそのまま残り、差し戻しが追記されます。</p></div>`;
   }
-  return `<div class="panel" data-gate="${esc(g.id)}"><h3>${g.kind === 'verify' ? '確かめたら' : '判定'}</h3>` +
-    // Past two rounds a gate has become a conversation, and a conversation is faster where
-    // it is not posted.
-    ((g.rounds || 0) >= 2 ? `<div class="hint-bar">⚠ ここまで ${g.rounds} 往復しています。<b>タブで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</div>` : '') +
-    `<div class="field" style="margin-bottom:12px"><span>コメント(修正指示・追加で聞きたいことはここに)</span>
-      <textarea class="gate-comment"></textarea></div>
-    <div class="decide">${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
-      <button class="talk" data-act="talk">タブで話す</button>
-      <button class="close" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">解決済みとして閉じる</button></div>
-    <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
-      ${['dispatch', 'issue'].includes(g.kind)
-        ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
-        : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
-      <b>「タブで話す」</b>は gate を開いたままタブで会話します。タブで直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。</p></div>`;
+  return `<div class="decision-dock panel" data-gate="${esc(g.id)}">
+    <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
+      <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">gavel</span>
+      <span>${g.kind === 'verify' ? '確かめたら（判定）' : 'あなたの判定・指示'}</span>
+    </h3>` +
+    ((g.rounds || 0) >= 2 ? `<div class="hint-bar" style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
+      <span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">warning</span>
+      <span>ここまで ${g.rounds} 往復しています。<b>ターミナルで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</span>
+    </div>` : '') +
+    `<div class="field" style="margin-bottom:12px">
+      <label style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px;display:block;">コメント（修正指示・追加で聞きたいことはここに）</label>
+      <textarea class="gate-comment" placeholder="修正指示や質問があれば入力してください（承認の場合は空欄でも可）..."></textarea>
+    </div>
+    <div class="decide">
+      ${(g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('')}
+      <button class="m3-icon-button talk" style="padding:8px 14px" data-act="talk">
+        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+        <span>ターミナルで話す</span>
+      </button>
+      ${g.worktree ? `
+        <button class="m3-icon-button" style="padding:8px 14px" data-ide="${esc(g.worktree)}">
+          <span class="material-symbols-outlined" style="font-size:16px;">code</span>
+          <span>IDEで開く</span>
+        </button>
+      ` : ''}
+      <button class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">
+        <span class="material-symbols-outlined" style="font-size:16px;">done_all</span>
+        <span>解決済みとして閉じる</span>
+      </button>
+    </div>
+    <div style="font-size:11.5px;color:var(--md-sys-color-outline);display:flex;align-items:flex-start;gap:6px;margin-top:8px;">
+      <span class="material-symbols-outlined" style="font-size:14px;margin-top:2px;">info</span>
+      <span>
+        ${['dispatch', 'issue'].includes(g.kind)
+          ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
+          : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
+        <b>「ターミナルで話す」</b>は gate を開いたまま worker タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。
+      </span>
+    </div>
+  </div>`;
 }
 
 /* The buttons `decideHtml` and a gate's choices draw, wired to the gate they sit in. */
@@ -1527,30 +2843,74 @@ function bindDecide(root) {
     b.addEventListener('click', () => answer('choice', b.dataset.choice, b.closest('[data-gate]').dataset.gate)));
   root.querySelectorAll('button[data-ide]').forEach(b =>
     b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+  root.querySelectorAll('button[data-focus]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
 }
+
+let reviewActiveTab = 'overview';
+function switchReviewTab(tabName) {
+  reviewActiveTab = tabName;
+  renderReview();
+  // The tab buttons were just replaced, so keyboard focus goes back to the selected one.
+  document.querySelector('#review .m3-seg-tab.active')?.focus({ preventScroll: true });
+}
+window.switchReviewTab = switchReviewTab;
 
 function renderReview() {
   const rail = document.querySelector('#review .rail');
   const pane = document.querySelector('#review .pane');
   const gates = state.gates || [];
 
-  rail.innerHTML = `<h2>要対応 ${gates.length} 件 &nbsp;<kbd>j</kbd><kbd>k</kbd> 移動 <kbd>a</kbd> 承認 <kbd>r</kbd> 修正 <kbd>c</kbd> 閉じる</h2>`;
+  rail.className = 'review-inbox-pane rail';
+  pane.className = 'review-detail-pane pane';
+
+  rail.innerHTML = `
+    <div class="review-inbox-header">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">inbox</span>
+        <span>要対応 (${gates.length})</span>
+      </div>
+      <div style="font-size:11px;font-weight:normal;color:var(--md-sys-color-outline)">
+        <kbd>j</kbd><kbd>k</kbd> 移動 &nbsp;<kbd>a</kbd> 承認 &nbsp;<kbd>r</kbd> 修正 &nbsp;<kbd>c</kbd> 閉じる
+      </div>
+    </div>
+    <div class="review-inbox-list"></div>
+  `;
+  const listEl = rail.querySelector('.review-inbox-list');
+
   for (const g of gates) {
+    const isCur = (g.id === focused);
     const [label, colour] = kindOf(g.kind);
     const b = document.createElement('button');
-    b.className = 'item';
-    b.setAttribute('aria-current', String(g.id === focused));
-    b.innerHTML = `<span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
-      <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
-    b.onclick = () => { focused = g.id; renderReview(); };
-    rail.appendChild(b);
+    b.className = 'review-inbox-item item' + (isCur ? ' selected' : '');
+    b.setAttribute('aria-current', String(isCur));
+    b.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="m3-pill ${g.kind === 'plan' ? 'pill-blue' : g.kind === 'diff' ? 'pill-purple' : 'pill-warn'}">${label}</span>
+        <span class="w" style="font-size:11px;color:var(--md-sys-color-outline);margin-left:auto;">${ago(g.openedAt)}</span>
+      </div>
+      <div class="t" style="font-weight:700;font-size:13px;line-height:1.35;">${esc(g.title)}</div>
+      <div style="font-size:11px;color:var(--md-sys-color-outline);font-family:var(--font-mono);">${esc(g.worktree ? g.worktree.split('/').pop() : '')}</div>
+    `;
+    b.onclick = () => {
+      focused = g.id;
+      reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
+      renderReview();
+    };
+    listEl.appendChild(b);
   }
 
   // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
   // is what waits on a person, and a record does not.
   const g = gates.find(x => x.id === focused) || recordById(focused) || gates[0];
   if (!g) {
-    pane.innerHTML = '<div class="empty-state">対応待ちの判定はありません。<br>ボード画面でお待ちください。</div>';
+    pane.innerHTML = `
+      <div class="empty-state" style="padding:80px 20px;text-align:center;">
+        <span class="material-symbols-outlined" style="font-size:48px;color:var(--md-sys-color-outline);opacity:.5;margin-bottom:12px;display:block;">done_all</span>
+        <div style="font-size:15px;font-weight:700;color:var(--md-sys-color-on-surface);">現在、対応待ちの判定はありません</div>
+        <div style="font-size:13px;color:var(--md-sys-color-outline);margin-top:6px;">ボード画面でお待ちください</div>
+      </div>
+    `;
     if (view === 'review') location.hash = '';
     return;
   }
@@ -1560,52 +2920,208 @@ function renderReview() {
   // A permalink, so "反映しといたから見てね" can point at this one card.
   if (view === 'review') location.hash = 'gate/' + g.id;
 
+  if (pane.dataset.shown !== g.id) {
+    reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
+  }
+
   const wasDecidedOpen = pane.querySelector('details.decided')?.open;
   const commentEl = pane.querySelector('.gate-comment');
-  // A comment written for something that has since left the board (a gate answered elsewhere,
-  // a record whose task finished) is not carried over to whatever is shown in its place.
-  // Compared with what the pane last drew, not with `focused`: a click on another item has
-  // already moved `focused` to it by the time this runs.
   const commentVal = commentEl && pane.dataset.shown === g.id ? commentEl.value : '';
   const isCommentFocused = document.activeElement === commentEl;
   const paneScroll = pane.scrollTop;
 
-  const [label, colour] = kindOf(g.kind);
-  let h = `<h1>${esc(g.title)}</h1><div class="sub">
-    <span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
-    ${record ? '<span class="tag">記録 — worker は止まらずに進んだ</span>' : ''}
-    <span class="mono2">${esc(g.worktree.split('/').pop())}</span>
-    <span>${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'}</span>
-    <span class="mono2" style="color:var(--muted)">#gate/${esc(g.id)}</span></div>`;
+  const parentTask = (state.tasks || []).find(t => t.id === g.task) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree);
+  const taskTitle = parentTask ? parentTask.title : g.title;
+  const taskId = parentTask ? parentTask.id : (g.task || g.id);
+  const taskBranch = parentTask ? parentTask.branch : '';
+  const taskWorktree = parentTask ? parentTask.worktree : g.worktree;
+  const taskDoneWhen = parentTask ? (DONE_WHEN[parentTask.doneWhen] || parentTask.doneWhen) : '—';
+  const taskIssue = httpUrl(parentTask?.issueUrl);
 
+  const gateTargetTab = TAB_OF_KIND[g.kind] || null;
+  const [gateLabel, gateColour] = kindOf(g.kind);
+
+  let h = '';
+
+  // ── 1. 対象タスクの基本ヘッダー ──
+  h += `
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        ${parentTask ? `<span class="m3-pill pill-blue">${esc(columnOf(parentTask))}</span>` : ''}
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-outline);">${esc(taskId)}</span>
+        ${taskIssue ? `<a href="${esc(taskIssue)}" target="_blank" rel="noopener noreferrer" style="margin-left:auto;font-size:12px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(issueNumberOf(taskIssue))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>` : ''}
+      </div>
+      <h1 style="font-size:22px;font-weight:800;color:var(--md-sys-color-on-surface);margin:2px 0 0;line-height:1.3;">${esc(taskTitle)}</h1>
+      <div style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+        <span>ブランチ: <code style="font-family:var(--font-mono);font-size:12px;">${esc(taskBranch || '—')}</code></span>
+        <span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(taskWorktree ? taskWorktree.split('/').pop() : '—')}</code></span>
+        <span>完了条件: <strong>${esc(taskDoneWhen)}</strong></span>
+        ${taskWorktree ? `
+          <span style="display:inline-flex;gap:6px;margin-left:auto;">
+            <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" data-focus="${esc(taskWorktree)}">
+              <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
+              <span>端末</span>
+            </button>
+            <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" data-ide="${esc(taskWorktree)}">
+              <span class="material-symbols-outlined" style="font-size:14px;">code</span>
+              <span>IDE</span>
+            </button>
+          </span>
+        ` : ''}
+      </div>
+    </div>
+  `;
+
+  // ── 2. 現在の確認待ち（Gate）アラートバナー ──
+  h += `
+    <div class="m3-card-attention-box" style="padding:14px 18px;display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px;">
+          <span class="material-symbols-outlined" style="font-size:18px;">${record ? 'history' : 'pending_actions'}</span>
+          <span>【${esc(gateLabel)}】${record ? '記録 — worker は止まらずに進んだ' : 'あなたの判定待ち'}</span>
+        </div>
+        <span style="font-size:11.5px;opacity:.9">${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'} (ID: ${esc(g.id)})</span>
+      </div>
+  `;
   if (stopWhy(g).length) {
-    h += `<div class="panel"><h3>止めた理由</h3><ul>${stopWhy(g).map(w =>
-      `<li${stopBad(g) ? ' style="color:var(--critical)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>`;
+    h += `
+      <div style="font-size:12.5px;">
+        <strong>止めた理由:</strong>
+        <ul style="margin:4px 0 0;padding-left:18px;">${stopWhy(g).map(w =>
+          `<li${stopBad(g) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul>
+      </div>
+    `;
   }
-  // verify is not a judgement — it is the door to work that happens outside the browser,
-  // so the way in comes first and the buttons wait at the bottom for the way back.
-  if (g.kind === 'verify' && !record) {
-    h += `<div class="work">
-      <button class="big" data-ide="${esc(g.worktree)}">IDE で開く</button>
-      <span class="mono2">${esc(g.worktree)}</span>
-      <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
+  if (g.focus) {
+    h += `
+      <div style="font-size:12.5px;background:rgba(0,0,0,.04);padding:8px 12px;border-radius:var(--md-shape-corner-xs);">
+        <strong>確認してほしい点:</strong> ${md(g.focus)}
+      </div>
+    `;
   }
-  if (g.facts?.length) {
-    h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  if (gateTargetTab && reviewActiveTab !== gateTargetTab) {
+    const targetTabLabel = gateTargetTab === 'overview' ? '概要・計画' : gateTargetTab === 'review' ? 'コードレビュー' : '動作確認';
+    h += `
+      <div style="margin-top:2px;">
+        <button class="btn-m3-tonal" style="padding:4px 12px;font-size:12px;border-radius:var(--md-shape-corner-full);" onclick="switchReviewTab('${gateTargetTab}')">
+          <span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span>
+          <span>判定対象タブ（${targetTabLabel}）を見る</span>
+        </button>
+      </div>
+    `;
   }
-  if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  h += choicesHtml(g, !record);
-  h += structuredPanels(g);
-  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
-  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
-  if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
-  if (g.decided) h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
-  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  h += `</div>`;
 
+  // ── 3. M3 Segmented Tabs (4つのタブ) ──
+  h += `
+    <div class="m3-segmented-tabs">
+      <button class="m3-seg-tab ${reviewActiveTab === 'overview' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'overview'}" onclick="switchReviewTab('overview')">
+        <span class="material-symbols-outlined">description</span>
+        <span>概要・計画</span>
+        ${gateTargetTab === 'overview' && !record ? '<span class="m3-tab-badge">要判定</span>' : ''}
+      </button>
+      <button class="m3-seg-tab ${reviewActiveTab === 'review' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'review'}" onclick="switchReviewTab('review')">
+        <span class="material-symbols-outlined">rate_review</span>
+        <span>コードレビュー</span>
+        ${gateTargetTab === 'review' && !record ? '<span class="m3-tab-badge">要判定</span>' : ''}
+      </button>
+      <button class="m3-seg-tab ${reviewActiveTab === 'check' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'check'}" onclick="switchReviewTab('check')">
+        <span class="material-symbols-outlined">fact_check</span>
+        <span>動作確認 (Verify)</span>
+        ${gateTargetTab === 'check' && !record ? '<span class="m3-tab-badge">要判定</span>' : ''}
+      </button>
+      <button class="m3-seg-tab ${reviewActiveTab === 'history' ? 'active' : ''}" aria-pressed="${reviewActiveTab === 'history'}" onclick="switchReviewTab('history')">
+        <span class="material-symbols-outlined">history</span>
+        <span>タイムライン・全履歴</span>
+      </button>
+    </div>
+  `;
+
+  // ── 4. タブ別コンテンツ領域 ──
+  h += `<div style="display:flex;flex-direction:column;gap:18px;">`;
+
+  if (reviewActiveTab === 'overview') {
+    if (parentTask?.body) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">assignment</span><span>依頼内容 / 要件プロンプト</span></h3>
+        <div class="body">${md(parentTask.body)}</div>
+      </div>`;
+    }
+    if (g.body && g.body !== parentTask?.body) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">report</span><span>Gate 報告</span></h3>
+        <div class="body">${md(g.body)}</div>
+      </div>`;
+    }
+    if (g.facts?.length) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3>
+        <ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+      </div>`;
+    }
+    if (g.unsure) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3>
+        <div class="body">${md(g.unsure)}</div>
+      </div>`;
+    }
+    h += choicesHtml(g, !record);
+  } else if (reviewActiveTab === 'review') {
+    h += reviewPanels(g);
+    if (g.diff) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">difference</span><span>コード差分 (Diff)</span></h3>
+        <div class="diff">${renderDiff(g.diff)}</div>
+      </div>`;
+    } else if (!g.findings?.length && !g.reviewRounds?.length) {
+      h += `<div class="empty-state" style="padding:40px;text-align:center;">この Gate に記録されたコード差分はありません。</div>`;
+    }
+  } else if (reviewActiveTab === 'check') {
+    if (g.kind === 'verify' && !record) {
+      h += `<div class="work">
+        <button class="big" data-ide="${esc(g.worktree)}">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:text-bottom;margin-right:4px;">code</span>
+          <span>IDE で開く</span>
+        </button>
+        <span class="mono2">${esc(g.worktree)}</span>
+        <span style="color:var(--md-sys-color-on-surface-variant);font-size:12px;">— 確認後、下のパネルで判定してください</span></div>`;
+    }
+    h += checkPanels(g);
+    if (g.run) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">play_arrow</span><span>動かし方</span></h3>
+        <div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div>
+      </div>`;
+    }
+  } else if (reviewActiveTab === 'history') {
+    if (g.decided) {
+      h += `<div class="panel"><details class="decided"${wasDecidedOpen ? ' open' : ''}><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
+    }
+    if (parentTask) {
+      h += historyTab(parentTask, gatesOf(parentTask));
+    } else {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">history</span><span>Gate 履歴</span></h3>
+        <div style="font-size:13px;line-height:1.8;">
+          <div><strong style="color:var(--md-sys-color-outline);">${when(g.openedAt)}:</strong> 【${esc(gateLabel)}】Gate をオープン — 人間の判定待ち</div>
+          ${(g.answers || []).map(a => `<div><strong style="color:var(--md-sys-color-outline);">${when(a.answeredAt)}:</strong> 人が差し戻し — ${esc(a.comment || '')}</div>`).join('')}
+        </div>
+      </div>`;
+    }
+  }
+
+  h += `</div>`;
+
+  // ── 5. Decision Dock (最下部判定パネル) ──
   h += decideHtml(g);
+
   pane.innerHTML = h;
   pane.dataset.shown = g.id;
   bindDecide(pane);
+  pane.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+    focused = b.dataset.open;
+    renderReview();
+  }));
   restoreComment(pane, commentVal, isCommentFocused, paneScroll);
 }
 
@@ -1613,13 +3129,23 @@ function renderReview() {
    answered, the one picked is marked instead. */
 function choicesHtml(g, pickable) {
   if (!g.choices?.length) return '';
-  return `<div class="panel"${pickable ? ` data-gate="${esc(g.id)}"` : ''}><h3>選択肢</h3><div class="choices">` +
-    g.choices.map(c => `<div class="choice${c.recommended ? ' rec' : ''}">
-      ${c.recommended ? '<span class="rec-tag">AI の推し</span>' : ''}${g.choice === c.id ? '<span class="rec-tag" style="color:var(--good)">✓ 選ばれた案</span>' : ''}
-      <h4>${esc(c.label)}</h4>${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
-      <ul>${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-      ${pickable ? `<button class="pick" data-choice="${esc(c.id)}">これで進める</button>` : ''}
-    </div>`).join('') + `</div></div>`;
+  return `<div class="panel"${pickable ? ` data-gate="${esc(g.id)}"` : ''}>
+    <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
+      <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>
+      <span>AI からの提案・選択肢</span>
+    </h3>
+    <div class="choices-container choices">` +
+    g.choices.map(c => `
+      <div class="m3-choice-card choice${c.recommended ? ' recommended rec' : ''}">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${c.recommended ? '<span class="m3-pill pill-blue rec-tag" style="align-self:flex-start;display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">auto_awesome</span><span>AI の推し案</span></span>' : ''}
+          ${g.choice === c.id ? '<span class="m3-pill pill-good" style="align-self:flex-start;display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">check_circle</span><span>選ばれた案</span></span>' : ''}
+        </div>
+        <h4 style="margin:0;font-size:14px;font-weight:700;">${esc(c.label)}</h4>
+        ${c.why ? `<p class="why" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0;">${esc(c.why)}</p>` : ''}
+        <ul style="padding-left:18px;font-size:12px;line-height:1.6;margin:0;">${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        ${pickable ? `<button class="m3-btn-pick pick" data-choice="${esc(c.id)}"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>この案で進める</span></button>` : ''}
+      </div>`).join('') + `</div></div>`;
 }
 
 /* What a redraw would otherwise lose: the comment being typed, and where the pane was. */
@@ -1640,7 +3166,9 @@ function reviewPanels(g) {
   let h = '';
   const rounds = g.reviewRounds || [];
   if (rounds.length) {
-    h += `<div class="panel"><h3>セルフレビュー ${rounds.length}ラウンド</h3><div class="body"><table>
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">rate_review</span><span>セルフレビュー ${rounds.length}ラウンド</span></h3>
+      <div class="body"><table>
       <tr><th>R</th><th>エンジン</th><th>must</th><th>want</th><th>scope</th><th>誤検知</th></tr>` +
       rounds.map((r, i) => `<tr><td>R${i + 1}</td><td>${esc(r.engine)}</td><td>${r.must || 0}</td>` +
         `<td>${r.want || 0}</td><td>${r.scope || 0}</td><td>${r.falsePositives || 0}</td></tr>`).join('') +
@@ -1651,15 +3179,18 @@ function reviewPanels(g) {
   const findings = g.findings || [];
   if (findings.length) {
     const groups = [...Object.keys(OUTCOME), ...new Set(findings.map(f => f.outcome).filter(o => !OUTCOME[o]))];
-    h += `<div class="panel"><h3>指摘 ${findings.length}件</h3><div class="body">` +
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">rule</span><span>指摘 ${findings.length}件</span></h3>
+      <div class="body">` +
       groups.map(outcome => {
         const mine = findings.filter(f => f.outcome === outcome);
         if (!mine.length) return '';
-        return `<h5>${esc(OUTCOME[outcome]?.[0] || outcome)} ${mine.length}件</h5><ul>` + mine.map(f => {
+        return `<h5>${esc(OUTCOME[outcome]?.[0] || outcome)} ${mine.length}件</h5><ul style="padding-left:20px;line-height:1.7;">` + mine.map(f => {
           const openMust = f.outcome === 'open' && f.severity === 'must';
-          return `<li${openMust ? ' style="color:var(--critical)"' : ''}><b>[${esc(f.severity)}]</b> ` +
-            `${f.location ? `<code>${esc(f.location)}</code> ` : ''}${esc(f.text)}` +
-            `${f.reason ? `<br><span style="color:var(--ink-2)">${f.outcome === 'declined' ? '却下の理由' : '理由'}: ${esc(f.reason)}</span>` : ''}</li>`;
+          return `<li${openMust ? ' style="color:var(--md-sys-color-error);font-weight:600;"' : ''}>` +
+            `<span class="m3-pill ${f.severity === 'must' ? 'pill-critical' : 'pill-gray'}" style="font-size:10px;padding:1px 6px;margin-right:6px;">${esc(f.severity)}</span>` +
+            `${f.location ? `<code style="font-family:var(--font-mono);font-size:11px;background:var(--md-sys-color-surface-container-high);padding:2px 6px;border-radius:4px;margin-right:6px;">${esc(f.location)}</code> ` : ''}${esc(f.text)}` +
+            `${f.reason ? `<br><span style="color:var(--md-sys-color-outline);font-size:12px;">${f.outcome === 'declined' ? '却下の理由' : '理由'}: ${esc(f.reason)}</span>` : ''}</li>`;
         }).join('') + '</ul>';
       }).join('') + `</div></div>`;
   }
@@ -1670,27 +3201,45 @@ function checkPanels(g) {
   let h = '';
   const commands = g.commands || [];
   if (commands.length) {
-    h += `<div class="panel"><h3>verify</h3>` + commands.map(c => {
-      const failed = c.result === 'fail';
-      // A pass that took more than one run failed first: the first run is the one that said
-      // something was wrong, so it is marked rather than shown as a plain pass.
-      const retried = !failed && (c.attempts || 1) > 1;
-      const head = `<span class="state ${failed ? 'bad' : 'good'}"><span>${failed ? '✗' : '✓'}</span>` +
-        `<code>${esc(c.command)}</code></span>` +
-        (retried ? ` <span class="tag" title="1回目は失敗して、直してから通った">${c.attempts}回目で通過</span>` : '') +
-        (c.time ? ` <span style="color:var(--muted)">${esc(c.time)}</span>` : '');
-      // A failure is what a person came to read, so it comes open; a pass stays folded.
-      return c.output
-        ? `<details${failed ? ' open' : ''} style="margin-bottom:6px"><summary style="cursor:pointer">${head}</summary>` +
-          `<div class="diff" style="margin-top:6px"><div>${esc(c.output).split('\n').join('</div><div>')}</div></div></details>`
-        : `<div style="margin-bottom:6px">${head}</div>`;
-    }).join('') + `</div>`;
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">fact_check</span><span>Verify 実行結果</span></h3>` +
+      commands.map(c => {
+        const failed = c.result === 'fail';
+        const retried = !failed && (c.attempts || 1) > 1;
+        const head = `<span class="state ${failed ? 'bad' : 'good'}" style="display:inline-flex;align-items:center;gap:6px;">` +
+          `<span class="material-symbols-outlined" style="font-size:16px;color:${failed ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-success)'};">${failed ? 'cancel' : 'check_circle'}</span>` +
+          `<code style="font-family:var(--font-mono);font-weight:600;">${esc(c.command)}</code></span>` +
+          (retried ? ` <span class="m3-pill pill-warn" style="font-size:11px;" title="1回目は失敗して、直してから通った">${c.attempts}回目で通過</span>` : '') +
+          (c.time ? ` <span style="color:var(--md-sys-color-outline);font-size:12px;margin-left:auto;">${esc(c.time)}</span>` : '');
+        return c.output
+          ? `<details${failed ? ' open' : ''} style="margin-bottom:8px;background:var(--md-sys-color-surface-container-low);padding:8px 12px;border-radius:var(--md-shape-corner-sm);"><summary style="cursor:pointer;list-style:none;display:flex;align-items:center;">${head}</summary>` +
+            `<div class="diff" style="margin-top:8px;"><div>${esc(c.output).split('\n').join('</div><div>')}</div></div></details>`
+          : `<div style="margin-bottom:8px;background:var(--md-sys-color-surface-container-low);padding:8px 12px;border-radius:var(--md-shape-corner-sm);display:flex;align-items:center;">${head}</div>`;
+      }).join('') + `</div>`;
   }
   if ((g.manual || []).length) {
-    h += `<div class="panel"><h3>人が見る確認</h3><ul class="checklist">${g.manual.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
+    h += `<div class="panel">
+      <h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>人が見る確認項目</span></h3>
+      <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map((m, i) =>
+        `<li><label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" data-manual-gate="${esc(g.id)}" data-manual-index="${i}"${manualChecked(g.id).has(i) ? ' checked' : ''} style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></label></li>`).join('')}</ul></div>`;
   }
   return h;
 }
+
+/* Ticks on a gate's manual checks, kept per gate so a re-render or a tab switch does not
+   drop them. */
+const manualChecks = new Map();
+function manualChecked(gateId) {
+  if (!manualChecks.has(gateId)) manualChecks.set(gateId, new Set());
+  return manualChecks.get(gateId);
+}
+document.addEventListener('change', e => {
+  const box = e.target.closest?.('input[data-manual-gate]');
+  if (!box) return;
+  const ticked = manualChecked(box.dataset.manualGate);
+  const i = Number(box.dataset.manualIndex);
+  if (box.checked) ticked.add(i); else ticked.delete(i);
+});
 
 /* The comment box of the view on screen. The review view and a task's view can both hold one
    at once, the hidden one included, so it is looked up inside the one being shown. */
@@ -1868,16 +3417,16 @@ function filesOf(diff) {
 
 /* One line saying where a gate stands: waiting, recorded, or answered and how. */
 function gateStatusHtml(g) {
-  if (isWaiting(g)) return `<span class="state warn"><span>⏳</span>${ago(g.openedAt)}から人の判定を待っている</span>`;
+  if (isWaiting(g)) return `<span class="state warn" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">hourglass_empty</span><span>${ago(g.openedAt)}から人の判定を待っている</span></span>`;
   if (g.wait === false) {
     const sent = (g.answers || []).length;
-    return `<span class="state good"><span>●</span>${ago(g.openedAt)}に記録 — worker は止まらずに進んだ${sent ? `（差し戻し ${sent}回）` : ''}</span>`;
+    return `<span class="state good" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-success);">check_circle</span><span>${ago(g.openedAt)}に記録 — worker は止まらずに進んだ${sent ? `（差し戻し ${sent}回）` : ''}</span></span>`;
   }
   if (g.decision) {
     const bad = ['changes', 'reject'].includes(g.decision);
-    return `<span class="state ${bad ? 'bad' : 'good'}"><span>${bad ? '↩' : '✓'}</span>` +
+    return `<span class="state ${bad ? 'bad' : 'good'}" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:${bad ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-success)'};">${bad ? 'replay' : 'check_circle'}</span>` +
       `<span title="${esc(when(g.answeredAt))}">${ago(g.answeredAt)}に人が${esc(DECISION[g.decision] || g.decision)}</span></span>` +
-      (g.comment ? ` <span style="color:var(--ink-2)">— ${esc(g.comment)}</span>` : '');
+      (g.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(g.comment)}</span>` : '');
   }
   return '';
 }
@@ -1888,14 +3437,14 @@ function gateHeadHtml(g, all) {
   const same = all.filter(x => x.kind === g.kind);
   let h = `<div class="panel"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">` +
     `<b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(g.title)}</b>` +
-    `<span class="mono2" style="color:var(--muted)">${esc(when(g.openedAt))}</span></div>` +
+    `<span class="mono2" style="color:var(--md-sys-color-outline)">${esc(when(g.openedAt))}</span></div>` +
     `<div style="margin-top:4px">${gateStatusHtml(g)}</div>`;
   if (stopWhy(g).length) {
-    h += `<div class="state${stopBad(g) ? ' bad' : ''}" style="margin-top:4px;white-space:normal"><span>${stopBad(g) ? '⚠' : '■'}</span>止めた理由: ${esc(stopWhy(g).join(' / '))}</div>`;
+    h += `<div class="state${stopBad(g) ? ' bad' : ''}" style="margin-top:6px;white-space:normal;display:flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:16px;color:${stopBad(g) ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-warning)'};">${stopBad(g) ? 'error' : 'warning'}</span><span>止めた理由: ${esc(stopWhy(g).join(' / '))}</span></div>`;
   }
   if (same.length > 1) {
     h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
-      `<span style="color:var(--muted);font-size:12px">このタスクの${esc(kindOf(g.kind)[0])} ${same.length}件:</span>` +
+      `<span style="color:var(--md-sys-color-outline);font-size:12px">このタスクの${esc(kindOf(g.kind)[0])} ${same.length}件:</span>` +
       same.map((x, i) => `<button type="button" class="chip${x.id === g.id ? ' good' : ''}" data-pick="${esc(x.id)}">` +
         `${i + 1}. ${esc(when(x.openedAt))}${x.wait === false ? ' 記録' : isWaiting(x) ? ' 待ち' : ''}</button>`).join('') + `</div>`;
   }
@@ -1905,9 +3454,9 @@ function gateHeadHtml(g, all) {
 /* The three frames, for a gate read in a task's view. */
 function framesHtml(g) {
   let h = '';
-  if (g.facts?.length) h += `<div class="panel"><h3>事実</h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-  if (g.focus) h += `<div class="panel"><h3>確認してほしい点</h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  if (g.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(g.unsure)}</div></div>`;
+  if (g.facts?.length) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  if (g.focus) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>確認してほしい点</span></h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
+  if (g.unsure) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
   return h;
 }
 
@@ -1922,6 +3471,10 @@ function actHtml(g) {
    stored as given, and `esc` keeps it from breaking the markup but not from being a
    `javascript:` link. */
 const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
+// The number at the end of an issue URL, ignoring a query, a fragment, or a trailing slash.
+function issueNumberOf(url) {
+  try { return new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; }
+}
 
 function overviewTab(task, all) {
   const plans = all.filter(g => g.kind === 'plan');
@@ -1952,9 +3505,9 @@ function overviewTab(task, all) {
     // `adj gate answer`; the gate does not record which one.
     const approved = ['approve', 'choice'].includes(plan.decision);
     h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(plan.title)}</b></div>` +
-      `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn"><span>⏳</span>${ago(plan.openedAt)}から承認待ち</span>`
-        : approved ? `<span class="state good"><span>✓</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
-          (plan.comment ? ` <span style="color:var(--ink-2)">— ${esc(plan.comment)}</span>` : '')
+      `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">hourglass_empty</span><span>${ago(plan.openedAt)}から承認待ち</span></span>`
+        : approved ? `<span class="state good" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-success);">check_circle</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
+          (plan.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(plan.comment)}</span>` : '')
         : gateStatusHtml(plan)}</div>`;
     if (plans.length > 1) {
       h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
@@ -2121,7 +3674,7 @@ function renderTaskView() {
   if (!task) {
     rail.classList.add('hidden');
     root.classList.remove('with-rail');
-    main.innerHTML = `<div class="tv-top"><div class="row"><button type="button" class="iconbtn" data-back>← ボード</button></div></div>` +
+    main.innerHTML = `<div class="tv-top"><div class="row"><button type="button" class="btn-m3-tonal" data-back style="padding:6px 14px;border-radius:var(--md-shape-corner-full);display:inline-flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span><span>ボード</span></button></div></div>` +
       `<div class="empty-state">このタスクは見つからない。${state.tasks?.length ? '取り消されたか、別のリポジトリのもの' : '読み込み中'}なのかもしれない。</div>`;
     main.querySelector('[data-back]').addEventListener('click', backToBoard);
     return;
@@ -2159,23 +3712,45 @@ function renderTaskView() {
   const count = kind => all.filter(g => g.kind === kind).length;
   const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && recordById(g.id) && isUnread(g));
   let h = `<div class="tv-top">
-    <div class="row">
-      <button type="button" class="iconbtn" data-back title="ボードに戻る (Esc)">← ボード</button>
-      <h1>${esc(task.title)}</h1>
+    <div class="row" style="display:flex;align-items:center;gap:12px;">
+      <button type="button" class="btn-m3-tonal" data-back title="ボードに戻る (Esc)" style="padding:6px 14px;border-radius:var(--md-shape-corner-full);display:inline-flex;align-items:center;gap:6px;">
+        <span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span>
+        <span>ボード</span>
+      </button>
+      <h1 style="flex:1;min-width:0;font-size:20px;font-weight:800;color:var(--md-sys-color-on-surface);margin:0;line-height:1.35;">${esc(task.title)}</h1>
+      ${httpUrl(task.issueUrl) ? `<a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="font-size:13px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(issueNumberOf(task.issueUrl))}</span><span class="material-symbols-outlined" style="font-size:16px;">open_in_new</span></a>` : ''}
     </div>
-    <div class="row" style="font-size:12px;color:var(--ink-2)">
-      <span class="tag">${esc(colObj ? colObj.label : task.status)}</span>
-      ${worker && worker.present && worker.phase ? `<span>${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
-      ${task.worktree ? `<span class="mono2">${esc(task.worktree.split('/').pop())}</span>` : ''}
-      ${stuckOf(task) ? `<span class="state bad"><span>⏱</span>${esc(stuckOf(task))}</span>` : ''}
+    <div class="row" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>
+      ${worker && worker.present && worker.phase ? `<span style="font-size:12px;color:var(--md-sys-color-primary);font-weight:600;">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
+      ${task.worktree ? `<span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.worktree.split('/').pop())}</code></span>` : ''}
+      ${task.branch ? `<span>ブランチ: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.branch)}</code></span>` : ''}
+      ${stuckOf(task) ? `<span class="m3-pill pill-critical" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuckOf(task))}</span></span>` : ''}
+      ${task.worktree ? `
+        <span style="display:inline-flex;gap:6px;margin-left:auto;">
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
+            <span>端末</span>
+          </button>
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}">
+            <span class="material-symbols-outlined" style="font-size:14px;">code</span>
+            <span>IDE</span>
+          </button>
+        </span>
+      ` : ''}
     </div>
-    <div class="tv-tabs" role="tablist">${TASK_TABS.map(([id, label]) => {
+    <div class="m3-segmented-tabs" role="tablist" style="margin-top:6px;margin-bottom:12px;">${TASK_TABS.map(([id, label]) => {
       const kind = KIND_OF_TAB[id];
       const n = kind && kind !== 'plan' ? count(kind) : 0;
-      return `<button role="tab" id="tv-tab-${id}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
-        `${kind && unreadIn(kind) ? '<span class="unread" aria-label="未読"></span>' : ''}${label}${n ? ` <span style="color:var(--muted)">${n}</span>` : ''}</button>`;
+      const icon = id === 'overview' ? 'description' : id === 'review' ? 'rate_review' : id === 'check' ? 'fact_check' : 'history';
+      return `<button role="tab" id="tv-tab-${id}" class="m3-seg-tab${id === taskView.tab ? ' active' : ''}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+        `<span>${label}</span>` +
+        (n ? ` <span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${n}</span>` : '') +
+        (kind && unreadIn(kind) ? '<span class="m3-tab-badge">新着</span>' : '') +
+        `</button>`;
     }).join('')}</div>
-  </div><div class="tv-body" id="tv-panel" role="tabpanel" aria-labelledby="tv-tab-${taskView.tab}">`;
+  </div><div class="tv-body pane" id="tv-panel" role="tabpanel" aria-labelledby="tv-tab-${taskView.tab}" style="padding:24px 36px 80px;max-width:1080px;margin:0 auto;width:100%;">`;
 
   // A gate waiting on a person comes first whichever tab is open: it is the ball.
   const waiting = openGate(task);
@@ -2183,12 +3758,21 @@ function renderTaskView() {
     const [label, colour] = kindOf(waiting.kind);
     const tab = TAB_OF_KIND[waiting.kind] || 'history';
     const here = tab === taskView.tab && gateShownIn(task, tab, all)?.id === waiting.id;
-    h += `<div class="tv-wait"><span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>
-      <b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(waiting.title)}</b>
-      <span style="color:var(--ink-2);font-size:12px">${ago(waiting.openedAt)}から待ち</span>
-      ${stopWhy(waiting).length ? `<span class="${stopBad(waiting) ? 'bad' : ''}" style="font-size:12px;width:100%">${stopBad(waiting) ? '⚠ ' : ''}止めた理由: ${esc(stopWhy(waiting).join(' / '))}</span>` : ''}
-      ${here ? `<span style="color:var(--ink-2);font-size:12px;width:100%">判定は${tab === 'review' ? 'この下、差分より前' : 'このページの下'}にある</span>`
-        : `<button type="button" class="primary" data-judge="${esc(waiting.id)}">判定する →</button>`}</div>`;
+    h += `
+      <div class="m3-card-attention-box" style="padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-outlined" style="font-size:18px;">pending_actions</span>
+            <span>【${esc(label)}】あなたの判定待ち</span>
+          </div>
+          <span style="font-size:11.5px;opacity:.9">${ago(waiting.openedAt)}から待ち (ID: ${esc(waiting.id)})</span>
+        </div>
+        ${stopWhy(waiting).length ? `<div style="font-size:12.5px;"><strong>止めた理由:</strong> <ul style="margin:4px 0 0;padding-left:18px;">${stopWhy(waiting).map(w => `<li${stopBad(waiting) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+        ${waiting.focus ? `<div style="font-size:12.5px;background:rgba(0,0,0,.04);padding:8px 12px;border-radius:var(--md-shape-corner-xs);"><strong>確認してほしい点:</strong> ${md(waiting.focus)}</div>` : ''}
+        ${here ? `<div style="font-size:12px;color:var(--md-sys-color-outline);display:flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span><span>判定パネルは${tab === 'review' ? 'この下、差分より前' : 'このページの下'}にあります</span></div>`
+          : `<div><button type="button" class="btn-m3-tonal" data-judge="${esc(waiting.id)}" style="padding:4px 12px;font-size:12px;border-radius:var(--md-shape-corner-full);"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>判定対象タブを開く</span></button></div>`}
+      </div>
+    `;
   }
 
   h += { overview: overviewTab, review: reviewTab, check: checkTab, history: historyTab }[taskView.tab](task, all);
@@ -2232,6 +3816,10 @@ function renderTaskView() {
     taskView.pick[tab] = waiting.id;
     renderTaskView();
   }));
+  main.querySelectorAll('[data-focus]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
+  main.querySelectorAll('[data-ide]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
   bindDecide(main);
   restoreComment(main, commentVal, isCommentFocused, scroll);
 }
@@ -2252,12 +3840,18 @@ function gateShownIn(task, tab, all) {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && view === 'task' && !e.target.matches('textarea,input,select')) {
-    backToBoard();
-    return;
-  }
-  if (e.key === 'Escape' && view === 'board') {
-    if (selectedTaskId) {
+  if (e.key === 'Escape') {
+    const formDialog = document.getElementById('form');
+    if (formDialog && formDialog.open) {
+      formDialog.close();
+      return;
+    }
+    // Escape in a comment box must not leave the task and drop what was typed.
+    if (view === 'task' && !e.target.matches('textarea,input,select')) {
+      backToBoard();
+      return;
+    }
+    if (view === 'board' && selectedTaskId) {
       closeDrawer();
       return;
     }
@@ -2265,8 +3859,16 @@ document.addEventListener('keydown', e => {
   if (view !== 'review' || e.target.matches('textarea,input,select')) return;
   const gates = state.gates || [];
   const i = gates.findIndex(g => g.id === focused);
-  if (e.key === 'j' && i < gates.length - 1) { focused = gates[i + 1].id; renderReview(); }
-  if (e.key === 'k' && i > 0) { focused = gates[i - 1].id; renderReview(); }
+  if (e.key === 'j' && i < gates.length - 1) {
+    focused = gates[i + 1].id;
+    reviewActiveTab = TAB_OF_KIND[gates[i + 1].kind] || 'overview';
+    renderReview();
+  }
+  if (e.key === 'k' && i > 0) {
+    focused = gates[i - 1].id;
+    reviewActiveTab = TAB_OF_KIND[gates[i - 1].kind] || 'overview';
+    renderReview();
+  }
   // A record on screen is not in the queue these keys work through, and approving one is not
   // something a record can take.
   if (i < 0) return;
@@ -2277,26 +3879,79 @@ document.addEventListener('keydown', e => {
 
 function setView(v) {
   view = v;
-  document.getElementById('board-view').style.display = v === 'board' ? 'flex' : 'none';
-  document.getElementById('review').classList.toggle('on', v === 'review');
-  document.getElementById('task-view').classList.toggle('on', v === 'task');
-  // A task's view is reached from the board and goes back to it, so the board tab stays lit.
-  document.getElementById('tab-board').setAttribute('aria-selected', String(v !== 'review'));
-  document.getElementById('tab-review').setAttribute('aria-selected', String(v === 'review'));
+  const boardView = document.getElementById('board-view');
+  const reviewView = document.getElementById('review');
+  const taskView = document.getElementById('task-view');
+
+  if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
+  if (reviewView) {
+    reviewView.classList.toggle('on', v === 'review');
+    reviewView.style.display = v === 'review' ? 'grid' : 'none';
+  }
+  if (taskView) {
+    taskView.classList.toggle('on', v === 'task');
+    taskView.style.display = v === 'task' ? 'grid' : 'none';
+  }
+
+  // Navigation rail active states
+  const navBoard = document.getElementById('nav-board');
+  const navReview = document.getElementById('nav-review');
+  for (const [nav, on] of [[navBoard, v === 'board'], [navReview, v === 'review']]) {
+    if (!nav) continue;
+    if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
+  }
+
+  // Top App Bar title updates
+  const pageTitle = document.getElementById('page-title');
+  const pageSub = document.getElementById('page-subtitle');
+  if (pageTitle && pageSub) {
+    if (v === 'board') {
+      pageTitle.textContent = 'タスクボード';
+      pageSub.textContent = 'バックグラウンド worker との協調作業カンバン';
+    } else if (v === 'review') {
+      pageTitle.textContent = '要対応レビュー';
+      pageSub.textContent = '人間の判断・承認を待っている Gate 一覧';
+    } else if (v === 'task') {
+      pageTitle.textContent = 'タスク詳細';
+      pageSub.textContent = '個別タスクの全工程記録と実行タイムライン';
+    }
+  }
+
+  // Filter chips are visible on board
+  const filterChips = document.querySelector('.filter-chip-group');
+  if (filterChips) filterChips.style.display = (v === 'board') ? 'flex' : 'none';
+
   if (v === 'task') {
     taskViewShown = null;
-    // The drawer stays selected underneath, for the way back.
     renderDrawer();
     renderTaskView();
-  } else if (v !== 'board') closeDrawer();
-  else {
+  } else if (v !== 'board') {
+    closeDrawer();
+  } else {
     if (location.hash.startsWith('#task/')) history.replaceState(null, '', location.pathname + location.search);
-    // Back from reading a record: the review tab is for the queue, so it opens on what waits
-    // rather than on the record read last.
     if (!(state.gates || []).some(g => g.id === focused)) focused = null;
-    // And the record's unread dot has to go now, not on the next change of state.
     render();
   }
+}
+
+function toggleBottomSheet() {
+  const sheet = document.getElementById('m3-bottom-sheet');
+  if (!sheet) return;
+  sheet.classList.toggle('open');
+  const isOpen = sheet.classList.contains('open');
+  const icon = document.getElementById('sheet-toggle-icon');
+  if (icon) icon.textContent = isOpen ? '▼ 閉じる' : '▲ 開く';
+  const handleBar = sheet.querySelector('.sheet-handle-bar');
+  if (handleBar) handleBar.setAttribute('aria-expanded', String(isOpen));
+}
+
+async function refreshAll() {
+  const line = 'adj refresh';
+  try {
+    await api('/api/refresh', { method: 'POST' });
+    note(line, false, '外部同期を完了しました');
+    await refresh(true);
+  } catch (e) { note(`${line} → ${e.message}`, true); }
 }
 
 
