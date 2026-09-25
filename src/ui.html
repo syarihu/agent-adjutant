@@ -2459,7 +2459,7 @@ function renderDrawer() {
     const drawerTextarea = document.getElementById('drawer-instruction');
     if (drawerTextarea) {
       drawerTextarea.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
           e.preventDefault();
           hand(task.id, drawerTextarea.value.trim());
         }
@@ -2492,7 +2492,8 @@ async function move(id, to, before) {
    Orders are not positions: a new task takes the highest order of every task plus one, so the
    queue can read 12, 15, 20. The task takes the gap below the one it lands on. When there is
    no gap, that one and the ones after it move down first, so no two queued tasks share an
-   order. Null when moving them failed. */
+   order. They move from the last one up, each into an order nobody holds, so a request that
+   fails part way leaves the queue in the same sequence with no order shared. Null then. */
 async function queueOrder(id, before) {
   const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -2501,20 +2502,23 @@ async function queueOrder(id, before) {
   const floor = at > 0 ? (queue[at - 1].order || 0) + 1 : 0;
   const target = queue[at].order || 0;
   if (target > floor) return target - 1;
+  const shifts = [];
   let next = floor + 1;
   for (const t of queue.slice(at)) {
     if ((t.order || 0) >= next) break;
-    const line = `adj task update --id ${t.id} --order ${next}`;
+    shifts.push([t.id, next++]);
+  }
+  for (const [tid, order] of shifts.reverse()) {
+    const line = `adj task update --id ${tid} --order ${order}`;
     try {
-      await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
-        method:'POST', body: JSON.stringify({ order: next }),
+      await api(`/api/tasks/${encodeURIComponent(tid)}`, {
+        method:'POST', body: JSON.stringify({ order }),
       });
       note(line, false, '間に入れる場所を空けるため後ろへずらしました');
     } catch (e) {
       note(`${line} → ${e.message}`, true);
       return null;
     }
-    next++;
   }
   return floor;
 }
@@ -2534,7 +2538,7 @@ function openHandoverDialog(id, before = null) {
   if (textarea) {
     textarea.value = task.instruction || '';
     textarea.onkeydown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
         e.preventDefault();
         submitHandover();
       }
@@ -2562,12 +2566,15 @@ async function submitHandover(e) {
   const before = handoverTargetBefore;
   closeHandoverDialog();
   // Dropped onto a card: the place is made in the queue just before it is handed over.
-  const order = before ? await queueOrder(id, before) : null;
-  if (before && order == null) return;
+  const order = await queueOrder(id, before);
+  if (order == null) return;
   hand(id, instruction, order);
 }
 
 async function hand(id, instruction = null, order = null) {
+  // Handed over without a place in mind, the task joins the end of the queue. Its own order
+  // dates from when it was created, which would put it ahead of tasks handed over before it.
+  if (order == null) order = await queueOrder(id, null);
   const body = { status:'queued' };
   // A string came from a field the person saw, so an empty one clears the instruction kept on
   // the task. Null is a hand-over with no field on screen, which leaves it as it was.
