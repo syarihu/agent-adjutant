@@ -541,16 +541,21 @@ function goToQueue() {
 function renderDrawer() {
   const drawer = document.getElementById('task-drawer');
   if (!drawer) return;
-  const task = selectedTaskId && (state.tasks || []).find(t => t.id === selectedTaskId);
-  if (!task) {
-    // Closed, not just out of view: what was typed for the task goes with it.
+  // Closed, not just out of view: what was typed for the task goes with it.
+  if (!selectedTaskId) {
     drawer.classList.add('hidden');
     document.getElementById('drawer-body')?.replaceChildren();
-    selectedTaskId = null;
     return;
   }
   if (view !== 'board') {
     drawer.classList.add('hidden');
+    return;
+  }
+  const task = (state.tasks || []).find(t => t.id === selectedTaskId);
+  if (!task) {
+    drawer.classList.add('hidden');
+    document.getElementById('drawer-body')?.replaceChildren();
+    selectedTaskId = null;
     return;
   }
   drawer.classList.remove('hidden');
