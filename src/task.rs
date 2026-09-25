@@ -156,6 +156,9 @@ pub struct Task {
     /// to reply to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Handover instruction for the agent when queued.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
     /// When a gate for this task was last answered or closed. The board counts the worker's
     /// time in a phase from here when it is later than the phase's start: waiting on a person
     /// is not the worker being stuck. Kept on the record, written as the gate is answered, so
@@ -336,6 +339,11 @@ pub fn render_request(task: &Task) -> String {
     out.push_str("\n## 内容\n\n");
     out.push_str(task.body.trim_end());
     out.push('\n');
+    if let Some(instruction) = task.instruction.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str("\n## 申し送り\n\n");
+        out.push_str(instruction.trim_end());
+        out.push('\n');
+    }
     out
 }
 
@@ -372,6 +380,7 @@ mod tests {
                 issue: None,
                 pr: None,
                 note: None,
+                instruction: None,
                 gate_answered_at: None,
                 created_at: stamp.to_string(),
                 updated_at: stamp.to_string(),
@@ -534,5 +543,22 @@ mod tests {
         value.as_object_mut().unwrap().remove("stopAt");
         let task: Task = serde_json::from_value(value).unwrap();
         assert_eq!(task.stop_at, StopAt::Plan);
+    }
+
+    #[test]
+    fn the_request_body_includes_instruction_when_present() {
+        let mut task = sample();
+        assert!(!render_request(&task).contains("## 申し送り"));
+
+        task.instruction = Some("まずは既存コードの挙動を調査してほしいのだ".to_string());
+        let body = render_request(&task);
+        assert!(body.contains("## 申し送り\n\nまずは既存コードの挙動を調査してほしいのだ\n"));
+    }
+
+    #[test]
+    fn a_record_without_an_instruction_deserializes_with_none() {
+        let value = serde_json::to_value(sample()).unwrap();
+        let task: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(task.instruction, None);
     }
 }

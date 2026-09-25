@@ -1553,6 +1553,34 @@ details.more .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; p
         <span>いま渡す</span>
       </button>
     </div>
+</dialog>
+
+<dialog id="handover-dialog">
+  <form method="dialog" id="handover-form" onsubmit="submitHandover(event)">
+    <div class="head" style="justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">forward_to_inbox</span>
+        <span>キューに渡す</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" id="handover-close-btn" onclick="closeHandoverDialog()" title="閉じる">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <div id="handover-task-title" style="font-size:13.5px;font-weight:600;color:var(--md-sys-color-on-surface);background:var(--md-sys-color-surface-container);padding:10px 14px;border-radius:var(--md-shape-corner-sm);line-height:1.4;"></div>
+      <label class="field">
+        <span>エージェントへの申し送り（指示）</span>
+        <textarea id="handover-instruction" placeholder="着手にあたってエージェントに伝えたい前提条件や追加指示があれば入力（空欄でも渡せます）..." rows="4"></textarea>
+        <span class="note">⌘+Enter / Ctrl+Enter で送信</span>
+      </label>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" id="handover-cancel-btn" onclick="closeHandoverDialog()">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="handover-submit-btn">
+        <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+        <span>キューに渡す</span>
+      </button>
+    </div>
   </form>
 </dialog>
 
@@ -2129,6 +2157,14 @@ function cardEl(task, col) {
     }
   }
 
+  // 7.5 Instruction (申し送り)
+  if (task.instruction) {
+    h += `<div style="display:flex;align-items:flex-start;gap:4px;font-size:11px;color:var(--md-sys-color-primary);background:var(--md-sys-color-surface-container-high);padding:4px 8px;border-radius:var(--md-shape-corner-xs);margin-top:2px;">
+      <span class="material-symbols-outlined" style="font-size:13px;flex-shrink:0;margin-top:1px;">forward_to_inbox</span>
+      <span style="overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${esc(task.instruction)}">${esc(task.instruction)}</span>
+    </div>`;
+  }
+
   // 8. Stuck warning
   const stuck = stuckOf(task);
   if (stuck) {
@@ -2168,7 +2204,7 @@ function cardEl(task, col) {
     selectTask(task.id);
   };
   el.querySelectorAll('[data-hand]').forEach(b =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); hand(b.dataset.hand); }));
+    b.addEventListener('click', (e) => { e.stopPropagation(); openHandoverDialog(b.dataset.hand); }));
   el.querySelectorAll('[data-ide]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('ide', b.dataset.ide); }));
   el.querySelectorAll('[data-focus]').forEach(b =>
@@ -2301,8 +2337,11 @@ function renderDrawer() {
 
   if (colId === 'backlog') {
     body += `
-      <div>
-        <button class="btn-m3-tonal" style="width:100%" data-drawer-hand="${esc(task.id)}">
+      <div class="m3-filled-card" style="display:flex;flex-direction:column;gap:8px;">
+        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;">キューへの受け渡し</div>
+        <label for="drawer-instruction" style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);">エージェントへの申し送り（指示）</label>
+        <textarea id="drawer-instruction" placeholder="追加の指示や申し送りがあれば入力（任意）..." style="width:100%;box-sizing:border-box;border-radius:var(--md-shape-corner-xs);border:1px solid var(--md-sys-color-outline-variant);padding:8px 10px;background:var(--md-sys-color-surface-container-high);color:var(--md-sys-color-on-surface);font-size:12.5px;font-family:inherit;resize:vertical;min-height:60px;">${esc(task.instruction || '')}</textarea>
+        <button class="btn-m3-primary" style="width:100%" data-drawer-hand="${esc(task.id)}">
           <span class="material-symbols-outlined" style="font-size:16px;">send</span>
           <span>待機キューに渡す</span>
         </button>
@@ -2380,6 +2419,15 @@ function renderDrawer() {
     `;
   }
 
+  if (task.instruction && colId !== 'backlog') {
+    body += `
+      <div class="m3-filled-card">
+        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">エージェントへの申し送り（指示）</div>
+        <p style="font-size:13px;line-height:1.6;color:var(--md-sys-color-on-surface);white-space:pre-wrap;">${esc(task.instruction)}</p>
+      </div>
+    `;
+  }
+
   if (task.body) {
     body += `
       <div class="m3-filled-card">
@@ -2396,14 +2444,27 @@ function renderDrawer() {
       b.addEventListener('click', () => openRecord(b.dataset.record)));
     drawerBody.querySelectorAll('[data-judge]').forEach(b =>
       b.addEventListener('click', () => judgeGate(b.dataset.judge)));
-    drawerBody.querySelectorAll('[data-drawer-hand]').forEach(b =>
-      b.addEventListener('click', () => hand(b.dataset.drawerHand)));
     drawerBody.querySelectorAll('[data-focus]').forEach(b =>
       b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
     drawerBody.querySelectorAll('[data-ide]').forEach(b =>
       b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
     drawerBody.querySelectorAll('[data-close]').forEach(b =>
       b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
+    drawerBody.querySelectorAll('[data-drawer-hand]').forEach(b =>
+      b.addEventListener('click', () => {
+        const textarea = document.getElementById('drawer-instruction');
+        const instruction = textarea ? textarea.value.trim() : '';
+        hand(b.dataset.drawerHand, instruction);
+      }));
+    const drawerTextarea = document.getElementById('drawer-instruction');
+    if (drawerTextarea) {
+      drawerTextarea.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          hand(task.id, drawerTextarea.value.trim());
+        }
+      });
+    }
   }
 }
 
@@ -2413,7 +2474,12 @@ function renderDrawer() {
 async function move(id, to, before) {
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task || !canDrop(columnOf(task), to)) return;
-  if (columnOf(task) === 'backlog' && to === 'queued') return hand(id);
+  if (columnOf(task) === 'backlog' && to === 'queued') {
+    const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id);
+    const at = before ? queue.findIndex(t => t.id === before) : queue.length;
+    const order = at < 0 ? queue.length + 1 : at + 1;
+    return openHandoverDialog(id, order);
+  }
   if (to === 'backlog') {
     await update(id, { status:'backlog' },
       `adj task update --id ${id} --status backlog`,
@@ -2428,9 +2494,63 @@ async function move(id, to, before) {
     'hub がキューの先頭から取得する順序です');
 }
 
-async function hand(id) {
-  await update(id, { status:'queued' },
-    `adj task update --id ${id} --status queued`,
+let handoverTargetTaskId = null;
+let handoverTargetOrder = null;
+
+function openHandoverDialog(id, order = null) {
+  const task = (state.tasks || []).find(t => t.id === id);
+  if (!task) return;
+  handoverTargetTaskId = id;
+  handoverTargetOrder = order;
+  const dialog = document.getElementById('handover-dialog');
+  const titleEl = document.getElementById('handover-task-title');
+  const textarea = document.getElementById('handover-instruction');
+  if (titleEl) titleEl.textContent = task.title;
+  if (textarea) {
+    textarea.value = task.instruction || '';
+    textarea.onkeydown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitHandover();
+      }
+    };
+  }
+  if (dialog) {
+    dialog.showModal();
+    if (textarea) setTimeout(() => textarea.focus(), 50);
+  }
+}
+
+function closeHandoverDialog() {
+  const dialog = document.getElementById('handover-dialog');
+  if (dialog && dialog.open) dialog.close();
+  handoverTargetTaskId = null;
+  handoverTargetOrder = null;
+}
+
+function submitHandover(e) {
+  if (e) e.preventDefault();
+  if (!handoverTargetTaskId) return;
+  const textarea = document.getElementById('handover-instruction');
+  const instruction = textarea ? textarea.value.trim() : '';
+  const id = handoverTargetTaskId;
+  const order = handoverTargetOrder;
+  closeHandoverDialog();
+  hand(id, instruction, order);
+}
+
+async function hand(id, instruction = null, order = null) {
+  const body = { status:'queued' };
+  if (instruction != null && instruction.trim() !== '') {
+    body.instruction = instruction.trim();
+  }
+  if (order != null) {
+    body.order = order;
+  }
+  const cmd = body.instruction
+    ? `adj task update --id ${id} --status queued --instruction -`
+    : `adj task update --id ${id} --status queued`;
+  await update(id, body, cmd,
     'レコードを queued にして、受信箱に kind:request を配置し hubWake を実行します');
 }
 
@@ -3509,6 +3629,13 @@ function overviewTab(task, all) {
   else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
   h += `</div>`;
 
+  if (task.instruction) {
+    h += `<div class="panel" style="border-left: 3px solid var(--md-sys-color-primary, #6750A4);">` +
+      `<h3>エージェントへの申し送り（指示）</h3>` +
+      `<div class="body" style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;">${esc(task.instruction)}</div>` +
+      `<div class="source">キュー投入時の指示</div></div>`;
+  }
+
   h += `<div class="panel"><h3>計画</h3>`;
   if (!plan) {
     h += `<div style="color:var(--muted)">計画はまだ出ていない</div></div>`;
@@ -3543,6 +3670,7 @@ function overviewTab(task, all) {
     ['止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)],
     ['着手設定', task.autoStart ? '確認なしで着手' : '着手前に確認が必要'],
   ];
+  if (task.instruction) rows.push(['申し送り', `<span style="white-space:pre-wrap">${esc(task.instruction)}</span>`]);
   const link = u => httpUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(u)}</a>` : esc(u);
   if (task.issueUrl) rows.push(['Issue', link(task.issueUrl)]);
   if (task.pr) rows.push(['PR', link(task.pr)]);
@@ -3853,6 +3981,11 @@ function gateShownIn(task, tab, all) {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
+    const handoverDialog = document.getElementById('handover-dialog');
+    if (handoverDialog && handoverDialog.open) {
+      closeHandoverDialog();
+      return;
+    }
     const formDialog = document.getElementById('form');
     if (formDialog && formDialog.open) {
       formDialog.close();

@@ -247,6 +247,7 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
         ("issue", &mut task.issue),
         ("pr", &mut task.pr),
         ("note", &mut task.note),
+        ("instruction", &mut task.instruction),
     ] {
         if let Some(value) = input.get(key) {
             // An explicit `null` clears; an absent key leaves it alone. Without the
@@ -657,6 +658,7 @@ pub struct UpdateArgs<'a> {
     pub issue: Option<&'a str>,
     pub pr: Option<&'a str>,
     pub note: Option<&'a str>,
+    pub instruction: Option<&'a str>,
     pub auto_start: Option<bool>,
     pub no_hand_over: bool,
     pub json: bool,
@@ -669,12 +671,14 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
     // comment typed on the board — and does not belong inside quotes on a command line.
     let note = args.note.map(super::dash_is_stdin).transpose()?;
+    let instruction = args.instruction.map(super::dash_is_stdin).transpose()?;
     for (key, value) in [
         ("status", args.status),
         ("worktree", args.worktree),
         ("issue", args.issue),
         ("pr", args.pr),
         ("note", note.as_deref()),
+        ("instruction", instruction.as_deref()),
     ] {
         if let Some(value) = value {
             fields.insert(key.to_string(), json!(value));
@@ -887,6 +891,14 @@ mod tests {
         );
         assert_eq!(text_field("pr", &json!(null)).unwrap(), None);
         assert_eq!(text_field("note", &json!("")).unwrap(), None);
+        assert_eq!(
+            text_field("instruction", &json!("優先して実装してください"))
+                .unwrap()
+                .as_deref(),
+            Some("優先して実装してください")
+        );
+        assert_eq!(text_field("instruction", &json!("")).unwrap(), None);
+        assert_eq!(text_field("instruction", &json!(null)).unwrap(), None);
         for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
             assert!(text_field("pr", &bad).is_err(), "{bad} was taken");
         }
