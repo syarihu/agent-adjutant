@@ -303,7 +303,7 @@ details.more .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padd
   <div class="brand">adj <span id="repo">…</span></div>
   <div class="tabs" role="tablist">
     <button role="tab" id="tab-board" aria-selected="true" onclick="setView('board')">ボード</button>
-    <button role="tab" id="tab-review" aria-selected="false" onclick="setView('review')">レビュー<span class="badge-count" id="gate-count">0</span></button>
+    <button role="tab" id="tab-review" aria-selected="false" onclick="goToQueue()">レビュー<span class="badge-count" id="gate-count">0</span></button>
   </div>
   <div class="spacer"></div>
   <span id="hub" class="state warn">…</span>
@@ -488,9 +488,7 @@ function checkNewGates(gates) {
         });
         n.onclick = () => {
           window.focus();
-          focused = g.id;
-          setView('review');
-          renderReview();
+          judgeGate(g.id);
         };
       }
     }
@@ -815,7 +813,7 @@ function cardEl(task, col) {
   let h = `<div class="title">${esc(task.title)}</div>`;
   if (gate) {
     const [label, colour] = kindOf(gate.kind);
-    h += `<div class="meta"><span class="tag" onclick="event.stopPropagation();goToGate('${gate.id}')" style="cursor:pointer" title="クリックしてレビュー画面を開く"><span class="dot" style="background:${colour}"></span>${label}</span>
+    h += `<div class="meta"><span class="tag" onclick="event.stopPropagation();judgeGate('${gate.id}')" style="cursor:pointer" title="クリックして判定する"><span class="dot" style="background:${colour}"></span>${label}</span>
       <span>${ago(gate.openedAt)}から待ち</span></div>`;
     const why = stopWhy(gate);
     if (why.length) {
@@ -897,7 +895,7 @@ function gateCardEl(gate) {
     <div class="meta"><span class="tag"><span class="dot" style="background:${colour}"></span>${label}</span>
       <span>${ago(gate.openedAt)}から待ち</span></div>
     <div class="mono">${esc(gate.worktree.split('/').pop())}</div>`;
-  el.onclick = () => { focused = gate.id; setView('review'); renderReview(); };
+  el.onclick = () => judgeGate(gate.id);
   return el;
 }
 
@@ -931,6 +929,26 @@ function goToGate(gateId) {
   focused = gateId;
   setView('review');
   renderReview();
+}
+
+/* Where a waiting gate is read and answered: its task's view, in the tab of its kind, when the
+   task is on the board. A gate with no task — the hub's, or one whose task is gone — has no
+   such view and opens in the review view. */
+function judgeGate(gateId) {
+  const g = (state.gates || []).find(x => x.id === gateId);
+  const owner = g?.task && (state.tasks || []).find(t => t.id === g.task);
+  if (owner) openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id);
+  else goToGate(gateId);
+}
+
+/* The レビュー tab: the first gate in the queue, where it is answered; the review view when the
+   queue is empty, which says so. */
+function goToQueue() {
+  // Already on the queue: stay on the one being read, and on whatever is typed for it.
+  if (view === 'review') return;
+  const first = (state.gates || [])[0];
+  if (first) judgeGate(first.id);
+  else setView('review');
 }
 
 function renderDrawer() {
@@ -974,7 +992,7 @@ function renderDrawer() {
       </div>
       <div style="color:var(--ink-2);font-size:12px">${ago(gate.openedAt)}から確認待ち</div>
       ${stopWhy(gate).length ? `<div class="state${stopBad(gate) ? ' bad' : ''}" style="font-size:12px;white-space:normal"><span>${stopBad(gate) ? '⚠' : '■'}</span>止めた理由: ${esc(stopWhy(gate).join(' / '))}</div>` : ''}
-      <button type="button" onclick="goToGate('${gate.id}')">レビュー画面で判定する →</button>
+      <button type="button" onclick="judgeGate('${gate.id}')">判定する →</button>
     </div>`;
   }
 
@@ -1944,7 +1962,11 @@ function overviewTab(task, all) {
 function reviewTab(task, all) {
   const g = gateForTab(task, 'review', all);
   if (!g) return `<div class="empty-state">コードレビューはまだ無い。worker がセルフレビューを終えると、ここに出る。</div>`;
-  let h = gateHeadHtml(g, all) + framesHtml(g) + reviewPanels(g);
+  // A gate waiting is judged on what the worker says about it, so the decision sits right under
+  // that, above the rounds, the findings and the diff it can be checked against. A record's
+  // send-back stays at the end, after what it would be sent back about.
+  const waiting = isWaiting(g);
+  let h = gateHeadHtml(g, all) + framesHtml(g) + (waiting ? actHtml(g) : '') + reviewPanels(g);
   if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
   const files = filesOf(g.diff);
   if (files.length) {
@@ -1955,7 +1977,7 @@ function reviewTab(task, all) {
   }
   if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
-  return h + actHtml(g);
+  return h + (waiting ? '' : actHtml(g));
 }
 
 function checkTab(task, all) {
@@ -2091,8 +2113,7 @@ function renderTaskView() {
       b.setAttribute('aria-current', String(g.task === task.id));
       b.innerHTML = `<span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>
         <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
-      const owner = g.task && (state.tasks || []).find(t => t.id === g.task);
-      b.onclick = () => owner ? openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id) : goToGate(g.id);
+      b.onclick = () => judgeGate(g.id);
       rail.appendChild(b);
     }
   }
@@ -2134,7 +2155,7 @@ function renderTaskView() {
       <b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(waiting.title)}</b>
       <span style="color:var(--ink-2);font-size:12px">${ago(waiting.openedAt)}から待ち</span>
       ${stopWhy(waiting).length ? `<span class="${stopBad(waiting) ? 'bad' : ''}" style="font-size:12px;width:100%">${stopBad(waiting) ? '⚠ ' : ''}止めた理由: ${esc(stopWhy(waiting).join(' / '))}</span>` : ''}
-      ${here ? '<span style="color:var(--ink-2);font-size:12px;width:100%">判定はこのページの下にある</span>'
+      ${here ? `<span style="color:var(--ink-2);font-size:12px;width:100%">判定は${tab === 'review' ? 'この下、差分より前' : 'このページの下'}にある</span>`
         : `<button type="button" class="primary" data-judge="${esc(waiting.id)}">判定する →</button>`}</div>`;
   }
 
@@ -2254,7 +2275,7 @@ function toggleTheme() {
 }
 
 note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
-// Opening #gate/<id> lands straight on that card — the shape a notification's click takes.
+// Opening #gate/<id> lands straight on that card in the review view.
 const deep = location.hash.match(/^#gate\/(.+)$/);
 // And #task/<id>/<tab> on one task's view.
 const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);

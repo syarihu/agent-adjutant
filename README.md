@@ -462,7 +462,9 @@ commands (folded, a failure open, a pass that took a second run marked — `atte
 command), the checks left for a person and how to run it. 経過 lists, in time order, the
 gates that waited, the records that did not and what people answered; the worker's phase is
 kept only as the one it is in now, so it closes the list. A gate waiting on a person is
-answered in the tab it belongs to, and the 要対応 queue is shown beside the task only while
+answered in the tab it belongs to — the gate's tag on a card, 判定する in the drawer, a
+notification and the レビュー tab all open it there, and a gate with no task on the board opens
+in the review view instead — and the 要対応 queue is shown beside the task only while
 the task is on it. The answered gates come from `GET /api/tasks/<id>/history`, read when the
 view opens rather than on every poll, since the archive only grows.
 
