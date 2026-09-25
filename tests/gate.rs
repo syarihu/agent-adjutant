@@ -349,6 +349,10 @@ fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
             "stoppedBy must be a list",
         ),
         (
+            serde_json::json!({ "kind": "plan", "title": "計画", "stoppedBy": null }),
+            "stoppedBy must be a list",
+        ),
+        (
             serde_json::json!({ "kind": "diff", "title": "差分" }),
             "a waiting diff gate needs stoppedBy",
         ),

@@ -723,6 +723,8 @@ function seenRecords() {
 }
 const isUnread = r => !seenRecords().has(r.id);
 function markSeen(id) {
+  // Read again first: another tab may have written since, and this write would drop its ids.
+  seenCache = null;
   const seen = seenRecords();
   if (seen.has(id)) return;
   seen.add(id);
@@ -732,6 +734,12 @@ function markSeen(id) {
   try { localStorage.setItem(SEEN_KEY(), JSON.stringify([...seen].filter(x => live.has(x)))); }
   catch { /* private mode or full: the dot comes back next load, nothing worse */ }
 }
+// Another tab on the same board opened a record: its dot goes here too.
+window.addEventListener('storage', e => {
+  if (e.key !== SEEN_KEY()) return;
+  seenCache = null;
+  if (view === 'board') render();
+});
 const allRecords = () => (state.tasks || []).flatMap(t => t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
 /* A task's records oldest first. The server sorts by `openedAt` alone, which is to the second,
@@ -1494,8 +1502,6 @@ function renderReview() {
     if (view === 'review') location.hash = '';
     return;
   }
-  // Whether this is what was on screen: a comment is only carried across a redraw of the same one.
-  const same = g.id === focused;
   focused = g.id;
   const record = g.wait === false;
   if (record && view === 'review') markSeen(g.id);
@@ -1506,7 +1512,9 @@ function renderReview() {
   const commentEl = pane.querySelector('.gate-comment');
   // A comment written for something that has since left the board (a gate answered elsewhere,
   // a record whose task finished) is not carried over to whatever is shown in its place.
-  const commentVal = commentEl && same ? commentEl.value : '';
+  // Compared with what the pane last drew, not with `focused`: a click on another item has
+  // already moved `focused` to it by the time this runs.
+  const commentVal = commentEl && pane.dataset.shown === g.id ? commentEl.value : '';
   const isCommentFocused = document.activeElement === commentEl;
   const paneScroll = pane.scrollTop;
 
@@ -1544,6 +1552,7 @@ function renderReview() {
 
   h += decideHtml(g);
   pane.innerHTML = h;
+  pane.dataset.shown = g.id;
   bindDecide(pane);
   restoreComment(pane, commentVal, isCommentFocused, paneScroll);
 }
