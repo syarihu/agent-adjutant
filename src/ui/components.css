@@ -15,7 +15,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.btn-m3-primary {
+.btn-m3-primary, .btn-m3-danger {
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
   border: 0;
@@ -29,9 +29,14 @@
   gap: 8px;
   transition: box-shadow .15s, opacity .15s;
 }
-.btn-m3-primary:hover {
+.btn-m3-primary:hover, .btn-m3-danger:hover {
   box-shadow: var(--md-elevation-1);
   opacity: .95;
+}
+/* An action that cannot be taken back, such as closing a worker's tab. */
+.btn-m3-danger {
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
 }
 
 .btn-m3-tonal {

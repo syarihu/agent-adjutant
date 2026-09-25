@@ -266,4 +266,33 @@
   </form>
 </dialog>
 
+<dialog id="close-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-error);">warning</span>
+        <span>worker のタブを閉じる</span>
+      </div>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body close-help">
+      <div class="target">
+        <div id="close-worktree-name" class="name"></div>
+        <code id="close-worktree-path" class="path"></code>
+      </div>
+      <p>この worktree の worker が動いているターミナルのタブを閉じます。worker は止まります。</p>
+      <p>worktree は消えずに残ります。</p>
+    </div>
+    <div class="foot">
+      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
+      <button type="submit" value="close" class="btn-m3-danger">
+        <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+        <span>タブを閉じる</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
 <script>

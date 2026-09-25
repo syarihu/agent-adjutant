@@ -57,12 +57,13 @@ async function focusHub() {
   } catch (e) { note(`${line} → ${e.message}`, true); }
 }
 
-async function worktreeAct(action, worktree) {
+/* `confirmed` is set by the close dialog: closing stops the worker, so it is asked there first. */
+async function worktreeAct(action, worktree, confirmed = false) {
   const line = { focus: `adj focus --worktree ${worktree}`, ide: `adj ide --worktree ${worktree}`,
                  close: `adj close --worktree ${worktree}` }[action];
   // With no editor configured the server can only refuse, so say how to set one instead.
   if (action === 'ide' && !ideReady()) { openIdeDialog(); return; }
-  if (action === 'close' && !confirm(`${worktree.split('/').pop()} の worker のタブを閉じます。worker は止まります（worktree は残ります）。`)) return;
+  if (action === 'close' && !confirmed) { openCloseDialog(worktree); return; }
   try {
     const data = await api(`/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
     const why = action === 'focus' ? (data.present ? (data.ran ? 'タブを前に出しました' : 'worker のタブが見つかりませんでした') : 'worker は動いていません')
@@ -433,7 +434,7 @@ function cardEl(task, col) {
   const branchSlug = task.branch || '';
 
   const hasSlug = worktreeSlug || branchSlug || (!issueNumber && task.id);
-  const hasButtons = task.worktree || (worker && worker.present) || col === 'backlog';
+  const hasButtons = task.worktree || col === 'backlog';
 
   if (hasSlug || hasButtons) {
     h += `
@@ -447,7 +448,6 @@ function cardEl(task, col) {
         <div class="card-button-row">
           ${task.worktree ? `<button class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
           ${task.worktree ? `<button class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
-          ${worker && worker.present ? `<button class="m3-icon-button" style="color:var(--md-sys-color-error);" title="workerを終了" data-close="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">close</span><span>閉じる</span></button>` : ''}
           ${col === 'backlog' ? `<button class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
         </div>
       </div>
@@ -465,8 +465,6 @@ function cardEl(task, col) {
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('ide', b.dataset.ide); }));
   el.querySelectorAll('[data-focus]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('focus', b.dataset.focus); }));
-  el.querySelectorAll('[data-close]').forEach(b =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); worktreeAct('close', b.dataset.close); }));
   el.querySelectorAll('[data-gate]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); judgeGate(b.dataset.gate); }));
   el.querySelectorAll('[data-record]').forEach(b =>
@@ -671,7 +669,7 @@ function renderDrawer() {
             <span class="material-symbols-outlined" style="font-size:16px;">code</span>
             <span>IDE で開く</span>
           </button>
-          ${workerOf(task)?.present ? `<button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-close="${esc(task.worktree)}">
+          ${workerOf(task)?.present ? `<button class="btn-m3-danger" style="padding:6px 14px;font-size:12px;" data-close="${esc(task.worktree)}">
             <span class="material-symbols-outlined" style="font-size:16px;">close</span>
             <span>タブを閉じる</span>
           </button>` : ''}

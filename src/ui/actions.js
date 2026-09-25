@@ -61,6 +61,26 @@ function openIdeDialog() {
   document.getElementById('ide-dialog').showModal();
 }
 
+/* Asked before a worker's tab is closed, in the page rather than with confirm(), which reads
+   like any other browser prompt. Only the button that says so closes it: cancel, Escape and the
+   header's close button all leave the worker running. */
+let closeTarget = null;
+function openCloseDialog(worktree) {
+  closeTarget = worktree;
+  document.getElementById('close-worktree-name').textContent = worktree.split('/').pop();
+  document.getElementById('close-worktree-path').textContent = worktree;
+  const dialog = document.getElementById('close-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+}
+document.getElementById('close-dialog').addEventListener('close', e => {
+  const worktree = closeTarget;
+  closeTarget = null;
+  // A worker that stopped while the dialog was open has no tab left to close.
+  const running = (state.workers || []).some(w => w.worktree === worktree && w.present);
+  if (e.target.returnValue === 'close' && worktree && running) worktreeAct('close', worktree, true);
+});
+
 function openHandoverDialog(id, before = null) {
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task) return;
