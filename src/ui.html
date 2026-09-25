@@ -305,16 +305,21 @@
 .m3-pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  gap: 3px;
+  padding: 2px 8px;
   border-radius: var(--md-shape-corner-full);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.pill-blue { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
-.pill-warn { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
-.pill-good { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
-.pill-err  { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.pill-blue    { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.pill-warn    { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.pill-good    { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+.pill-err     { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.pill-neutral { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
+.pill-purple  { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 
 .m3-card {
   background: var(--md-sys-color-surface-container-lowest);
@@ -633,15 +638,15 @@ main { flex: 1; overflow: hidden; position: relative; }
 }
 
 .col {
-  flex: 0 0 270px;
-  width: 270px;
-  min-width: 270px;
+  flex: 0 0 240px;
+  width: 240px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   background: var(--md-sys-color-surface-container-low);
   border-radius: var(--md-shape-corner-lg);
-  padding: 12px;
+  padding: 10px;
   min-height: 140px;
   border: 1px solid transparent;
   transition: border-color .15s ease, background-color .15s ease;
@@ -653,7 +658,19 @@ main { flex: 1; overflow: hidden; position: relative; }
   outline: 2px dashed var(--md-sys-color-primary);
   outline-offset: 1px;
 }
-.col .empty { color: var(--md-sys-color-outline); padding: 8px 6px; font-size: 12px; }
+.col-empty-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 8px;
+  color: var(--md-sys-color-outline);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px dashed var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-md);
+  opacity: 0.6;
+}
 
 .col-header {
   display: flex;
@@ -720,7 +737,7 @@ main { flex: 1; overflow: hidden; position: relative; }
 .card {
   background: var(--md-sys-color-surface-container-lowest);
   border-radius: var(--md-shape-corner-md);
-  padding: 12px 14px;
+  padding: 10px 12px;
   box-shadow: var(--md-elevation-1);
   display: flex;
   flex-direction: column;
@@ -756,16 +773,42 @@ main { flex: 1; overflow: hidden; position: relative; }
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  min-width: 0;
 }
 .card-task-id {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--md-sys-color-outline);
-  font-weight: 600;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.card-issue-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--md-sys-color-primary);
+  text-decoration: none;
+  background: var(--md-sys-color-surface-container-high);
+  padding: 1px 6px;
+  border-radius: var(--md-shape-corner-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color .15s ease, color .15s ease;
+}
+.card-issue-link:hover {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
 }
 .card .title {
-  font-weight: 700;
-  font-size: 13.5px;
+  font-weight: 600;
+  font-size: 13px;
   line-height: 1.4;
   color: var(--md-sys-color-on-surface);
   overflow-wrap: anywhere;
@@ -788,6 +831,7 @@ main { flex: 1; overflow: hidden; position: relative; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--md-sys-color-surface-container-high);
 }
@@ -795,27 +839,36 @@ main { flex: 1; overflow: hidden; position: relative; }
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--md-sys-color-outline);
-  max-width: 120px;
+  max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 1;
 }
 .card-button-row {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .m3-icon-button {
   border: 1px solid var(--md-sys-color-outline-variant);
   background: var(--md-sys-color-surface-container-lowest);
   color: var(--md-sys-color-on-surface-variant);
   border-radius: var(--md-shape-corner-sm);
-  padding: 4px 8px;
+  padding: 3px 7px;
   font-size: 11px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: background-color .15s ease, color .15s ease;
 }
 .m3-icon-button:hover {
   background: var(--md-sys-color-surface-container-high);
@@ -1260,6 +1313,10 @@ legend { padding: 0 0 8px; color: var(--md-sys-color-on-surface-variant); font-s
   gap: 6px;
 }
 .radios input { position: absolute; opacity: 0; pointer-events: none; }
+.radios label:has(input:focus-visible) {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
 .radios label:has(input:checked) {
   border-color: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary-container);
@@ -1794,7 +1851,7 @@ function columnEl(col) {
     }
   }
   const shownCards = el.querySelectorAll('.card').length;
-  if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="empty">—</div>');
+  if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder"><span class="material-symbols-outlined" style="font-size:16px;">inbox</span><span>タスクなし</span></div>');
   if (older.length) {
     el.insertAdjacentHTML('beforeend',
       `<button type="button" class="more">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
@@ -1963,11 +2020,26 @@ function cardEl(task, col) {
 
   let h = '';
 
-  // 1. Header row: ID & Status Pill
+  // 1. Header row: Issue / ID & Status Pill
+  const doneLabel = DONE_WHEN[task.doneWhen] || task.doneWhen;
+  const donePillClass = task.doneWhen === 'report-only' ? 'pill-purple'
+    : task.doneWhen === 'verify' ? 'pill-warn'
+    : task.doneWhen === 'review' ? 'pill-blue'
+    : 'pill-neutral';
+
+  const issueNumber = task.issueUrl ? task.issueUrl.split('/').pop() : null;
+
   h += `
     <div class="card-header-row">
-      <span class="card-task-id">${esc(task.id)}</span>
-      <span class="m3-pill pill-blue">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || 'PR作成')}</span>
+      ${issueNumber ? `
+        <a href="${esc(task.issueUrl)}" target="_blank" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
+          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
+          <span>${esc(issueNumber)}</span>
+        </a>
+      ` : `
+        <span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>
+      `}
+      ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
     </div>
   `;
 
@@ -2004,7 +2076,23 @@ function cardEl(task, col) {
     `;
   }
 
-  // 5. Records / Chips
+  // 5. Metadata tags (queued order, autoStart, PR, etc.)
+  const metaBadges = [];
+  if (col === 'queued' && task.order != null) {
+    metaBadges.push(`<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>`);
+  }
+  if (!task.autoStart) {
+    metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
+  }
+  const prUrl = httpUrl(task.pr);
+  if (prUrl) {
+    metaBadges.push(`<a href="${esc(prUrl)}" target="_blank" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く"><span class="material-symbols-outlined" style="font-size:12px;">merge</span>PR</a>`);
+  }
+  if (metaBadges.length) {
+    h += `<div style="display:flex;flex-wrap:wrap;gap:4px;">${metaBadges.join('')}</div>`;
+  }
+
+  // 6. Records / Chips
   const chips = chipsOf(task);
   if (chips.length) {
     h += `<div class="chips" style="gap:4px;">${chips.map(c => {
@@ -2013,36 +2101,58 @@ function cardEl(task, col) {
       const pillClass = isGood ? 'pill-good' : isBad ? 'pill-err' : 'pill-warn';
       const icon = isGood ? 'check_circle' : isBad ? 'cancel' : 'info';
       return `<button type="button" class="m3-pill ${pillClass}" style="border:0;cursor:pointer;" data-record="${esc(c.id)}" title="${c.unread ? '未読 — ' : ''}クリックして記録を開く">
-        <span class="material-symbols-outlined" style="font-size:13px;margin-right:3px;">${icon}</span>
+        ${c.unread ? '<span style="width:5px;height:5px;border-radius:50%;background:currentColor;display:inline-block;margin-right:2px;"></span>' : ''}
+        <span class="material-symbols-outlined" style="font-size:13px;margin-right:2px;">${icon}</span>
         <span>${esc(c.text)}</span>
       </button>`;
     }).join('')}</div>`;
   }
 
-  // 6. Stuck warning
+  // 7. Note / Alert
+  if (task.note) {
+    if (task.status === 'done') {
+      h += `<div style="font-size:11.5px;color:var(--md-sys-color-outline);overflow-wrap:anywhere;">${esc(task.note)}</div>`;
+    } else {
+      h += `<div style="display:flex;align-items:flex-start;gap:4px;font-size:11.5px;color:var(--md-sys-color-error);font-weight:600;"><span class="material-symbols-outlined" style="font-size:14px;flex-shrink:0;">warning</span><span>${esc(task.note)}</span></div>`;
+    }
+  }
+
+  // 8. Stuck warning
   const stuck = stuckOf(task);
   if (stuck) {
     el.classList.add('stuck');
     h += `<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--md-sys-color-error);font-weight:700;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuck)}</span></div>`;
   }
 
-  // 7. Footer row: slug & buttons
-  const slug = task.worktree ? task.worktree.split('/').pop() : (task.branch || '—');
-  h += `
-    <div class="card-footer-row">
-      <span class="card-meta-slug" title="${esc(task.worktree || task.branch || '')}">${esc(slug)}</span>
-      <div class="card-button-row">
-        ${task.worktree ? `<button class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
-        ${task.worktree ? `<button class="m3-icon-button" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
-        ${task.worktree && worker && worker.present ? `<button class="m3-icon-button" title="workerのタブを閉じる" data-close="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">close</span><span>閉じる</span></button>` : ''}
-        ${col === 'backlog' ? `<button class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
+  // 9. Footer row: slug / identifier & buttons
+  const worktreeSlug = task.worktree ? task.worktree.split('/').pop() : '';
+  const branchSlug = task.branch || '';
+
+  const hasSlug = worktreeSlug || branchSlug || (!issueNumber && task.id);
+  const hasButtons = task.worktree || (worker && worker.present) || col === 'backlog';
+
+  if (hasSlug || hasButtons) {
+    h += `
+      <div class="card-footer-row">
+        <div class="card-meta-slug" title="${esc(task.worktree || task.branch || task.id)}">
+          ${worktreeSlug ? `<span class="material-symbols-outlined" style="font-size:13px;">folder_open</span><span>${esc(worktreeSlug)}</span>`
+            : branchSlug ? `<span class="material-symbols-outlined" style="font-size:13px;">fork_right</span><span>${esc(branchSlug)}</span>`
+            : issueNumber ? `<span class="card-task-id" style="font-size:10px;">${esc(task.id)}</span>`
+            : ''}
+        </div>
+        <div class="card-button-row">
+          ${task.worktree ? `<button class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
+          ${task.worktree ? `<button class="m3-icon-button" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
+          ${worker && worker.present ? `<button class="m3-icon-button" style="color:var(--md-sys-color-error);" title="workerを終了" data-close="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">close</span><span>閉じる</span></button>` : ''}
+          ${col === 'backlog' ? `<button class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
+        </div>
       </div>
-    </div>
-  `;
+    `;
+  }
 
   el.innerHTML = h;
   el.onclick = (e) => {
-    if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.m3-card-attention-box')) return;
+    if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('.m3-card-attention-box')) return;
     selectTask(task.id);
   };
   el.querySelectorAll('[data-hand]').forEach(b =>
@@ -3606,11 +3716,11 @@ function renderTaskView() {
       ${stuckOf(task) ? `<span class="m3-pill pill-critical" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuckOf(task))}</span></span>` : ''}
       ${task.worktree ? `
         <span style="display:inline-flex;gap:6px;margin-left:auto;">
-          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" onclick="worktreeAct('focus', '${esc(task.worktree)}')">
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}">
             <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
             <span>端末</span>
           </button>
-          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" onclick="worktreeAct('ide', '${esc(task.worktree)}')">
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}">
             <span class="material-symbols-outlined" style="font-size:14px;">code</span>
             <span>IDE</span>
           </button>
@@ -3694,6 +3804,10 @@ function renderTaskView() {
     taskView.pick[tab] = waiting.id;
     renderTaskView();
   }));
+  main.querySelectorAll('[data-focus]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
+  main.querySelectorAll('[data-ide]').forEach(b =>
+    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
   bindDecide(main);
   restoreComment(main, commentVal, isCommentFocused, scroll);
 }
