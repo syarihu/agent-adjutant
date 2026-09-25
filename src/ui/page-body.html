@@ -227,4 +227,43 @@
   </form>
 </dialog>
 
+<dialog id="ide-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">code</span>
+        <span>エディタが設定されていません</span>
+      </div>
+      <button type="submit" class="m3-icon-button" style="padding:4px;" title="閉じる">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body ide-help">
+      <p>IDE で開くには、config の <code>ide</code> キーに使うエディタを書いてください。</p>
+      <div>
+        <div class="label">config ファイル</div>
+        <code id="ide-config-path" class="path"></code>
+      </div>
+      <div>
+        <div class="label">書ける値</div>
+        <ul>
+          <li>パスを受け取るランチャーの名前: <code>code</code> / <code>cursor</code> / <code>idea</code> / <code>studio</code> など</li>
+          <li><code>{worktree}</code> を含むコマンド: <code>kitty @ launch --cwd {worktree} nvim</code> など</li>
+        </ul>
+      </div>
+      <div>
+        <div class="label">書く場所</div>
+        <p><code>defaults</code> に書くと全リポジトリに、<code>repos</code> の中のリポジトリのエントリに書くとそのリポジトリだけに効きます。</p>
+        <pre>"defaults": {
+  "ide": "code"
+}</pre>
+      </div>
+      <p>保存すると、次の更新でボードに反映されます。<code>adj serve</code> の再起動はいりません。</p>
+    </div>
+    <div class="foot">
+      <button type="submit" class="btn-m3-primary">閉じる</button>
+    </div>
+  </form>
+</dialog>
+
 <script>

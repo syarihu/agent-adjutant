@@ -246,7 +246,7 @@ function overviewTab(task, all) {
   if (task.parent) rows.push(['親タスク', esc(task.parent)]);
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
   if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);
-  if (task.worktree) rows.push(['worktree', `<span class="mono2">${esc(task.worktree)}</span> <button type="button" class="iconbtn" data-ide="${esc(task.worktree)}">IDE で開く</button>`]);
+  if (task.worktree) rows.push(['worktree', `<span class="mono2">${esc(task.worktree)}</span> <button type="button" class="iconbtn" title="${ideTitle()}" data-ide="${esc(task.worktree)}">IDE で開く</button>`]);
   rows.push(['作成', `${esc(when(task.createdAt))}（${ago(task.createdAt)}）`]);
   if (task.note) rows.push(['ノート', `<span style="white-space:pre-wrap">${esc(task.note)}</span>`]);
   h += `<div class="panel"><h3>詳細</h3><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
@@ -280,7 +280,7 @@ function checkTab(task, all) {
   let h = gateHeadHtml(g, all);
   if (isWaiting(g)) {
     h += `<div class="work">
-      <button class="big" data-ide="${esc(g.worktree)}">IDE で開く</button>
+      <button class="big" title="${ideTitle()}" data-ide="${esc(g.worktree)}">IDE で開く</button>
       <span class="mono2">${esc(g.worktree)}</span>
       <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
   }
@@ -441,7 +441,7 @@ function renderTaskView() {
             <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
             <span>端末</span>
           </button>
-          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="IDEでworktreeを開く" data-ide="${esc(task.worktree)}">
+          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="${ideTitle()}" data-ide="${esc(task.worktree)}">
             <span class="material-symbols-outlined" style="font-size:14px;">code</span>
             <span>IDE</span>
           </button>
