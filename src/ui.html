@@ -462,7 +462,7 @@ main { flex:1; overflow:hidden; position:relative; }
 #task-drawer .d-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 #task-drawer .d-gate-banner { border:1px solid var(--accent); background:color-mix(in oklab,var(--surface-1) 85%,var(--accent));
   border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
-#task-drawer .d-gate-banner button { align-self:flex-start; border:0; background:var(--accent); color:#fff;
+#task-drawer .d-gate-banner button { align-self:flex-start; border:0; background:var(--accent); color:var(--md-sys-color-on-primary);
   border-radius:6px; padding:4px 10px; font-weight:600; font-size:12px; cursor:pointer; }
 #task-drawer .d-record { display:flex; flex-direction:column; gap:4px; padding:8px 0;
   border-top:1px solid var(--hairline); }
@@ -538,7 +538,7 @@ details.decided[open] summary { margin-bottom:8px; }
   border-radius:7px; padding:6px 10px; font-weight:600; }
 .work { border:1px solid var(--good); border-radius:9px; padding:12px 14px; display:flex;
   align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
-.work .big { border:0; background:var(--good); color:#fff; border-radius:7px; padding:8px 15px; font-weight:640; }
+.work .big { border:0; background:var(--good); color:var(--md-sys-color-on-success); border-radius:7px; padding:8px 15px; font-weight:640; }
 .mono2 { font:12px ui-monospace,Menlo,monospace; color:var(--ink-2); }
 .diff { font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--surface-2);
   border-radius:8px; padding:8px 0; overflow:auto; }
@@ -549,7 +549,7 @@ details.decided[open] summary { margin-bottom:8px; }
 .hint-bar { border:1px solid var(--warning); border-radius:8px; padding:8px 12px; margin-bottom:12px;
   color:var(--ink-2); font-size:12px; }
 .decide { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.decide .approve { border:0; background:var(--good); color:#fff; border-radius:7px; padding:7px 14px; font-weight:640; }
+.decide .approve { border:0; background:var(--good); color:var(--md-sys-color-on-success); border-radius:7px; padding:7px 14px; font-weight:640; }
 .decide .changes { border:1px solid var(--warning); background:transparent; color:var(--ink);
   border-radius:7px; padding:6px 13px; font-weight:600; }
 .decide .reject { border:1px solid var(--border); background:transparent; color:var(--ink-2);
@@ -561,7 +561,7 @@ details.decided[open] summary { margin-bottom:8px; }
 .decide .close:hover { border-color:var(--ink-2); color:var(--ink); }
 .empty-state { padding:40px; color:var(--muted); }
 .badge-count { display:inline-block; min-width:16px; margin-left:6px; padding:0 4px;
-  border-radius:999px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; text-align:center; }
+  border-radius:999px; background:var(--accent); color:var(--md-sys-color-on-primary); font-size:11px; font-weight:700; text-align:center; }
 .tabs { display:flex; gap:2px; background:var(--surface-2); padding:2px; border-radius:8px; }
 .tabs button { border:0; background:transparent; padding:4px 12px; border-radius:6px; color:var(--ink-2); }
 .tabs button[aria-selected="true"] { background:var(--surface-1); color:var(--ink); font-weight:600;
