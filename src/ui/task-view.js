@@ -23,8 +23,8 @@ function backToBoard() {
   setView('board');
 }
 
-/* What a task's gates left in the archive, read when its view opens rather than on every
-   poll: the archive only grows. Read again when a gate of the task has been answered since,
+/* What a task's gates left in the archive, read when its view or the side sheet opens
+   on it rather than on every poll: the archive only grows. Read again when a gate of the task has been answered since,
    which is when it can have changed. */
 const histories = {};
 const historyFailed = new Set();
@@ -40,7 +40,7 @@ function historyOf(task) {
       mine.records = data.records || [];
       mine.loaded = true;
       historyFailed.delete(task.id);
-      if (view === 'task' && taskView.id === task.id) redrawTaskView();
+      redrawHistoryOf(task.id);
     }).catch(e => {
       // Asked for again on the next redraw, keeping what was read before on screen meanwhile.
       if (histories[task.id] === mine) mine.key = null;
@@ -50,12 +50,18 @@ function historyOf(task) {
       historyFailed.add(task.id);
       // Nothing else redraws a quiet board, so the view asks again itself — while no comment
       // is being typed, since a redraw would cut an IME composition short.
-      setTimeout(() => {
-        if (view === 'task' && taskView.id === task.id) redrawTaskView();
-      }, 30000);
+      setTimeout(() => redrawHistoryOf(task.id), 30000);
     });
   }
   return entry;
+}
+
+/* Redraws what shows a task's history: its view, or the side sheet open on it. Not the side
+   sheet while its instruction box is being typed in, which the redraw would empty; the next
+   redraw of the board draws it. */
+function redrawHistoryOf(id) {
+  if (view === 'task' && taskView.id === id) redrawTaskView();
+  if (view === 'board' && selectedTaskId === id && !document.activeElement?.matches('#drawer-instruction')) renderDrawer();
 }
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
@@ -305,10 +311,8 @@ function gateDetailHtml(g, all) {
   return h + actHtml(g);
 }
 
-/* In time order: what waited on a person, what was only recorded, and what people did. The
-   worker's phase is not kept as a history — only the one it is in now — so it closes the
-   list rather than running through it. */
-function historyTab(task, all) {
+/* In time order: what waited on a person, what was only recorded, and what people did. */
+function historyEventsOf(task, all) {
   const events = [];
   const push = (stamp, html, gateId) => events.push({ at: stampSecs(stamp) ?? 0, stamp, html, gateId });
   push(task.createdAt, `<div>タスクを作成</div><div class="who">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '')} · ${esc(STOP_AT[task.stopAt || 'plan'] || '')}</div>`);
@@ -334,11 +338,20 @@ function historyTab(task, all) {
         (a.comment ? `<div class="who">${esc(a.comment)}</div>` : ''), g.id);
     }
   }
-  events.sort((a, b) => a.at - b.at);
+  return events.sort((a, b) => a.at - b.at);
+}
+
+/* The timeline of 経過, shared by the tab and the side sheet. `limit` keeps only the latest
+   entries, for the side sheet, where a long history would push the actions out of reach. The
+   worker's phase is not kept as a history — only the one it is in now — so it closes the
+   list rather than running through it. */
+function timelineHtml(task, all, limit = Infinity) {
+  const events = historyEventsOf(task, all);
+  const shown = events.slice(-limit);
   const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task) : null;
-  const picked = taskView.pick.history && all.find(g => g.id === taskView.pick.history);
-  let h = picked ? gateDetailHtml(picked, all) : '';
-  h += `<div class="panel"><h3>経過</h3><ol class="timeline">` + events.map(e =>
+  let h = '';
+  if (shown.length < events.length) h += `<div class="source">古い ${events.length - shown.length} 件は省いている</div>`;
+  h += `<ol class="timeline">` + shown.map(e =>
     `<li><span class="at" title="${esc(ago(e.stamp))}">${esc(when(e.stamp))}</span><div class="what">${e.html}</div></li>`).join('');
   if (worker && worker.present && worker.phase) {
     const mins = phaseMinutes(worker);
@@ -347,7 +360,13 @@ function historyTab(task, all) {
   }
   h += `</ol>`;
   if (!histories[task.id]?.loaded) h += `<div class="source">回答済みのものを読み込んでいる…</div>`;
-  return h + `</div>`;
+  return h;
+}
+
+function historyTab(task, all) {
+  const picked = taskView.pick.history && all.find(g => g.id === taskView.pick.history);
+  let h = picked ? gateDetailHtml(picked, all) : '';
+  return h + `<div class="panel"><h3>経過</h3>${timelineHtml(task, all)}</div>`;
 }
 
 /* A redraw that came while a comment was being typed in the task view, held until the box is
