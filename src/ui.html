@@ -547,7 +547,7 @@ function render() {
   updateNotifyButton();
   renderDrawer();
   renderReview();
-  renderTaskView();
+  redrawTaskView();
 }
 
 /* What `adj phase --set` writes, in the words a card shows. */
@@ -1733,7 +1733,7 @@ function historyOf(task) {
       mine.records = data.records || [];
       mine.loaded = true;
       historyFailed.delete(task.id);
-      if (view === 'task' && taskView.id === task.id) renderTaskView();
+      if (view === 'task' && taskView.id === task.id) redrawTaskView();
     }).catch(e => {
       // Asked for again on the next redraw, keeping what was read before on screen meanwhile.
       if (histories[task.id] === mine) mine.key = null;
@@ -1744,7 +1744,7 @@ function historyOf(task) {
       // Nothing else redraws a quiet board, so the view asks again itself — while no comment
       // is being typed, since a redraw would cut an IME composition short.
       setTimeout(() => {
-        if (view === 'task' && taskView.id === task.id && !document.activeElement?.matches('textarea')) renderTaskView();
+        if (view === 'task' && taskView.id === task.id) redrawTaskView();
       }, 30000);
     });
   }
@@ -2023,8 +2023,31 @@ function historyTab(task, all) {
   return h + `</div>`;
 }
 
+/* A redraw that came while a comment was being typed in the task view, held until the box is
+   left. Replacing the markup under the box cuts an IME composition short even when the text
+   is put back, and the view is redrawn on every change of state, not once a minute. */
+let taskViewHeld = false;
+function redrawTaskView() {
+  if (view === 'task' && document.activeElement?.matches('#task-view .gate-comment')) {
+    taskViewHeld = true;
+    return;
+  }
+  renderTaskView();
+}
+document.getElementById('task-view').addEventListener('focusout', e => {
+  if (!taskViewHeld || !e.target.matches('.gate-comment')) return;
+  // After the focus has moved: a click on a button in the view redraws through its own handler,
+  // and this one should not draw over it with the old state.
+  setTimeout(() => {
+    if (!taskViewHeld || document.activeElement?.matches('#task-view .gate-comment')) return;
+    taskViewHeld = false;
+    renderTaskView();
+  });
+});
+
 let taskViewShown = null;
 function renderTaskView() {
+  taskViewHeld = false;
   const root = document.getElementById('task-view');
   if (view !== 'task') return;
   const rail = root.querySelector('.rail');
@@ -2085,10 +2108,10 @@ function renderTaskView() {
     <div class="tv-tabs" role="tablist">${TASK_TABS.map(([id, label]) => {
       const kind = KIND_OF_TAB[id];
       const n = kind && kind !== 'plan' ? count(kind) : 0;
-      return `<button role="tab" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
+      return `<button role="tab" id="tv-tab-${id}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
         `${kind && unreadIn(kind) ? '<span class="unread" aria-label="未読"></span>' : ''}${label}${n ? ` <span style="color:var(--muted)">${n}</span>` : ''}</button>`;
     }).join('')}</div>
-  </div><div class="tv-body">`;
+  </div><div class="tv-body" id="tv-panel" role="tabpanel" aria-labelledby="tv-tab-${taskView.tab}">`;
 
   // A gate waiting on a person comes first whichever tab is open: it is the ball.
   const waiting = openGate(task);
