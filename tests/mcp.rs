@@ -277,6 +277,9 @@ fn a_record_kept_through_the_server_is_one_the_cli_can_show() {
                 "title": "cargo test が通った",
                 "commands": [{ "command": "cargo test", "result": "pass", "time": "42s" }],
                 "manual": ["画面の文言を見る"],
+                // What a client that fills in every property sends for one it has no value
+                // for. Taken as absent, not as an address.
+                "worktree": "",
                 "cwd": fixture.repo.to_str().unwrap(),
             }}),
         )],
