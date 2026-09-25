@@ -698,6 +698,16 @@ function renderDrawer() {
     `;
   }
 
+  // The latest few only: the whole history is a click away in the task view's 経過 tab.
+  const all = gatesOf(task);
+  body += `
+    <div class="m3-filled-card" style="display:flex;flex-direction:column;">
+      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">経過</div>
+      ${timelineHtml(task, all, 5)}
+      <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;margin-top:6px;" data-history="${esc(task.id)}">経過をすべて見る →</button>
+    </div>
+  `;
+
   const drawerBody = document.getElementById('drawer-body');
   if (drawerBody) {
     drawerBody.innerHTML = body;
@@ -705,6 +715,13 @@ function renderDrawer() {
       b.addEventListener('click', () => openRecord(b.dataset.record)));
     drawerBody.querySelectorAll('[data-judge]').forEach(b =>
       b.addEventListener('click', () => judgeGate(b.dataset.judge)));
+    // A gate in 経過 opens where the task view reads it, rather than being repeated here.
+    drawerBody.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+      const g = all.find(x => x.id === b.dataset.open);
+      if (g) openTask(task.id, TAB_OF_KIND[g.kind] || 'history', g.id);
+    }));
+    drawerBody.querySelectorAll('[data-history]').forEach(b =>
+      b.addEventListener('click', () => openTask(b.dataset.history, 'history')));
     drawerBody.querySelectorAll('[data-focus]').forEach(b =>
       b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
     drawerBody.querySelectorAll('[data-ide]').forEach(b =>
