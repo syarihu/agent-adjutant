@@ -598,6 +598,15 @@ enum TaskAction {
         #[arg(long)]
         id: String,
     },
+    /// Move every task whose pull request was merged to done, and say what was left alone
+    Refresh {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Move a task on. This is how the hub reports back what it did with one
     Update {
         #[arg(long)]
@@ -925,6 +934,9 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             *json,
         ),
         TaskAction::Show { repo, hub, id } => cmd::task_show(repo.as_deref(), hub.as_deref(), id),
+        TaskAction::Refresh { repo, hub, json } => {
+            cmd::task_refresh_cmd(repo.as_deref(), hub.as_deref(), *json)
+        }
         TaskAction::Update {
             repo,
             hub,

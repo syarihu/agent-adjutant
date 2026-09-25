@@ -154,6 +154,10 @@ proctor pattern that bakes one key in (`{user}/ALPHA-{issue}`) cannot serve a se
 - `adjutant_config` — このリポジトリの解決済み設定。`repo` / `main` / `hubName` / `registered` /
   `warnings` / `settings` / `config` が1発で返る。**設定ファイルを自分で読み直さない。**
 - `adjutant_pending` — 受信箱に溜まっている報告
+- `adjutant_refresh` — PR を持つタスクのレコードを PR の状態に合わせる。マージ済みの PR のタスクだけが
+  `done` になり、open・マージされずに閉じた・`gh` で読めない PR は触らずに一覧で返る。hub が
+  止まっている間にマージされた PR のカードが、レビュー中に残ったままにならないようにする。
+  **呼ぶのは起動時のこの1回だけ**（人がボードの「PR を確認」を押せば同じ処理が走る）
 - `git rev-parse --show-toplevel` と `git branch --show-current`
 - `gh api user -q '.login'`（GitHub を使うリポジトリのときだけ）
 - `proctor worktree ls --json 2>/dev/null || git worktree list`
@@ -226,6 +230,11 @@ hub の体感速度そのもの。ツールを1つ順番に打つたびに待機
      **集めていないことと、頼めば集まることを1行で**書いて終える。前者だけだと人は待ち続けるし、
      後者が無いと一覧の出し方がこの画面のどこにも無い。
 
+   Context の `adjutant_refresh` が何か返していれば、同じ1行に短く混ぜる。`done` にした件数と、
+   `closed`・`unreadable` の PR（どちらも人が決めることなので、URL を出す）、`failed`（マージ済みなのに
+   レコードを書き換えられなかったもの。`error` に理由がある）。`open` はレビュー中の
+   ままで正しいので件数だけにする。**閉じた PR のタスクを自分で `done` や `cancelled` にしない** —
+   作業が別の PR に移っただけかもしれず、それは人にしか分からない。
    ここまでツールは1ブロックしか使っていないはずで、それが起動の速さの上限。
    拾うものがあった場合だけ、それを片付けてから待機に戻る。
    **起動時に `AskUserQuestion` を開かない** — 人が来るまで hub が止まる。

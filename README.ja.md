@@ -70,10 +70,10 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力 |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 
-エージェント側（`adjutant mcp`）：8つのツールと3つのプロンプトを提供します。
+エージェント側（`adjutant mcp`）：9つのツールと3つのプロンプトを提供します。
 
 - **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスクの着手から完了引き渡しまで）、`adj-report`（作業中に発見したバグを hub に報告）。Claude Code では `/mcp__adjutant__adj-hub` のように呼び出せます。
-- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_skill`。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。エージェントに応じた形式（Claude Code の `AskUserQuestion` や Antigravity の `ask_question` など）に自動調整されます（`--agent` または `agent` 引数で指定も可能）。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_refresh`、`adjutant_skill`。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。エージェントに応じた形式（Claude Code の `AskUserQuestion` や Antigravity の `ask_question` など）に自動調整されます（`--agent` または `agent` 引数で指定も可能）。
 
 名前の使い分けとして、人間が入力する CLI コマンドやプロンプトは短く（`adj`, `adj-…`）、システムが参照する MCP サーバー名やツール名は長めに（`adjutant`, `adjutant_…`）揃えています。
 
@@ -135,7 +135,8 @@ MCP 経由で配信される手順書からは、個別ツールの許可リス�
   "mcp__adjutant__adjutant_config", "mcp__adjutant__adjutant_hub_status",
   "mcp__adjutant__adjutant_send", "mcp__adjutant__adjutant_pending",
   "mcp__adjutant__adjutant_tell", "mcp__adjutant__adjutant_outbox",
-  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_skill"
+  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_refresh",
+  "mcp__adjutant__adjutant_skill"
 ]}
 ```
 

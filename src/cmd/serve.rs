@@ -246,6 +246,7 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
+        ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
         ("POST", "/api/hub/next") => reply(out, nudge_hub(server)),
         ("POST", "/api/hub/focus") => reply(out, focus_hub(server)),
         ("POST", path) if path.starts_with("/api/worktrees/") => {
@@ -499,6 +500,13 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
         false,
     )?;
     Ok(json!({ "present": true, "ran": done.ran }))
+}
+
+/// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
+/// in its log before it redraws.
+fn refresh_tasks(server: &Server) -> Result<Value, String> {
+    let checked = super::task::refresh(&server.ctx)?;
+    Ok(super::task::refresh_json(&checked))
 }
 
 fn nudge_hub(server: &Server) -> Result<Value, String> {

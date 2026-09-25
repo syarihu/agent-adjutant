@@ -68,7 +68,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
         !procedure.starts_with("---"),
         "frontmatter leaked into the procedure"
     );
-    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 9);
 
     let hub = tool_result(&replies[4]);
     assert_eq!(hub["hubName"], HUB);

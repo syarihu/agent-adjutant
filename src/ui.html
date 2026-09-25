@@ -673,10 +673,16 @@ function columnEl(col) {
   const next = col.id === 'queued' && shownCards
     ? '<button type="button" class="next" title="worker の枠が空いていれば、待ちの先頭を hub に着手させる">次を流す</button>'
     : '';
+  // Where the cards it can move are. Nothing else asks GitHub about a PR, so a card whose PR
+  // was merged sits here until this is pressed or the hub starts. Shown with the column empty
+  // too: a record with a PR can be in 進行中 or 要対応 instead, and this is the only way to it.
+  const check = col.id === 'pr'
+    ? '<button type="button" class="next" title="PR がマージ済みのタスクを完了に移す(open・閉じた・読めない PR は触らない)">PR を確認</button>'
+    : '';
   el.insertAdjacentHTML('afterbegin',
     `<h2>${col.label}<span class="n">${shownCards}</span>` +
-    (hint ? `<span class="hint${col.id === 'working' && full ? ' full' : ''}">${esc(hint)}</span>` : '') + next + '</h2>');
-  el.querySelector('h2 .next')?.addEventListener('click', nudgeHub);
+    (hint ? `<span class="hint${col.id === 'working' && full ? ' full' : ''}">${esc(hint)}</span>` : '') + next + check + '</h2>');
+  el.querySelector('h2 .next')?.addEventListener('click', col.id === 'pr' ? refreshPrs : nudgeHub);
 
   el.addEventListener('dragover', e => {
     if (canDrop(window.__from, col.id)) { e.preventDefault(); el.classList.add('drop-ok'); }
@@ -1172,6 +1178,32 @@ async function nudgeHub() {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
+  }
+}
+
+async function refreshPrs(e) {
+  const line = 'adj task refresh';
+  const button = e?.currentTarget;
+  if (button) button.disabled = true;
+  try {
+    const data = await api('/api/refresh', { method: 'POST' });
+    const left = [['open', 'open'], ['closed', '閉じた'], ['unreadable', '読めない'], ['skipped', '途中で変更'], ['failed', '移せなかった']]
+      .filter(([k]) => data[k]?.length)
+      .map(([k, label]) => `${label} ${data[k].length}`);
+    const moved = data.done.length ? `${data.done.length} 件を完了に` : '完了に移すものは無し';
+    note(line, false, moved + (left.length ? ` / 触らなかった: ${left.join('・')}` : ''));
+    // One line for all of them: the log keeps five, and the summary above must not scroll off.
+    if (data.unreadable?.length) {
+      note(`${line}: 状態を読めなかった PR`, true, data.unreadable.map(t => `${t.pr} (${t.error})`).join(' / '));
+    }
+    if (data.failed?.length) {
+      note(`${line}: マージ済みだが完了に移せなかったタスク`, true, data.failed.map(t => `${t.id} (${t.error})`).join(' / '));
+    }
+    await refresh();
+  } catch (err) {
+    note(`${line} → ${err.message}`, true);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 

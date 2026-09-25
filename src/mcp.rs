@@ -300,6 +300,14 @@ fn tool_definitions() -> Value {
             },
         },
         {
+            "name": "adjutant_refresh",
+            "description": "Bring the task records up to date with their pull requests, the same as `adj task refresh`: every record with a `pr` that is not done or cancelled is looked up with `gh`, and the ones whose PR was merged are moved to done. A PR still open, closed without merging, or one `gh` cannot read is left alone and listed instead — say those to the person rather than deciding for them. A hub calls this once at startup.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "repo": repo_property(), "hub": hub_property(), "cwd": cwd_property() },
+            },
+        },
+        {
             "name": "adjutant_skill",
             "description": "The full text of one of adjutant's procedures: adj-hub (running the hub), adj-worker (taking a task from brief to handover), adj-report (handing a bug you found to the hub). Same text the MCP prompts serve; use this tool when prompts are not available to you.",
             "inputSchema": {
@@ -543,6 +551,11 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             }
             let (gate, served) = crate::cmd::gate_open_payload(&ctx, &payload)?;
             Ok(crate::cmd::gate_open_json(&gate, served))
+        }
+        "adjutant_refresh" => {
+            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let checked = crate::cmd::task_refresh(&ctx)?;
+            Ok(crate::cmd::task_refresh_json(&checked))
         }
         "adjutant_skill" => {
             let name = args["name"].as_str().unwrap_or("");

@@ -2436,6 +2436,23 @@ mod tests {
         );
     }
 
+    /// The hub brings the task records up to date with their pull requests in the first
+    /// block it runs, and nowhere else: a second call site is a second automatic run, which is
+    /// what the startup pass was chosen over.
+    #[test]
+    fn the_hub_refreshes_the_records_once_at_startup_and_nowhere_else() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        let context = section(hub, "## Context");
+        let startup = section(hub, "## 起動時にやること");
+        assert!(context.contains("`adjutant_refresh`"), "{context}");
+        assert_eq!(
+            hub.matches("adjutant_refresh").count(),
+            context.matches("adjutant_refresh").count()
+                + startup.matches("adjutant_refresh").count(),
+            "adjutant_refresh is named outside the startup sections"
+        );
+    }
+
     #[test]
     fn procedures_are_tailored_for_agy() {
         for prompt in &PROMPTS {
