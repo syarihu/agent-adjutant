@@ -1057,7 +1057,7 @@ details.decided[open] summary { margin-bottom: 8px; }
 
 .work { border: 1px solid var(--md-sys-color-success); border-radius: var(--md-shape-corner-lg); padding: 12px 16px; display: flex;
   align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; background: var(--md-sys-color-surface-container); }
-.work .big { border: 0; background: var(--md-sys-color-success); color: #fff; border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
+.work .big { border: 0; background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
 .mono2 { font: 12px var(--font-mono); color: var(--md-sys-color-on-surface-variant); }
 .diff { font: 12px/1.65 var(--font-mono); background: var(--md-sys-color-surface-container-lowest);
   border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); padding: 8px 0; overflow: auto; }
@@ -1100,7 +1100,7 @@ details.decided[open] summary { margin-bottom: 8px; }
   border-color: transparent;
 }
 .decide { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.decide .approve { border: 0; background: var(--md-sys-color-success); color: #fff; border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
+.decide .approve { border: 0; background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); border-radius: var(--md-shape-corner-full); padding: 8px 18px; font-weight: 700; cursor: pointer; }
 .decide .changes { border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
   border-radius: var(--md-shape-corner-full); padding: 8px 16px; font-weight: 600; cursor: pointer; }
 .decide .reject { border: 0; background: transparent; color: var(--md-sys-color-error);
@@ -2553,7 +2553,7 @@ const renderDiff = d => esc(d).split('\n').map(l => {
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
    the `data-gate` around it, so the same panel works in the review view and a task's view. */
 const BUTTONS = {
-  approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:#fff"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</span></button>`,
+  approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</span></button>`,
   changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</span></button>`,
   reject:  () => `<button class="btn-m3-text reject" data-act="reject" style="color:var(--md-sys-color-error);"><span class="material-symbols-outlined" style="font-size:16px;">cancel</span><span>却下</span></button>`,
   ack:     () => `<button class="btn-m3-primary approve" data-act="ack"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>了解(閉じる)</span></button>`,
@@ -2658,6 +2658,8 @@ let reviewActiveTab = 'overview';
 function switchReviewTab(tabName) {
   reviewActiveTab = tabName;
   renderReview();
+  // The tab buttons were just replaced, so keyboard focus goes back to the selected one.
+  document.querySelector('#review .m3-seg-tab.active')?.focus({ preventScroll: true });
 }
 window.switchReviewTab = switchReviewTab;
 
@@ -3025,11 +3027,26 @@ function checkPanels(g) {
   if ((g.manual || []).length) {
     h += `<div class="panel">
       <h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>人が見る確認項目</span></h3>
-      <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map(m =>
-        `<li style="display:flex;align-items:flex-start;gap:8px;font-size:13px;"><input type="checkbox" style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></li>`).join('')}</ul></div>`;
+      <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map((m, i) =>
+        `<li style="display:flex;align-items:flex-start;gap:8px;font-size:13px;"><input type="checkbox" data-manual-gate="${esc(g.id)}" data-manual-index="${i}"${manualChecked(g.id).has(i) ? ' checked' : ''} style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></li>`).join('')}</ul></div>`;
   }
   return h;
 }
+
+/* Ticks on a gate's manual checks, kept per gate so a re-render or a tab switch does not
+   drop them. */
+const manualChecks = new Map();
+function manualChecked(gateId) {
+  if (!manualChecks.has(gateId)) manualChecks.set(gateId, new Set());
+  return manualChecks.get(gateId);
+}
+document.addEventListener('change', e => {
+  const box = e.target.closest?.('input[data-manual-gate]');
+  if (!box) return;
+  const ticked = manualChecked(box.dataset.manualGate);
+  const i = Number(box.dataset.manualIndex);
+  if (box.checked) ticked.add(i); else ticked.delete(i);
+});
 
 /* The comment box of the view on screen. The review view and a task's view can both hold one
    at once, the hidden one included, so it is looked up inside the one being shown. */
