@@ -829,6 +829,7 @@ main { flex: 1; overflow: hidden; position: relative; }
 }
 .card-footer-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -850,8 +851,10 @@ main { flex: 1; overflow: hidden; position: relative; }
 }
 .card-button-row {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
-  flex-shrink: 0;
+  min-width: 0;
   margin-left: auto;
 }
 .m3-icon-button {
@@ -1265,8 +1268,12 @@ dialog {
   color: var(--md-sys-color-on-surface);
   width: min(580px, 94vw);
   box-shadow: var(--md-elevation-3);
+  max-height: calc(100vh - 32px);
   overflow: hidden;
 }
+/* The whole dialog stays inside the viewport: only the body scrolls, so the header and the
+   submit buttons are always reachable. */
+dialog > form { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
 dialog::backdrop {
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
@@ -1286,7 +1293,8 @@ dialog .body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-height: 75vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 dialog .foot {
