@@ -1488,13 +1488,7 @@ pub fn hub(
     // name the process a worker will later check for.
     // Removed and then set on the line itself, so the only value the agent — and so its MCP
     // server — can see is this hub's own, never one inherited from whatever started this.
-    let error = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .env_remove(messaging::HUB_SESSION_ENV)
-        .env_remove(messaging::HUB_SERVE_ENV)
-        .env_remove(messaging::HUB_ENV)
-        .exec();
+    let error = agent_command(&command).exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
     let _ = messaging::unregister_hub(&ctx.repo.slug);
     Err(format!("cannot start the hub: {error}"))
@@ -1729,15 +1723,29 @@ pub fn worker(
     // Nor is it whichever hub opened the tab. `ADJUTANT_HUB` outranks the record written
     // above, so an inherited one would send every report to the hub that dispatched the
     // tab rather than the one this worker registered under; the line carries the right one.
-    let error = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .env_remove(messaging::HUB_SESSION_ENV)
-        .env_remove(messaging::HUB_SERVE_ENV)
-        .env_remove(messaging::HUB_ENV)
-        .exec();
+    let error = agent_command(&command).exec();
     let _ = messaging::unregister_worker(&worktree);
     Err(format!("cannot start the worker: {error}"))
+}
+
+/// The shell the agent is started through, by `hub` and `worker` alike.
+///
+/// The agent gets the caller's environment, minus what would make it answer for something it
+/// is not. The adjutant variables are set on the command line itself when they apply, so an
+/// inherited one could only name another hub. The git variables in
+/// `repo::REPOSITORY_LOCATION_ENV` would point every git command the agent runs at another
+/// repository, while adjutant — which ignores them — works on the one it was started in.
+fn agent_command(command: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .env_remove(messaging::HUB_SESSION_ENV)
+        .env_remove(messaging::HUB_SERVE_ENV)
+        .env_remove(messaging::HUB_ENV);
+    for name in repo::REPOSITORY_LOCATION_ENV {
+        cmd.env_remove(name);
+    }
+    cmd
 }
 
 /// The worktree a worker runs in: the one named, or — for `--resume`, typed by a person
@@ -2008,6 +2016,31 @@ mod tests {
             std::env::remove_var(messaging::STATE_DIR_ENV);
         }
         assert!(forwarded_env().is_empty());
+    }
+
+    /// A `GIT_DIR` left over from whatever started the agent would send every git command it
+    /// runs to another repository, while adjutant itself works on this one.
+    #[test]
+    fn the_agent_is_started_without_variables_that_point_it_elsewhere() {
+        let cmd = agent_command("true");
+        let removed: Vec<&std::ffi::OsStr> = cmd
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name)
+            .collect();
+        let expected = [
+            messaging::HUB_SESSION_ENV,
+            messaging::HUB_SERVE_ENV,
+            messaging::HUB_ENV,
+        ]
+        .into_iter()
+        .chain(repo::REPOSITORY_LOCATION_ENV);
+        for name in expected {
+            assert!(
+                removed.contains(&std::ffi::OsStr::new(name)),
+                "{name} is not removed: {removed:?}"
+            );
+        }
     }
     use crate::messaging::Liveness;
 
