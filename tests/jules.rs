@@ -859,3 +859,61 @@ fn a_comment_named_twice_is_refused_rather_than_posted_twice() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("named more than once"));
     assert!(!posted.exists());
 }
+
+/// A request to a running board, with the token and the board's own origin as the page sends
+/// them. The status line and the body.
+fn board_request(url: &str, method: &str, path: &str, body: &str) -> (String, String) {
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, query) = rest.split_once('/').unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+    let mut stream = std::net::TcpStream::connect(host).unwrap();
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nX-Adjutant-Token: {token}\r\nOrigin: http://{host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut answer = String::new();
+    std::io::Read::read_to_string(&mut stream, &mut answer).unwrap();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    (head.lines().next().unwrap().to_string(), body.to_string())
+}
+
+#[test]
+fn a_board_that_listed_findings_sees_an_account_switched_since() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let record = std::fs::read_dir(fixture.state.join("tasks"))
+        .unwrap()
+        .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
+        .map(|e| e.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy() == format!("{id}.json"))
+        .unwrap();
+    let mut task: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    task["julesBy"] = serde_json::json!("someone-else");
+    std::fs::write(&record, task.to_string()).unwrap();
+    let (path, posted) = stub_gh(&fixture);
+    let (mut board, url) = serve(&fixture, &path);
+
+    // Listed while `gh` is signed in as `someone`, which the board keeps for the listing.
+    let (status, _) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
+    assert!(status.contains(" 200 "), "{status}");
+    // Then the person switches to the account that started Jules, as the refusal says to.
+    let gh = fixture.repo.join("stub-bin").join("gh");
+    let script = std::fs::read_to_string(&gh).unwrap().replace(
+        "'api user') echo someone ;;",
+        "'api user') echo someone-else ;;",
+    );
+    std::fs::write(&gh, script).unwrap();
+    let (status, body) = board_request(
+        &url,
+        "POST",
+        &format!("/api/tasks/{id}/relay"),
+        r#"{"comments": ["11"]}"#,
+    );
+    board.kill().unwrap();
+    board.wait().unwrap();
+    assert!(status.contains(" 200 "), "{status} {body}");
+    assert!(posted.exists(), "the relay was refused on a stale account");
+}
