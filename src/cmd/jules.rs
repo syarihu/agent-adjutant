@@ -451,14 +451,16 @@ fn announce_review(
             ids.join(" ")
         ),
     };
-    // Told first and written after, for the reason `follow` gives.
-    super::deliver_to_hub(ctx, &message)?;
+    // Posted first and written after, under the lock; woken and notified after it, for the
+    // reasons `follow` gives.
+    let posted = super::post_to_hub(ctx, &message)?;
     task.announced.extend(ids.iter().map(|id| id.to_string()));
     task.relay_rounds = round;
     task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
-    task::save(&tasks::dir(ctx), &task)?;
+    let saved = task::save(&tasks::dir(ctx), &task);
     drop(lock);
-    Ok(())
+    posted.follow_up(ctx, true);
+    saved.map(|_| ())
 }
 
 /// Whether Jules is doing something with the session right now. A session goes back to
