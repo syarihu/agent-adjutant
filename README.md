@@ -350,8 +350,11 @@ property of the terminal, and **what to say** once poked is a property of the ag
 
 — which is what a repo whose hub is one agent and whose workers are another needs. The
 built-in sentences name MCP tools (`adjutant_pending`, `adjutant_outbox`), and each direction
-is pointed at its own box. For anything longer than one command, point at a script rather than
-wrapping it in `sh -c '…'`: a substituted value arrives with its own quoting and would end
+is pointed at its own box. A `wake` template of your own should type `{line}` and press
+Enter as two separate writes: an agent's input box can take the line and its newline, sent
+together, as a paste, and then the newline lands in the box instead of submitting it. For
+anything longer than one command, point at a script rather than wrapping it in `sh -c '…'`:
+a substituted value arrives with its own quoting and would end
 the wrapper's quoted string early. A `spawn` template containing `{cwd}` is trusted to change directory
 itself; one without gets a `cd` prepended. A new tab is named by the shell inside it calling
 `adjutant title`, not through the terminal's own API — `set name of session` is the one

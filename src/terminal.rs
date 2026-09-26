@@ -486,6 +486,15 @@ fn woke(built_in: bool, output: &str) -> bool {
     !built_in || output.contains(WOKE_MARKER)
 }
 
+/// How long to wait between typing the line and pressing Enter. The two writes have to
+/// reach the agent as two reads; one that is busy and reads both at once sees a burst again.
+const WAKE_ENTER_DELAY: &str = "0.2";
+
+/// The line and its Enter go as two writes. `write text "<line>"` sends both in one burst,
+/// and an agent's input box takes a long enough burst as a paste: the newline lands in the
+/// box as text and nothing is submitted. Observed on Claude Code 2.1.282, where a line of
+/// about 50 characters still submitted and one of 79 did not — and a paste threshold is the
+/// agent's to move, so no line is short enough to count on.
 fn default_wake_command(tty: &str, line: &str) -> String {
     let script = format!(
         "tell application \"iTerm2\"\n  \
@@ -493,7 +502,9 @@ fn default_wake_command(tty: &str, line: &str) -> String {
              repeat with t in tabs of w\n      \
                repeat with s in sessions of t\n        \
                  if tty of s is \"/dev/{}\" then\n          \
-                   tell s to write text \"{}\"\n          \
+                   tell s to write text \"{}\" newline NO\n          \
+                   delay {WAKE_ENTER_DELAY}\n          \
+                   tell s to write text \"\"\n          \
                    return \"{WOKE_MARKER}\"\n        \
                  end if\n      \
                end repeat\n    \
@@ -1366,9 +1377,27 @@ mod tests {
         // The contract the two halves share: the marker is printed on the one path that
         // types into a session, and the fall-through returns nothing.
         let script = default_wake_command("ttys004", "check your inbox");
-        let typed = script.find("write text").unwrap();
+        let entered = script.find("write text \"\"\n").unwrap();
         let marked = script.find(WOKE_MARKER).unwrap();
-        assert!(marked > typed, "{script}");
+        assert!(marked > entered, "{script}");
         assert!(script.trim_end().ends_with("return \"\"'"), "{script}");
+    }
+
+    /// The finding: a wake line long enough for the agent to take as a paste was typed into
+    /// the box with its newline and never submitted. The line goes without a newline and
+    /// Enter follows as a write of its own, after a pause.
+    #[test]
+    fn the_builtin_wake_presses_enter_apart_from_the_line() {
+        let script = default_wake_command("ttys004", WORKER_WAKE_LINE);
+        let typed = script
+            .find(&format!(
+                "write text \"{}\" newline NO\n",
+                applescript_literal(WORKER_WAKE_LINE)
+            ))
+            .unwrap_or_else(|| panic!("the line is typed without its newline: {script}"));
+        let paused = script.find(&format!("delay {WAKE_ENTER_DELAY}\n")).unwrap();
+        let entered = script.find("write text \"\"\n").unwrap();
+        assert!(typed < paused && paused < entered, "{script}");
+        assert_eq!(script.matches("write text").count(), 2, "{script}");
     }
 }
