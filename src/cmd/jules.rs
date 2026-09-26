@@ -24,6 +24,16 @@ pub struct StartArgs<'a> {
 pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
     let task = task::load(&tasks::dir(&ctx), args.id)?;
+    // Handed over by the worker of a task in progress, and by nobody else. The board follows a
+    // session only while its task is in progress or in review, so one started for a task still
+    // in the backlog or the queue would run with nothing watching it.
+    if task.status != task::Status::Dispatched {
+        return Err(format!(
+            "{} is {}, not in progress: a task goes to Jules from its worker, after the hub has dispatched it",
+            task.id,
+            task.status.as_str()
+        ));
+    }
     // A second session for one task is two pull requests for one change, and the first one
     // would be forgotten: the record keeps one id.
     if let Some(session) = &task.jules_session {

@@ -67,7 +67,18 @@ fn add_task(fixture: &Fixture, extra: &[&str]) -> String {
     ];
     args.extend_from_slice(extra);
     let added = fixture.json(&args);
-    added["task"]["id"].as_str().unwrap().to_string()
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    // In progress, as a task is by the time its worker hands it to Jules.
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "dispatched",
+        "--no-hand-over",
+    ]);
+    id
 }
 
 fn write_prompt(fixture: &Fixture) -> String {
@@ -366,6 +377,17 @@ fn a_stored_base_is_left_as_written_when_this_checkout_is_another_repository() {
         .as_str()
         .unwrap()
         .to_string();
+    fixture.ok(&[
+        "task",
+        "update",
+        "--repo",
+        "acme/other",
+        "--id",
+        &id,
+        "--status",
+        "dispatched",
+        "--no-hand-over",
+    ]);
     let out = fixture
         .command([
             "jules",
@@ -393,4 +415,23 @@ fn a_stored_base_is_left_as_written_when_this_checkout_is_another_repository() {
         body["sourceContext"]["githubRepoContext"]["startingBranch"],
         "origin/release/2.0"
     );
+}
+
+#[test]
+fn a_task_not_in_progress_is_not_handed_to_jules() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let added = fixture.json(&[
+        "task", "add", "--title", "t", "--body", "b", "--base", "main", "--json",
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    let prompt = write_prompt(&fixture);
+    let (path, args, _) = stub_curl(&fixture);
+    let out = fixture
+        .command(["jules", "start", "--id", &id, "--prompt-file", &prompt])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not in progress"));
+    assert!(!args.exists(), "the API was called anyway");
 }
