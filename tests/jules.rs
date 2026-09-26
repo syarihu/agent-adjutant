@@ -991,6 +991,47 @@ fn a_comment_named_twice_is_refused_rather_than_posted_twice() {
     assert!(!posted.exists());
 }
 
+#[test]
+fn another_pr_starts_the_automatic_review_rounds_over() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let record = std::fs::read_dir(fixture.state.join("tasks"))
+        .unwrap()
+        .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
+        .map(|e| e.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy() == format!("{id}.json"))
+        .unwrap();
+    let mut task: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    task["announced"] = serde_json::json!(["11", "12"]);
+    task["relayRounds"] = serde_json::json!(2);
+    std::fs::write(&record, task.to_string()).unwrap();
+
+    // The same PR again changes nothing.
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--pr",
+        "https://github.com/acme/widget/pull/7",
+    ]);
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["relayRounds"], 2);
+
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--pr",
+        "https://github.com/acme/widget/pull/8",
+    ]);
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert!(shown.get("announced").is_none(), "{shown}");
+    assert!(shown.get("relayRounds").is_none(), "{shown}");
+}
+
 /// A request to a running board, with the token and the board's own origin as the page sends
 /// them. The status line and the body.
 fn board_request(url: &str, method: &str, path: &str, body: &str) -> (String, String) {

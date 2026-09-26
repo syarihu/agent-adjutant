@@ -250,6 +250,7 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
         task.executor = task::Executor::parse(&executor)
             .ok_or(format!("no such executor: {executor} (worker or jules)"))?;
     }
+    let pr_before = task.pr.clone();
     for (key, field) in [
         ("worktree", &mut task.worktree),
         ("issue", &mut task.issue),
@@ -266,6 +267,12 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
             // "waiting for a slot" note has to go once the worker starts.
             *field = text_field(key, value)?;
         }
+    }
+    // What the board has brought to the hub belongs to the PR it read. Another PR starts over:
+    // kept, the count would leave a new PR at the limit before its first review.
+    if task.pr != pr_before {
+        task.announced.clear();
+        task.relay_rounds = 0;
     }
     // Only a worktree given in this update: one already stored was resolved when it was
     // given, against the directory of the command that gave it, and re-resolving it here
