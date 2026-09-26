@@ -432,9 +432,7 @@ fn a_hub_for_a_parent_task_serves_a_board_of_its_own() {
     child.wait().unwrap();
 }
 
-#[test]
-fn a_board_already_running_for_the_hub_is_left_to_serve() {
-    let fixture = Fixture::new(QUIET);
+fn start_board(fixture: &Fixture) -> (std::process::Child, String) {
     let mut by_hand = fixture
         .command(["serve", "--port", "0", "--no-open"])
         .stdout(Stdio::piped())
@@ -444,7 +442,14 @@ fn a_board_already_running_for_the_hub_is_left_to_serve() {
     std::io::BufReader::new(by_hand.stdout.as_mut().unwrap())
         .read_line(&mut said)
         .unwrap();
-    let theirs = said.split(" — ").nth(1).unwrap().trim().to_string();
+    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
+    (by_hand, url)
+}
+
+#[test]
+fn a_board_already_running_for_the_hub_is_left_to_serve() {
+    let fixture = Fixture::new(QUIET);
+    let (mut by_hand, theirs) = start_board(&fixture);
 
     let (mut child, config) = hub_mcp(&fixture, SLUG);
     assert_eq!(config["board"]["url"], theirs.as_str());
@@ -455,4 +460,46 @@ fn a_board_already_running_for_the_hub_is_left_to_serve() {
     assert!(fetch(&theirs).contains(" 200 "));
     by_hand.kill().unwrap();
     by_hand.wait().unwrap();
+}
+
+/// A board started while another serves the same hub — a worker checking a UI change in its
+/// worktree does exactly this — must not take the record: once it stops, the record would name
+/// a dead process and the board still serving would read as absent.
+#[test]
+fn a_second_board_does_not_take_the_record_from_the_one_still_serving() {
+    let fixture = Fixture::new(QUIET);
+    let (mut first, first_url) = start_board(&fixture);
+    let (mut second, _) = start_board(&fixture);
+    assert_eq!(
+        fixture.json(&["config"])["board"]["url"],
+        first_url.as_str()
+    );
+
+    second.kill().unwrap();
+    second.wait().unwrap();
+    assert_eq!(
+        fixture.json(&["config"])["board"]["url"],
+        first_url.as_str()
+    );
+    assert!(fetch(&first_url).contains(" 200 "));
+
+    first.kill().unwrap();
+    first.wait().unwrap();
+}
+
+#[test]
+fn a_board_takes_the_record_from_one_that_has_stopped() {
+    let fixture = Fixture::new(QUIET);
+    let (mut first, _) = start_board(&fixture);
+    first.kill().unwrap();
+    first.wait().unwrap();
+
+    let (mut second, second_url) = start_board(&fixture);
+    assert_eq!(
+        fixture.json(&["config"])["board"]["url"],
+        second_url.as_str()
+    );
+
+    second.kill().unwrap();
+    second.wait().unwrap();
 }

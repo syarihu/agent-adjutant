@@ -74,6 +74,11 @@ pub fn serve(
     let url = board.url();
     println!("adj serve: {} — {url}", board.server.ctx.repo.nwo);
     println!("The token is in the URL. Anything without it gets a 403.");
+    if !board.recorded {
+        eprintln!(
+            "adj serve: another board is already serving this hub; it stays the one `adj gate open` and `adj config` point at."
+        );
+    }
     if open {
         open_browser(&url);
     }
@@ -118,6 +123,7 @@ fn bind_preferring(port: u16) -> std::io::Result<TcpListener> {
 struct Board {
     server: Arc<Server>,
     listener: TcpListener,
+    recorded: bool,
 }
 
 impl Board {
@@ -129,7 +135,7 @@ impl Board {
             .local_addr()
             .map(|a| a.port())
             .map_err(|e| format!("cannot read the board's port: {e}"))?;
-        record(&ctx.repo.slug, port)?;
+        let recorded = record(&ctx.repo.slug, port)?;
         Ok(Board {
             server: Arc::new(Server {
                 ctx,
@@ -138,6 +144,7 @@ impl Board {
                 jules: Arc::default(),
             }),
             listener,
+            recorded,
         })
     }
 
@@ -185,14 +192,7 @@ fn record_path(slug: &str) -> PathBuf {
         .join(format!("{slug}.json"))
 }
 
-/// The port a live dashboard is on, or `None`.
-///
-/// This is what `adj gate open` asks before it hands the ball over: a gate written with
-/// nobody serving is a message into a directory no one opens, and an agent that waited on
-/// one would wait for ever. Anchored on the recorded process start time like every other
-/// record here, so a crashed server leaves a file that reads as absent rather than as a
-/// dashboard that is about to answer.
-pub fn running(slug: &str) -> Option<u16> {
+fn live_record(slug: &str) -> Option<(u32, u16)> {
     let record: Value = std::fs::read_to_string(record_path(slug))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())?;
@@ -201,10 +201,33 @@ pub fn running(slug: &str) -> Option<u16> {
     if messaging::ps_started(pid).as_deref() != started {
         return None;
     }
-    record.get("port").and_then(Value::as_u64).map(|p| p as u16)
+    let port = record
+        .get("port")
+        .and_then(Value::as_u64)
+        .map(|p| p as u16)?;
+    Some((pid, port))
 }
 
-fn record(slug: &str, port: u16) -> Result<(), String> {
+/// The port a live dashboard is on, or `None`.
+///
+/// This is what `adj gate open` asks before it hands the ball over: a gate written with
+/// nobody serving is a message into a directory no one opens, and an agent that waited on
+/// one would wait for ever. Anchored on the recorded process start time like every other
+/// record here, so a crashed server leaves a file that reads as absent rather than as a
+/// dashboard that is about to answer.
+pub fn running(slug: &str) -> Option<u16> {
+    live_record(slug).map(|(_, port)| port)
+}
+
+/// Record this board as the one serving the hub. Returns `Ok(true)` if it wrote the record,
+/// and `Ok(false)` if another live board holds it and nothing was written.
+/// A second board (for instance one started in a worktree to check a UI change) must not
+/// take the record from a live board, because once it stops the record would name a dead
+/// process and the live board would read as absent.
+fn record(slug: &str, port: u16) -> Result<bool, String> {
+    if live_record(slug).is_some_and(|(pid, _)| pid != std::process::id()) {
+        return Ok(false);
+    }
     let path = record_path(slug);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -213,7 +236,8 @@ fn record(slug: &str, port: u16) -> Result<(), String> {
     let pid = std::process::id();
     let record = json!({ "pid": pid, "port": port, "psStarted": messaging::ps_started(pid) });
     std::fs::write(&path, format!("{record:#}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(true)
 }
 
 // ── the security boundary ────────────────────────────────────────────
