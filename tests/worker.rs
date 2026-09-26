@@ -198,23 +198,11 @@ fn a_dispatch_past_max_workers_starts_nothing_and_says_so_with_its_own_exit_code
 fn a_task_waiting_for_a_slot_is_queued_with_its_worktree_and_sends_the_hub_nothing() {
     let fixture = one_worker_at_a_time();
     let worktree = linked_worktree(&fixture, "wid-3");
-    let out = fixture.ok(&[
-        "task",
-        "add",
-        "--title",
-        "WID-3",
-        "--body",
-        "画像が潰れる",
-        "--waiting-in",
-        &worktree,
-    ]);
-    assert!(out.contains("Queued, but not handed to "), "{out}");
-
     let added = fixture.json(&[
         "task",
         "add",
         "--title",
-        "WID-4",
+        "WID-3",
         "--body",
         "画像が潰れる",
         "--waiting-in",
@@ -313,7 +301,7 @@ fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
         &worktree,
         "--json",
     ]);
-    fixture.ok(&[
+    let out = fixture.ok(&[
         "task",
         "add",
         "--title",
@@ -323,6 +311,7 @@ fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
         "--waiting-in",
         &other,
     ]);
+    assert!(out.contains("Queued, but not handed to "), "{out}");
     let id = added["task"]["id"].as_str().unwrap().to_string();
     // No note of its own: the same record is written before a worker starts, not only when
     // one was turned away.
