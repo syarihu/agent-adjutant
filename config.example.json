@@ -31,7 +31,7 @@
     "selfReviewRounds": 5,
     "//reviewEffort": "How hard the review engine is asked to look: low | medium | high | xhigh | max.",
     "reviewEffort": "high",
-    "//reviewEngine": "Who reviews: \"auto\" alternates so that a later round is read by a different model than wrote the code, which is the whole point — a reviewer that knows why the code is the way it is confirms rather than reviews. \"claude\" or \"codex\" pins one.",
+    "//reviewEngine": "Who reviews the diff in each self-review round. \"auto\" sends it to codex while Claude's 5-hour window is at 50% or more or its 7-day window is above 70% (read from rate-limit-cache.json under the session's config directory, and only when codex is on PATH), and to Claude otherwise; `adj review-engine` gives the answer. \"claude\" or \"codex\" pins one.",
     "reviewEngine": "auto",
     "//draftPr": "Open pull requests as drafts. The worker marks one ready only once its own review rounds have converged.",
     "draftPr": true,

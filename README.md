@@ -77,6 +77,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
 | `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
 | `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `review` / `report`), or show it |
+| `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate-limit cache and whether `codex` is on `PATH` — and the line to tell the user |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
