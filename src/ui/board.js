@@ -544,7 +544,7 @@ function renderDrawer() {
   // Closed, not just out of view: what was typed for the task goes with it.
   if (!selectedTaskId) {
     drawer.classList.add('hidden');
-    document.getElementById('drawer-body')?.replaceChildren();
+    renderHandForm(null);
     return;
   }
   if (view !== 'board') {
@@ -554,7 +554,7 @@ function renderDrawer() {
   const task = (state.tasks || []).find(t => t.id === selectedTaskId);
   if (!task) {
     drawer.classList.add('hidden');
-    document.getElementById('drawer-body')?.replaceChildren();
+    renderHandForm(null);
     selectedTaskId = null;
     return;
   }
@@ -701,9 +701,9 @@ function renderDrawer() {
     </div>
   `;
 
-  const drawerBody = document.getElementById('drawer-body');
-  if (drawerBody) {
-    const [headEl, formEl, restEl] = drawerParts(drawerBody);
+  const headEl = document.getElementById('drawer-head');
+  const restEl = document.getElementById('drawer-rest');
+  if (headEl && restEl) {
     headEl.innerHTML = head;
     restEl.innerHTML = body;
     for (const part of [headEl, restEl]) {
@@ -725,38 +725,44 @@ function renderDrawer() {
       part.querySelectorAll('[data-close]').forEach(b =>
         b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
     }
-    renderHandForm(formEl, colId === 'backlog' ? task : null);
+    renderHandForm(colId === 'backlog' ? task : null);
   }
-}
-
-/* The side sheet's body in three parts: what waits on the person, the hand-over form, and the
-   rest. Each part is display:contents, so the body's gap still spaces the cards inside them. */
-function drawerParts(drawerBody) {
-  if (drawerBody.childElementCount !== 3) {
-    drawerBody.innerHTML = '<div style="display:contents"></div>'.repeat(3);
-  }
-  return [...drawerBody.children];
 }
 
 /* The hand-over form of a backlog task. The board redraws once a minute and on every change of
    state, and a textarea built again loses what is typed into it, the caret, and an IME
    composition in progress. So the form is built again only for another task, or when the saved
-   instruction changed and nothing has been typed over the one shown. */
-function renderHandForm(el, task) {
+   instruction changed while the box is neither typed in nor focused. When it changed while the
+   box is being written, the box is kept and a note says so, with a button to load the new one. */
+function renderHandForm(task) {
+  const el = document.getElementById('drawer-form');
+  if (!el) return;
   if (!task) {
-    el.innerHTML = '';
+    el.replaceChildren();
     delete el.dataset.task;
     return;
   }
   const saved = task.instruction || '';
   const kept = el.querySelector('#drawer-instruction');
-  if (kept && el.dataset.task === task.id && (el.dataset.saved === saved || kept.value !== el.dataset.saved)) return;
+  if (kept && el.dataset.task === task.id) {
+    // Compared with what the box showed, not the saved string: the parser drops a leading newline
+    // and turns CRLF into LF, so the saved string can differ from an untouched box.
+    const writing = kept.value !== el.dataset.shown || document.activeElement === kept;
+    if (el.dataset.saved === saved || writing) {
+      el.querySelector('[data-stale]').hidden = el.dataset.saved === saved;
+      return;
+    }
+  }
   el.dataset.task = task.id;
   el.dataset.saved = saved;
   el.innerHTML = `
       <div class="m3-filled-card" style="display:flex;flex-direction:column;gap:8px;">
         <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;">キューへの受け渡し</div>
         <label for="drawer-instruction" style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);">エージェントへの申し送り（指示）</label>
+        <div data-stale hidden style="font-size:11.5px;color:var(--md-sys-color-error);">
+          保存済みの申し送りが別の所で変わりました。いまの入力のまま渡すと上書きします。
+          <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-reload>変わった内容を読み込む</button>
+        </div>
         <textarea id="drawer-instruction" placeholder="追加の指示や申し送りがあれば入力（任意）..." style="width:100%;box-sizing:border-box;border-radius:var(--md-shape-corner-xs);border:1px solid var(--md-sys-color-outline-variant);padding:8px 10px;background:var(--md-sys-color-surface-container-high);color:var(--md-sys-color-on-surface);font-size:12.5px;font-family:inherit;resize:vertical;min-height:60px;">${esc(saved)}</textarea>
         <button class="btn-m3-primary" style="width:100%" data-drawer-hand="${esc(task.id)}">
           <span class="material-symbols-outlined" style="font-size:16px;">send</span>
@@ -765,6 +771,13 @@ function renderHandForm(el, task) {
       </div>
     `;
   const textarea = el.querySelector('#drawer-instruction');
+  el.dataset.shown = textarea.value;
+  el.querySelector('[data-reload]').addEventListener('click', () => {
+    const now = (state.tasks || []).find(t => t.id === task.id);
+    if (!now) return;
+    el.replaceChildren();
+    renderHandForm(now);
+  });
   el.querySelector('[data-drawer-hand]').addEventListener('click', () =>
     hand(task.id, textarea.value.trim()));
   textarea.addEventListener('keydown', (e) => {
