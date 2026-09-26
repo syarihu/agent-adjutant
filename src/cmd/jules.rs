@@ -234,3 +234,131 @@ fn read_prompt(from: &str) -> Result<String, String> {
     }
     Ok(text)
 }
+
+// ── the board's view of the sessions ─────────────────────────────────
+
+/// How long an answer about a session is reused. The board polls every two seconds; the
+/// session's state changes over minutes. Asking once in this long keeps the badge current
+/// enough to act on without sending the API a request per poll per open tab.
+const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// The last answer about each session, and whether a question is already out.
+///
+/// The board asks from a thread of its own, never from the request that serves the page: an
+/// API that is slow to answer should make a badge a little stale, not the whole board.
+#[derive(Default)]
+pub struct Watch {
+    seen: std::sync::Mutex<std::collections::HashMap<String, Seen>>,
+}
+
+struct Seen {
+    at: std::time::Instant,
+    asking: bool,
+    answer: Option<Result<jules::Session, String>>,
+}
+
+impl Watch {
+    /// What the board shows for a task: the last answer about its session, or `None` for a
+    /// task Jules is not working on. Asks again in the background when the answer is old.
+    ///
+    /// Only for a task still in progress or in review: once it is done nobody reads the badge,
+    /// and a session that is left alone does not change.
+    pub fn look(
+        self: &std::sync::Arc<Self>,
+        ctx: &super::Context,
+        key: &crate::config::Hook,
+        task: &Value,
+    ) -> Option<Value> {
+        let session = task.get("julesSession")?.as_str()?.to_string();
+        let status = task.get("status").and_then(Value::as_str)?;
+        if !matches!(status, "dispatched" | "pr") {
+            return None;
+        }
+        let task_id = task.get("id")?.as_str()?.to_string();
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = seen.entry(session.clone()).or_insert(Seen {
+            at: std::time::Instant::now(),
+            asking: false,
+            answer: None,
+        });
+        let stale = entry.answer.is_none() || entry.at.elapsed() >= FRESH_FOR;
+        if stale && !entry.asking {
+            entry.asking = true;
+            let watch = std::sync::Arc::clone(self);
+            let ctx = ctx.clone();
+            let key = key.clone();
+            let asked = session.clone();
+            std::thread::spawn(move || watch.ask(&ctx, &key, &task_id, &asked));
+        }
+        Some(match &entry.answer {
+            None => json!({ "session": session, "checking": true }),
+            Some(Ok(found)) => json!({
+                "session": session,
+                "state": found.state,
+                "url": found.url,
+                "pr": found.pr,
+                "working": working(&found.state),
+                "age": entry.at.elapsed().as_secs(),
+            }),
+            Some(Err(why)) => json!({
+                "session": session,
+                "error": why,
+                "age": entry.at.elapsed().as_secs(),
+            }),
+        })
+    }
+
+    fn ask(&self, ctx: &super::Context, key: &crate::config::Hook, task_id: &str, session: &str) {
+        let answer = jules::get(key, session);
+        if let Ok(found) = &answer
+            && let Err(e) = follow(ctx, task_id, found)
+        {
+            eprintln!("adj serve: could not record the pull request of {task_id}: {e}");
+        }
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = seen.get_mut(session) {
+            entry.at = std::time::Instant::now();
+            entry.asking = false;
+            entry.answer = Some(answer);
+        }
+    }
+}
+
+/// Whether Jules is doing something with the session right now. A session goes back to
+/// `IN_PROGRESS` while it answers a comment on its pull request, and to `COMPLETED` once it
+/// has pushed, so this flips more than once in a task's life.
+pub fn working(state: &str) -> bool {
+    matches!(state, "QUEUED" | "PLANNING" | "IN_PROGRESS")
+}
+
+/// The first time a session is seen with a pull request: write it onto the task, move the
+/// card to review, and tell the hub, which has the PR's description to rewrite.
+///
+/// Keyed on the record having no PR yet, so it happens once however many times the session
+/// finishes — it finishes again after every round of comments it answers.
+fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Result<(), String> {
+    let Some(pr) = &session.pr else {
+        return Ok(());
+    };
+    let task = task::load(&tasks::dir(ctx), task_id)?;
+    if task.pr.is_some() || task.jules_session.as_deref() != Some(session.id.as_str()) {
+        return Ok(());
+    }
+    let mut change = json!({ "pr": pr });
+    if task.status == task::Status::Dispatched {
+        change["status"] = json!("pr");
+    }
+    let (task, _) = tasks::update(ctx, task_id, &change)?;
+    let message = crate::messaging::Message {
+        from: "jules".to_string(),
+        // None, for the reason `task::hand_over` gives: this comes from no worktree.
+        worktree: None,
+        kind: "jules-pr".to_string(),
+        subject: task.title.clone(),
+        body: format!(
+            "## task        {}\n## pr          {pr}\n## session     {}\n",
+            task.id, session.id
+        ),
+    };
+    super::deliver_to_hub(ctx, &message).map(|_| ())
+}

@@ -175,6 +175,11 @@
               <option value="diff">計画と差分レビューを待つ</option>
               <option value="all">計画・差分・動作確認を待つ</option>
             </select></label>
+          <label class="field"><span>実装</span>
+            <select name="executor">
+              <option value="worker" selected>worker が実装する</option>
+              <option value="jules">計画の承認後に Jules へ渡す</option>
+            </select></label>
           <label class="field"><span>分岐元</span>
             <input type="text" name="base" placeholder="既定 (baseBranch)"></label>
           <label class="field"><span>親タスク(URL)</span>

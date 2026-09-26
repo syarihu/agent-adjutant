@@ -492,3 +492,127 @@ fn two_starts_for_one_task_at_once_create_one_session() {
     let refused = outs.iter().find(|o| !o.status.success()).unwrap();
     assert!(String::from_utf8_lossy(&refused.stderr).contains("already with Jules"));
 }
+
+/// `/api/state` from a running board, whole.
+fn board_state(url: &str) -> serde_json::Value {
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, query) = rest.split_once('/').unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+    let mut stream = std::net::TcpStream::connect(host).unwrap();
+    write!(
+        stream,
+        "GET /api/state?token={token} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    std::io::Read::read_to_string(&mut stream, &mut answer).unwrap();
+    let body = answer.split_once("\r\n\r\n").unwrap().1;
+    serde_json::from_str(body).unwrap()
+}
+
+/// A board serving this fixture with `curl` stubbed, and the URL it printed.
+fn serve(fixture: &Fixture, path: &str) -> (std::process::Child, String) {
+    let mut child = fixture
+        .command(["serve", "--port", "0", "--no-open"])
+        .env("PATH", path)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::io::BufReader::new(child.stdout.as_mut().unwrap())
+        .read_line(&mut said)
+        .unwrap();
+    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
+    (child, url)
+}
+
+#[test]
+fn the_board_shows_the_session_and_moves_its_task_to_review_once_the_pr_is_open() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let id = add_task(&fixture, &["--executor", "jules"]);
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "dispatched",
+        "--jules-session",
+        "42",
+        "--no-hand-over",
+    ]);
+    let (path, _, _) = stub_curl(&fixture);
+    let (mut board, url) = serve(&fixture, &path);
+
+    // The first answer is asked for in the background; the card says so until it lands.
+    let mut seen = serde_json::Value::Null;
+    for _ in 0..100 {
+        let state = board_state(&url);
+        let task = state["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id.as_str())
+            .unwrap()
+            .clone();
+        if task["jules"]["state"].is_string() && task["pr"].is_string() {
+            seen = task;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    board.kill().unwrap();
+    board.wait().unwrap();
+
+    assert_eq!(seen["jules"]["state"], "COMPLETED", "{seen}");
+    assert_eq!(seen["jules"]["working"], false, "{seen}");
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["pr"], "https://github.com/acme/widget/pull/7");
+    assert_eq!(shown["status"], "pr");
+
+    // The hub is told once, so it can rewrite the description.
+    let listed = fixture.json(&["pending", "--json"]);
+    let told: Vec<&serde_json::Value> = listed["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "jules-pr")
+        .collect();
+    assert_eq!(told.len(), 1, "{listed}");
+    let name = told[0]["name"].as_str().unwrap();
+    let body = fixture.ok(&["pending", "--read", name]);
+    assert!(body.contains(&id) && body.contains("/pull/7"), "{body}");
+}
+
+#[test]
+fn a_task_that_already_has_its_pr_is_not_announced_again() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let id = add_task(&fixture, &["--executor", "jules"]);
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "pr",
+        "--pr",
+        "https://github.com/acme/widget/pull/7",
+        "--jules-session",
+        "42",
+        "--no-hand-over",
+    ]);
+    let (path, args, _) = stub_curl(&fixture);
+    let (mut board, url) = serve(&fixture, &path);
+    for _ in 0..100 {
+        if board_state(&url)["tasks"][0]["jules"]["state"].is_string() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    board.kill().unwrap();
+    board.wait().unwrap();
+
+    assert!(args.exists(), "the session was never asked about");
+    let listed = fixture.json(&["pending", "--json"]);
+    assert_eq!(listed["count"], 0, "{listed}");
+}

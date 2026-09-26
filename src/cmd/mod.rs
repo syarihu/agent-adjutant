@@ -25,8 +25,8 @@ pub use gate::{
     show as gate_show,
 };
 pub use jules::{
-    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, show as jules_show,
-    start as jules_start,
+    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, Watch as JulesWatch,
+    show as jules_show, start as jules_start,
 };
 pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{
@@ -37,6 +37,7 @@ pub use task::{
 
 /// Everything a command needs to know about where it is. Resolved once, at the top, because
 /// two commands disagreeing about which repo they are in is the failure that loses reports.
+#[derive(Clone)]
 pub struct Context {
     pub repo: RepoInfo,
     pub settings: Settings,

@@ -23,7 +23,11 @@ const workerMinutes = (task, w) => {
 /* Why a card is stuck, or null. A badge rather than a column: moved to a column of its own,
    the card would lose the column that says where it got to. */
 function stuckOf(task) {
-  if (!['dispatched', 'pr'].includes(task.status) || !task.worktree) return null;
+  if (!['dispatched', 'pr'].includes(task.status)) return null;
+  // Handed to Jules: the worker is expected to have gone, and the session is what moves the
+  // card. Only a session that failed needs a person.
+  if (task.julesSession) return task.jules?.state === 'FAILED' ? 'session を開いて確認' : null;
+  if (!task.worktree) return null;
   const w = workerOf(task);
   // The worker is gone and nothing will move this card: the one thing a person must hear.
   // Not in the first two minutes, while a worker that was just dispatched is still opening.
@@ -36,6 +40,24 @@ function stuckOf(task) {
   const limit = state.stuckAfterMinutes;
   if (mins != null && limit > 0 && mins >= limit) return `${minutesLabel(mins)} 同じ工程`;
   return null;
+}
+
+/* What a card says about the Jules session behind it, in the words the card shows. `working`
+   comes from the server, which knows which states mean Jules is busy. */
+const JULES_LABEL = { QUEUED:'待機中', PLANNING:'計画中', IN_PROGRESS:'作業中', AWAITING_PLAN_APPROVAL:'計画の承認待ち',
+                      AWAITING_USER_FEEDBACK:'返事待ち', PAUSED:'一時停止', COMPLETED:'完了', FAILED:'失敗' };
+function julesLine(task) {
+  const j = task.jules;
+  if (!j) return '';
+  const text = j.error ? '状態を読めません' : j.checking ? '確認中' : (JULES_LABEL[j.state] || j.state);
+  const url = httpUrl(j.url);
+  const label = `<span style="font-weight:700;">Jules ${esc(text)}</span>`;
+  return `
+    <div class="card-worker-status" title="${esc(j.error || `session ${j.session}`)}">
+      ${j.working ? '<span class="pulse-dot"></span>' : '<span class="material-symbols-outlined" style="font-size:14px;">smart_toy</span>'}
+      ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;">${label}</a>` : label}
+    </div>
+  `;
 }
 
 /* Done cards older than this fold away. The records stay; the column is for
@@ -378,8 +400,10 @@ function cardEl(task, col) {
     `;
   }
 
-  // 4. Worker Live Status
-  if (worker && worker.present && worker.phase) {
+  // 4. Worker Live Status — or, once the task is with Jules, the session's
+  if (live && task.jules) {
+    h += julesLine(task);
+  } else if (worker && worker.present && worker.phase) {
     const mins = phaseMinutes(worker);
     h += `
       <div class="card-worker-status">
@@ -394,6 +418,10 @@ function cardEl(task, col) {
   const metaBadges = [];
   if (col === 'queued' && task.order != null) {
     metaBadges.push(`<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>`);
+  }
+  // Only before the session exists: after that the Jules line above says it, with the state.
+  if (task.executor === 'jules' && !task.jules) {
+    metaBadges.push(`<span class="m3-pill pill-purple" title="計画の承認後に Jules へ渡す"><span class="material-symbols-outlined" style="font-size:12px;">smart_toy</span>Jules</span>`);
   }
   if (!task.autoStart) {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
@@ -661,6 +689,12 @@ function renderDrawer() {
           <span style="color:var(--md-sys-color-outline);font-size:11px;">worktree</span>
           <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code>
         </div>
+        ${task.executor === 'jules' ? `<div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">実装</span>
+          ${httpUrl(task.jules?.url)
+            ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>Jules ${esc(JULES_LABEL[task.jules.state] || task.jules.state || '')}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
+            : `<strong style="color:var(--md-sys-color-on-surface);">Jules${task.julesSession ? '' : '（計画の承認後に渡す）'}</strong>`}
+        </div>` : ''}
         ${drawerPrUrl ? `<div style="display:flex;flex-direction:column;gap:2px;">
           <span style="color:var(--md-sys-color-outline);font-size:11px;">PR</span>
           <a href="${esc(drawerPrUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(drawerPrUrl)}" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>${prNumberOf(drawerPrUrl) ? `#${esc(prNumberOf(drawerPrUrl))}` : 'PR を開く'}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>

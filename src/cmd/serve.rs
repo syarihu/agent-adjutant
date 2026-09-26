@@ -52,6 +52,9 @@ struct Server {
     ctx: super::Context,
     token: String,
     port: u16,
+    /// What Jules last said about each session a card follows. The one thing here that
+    /// changes after startup, and it is a cache: the record on disk stays the answer.
+    jules: Arc<super::JulesWatch>,
 }
 
 pub fn serve(
@@ -128,7 +131,12 @@ impl Board {
             .map_err(|e| format!("cannot read the board's port: {e}"))?;
         record(&ctx.repo.slug, port)?;
         Ok(Board {
-            server: Arc::new(Server { ctx, token, port }),
+            server: Arc::new(Server {
+                ctx,
+                token,
+                port,
+                jules: Arc::default(),
+            }),
             listener,
         })
     }
@@ -403,6 +411,17 @@ fn state(server: &Server) -> Value {
 
     let now = messaging::now_secs();
     let settings = settings_now(server);
+    // After the records are joined, from the same values the page gets: a card shows the last
+    // answer about its session, and an old answer is asked again behind the page's back.
+    let tasks: Vec<Value> = tasks
+        .into_iter()
+        .map(|mut t| {
+            if let Some(seen) = server.jules.look(&server.ctx, &settings.jules_key, &t) {
+                t["jules"] = seen;
+            }
+            t
+        })
+        .collect();
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
     let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.

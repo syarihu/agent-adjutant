@@ -384,9 +384,11 @@ already running, started by hand, it is left alone. `hubServe: false` turns this
 hub whose agent has no adjutant MCP server gets no board; for both, `adj serve` is the way.
 Nothing opens a browser.
 
-**It holds no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
-arrives because a person clicked. The page asks for state every two seconds, which is the
-only repeating thing anywhere in it.
+**It holds almost no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
+arrives because a person clicked. The page asks for state every two seconds, and the one
+thing that answer reaches outside for is a task handed to Jules: its session is asked about
+at most once every 45 seconds, and only while the page is open and the card is in progress
+or in review (see [Handing a task to Jules](#handing-a-task-to-jules)).
 
 A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
 message that announces it: the message is read once and acked, and after that the hub would
@@ -532,6 +534,16 @@ security add-generic-password -s jules-api -a "$USER" -w
 The key reaches `curl` on its stdin — an argument would be readable through `ps` — and is
 taken out of anything printed back, errors included. Off macOS, point `julesKey` at a
 command that prints the key from wherever it is kept.
+
+On the board, such a card shows the session in place of a worker: its state (queued,
+working, done, failed), linked to its page. A worker that has gone is not flagged for a
+card like this — handing over is the last thing the worker does — and a session that failed
+is. The answer is asked for behind the page, never while it waits, so a slow API makes the
+badge a little stale rather than the board slow. The first time a session is seen with a pull
+request, the board writes it onto the task, moves the card to review, and sends the hub a
+`jules-pr` message naming the task and the PR. That happens once: Jules finishes again after
+every round of comments it answers, and the record already has its PR by then. The new-task
+form's 実装 field picks who implements.
 
 The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
 see is refused by the API.
