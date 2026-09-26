@@ -301,7 +301,7 @@ fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
         &worktree,
         "--json",
     ]);
-    fixture.ok(&[
+    let out = fixture.ok(&[
         "task",
         "add",
         "--title",
@@ -311,6 +311,7 @@ fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
         "--waiting-in",
         &other,
     ]);
+    assert!(out.contains("Queued, but not handed to "), "{out}");
     let id = added["task"]["id"].as_str().unwrap().to_string();
     // No note of its own: the same record is written before a worker starts, not only when
     // one was turned away.

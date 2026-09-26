@@ -810,12 +810,25 @@ fn handed_json(handed: &Option<Delivered>) -> Value {
     }
 }
 
+/// What to say when nothing was put in the hub's inbox, which depends on where the task is
+/// now: only a backlog task is "kept in the backlog". A queued one was either handed over
+/// earlier or is waiting for a slot the hub itself asked for; anything further along is
+/// already shown by its status.
+fn not_handed_line(status: Status, hub_name: &str) -> Option<String> {
+    match status {
+        Status::Backlog => Some(format!(
+            "Kept in the backlog. Nothing is in {hub_name}'s inbox yet."
+        )),
+        Status::Queued => Some(format!("Queued, but not handed to {hub_name} this time.")),
+        Status::Dispatched | Status::Pr | Status::Done | Status::Cancelled => None,
+    }
+}
+
 fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<Delivered>) {
     let Some(handed) = handed else {
-        println!(
-            "Kept in the backlog. Nothing is in {}'s inbox yet.",
-            ctx.repo.hub_name
-        );
+        if let Some(line) = not_handed_line(task.status, &ctx.repo.hub_name) {
+            println!("{line}");
+        }
         return;
     };
     println!(
@@ -930,5 +943,26 @@ mod tests {
     fn empty_title_and_body_produce_nothing() {
         let input = json!({ "title": "   ", "body": "   \n\n  " });
         assert!(derive_title(&input).is_none());
+    }
+
+    /// Only a backlog task is said to be kept in the backlog; a task further along is not
+    /// sent back there by an update that did not hand it over.
+    #[test]
+    fn a_task_not_handed_over_is_described_by_where_it_is() {
+        assert_eq!(
+            not_handed_line(Status::Backlog, "hub").as_deref(),
+            Some("Kept in the backlog. Nothing is in hub's inbox yet.")
+        );
+        let queued = not_handed_line(Status::Queued, "hub").expect("a queued task gets a line");
+        assert!(!queued.contains("backlog"), "{queued}");
+        assert!(queued.contains("hub"), "{queued}");
+        for status in [
+            Status::Dispatched,
+            Status::Pr,
+            Status::Done,
+            Status::Cancelled,
+        ] {
+            assert_eq!(not_handed_line(status, "hub"), None, "{}", status.as_str());
+        }
     }
 }
