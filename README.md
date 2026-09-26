@@ -566,7 +566,9 @@ worth passing on. Jules is not mentioned in the comment: it reads comments on it
 requests without one. What each finding carries is the comment's bold headline with the bot's
 prompt for an agent when there is one — without the paragraphs every such prompt repeats, one
 of which tells the agent to run the bot's own CLI — and otherwise the comment without its
-hidden and folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. From
+hidden and folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. `gh` has to be
+signed in as the account that started the session — `adj jules start` records it as `julesBy` —
+since Jules would ignore a comment from any other; a relay from another account is refused. From
 a shell it is `adj jules findings --id <task>` and `adj jules relay --id <task> --comment <id>`.
 Only inline comments are listed; what a bot writes in the body of its review is not.
 

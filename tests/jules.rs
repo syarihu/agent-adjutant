@@ -804,3 +804,58 @@ fn two_relays_of_one_comment_at_once_post_it_once() {
         "{comment}"
     );
 }
+
+#[test]
+fn a_relay_from_another_account_than_the_one_that_started_jules_is_refused() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    // As `adj jules start` would have recorded it, for an account other than the stub's.
+    let record = std::fs::read_dir(fixture.state.join("tasks"))
+        .unwrap()
+        .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
+        .map(|e| e.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy() == format!("{id}.json"))
+        .unwrap();
+    let mut task: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    task["julesBy"] = serde_json::json!("someone-else");
+    std::fs::write(&record, task.to_string()).unwrap();
+
+    let (path, posted) = stub_gh(&fixture);
+    let out = fixture
+        .command(["jules", "relay", "--id", &id, "--comment", "11"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        said.contains("someone-else started this Jules session"),
+        "{said}"
+    );
+    assert!(!posted.exists(), "posted from the wrong account");
+}
+
+#[test]
+fn a_comment_named_twice_is_refused_rather_than_posted_twice() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let out = fixture
+        .command([
+            "jules",
+            "relay",
+            "--id",
+            &id,
+            "--comment",
+            "11",
+            "--comment",
+            "11",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("named more than once"));
+    assert!(!posted.exists());
+}
