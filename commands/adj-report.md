@@ -130,7 +130,9 @@ Once sent, this procedure is over. The hub's reply arrives later; when it does, 
 number in one line and go back to your task**. No reply is needed. Do not get drawn into discussing
 what was filed — that is between the hub and the user.
 
-**There is one exception: a reply whose first line starts with `[question]`.** The hub is asking for
+**There is one exception: a reply whose first line starts with `[question`, followed by an identifier
+and `]` (`[question {YYYYMMDD-HHMMSS}]`).** A hub started before its procedures were in English writes
+`[質問 {YYYYMMDD-HHMMSS}]` instead; treat that the same. The hub is asking for
 something it needs in order to file, so **answer once**. The hub is looking at a different branch and
 cannot read the code in your worktree — only you can. Check the file:line, reply briefly, and leave
 it there (no discussion). Reply with `adjutant_send` as well, with `kind` `answer` and the original

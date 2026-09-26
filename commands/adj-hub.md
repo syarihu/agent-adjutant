@@ -1494,7 +1494,7 @@ The answer comes back turns later, when this session is doing something else. Wi
 "file only"** — do not ask back; file it and reply. Never start on your own. More tabs and worktrees
 are not the kind of side effect to produce on your own where nobody asked.
 
-**Start a question back with `[question]` on the first line.** The requester's procedure
+**Start a question back with `[question {YYYYMMDD-HHMMSS}]` on the first line.** The requester's procedure
 (`adj-report`) defaults to "do not reply to the hub, do not get drawn in", so **this marker is the one
 signal that allows an answer**. Without it, the question is read and ignored. Keep what you ask to
 what one round trip can settle (the other side is in the middle of another task).
@@ -2385,7 +2385,7 @@ You are the one working in this worktree. You are not the hub (the side that han
   and has nowhere to pass on what it receives. You send the hub only these two things on your own:
   (a) a bug **outside this task**, through the `adj-report` procedure, and (b) a request to clean up
   once the work is done.
-  (Answering when the hub asks with `[question]` is neither of these, and is fine to do)
+  (Answering when the hub asks with `[question {id}]` is neither of these, and is fine to do)
 - Verify commands: {verify}
   (the config's `verify` is an array. List it as bullet points as it is, not packed into one line)
 

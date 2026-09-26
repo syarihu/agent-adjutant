@@ -29,7 +29,7 @@ in this procedure says what to tell them, not the words to use.
   sent to it have nowhere to go (and the same report shows up in two places). You send the hub
   only two things on your own: a bug **outside this task**, through the `adj-report` procedure
   (§7), and a request to clean up (§9). **Answering the hub with `kind: answer` when it asks with
-  `[question]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
+  `[question {id}]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
   holds the results, and removal goes through the hub's cleanup alone (§9 says how to ask).
@@ -48,7 +48,7 @@ in this procedure says what to tell them, not the words to use.
   choice of which review comments to address, and before the final report.
   When you have dealt with them, clear them with `adjutant_outbox` `action: clear` (the file is
   append-only, so anything not cleared is read again every time). If the first line is
-  `[question]`, answer it (§7).
+  `[question {id}]`, answer it (§7).
 - **Call `adjutant_config`** (`adjutant config` prints the same). It is the authority for every
   setting this procedure refers to, with the `defaults` merge, the flat-form expansion and the
   defaults already applied (do not read `~/.config/adjutant/config.json` again yourself).
@@ -369,12 +369,15 @@ Two reasons. A fix on the side dirties this task's diff and breaks review and re
 cannot be cut from inside a worktree, so you cannot start it as another task on the spot either.
 
 **When the hub replies after you hand it over**: if the first line is `[ack]` (received), send
-nothing back. If it is `[question]` (asking for what it needs to file), **answer once** — the hub is
+nothing back. If it starts with `[question`, followed by an identifier and `]` (asking for what it
+needs to file), **answer once** — the hub is
 looking at a different branch and cannot read this worktree's code, so only you can. Check the
 `file:line`, reply briefly, and leave it there. Anything else (a notice with the filed number) is
 just noted; no reply and no discussion.
 
-Answer with `adjutant_send` (`kind` `answer`, with the identifier from the hub's `[question]` at the
+A hub started before its procedures were in English writes `[質問 {id}]` instead; treat that the same.
+
+Answer with `adjutant_send` (`kind` `answer`, with the identifier from the hub's `[question {id}]` at the
 start of `subject`; if there was none, one line with the parent task number and what it answers).
 **You need not care whether the hub is running** — if it is not, the answer waits in its inbox, and
 the hub looks there on startup and right before going back to waiting. No route loses it, so there
