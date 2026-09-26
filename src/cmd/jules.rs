@@ -338,6 +338,10 @@ pub fn working(state: &str) -> bool {
 /// Keyed on the record having no PR yet, so it happens once however many times the session
 /// finishes — it finishes again after every round of comments it answers.
 ///
+/// All of it under the task's lock, decided on the record as it is now rather than as it was
+/// when the question to Jules went out: the answer can take seconds, and by then the task may
+/// have been finished, pulled back, or given another session, whose card this PR is not.
+///
 /// The hub is told first and the record written after. The other order loses the message for
 /// good when delivery fails: the record already has its PR, so no later poll gets this far
 /// again. This order at worst tells the hub twice, when the write fails after a delivery.
@@ -345,13 +349,13 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
     let Some(pr) = &session.pr else {
         return Ok(());
     };
-    let task = task::load(&tasks::dir(ctx), task_id)?;
-    if task.pr.is_some() || task.jules_session.as_deref() != Some(session.id.as_str()) {
+    let lock = tasks::lock_task(ctx, task_id)?;
+    let mut task = task::load(&tasks::dir(ctx), task_id)?;
+    let waiting = task.pr.is_none()
+        && task.jules_session.as_deref() == Some(session.id.as_str())
+        && matches!(task.status, task::Status::Dispatched | task::Status::Pr);
+    if !waiting {
         return Ok(());
-    }
-    let mut change = json!({ "pr": pr });
-    if task.status == task::Status::Dispatched {
-        change["status"] = json!("pr");
     }
     let message = crate::messaging::Message {
         from: "jules".to_string(),
@@ -365,5 +369,12 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
         ),
     };
     super::deliver_to_hub(ctx, &message)?;
-    tasks::update(ctx, task_id, &change).map(|_| ())
+    task.pr = Some(pr.clone());
+    if task.status == task::Status::Dispatched {
+        task.status = task::Status::Pr;
+    }
+    task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
+    task::save(&tasks::dir(ctx), &task)?;
+    drop(lock);
+    Ok(())
 }
