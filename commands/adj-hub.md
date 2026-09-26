@@ -1124,12 +1124,27 @@ Everything here uses **the selected task's own source**, not the repo's first on
 - `github-project` — the status lives on the board, not on the issue, so it takes two calls.
   **For a selected task the item id is already at hand** — the fetch in "1. Pick the task" returns
   `projectItems.nodes.id`. Do not fetch it twice. **Only for a new issue the hub filed** is it not at
-  hand, so fetch it once there:
+  hand, so fetch it once there, by asking the issue for its items — addressed by the repo it was
+  filed into and its number:
 
   ```bash
-  gh project item-list <projectNumber> --owner <projectOwner> --format json \
-    --jq '.items[] | select(.content.number == <n>) | .id'
+  gh api graphql -f query='{ repository(owner: "<owner>", name: "<name>") {
+    issue(number: <n>) { projectItems(first: 20) { nodes { id project { number } } } } } }' \
+    --jq '.data.repository.issue.projectItems.nodes[] | select(.project.number == <projectNumber>) | .id'
   ```
+
+  `<owner>/<name>` is the repo the issue was filed into, not `projectOwner`. A board holds issues
+  from any number of repositories and an issue number is only unique within one, so a board-side
+  filter on the number alone matches every repository's `#<n>` on the board, and the status then
+  moves on an issue nobody here touched. Asking the issue also avoids `gh project item-list`, which
+  returns only its first 30 items unless told otherwise — on a busy board the new item is simply
+  not in the list.
+
+  **Use the id only when exactly one comes back.** Zero means the issue has no item on that board,
+  or board registration has not caught up right after filing; more than one means the lookup did
+  not single out one item. Either way, do not call `item-edit`: skip the status update, tell the
+  user which issue (`<owner>/<name>#<n>`) and how many ids came back, and carry on. Several is not
+  quieter than none.
 
   Then just update the field:
 
@@ -1150,8 +1165,8 @@ Everything here uses **the selected task's own source**, not the repo's first on
     --jq '.fields[] | select(.name == "Status") | {fieldId: .id, options: .options}'
   ```
 
-  If the issue has **no item on that board**, the item id comes back empty: skip the status
-  update, tell the user, and carry on.
+  If a selected task's row carries `no-item` in place of an id, the issue has **no item on that
+  board**: skip the status update, tell the user, and carry on.
   **Status options are per board, not universal.** One board's `In Progress` may not exist on
   another — a content board might run Not started / In production / Done instead. `projectFields`
   and `inProgressOptionId` are therefore **optional per source**: when a source omits them,
@@ -1679,8 +1694,9 @@ Run the four moves of "Starting a task" above as they are. **Do not copy them he
 
 - **Skip 1. Pick the task.** What is started is the issue just filed.
 - **2. Claim it** — assignment and In Progress. For `github-project`, the new issue's item id is not at
-  hand, so fetch it once the way `gh project item-list` is written there. Right after filing, the
-  board registration may not show yet; then skip the status update and carry on.
+  hand, so fetch it once with the lookup written there, addressed by the repo it was filed into and
+  its number. Right after filing, the board registration may not show yet; then skip the status
+  update and carry on.
   `jira` has no item id. Assign and transition directly with the key of the ticket filed.
 - **3. Create the worktree** — make the key by passing the repo it was filed into through
   `issueKeys`. For `jira`, the issue key returned at filing is the key as it is.
