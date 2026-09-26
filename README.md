@@ -558,12 +558,15 @@ block and Jules' link back to the session are kept as they are.
 **Review comments are passed on by hand, in your name.** Jules answers the comments of the
 person who started it and keeps out of other bots' threads, so a review bot's findings do not
 reach it by themselves. The side sheet of a Jules task in review has 「レビュー指摘を Jules に
-回す」: it lists the first comment of each thread by the repository's `reviewBots`
-(`coderabbitai[bot]` when none are named), and posts the ones you tick as one comment on the
-pull request through `gh`, which is signed in as you. Jules is not mentioned in it: it reads
-comments on its own pull requests without one. What each finding carries is the bot's own
-prompt for an agent when the comment has one, and otherwise the comment without its hidden and
-folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. From
+回す」: it lists the first comment of each thread by anyone but Jules and you — a review
+bot, Copilot and a colleague alike, since Jules answers none of them — and posts the ones you
+tick as one comment on the pull request through `gh`, which is signed in as you. It does not
+go by `reviewBots`, which names the reviews a worker waits for rather than whose findings are
+worth passing on. Jules is not mentioned in the comment: it reads comments on its own pull
+requests without one. What each finding carries is the comment's bold headline with the bot's
+prompt for an agent when there is one — without the paragraphs every such prompt repeats, one
+of which tells the agent to run the bot's own CLI — and otherwise the comment without its
+hidden and folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. From
 a shell it is `adj jules findings --id <task>` and `adj jules relay --id <task> --comment <id>`.
 Only inline comments are listed; what a bot writes in the body of its review is not.
 

@@ -623,7 +623,8 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
 }
 
 /// A `gh` that lists three review comments on PR 7 — one from CodeRabbit with a prompt for
-/// agents, a reply to it, and one from a person — and writes down a posted comment.
+/// agents, a reply to it, and one from the person `gh` is signed in as — and writes down a
+/// posted comment.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
     std::fs::create_dir_all(&stubs).unwrap();
@@ -653,6 +654,7 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
         format!(
             "#!/bin/sh\n\
              case \"$1 $2\" in\n\
+             'api user') echo someone ;;\n\
              'api repos/acme/widget/pulls/7/comments') cat {listed} ;;\n\
              'pr comment') sleep 1; echo \"$3\" >> {posted}; cat >> {posted}; echo https://github.com/acme/widget/pull/7#issuecomment-1 ;;\n\
              *) echo \"unexpected: $*\" >&2; exit 1 ;;\n\
@@ -704,13 +706,15 @@ fn review_bot_comments_are_listed_and_passed_on_once_in_the_person_s_name() {
         String::from_utf8_lossy(&out.stderr)
     );
     let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    // The reply and the person's comment are not findings.
+    // The reply and the signed-in person's own comment are not findings.
     assert_eq!(found.as_array().unwrap().len(), 1, "{found}");
     assert_eq!(found[0]["id"], "11");
+    // The bold headline first, then the bot's prompt for an agent.
     assert_eq!(
         found[0]["text"],
-        "In src/a.rs around line 3, check the index first."
+        "Guard the index.\n\nIn src/a.rs around line 3, check the index first."
     );
+    assert_eq!(found[0]["author"], "coderabbitai[bot]");
 
     let out = run(&[
         "jules",
