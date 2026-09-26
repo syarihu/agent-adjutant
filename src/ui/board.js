@@ -172,7 +172,10 @@ function columnEl(col) {
 
   for (const task of items) cards.appendChild(cardEl(task, col.id));
   if (col.id === 'working' && currentActiveFilter !== 'mine') {
-    const known = new Set(items.map(t => t.worktree).filter(Boolean));
+    /* Every task that has a column counts, not only this column's: a worker whose task sits in
+       review is shown by that card, and the filters decide which cards show, not which workers
+       have one. A cancelled task has no column and no card, so its worker stays a ghost. */
+    const known = new Set((state.tasks || []).filter(t => columnOf(t)).map(t => t.worktree).filter(Boolean));
     for (const w of (state.workers || []).filter(w => w.present && !known.has(w.worktree))) {
       cards.appendChild(ghostEl(w));
     }
