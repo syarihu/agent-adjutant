@@ -781,7 +781,9 @@ function renderHandForm(task) {
   el.querySelector('[data-drawer-hand]').addEventListener('click', () =>
     hand(task.id, textarea.value.trim()));
   textarea.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
+    // keyCode 229 too: where compositionend comes first, the keydown that confirms the IME
+    // text already has isComposing false.
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       hand(task.id, textarea.value.trim());
     }
