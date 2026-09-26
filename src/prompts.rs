@@ -449,6 +449,44 @@ mod tests {
         );
     }
 
+    /// The record the hub creates carries the same implementer as the brief it writes.
+    ///
+    /// `adj task add` defaults `--executor` to `worker`, and the brief's Implementer line is
+    /// the only other place the choice lives. Left off the command, every task the hub
+    /// records itself and hands to Jules shows on the board as the worker's, and the worker
+    /// has to fix the record before it can hand the task over.
+    #[test]
+    fn the_task_record_the_hub_creates_carries_the_brief_implementer() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        assert!(
+            hub.contains("- Implementer: {worker / jules}"),
+            "the brief template has no slot for the implementer"
+        );
+        let start = step(hub, "### 4. ");
+        // The flag has to be inside the command, not in the prose that explains it — the
+        // same reason the `gh pr create` guard reads the command's own span.
+        let at = start
+            .find("adj task add")
+            .expect("the start step no longer creates the task record");
+        let tail = &start[at..];
+        let command = &tail[..tail.find('\n').unwrap_or(tail.len())];
+        assert!(
+            command.contains("--executor {implementer}"),
+            "the start step records the task without its implementer: {command}"
+        );
+        let flowed: String = flow(&start);
+        assert!(
+            flowed.contains(
+                "`--executor` is the same value as the brief's Implementer line (`worker` / `jules`)"
+            ),
+            "the start step does not say where `--executor` comes from: {start}"
+        );
+        assert!(
+            flowed.contains("The two must match"),
+            "the start step does not say the brief and the record must agree: {start}"
+        );
+    }
+
     /// A report carries two tasks: the one it was found in, and that one's parent.
     ///
     /// The report used to carry only the task the reporter was holding, and the hub decides

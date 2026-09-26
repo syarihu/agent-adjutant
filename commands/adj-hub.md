@@ -1319,6 +1319,12 @@ after `mkdir -p {worktree}/.claude`.
   `never`) as it is. The merge of `defaults` and `repos.<repo>` is already done, so do not resolve it
   again yourself. After opening the PR, the worker decides by this line whether to ask Copilot for a
   review, and whether to ask the user first.
+- **Write the Implementer line too.** `worker` or `jules`. For a request from the dashboard, the
+  leading value of the `## Implementer` line when there is one, and `worker` when there is none (the
+  board writes the line only for `jules`; "A request from the dashboard"). For one asked in the tab,
+  `jules` only when the user said to have Jules implement it; otherwise `worker`. The worker decides
+  by this line whether to implement the approved plan itself or hand it to Jules, and the task record
+  carries the same value (`--executor` below).
 - **For "investigation only", no PR and no issue updates.** Have the results given to the user at
   that tab (the brief's "Report to" says so). Have them reported to you here and the report is
   doubled.
@@ -1344,7 +1350,7 @@ after `mkdir -p {worktree}/.claude`.
   the like.** Then:
 
   ```bash
-  adj task add --body - --issue-url '{issue url}' --done-when {done when} --stop-at {stop at} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md' \
+  adj task add --body - --issue-url '{issue url}' --done-when {done when} --stop-at {stop at} --executor {implementer} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md' \
     && rm '{worktree}/.claude/task-summary.md'
   ```
 
@@ -1362,6 +1368,10 @@ after `mkdir -p {worktree}/.claude`.
   `pr`, and the board shows an investigation-only task as "one that goes as far as a PR".
   `--stop-at` is the same value as the brief's Stop at line (`plan` / `diff` / `all`). Left out it is
   `plan`.
+  `--executor` is the same value as the brief's Implementer line (`worker` / `jules`). Left out it
+  is `worker`, and a task handed to Jules is recorded as the worker's: the worker then finds the brief
+  and the card disagreeing and has to fix the record before it can hand the task over. **The two must
+  match.**
 
   **So that no worker is off the board.** Wherever it came in, every running worker has a card on the
   board. Without a record, a worker cannot tie the gates it opens to a card, and cannot move it to
