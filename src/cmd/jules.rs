@@ -37,7 +37,7 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     // GitHub has, so that one is checked against this checkout's remote-tracking refs.
     let base = match (args.base, task.base.as_deref()) {
         (Some(given), _) => given.to_string(),
-        (None, Some(stored)) => branch_on_github(&ctx.repo.main, stored),
+        (None, Some(stored)) => branch_on_github(&ctx.repo.main, &ctx.repo.nwo, stored),
         (None, None) => {
             return Err("which branch should Jules start from? pass --base (the branch this worktree was cut from, without origin/)".to_string());
         }
@@ -107,10 +107,17 @@ pub fn show(args: &ShowArgs<'_>) -> Result<(), String> {
 /// remote-tracking ref of that name exists, and no branch on the remote is itself called
 /// `origin/…`. Anything the checkout cannot vouch for is left as it was written, for the API to
 /// accept or refuse — stripping blindly would turn a real branch named `origin/x` into `x`.
-fn branch_on_github(main: &str, base: &str) -> String {
+///
+/// Only when the checkout is a clone of the repository the session is for. `--repo` names the
+/// repository without moving the command into its checkout, and another repository's refs say
+/// nothing about this one's branches.
+fn branch_on_github(main: &str, nwo: &str, base: &str) -> String {
     let Some(rest) = base.strip_prefix("origin/") else {
         return base.to_string();
     };
+    if crate::repo::name_with_owner(main).0 != nwo {
+        return base.to_string();
+    }
     let known = |name: &str| {
         crate::repo::git(
             &[

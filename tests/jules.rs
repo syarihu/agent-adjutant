@@ -337,3 +337,60 @@ fn a_stored_base_written_for_git_worktree_is_handed_to_jules_as_the_branch_name(
         "origin/x"
     );
 }
+
+#[test]
+fn a_stored_base_is_left_as_written_when_this_checkout_is_another_repository() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let out = Command::new("git")
+        .hermetic()
+        .args(["update-ref", "refs/remotes/origin/release/2.0", "HEAD"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let prompt = write_prompt(&fixture);
+    let (path, args, _) = stub_curl(&fixture);
+    let id = fixture.json(&[
+        "task",
+        "add",
+        "--repo",
+        "acme/other",
+        "--title",
+        "t",
+        "--body",
+        "b",
+        "--base",
+        "origin/release/2.0",
+        "--json",
+    ])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let out = fixture
+        .command([
+            "jules",
+            "start",
+            "--repo",
+            "acme/other",
+            "--id",
+            &id,
+            "--prompt-file",
+            &prompt,
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let sent = std::fs::read_to_string(&args).unwrap();
+    let body: serde_json::Value =
+        serde_json::from_str(sent.lines().find(|l| l.starts_with('{')).unwrap()).unwrap();
+    assert_eq!(body["sourceContext"]["source"], "sources/github/acme/other");
+    assert_eq!(
+        body["sourceContext"]["githubRepoContext"]["startingBranch"],
+        "origin/release/2.0"
+    );
+}
