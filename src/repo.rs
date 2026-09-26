@@ -51,6 +51,7 @@ pub struct RepoInfo {
 /// have one set; left in place, any of these would answer for another checkout — its hub
 /// name, its inbox, its worker count — with nothing reporting the swap. `GIT_INDEX_FILE`,
 /// `GIT_OBJECT_DIRECTORY` and the like stay: they do not choose the repository.
+/// The agent `adj hub` and `adj work` start is handed an environment without them too.
 pub(crate) const REPOSITORY_LOCATION_ENV: [&str; 3] =
     ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"];
 
