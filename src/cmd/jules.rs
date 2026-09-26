@@ -497,6 +497,11 @@ pub fn relay(
     if chosen.is_empty() {
         return Err("choose at least one comment to pass on".to_string());
     }
+    // Held from the check to the save, across both round trips to GitHub. Two relays of one
+    // comment — a double click, the board and a shell at once — would otherwise both find it
+    // not yet passed on and both post it. Waiting a few seconds on a button somebody pressed
+    // is the cheaper failure.
+    let lock = tasks::lock_task(ctx, id)?;
     let all = findings(ctx, id)?;
     let mut picked = Vec::new();
     for want in chosen {
@@ -543,7 +548,6 @@ pub fn relay(
     }
     let posted = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // Written after the comment is up, so a failure to post leaves them choosable.
-    let lock = tasks::lock_task(ctx, id)?;
     let mut task = task::load(&tasks::dir(ctx), id)?;
     for f in &picked {
         if !task.relayed.contains(&f.id) {

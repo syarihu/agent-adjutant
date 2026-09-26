@@ -593,15 +593,20 @@ function goToQueue() {
 let relay = { taskId: null, loading: false, error: '', findings: [], picked: new Set() };
 
 async function loadFindings(id) {
-  relay = { taskId: id, loading: true, error: '', findings: [], picked: new Set() };
+  const asked = { taskId: id, loading: true, error: '', findings: [], picked: new Set() };
+  relay = asked;
   renderDrawer();
-  try {
-    const data = await api(`/api/tasks/${encodeURIComponent(id)}/findings`);
+  let data = null, failed = null;
+  try { data = await api(`/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
+  // Another list was asked for meanwhile — another task's, or this one again. That one's
+  // answer is the one to show; this one would put its comments under the wrong card.
+  if (relay !== asked) return;
+  if (failed) {
+    relay.error = failed.message;
+    note(`adj jules findings --id ${id} → ${failed.message}`, true);
+  } else {
     relay.findings = data.findings || [];
     note(`adj jules findings --id ${id}`, false, `${relay.findings.length} 件`);
-  } catch (e) {
-    relay.error = e.message;
-    note(`adj jules findings --id ${id} → ${e.message}`, true);
   }
   relay.loading = false;
   renderDrawer();

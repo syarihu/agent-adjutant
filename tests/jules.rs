@@ -654,7 +654,7 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
             "#!/bin/sh\n\
              case \"$1 $2\" in\n\
              'api repos/acme/widget/pulls/7/comments') cat {listed} ;;\n\
-             'pr comment') echo \"$3\" > {posted}; cat >> {posted}; echo https://github.com/acme/widget/pull/7#issuecomment-1 ;;\n\
+             'pr comment') sleep 1; echo \"$3\" >> {posted}; cat >> {posted}; echo https://github.com/acme/widget/pull/7#issuecomment-1 ;;\n\
              *) echo \"unexpected: $*\" >&2; exit 1 ;;\n\
              esac\n",
             listed = shell_quoted(&listed.to_string_lossy()),
@@ -769,4 +769,34 @@ fn a_comment_that_is_not_a_finding_is_not_passed_on() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("no review comment 13"));
     assert!(!posted.exists());
+}
+
+#[test]
+fn two_relays_of_one_comment_at_once_post_it_once() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let spawn = || {
+        fixture
+            .command(["jules", "relay", "--id", &id, "--comment", "11"])
+            .env("PATH", &path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let (mut a, mut b) = (spawn(), spawn());
+    let ok = [a.wait().unwrap(), b.wait().unwrap()]
+        .iter()
+        .filter(|s| s.success())
+        .count();
+    assert_eq!(ok, 1, "exactly one of the two should have posted");
+    let comment = std::fs::read_to_string(&posted).unwrap();
+    assert_eq!(
+        comment
+            .matches("Please address these review comments.")
+            .count(),
+        1,
+        "{comment}"
+    );
 }
