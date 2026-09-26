@@ -337,6 +337,10 @@ pub fn working(state: &str) -> bool {
 ///
 /// Keyed on the record having no PR yet, so it happens once however many times the session
 /// finishes — it finishes again after every round of comments it answers.
+///
+/// The hub is told first and the record written after. The other order loses the message for
+/// good when delivery fails: the record already has its PR, so no later poll gets this far
+/// again. This order at worst tells the hub twice, when the write fails after a delivery.
 fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Result<(), String> {
     let Some(pr) = &session.pr else {
         return Ok(());
@@ -349,7 +353,6 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
     if task.status == task::Status::Dispatched {
         change["status"] = json!("pr");
     }
-    let (task, _) = tasks::update(ctx, task_id, &change)?;
     let message = crate::messaging::Message {
         from: "jules".to_string(),
         // None, for the reason `task::hand_over` gives: this comes from no worktree.
@@ -361,5 +364,6 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
             task.id, session.id
         ),
     };
-    super::deliver_to_hub(ctx, &message).map(|_| ())
+    super::deliver_to_hub(ctx, &message)?;
+    tasks::update(ctx, task_id, &change).map(|_| ())
 }

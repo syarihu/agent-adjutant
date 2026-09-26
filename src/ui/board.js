@@ -46,10 +46,13 @@ function stuckOf(task) {
    comes from the server, which knows which states mean Jules is busy. */
 const JULES_LABEL = { QUEUED:'待機中', PLANNING:'計画中', IN_PROGRESS:'作業中', AWAITING_PLAN_APPROVAL:'計画の承認待ち',
                       AWAITING_USER_FEEDBACK:'返事待ち', PAUSED:'一時停止', COMPLETED:'完了', FAILED:'失敗' };
+/* The one rule for what a session's state reads as, for the card, the side sheet and the full
+   view alike: an answer not in yet, or one that failed, is said as such rather than as a state. */
+const julesText = j => j.error ? '状態を読めません' : j.checking ? '確認中' : (JULES_LABEL[j.state] || j.state || '');
 function julesLine(task) {
   const j = task.jules;
   if (!j) return '';
-  const text = j.error ? '状態を読めません' : j.checking ? '確認中' : (JULES_LABEL[j.state] || j.state);
+  const text = julesText(j);
   const url = httpUrl(j.url);
   const label = `<span style="font-weight:700;">Jules ${esc(text)}</span>`;
   return `
@@ -692,7 +695,7 @@ function renderDrawer() {
         ${task.executor === 'jules' ? `<div style="display:flex;flex-direction:column;gap:2px;">
           <span style="color:var(--md-sys-color-outline);font-size:11px;">実装</span>
           ${httpUrl(task.jules?.url)
-            ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>Jules ${esc(JULES_LABEL[task.jules.state] || task.jules.state || '')}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
+            ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>Jules ${esc(julesText(task.jules))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
             : `<strong style="color:var(--md-sys-color-on-surface);">Jules${task.julesSession ? '' : '（計画の承認後に渡す）'}</strong>`}
         </div>` : ''}
         ${drawerPrUrl ? `<div style="display:flex;flex-direction:column;gap:2px;">

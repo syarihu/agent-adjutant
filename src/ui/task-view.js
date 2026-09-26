@@ -249,8 +249,9 @@ function overviewTab(task, all) {
   if (task.issueUrl) rows.push(['Issue', link(task.issueUrl)]);
   if (task.pr) rows.push(['PR', link(task.pr)]);
   if (task.executor === 'jules') {
-    rows.push(['実装', task.jules?.url ? `Jules — ${link(task.jules.url)}`
-      : task.julesSession ? `Jules（session <span class="mono2">${esc(task.julesSession)}</span>）` : 'Jules（計画の承認後に渡す）']);
+    rows.push(['実装', task.jules?.url ? `Jules ${esc(julesText(task.jules))} — ${link(task.jules.url)}`
+      : task.julesSession ? `Jules ${task.jules ? esc(julesText(task.jules)) : ''}（session <span class="mono2">${esc(task.julesSession)}</span>）`
+      : 'Jules（計画の承認後に渡す）']);
   }
   if (task.parent) rows.push(['親タスク', esc(task.parent)]);
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
