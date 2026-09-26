@@ -121,7 +121,7 @@ fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
         "`manual-check`",
         "`unsure`",
         "`stop-at`",
-        "止める所",
+        "Stop at",
         "`problem`",
         "`goal`",
     ] {

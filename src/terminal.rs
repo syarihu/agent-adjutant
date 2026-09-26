@@ -517,10 +517,8 @@ fn default_wake_command(tty: &str, line: &str) -> String {
 /// costs several lookups before it can be called, and an agent without MCP at all cannot
 /// call it — while every agent can run a command. Naming one way in is a session that
 /// stalls on the machine where that way is missing.
-pub const HUB_WAKE_LINE: &str =
-    "受信箱に届いたのだ。adjutant_pending（無ければ `adj pending`）で確認して処理するのだ";
-pub const WORKER_WAKE_LINE: &str =
-    "hub から連絡が来たのだ。adjutant_outbox（無ければ `adj outbox`）で確認して処理するのだ";
+pub const HUB_WAKE_LINE: &str = "Something arrived in the inbox. Check it with adjutant_pending (or `adj pending` without it) and deal with it.";
+pub const WORKER_WAKE_LINE: &str = "The hub sent you something. Check it with adjutant_outbox (or `adj outbox` without it) and deal with it.";
 
 /// `default_line` is what to type when the config has not overridden it — the caller knows
 /// which direction this is, and the two directions read different boxes.

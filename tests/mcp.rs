@@ -138,7 +138,7 @@ fn a_report_sent_through_the_server_lands_where_the_cli_looks_for_it() {
             serde_json::json!({"name": "adjutant_send", "arguments": {
                 "from": "wid-2-worker",
                 "kind": "done",
-                "subject": "終わったのだ",
+                "subject": "Done",
                 "body": "b",
                 "cwd": worktree.to_string_lossy(),
             }}),

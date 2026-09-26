@@ -478,7 +478,7 @@ pub fn archive(dir: &Path, answered: &Path, gate: &Gate) -> Result<PathBuf, Stri
 
 /// The subject the answer is delivered under.
 ///
-/// The identifier goes first, exactly as the hub's own `[質問 {stamp}]` does: it is the
+/// The identifier goes first, exactly as the hub's own `[question {stamp}]` does: it is the
 /// only thing tying an answer to what was asked, and an agent reading its outbox has
 /// nothing else to match on.
 pub fn answer_subject(gate: &Gate, decision: &str) -> String {
@@ -496,7 +496,7 @@ pub fn answer_body(
     choice: Option<&str>,
     comment: Option<&str>,
 ) -> String {
-    let mut out = format!("## 判定        {decision}\n");
+    let mut out = format!("## Decision   {decision}\n");
     if let Some(choice) = choice {
         let label = gate
             .choices
@@ -504,11 +504,11 @@ pub fn answer_body(
             .find(|c| c.id == choice)
             .map(|c| c.label.as_str())
             .unwrap_or(choice);
-        out.push_str(&format!("## 選ばれた案   {label}({choice})\n"));
+        out.push_str(&format!("## Chosen     {label} ({choice})\n"));
     }
     // A record said as one, so the worker knows the person went back to something it had
     // already moved past rather than something it is waiting on.
-    let record = if gate.wait { "" } else { ", 記録" };
+    let record = if gate.wait { "" } else { ", record" };
     out.push_str(&format!(
         "## gate       {} ({}{record})\n",
         gate.id,
@@ -520,10 +520,10 @@ pub fn answer_body(
         out.push_str(&format!("## task       {task}\n"));
     }
     match comment.map(str::trim).filter(|c| !c.is_empty()) {
-        Some(comment) => out.push_str(&format!("\n## コメント\n\n{comment}\n")),
+        Some(comment) => out.push_str(&format!("\n## Comment\n\n{comment}\n")),
         // Said rather than left out: an agent that sees no comment section has to work out
         // whether there was none or whether it lost one.
-        None => out.push_str("\n## コメント\n\n(なし)\n"),
+        None => out.push_str("\n## Comment\n\n(none)\n"),
     }
     out
 }
@@ -538,19 +538,19 @@ mod tests {
             kind,
             worktree: "/tmp/wt".to_string(),
             task: Some("20260922T041000Z-cache".to_string()),
-            title: "設計レビュー: 検索結果のキャッシュ".to_string(),
-            facts: vec!["触る予定のファイル 6 件".to_string()],
-            focus: Some("TTL の持ち方を決めてほしいのだ".to_string()),
-            decided: Some("LRU 64件にするのだ".to_string()),
+            title: "Design review: caching search results".to_string(),
+            facts: vec!["6 files to touch".to_string()],
+            focus: Some("Please decide how the TTL is held".to_string()),
+            decided: Some("An LRU of 64 entries".to_string()),
             unsure: None,
             body: None,
             run: None,
             diff: None,
             choices: vec![Choice {
                 id: "const".to_string(),
-                label: "案A — 定数で持つ".to_string(),
-                why: "remote config が無いのだ".to_string(),
-                points: vec!["差分 小".to_string()],
+                label: "Option A — a constant".to_string(),
+                why: "there is no remote config".to_string(),
+                points: vec!["small diff".to_string()],
                 recommended: true,
             }],
             options: vec!["approve".to_string(), "changes".to_string()],
@@ -586,7 +586,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut gate = gate(Kind::Diff);
         save(dir.path(), &gate).unwrap();
-        gate.title = "書き直した".to_string();
+        gate.title = "Rewritten".to_string();
         save(dir.path(), &gate).unwrap();
         assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
         let names: Vec<String> = std::fs::read_dir(dir.path())
@@ -689,11 +689,11 @@ mod tests {
             &gate(Kind::Plan),
             "choice",
             Some("const"),
-            Some("これで進めてほしいのだ"),
+            Some("Go ahead with this"),
         );
-        assert!(body.contains("## 判定        choice"), "{body}");
-        assert!(body.contains("案A — 定数で持つ(const)"), "{body}");
-        assert!(body.contains("これで進めてほしいのだ"), "{body}");
+        assert!(body.contains("## Decision   choice"), "{body}");
+        assert!(body.contains("Option A — a constant (const)"), "{body}");
+        assert!(body.contains("Go ahead with this"), "{body}");
     }
 
     /// An agent that sees no comment section cannot tell "there was none" from "one was
@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn a_missing_comment_is_said_rather_than_left_out() {
         let body = answer_body(&gate(Kind::Diff), "approve", None, None);
-        assert!(body.contains("## コメント\n\n(なし)"), "{body}");
+        assert!(body.contains("## Comment\n\n(none)"), "{body}");
     }
 
     #[test]
@@ -736,7 +736,7 @@ mod tests {
         }];
         gate.answers = vec![Answer {
             decision: "changes".to_string(),
-            comment: Some("もう一度見てほしいのだ".to_string()),
+            comment: Some("Please look at it again".to_string()),
             answered_at: "20260922T050000Z".to_string(),
         }];
         save(dir.path(), &gate).unwrap();
@@ -761,8 +761,8 @@ mod tests {
     fn an_answer_to_a_record_says_it_is_one() {
         let mut gate = gate(Kind::Verify);
         gate.wait = false;
-        let body = answer_body(&gate, "changes", None, Some("直してほしいのだ"));
-        assert!(body.contains("(verify, 記録)"), "{body}");
+        let body = answer_body(&gate, "changes", None, Some("Please fix it"));
+        assert!(body.contains("(verify, record)"), "{body}");
     }
 
     /// A report is read, not approved, so it must not come with an Approve button.

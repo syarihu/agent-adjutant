@@ -269,7 +269,7 @@ enum Commands {
         /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
         #[arg(long)]
         hub: Option<String>,
-        /// One line stating the point. `[質問 …]` is what makes a worker answer
+        /// One line stating the point. `[question …]` is what makes a worker answer
         #[arg(long)]
         subject: String,
         #[arg(long)]

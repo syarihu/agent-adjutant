@@ -353,59 +353,59 @@ pub fn list(dir: &Path) -> Vec<Task> {
 /// record, and the two can never drift.
 pub fn render_request(task: &Task) -> String {
     let mut out = String::new();
-    out.push_str(&format!("## task        {}\n", task.id));
+    out.push_str(&format!("## task          {}\n", task.id));
     out.push_str(&format!(
-        "## 種類        {}\n",
+        "## Kind          {}\n",
         match task.kind {
-            Kind::Start => "Issue に着手",
-            Kind::FileAndStart => "起票して着手",
-            Kind::Investigate => "調査だけ(報告して終わり)",
-            Kind::TellWorker => "既存 worktree へ追加指示",
+            Kind::Start => "start an issue",
+            Kind::FileAndStart => "file and start",
+            Kind::Investigate => "investigation only (report and stop)",
+            Kind::TellWorker => "more instructions for an existing worktree",
         }
     ));
     out.push_str(&format!(
-        "## 完了条件     {}\n",
+        "## Done when     {}\n",
         match task.done_when {
-            DoneWhen::ReportOnly => "調査のみ(報告して終わり)",
-            DoneWhen::Verify => "動作確認まで",
-            DoneWhen::Pr => "PR 作成まで",
-            DoneWhen::Review => "レビュー対応まで",
+            DoneWhen::ReportOnly => "investigation only (report and stop)",
+            DoneWhen::Verify => "up to handing over for verification",
+            DoneWhen::Pr => "up to a PR",
+            DoneWhen::Review => "up to handling review",
         }
     ));
     // The value itself goes first: the hub passes it on as `--stop-at` and into the brief,
     // and the gloss is for whoever reads the message.
     out.push_str(&format!(
-        "## 止める所     {}（{}）\n",
+        "## Stop at       {} ({})\n",
         task.stop_at.as_str(),
         match task.stop_at {
-            StopAt::Plan => "計画の承認だけ待つ",
-            StopAt::Diff => "計画の承認と差分レビューを待つ",
-            StopAt::All => "計画の承認・差分レビュー・動作確認を待つ",
+            StopAt::Plan => "wait for plan approval only",
+            StopAt::Diff => "wait for plan approval and the diff review",
+            StopAt::All => "wait for plan approval, the diff review and verification",
         }
     ));
     // Only when it is not the worker, so a request reads the way it always has for the tasks
     // that did not choose.
     if task.executor == Executor::Jules {
-        out.push_str("## 実装        jules（計画の承認後に Jules へ渡す）\n");
+        out.push_str("## Implementer   jules (handed to Jules once the plan is approved)\n");
     }
     let line = |label: &str, value: Option<&str>| format!("## {label}{}\n", value.unwrap_or("-"));
-    out.push_str(&line("Issue      ", task.issue_url.as_deref()));
-    out.push_str(&line("分岐元      ", task.base.as_deref()));
-    out.push_str(&line("親タスク    ", task.parent.as_deref()));
-    out.push_str(&line("worktree名 ", task.worktree_name.as_deref()));
+    out.push_str(&line("Issue         ", task.issue_url.as_deref()));
+    out.push_str(&line("Base          ", task.base.as_deref()));
+    out.push_str(&line("Parent task   ", task.parent.as_deref()));
+    out.push_str(&line("Worktree name ", task.worktree_name.as_deref()));
     out.push_str(&format!(
-        "## 着手        {}\n",
+        "## Start         {}\n",
         if task.auto_start {
-            "確認なしで着手してよい"
+            "start without asking"
         } else {
-            "着手前に確認がほしい"
+            "ask before starting"
         }
     ));
-    out.push_str("\n## 内容\n\n");
+    out.push_str("\n## Body\n\n");
     out.push_str(task.body.trim_end());
     out.push('\n');
     if let Some(instruction) = task.instruction.as_deref().filter(|s| !s.trim().is_empty()) {
-        out.push_str("\n## 申し送り\n\n");
+        out.push_str("\n## Handover note\n\n");
         out.push_str(instruction.trim_end());
         out.push('\n');
     }
@@ -467,7 +467,7 @@ mod tests {
             DoneWhen::ReportOnly,
             "20260922T041233Z",
         );
-        task.body = "リトライが効いていない気がするのだ".to_string();
+        task.body = "The retry does not seem to take effect".to_string();
         task
     }
 
@@ -572,10 +572,13 @@ mod tests {
         assert!(body.contains(&task.id), "{body}");
         assert!(body.contains("origin/release/1.2"), "{body}");
         assert!(body.contains("login-retry"), "{body}");
-        assert!(body.contains("着手前に確認がほしい"), "{body}");
-        assert!(body.contains("調査だけ(報告して終わり)"), "{body}");
+        assert!(body.contains("ask before starting"), "{body}");
         assert!(
-            body.contains("リトライが効いていない気がするのだ"),
+            body.contains("investigation only (report and stop)"),
+            "{body}"
+        );
+        assert!(
+            body.contains("The retry does not seem to take effect"),
             "{body}"
         );
     }
@@ -585,8 +588,8 @@ mod tests {
     #[test]
     fn unset_fields_say_so_rather_than_vanishing() {
         let body = render_request(&sample());
-        assert!(body.contains("## 分岐元      -"), "{body}");
-        assert!(body.contains("## 親タスク    -"), "{body}");
+        assert!(body.contains("## Base          -"), "{body}");
+        assert!(body.contains("## Parent task   -"), "{body}");
     }
 
     /// The hub copies the stop point into the brief, so the message has to say it — and say
@@ -595,13 +598,13 @@ mod tests {
     fn the_request_body_says_where_the_task_stops() {
         let mut task = sample();
         assert!(
-            render_request(&task).contains("## 止める所     plan（"),
+            render_request(&task).contains("## Stop at       plan ("),
             "{}",
             render_request(&task)
         );
         task.stop_at = StopAt::All;
         assert!(
-            render_request(&task).contains("## 止める所     all（"),
+            render_request(&task).contains("## Stop at       all ("),
             "{}",
             render_request(&task)
         );
@@ -619,11 +622,13 @@ mod tests {
     #[test]
     fn the_request_body_includes_instruction_when_present() {
         let mut task = sample();
-        assert!(!render_request(&task).contains("## 申し送り"));
+        assert!(!render_request(&task).contains("## Handover note"));
 
-        task.instruction = Some("まずは既存コードの挙動を調査してほしいのだ".to_string());
+        task.instruction = Some("Look into how the existing code behaves first".to_string());
         let body = render_request(&task);
-        assert!(body.contains("## 申し送り\n\nまずは既存コードの挙動を調査してほしいのだ\n"));
+        assert!(
+            body.contains("## Handover note\n\nLook into how the existing code behaves first\n")
+        );
     }
 
     #[test]

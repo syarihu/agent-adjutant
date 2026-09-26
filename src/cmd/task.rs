@@ -1,7 +1,7 @@
 //! `adj task` — the records the board is a view of.
 //!
 //! The dashboard is not the only caller. The hub writes back here when it picks a task up
-//! ("依頼が届いたら" Step 5 replies to the requester, and for a request from the dashboard
+//! ("When a request arrives" Step 5 replies to the requester, and for a request from the dashboard
 //! the requester is a file rather than a session), and a worker or a script can add one
 //! without a browser. So the verbs live here and the HTTP layer calls them, rather than the
 //! other way round.

@@ -54,20 +54,19 @@ pub const DEFAULT_HUB_RESUME_RUNNER: &str =
 /// unrecognised `/…` sits there doing nothing, which looks exactly like a hub that is up and
 /// idle. Both a tool and a command are named because neither is universal: an MCP tool may
 /// be deferred or absent, and a command needs the binary on PATH.
-pub const HUB_STARTUP_PROMPT: &str = "adjutant_skill で name=adj-hub の手順書を取得（使えなければ `adj skill adj-hub`）して、その手順どおりに常駐 hub を開始するのだ";
+pub const HUB_STARTUP_PROMPT: &str = "Fetch the adj-hub procedure with adjutant_skill name=adj-hub (or `adj skill adj-hub` if that is not available), and start the resident hub as it says.";
 
 /// What a resumed hub is told. The conversation is all there, procedure included, so this
 /// only has to cover what happened while it was gone: reports that landed with nobody to be
 /// woken by them.
-pub const HUB_RESUME_PROMPT: &str = "セッションを再開したのだ。止まっていた間に届いたものがあるかもしれないので、adjutant_pending で受信箱を確認して、溜まっていれば起動時と同じく振り分けてから待機に戻るのだ";
+pub const HUB_RESUME_PROMPT: &str = "The session has been resumed. Something may have arrived while it was down, so check the inbox with adjutant_pending, sort out anything waiting as on startup, and then go back to waiting.";
 
 /// What a worker is told on startup, when the hub says nothing else.
-pub const WORKER_STARTUP_PROMPT: &str =
-    ".claude/task-brief.md を読んで、その指示に従って作業を開始してください";
+pub const WORKER_STARTUP_PROMPT: &str = "Read .claude/task-brief.md and start working as it says.";
 
 /// What a resumed worker is told. The hub may have written to the outbox while nobody was
 /// there to be woken, and the outbox is the one place a worker hears from it.
-pub const WORKER_RESUME_PROMPT: &str = "セッションを再開しました。止まっていた間に hub から連絡が届いているかもしれないので、adjutant_outbox（使えなければ `adj outbox`）で確認してから、中断したところから作業を続けてください";
+pub const WORKER_RESUME_PROMPT: &str = "The session has been resumed. The hub may have sent something while it was down, so check with adjutant_outbox (or `adj outbox` if that is not available), then carry on from where you left off.";
 
 /// The placeholder a runner template puts the session id in.
 pub const SESSION_PLACEHOLDER: &str = "sessionId";

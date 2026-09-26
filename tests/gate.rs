@@ -257,18 +257,18 @@ fn a_record_is_kept_without_waiting_and_an_answer_to_it_reaches_the_outbox() {
         "--decision",
         "changes",
         "--comment",
-        "テストを足してほしいのだ",
+        "Please add tests",
     ]);
     let outbox = fixture.ok(&["outbox", "--worktree", worktree]);
     assert!(outbox.contains(&format!("[gate {id}] changes")), "{outbox}");
-    assert!(outbox.contains("(diff, 記録)"), "{outbox}");
-    assert!(outbox.contains("テストを足してほしいのだ"), "{outbox}");
+    assert!(outbox.contains("(diff, record)"), "{outbox}");
+    assert!(outbox.contains("Please add tests"), "{outbox}");
 
     // And the record stays, with the answer on it.
     let shown = fixture.json(&["gate", "show", "--id", &id]);
     assert_eq!(shown["answers"][0]["decision"], "changes", "{shown}");
     assert_eq!(
-        shown["answers"][0]["comment"], "テストを足してほしいのだ",
+        shown["answers"][0]["comment"], "Please add tests",
         "{shown}"
     );
     assert!(shown["decision"].is_null(), "{shown}");
