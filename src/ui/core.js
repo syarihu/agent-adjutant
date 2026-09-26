@@ -151,9 +151,7 @@ function render() {
 
   document.body.classList.toggle('ide-unset', !ideReady());
 
-  const board = document.getElementById('board');
-  board.innerHTML = '';
-  for (const col of COLUMNS) board.appendChild(columnEl(col));
+  renderColumns();
 
   const mine = (state.gates || []).length;
   document.getElementById('gate-count').textContent = mine;

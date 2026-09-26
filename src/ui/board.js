@@ -99,10 +99,24 @@ function setBoardFilter(filter, btn) {
     b.classList.toggle('active', b === btn);
     b.setAttribute('aria-pressed', String(b === btn));
   });
+  renderColumns();
+}
+
+/* Draws the columns afresh. Each column scrolls on its own, and the board is redrawn every
+   minute and on every change, so each column's scroll is carried over or it would jump back
+   to the top. */
+function renderColumns() {
   const board = document.getElementById('board');
-  if (board) {
-    board.innerHTML = '';
-    for (const col of COLUMNS) board.appendChild(columnEl(col));
+  if (!board) return;
+  const scrolled = {};
+  for (const cards of board.querySelectorAll('.col-cards')) {
+    scrolled[cards.parentElement.dataset.col] = cards.scrollTop;
+  }
+  board.innerHTML = '';
+  for (const col of COLUMNS) board.appendChild(columnEl(col));
+  for (const cards of board.querySelectorAll('.col-cards')) {
+    const top = scrolled[cards.parentElement.dataset.col];
+    if (top) cards.scrollTop = top;
   }
 }
 
@@ -127,11 +141,15 @@ function columnEl(col) {
   el.className = 'col' + (col.id === 'attention' ? ' attention' : '');
   el.dataset.col = col.id;
 
-  for (const task of items) el.appendChild(cardEl(task, col.id));
+  const cards = document.createElement('div');
+  cards.className = 'col-cards';
+  el.appendChild(cards);
+
+  for (const task of items) cards.appendChild(cardEl(task, col.id));
   if (col.id === 'working' && currentActiveFilter !== 'mine') {
     const known = new Set(items.map(t => t.worktree).filter(Boolean));
     for (const w of (state.workers || []).filter(w => w.present && !known.has(w.worktree))) {
-      el.appendChild(ghostEl(w));
+      cards.appendChild(ghostEl(w));
     }
   }
   if (col.id === 'attention') {
@@ -142,15 +160,15 @@ function columnEl(col) {
       const owner = (state.tasks || []).find(t => t.id === g.task);
       return !owner || workerOf(owner)?.present;
     })) {
-      el.appendChild(gateCardEl(g));
+      cards.appendChild(gateCardEl(g));
     }
   }
   const shownCards = el.querySelectorAll('.card').length;
-  if (!shownCards) el.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder"><span class="material-symbols-outlined" style="font-size:16px;">inbox</span><span>タスクなし</span></div>');
+  if (!shownCards) cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder"><span class="material-symbols-outlined" style="font-size:16px;">inbox</span><span>タスクなし</span></div>');
   if (older.length) {
-    el.insertAdjacentHTML('beforeend',
+    cards.insertAdjacentHTML('beforeend',
       `<button type="button" class="more">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
-    el.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
+    cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
   }
 
   const iconName = COLUMN_ICONS[col.id] || 'view_kanban';
