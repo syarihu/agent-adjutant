@@ -2474,7 +2474,12 @@ mod tests {
             "{hand_over}"
         );
         // The brief spells the base as `git worktree add` takes it; Jules takes GitHub's name.
-        assert!(hand_over.contains("--base{branch_name}"), "{hand_over}");
+        assert!(hand_over.contains("--base'{branch_name}'"), "{hand_over}");
+        // A base can be typed on the board, and git allows `;` in a branch name.
+        assert!(
+            hand_over.contains("コマンド行に置かずユーザーに聞く"),
+            "{hand_over}"
+        );
         assert!(
             hand_over.contains("`origin/`を外したブランチ名"),
             "{hand_over}"
