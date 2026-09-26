@@ -761,6 +761,7 @@ mod tests {
             issue: None,
             pr: None,
             jules_session: None,
+            jules_by: None,
             note: None,
             instruction: None,
             gate_answered_at: None,

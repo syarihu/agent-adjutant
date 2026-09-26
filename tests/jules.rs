@@ -47,6 +47,18 @@ fn stub_curl(fixture: &Fixture) -> (String, PathBuf, PathBuf) {
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // `adj jules start` asks `gh` who is signed in, and the real one would answer about the
+    // developer running the suite.
+    let gh = stubs.join("gh");
+    if !gh.exists() {
+        std::fs::write(
+            &gh,
+            "#!/bin/sh
+case \"$1 $2\" in 'api user') echo someone ;; *) exit 1 ;; esac\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let path = format!(
         "{}:{}",
         stubs.to_string_lossy(),
@@ -76,6 +88,8 @@ fn add_task(fixture: &Fixture, extra: &[&str]) -> String {
         &id,
         "--status",
         "dispatched",
+        "--executor",
+        "jules",
         "--no-hand-over",
     ]);
     id
@@ -120,6 +134,7 @@ fn a_started_session_is_written_onto_the_task_and_the_key_only_goes_to_stdin() {
     let shown = fixture.json(&["task", "show", "--id", &id]);
     assert_eq!(shown["julesSession"], "42");
     assert_eq!(shown["executor"], "jules");
+    assert_eq!(shown["julesBy"], "someone");
 
     let sent_args = std::fs::read_to_string(&args).unwrap();
     assert!(
@@ -386,6 +401,8 @@ fn a_stored_base_is_left_as_written_when_this_checkout_is_another_repository() {
         &id,
         "--status",
         "dispatched",
+        "--executor",
+        "jules",
         "--no-hand-over",
     ]);
     let out = fixture
@@ -433,5 +450,22 @@ fn a_task_not_in_progress_is_not_handed_to_jules() {
         .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not in progress"));
+    assert!(!args.exists(), "the API was called anyway");
+}
+
+#[test]
+fn a_task_its_worker_implements_is_not_handed_to_jules() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let id = add_task(&fixture, &["--base", "main"]);
+    fixture.ok(&["task", "update", "--id", &id, "--executor", "worker"]);
+    let prompt = write_prompt(&fixture);
+    let (path, args, _) = stub_curl(&fixture);
+    let out = fixture
+        .command(["jules", "start", "--id", &id, "--prompt-file", &prompt])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("implemented by its worker"));
     assert!(!args.exists(), "the API was called anyway");
 }

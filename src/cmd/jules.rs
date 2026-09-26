@@ -34,6 +34,14 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
             task.status.as_str()
         ));
     }
+    // Who implements was decided when the task was written down, and a worker-implemented
+    // task handed to Jules as well would be implemented twice.
+    if task.executor != task::Executor::Jules {
+        return Err(format!(
+            "{} is to be implemented by its worker; `adj task update --id {} --executor jules` first if Jules should do it",
+            task.id, task.id
+        ));
+    }
     // A second session for one task is two pull requests for one change, and the first one
     // would be forgotten: the record keeps one id.
     if let Some(session) = &task.jules_session {
@@ -63,13 +71,19 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     )?;
     // Written as soon as the session exists. If this fails the session is still running, so
     // the error says which one it is rather than leaving it to be found on jules.google.com.
-    let (task, _) =
-        tasks::update(&ctx, &task.id, &json!({ "julesSession": session.id })).map_err(|e| {
-            format!(
-                "Jules started session {} but the task record could not be updated: {e}",
-                session.id
-            )
-        })?;
+    let (task, _) = tasks::update(
+        &ctx,
+        &task.id,
+        // Who started it, as far as `gh` can say. Jules acts on comments by that person
+        // only, so a comment passed on in anybody else's name would be posted and ignored.
+        &json!({ "julesSession": session.id, "julesBy": github_login(&ctx.repo.main) }),
+    )
+    .map_err(|e| {
+        format!(
+            "Jules started session {} but the task record could not be updated: {e}",
+            session.id
+        )
+    })?;
     if args.json {
         println!("{}", json!({ "task": task.id, "session": session }));
         return Ok(());
@@ -147,6 +161,20 @@ fn branch_on_github(main: &str, nwo: &str, base: &str) -> String {
     } else {
         rest.to_string()
     }
+}
+
+/// The GitHub account `gh` is signed in as, or `None` when it cannot say.
+pub fn github_login(main: &str) -> Option<String> {
+    let out = std::process::Command::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .current_dir(main)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let login = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!login.is_empty()).then_some(login)
 }
 
 /// The prompt, from a file or from stdin. The design is dozens of lines and does not belong

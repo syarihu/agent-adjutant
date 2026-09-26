@@ -255,6 +255,7 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
         ("issue", &mut task.issue),
         ("pr", &mut task.pr),
         ("julesSession", &mut task.jules_session),
+        ("julesBy", &mut task.jules_by),
         ("note", &mut task.note),
         ("instruction", &mut task.instruction),
     ] {
