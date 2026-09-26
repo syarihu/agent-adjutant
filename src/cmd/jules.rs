@@ -290,6 +290,9 @@ impl Watch {
             let asked = session.clone();
             std::thread::spawn(move || watch.ask(&ctx, &key, &task_id, &asked));
         }
+        // Nothing that changes by itself goes in here — an age in seconds, say. The page redraws
+        // whenever the state it polls differs from the last, and a field that ticks would have
+        // it redraw every two seconds.
         Some(match &entry.answer {
             None => json!({ "session": session, "checking": true }),
             Some(Ok(found)) => json!({
@@ -298,12 +301,10 @@ impl Watch {
                 "url": found.url,
                 "pr": found.pr,
                 "working": working(&found.state),
-                "age": entry.at.elapsed().as_secs(),
             }),
             Some(Err(why)) => json!({
                 "session": session,
                 "error": why,
-                "age": entry.at.elapsed().as_secs(),
             }),
         })
     }
