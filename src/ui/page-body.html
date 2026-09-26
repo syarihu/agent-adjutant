@@ -101,7 +101,13 @@
             </button>
           </div>
         </div>
-        <div class="sidesheet-body" id="drawer-body"></div>
+        <div class="sidesheet-body" id="drawer-body">
+          <!-- Three parts, so the hand-over form can outlive a redraw of the others. display:contents
+               keeps the body's gap between the cards inside them. -->
+          <div id="drawer-head" style="display:contents"></div>
+          <div id="drawer-form" style="display:contents"></div>
+          <div id="drawer-rest" style="display:contents"></div>
+        </div>
       </aside>
     </div>
     <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>

@@ -93,7 +93,9 @@ function openHandoverDialog(id, before = null) {
   if (textarea) {
     textarea.value = task.instruction || '';
     textarea.onkeydown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
+      // keyCode 229 too: where compositionend comes first, the keydown that confirms the IME
+      // text already has isComposing false.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         submitHandover();
       }
