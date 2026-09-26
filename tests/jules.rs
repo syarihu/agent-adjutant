@@ -603,8 +603,12 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
     ]);
     let (path, args, _) = stub_curl(&fixture);
     let (mut board, url) = serve(&fixture, &path);
+    // The state shows once the answer is stored, and the answer is stored after it has been
+    // acted on — so from here on, a message would already be in the inbox.
+    let mut answered = false;
     for _ in 0..100 {
-        if board_state(&url)["tasks"][0]["jules"]["state"].is_string() {
+        if board_state(&url)["tasks"][0]["jules"]["state"] == "COMPLETED" {
+            answered = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -613,6 +617,7 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
     board.wait().unwrap();
 
     assert!(args.exists(), "the session was never asked about");
+    assert!(answered, "the board never got the session's answer");
     let listed = fixture.json(&["pending", "--json"]);
     assert_eq!(listed["count"], 0, "{listed}");
 }

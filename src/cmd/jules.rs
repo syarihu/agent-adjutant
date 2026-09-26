@@ -309,6 +309,14 @@ impl Watch {
         })
     }
 
+    /// Forget the sessions no card showed on this poll: finished tasks, sessions replaced.
+    /// One still being asked about is kept, so its answer has somewhere to land. Without this
+    /// the map grows with every session the board has ever shown.
+    pub fn keep_only(&self, shown: &std::collections::HashSet<String>) {
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        seen.retain(|session, entry| entry.asking || shown.contains(session));
+    }
+
     fn ask(&self, ctx: &super::Context, key: &crate::config::Hook, task_id: &str, session: &str) {
         let answer = jules::get(key, session);
         if let Ok(found) = &answer

@@ -422,6 +422,11 @@ fn state(server: &Server) -> Value {
             t
         })
         .collect();
+    let shown: std::collections::HashSet<String> = tasks
+        .iter()
+        .filter_map(|t| t["jules"]["session"].as_str().map(str::to_string))
+        .collect();
+    server.jules.keep_only(&shown);
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
     let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
