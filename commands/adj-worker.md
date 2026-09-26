@@ -414,10 +414,14 @@ worktree を消せるのは hub だけ（自分の足元は自分では消せな
 2. **渡す。**
 
    ```bash
-   adj jules start --id {task_record} --prompt-file .claude/jules-prompt.md --base {base_branch}
+   adj jules start --id {task_record} --prompt-file .claude/jules-prompt.md --base {branch_name}
    ```
 
-   `{task_record}` と `{base_branch}` は指示書の値。session の id が板のカードに書き込まれ、
+   `{task_record}` は指示書の値。`{branch_name}` は指示書の「ベースブランチ」行から `origin/` を
+   外したブランチ名（`origin/release/1.2` → `release/1.2`）で、§5 で PR のベースを決めるのと
+   同じ規則。Jules は GitHub 上のブランチ名で受け取るので、`origin/` を付けたまま渡すと
+   存在しないブランチを指すことになる。行が無い、または `-` のときは推測せずユーザーに聞く。
+   session の id が板のカードに書き込まれ、
    カードは Jules の状態を出すようになる。**失敗したら理由をユーザーに見せて止まる。** 自分で
    実装に切り替えない — 誰が実装するかを決めたのはタスクを作った人。
    `julesKey` が無い・キーチェーンに項目が無いと言われたら、そのメッセージのとおりにユーザーに

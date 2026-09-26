@@ -1677,7 +1677,12 @@ Claude Code なら `model: "haiku"` か `"sonnet"`。材料を読んで文章を
   `<!-- end of auto-generated comment: release notes by coderabbit.ai -->` までのブロック
 - `PR created automatically by Jules for task` で始まる行（Jules の session へのリンク）
 
-書き終えたら本文をファイルに書き、`gh pr edit {pr} --body-file <file>` で更新する。
+書き終えたら、更新する直前に `gh pr view {pr} --json body` で本文を**もう一度読む**。最初に
+読んだあとで CodeRabbit が要約を書き足していることがある（PR ができた直後に書くので、
+ちょうどこの作業と重なる）。そのとき増えた「残すもの」は、書き直した本文に足してから更新する。
+本文をファイルに書き、`gh pr edit {pr} --body-file <file>` で更新する。
+更新したあとにもう一度読み、残すものがそろっているか確かめる。その間にまた書き足されて
+消えていたら、読み直しから繰り返す（2回まで。それでも合わなければ更新せずに報告する）。
 タイトルは変えない。報告は更新後の本文そのまま。
 ```
 

@@ -2473,6 +2473,12 @@ mod tests {
             hand_over.contains("adjjulesstart--id{task_record}"),
             "{hand_over}"
         );
+        // The brief spells the base as `git worktree add` takes it; Jules takes GitHub's name.
+        assert!(hand_over.contains("--base{branch_name}"), "{hand_over}");
+        assert!(
+            hand_over.contains("`origin/`を外したブランチ名"),
+            "{hand_over}"
+        );
         assert!(hand_over.contains("実装しない"), "{hand_over}");
         // The key is typed into the keychain by the person, never into this conversation.
         assert!(hand_over.contains("キーを聞き出さない"), "{hand_over}");
@@ -2496,6 +2502,13 @@ mod tests {
         );
         assert!(
             rewrite.contains("adj jules show --session {session} --json"),
+            "{rewrite}"
+        );
+        // CodeRabbit writes its summary right after the PR opens, which is when this runs; a
+        // body read once and written back whole would drop it.
+        assert!(
+            rewrite
+                .contains("更新する直前に `gh pr view {pr} --json body` で本文を**もう一度読む**"),
             "{rewrite}"
         );
     }
