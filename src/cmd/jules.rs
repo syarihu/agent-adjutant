@@ -32,9 +32,17 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
             task.id, task.id
         ));
     }
-    let base = args.base.or(task.base.as_deref()).ok_or(
-        "which branch should Jules start from? pass --base (the branch this worktree was cut from)",
-    )?;
+    // Given explicitly, the branch is taken as it is. The task's own base is what was typed on
+    // the board, where `origin/feature/x` is as likely as `feature/x`; Jules wants the name
+    // GitHub has, so that one is checked against this checkout's remote-tracking refs.
+    let base = match (args.base, task.base.as_deref()) {
+        (Some(given), _) => given.to_string(),
+        (None, Some(stored)) => branch_on_github(&ctx.repo.main, stored),
+        (None, None) => {
+            return Err("which branch should Jules start from? pass --base (the branch this worktree was cut from, without origin/)".to_string());
+        }
+    };
+    let base = base.as_str();
     let prompt = read_prompt(args.prompt)?;
     let session = jules::create(
         &ctx.settings.jules_key,
@@ -91,6 +99,37 @@ pub fn show(args: &ShowArgs<'_>) -> Result<(), String> {
         println!("{line}");
     }
     Ok(())
+}
+
+/// The branch as GitHub names it, for a base written the way `git worktree add` takes it.
+///
+/// `origin/` is taken off only when this checkout says it is the remote's prefix: a
+/// remote-tracking ref of that name exists, and no branch on the remote is itself called
+/// `origin/…`. Anything the checkout cannot vouch for is left as it was written, for the API to
+/// accept or refuse — stripping blindly would turn a real branch named `origin/x` into `x`.
+fn branch_on_github(main: &str, base: &str) -> String {
+    let Some(rest) = base.strip_prefix("origin/") else {
+        return base.to_string();
+    };
+    let known = |name: &str| {
+        crate::repo::git(
+            &[
+                "-C",
+                main,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/remotes/{name}"),
+            ],
+            None,
+        )
+        .is_ok_and(|out| out.status.success())
+    };
+    if known(&format!("origin/{base}")) || !known(base) {
+        base.to_string()
+    } else {
+        rest.to_string()
+    }
 }
 
 /// The prompt, from a file or from stdin. The design is dozens of lines and does not belong

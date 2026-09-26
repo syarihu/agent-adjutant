@@ -271,3 +271,69 @@ fn a_jules_task_says_so_in_the_request_the_hub_reads_and_a_typo_is_refused() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("no such executor"));
 }
+
+#[test]
+fn a_stored_base_written_for_git_worktree_is_handed_to_jules_as_the_branch_name() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    // What `git fetch` would leave: a remote-tracking ref for the branch.
+    let out = Command::new("git")
+        .hermetic()
+        .args(["update-ref", "refs/remotes/origin/release/2.0", "HEAD"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let prompt = write_prompt(&fixture);
+    let (path, args, _) = stub_curl(&fixture);
+    let body_sent = || {
+        let sent = std::fs::read_to_string(&args).unwrap();
+        let line = sent
+            .lines()
+            .find(|l| l.starts_with('{'))
+            .unwrap()
+            .to_string();
+        serde_json::from_str::<serde_json::Value>(&line).unwrap()
+    };
+
+    let stored = add_task(&fixture, &["--base", "origin/release/2.0"]);
+    let out = fixture
+        .command(["jules", "start", "--id", &stored, "--prompt-file", &prompt])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        body_sent()["sourceContext"]["githubRepoContext"]["startingBranch"],
+        "release/2.0"
+    );
+
+    // Given explicitly, it is taken as written.
+    let given = add_task(&fixture, &[]);
+    let out = fixture
+        .command([
+            "jules",
+            "start",
+            "--id",
+            &given,
+            "--prompt-file",
+            &prompt,
+            "--base",
+            "origin/x",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        body_sent()["sourceContext"]["githubRepoContext"]["startingBranch"],
+        "origin/x"
+    );
+}
