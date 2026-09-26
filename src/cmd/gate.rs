@@ -88,15 +88,19 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         return Err("a gate needs a title".to_string());
     }
 
-    // A dispatch gate asks whether to start a task, and its answer is acted on by reading the
-    // task out of the message. Without one the hub would be told "approve" and not what.
-    if kind == Kind::Dispatch
+    // A dispatch gate asks whether to start a task, and a relay gate whether to pass a task's
+    // review comments on; the answer to either is acted on by reading the task out of the
+    // message. Without one the hub would be told "approve" and not what.
+    if matches!(kind, Kind::Dispatch | Kind::Relay)
         && payload
             .get("task")
             .and_then(Value::as_str)
             .is_none_or(|t| t.trim().is_empty())
     {
-        return Err("a dispatch gate needs the task it asks about".to_string());
+        return Err(format!(
+            "a {} gate needs the task it asks about",
+            kind.as_str()
+        ));
     }
 
     let wait = match payload.get("wait") {

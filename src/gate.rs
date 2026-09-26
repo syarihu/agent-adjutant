@@ -37,6 +37,9 @@ pub enum Kind {
     Question,
     /// A finished piece of investigation. There is nothing to approve — it is read.
     Result,
+    /// The hub's selection of review comments on a Jules PR, each with what Jules should know
+    /// about it, to be passed on once a person approves.
+    Relay,
 }
 
 impl Kind {
@@ -49,6 +52,7 @@ impl Kind {
             Kind::Issue => "issue",
             Kind::Question => "question",
             Kind::Result => "result",
+            Kind::Relay => "relay",
         }
     }
 
@@ -60,7 +64,7 @@ impl Kind {
     /// and whether to file an issue are the hub's questions, and nothing a worker asks about.
     /// A kind that either side could open would need the opener written into the gate.
     pub fn answered_by_hub(self) -> bool {
-        matches!(self, Kind::Dispatch | Kind::Issue)
+        matches!(self, Kind::Dispatch | Kind::Issue | Kind::Relay)
     }
 
     /// Whether a gate of this kind may be kept as a record instead of waited on.

@@ -52,6 +52,9 @@ struct Server {
     ctx: super::Context,
     token: String,
     port: u16,
+    /// What Jules last said about each session a card follows. The one thing here that
+    /// changes after startup, and it is a cache: the record on disk stays the answer.
+    jules: Arc<super::JulesWatch>,
 }
 
 pub fn serve(
@@ -128,7 +131,12 @@ impl Board {
             .map_err(|e| format!("cannot read the board's port: {e}"))?;
         record(&ctx.repo.slug, port)?;
         Ok(Board {
-            server: Arc::new(Server { ctx, token, port }),
+            server: Arc::new(Server {
+                ctx,
+                token,
+                port,
+                jules: Arc::default(),
+            }),
             listener,
         })
     }
@@ -363,7 +371,13 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/history") => {
             reply(out, task_history(server, path))
         }
+        ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/findings") => {
+            reply(out, review_findings(server, path))
+        }
         ("POST", "/api/tasks") => reply(out, create_task(server, &req.body)),
+        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/relay") => {
+            reply(out, relay_findings(server, path, &req.body))
+        }
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
@@ -403,6 +417,22 @@ fn state(server: &Server) -> Value {
 
     let now = messaging::now_secs();
     let settings = settings_now(server);
+    // After the records are joined, from the same values the page gets: a card shows the last
+    // answer about its session, and an old answer is asked again behind the page's back.
+    let tasks: Vec<Value> = tasks
+        .into_iter()
+        .map(|mut t| {
+            if let Some(seen) = server.jules.look(&server.ctx, &settings.jules_key, &t) {
+                t["jules"] = seen;
+            }
+            t
+        })
+        .collect();
+    let shown: std::collections::HashSet<String> = tasks
+        .iter()
+        .filter_map(|t| t["jules"]["session"].as_str().map(str::to_string))
+        .collect();
+    server.jules.keep_only(&shown);
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
     let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
@@ -627,6 +657,42 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
+/// The task id in `/api/tasks/{id}/{what}`, when there is exactly one.
+fn task_id_in<'a>(path: &'a str, what: &str) -> Option<&'a str> {
+    path.strip_prefix("/api/tasks/")
+        .and_then(|rest| rest.strip_suffix(&format!("/{what}")))
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// The review bots' comments on a Jules task's PR, for the side sheet to choose from. Asked
+/// for when a person opens the list, not on every poll: it is a round trip to GitHub.
+fn review_findings(server: &Server, path: &str) -> Result<Value, String> {
+    let id = task_id_in(path, "findings").ok_or("no such task")?;
+    Ok(json!({ "findings": super::jules_findings(&server.ctx, id)? }))
+}
+
+/// Post the chosen comments to the PR for Jules, in the name `gh` is signed in as.
+fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
+    let id = task_id_in(path, "relay").ok_or("no such task")?;
+    let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let chosen = input
+        .get("comments")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .map(super::JulesChosen::read)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    super::jules_relay(
+        &server.ctx,
+        id,
+        &chosen,
+        input.get("note").and_then(Value::as_str),
+    )
+}
+
 /// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
 /// in its log before it redraws.
 fn refresh_tasks(server: &Server) -> Result<Value, String> {
@@ -750,6 +816,7 @@ mod tests {
             issue_url: None,
             done_when: task::DoneWhen::Pr,
             stop_at: task::StopAt::Plan,
+            executor: task::Executor::Worker,
             base: None,
             parent: None,
             worktree_name: None,
@@ -759,6 +826,11 @@ mod tests {
             worktree: None,
             issue: None,
             pr: None,
+            jules_session: None,
+            jules_by: None,
+            relayed: Vec::new(),
+            announced: Vec::new(),
+            relay_rounds: 0,
             note: None,
             instruction: None,
             gate_answered_at: None,

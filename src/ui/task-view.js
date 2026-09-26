@@ -248,6 +248,11 @@ function overviewTab(task, all) {
   const link = u => httpUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(u)}</a>` : esc(u);
   if (task.issueUrl) rows.push(['Issue', link(task.issueUrl)]);
   if (task.pr) rows.push(['PR', link(task.pr)]);
+  if (task.executor === 'jules') {
+    rows.push(['実装', task.jules?.url ? `Jules ${esc(julesText(task.jules))} — ${link(task.jules.url)}`
+      : task.julesSession ? `Jules ${task.jules ? esc(julesText(task.jules)) : ''}（session <span class="mono2">${esc(task.julesSession)}</span>）`
+      : 'Jules（計画の承認後に渡す）']);
+  }
   if (task.parent) rows.push(['親タスク', esc(task.parent)]);
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
   if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);

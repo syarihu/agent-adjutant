@@ -218,6 +218,7 @@ async function submitForm(e) {
     kind: f.get('kind'),
     doneWhen: f.get('doneWhen'),
     stopAt: f.get('stopAt'),
+    executor: f.get('executor') || 'worker',
     autoStart: f.get('autoStart') === 'true',
     status,
   };
@@ -227,7 +228,8 @@ async function submitForm(e) {
     if (value) body[key] = value;
   }
   const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` +
-    (body.stopAt && body.stopAt !== 'plan' ? ` --stop-at ${body.stopAt}` : '') + (status === 'queued' ? ' --queue' : '');
+    (body.stopAt && body.stopAt !== 'plan' ? ` --stop-at ${body.stopAt}` : '') +
+    (body.executor === 'jules' ? ' --executor jules' : '') + (status === 'queued' ? ' --queue' : '');
   try {
     const data = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
     note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));

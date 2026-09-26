@@ -23,7 +23,11 @@ const workerMinutes = (task, w) => {
 /* Why a card is stuck, or null. A badge rather than a column: moved to a column of its own,
    the card would lose the column that says where it got to. */
 function stuckOf(task) {
-  if (!['dispatched', 'pr'].includes(task.status) || !task.worktree) return null;
+  if (!['dispatched', 'pr'].includes(task.status)) return null;
+  // Handed to Jules: the worker is expected to have gone, and the session is what moves the
+  // card. Only a session that failed needs a person.
+  if (task.julesSession) return task.jules?.state === 'FAILED' ? 'session を開いて確認' : null;
+  if (!task.worktree) return null;
   const w = workerOf(task);
   // The worker is gone and nothing will move this card: the one thing a person must hear.
   // Not in the first two minutes, while a worker that was just dispatched is still opening.
@@ -36,6 +40,27 @@ function stuckOf(task) {
   const limit = state.stuckAfterMinutes;
   if (mins != null && limit > 0 && mins >= limit) return `${minutesLabel(mins)} 同じ工程`;
   return null;
+}
+
+/* What a card says about the Jules session behind it, in the words the card shows. `working`
+   comes from the server, which knows which states mean Jules is busy. */
+const JULES_LABEL = { QUEUED:'待機中', PLANNING:'計画中', IN_PROGRESS:'作業中', AWAITING_PLAN_APPROVAL:'計画の承認待ち',
+                      AWAITING_USER_FEEDBACK:'返事待ち', PAUSED:'一時停止', COMPLETED:'完了', FAILED:'失敗' };
+/* The one rule for what a session's state reads as, for the card, the side sheet and the full
+   view alike: an answer not in yet, or one that failed, is said as such rather than as a state. */
+const julesText = j => j.error ? '状態を読めません' : j.checking ? '確認中' : (JULES_LABEL[j.state] || j.state || '');
+function julesLine(task) {
+  const j = task.jules;
+  if (!j) return '';
+  const text = julesText(j);
+  const url = httpUrl(j.url);
+  const label = `<span style="font-weight:700;">Jules ${esc(text)}</span>`;
+  return `
+    <div class="card-worker-status" title="${esc(j.error || `session ${j.session}`)}">
+      ${j.working ? '<span class="pulse-dot"></span>' : '<span class="material-symbols-outlined" style="font-size:14px;">smart_toy</span>'}
+      ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;">${label}</a>` : label}
+    </div>
+  `;
 }
 
 /* Done cards older than this fold away. The records stay; the column is for
@@ -378,8 +403,10 @@ function cardEl(task, col) {
     `;
   }
 
-  // 4. Worker Live Status
-  if (worker && worker.present && worker.phase) {
+  // 4. Worker Live Status — or, once the task is with Jules, the session's
+  if (live && task.jules) {
+    h += julesLine(task);
+  } else if (worker && worker.present && worker.phase) {
     const mins = phaseMinutes(worker);
     h += `
       <div class="card-worker-status">
@@ -394,6 +421,10 @@ function cardEl(task, col) {
   const metaBadges = [];
   if (col === 'queued' && task.order != null) {
     metaBadges.push(`<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>`);
+  }
+  // Only before the session exists: after that the Jules line above says it, with the state.
+  if (task.executor === 'jules' && !task.jules) {
+    metaBadges.push(`<span class="m3-pill pill-purple" title="計画の承認後に Jules へ渡す"><span class="material-symbols-outlined" style="font-size:12px;">smart_toy</span>Jules</span>`);
   }
   if (!task.autoStart) {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
@@ -556,6 +587,86 @@ function goToQueue() {
   else setView('review');
 }
 
+/* The review comments of the task the side sheet is open on, once a person asked for them.
+   Kept here rather than in /api/state: listing them is a round trip to GitHub, done when
+   somebody wants to choose, and the choice has to survive the side sheet being redrawn. */
+let relay = { taskId: null, loading: false, error: '', findings: [], picked: new Set() };
+
+async function loadFindings(id) {
+  const asked = { taskId: id, loading: true, error: '', findings: [], picked: new Set() };
+  relay = asked;
+  renderDrawer();
+  let data = null, failed = null;
+  try { data = await api(`/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
+  // Another list was asked for meanwhile — another task's, or this one again. That one's
+  // answer is the one to show; this one would put its comments under the wrong card.
+  if (relay !== asked) return;
+  if (failed) {
+    relay.error = failed.message;
+    note(`adj jules findings --id ${id} → ${failed.message}`, true);
+  } else {
+    relay.findings = data.findings || [];
+    note(`adj jules findings --id ${id}`, false, `${relay.findings.length} 件`);
+  }
+  relay.loading = false;
+  renderDrawer();
+}
+
+async function relayPicked(id) {
+  const comments = [...relay.picked];
+  // One at a time: a second click while the first is posting would only come back refused.
+  if (!comments.length || relay.posting) return;
+  const asked = relay;
+  asked.posting = true;
+  renderDrawer();
+  const line = `adj jules relay --id ${id} ${comments.map(c => `--comment ${c}`).join(' ')}`;
+  try {
+    await api(`/api/tasks/${encodeURIComponent(id)}/relay`, { method: 'POST', body: JSON.stringify({ comments }) });
+    note(line, false, `${comments.length} 件を PR にコメントしました。Jules が読んで直します`);
+    // Read again only if the side sheet is still on this list; otherwise the reload would
+    // replace whatever is being looked at now.
+    if (relay === asked && selectedTaskId === id) await loadFindings(id);
+  } catch (e) { note(`${line} → ${e.message}`, true); }
+  asked.posting = false;
+  if (relay === asked) renderDrawer();
+}
+
+function relayHtml(task) {
+  const mine = relay.taskId === task.id;
+  let h = `
+    <div class="m3-filled-card">
+      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">レビュー指摘を Jules に回す</div>
+      <p style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0 0 8px;">Jules は起動した本人以外のコメントには反応しないので、選んだ指摘をあなたの名前で PR にコメントし直します。</p>`;
+  if (!mine || (!relay.loading && !relay.findings.length && !relay.error)) {
+    h += `<button type="button" class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;align-self:flex-start;" data-findings="${esc(task.id)}">
+      <span class="material-symbols-outlined" style="font-size:16px;">download</span><span>${mine ? '指摘はありません — 読み直す' : '指摘を読み込む'}</span></button>`;
+  } else if (relay.loading) {
+    h += `<div style="font-size:12px;color:var(--md-sys-color-outline);">読み込み中…</div>`;
+  } else if (relay.error) {
+    h += `<div style="font-size:12px;color:var(--md-sys-color-error);overflow-wrap:anywhere;">${esc(relay.error)}</div>
+      <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-findings="${esc(task.id)}">読み直す</button>`;
+  } else {
+    h += `<div style="display:flex;flex-direction:column;gap:6px;">` + relay.findings.map(f => {
+      const place = f.line != null ? `${f.path}:${f.line}` : f.path;
+      return `<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;${f.relayed ? 'opacity:.55;' : ''}">
+        <input type="checkbox" data-relay-pick="${esc(f.id)}" ${relay.picked.has(f.id) ? 'checked' : ''} ${f.relayed ? 'disabled' : ''} style="margin-top:2px;">
+        <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+          <code style="font-family:var(--font-mono);font-size:11.5px;word-break:break-all;">${esc(place)}${f.relayed ? '（回し済み）' : ''}</code>
+          <span style="font-size:11px;color:var(--md-sys-color-outline);">${esc(f.author)}</span>
+          <span style="color:var(--md-sys-color-on-surface-variant);overflow-wrap:anywhere;">${esc((f.text || '').split('\n')[0].slice(0, 160))}</span>
+          ${httpUrl(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-size:11px;">GitHub で見る</a>` : ''}
+        </span>
+      </label>`;
+    }).join('') + `</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button type="button" class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-relay="${esc(task.id)}" ${relay.picked.size && !relay.posting ? '' : 'disabled'}>
+          <span class="material-symbols-outlined" style="font-size:16px;">forward</span><span>選んだ ${relay.picked.size} 件を Jules に回す</span></button>
+        <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-findings="${esc(task.id)}">読み直す</button>
+      </div>`;
+  }
+  return h + `</div>`;
+}
+
 function renderDrawer() {
   const drawer = document.getElementById('task-drawer');
   if (!drawer) return;
@@ -661,6 +772,12 @@ function renderDrawer() {
           <span style="color:var(--md-sys-color-outline);font-size:11px;">worktree</span>
           <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code>
         </div>
+        ${task.executor === 'jules' ? `<div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="color:var(--md-sys-color-outline);font-size:11px;">実装</span>
+          ${httpUrl(task.jules?.url)
+            ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>Jules ${esc(julesText(task.jules))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
+            : `<strong style="color:var(--md-sys-color-on-surface);">Jules${task.julesSession ? '' : '（計画の承認後に渡す）'}</strong>`}
+        </div>` : ''}
         ${drawerPrUrl ? `<div style="display:flex;flex-direction:column;gap:2px;">
           <span style="color:var(--md-sys-color-outline);font-size:11px;">PR</span>
           <a href="${esc(drawerPrUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(drawerPrUrl)}" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>${prNumberOf(drawerPrUrl) ? `#${esc(prNumberOf(drawerPrUrl))}` : 'PR を開く'}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>
@@ -689,6 +806,10 @@ function renderDrawer() {
         </div>
       </div>
     `;
+  }
+
+  if (task.julesSession && httpUrl(task.pr) && ['dispatched', 'pr'].includes(task.status)) {
+    body += relayHtml(task);
   }
 
   if (task.instruction && colId !== 'backlog') {
@@ -742,6 +863,15 @@ function renderDrawer() {
         b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
       part.querySelectorAll('[data-close]').forEach(b =>
         b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
+      part.querySelectorAll('[data-findings]').forEach(b =>
+        b.addEventListener('click', () => loadFindings(b.dataset.findings)));
+      part.querySelectorAll('[data-relay]').forEach(b =>
+        b.addEventListener('click', () => relayPicked(b.dataset.relay)));
+      part.querySelectorAll('[data-relay-pick]').forEach(b =>
+        b.addEventListener('change', () => {
+          if (b.checked) relay.picked.add(b.dataset.relayPick); else relay.picked.delete(b.dataset.relayPick);
+          renderDrawer();
+        }));
     }
     renderHandForm(colId === 'backlog' ? task : null);
   }

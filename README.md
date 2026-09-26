@@ -85,6 +85,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
 | `adjutant task add\|list\|show\|update\|refresh` | the records that board is a view of (`refresh`: move the ones whose PR was merged to done) |
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
+| `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as nine tools and three prompts:
@@ -278,6 +279,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *`false` leaves the board to `adj serve`, started by hand* |
 | `stuckAfterMinutes` | — (a number, `0` to turn it off) | `120` |
 | | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless* |
+| `julesKey` | — (a command that prints the Jules API key) | the macOS keychain item `jules-api` |
+| | | *`false` turns handing tasks to Jules off* |
 | `maxWorkers` | — (a whole number, 1 or more) | no limit |
 | | | *counted per checkout; a worker parked at a gate or still starting up takes a slot, a dead one does not* |
 
@@ -381,9 +384,11 @@ already running, started by hand, it is left alone. `hubServe: false` turns this
 hub whose agent has no adjutant MCP server gets no board; for both, `adj serve` is the way.
 Nothing opens a browser.
 
-**It holds no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
-arrives because a person clicked. The page asks for state every two seconds, which is the
-only repeating thing anywhere in it.
+**It holds almost no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
+arrives because a person clicked. The page asks for state every two seconds, and the one
+thing that answer reaches outside for is a task handed to Jules: its session is asked about
+at most once every 45 seconds, and only while the page is open and the card is in progress
+or in review (see [Handing a task to Jules](#handing-a-task-to-jules)).
 
 A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
 message that announces it: the message is read once and acked, and after that the hub would
@@ -495,6 +500,92 @@ view opens rather than on every poll, since the archive only grows.
 Anything that changes state needs it in a header as well, and needs an `Origin` naming this
 server — a page on another site can submit a form to a loopback port, but it cannot set that
 header, and these endpoints are how work gets started.
+
+## Handing a task to Jules
+
+A task can be implemented by [Jules](https://jules.google) instead of by the worker. The
+worker still plans it — that is where a strong model pays for itself — and once the plan
+gate is answered it hands the approved design to a Jules session rather than writing the
+code. Jules implements it, reviews its own patch and opens the pull request.
+
+The choice is on the record: `adjutant task add --executor jules` (or `task update
+--executor jules`). The hand-over is one command, run by the worker:
+
+```bash
+adj jules start --id <task> --prompt-file design.md --base main
+```
+
+It starts a session on this repository with the file as its prompt, asks for the pull
+request to be opened automatically and for the plan to be approved without asking (a person
+already approved it), and writes the session's id onto the task as `julesSession`. `adj
+jules show --id <task>` asks how the session is doing: its state, its page on
+jules.google.com and, once there is one, its pull request. A task is handed over once;
+starting a second session for it is refused until `julesSession` is cleared.
+
+**The key stays out of the agent's reach.** `julesKey` is a command that prints it, not the
+key, because `adj config` prints every setting and an agent reads that. The built-in reads
+the macOS keychain item `jules-api`; add it once, typing the key at the prompt rather than on
+the command line:
+
+```bash
+security add-generic-password -s jules-api -a "$USER" -w
+```
+
+The key reaches `curl` on its stdin — an argument would be readable through `ps` — and is
+taken out of anything printed back, errors included. Off macOS, point `julesKey` at a
+command that prints the key from wherever it is kept.
+
+On the board, such a card shows the session in place of a worker: its state (queued,
+working, done, failed), linked to its page. A worker that has gone is not flagged for a
+card like this — handing over is the last thing the worker does — and a session that failed
+is. The answer is asked for behind the page, never while it waits, so a slow API makes the
+badge a little stale rather than the board slow. The first time a session is seen with a pull
+request, the board writes it onto the task, moves the card to review, and sends the hub a
+`jules-pr` message naming the task and the PR. That happens once: Jules finishes again after
+every round of comments it answers, and the record already has its PR by then. The new-task
+form's 実装 field picks who implements.
+
+The procedures carry it from there. The brief tells the worker who implements; for Jules,
+`adj-worker` has it write a design for Jules once the plan is approved — every file, what
+changes in it, what must not be touched, the tests — rather than a summary, because the model
+on the other end needs the decisions made for it. It runs `adj jules start` with that file and
+asks the hub to clean up; there is nothing in the worktree to keep. When the `jules-pr`
+message arrives, `adj-hub` hands the pull request's description to a subagent on a light model
+to rewrite in the repository's own style, from the design (`adj jules show --json` returns it
+as `prompt`), Jules' own description and the list of changed files. The CodeRabbit summary
+block and Jules' link back to the session are kept as they are.
+
+**Review comments are passed on by hand, in your name.** Jules answers the comments of the
+person who started it and keeps out of other bots' threads, so a review bot's findings do not
+reach it by themselves. The side sheet of a Jules task in review has 「レビュー指摘を Jules に
+回す」: it lists the first comment of each thread by anyone but Jules and you — a review
+bot, Copilot and a colleague alike, since Jules answers none of them — and posts the ones you
+tick as one comment on the pull request through `gh`, which is signed in as you. It does not
+go by `reviewBots`, which names the reviews a worker waits for rather than whose findings are
+worth passing on. Jules is not mentioned in the comment: it reads comments on its own pull
+requests without one. What each finding carries is the comment's bold headline with the bot's
+prompt for an agent when there is one — without the paragraphs every such prompt repeats, one
+of which tells the agent to run the bot's own CLI — and otherwise the comment without its
+hidden and folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. `gh` has to be
+signed in as the account that started the session — `adj jules start` records it as `julesBy` —
+since Jules would ignore a comment from any other; a relay from another account is refused. From
+a shell it is `adj jules findings --id <task>` and `adj jules relay --id <task> --comment <id>`.
+Only inline comments are listed; what a bot writes in the body of its review is not.
+
+**The hub prepares a review for you to approve.** While the board is open, it also looks at
+the pull request of each Jules task in review. When comments by anyone but Jules and you have
+arrived and Jules is idle, it sends the hub a `jules-review` message naming them. The hub has a
+subagent read each one against the pull request's code — without checking the branch out — and
+decide whether it still applies and where the change really belongs, since a review bot can
+only comment on lines the diff touched. It opens a `relay` gate with what would go, the note
+for each, and what it left out and why. Approving it runs `adj jules relay --plan-file`, which
+posts them with each note under its finding; `changes` has the hub adjust and pass them on,
+and `reject` drops them. The board does this at most twice per pull request (`relayRounds` on
+the task); after that a reviewer and Jules are likely answering each other, and the side sheet's
+manual relay is the way.
+
+The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
+see is refused by the API.
 
 ## How the two sides reach each other
 

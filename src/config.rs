@@ -58,7 +58,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-const SETTING_KEYS: [&str; 17] = [
+const SETTING_KEYS: [&str; 18] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -94,6 +94,9 @@ const SETTING_KEYS: [&str; 17] = [
     // How long a worker may stay in one phase before the board flags it. About how somebody
     // works, like the two above it.
     "stuckAfterMinutes",
+    // How to get the Jules API key. The key belongs to a person's account and sits in their
+    // keychain, not to any one repository, so there is one answer per machine.
+    "julesKey",
 ];
 
 /// How long a worker may sit in one phase before the board calls it stuck, when nothing is
@@ -129,6 +132,7 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
     match key {
         "terminal" | "agentEnv" => &["an object"],
         "notification" | "wake" | "hubWake" | "workerWake" => &["a string", "false", "an object"],
+        "julesKey" => &["a string", "false"],
         // The one knob that is a yes/no rather than a command line. Without its own arm it
         // fell through to the string default below, and every `true` anybody wrote was
         // reported as the wrong shape and dropped — a setting that warns when used correctly.
@@ -554,6 +558,13 @@ pub struct Settings {
     /// Minutes in one phase after which the board marks a worker as stuck. `0` turns the
     /// badge off; a dead worker is flagged regardless.
     pub stuck_after_minutes: f64,
+    /// Command that prints the Jules API key on stdout. Built-in: the macOS keychain item
+    /// `jules-api`. `false` turns handing tasks to Jules off.
+    ///
+    /// A command rather than the key: `adj config` prints every setting, and an agent reads
+    /// that output. What it prints here is how to get the key, which is worth nothing without
+    /// the keychain's consent.
+    pub jules_key: Hook,
 }
 
 impl Default for Settings {
@@ -575,6 +586,7 @@ impl Default for Settings {
             hub_auto_resume_hours: DEFAULT_HUB_AUTO_RESUME_HOURS,
             max_workers: None,
             stuck_after_minutes: DEFAULT_STUCK_AFTER_MINUTES,
+            jules_key: Hook::default(),
         }
     }
 }
@@ -801,6 +813,7 @@ fn resolve_settings(
         hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
         max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
         stuck_after_minutes: stuck_after_minutes(pick("stuckAfterMinutes").as_ref(), warnings),
+        jules_key: Hook::read(pick("julesKey")),
     }
 }
 
@@ -1320,7 +1333,7 @@ mod tests {
             json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                    "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
                    "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
-                   "maxWorkers": 3, "stuckAfterMinutes": 30,
+                   "maxWorkers": 3, "stuckAfterMinutes": 30, "julesKey": "print-key",
                    "hubResumeRunner": "again {name} {sessionId}",
                    "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false, "hubServe": false,
                    "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
@@ -1342,6 +1355,7 @@ mod tests {
             "hubAutoResumeHours",
             "maxWorkers",
             "stuckAfterMinutes",
+            "julesKey",
         ] {
             assert!(text.get(key).is_some(), "{key} is missing from {text}");
         }
@@ -1359,6 +1373,7 @@ mod tests {
             "hub_serve",
             "max_workers",
             "stuck_after_minutes",
+            "jules_key",
         ] {
             assert!(
                 text.get(key).is_none(),

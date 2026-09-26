@@ -15,6 +15,7 @@ use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
 mod gate;
+mod jules;
 mod serve;
 mod task;
 
@@ -22,6 +23,11 @@ pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
     open as gate_open_payload, open_cmd as gate_open, open_json as gate_open_json,
     show as gate_show,
+};
+pub use jules::{
+    Chosen as JulesChosen, ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs,
+    Watch as JulesWatch, findings as jules_findings, findings_cmd as jules_findings_cmd,
+    relay as jules_relay, relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
 pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{
@@ -32,6 +38,7 @@ pub use task::{
 
 /// Everything a command needs to know about where it is. Resolved once, at the top, because
 /// two commands disagreeing about which repo they are in is the failure that loses reports.
+#[derive(Clone)]
 pub struct Context {
     pub repo: RepoInfo,
     pub settings: Settings,
@@ -289,40 +296,64 @@ pub fn deliver_to_hub_announcing(
     message: &Message,
     announce: bool,
 ) -> Result<Delivered, String> {
+    Ok(post_to_hub(ctx, message)?.follow_up(ctx, announce))
+}
+
+/// A message written into the hub's inbox, its two follow-ups not yet run.
+pub struct Posted {
+    subject: String,
+    delivery: messaging::Delivery,
+}
+
+/// The first half of `deliver_to_hub`: the message is in the inbox once this returns.
+///
+/// Split off for a caller holding a lock: writing a file is quick, while waking the hub and
+/// notifying run commands of the person's choosing, which can hang. Such a caller posts under
+/// the lock and follows up after letting it go.
+pub fn post_to_hub(ctx: &Context, message: &Message) -> Result<Posted, String> {
     let subject =
         messaging::header_value(&messaging::render_message(message), "subject").unwrap_or_default();
     let delivery = messaging::send(&ctx.repo.slug, &ctx.repo.hub_name, message)?;
+    Ok(Posted { subject, delivery })
+}
 
-    // A file appearing in a directory wakes nobody, so delivery has two follow-ups: poke the
-    // hub if it is actually sitting there, and tell the person either way.
-    let woken = match (
-        delivery.present,
-        messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
-    ) {
-        (true, Some(pid)) => terminal::wake(
-            &ctx.settings.hub_wake,
-            pid,
-            &subject,
-            terminal::HUB_WAKE_LINE,
-            false,
-        )
-        .map(|done| done.ran)
-        .unwrap_or(false),
-        _ => false,
-    };
-    // Unconditionally, unlike `tell`, and the difference is the direction rather than an
-    // oversight. This is a worker reporting to the hub, and the hub is the unattended half
-    // — nobody is watching that tab, which is the premise the whole design rests on. A
-    // report is also the thing a person most wants to hear about, so it is announced
-    // whether or not the hub was poked. `tell` runs the other way, hub to worker: a worker
-    // that was successfully woken needs no human, so there the notification is what happens
-    // when waking did not.
-    if announce
-        && let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject)
-    {
-        let _ = terminal::run_shell(&command);
+impl Posted {
+    /// The second half: poke the hub if it is there, and tell the person when `announce`.
+    pub fn follow_up(self, ctx: &Context, announce: bool) -> Delivered {
+        let Posted { subject, delivery } = self;
+
+        // A file appearing in a directory wakes nobody, so delivery has two follow-ups: poke the
+        // hub if it is actually sitting there, and tell the person either way.
+        let woken = match (
+            delivery.present,
+            messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
+        ) {
+            (true, Some(pid)) => terminal::wake(
+                &ctx.settings.hub_wake,
+                pid,
+                &subject,
+                terminal::HUB_WAKE_LINE,
+                false,
+            )
+            .map(|done| done.ran)
+            .unwrap_or(false),
+            _ => false,
+        };
+        // Unconditionally, unlike `tell`, and the difference is the direction rather than an
+        // oversight. This is a worker reporting to the hub, and the hub is the unattended half
+        // — nobody is watching that tab, which is the premise the whole design rests on. A
+        // report is also the thing a person most wants to hear about, so it is announced
+        // whether or not the hub was poked. `tell` runs the other way, hub to worker: a worker
+        // that was successfully woken needs no human, so there the notification is what happens
+        // when waking did not.
+        if announce
+            && let Some(command) =
+                notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject)
+        {
+            let _ = terminal::run_shell(&command);
+        }
+        Delivered { delivery, woken }
     }
-    Ok(Delivered { delivery, woken })
 }
 
 pub fn send(args: &SendArgs<'_>) -> Result<(), String> {

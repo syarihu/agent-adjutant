@@ -81,6 +81,10 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
     {
         return Err(format!("no such stop point: {}", input["stopAt"]));
     }
+    if let Some(executor) = typed("executor") {
+        task::Executor::parse(executor)
+            .ok_or_else(|| format!("no such executor: {executor} (worker or jules)"))?;
+    }
     if let Some(url) = typed("issueUrl") {
         let rest = url
             .strip_prefix("https://")
@@ -242,10 +246,17 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
     if let Some(auto_start) = input.get("autoStart").and_then(Value::as_bool) {
         task.auto_start = auto_start;
     }
+    if let Some(executor) = string(input, "executor") {
+        task.executor = task::Executor::parse(&executor)
+            .ok_or(format!("no such executor: {executor} (worker or jules)"))?;
+    }
+    let pr_before = task.pr.clone();
     for (key, field) in [
         ("worktree", &mut task.worktree),
         ("issue", &mut task.issue),
         ("pr", &mut task.pr),
+        ("julesSession", &mut task.jules_session),
+        ("julesBy", &mut task.jules_by),
         ("note", &mut task.note),
         ("instruction", &mut task.instruction),
     ] {
@@ -256,6 +267,12 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
             // "waiting for a slot" note has to go once the worker starts.
             *field = text_field(key, value)?;
         }
+    }
+    // What the board has brought to the hub belongs to the PR it read. Another PR starts over:
+    // kept, the count would leave a new PR at the limit before its first review.
+    if task.pr != pr_before {
+        task.announced.clear();
+        task.relay_rounds = 0;
     }
     // Only a worktree given in this update: one already stored was resolved when it was
     // given, against the directory of the command that gave it, and re-resolving it here
@@ -597,6 +614,7 @@ pub struct AddArgs<'a> {
     pub kind: &'a str,
     pub done_when: &'a str,
     pub stop_at: &'a str,
+    pub executor: &'a str,
     pub issue_url: Option<&'a str>,
     pub base: Option<&'a str>,
     pub parent: Option<&'a str>,
@@ -615,6 +633,7 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         "kind": args.kind,
         "doneWhen": args.done_when,
         "stopAt": args.stop_at,
+        "executor": args.executor,
         "issueUrl": args.issue_url,
         "base": args.base,
         "parent": args.parent,
@@ -657,6 +676,8 @@ pub struct UpdateArgs<'a> {
     pub worktree: Option<&'a str>,
     pub issue: Option<&'a str>,
     pub pr: Option<&'a str>,
+    pub jules_session: Option<&'a str>,
+    pub executor: Option<&'a str>,
     pub note: Option<&'a str>,
     pub instruction: Option<&'a str>,
     pub auto_start: Option<bool>,
@@ -677,6 +698,8 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
         ("worktree", args.worktree),
         ("issue", args.issue),
         ("pr", args.pr),
+        ("julesSession", args.jules_session),
+        ("executor", args.executor),
         ("note", note.as_deref()),
         ("instruction", instruction.as_deref()),
     ] {
