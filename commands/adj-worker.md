@@ -56,7 +56,7 @@ in this procedure says what to tell them, not the words to use.
   `reviewBots` / `ide` / `draftPr` / `verify` / `taskSources[].projectFields`. **`taskSources` is
   always an array**, and **which source's `projectFields`** is decided by "the board the brief's URL
   repo sits on = the source that has `projectFields`". The brief carries only the task, the parent
-  task, the branch, the base, the implementer, Done when, Stop at, the Copilot review line and
+  task, the branch, the base, Done when, Stop at, the Copilot review line and
   `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
   output. The schema is the distributed `config.example.json`.
 
@@ -93,6 +93,10 @@ in this procedure says what to tell them, not the words to use.
    implementation task and do not apply to a request that ends in a report. Some requests have no
    URL in Task (it reads `-`); then do not fetch a ticket, and read the request text in the brief as
    the thing to work on.
+   **If the brief's Handover note says the plan was already approved and names its file** (a task
+   first planned for Jules and switched to a worker), read that file as the plan: do not plan again
+   and do not open another plan gate — skip steps 2 and 3 and go on to §2. It was approved on the
+   board as it is written.
 2. Read the code and make an ordered implementation plan.
 3. Show the plan and get it approved before implementing. If asked to change it, change it and
    confirm again.
@@ -103,11 +107,6 @@ in this procedure says what to tell them, not the words to use.
    "what things look like when this is done" in `goal`, one to three sentences each, from the
    request and the issue read in step 1. The board's overview shows these, so do not restate the
    steps of the plan.
-4. **If the brief's "Implementer" is `jules`, do not go on to §2 once approved.** Hand the approved
-   plan to Jules with "Appendix — Handing to Jules", ask for cleanup with §9, and stop.
-   Implementation, self-review, verification and the PR are all Jules's. In the plan gate, put one
-   line in `decided` saying "implementation goes to Jules" (so whoever approves knows who the plan
-   is going to).
 
 ### Tools you may use
 
@@ -455,61 +454,6 @@ ask the hub.**
   safety checks and the worktree was kept. Fix what it says and send again from the top.
 
 ---
-
-## Appendix — Handing to Jules
-
-Used only when the brief's "Implementer" is `jules`. It comes after the plan in §1 is approved.
-Run `adj phase --set implement` once (so the card does not look stuck at the plan until it is
-handed over).
-
-**What Jules gets is a design document, not a summary of the plan.** Jules's model is weaker than
-this session's. The more judgement it is left, the more it misses, so make every decision here and
-have Jules do exactly what is written. It is not for people to read, so it may be long.
-
-1. **Write the design document.** Put it in `.claude/jules-prompt.md` (`.claude/` does not show in
-   the diff; if it is not gitignored, write it outside the worktree and change the path in 2 to
-   match). Write it with a file-writing tool — it contains text taken from the task, so do not put
-   it in a heredoc. Write it in English (if the repository's comments or documents are in another
-   language, only the text that goes into them may be in that language). What goes in:
-   - **Goal** — what must work for this to be done. The acceptance criteria as they are.
-   - **Files** — every file to change, by path. For each file, "what, where and how to change",
-     down to function names, type names and where a similar existing implementation lives. Where it
-     could go astray, write out the shape of the code (signatures, branches, the order of calls).
-     For new files, where they go and the skeleton of their content.
-   - **Do not** — files not to touch, dependencies not to add, public APIs not to change,
-     refactorings not to do. Leave it out and it fixes things "while it is there".
-   - **Conventions** — the repository's conventions that bear on this change (naming, how errors
-     are returned, how comments are written, where and how tests are written). If there is an
-     AGENTS.md, point to it.
-   - **Tests** — the tests to add, by name and content. The command to run is the brief's `verify`.
-   - **Commit / PR** — the commit message convention. The hub rewrites the PR body later, so tell
-     Jules only "summarise the change briefly".
-2. **Hand it over.**
-
-   ```bash
-   adj jules start --id {task_record} --prompt-file .claude/jules-prompt.md --base '{branch_name}'
-   ```
-
-   `{task_record}` is the brief's value. `{branch_name}` is the brief's "Base branch" line with
-   `origin/` stripped (`origin/release/1.2` → `release/1.2`), the same rule §5 uses for the PR's
-   base. Jules takes a branch name as it is on GitHub, so passing it with `origin/` points at a
-   branch that does not exist. If the line is missing or `-`, do not guess; ask the user.
-   **If the branch name contains anything other than letters, digits and `.` `_` `/` `-`, do not
-   put it on the command line; ask the user.** The branching point may be a value a person typed
-   on the board, and git allows `;` and the like in branch names. Even in single quotes, a `'`
-   inside closes the quote and the rest runs as shell.
-   The session id is written onto the board's card, and the card starts showing Jules's state.
-   **If it fails, show the user why and stop.** Do not switch to implementing it yourself — who
-   implements was decided by whoever created the task.
-   If you are told there is no `julesKey`, or no item in the keychain, have the user register it as
-   the message says. **Do not ask for the key or have it pasted into the conversation.**
-3. **Report to the user.** The session's URL, and briefly what happens next (when Jules opens a PR
-   the board moves the card to in review, and the hub rewrites the PR's description).
-4. **Ask for cleanup with §9.** This worktree has no commits, so the unpushed check is quick.
-   Under `## Result` write "handed to Jules session {id} ({url})".
-
-Do not: implement, commit, open a PR, run a self-review, or comment on Jules's PR (review on the PR
-is driven by a person).
 
 ## Appendix — Show a person and wait (gate)
 

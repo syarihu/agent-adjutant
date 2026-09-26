@@ -375,3 +375,168 @@ fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
     }));
     assert!(out.status.success(), "{out:?}");
 }
+
+#[test]
+fn a_plan_the_hub_opened_is_answered_to_the_hubs_inbox() {
+    // A task handed to Jules gets no worker: the hub opens its plan gate on a worktree nobody
+    // is in, and an answer left in that worktree's outbox would never be read.
+    let fixture = Fixture::new(QUIET);
+    let payload_file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "plan",
+            "openedBy": "hub",
+            "task": "t-1",
+            "title": "設計レビュー: WID-7",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&[
+        "gate",
+        "open",
+        "--file",
+        payload_file.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(opened["gate"]["openedBy"], "hub", "{opened}");
+    let id = opened["gate"]["id"].as_str().unwrap().to_string();
+
+    fixture.ok(&["gate", "answer", "--id", &id, "--decision", "approve"]);
+
+    let pending = fixture.json(&["pending", "--json"]);
+    assert_eq!(pending["count"], 1, "{pending}");
+    let name = pending["messages"][0]["name"].as_str().unwrap();
+    let body = fixture.ok(&["pending", "--read", name]);
+    assert!(body.contains("(plan)"), "{body}");
+    assert!(body.contains("## task       t-1"), "{body}");
+    let outbox = fixture.ok(&["outbox", "--worktree", fixture.repo.to_str().unwrap()]);
+    assert_eq!(outbox.trim(), "(empty)");
+}
+
+#[test]
+fn the_hub_opens_only_a_plan_and_only_for_a_task() {
+    // Every other kind's opener follows from the kind, and the hub reads which task an answer
+    // is about out of the message alone.
+    let fixture = Fixture::new(QUIET);
+    let payload_file = fixture.repo.join("gate.json");
+    for (payload, expected) in [
+        (
+            serde_json::json!({ "kind": "diff", "openedBy": "hub", "task": "t-1",
+                                "stoppedBy": ["stop-at"] }),
+            "openedBy is for a plan",
+        ),
+        (
+            serde_json::json!({ "kind": "plan", "openedBy": "hub" }),
+            "needs the task",
+        ),
+        (
+            serde_json::json!({ "kind": "plan", "openedBy": "somebody", "task": "t-1" }),
+            "no such opener",
+        ),
+    ] {
+        let mut payload = payload;
+        payload["title"] = serde_json::json!("t");
+        payload["worktree"] = serde_json::json!(fixture.repo.to_str().unwrap());
+        std::fs::write(&payload_file, payload.to_string()).unwrap();
+        let out = fixture.cmd(&["gate", "open", "--file", payload_file.to_str().unwrap()]);
+        assert!(!out.status.success(), "{payload}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(expected),
+            "{payload}: {out:?}"
+        );
+    }
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_body_file_becomes_the_gate_s_body_as_it_is() {
+    // What a person approves is the file handed on afterwards, so it is carried byte for byte:
+    // quotes, backticks and all.
+    let fixture = Fixture::new(QUIET);
+    let payload_file = fixture.repo.join("gate.json");
+    let body_file = fixture.repo.join("plan.md");
+    let plan = "# Goal\n\nKeep `\"quoted\"` text and a line of 'JSON' as it is.\n";
+    std::fs::write(&body_file, plan).unwrap();
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "plan",
+            "title": "t",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&[
+        "gate",
+        "open",
+        "--file",
+        payload_file.to_str().unwrap(),
+        "--body-file",
+        body_file.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(opened["gate"]["body"], plan, "{opened}");
+
+    // One that has a body of its own is refused rather than one of the two dropped.
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "plan",
+            "title": "t",
+            "body": "mine",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = fixture.cmd(&[
+        "gate",
+        "open",
+        "--file",
+        payload_file.to_str().unwrap(),
+        "--body-file",
+        body_file.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("has a body already"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn a_null_opener_is_the_worker() {
+    // A client that fills in every advertised property sends `null` for one it has no value
+    // for; refused after the id is claimed, it would leave an empty gate in the queue.
+    let fixture = Fixture::new(QUIET);
+    let payload_file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &payload_file,
+        serde_json::json!({
+            "kind": "plan",
+            "openedBy": null,
+            "title": "t",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&[
+        "gate",
+        "open",
+        "--file",
+        payload_file.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(opened["gate"].get("openedBy").is_none(), "{opened}");
+}

@@ -449,18 +449,19 @@ mod tests {
         );
     }
 
-    /// The record the hub creates carries the same implementer as the brief it writes.
+    /// The record the hub creates carries the implementer of the route it takes.
     ///
-    /// `adj task add` defaults `--executor` to `worker`, and the brief's Implementer line is
-    /// the only other place the choice lives. Left off the command, every task the hub
-    /// records itself and hands to Jules shows on the board as the worker's, and the worker
-    /// has to fix the record before it can hand the task over.
+    /// `adj task add` defaults `--executor` to `worker`. Left off the command, every task the
+    /// hub records itself and hands to Jules shows on the board as the worker's: the card waits
+    /// on a worker that is never started, and `adj jules start` refuses the task.
     #[test]
-    fn the_task_record_the_hub_creates_carries_the_brief_implementer() {
+    fn the_task_record_the_hub_creates_carries_the_implementer() {
         let hub = find("adj-hub").unwrap().raw_content;
+        // A worker is started only for a task it implements, so its brief has nothing to say
+        // about who implements.
         assert!(
-            hub.contains("- Implementer: {worker / jules}"),
-            "the brief template has no slot for the implementer"
+            !section(hub, "## Appendix — The worker's brief").contains("- Implementer:"),
+            "the brief still carries an implementer line"
         );
         let start = step(hub, "### 4. ");
         // The flag has to be inside the command, not in the prose that explains it — the
@@ -476,14 +477,17 @@ mod tests {
         );
         let flowed: String = flow(&start);
         assert!(
-            flowed.contains(
-                "`--executor` is the same value as the brief's Implementer line (`worker` / `jules`)"
-            ),
+            flowed.contains("`--executor` is the implementer (`worker` / `jules`)"),
             "the start step does not say where `--executor` comes from: {start}"
         );
         assert!(
-            flowed.contains("The two must match"),
-            "the start step does not say the brief and the record must agree: {start}"
+            flowed.contains("The record and the route taken must match"),
+            "the start step does not say the record and the route must agree: {start}"
+        );
+        let jules = flow(&step(hub, "### 5. "));
+        assert!(
+            jules.contains("with `--executor jules`"),
+            "the Jules route records the task as the worker's: {jules}"
         );
     }
 
@@ -2583,36 +2587,135 @@ mod tests {
         );
     }
 
-    /// A task handed to Jules leaves the worker at the plan gate. Reading on into §2 would
-    /// have the worker implement it as well, and Jules would open a second PR for the same
-    /// change; so the plan step has to send it away, and the appendix it sends it to has to
-    /// hand over rather than implement.
+    /// A task handed to Jules starts no worker. A worker session would be started only to
+    /// write a plan and then ask for its untouched worktree to be removed, so the hub cuts a
+    /// worktree to read from and has a sub-agent write the plan into it.
     #[test]
-    fn a_jules_task_is_handed_over_after_the_plan_and_not_implemented() {
+    fn a_jules_task_is_planned_by_a_subagent_and_no_worker_is_started() {
         let worker = find("adj-worker").unwrap().raw_content;
-        let flow = |text: String| -> String { flow(&text) };
-        let plan = flow(section(worker, "## 1. Plan"));
         assert!(
-            plan.contains("do not go on to §2 once approved")
-                && plan.contains("\"Appendix — Handing to Jules\""),
-            "the plan step does not send a Jules task to the hand-over: {plan}"
+            !worker.contains("Handing to Jules") && !worker.contains("adj jules start"),
+            "the worker still hands tasks to Jules"
         );
-        let hand_over = flow(section(worker, "## Appendix — Handing to Jules"));
+        let hub = find("adj-hub").unwrap().raw_content;
+        // Nothing is committed there and nothing is built, so no branch and no setup.
+        let create = flow(&step(hub, "### 3. "));
         assert!(
-            hand_over.contains("adj jules start --id {task_record}"),
-            "{hand_over}"
+            create.contains("git -C '{main}' worktree add --detach '{path}' '{base}'"),
+            "{create}"
         );
-        // The brief spells the base as `git worktree add` takes it; Jules takes GitHub's name.
-        assert!(hand_over.contains("--base '{branch_name}'"), "{hand_over}");
-        // A base can be typed on the board, and git allows `;` in a branch name.
+        assert!(create.contains("do not run `postCreate`"), "{create}");
+
+        let route = step(hub, "### 5. ");
+        let planning = flow(&route[..route.find("#### Switching to a worker").unwrap()]);
         assert!(
-            hand_over.contains("do not put it on the command line; ask the user"),
-            "{hand_over}"
+            !planning.contains("adjutant work"),
+            "the Jules route starts a worker: {planning}"
         );
-        assert!(hand_over.contains("with `origin/` stripped"), "{hand_over}");
-        assert!(hand_over.contains("Do not: implement"), "{hand_over}");
+        // The plan stays out of the resident hub's transcript: the file goes to the board as
+        // it is, and what the person approves is what Jules gets.
+        assert!(
+            planning.contains(
+                "adj gate open --file '{worktree}/.claude/jules-gate.json' --body-file '{worktree}/.claude/jules-plan.md' --json"
+            ),
+            "{planning}"
+        );
+        assert!(
+            planning.contains("Do not read the plan yourself"),
+            "{planning}"
+        );
+        assert!(planning.contains("Keep its agent id"), "{planning}");
+
+        let brief = flow(&section(
+            hub,
+            "## Appendix — Brief for the Jules planning agent",
+        ));
+        // Answered in the hub's inbox: the worktree's outbox has nobody to read it.
+        assert!(brief.contains("\"openedBy\": \"hub\""), "{brief}");
+        assert!(
+            brief.contains("Do not change any file in it except the two below"),
+            "{brief}"
+        );
+        assert!(brief.contains("Report only this, nothing else"), "{brief}");
+    }
+
+    /// Once the plan is approved the hub hands it to Jules itself and removes the worktree it
+    /// cut, since no worker is there to send `kind: done`. A `changes` goes back to the agent
+    /// that wrote the plan, which already has the task in its context.
+    #[test]
+    fn the_hub_hands_an_approved_plan_to_jules_and_removes_the_worktree() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        let answer = between(
+            hub,
+            "#### The answer to a plan for Jules",
+            "### Jules opened a PR",
+        );
+        let flowed = flow(&answer);
+        assert!(
+            flowed.contains(
+                "adj jules start --id {task_id} --prompt-file '{worktree}/.claude/jules-plan.md'"
+            ),
+            "{flowed}"
+        );
+        // The base is read from the record: the answer comes on a later wake, perhaps after a
+        // restart, when what "3. Create the worktree" decided is no longer in the hub's context.
+        assert!(flowed.contains("No `--base`"), "{flowed}");
+        let record = flow(&step(hub, "### 5. "));
+        assert!(
+            record.contains(
+                "adj task update --id {task_id} --status dispatched --worktree '{worktree}' --base '{base}'"
+            ),
+            "{record}"
+        );
         // The key is typed into the keychain by the person, never into this conversation.
-        assert!(hand_over.contains("Do not ask for the key"), "{hand_over}");
+        assert!(flowed.contains("Do not ask for the key"), "{flowed}");
+        // Where `.claude/` is tracked, the plan files would stop the clean check.
+        assert!(
+            flowed.contains(
+                "rm -f '{worktree}/.claude/jules-plan.md' '{worktree}/.claude/jules-gate.json'"
+            ),
+            "{flowed}"
+        );
+        // A worktree still detached and clean holds nothing to lose.
+        assert!(flowed.contains("symbolic-ref -q HEAD"), "{flowed}");
+        assert!(
+            flowed.contains(
+                "git -C '{main}' worktree remove '{worktree}' && adj task update --id {task_id} --worktree ''"
+            ),
+            "{flowed}"
+        );
+        // Asked for a worker, the approved plan must not reach Jules as well.
+        before(
+            &answer,
+            "if the comment asks for a worker",
+            "adj jules start",
+        );
+        assert!(flowed.contains("**the same sub-agent**"), "{flowed}");
+        assert!(flowed.contains("Where it cannot be continued"), "{flowed}");
+
+        // Switched to a worker, the plan is not written twice.
+        let switch = flow(&step(hub, "### 5. "));
+        assert!(
+            switch.contains("git -C '{worktree}' switch -c '{branch}'"),
+            "{switch}"
+        );
+        assert!(
+            switch.contains("Implement from it; do not plan again."),
+            "{switch}"
+        );
+        // Sent back with `changes`, the plan was never approved, and the worker has it approved.
+        assert!(switch.contains("it was not approved"), "{switch}");
+        // A record taken from the queue or a dispatch gate has no request message to read.
+        assert!(
+            switch.contains("record's `executor` when a record already exists"),
+            "{switch}"
+        );
+        let worker = find("adj-worker").unwrap().raw_content;
+        let plan = flow(&section(worker, "## 1. Plan"));
+        assert!(
+            plan.contains("do not plan again and do not open another plan gate"),
+            "{plan}"
+        );
     }
 
     /// The hub rewrites the description of a PR Jules opened, and nothing a reviewer bot or

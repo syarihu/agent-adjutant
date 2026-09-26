@@ -477,6 +477,9 @@ enum GateAction {
         /// Read the payload from here instead of stdin
         #[arg(long)]
         file: Option<String>,
+        /// Take the gate's body from this file as it is (the payload must not have one)
+        #[arg(long)]
+        body_file: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -705,6 +708,9 @@ enum TaskAction {
         issue: Option<String>,
         #[arg(long)]
         pr: Option<String>,
+        /// The branch it is cut from, as `git worktree add` takes it ('' clears it)
+        #[arg(long)]
+        base: Option<String>,
         /// The Jules session implementing it ('' clears it)
         #[arg(long)]
         jules_session: Option<String>,
@@ -1038,6 +1044,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             worktree,
             issue,
             pr,
+            base,
             jules_session,
             executor,
             note,
@@ -1054,6 +1061,7 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             worktree: worktree.as_deref(),
             issue: issue.as_deref(),
             pr: pr.as_deref(),
+            base: base.as_deref(),
             jules_session: jules_session.as_deref(),
             executor: executor.as_deref(),
             note: note.as_deref(),
@@ -1127,8 +1135,15 @@ fn run_gate(action: &GateAction) -> Result<(), String> {
             repo,
             hub,
             file,
+            body_file,
             json,
-        } => cmd::gate_open(repo.as_deref(), hub.as_deref(), file.as_deref(), *json),
+        } => cmd::gate_open(
+            repo.as_deref(),
+            hub.as_deref(),
+            file.as_deref(),
+            body_file.as_deref(),
+            *json,
+        ),
         GateAction::List { repo, hub, json } => {
             cmd::gate_list(repo.as_deref(), hub.as_deref(), *json)
         }

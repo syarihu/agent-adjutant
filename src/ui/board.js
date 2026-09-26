@@ -27,6 +27,16 @@ function stuckOf(task) {
   // Handed to Jules: the worker is expected to have gone, and the session is what moves the
   // card. Only a session that failed needs a person.
   if (task.julesSession) return task.jules?.state === 'FAILED' ? 'session を開いて確認' : null;
+  // Bound for Jules but not with it yet: no worker is ever started in that worktree, so its
+  // absence says nothing. The hub is having the plan written, or a person is reading it; with
+  // no gate open for long, the planning stopped (the hub restarted, or the hand-over failed).
+  if (task.executor === 'jules') {
+    if (openGate(task)) return null;
+    const since = Math.max(updatedMs(task), (stampSecs(task.gateAnsweredAt) || 0) * 1000);
+    const mins = Math.floor((Date.now() - since) / 60000);
+    const limit = state.stuckAfterMinutes;
+    return limit > 0 && mins >= limit ? `計画が ${minutesLabel(mins)} 止まっています` : null;
+  }
   if (!task.worktree) return null;
   const w = workerOf(task);
   // The worker is gone and nothing will move this card: the one thing a person must hear.
