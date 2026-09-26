@@ -103,6 +103,32 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         ));
     }
 
+    // Who waits on the answer, for a plan: the hub opens one for a task handed to Jules. Read
+    // before the id is claimed, for the reason given for `stoppedBy` below.
+    let opener: gate::Opener = match payload.get("openedBy") {
+        None | Some(Value::Null) => gate::Opener::Worker,
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|_| format!("no such opener: {value} (worker or hub)"))?,
+    };
+    if opener == gate::Opener::Hub {
+        // Every other kind's opener follows from the kind; only a plan is opened by either.
+        if kind != Kind::Plan {
+            return Err(format!(
+                "openedBy is for a plan; a {} gate's opener follows from its kind",
+                kind.as_str()
+            ));
+        }
+        // The hub is told which task an answer is about by the message alone, as with a
+        // dispatch gate: the gate is archived by the time it reads it.
+        if payload
+            .get("task")
+            .and_then(Value::as_str)
+            .is_none_or(|t| t.trim().is_empty())
+        {
+            return Err("a plan the hub opens needs the task it is for".to_string());
+        }
+    }
+
     let wait = match payload.get("wait") {
         None | Some(Value::Null) => true,
         Some(Value::Bool(wait)) => *wait,
@@ -190,6 +216,10 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
         .entry("options")
         .or_insert(json!(kind.default_options()));
     fields.insert("wait".to_string(), json!(wait));
+    // `null` read as the worker above, and serde's default covers only a missing field.
+    if fields.get("openedBy").is_some_and(Value::is_null) {
+        fields.remove("openedBy");
+    }
     // A record's answers are appended by whoever answers it, never brought in with it.
     fields.remove("answers");
     let gate: Gate = serde_json::from_value(value).map_err(|e| format!("bad gate: {e}"))?;
@@ -231,7 +261,7 @@ pub fn answer(
 
     let subject = gate::answer_subject(&gate, decision);
     let body = gate::answer_body(&gate, decision, choice, comment);
-    let told = if gate.kind.answered_by_hub() {
+    let told = if gate.answered_by_hub() {
         // `gate` rather than `answer`: the hub pairs an `answer` with a question it asked a
         // worker, and this is a person deciding on something the hub put on the board.
         let message = crate::messaging::Message {
@@ -337,6 +367,7 @@ pub fn open_cmd(
     repo: Option<&str>,
     hub: Option<&str>,
     file: Option<&str>,
+    body_file: Option<&str>,
     as_json: bool,
 ) -> Result<(), String> {
     let ctx = super::context(repo, hub)?;
@@ -352,7 +383,16 @@ pub fn open_cmd(
         // `read_body(None)` is the stdin path, which is the one a heredoc uses.
         None => super::read_body(None)?,
     };
-    let payload: Value = serde_json::from_str(&raw).map_err(|e| format!("bad JSON: {e}"))?;
+    let mut payload: Value = serde_json::from_str(&raw).map_err(|e| format!("bad JSON: {e}"))?;
+    // The body read from a file as it is, so the one who opens the gate need not read a long
+    // report into its own context to quote it into JSON — the hub opening a plan a sub-agent
+    // wrote is the case this is for, and what the person approves is that file, byte for byte.
+    if let Some(path) = body_file {
+        let path = crate::config::expand_home(path);
+        let body = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        with_body(&mut payload, body)?;
+    }
     let (gate, served) = open(&ctx, &payload)?;
 
     if as_json {
@@ -362,7 +402,7 @@ pub fn open_cmd(
     println!("{} — {}", gate.id, gate.title);
     if !gate.wait {
         println!("{RECORDED}");
-    } else if served && gate.kind.answered_by_hub() {
+    } else if served && gate.answered_by_hub() {
         println!("Waiting on the board. The answer arrives in your inbox as `kind: gate`.");
     } else if served {
         println!("Waiting on the board. Read `adj outbox` when you are woken.");
@@ -374,6 +414,18 @@ pub fn open_cmd(
              (the gate is written, and stays)."
         );
     }
+    Ok(())
+}
+
+/// Put a body read from a file into a payload. Refused when the payload has one of its own:
+/// which of the two was meant cannot be told, and the one dropped is what a person expected
+/// to be shown.
+fn with_body(payload: &mut Value, body: String) -> Result<(), String> {
+    let fields = payload.as_object_mut().ok_or("expected an object")?;
+    if fields.get("body").is_some_and(|b| !b.is_null()) {
+        return Err("the payload has a body already; drop it or --body-file".to_string());
+    }
+    fields.insert("body".to_string(), json!(body));
     Ok(())
 }
 
@@ -454,7 +506,7 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     }
     println!("{} → {}", gate.id, args.decision);
     println!("wrote {}", told.path.display());
-    if gate.kind.answered_by_hub() {
+    if gate.answered_by_hub() {
         match (told.present, told.woken) {
             (true, true) => println!("Woke the hub."),
             (true, false) => {

@@ -467,6 +467,9 @@ worktree's outbox like any other, and the record stays, with the answer appended
 Both kinds of gate take structured fields beside the prose — `reviewRounds` and `findings`
 for a diff, `commands` and `manual` for a check, `problem` and `goal` for a plan — and
 `/api/state` hands each live task its records and the plan a person last approved.
+A plan is usually a worker's, but the hub opens one for a task handed to Jules; that gate
+carries `"openedBy": "hub"` so its answer goes to the hub's inbox, and `--body-file` puts a
+file in as the body as it is.
 The worker's procedure decides between the two by rule: a diff or a check waits only when
 the review hit its round limit with a must open, `verify` failed and could not be fixed,
 there is something only a person can check, the worker wrote something under `unsure`, or
@@ -506,13 +509,14 @@ header, and these endpoints are how work gets started.
 
 ## Handing a task to Jules
 
-A task can be implemented by [Jules](https://jules.google) instead of by the worker. The
-worker still plans it — that is where a strong model pays for itself — and once the plan
-gate is answered it hands the approved design to a Jules session rather than writing the
-code. Jules implements it, reviews its own patch and opens the pull request.
+A task can be implemented by [Jules](https://jules.google) instead of by a worker. No worker
+session is started for it: the hub cuts a detached worktree to read from and has a subagent
+write the plan there — that is where a strong model pays for itself — and once a person
+approves the plan the hub hands it to a Jules session and removes the worktree. Jules
+implements it, reviews its own patch and opens the pull request.
 
 The choice is on the record: `adjutant task add --executor jules` (or `task update
---executor jules`). The hand-over is one command, run by the worker:
+--executor jules`). The hand-over is one command, run by the hub:
 
 ```bash
 adj jules start --id <task> --prompt-file design.md --base main
@@ -539,20 +543,24 @@ taken out of anything printed back, errors included. Off macOS, point `julesKey`
 command that prints the key from wherever it is kept.
 
 On the board, such a card shows the session in place of a worker: its state (queued,
-working, done, failed), linked to its page. A worker that has gone is not flagged for a
-card like this — handing over is the last thing the worker does — and a session that failed
-is. The answer is asked for behind the page, never while it waits, so a slow API makes the
+working, done, failed), linked to its page. No worker is flagged as gone for a card like
+this — none is ever started for it — and a session that failed is. The answer is asked for behind the page, never while it waits, so a slow API makes the
 badge a little stale rather than the board slow. The first time a session is seen with a pull
 request, the board writes it onto the task, moves the card to review, and sends the hub a
 `jules-pr` message naming the task and the PR. That happens once: Jules finishes again after
 every round of comments it answers, and the record already has its PR by then. The new-task
 form's 実装 field picks who implements.
 
-The procedures carry it from there. The brief tells the worker who implements; for Jules,
-`adj-worker` has it write a design for Jules once the plan is approved — every file, what
-changes in it, what must not be touched, the tests — rather than a summary, because the model
-on the other end needs the decisions made for it. It runs `adj jules start` with that file and
-asks the hub to clean up; there is nothing in the worktree to keep. When the `jules-pr`
+The procedures carry it from there. For a Jules task, `adj-hub` has its planning subagent
+write a design for Jules — every file, what changes in it, what must not be touched, the
+tests — rather than a summary, because the model on the other end needs the decisions made for
+it. The subagent reports back only the file's path and one line, so the plan stays out of the
+resident hub's context, and the hub opens the plan gate with `adj gate open --body-file` and
+`"openedBy": "hub"`: the board shows the file as it is, and the answer comes to the hub's inbox
+rather than to an outbox nobody reads. On approval the hub runs `adj jules start` with that
+file and removes the worktree; on `changes` the same subagent revises it. If the plan shows the
+task needs a worker after all, the hub gives the worktree a branch and starts one, and the
+worker implements the approved plan instead of planning again. When the `jules-pr`
 message arrives, `adj-hub` hands the pull request's description to a subagent on a light model
 to rewrite in the repository's own style, from the design (`adj jules show --json` returns it
 as `prompt`), Jules' own description and the list of changed files. The CodeRabbit summary

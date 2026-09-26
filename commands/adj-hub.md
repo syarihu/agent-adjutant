@@ -719,7 +719,7 @@ itself.
 - The hub moves on three occasions only: **when woken**, **when a person talks to it**, and **when a
   completion notification for a sub-agent it sent out arrives**. The third is usually the dashboard's
   collection; when it arrives, show a summary and go back to waiting (it is neither a nudge nor
-  anything wrong).
+  anything wrong). The other is a Jules plan: open its gate (Step 3 of "5. Hand it to Jules").
 
 **To send to a worker, call `adjutant_tell`.** Its arguments are `worktree` (absolute path) /
 `subject` / `body`. Direct messages between agents are not used — only some coding agents have them,
@@ -883,6 +883,11 @@ checkout.
 The hub does not stand in a worktree, so the "cannot remove the ground you stand on" problem does not
 arise. **Cleanup is the hub's job**, and this is the only route by which anything is removed.
 
+**Leave out any worktree a Jules plan is being written or read in** (`adj task list --worktree <path>
+--json` has a record whose `executor` is `jules`, `status` is `dispatched` and `julesSession` is
+unset). It is detached and has no commits, so it looks finished — but the plan in it is with a
+sub-agent or a person, and the hub removes it itself once that is answered.
+
 **Leave out any worktree a queued task is waiting in** (`adj task list --worktree <path>
 --json` has a record whose `status` is `queued`). A worktree prepared for a worker that was
 turned away for a slot has no commits and no session, so it looks removable — but the queue
@@ -985,9 +990,13 @@ when it finishes.
      fixed it
 
    If there is none, do nothing.
-2. Run that record as "A request from the dashboard" (including the `adj task show` check). If
-   `worktree` is written and that worktree **still exists**, only Step 3. If not written, or gone (not
-   in `git worktree list`), start again from creating the worktree in "4. Start the worker". If `note`
+2. Run that record as "A request from the dashboard" (including the `adj task show` check). **A
+   record whose `executor` is `jules` never gets `adjutant work`**: run "5. Hand it to Jules" for it
+   (reusing its worktree if it still exists, otherwise creating it detached in "3. Create the
+   worktree"). It takes no slot, so it does not count as the one taken here; go back to 1 for the
+   next. Otherwise, if `worktree` is written and that worktree **still exists**, only Step 3. If not
+   written, or gone (not in `git worktree list`), start again from creating the worktree in "4. Start
+   the worker". If `note`
    says "resume with --resume", start it with `adjutant work --resume` (starting it with a plain
    `adjutant work` loses the saved conversation).
 3. If `adjutant work` returns 3 again, the slots are still full. Leave the record as it is, and
@@ -1045,7 +1054,8 @@ machine rows that come with the agent's report, and use it in "2. Claim it".
 
 ## Starting a task
 
-These four moves are all the hub does for one task. It does not touch the implementation.
+These moves are all the hub does for one task. It does not touch the implementation. A task
+handed to Jules takes "5. Hand it to Jules" in place of "4. Start the worker".
 
 ### 1. Pick the task
 
@@ -1270,12 +1280,25 @@ hook is where per-repo setup a fresh worktree cannot inherit belongs: gitignored
 its own Gradle daemon registry so one `--stop` does not kill the other worktrees' builds.
 adjutant itself knows nothing about any build tool.
 
+**For a task handed to Jules, create it detached, and do not run `postCreate`.** Nothing is committed
+there — the plan is written into its `.claude/`, and everything after the plan is Jules's — so it
+needs no branch; and it is only read, so it needs none of the setup a build does. The location, the
+name and the branching point are decided as above, the same as for any task:
+
+```bash
+git -C '{main}' worktree add --detach '{path}' '{base}'
+```
+
+A branch and `postCreate` come only if the task is switched to a worker ("Switching to a worker" in
+"5. Hand it to Jules").
+
 Then, whichever the user chose:
 
 - **Worktree only** — run `adj ide --worktree <worktree>`, print the path, and stop here. **Do not
   go into the worktree.**
 - **Leave it to a worker** — on to "4. Start the worker". Do not touch this tab's name (it only
   affects your own tab and never reaches the worker's). The worker names itself.
+- **The implementer is `jules`** — on to "5. Hand it to Jules". No worker is started.
 
 ### 4. Start the worker
 
@@ -1319,12 +1342,9 @@ after `mkdir -p {worktree}/.claude`.
   `never`) as it is. The merge of `defaults` and `repos.<repo>` is already done, so do not resolve it
   again yourself. After opening the PR, the worker decides by this line whether to ask Copilot for a
   review, and whether to ask the user first.
-- **Write the Implementer line too.** `worker` or `jules`. For a request from the dashboard, the
-  leading value of the `## Implementer` line when there is one, and `worker` when there is none (the
-  board writes the line only for `jules`; "A request from the dashboard"). For one asked in the tab,
-  `jules` only when the user said to have Jules implement it; otherwise `worker`. The worker decides
-  by this line whether to implement the approved plan itself or hand it to Jules, and the task record
-  carries the same value (`--executor` below).
+- **Only a task its worker implements comes here.** Whether the implementer is `worker` or `jules`
+  is decided as "5. Hand it to Jules" says; a `jules` task starts no worker and writes no brief, so
+  the brief has no Implementer line. The task record carries the implementer (`--executor` below).
 - **For "investigation only", no PR and no issue updates.** Have the results given to the user at
   that tab (the brief's "Report to" says so). Have them reported to you here and the report is
   doubled.
@@ -1368,10 +1388,10 @@ after `mkdir -p {worktree}/.claude`.
   `pr`, and the board shows an investigation-only task as "one that goes as far as a PR".
   `--stop-at` is the same value as the brief's Stop at line (`plan` / `diff` / `all`). Left out it is
   `plan`.
-  `--executor` is the same value as the brief's Implementer line (`worker` / `jules`). Left out it
-  is `worker`, and a task handed to Jules is recorded as the worker's: the worker then finds the brief
-  and the card disagreeing and has to fix the record before it can hand the task over. **The two must
-  match.**
+  `--executor` is the implementer (`worker` / `jules`): `worker` on this route, `jules` when "5. Hand
+  it to Jules" creates the record. Left out it is `worker`, and a task handed to Jules is recorded as
+  the worker's: the board then waits on a worker that is never started, and `adj jules start` refuses
+  the task. **The record and the route taken must match.**
 
   **So that no worker is off the board.** Wherever it came in, every running worker has a card on the
   board. Without a record, a worker cannot tie the gates it opens to a card, and cannot move it to
@@ -1481,6 +1501,102 @@ adjutant work --worktree '{worktree}' --task {task_id}
 **Step 4** — tell the user the worker is running and which tab it is, then **go back to waiting**.
 The hub's job for this task is over. Do not poll the worker: the tab name and the proctor row show
 progress, and reading the screen is a waste of context.
+
+### 5. Hand it to Jules
+
+In place of "4. Start the worker", when the implementer is `jules`. **The implementer** is the
+record's `executor` when a record already exists — a task taken from the queue or confirmed through a
+dispatch gate is started from its record, with no request message in hand. Otherwise, for a request
+from the dashboard, the leading value of the `## Implementer` line when there is one, and `worker`
+when there is none (the board writes the line only for `jules`); for one asked in the tab, `jules`
+only when the user said to have Jules implement it, and `worker` otherwise.
+
+Why no worker: everything after the plan is Jules's. A worker session would start (a tab, the whole
+procedure, its own investigation) only to write a plan, and then ask for a worktree nobody wrote to
+be removed. Instead the hub has a **sub-agent** write the plan, and keeps the worktree (created
+detached in "3. Create the worktree") only as a place to read from.
+
+A sub-agent cannot ask a person anything. A task that needs a decision partway through planning is not
+a good fit for Jules in the first place; it goes to a worker ("Switching to a worker" below).
+
+**Step 1 — the record.** For a request from the dashboard, the id on the `## task` line. Otherwise
+create it with the `adj task add` command in Step 2 of "4. Start the worker" (the summary file as
+written there), with `--executor jules`, `--done-when pr` and `--stop-at plan` — nothing after the
+plan waits here, and Jules opens the PR. Then mark it in progress with the worktree and the base:
+
+```bash
+adj task update --id {task_id} --status dispatched --worktree '{worktree}' --base '{base}' --note ''
+```
+
+`{base}` is the branching point decided in "3. Create the worktree". It goes on the record because the
+plan is answered on a later wake, perhaps after the hub restarted, and `adj jules start` reads it from
+there. `adj jules start` also refuses a task that is not `dispatched`, and the card shows it in
+progress while the plan is written. **No worker slot is taken** — `maxWorkers` counts worker sessions, and none is
+started — so there is no waiting for a slot on this route.
+
+**Step 2 — the planning sub-agent.** Run `mkdir -p '{worktree}/.claude'`, then start a sub-agent with
+"Appendix — Brief for the Jules planning agent", **in the background**, and go back to waiting. Its
+completion arrives as a notification. **Keep its agent id**: a `changes` answer goes back to the same
+one. It writes two files, and reports only their paths and one line, so the plan does not pile up in
+this transcript:
+
+- `{worktree}/.claude/jules-plan.md` — the design document Jules gets, as it is.
+- `{worktree}/.claude/jules-gate.json` — the plan gate's payload, without the body.
+
+**Step 3 — open the plan gate** when it reports back. **Do not read the plan yourself**; the board
+shows it:
+
+```bash
+adj gate open --file '{worktree}/.claude/jules-gate.json' --body-file '{worktree}/.claude/jules-plan.md' --json
+```
+
+`--body-file` puts the plan file into the gate as it is, so what the person approves is exactly what
+Jules gets. The payload carries `"openedBy": "hub"` and the task, so the answer arrives in your inbox
+as `kind: gate` ("The answer to a gate the hub opened"), not in the worktree's outbox. The gate and the
+card keep the worktree, so nothing else on the board changes.
+
+If the `server` that comes back is `down`, there is no board: close the gate at once (`adj gate close
+--id {gate id}`), and ask with `AskUserQuestion` only when a person is at this tab, pointing at the
+plan file; the answer is handled as the gate's would be. When nobody is there, write "Plan waiting for
+approval: {worktree}/.claude/jules-plan.md" in `--note` and leave it.
+
+**Step 4** — tell the user in one line that the plan is on the board, and go back to waiting.
+
+#### When a plan stopped
+
+A Jules task whose record is `dispatched` with no `julesSession`, and with no gate open for it (`task`
+in `adj gate list --json`), is between a planning sub-agent and a person with nobody moving it: the hub
+restarted while the sub-agent ran, the gate was closed without an answer, or `adj jules start` failed.
+The board shows 「計画が止まっています」 on its card after `stuckAfterMinutes`. When a person points at
+one, or asks to try a failed hand-over again:
+
+- If the record's `worktree` is gone, create it again detached ("3. Create the worktree") and start
+  from Step 2.
+- If `{worktree}/.claude/jules-gate.json` and `jules-plan.md` are there, open the gate again (Step 3);
+  the approval that comes back runs the hand-over again.
+- Otherwise start the planning sub-agent again (Step 2).
+
+#### Switching to a worker
+
+When the answer asks for a worker to implement it (the plan shows it needs a local check, or is too
+large for Jules), the approved plan is kept and only the implementer changes. The worker implements
+from that plan instead of planning again:
+
+1. `git -C '{worktree}' switch -c '{branch}'` — the branch name from the conventions in "3. Create
+   the worktree" (decide it again the same way; the same conventions give the same name).
+2. Run the config's `postCreate`, as "3. Create the worktree" says.
+3. `adj task update --id {task_id} --executor worker`.
+4. Write the brief as Step 2 of "4. Start the worker" says. In its Handover note, **after `approve`**
+   write "The plan was approved on the board: `.claude/jules-plan.md`. Implement from it; do not plan
+   again."; **after `changes`** the plan was not approved, so write "A plan written for Jules is at
+   `.claude/jules-plan.md`; it was not approved. Plan from it, and have the plan approved as usual."
+   Then the person's comment, if any. Delete `{worktree}/.claude/jules-gate.json` (only the gate
+   needed it). In a repository where `.claude/` is not gitignored, move the plan to where the brief
+   goes (outside the worktree) and name that path instead, or it rides along in the worker's diff.
+5. Step 3 of "4. Start the worker" (`adjutant work`, including waiting for a slot on exit code 3).
+
+If a Jules PR later needs a fix by hand, a worktree is created again from the PR's branch ("When asked
+to work on an existing worktree").
 
 ---
 
@@ -1700,7 +1816,7 @@ The brief's "Done when" has a default ("up to a PR" when not given), but that is
 far to go once starting is decided**, **not a default for whether to start**. Mixing the two up grows a
 tab and a worktree for a report that only asked for filing.
 
-Run the four moves of "Starting a task" above as they are. **Do not copy them here.**
+Run the moves of "Starting a task" above as they are. **Do not copy them here.**
 
 - **Skip 1. Pick the task.** What is started is the issue just filed.
 - **2. Claim it** — assignment and In Progress. For `github-project`, the new issue's item id is not at
@@ -1710,7 +1826,7 @@ Run the four moves of "Starting a task" above as they are. **Do not copy them he
   `jira` has no item id. Assign and transition directly with the key of the ticket filed.
 - **3. Create the worktree** — make the key by passing the repo it was filed into through
   `issueKeys`. For `jira`, the issue key returned at filing is the key as it is.
-- **4. Start the worker** — the brief's "Done when" is the scope the requester gave; if none, "up to a
+- **4. Start the worker** (or **5. Hand it to Jules**, when the requester asked for Jules) — the brief's "Done when" is the scope the requester gave; if none, "up to a
   PR". The brief's "Task" is the issue just filed, and **its title is the one used for filing** (Step 1
   of "4. Start the worker" saying "the title is held by '1. Pick the task'" is about that route).
   **"Parent task" is the report's "Parent task" as it is, or, if that is `-`, the Found in task's**
@@ -1745,8 +1861,9 @@ worker's `report`; only the two ends differ.**
   branching point, the parent task, the worktree name and whether to start without asking were asked
   by the form before it was handed over. The body's `##` lines are those answers themselves.
   If there is a `## Handover note`, copy it into the "Handover note" line of Step 2's brief
-  (`{worktree}/.claude/task-brief.md`). If there is a `## Implementer` line (`jules`), set the brief's
-  "Implementer" line to `jules`. If not, `worker`.
+  (`{worktree}/.claude/task-brief.md`). If the record's `executor` is `jules` (the body's
+  `## Implementer` line says so too), take "5. Hand it to Jules" in place of "4. Start the worker": no
+  brief is written, and the handover note goes into the planning sub-agent's brief instead.
   **There is nobody to ask back either** — the requester is a browser, not a session, and
   `adjutant_tell` has no address. If something is missing, write it in Step 5's `--note` and leave it.
 - **If `## Start` says "ask before starting", open a `dispatch` gate before starting the worker.** The
@@ -1808,14 +1925,15 @@ worker's `report`; only the two ends differ.**
 
 ### The answer to a gate the hub opened (`kind: gate`)
 
-When a person answers a gate the hub opened (`dispatch` / `relay`) on the board, the answer arrives in
+When a person answers a gate the hub opened (`dispatch` / `relay`, or a `plan` for Jules) on the board, the answer arrives in
 the hub's inbox. Unlike a worker's gate it does not go to an outbox (the hub does not read an outbox).
 `subject` is `[gate {id}] {decision}`, and the body has the decision and comment and **a `## task` line
 saying which task it is about**. The gate is put away once answered, so it cannot be fetched with
 `adj gate show` — the body's `## task` is the only clue.
 
 **If the parentheses on the `## gate` line say `relay`, go to "The answer about findings to pass to
-Jules" below.** From here on it is about `dispatch`.
+Jules" below; if they say `plan`, go to "The answer to a plan for Jules".** From here on it is about
+`dispatch`.
 
 **First read `adj task show --id {task_id}`.** If `status` is not `queued`, do nothing (a person moved
 it on the board meanwhile, or it was asked in the tab and already started). If `queued`, split by the
@@ -1833,6 +1951,60 @@ decision:
   '{main}/.claude/task-note-{task_id}.md'`) (it goes back to the person's court. Left queued, the same
   gate would be opened again every time a slot frees up).
 - **`reject`** — `adj task update --id {task_id} --status cancelled`.
+- Ack when done.
+
+#### The answer to a plan for Jules
+
+The answer to the gate "5. Hand it to Jules" opened. **First read `adj task show --id {task_id}`.** If
+`status` is not `dispatched`, or `julesSession` is already written, do nothing (a person moved it on the
+board meanwhile, or it was handed over already). `{worktree}` is the record's `worktree`. Then, by the
+decision:
+
+- **`approve`** — if the comment asks for a worker to implement it, go to "Switching to a worker".
+  Otherwise:
+  1. Hand it to Jules with the approved plan:
+
+     ```bash
+     adj jules start --id {task_id} --prompt-file '{worktree}/.claude/jules-plan.md'
+     ```
+
+     No `--base`: it reads the base Step 1 wrote onto the record, and turns `origin/release/1.2`
+     into the `release/1.2` Jules wants. If it says the base is missing (a record from before Step 1
+     wrote it), write it with `adj task update --id {task_id} --base '{base}'` — the worktree's
+     branching point, as "3. Create the worktree" decides it — and run it again.
+     **If it fails otherwise, tell the user why and stop**, keeping the worktree and the plan; write
+     "Could not hand to Jules: {reason}" in `--note` through a file ("Keep task text off the shell").
+     Trying again is "When a plan stopped". Do not start a worker in its place — who implements was
+     decided when the task was created.
+     If told there is no `julesKey`, or no item in the keychain, have the user register it as the
+     message says. **Do not ask for the key or have it pasted into the conversation.**
+  2. **Remove the worktree yourself.** The hub created it and nobody wrote to it, so no `kind: done`
+     comes and nobody is asked. First delete the two plan files (`rm -f
+     '{worktree}/.claude/jules-plan.md' '{worktree}/.claude/jules-gate.json'`; Jules has the plan, and
+     `adj jules show` returns it) — in a repository where `.claude/` is not gitignored they would
+     otherwise count as changes. Then check: `git -C '{worktree}' status --porcelain` is empty, and
+     `git -C '{worktree}' symbolic-ref -q HEAD` fails (still detached, so there is no branch to keep).
+     If either trips, do not remove it; tell the user what tripped. Otherwise:
+
+     ```bash
+     git -C '{main}' worktree remove '{worktree}' && adj task update --id {task_id} --worktree ''
+     ```
+
+     Then the config's `onWorktreeRemove`, as in "Cleaning up one worktree".
+  3. Tell the user the session's URL, and that the board moves the card to in review once Jules opens
+     a PR.
+- **`changes`** — pass the comment to **the same sub-agent** to revise the plan (in Claude Code,
+  `SendMessage` to the id kept in Step 2), telling it to rewrite both files and add one to `rounds` in
+  the gate's payload. Where it cannot be continued (the hub was restarted, or its agent has no way to
+  continue one), start a new one with the Appendix brief, adding "a plan is already written at
+  `{worktree}/.claude/jules-plan.md`; revise it as this comment says" and the comment. Then open the
+  gate again as Step 3 of "5. Hand it to Jules" says. If the comment asks for a worker rather than a
+  revision, go to "Switching to a worker" instead.
+- **`reject`** — remove the worktree and the plan with it, in the same way as step 2 of `approve`
+  (delete the plan files, check, `git worktree remove`, then `onWorktreeRemove`), then put the task
+  back in the person's court:
+  `adj task update --id {task_id} --status backlog --worktree '' --note 'Plan rejected'`. Moved back
+  to the queue it would be planned again the same way.
 - Ack when done.
 
 ### Jules opened a PR (`kind: jules-pr`)
@@ -1878,8 +2050,8 @@ Do not change the title. The report is the updated body as it is.
 
 - Glance at the body that comes back, checking only that what is to be kept has not disappeared. If it
   has, send it back to the same sub-agent.
-- Ack when done. **Do not clean up the worktree here** — the worker sent `kind: done` when it handed
-  over to Jules, and that took care of it.
+- Ack when done. **There is no worktree to clean up here** — the hub removed it right after `adj
+  jules start` ("The answer to a plan for Jules").
 
 ### Jules's PR got a review (`kind: jules-review`)
 
@@ -2193,6 +2365,7 @@ as standard input to an option that accepts `-`. Remove the file once read:
 | A note (why it could not be started, a gate's comment) | `adj task update --note -` | `{main}/.claude/task-note-{task_id}.md` |
 | A dispatch gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
 | A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
+| A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
 | Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
 | The hub's tab title | `adjutant title --title -` | `{main}/.claude/tab-title-{hub name}.txt` |
 
@@ -2359,6 +2532,84 @@ a key nor a branch can be made.
 If there are no subtasks at all, write "none" and return. **Do not work out how to split it instead.**
 ```
 
+## Appendix — Brief for the Jules planning agent
+
+Handed to the sub-agent in Step 2 of "5. Hand it to Jules". Fill in the placeholders. `{task_id}`,
+`{task_title}`, `{tracker}`, `{task_url}`, `{parent_task}`, `{base_branch}` and `{instruction}` are
+what the worker's brief would carry ("Appendix — The worker's brief"); `{verify}` is the config's
+`verify`. **`{task_record}` is the record's id** from Step 1 — not the tracker's key in `{task_id}`.
+The hub reads the task back out of the gate's answer by that id, so a key there leaves the approval
+with no task to hand over.
+
+**What Jules gets is a design document, not a summary of a plan.** Jules's model is weaker than the
+one writing the plan. The more judgement it is left, the more it misses, so every decision is made
+here and Jules does exactly what is written. That is why the brief asks for so much, and why the plan
+is not for people to read at length (the gate's frames are).
+
+```
+Write the implementation plan for one task that Jules (an external coding agent) will implement.
+You only plan. Do not implement, commit, push, or open or comment on any issue or PR.
+
+- Task: {task_id} "{task_title}" ({tracker})
+  {task_url}
+- Parent task: {parent_task}  (read its body and comments too if not `-`; work out its tracker and
+  repository from its own URL)
+- Worktree (read only): {worktree}  — detached at {base_branch}. Read the code here.
+- Handover note: {instruction}
+- Verify commands: {verify}
+
+Read the task's body and comments first (`github` / `github-project`: `gh issue view <n> -R <the
+repo of the URL> --json title,body,comments`; `jira` / `linear`: that tracker's read tool). Then read
+the code in the worktree. Do not change any file in it except the two below, and do not change files
+through the shell either (redirects and the like).
+
+Write two files, with a file-writing tool (not a heredoc: they carry text taken from the task):
+
+1. `{worktree}/.claude/jules-plan.md` — the design document, in English (text that goes into the
+   repository's comments or documents may be in that repository's language). It is given to Jules
+   as it is, so it contains:
+   - **Goal** — what must work for this to be done. The acceptance criteria as they are.
+   - **Files** — every file to change, by path. For each, what, where and how to change, down to
+     function names, type names and where a similar existing implementation lives. Where it could go
+     astray, write out the shape of the code (signatures, branches, the order of calls). For new
+     files, where they go and the skeleton of their content.
+   - **Do not** — files not to touch, dependencies not to add, public APIs not to change,
+     refactorings not to do. Leave it out and Jules fixes things "while it is there".
+   - **Conventions** — the repository's conventions that bear on this change (naming, how errors
+     are returned, how comments are written, where and how tests are written). If there is an
+     AGENTS.md, point to it.
+   - **Tests** — the tests to add, by name and content, and the verify commands above.
+   - **Commit / PR** — the commit message convention (match the repository's recent commits). For
+     the PR body, only "summarise the change briefly"; it is rewritten later.
+2. `{worktree}/.claude/jules-gate.json` — the plan gate's payload, in the person's language, without
+   a body (the plan file becomes the body):
+
+   {
+     "kind": "plan",
+     "openedBy": "hub",
+     "task": "{task_record}",
+     "worktree": "{worktree}",
+     "title": "Design review: <what the task is, in one line>",
+     "problem": "<what is wrong now, one to three sentences>",
+     "goal": "<what things look like when this is done, one to three sentences>",
+     "facts": ["<files to touch>", "base {base_branch}", "implementation goes to Jules"],
+     "focus": "<the one or two points a person should decide or check; enough to answer from alone>",
+     "decided": "<what is settled, as a short list>",
+     "unsure": "<where your confidence ran out; leave the key out if nowhere>",
+     "rounds": 0
+   }
+
+   If the task does not fit Jules — it needs a check only a person can make on a real device or
+   screen, it is too large to specify completely, or a decision is needed before it can be planned —
+   say so at the top of `unsure`, and still write the best plan you can.
+
+Report only this, nothing else: the path of the plan file, and one line (what the plan does, or why it
+does not fit Jules).
+
+If you are sent a comment afterwards, revise both files as it says, add one to `rounds`, and report
+the same way.
+```
+
 ## Appendix — The worker's brief
 
 Written out to `{worktree}/.claude/task-brief.md` in "4. Start the worker". Fill in the placeholders.
@@ -2393,9 +2644,6 @@ You are the one working in this worktree. You are not the hub (the side that han
   otherwise the id of the record made in Step 2. Put it in `task` when opening a gate and it is tied to
   the card on the board. Once you open a PR, move the card on with
   `adj task update --id {task_record} --status pr --pr <URL>`)
-- Implementer: {worker / jules}
-  (if `jules`, once the plan is approved, do not implement it yourself; hand it to Jules with
-  "Handing to Jules" in the procedure and stop. If `worker`, implement it yourself as usual)
 - Done when: {up to a PR / up to handing over for verification / investigation only (report and stop)}
   (what the hub was asked by the user, as it is. Unless it is "up to a PR", do not open a PR. For
   "investigation only", do not implement, commit, or file or update an issue)

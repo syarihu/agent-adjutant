@@ -274,6 +274,7 @@ fn tool_definitions() -> Value {
                     "title": { "type": "string", "description": "What this is, in one line. Most of what the board shows." },
                     "task": { "type": "string", "description": "The task record id from the brief, when there is one." },
                     "worktree": { "type": "string", "description": "Where the answer goes. Default: the worktree `cwd` is in." },
+                    "openedBy": { "type": "string", "enum": ["worker", "hub"], "description": "For the hub only; a worker leaves it out. plan only: `hub` when the hub opens the plan of a task handed to Jules, so the answer reaches the hub's inbox rather than the worktree's outbox. Needs task. Default: worker." },
                     "wait": { "type": "boolean", "description": "false to keep a diff or verify gate as a record instead of waiting on it. Default: true." },
                     "facts": { "type": "array", "items": { "type": "string" }, "description": "True whatever is decided: rounds run, tests passed, lines changed." },
                     "focus": { "type": "string", "description": "What the person has to decide. Enough to answer from alone." },
