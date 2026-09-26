@@ -23,7 +23,15 @@ pub struct StartArgs<'a> {
 
 pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
-    let task = task::load(&tasks::dir(&ctx), args.id)?;
+    // Read before anything is started: a session that exists with nobody recorded as its
+    // starter would have its review comments passed on in the wrong name, and a lookup that
+    // hangs after the session is created would leave it running unrecorded.
+    let by = github_login(&ctx.repo.main);
+    // Held from the checks to the record, across the call that creates the session. Two starts
+    // for one task at once would otherwise both find it without a session and both create one,
+    // and the record would keep whichever wrote last.
+    let lock = tasks::lock_task(&ctx, args.id)?;
+    let mut task = task::load(&tasks::dir(&ctx), args.id)?;
     // Handed over by the worker of a task in progress, and by nobody else. The board follows a
     // session only while its task is in progress or in review, so one started for a task still
     // in the backlog or the queue would run with nothing watching it.
@@ -69,21 +77,21 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
         &task.title,
         &prompt,
     )?;
-    // Written as soon as the session exists. If this fails the session is still running, so
-    // the error says which one it is rather than leaving it to be found on jules.google.com.
-    let (task, _) = tasks::update(
-        &ctx,
-        &task.id,
-        // Who started it, as far as `gh` can say. Jules acts on comments by that person
-        // only, so a comment passed on in anybody else's name would be posted and ignored.
-        &json!({ "julesSession": session.id, "julesBy": github_login(&ctx.repo.main) }),
-    )
-    .map_err(|e| {
+    // Written as soon as the session exists, under the lock taken above. If this fails the
+    // session is still running, so the error says which one it is rather than leaving it to be
+    // found on jules.google.com.
+    task.jules_session = Some(session.id.clone());
+    // Who started it, as far as `gh` can say. Jules acts on comments by that person only, so a
+    // comment passed on in anybody else's name would be posted and ignored.
+    task.jules_by = by;
+    task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
+    task::save(&tasks::dir(&ctx), &task).map_err(|e| {
         format!(
             "Jules started session {} but the task record could not be updated: {e}",
             session.id
         )
     })?;
+    drop(lock);
     if args.json {
         println!("{}", json!({ "task": task.id, "session": session }));
         return Ok(());
@@ -164,18 +172,44 @@ fn branch_on_github(main: &str, nwo: &str, base: &str) -> String {
 }
 
 /// The GitHub account `gh` is signed in as, or `None` when it cannot say.
+///
+/// Given up on after `LOGIN_TIMEOUT`: `gh` waiting on a login prompt or a network that has
+/// gone should not hold up a command that has more to do.
 pub fn github_login(main: &str) -> Option<String> {
-    let out = std::process::Command::new("gh")
+    let mut child = std::process::Command::new("gh")
         .args(["api", "user", "--jq", ".login"])
         .current_dir(main)
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .output()
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + LOGIN_TIMEOUT;
+    // Polled rather than waited on: what `gh` prints here is one short line, far short of
+    // filling a pipe, so it can sit unread until the process is done.
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let out = child
+        .wait_with_output()
         .ok()
         .filter(|o| o.status.success())?;
     let login = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!login.is_empty()).then_some(login)
 }
+
+/// How long `github_login` waits for `gh`.
+const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The prompt, from a file or from stdin. The design is dozens of lines and does not belong
 /// on a command line, where a quote in it would end the argument early.

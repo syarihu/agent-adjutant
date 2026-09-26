@@ -34,7 +34,7 @@ fn stub_curl(fixture: &Fixture) -> (String, PathBuf, PathBuf) {
              cat > {stdin}\n\
              for last; do :; done\n\
              case \"$*\" in\n\
-             *'-X POST'*) printf '%s\\n200' '{{\"id\":\"42\",\"url\":\"https://jules.google.com/session/42\"}}' ;;\n\
+             *'-X POST'*) sleep 1; printf '%s\\n200' '{{\"id\":\"42\",\"url\":\"https://jules.google.com/session/42\"}}' ;;\n\
              *) case \"$last\" in\n\
                 *sessions/42) printf '%s\\n200' '{{\"id\":\"42\",\"state\":\"COMPLETED\",\"outputs\":[{{\"pullRequest\":{{\"url\":\"https://github.com/acme/widget/pull/7\"}}}}]}}' ;;\n\
                 *) printf '{{\"error\":{{\"message\":\"no such session, you sent %s\"}}}}\\n404' \"$(cat {stdin})\" ;;\n\
@@ -468,4 +468,27 @@ fn a_task_its_worker_implements_is_not_handed_to_jules() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("implemented by its worker"));
     assert!(!args.exists(), "the API was called anyway");
+}
+
+#[test]
+fn two_starts_for_one_task_at_once_create_one_session() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let id = add_task(&fixture, &["--base", "main"]);
+    let prompt = write_prompt(&fixture);
+    let (path, _, _) = stub_curl(&fixture);
+    let spawn = || {
+        fixture
+            .command(["jules", "start", "--id", &id, "--prompt-file", &prompt])
+            .env("PATH", &path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let (a, b) = (spawn(), spawn());
+    let outs = [a.wait_with_output().unwrap(), b.wait_with_output().unwrap()];
+    let ok = outs.iter().filter(|o| o.status.success()).count();
+    assert_eq!(ok, 1, "exactly one start should have created a session");
+    let refused = outs.iter().find(|o| !o.status.success()).unwrap();
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("already with Jules"));
 }
