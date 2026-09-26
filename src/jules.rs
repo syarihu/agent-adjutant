@@ -42,6 +42,10 @@ pub struct Session {
     /// The pull request the session opened, once it has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr: Option<String>,
+    /// What the session was started with: the design the worker wrote. The worktree it was
+    /// written in is gone by the time the PR is open, and this is where it is kept after that.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 /// The source name the API knows a GitHub repository by.
@@ -89,6 +93,7 @@ pub fn parse_session(value: &Value) -> Result<Session, String> {
         url: text("url"),
         title: text("title"),
         pr,
+        prompt: text("prompt"),
     })
 }
 

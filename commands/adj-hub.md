@@ -1573,6 +1573,7 @@ worker 由来の依頼で人がこのタブに居ないなら、起票せずに 
 - **Step 1（読む。足りなければ聞き返す）は飛ばす。** 種類・完了条件・止める所・分岐元・親タスク・
   worktree 名・着手の可否は、フォームが渡す前に聞いてある。本文の `##` 行がその答えそのもの。
   `## 申し送り` があれば、Step 2 の指示書（`{worktree}/.claude/task-brief.md`）の「申し送り」行に写す。
+  `## 実装` 行（`jules`）があれば、指示書の「実装」行を `jules` にする。無ければ `worker`。
   **聞き返す先も無い** — 依頼元はセッションではなくブラウザで、`adjutant_tell` の宛先が無い。
   足りないものがあったら Step 5 の `--note` に書いて残す。
 - **`## 着手` が「着手前に確認がほしい」なら、worker を立てる前に `dispatch` の gate を開く。**
@@ -1648,6 +1649,44 @@ hub が開いた gate（`dispatch`）に人が板で答えると、答えは hub
   開き直すことになる）。
 - **`reject`** — `adj task update --id {task_id} --status cancelled`。
 - 済んだら ack する。
+
+### Jules が PR を開いた（`kind: jules-pr`）
+
+Jules に渡したタスクの PR ができたときに、板が送ってくる。本文に `## task` / `## pr` /
+`## session` がある。板はもう PR をレコードに書き、カードをレビュー中に移してあるので、
+hub がやるのは **PR の説明の書き直しだけ**。Jules はリポジトリの PR テンプレートや書き方の
+規約を気にせずに書くので、人が読む前に整える。
+
+**自分では書かない。サブエージェントに渡す**（`Agent` ツール。軽いモデルを指定する —
+Claude Code なら `model: "haiku"` か `"sonnet"`。材料を読んで文章を整えるだけで、強いモデルは
+要らない）。hub の文脈に差分を入れないため。渡す指示:
+
+```
+{pr} の説明（本文）を書き直してほしい。コードは触らない。
+
+材料:
+- `adj jules show --session {session} --json` の `prompt` — 承認済みの設計。何を・なぜ変えたかは
+  ここから取る。全文は写さない（Jules 向けの細かい指示で、人が読むものではない）。
+- `gh pr view {pr} --json title,body,headRefName` — Jules が書いた元の本文。
+- `gh pr diff {pr} --name-only` — 変更したファイル。差分の中身は読まなくてよい。
+- リポジトリの PR テンプレート（`.github/pull_request_template.md` などがあれば）と、
+  {skills.prStyle があれば: その skill} の書き方に合わせる。
+
+残すもの（本文の中にあれば、そのまま一字も変えずに残す）:
+- `<!-- This is an auto-generated comment: release notes by coderabbit.ai -->` から
+  `<!-- end of auto-generated comment: release notes by coderabbit.ai -->` までのブロック
+- `PR created automatically by Jules for task` で始まる行（Jules の session へのリンク）
+
+書き終えたら本文をファイルに書き、`gh pr edit {pr} --body-file <file>` で更新する。
+タイトルは変えない。報告は更新後の本文そのまま。
+```
+
+`{skills.prStyle}` は `adjutant_config` の値。空なら「その skill」の部分を落とす。
+
+- 返ってきた本文をざっと見て、残すものが消えていないかだけ確かめる。消えていたら同じ
+  サブエージェントに差し戻す。
+- 済んだら ack する。**worktree の片付けはここではしない** — worker は Jules に渡した時点で
+  `kind: done` を送ってきていて、そちらで済んでいる。
 
 ### ユーザーに聞く必要が出たとき
 
@@ -2043,6 +2082,9 @@ worker はそれを引きに行って空振りする。**ここで起票はし�
   （板のカードの id なのだ。ダッシュボードから来た依頼なら `## task` 行の id、それ以外は Step 2 で
   作ったレコードの id なのだ。gate を開くときに `task` に入れると、板の上でカードと結びつくのだ。
   PR を出したら `adj task update --id {task_record} --status pr --pr <URL>` でカードを進めるのだ）
+- 実装: {worker / jules}
+  （`jules` なら、計画の承認を取ったあと自分では実装せず、手順書の「Jules に渡す」で
+  Jules に渡して終わるのだ。`worker` なら今までどおり自分で実装するのだ）
 - 完了条件: {PR作成まで / 動作確認待ちで引き渡しまで / 調査だけ（報告して終わり）}
   （hub がユーザーから受けた依頼をそのまま書くのだ。「PR作成まで」でなければ PR は作らないのだ。
   「調査だけ」なら実装もコミットも Issue の起票・更新もしないのだ）

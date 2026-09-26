@@ -2453,6 +2453,53 @@ mod tests {
         );
     }
 
+    /// A task handed to Jules leaves the worker at the plan gate. Reading on into §2 would
+    /// have the worker implement it as well, and Jules would open a second PR for the same
+    /// change; so the plan step has to send it away, and the appendix it sends it to has to
+    /// hand over rather than implement.
+    #[test]
+    fn a_jules_task_is_handed_over_after_the_plan_and_not_implemented() {
+        let worker = find("adj-worker").unwrap().raw_content;
+        let flow =
+            |text: String| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+        let plan = flow(section(worker, "## 1. Plan"));
+        assert!(
+            plan.contains("承認されたあと§2以降に進まない")
+                && plan.contains("「Appendix—Julesに渡す」"),
+            "the plan step does not send a Jules task to the hand-over: {plan}"
+        );
+        let hand_over = flow(section(worker, "## Appendix — Jules に渡す"));
+        assert!(
+            hand_over.contains("adjjulesstart--id{task_record}"),
+            "{hand_over}"
+        );
+        assert!(hand_over.contains("実装しない"), "{hand_over}");
+        // The key is typed into the keychain by the person, never into this conversation.
+        assert!(hand_over.contains("キーを聞き出さない"), "{hand_over}");
+    }
+
+    /// The hub rewrites the description of a PR Jules opened, and nothing a reviewer bot or
+    /// Jules itself put there may be lost doing it: the CodeRabbit summary is regenerated only
+    /// on the next push, and the Jules line is the one link back to the session.
+    #[test]
+    fn the_hub_rewrites_a_jules_pr_through_a_subagent_and_keeps_what_others_wrote() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        let rewrite = step(hub, "### Jules が PR を開いた（`kind: jules-pr`）");
+        assert!(rewrite.contains("サブエージェントに渡す"), "{rewrite}");
+        assert!(
+            rewrite.contains("release notes by coderabbit.ai"),
+            "{rewrite}"
+        );
+        assert!(
+            rewrite.contains("PR created automatically by Jules for task"),
+            "{rewrite}"
+        );
+        assert!(
+            rewrite.contains("adj jules show --session {session} --json"),
+            "{rewrite}"
+        );
+    }
+
     #[test]
     fn procedures_are_tailored_for_agy() {
         for prompt in &PROMPTS {

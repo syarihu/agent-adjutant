@@ -545,6 +545,16 @@ request, the board writes it onto the task, moves the card to review, and sends 
 every round of comments it answers, and the record already has its PR by then. The new-task
 form's 実装 field picks who implements.
 
+The procedures carry it from there. The brief tells the worker who implements; for Jules,
+`adj-worker` has it write a design for Jules once the plan is approved — every file, what
+changes in it, what must not be touched, the tests — rather than a summary, because the model
+on the other end needs the decisions made for it. It runs `adj jules start` with that file and
+asks the hub to clean up; there is nothing in the worktree to keep. When the `jules-pr`
+message arrives, `adj-hub` hands the pull request's description to a subagent on a light model
+to rewrite in the repository's own style, from the design (`adj jules show --json` returns it
+as `prompt`), Jules' own description and the list of changed files. The CodeRabbit summary
+block and Jules' link back to the session are kept as they are.
+
 The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
 see is refused by the API.
 
