@@ -2005,6 +2005,51 @@ mod tests {
         );
     }
 
+    /// A board holds issues from several repositories, and an issue number is only unique
+    /// within one. The lookup for a freshly filed issue's board item filtered the board's item
+    /// list on the number alone, so on a multi-repo board it matched every repository's `#n`:
+    /// the status moved on an issue nobody had touched, or two ids reached `item-edit` and it
+    /// failed. The lookup has to be addressed by repo and number, and a result that is not
+    /// exactly one id has to stop the status update rather than pass through.
+    #[test]
+    fn a_filed_issue_s_board_item_is_found_by_its_repository_and_number() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        let claim = step(raw, "### 2. Claim it");
+        let flowed: String = flow(&claim);
+        // Anywhere in the file, not only this step: the same filter pasted into another route
+        // would reintroduce the bug where this guard is not looking.
+        assert!(
+            !raw.contains(".content.number =="),
+            "a board item is still found by issue number alone"
+        );
+        assert!(
+            flowed.contains("repository(owner: \"<owner>\", name: \"<name>\")")
+                && flowed.contains("issue(number: <n>)"),
+            "the lookup is not addressed by the repo the issue was filed into: {claim}"
+        );
+        assert!(
+            flowed.contains("select(.project.number == <projectNumber>)"),
+            "the lookup does not pick the item on this board: {claim}"
+        );
+        // Zero was already handled; several went through as one `--id`.
+        assert!(
+            flowed.contains("**Use the id only when exactly one comes back.**"),
+            "the step does not say what to do when the lookup is not exactly one id: {claim}"
+        );
+        assert!(
+            flowed.contains("more than one"),
+            "several matches are not treated like none: {claim}"
+        );
+
+        // The filing route points at the lookup; naming the old command there sends the reader
+        // back to the number-only filter.
+        let start = step(raw, "### Step 4 — Start it");
+        assert!(
+            !start.contains("gh project item-list"),
+            "the filing route still points at the number-only lookup: {start}"
+        );
+    }
+
     /// A procedure's text with every run of whitespace squeezed to one space.
     ///
     /// The procedures are hard-wrapped, so a phrase a guard looks for is as likely as not to
