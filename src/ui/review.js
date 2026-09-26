@@ -301,7 +301,7 @@ function decideHtml(g) {
         ${hubsGate(g)
           ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
           : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
-        <b>「ターミナルで話す」</b>は gate を開いたまま worker タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。
+        <b>「ターミナルで話す」</b>は gate を開いたまま${hubsGate(g) ? ' hub' : ' worker'} タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（${hubsGate(g) ? 'hub への配信' : 'worker への outbox 配信'}なしでアーカイブします）。
       </span>
     </div>
   </div>`;

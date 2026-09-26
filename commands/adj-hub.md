@@ -1570,8 +1570,9 @@ restarted while the sub-agent ran, the gate was closed without an answer, or `ad
 The board shows 「計画が止まっています」 on its card after `stuckAfterMinutes`. When a person points at
 one, or asks to try a failed hand-over again:
 
-- If the record's `worktree` is gone, create it again detached ("3. Create the worktree") and start
-  from Step 2.
+- If the record's `worktree` is gone, create it again detached ("3. Create the worktree"), write the
+  new path and base onto the record with the `adj task update` of Step 1 (the answer and `adj jules
+  start` read both from there), and start from Step 2.
 - If `{worktree}/.claude/jules-gate.json` and `jules-plan.md` are there, open the gate again (Step 3);
   the approval that comes back runs the hand-over again.
 - Otherwise start the planning sub-agent again (Step 2).

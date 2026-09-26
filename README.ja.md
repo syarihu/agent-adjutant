@@ -211,10 +211,10 @@ macOS 以外には組み込みの通知手段がなく、通知できないこ�
 どちらに実装させるかはタスクレコードに持たせます。`adjutant task add --executor jules`（または `task update --executor jules`）で指定します。Jules に渡すのは hub が実行する次のコマンドです。
 
 ```bash
-adj jules start --id <task> --prompt-file design.md --base main
+adj jules start --id <task> --prompt-file design.md
 ```
 
-このリポジトリを対象に、ファイルの中身を prompt として session を作ります。PR は自動で作らせ、計画は確認なしで承認させます（人がすでに承認しているため）。作った session の id はタスクの `julesSession` に書き込みます。`adj jules show --id <task>` で、session の状態、jules.google.com のページ、PR ができていればその URL を確認できます。1つのタスクを渡せるのは1回だけで、`julesSession` を消すまで2つ目の session は作れません。
+このリポジトリを対象に、ファイルの中身を prompt として session を作ります。起点のブランチはタスクに記録した base（`adj task update --base`）で、コマンド行で `--base` を渡すとそちらを使います。PR は自動で作らせ、計画は確認なしで承認させます（人がすでに承認しているため）。作った session の id はタスクの `julesSession` に書き込みます。`adj jules show --id <task>` で、session の状態、jules.google.com のページ、PR ができていればその URL を確認できます。1つのタスクを渡せるのは1回だけで、`julesSession` を消すまで2つ目の session は作れません。
 
 API キーはエージェントから読めない場所に置きます。`adj config` はすべての設定を出力し、エージェントはそれを読むので、`julesKey` にはキーそのものではなく、キーを出力するコマンドを書きます。組み込みの既定値は macOS のキーチェーン項目 `jules-api` を読みます。次のコマンドで一度だけ登録してください。キーはコマンド行に書かず、表示されるプロンプトで入力します。
 

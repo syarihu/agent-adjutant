@@ -519,12 +519,13 @@ The choice is on the record: `adjutant task add --executor jules` (or `task upda
 --executor jules`). The hand-over is one command, run by the hub:
 
 ```bash
-adj jules start --id <task> --prompt-file design.md --base main
+adj jules start --id <task> --prompt-file design.md
 ```
 
-It starts a session on this repository with the file as its prompt, asks for the pull
-request to be opened automatically and for the plan to be approved without asking (a person
-already approved it), and writes the session's id onto the task as `julesSession`. `adj
+It starts a session on this repository with the file as its prompt, from the branch the task
+records as its base (`adj task update --base`; `--base` given on the command line takes its
+place), asks for the pull request to be opened automatically and for the plan to be approved
+without asking (a person already approved it), and writes the session's id onto the task as `julesSession`. `adj
 jules show --id <task>` asks how the session is doing: its state, its page on
 jules.google.com and, once there is one, its pull request. A task is handed over once;
 starting a second session for it is refused until `julesSession` is cleared.
