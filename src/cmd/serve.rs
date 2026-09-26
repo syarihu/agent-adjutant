@@ -675,15 +675,15 @@ fn review_findings(server: &Server, path: &str) -> Result<Value, String> {
 fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
     let id = task_id_in(path, "relay").ok_or("no such task")?;
     let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
-    let chosen: Vec<String> = input
+    let chosen = input
         .get("comments")
         .and_then(Value::as_array)
         .map(|ids| {
             ids.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
+                .map(super::JulesChosen::read)
+                .collect::<Result<Vec<_>, _>>()
         })
+        .transpose()?
         .unwrap_or_default();
     super::jules_relay(
         &server.ctx,
@@ -829,6 +829,8 @@ mod tests {
             jules_session: None,
             jules_by: None,
             relayed: Vec::new(),
+            announced: Vec::new(),
+            relay_rounds: 0,
             note: None,
             instruction: None,
             gate_answered_at: None,

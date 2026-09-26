@@ -572,6 +572,18 @@ since Jules would ignore a comment from any other; a relay from another account 
 a shell it is `adj jules findings --id <task>` and `adj jules relay --id <task> --comment <id>`.
 Only inline comments are listed; what a bot writes in the body of its review is not.
 
+**The hub prepares a review for you to approve.** While the board is open, it also looks at
+the pull request of each Jules task in review. When comments by anyone but Jules and you have
+arrived and Jules is idle, it sends the hub a `jules-review` message naming them. The hub has a
+subagent read each one against the pull request's code — without checking the branch out — and
+decide whether it still applies and where the change really belongs, since a review bot can
+only comment on lines the diff touched. It opens a `relay` gate with what would go, the note
+for each, and what it left out and why. Approving it runs `adj jules relay --plan-file`, which
+posts them with each note under its finding; `changes` has the hub adjust and pass them on,
+and `reject` drops them. The board does this at most twice per pull request (`relayRounds` on
+the task); after that a reviewer and Jules are likely answering each other, and the side sheet's
+manual relay is the way.
+
 The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
 see is refused by the API.
 

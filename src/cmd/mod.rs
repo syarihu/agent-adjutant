@@ -25,9 +25,9 @@ pub use gate::{
     show as gate_show,
 };
 pub use jules::{
-    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, Watch as JulesWatch,
-    findings as jules_findings, findings_cmd as jules_findings_cmd, relay as jules_relay,
-    relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
+    Chosen as JulesChosen, ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs,
+    Watch as JulesWatch, findings as jules_findings, findings_cmd as jules_findings_cmd,
+    relay as jules_relay, relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
 pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{

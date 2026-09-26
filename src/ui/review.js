@@ -10,7 +10,10 @@ const KINDS = {
   dispatch: ['着手確認',      '#4a3aa7'],
   issue:    ['起票の確認',    '#eda100'],
   question: ['質問',          '#52514e'],
+  relay:    ['Jules に回す指摘','#0f8a9d'],
 };
+/* The kinds the hub opens: their answers go to its inbox, and its tab is the one to raise. */
+const HUB_KINDS = ['dispatch', 'issue', 'relay'];
 const kindOf = k => KINDS[k] || [k, '#898781'];
 
 let focused = null;
@@ -292,7 +295,7 @@ function decideHtml(g) {
     <div style="font-size:11.5px;color:var(--md-sys-color-outline);display:flex;align-items:flex-start;gap:6px;margin-top:8px;">
       <span class="material-symbols-outlined" style="font-size:14px;margin-top:2px;">info</span>
       <span>
-        ${['dispatch', 'issue'].includes(g.kind)
+        ${HUB_KINDS.includes(g.kind)
           ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
           : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
         <b>「ターミナルで話す」</b>は gate を開いたまま worker タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。
@@ -752,7 +755,7 @@ async function answer(decision, choice, id = focused) {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
     });
     // The hub opened dispatch and issue gates, and their answers go to its inbox instead.
-    const toHub = ['dispatch', 'issue'].includes(g.kind);
+    const toHub = HUB_KINDS.includes(g.kind);
     note(line, false, toHub
       ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
       : `${g.worktree.split('/').pop()} の outbox に追記` +
@@ -772,7 +775,7 @@ function talk(id = focused) {
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
   // hub's.
-  if (['dispatch', 'issue'].includes(g.kind)) focusHub(); else worktreeAct('focus', g.worktree);
+  if (HUB_KINDS.includes(g.kind)) focusHub(); else worktreeAct('focus', g.worktree);
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 

@@ -806,6 +806,137 @@ fn two_relays_of_one_comment_at_once_post_it_once() {
 }
 
 #[test]
+fn new_review_comments_on_a_jules_pr_are_brought_to_the_hub_once() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let id = task_in_review(&fixture);
+    // Both stubs live in the same directory, so either path finds both.
+    let _ = stub_curl(&fixture);
+    let (path, _) = stub_gh(&fixture);
+    let (mut board, url) = serve(&fixture, &path);
+
+    let mut told = None;
+    for _ in 0..100 {
+        let _ = board_state(&url);
+        let listed = fixture.json(&["pending", "--json"]);
+        if let Some(m) = listed["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["kind"] == "jules-review")
+        {
+            told = Some(m["name"].as_str().unwrap().to_string());
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    board.kill().unwrap();
+    board.wait().unwrap();
+
+    let name = told.expect("the hub was never told about the review");
+    let body = fixture.ok(&["pending", "--read", &name]);
+    assert!(body.contains(&id), "{body}");
+    assert!(body.contains("## round       1/2"), "{body}");
+    // The CodeRabbit comment, and not the reply or the signed-in person's own.
+    assert!(body.contains("## comments    11\n"), "{body}");
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["announced"], serde_json::json!(["11"]));
+    assert_eq!(shown["relayRounds"], 1);
+    let count = fixture.json(&["pending", "--json"])["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "jules-review")
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn a_relay_plan_passes_each_comment_on_with_its_note() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let plan = fixture.repo.join("relay.json");
+    std::fs::write(
+        &plan,
+        serde_json::json!({
+            "note": "Keep the API.",
+            "findings": [{"id": "11", "note": "The test to change is in tests/worker.rs, not here."}],
+            "skipped": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = fixture
+        .command([
+            "jules",
+            "relay",
+            "--id",
+            &id,
+            "--plan-file",
+            plan.to_str().unwrap(),
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let comment = std::fs::read_to_string(&posted).unwrap();
+    assert!(comment.contains("Keep the API."), "{comment}");
+    assert!(
+        comment.contains(
+            "**From the author of this PR:** The test to change is in tests/worker.rs, not here."
+        ),
+        "{comment}"
+    );
+    assert_eq!(
+        fixture.json(&["task", "show", "--id", &id])["relayed"],
+        serde_json::json!(["11"])
+    );
+}
+
+#[test]
+fn a_relay_gate_names_its_task_and_is_answered_to_the_hub() {
+    let fixture = Fixture::new(&config("false"));
+    let without = fixture.repo.join("gate-without.json");
+    std::fs::write(
+        &without,
+        r#"{"kind": "relay", "title": "Jules に回す指摘", "focus": "x"}"#,
+    )
+    .unwrap();
+    let out = fixture.cmd(&["gate", "open", "--file", without.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("a relay gate needs the task"));
+
+    let id = task_in_review(&fixture);
+    let with = fixture.repo.join("gate-with.json");
+    std::fs::write(
+        &with,
+        serde_json::json!({"kind": "relay", "task": id, "title": "Jules に回す指摘", "focus": "x"})
+            .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&["gate", "open", "--file", with.to_str().unwrap(), "--json"]);
+    let gate = opened["gate"]["id"]
+        .as_str()
+        .or(opened["id"].as_str())
+        .unwrap()
+        .to_string();
+    fixture.ok(&["gate", "answer", "--id", &gate, "--decision", "approve"]);
+    let listed = fixture.json(&["pending", "--json"]);
+    assert!(
+        listed["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["kind"] == "gate"),
+        "{listed}"
+    );
+}
+
+#[test]
 fn a_relay_from_another_account_than_the_one_that_started_jules_is_refused() {
     let fixture = Fixture::new(&config("false"));
     let id = task_in_review(&fixture);

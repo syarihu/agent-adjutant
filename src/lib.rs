@@ -588,8 +588,16 @@ enum JulesAction {
         #[arg(long)]
         id: String,
         /// A comment id from `adj jules findings` (repeat for more)
-        #[arg(long = "comment", required = true)]
+        #[arg(
+            long = "comment",
+            required_unless_present = "plan_file",
+            conflicts_with = "plan_file"
+        )]
         comments: Vec<String>,
+        /// A relay plan as JSON: {"note": …, "findings": [{"id": …, "note": …}]} — a note for each
+        /// comment, as the hub prepares them
+        #[arg(long)]
+        plan_file: Option<String>,
         /// Something to say to Jules above them (- reads stdin)
         #[arg(long)]
         note: Option<String>,
@@ -1099,12 +1107,14 @@ fn run_jules(action: &JulesAction) -> Result<(), String> {
             hub,
             id,
             comments,
+            plan_file,
             note,
         } => cmd::jules_relay_cmd(
             repo.as_deref(),
             hub.as_deref(),
             id,
             comments,
+            plan_file.as_deref(),
             note.as_deref(),
         ),
     }

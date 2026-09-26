@@ -199,6 +199,14 @@ pub struct Task {
     /// say which ones went, and so one comment is not handed over twice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relayed: Vec<String>,
+    /// Review comments the board has told the hub about, so each one is brought up once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub announced: Vec<String>,
+    /// How many times the board has told the hub about new review comments on this task's PR.
+    /// Past a limit it stops, and passing comments on is left to a person: a reviewer and Jules
+    /// answering each other's pushes can otherwise go round without end.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub relay_rounds: u32,
     /// Why the hub could not take it, when that is the answer. Written where the reply to
     /// the requester would have gone, because for a dashboard request there is no session
     /// to reply to.
@@ -215,6 +223,10 @@ pub struct Task {
     pub gate_answered_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Where this hub's tasks live. Beside the inbox rather than inside it: the inbox is a
@@ -436,6 +448,8 @@ mod tests {
                 jules_session: None,
                 jules_by: None,
                 relayed: Vec::new(),
+                announced: Vec::new(),
+                relay_rounds: 0,
                 note: None,
                 instruction: None,
                 gate_answered_at: None,
