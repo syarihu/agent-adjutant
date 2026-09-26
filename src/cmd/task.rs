@@ -819,9 +819,7 @@ fn not_handed_line(status: Status, hub_name: &str) -> Option<String> {
         Status::Backlog => Some(format!(
             "Kept in the backlog. Nothing is in {hub_name}'s inbox yet."
         )),
-        Status::Queued => Some(format!(
-            "Queued, but not handed to {hub_name} this time."
-        )),
+        Status::Queued => Some(format!("Queued, but not handed to {hub_name} this time.")),
         Status::Dispatched | Status::Pr | Status::Done | Status::Cancelled => None,
     }
 }
@@ -958,7 +956,12 @@ mod tests {
         let queued = not_handed_line(Status::Queued, "hub").expect("a queued task gets a line");
         assert!(!queued.contains("backlog"), "{queued}");
         assert!(queued.contains("hub"), "{queued}");
-        for status in [Status::Dispatched, Status::Pr, Status::Done, Status::Cancelled] {
+        for status in [
+            Status::Dispatched,
+            Status::Pr,
+            Status::Done,
+            Status::Cancelled,
+        ] {
             assert_eq!(not_handed_line(status, "hub"), None, "{}", status.as_str());
         }
     }
