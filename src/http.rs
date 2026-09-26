@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn percent_escapes_and_plus_signs_come_back_as_characters() {
         assert_eq!(percent_decode("a%2Fb+c"), "a/b c");
-        assert_eq!(percent_decode("%E3%81%AE%E3%81%A0"), "のだ");
+        assert_eq!(percent_decode("%E6%97%A5%E6%9C%AC"), "日本");
     }
 
     /// A truncated escape is kept as written rather than dropped: a token that quietly

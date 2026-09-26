@@ -1,508 +1,581 @@
 ---
-description: worktree の中で1タスクを最後まで回す worker の手順書
+description: The worker's procedure for carrying one task to the end inside a worktree
 ---
 
-Worker — worktree の**中**で走る手順。ここでの「あなた」は worker、`.` が作業対象。
+Worker — the procedure that runs **inside** a worktree. "You" here is the worker, and `.` is what
+you are working on.
 
-hub（`adj-hub`）がタスクを選び、worktree を作り、このタブを立てた。**hub は振り分けしか
-やらない。** このタスクを最後まで持っていくのはあなたで、迷ったら hub ではなく**ユーザーに聞く** —
-ユーザーはこのタブにいる。
+The hub (`adj-hub`) picked the task, created the worktree and opened this tab. **The hub only hands
+work out.** Carrying this task to the end is yours, and when in doubt **ask the user, not the hub** —
+the user is at this tab.
 
-## 立ち位置
+Talk to the user in the language they use with you (or the one your agent is set to). A quoted line
+in this procedure says what to tell them, not the words to use.
 
-- **節に入るたびに `adj phase --set <phase>` を1回打つ。** 板のカードがいまどこに居るかと、同じ所に
-  どれだけ居るか（長すぎると「詰まり」として赤くなる）をこれで見せる。打ち忘れても作業は止まらないが、
-  カードは前の節で止まって見える。値は `plan` / `implement` / `self-review` / `verify` / `pr` /
-  `review` / `report` のどれか。各節の頭にどれを打つか書いてある。
-- いまの cwd がその worktree。素の `git` と相対パスでいい。`git -C <絶対パス>` は要らない。
-- **`EnterWorktree` は使わない。** もう中にいる。
-- **`isolation: worktree` は禁止。** いま立っている worktree の下にもう1つ掘ってしまう。
-  サブエージェントの作業ディレクトリも、いまの cwd。
-- **hub に実装を戻さない。** 完了報告まで自分でやって、**その報告はこのタブのユーザーに出す**。
-  hub は振り分け役で、成果を送っても読ませる先が無い（送ると同じ報告が2箇所に出る）。hub に
-  自分から送るのは2つだけ: `adj-report` の手順で投げる**別件の**不具合（§7）と、片付け依頼（§9）。
-  **hub から `[質問]` で聞かれたときに `kind: answer` で答えるのは別の話**で、これは続けてよい
-  （§7。聞いた相手が待っているので、答えないと起票が止まる）。
-- セッション終了時に「worktree を残すか消すか」を聞かれたら、**残す**。成果が乗っている場所で、
-  削除は hub の片付けに一本化してある（頼み方は §9）。
-- 対象タスク・親タスク・ベースブランチ・完了条件・止める所・`verify` コマンドは
-  `.claude/task-brief.md` にある。まずそれを読む。止める所（`plan` / `diff` / `all`）は、差分と
-  動作確認で人を待つかを決める規則の1つ（「Appendix — 待つか、記録にするか」）。この行が無い
-  指示書は `plan` として読む。
-- **hub からの連絡を取りこぼさない。** hub からこちらへの連絡は `adjutant_outbox` で読む
-  （この worktree の `.claude/adjutant-outbox.md` に `##` 見出し1件ずつ溜まっている）。
-  エージェント間の直接メッセージを使わないのは、それが特定のコーディングエージェントにしか
-  無いからで、ファイルならこちらが何で動いていても、いつ見ても残っている。
-  届いた時点で起こされることもあるが（`workerWake` が設定されていれば）、**当てにしない。**
-  **`AskUserQuestion` から戻るたびに** `adjutant_outbox` を叩く（人に聞いている間が一番溜まる
-  区間で、起こされても気づけないのもそこ）。具体的には 計画の承認・セルフレビューの entry gate・
-  PR 本文の承認・Copilot 依頼の確認・レビュー指摘の採否・完了報告の前。
-  処理し終えたら `adjutant_outbox` の `action: clear` で片付ける（追記式なので、消さないと毎回
-  読み返すことになる）。1行目が `[質問]` なら答える（§7）。
-- **`adjutant_config` を呼ぶ**（`adjutant config` でも同じものが出る）。これがこの手順書の
-  参照する設定の正本で、`defaults` のマージも
-  フラット形式の展開も既定値の補完も済んでいる（`~/.config/adjutant/config.json` を自分で読み直さない）。
-  名前で参照しているのは `reviewEffort` / `selfReviewRounds` / `reviewEngine` / `reviewBots` /
-  `ide` / `draftPr` / `verify` / `taskSources[].projectFields`。**`taskSources` は常に配列**で、
-  **どのソースの `projectFields` か**は「指示書の URL の repo が乗っているボード =
-  `projectFields` を持つソース」で決める。指示書が運ぶのは作業対象・親タスク・ブランチ・
-  ベース・実装・完了条件・止める所・Copilot レビュー依頼・`verify` だけなので、**それ以外は自分でここから引く**。
-  `repo`（= `<codeRepo>`）も同じ出力に入っている。スキーマは配布物の `config.example.json`。
+## Where you stand
+
+- **Run `adj phase --set <phase>` once each time you enter a section.** It shows on the board's card
+  where the task is now and how long it has been there (too long and the card turns red as stuck).
+  Forgetting it does not stop the work, but the card looks stuck in the previous section. The value
+  is one of `plan` / `implement` / `self-review` / `verify` / `pr` / `review` / `report`; each
+  section says which one to set at its start.
+- The current cwd is that worktree. Plain `git` and relative paths are fine. `git -C <absolute
+  path>` is not needed.
+- **Do not use `EnterWorktree`.** You are already inside.
+- **`isolation: worktree` is forbidden.** It digs another worktree under the one you are standing
+  in. Sub-agents work in the current cwd too.
+- **Do not hand the implementation back to the hub.** Do everything up to the final report
+  yourself, and **give that report to the user at this tab**. The hub only hands work out; results
+  sent to it have nowhere to go (and the same report shows up in two places). You send the hub
+  only two things on your own: a bug **outside this task**, through the `adj-report` procedure
+  (§7), and a request to clean up (§9). **Answering the hub with `kind: answer` when it asks with
+  `[question]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
+  filing stalls until you answer).
+- If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
+  holds the results, and removal goes through the hub's cleanup alone (§9 says how to ask).
+- The task, the parent task, the base branch, Done when, Stop at and the `verify` commands are in
+  `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all`) is one of the rules that
+  decides whether the diff and the verification wait on a person ("Appendix — Wait or record"). A
+  brief without that line is read as `plan`.
+- **Do not miss what the hub sends you.** Messages from the hub are read with `adjutant_outbox`
+  (they pile up in this worktree's `.claude/adjutant-outbox.md`, one `##` heading each). Direct
+  messages between agents are not used because only some coding agents have them; a file stays
+  there whatever you run on and whenever you look.
+  You may be woken when one arrives (if `workerWake` is set), but **do not count on it.** **Every
+  time you come back from `AskUserQuestion`,** call `adjutant_outbox` (while you are asking a
+  person is when most piles up, and also when being woken goes unnoticed). Concretely: plan
+  approval, the self-review entry gate, PR body approval, the Copilot request confirmation, the
+  choice of which review comments to address, and before the final report.
+  When you have dealt with them, clear them with `adjutant_outbox` `action: clear` (the file is
+  append-only, so anything not cleared is read again every time). If the first line is
+  `[question]`, answer it (§7).
+- **Call `adjutant_config`** (`adjutant config` prints the same). It is the authority for every
+  setting this procedure refers to, with the `defaults` merge, the flat-form expansion and the
+  defaults already applied (do not read `~/.config/adjutant/config.json` again yourself).
+  The settings referred to by name are `reviewEffort` / `selfReviewRounds` / `reviewEngine` /
+  `reviewBots` / `ide` / `draftPr` / `verify` / `taskSources[].projectFields`. **`taskSources` is
+  always an array**, and **which source's `projectFields`** is decided by "the board the brief's URL
+  repo sits on = the source that has `projectFields`". The brief carries only the task, the parent
+  task, the branch, the base, the implementer, Done when, Stop at, the Copilot review line and
+  `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
+  output. The schema is the distributed `config.example.json`.
 
 ## 1. Plan
 
 `adj phase --set plan`
 
-1. タスクを読む。読み方は指示書の「作業対象」に書いてあるトラッカーで決まる:
-   - `github` / `github-project` — `gh issue view <n> -R <指示書の URL の repo> --json title,body,comments`。
-     リポジトリは指示書の URL のもの（ボードを跨ぐので、コードリポジトリとも他ソースの
-     リポジトリとも別でありうる）。
-   - `jira` — `mcp__atlassian__getJiraIssue`。`cloudId` は指示書の URL のホスト名
-     (`example.atlassian.net`) をそのまま渡せる。コメントも読むので
-     `fields: ["summary","description","status","issuetype","comment"]`、
-     `responseContentFormat: "markdown"`。**チケットにコメントを投稿しない・ステータスを勝手に
-     動かさない** — 書き込みは hub の担当で、こちらは読むだけ。
-   - `linear` — `mcp__linear__get_issue`。
+1. Read the task. How to read it depends on the tracker named in the brief's "Task" line:
+   - `github` / `github-project` — `gh issue view <n> -R <the repo of the brief's URL> --json
+     title,body,comments`. The repository is the one in the brief's URL (boards span repositories,
+     so it may differ from both the code repository and other sources' repositories).
+   - `jira` — `mcp__atlassian__getJiraIssue`. `cloudId` can be the host name of the brief's URL
+     (`example.atlassian.net`) as it is. Comments are read too, so
+     `fields: ["summary","description","status","issuetype","comment"]` and
+     `responseContentFormat: "markdown"`. **Do not post comments on the ticket or move its status
+     on your own** — writing is the hub's job; you only read.
+   - `linear` — `mcp__linear__get_issue`.
 
-   **指示書の「親タスク」が `-` でなければ、そちらの本文とコメントも読む。** トラッカーと repo は
-   **親タスクの URL から割り出す** — 上の道具は作業対象の URL のものなので、そのまま使い回さない。
-   ボードは複数の repo の issue を載せるので、親が別 repo（`jira` なら別ホスト）にいることがあり、
-   子の repo に同じ番号の別タスクがあれば**エラーも出さずに**そちらが返る。大きな
-   作業を割ったサブタスクなら、設計の意図と兄弟のサブタスクとの境目はそこにしか書かれていない。
-   別のタスクの最中に見つかった不具合として起票されたものなら、再現手順と発見時の状況がそこに
-   ある。読む対象を増やすだけで、**親タスクに書き込まない・親タスクの作業をしない** — 受け持ちは
-   「作業対象」の1件だけ。
+   **If the brief's "Parent task" is not `-`, read that one's body and comments too.** **Work out
+   the tracker and repository from the parent task's URL** — the tools above are for the task's own
+   URL, so do not reuse them as they are. A board holds issues from several repositories, so the
+   parent may live in another repository (another host for `jira`), and if the child's repository
+   has a different task under the same number, that one comes back **without any error**. For a
+   subtask split out of a larger piece of work, the design intent and where it ends and its
+   siblings begin are written only there. For a bug filed while working on another task, the steps
+   to reproduce and the situation it was found in are there. This only adds something to read:
+   **do not write to the parent task or do its work** — you are responsible for the one task in
+   "Task" alone.
 
-   hub は調査をしないので、引き継ぎは指示書に書いてあることだけ。ここから自分で読む。
+   The hub does no investigation, so all that is handed over is what the brief says. Read from
+   there yourself.
 
-   **指示書の完了条件が「調査だけ」なら、ここで §8 に移る。** 以下の 2〜3 は実装タスクの手順で、
-   報告だけの依頼には当てはまらない。作業対象に URL が無い（`-` になっている）依頼もあるので、
-   そのときはチケットを引かず、指示書に書かれた依頼文そのものを対象として読む。
-2. コードを読み、順序付きの実装計画を作る。
-3. 計画を見せて承認を得てから実装する。直しを言われたら直して再確認する。
-   **見せ方は「Appendix — 人間に見せて待つ（gate）」の `kind: "plan"`。** ダッシュボードが
-   動いていれば板に出してターンを終え、動いていなければこのタブで `AskUserQuestion`。
-   どちらでも**承認を取るのはこのセッション**で、エージェントはユーザーと話せない。
-   **計画は止める所に関係なく必ず待つ。** `problem` に「いま何が困っているか」、`goal` に
-   「終わったらどうなっているか」を、依頼文と step 1 で読んだ issue から1〜3文ずつ書く。板の
-   概要はここを出すので、計画の手順をなぞらない。
-4. **指示書の「実装」が `jules` なら、承認されたあと §2 以降に進まない。**「Appendix — Jules に
-   渡す」で承認された計画を Jules に渡し、§9 で片付けを頼んで終わる。実装・セルフレビュー・
-   動作確認・PR 作成はすべて Jules がやる。計画の gate では `decided` に「実装は Jules に渡す」と
-   1行入れておく（承認する人が、この計画が誰に渡るのかを知ったうえで読めるように）。
+   **If the brief's Done when is "investigation only", move to §8 here.** Steps 2–3 below are for an
+   implementation task and do not apply to a request that ends in a report. Some requests have no
+   URL in Task (it reads `-`); then do not fetch a ticket, and read the request text in the brief as
+   the thing to work on.
+2. Read the code and make an ordered implementation plan.
+3. Show the plan and get it approved before implementing. If asked to change it, change it and
+   confirm again.
+   **Show it as `kind: "plan"` in "Appendix — Show a person and wait (gate)".** If the dashboard is
+   running, put it on the board and end the turn; if not, ask with `AskUserQuestion` in this tab.
+   Either way **the approval is taken by this session**; sub-agents cannot talk to the user.
+   **The plan always waits, whatever Stop at says.** Write "what is wrong now" in `problem` and
+   "what things look like when this is done" in `goal`, one to three sentences each, from the
+   request and the issue read in step 1. The board's overview shows these, so do not restate the
+   steps of the plan.
+4. **If the brief's "Implementer" is `jules`, do not go on to §2 once approved.** Hand the approved
+   plan to Jules with "Appendix — Handing to Jules", ask for cleanup with §9, and stop.
+   Implementation, self-review, verification and the PR are all Jules's. In the plan gate, put one
+   line in `decided` saying "implementation goes to Jules" (so whoever approves knows who the plan
+   is going to).
 
-### 使っていい道具
+### Tools you may use
 
-- **調査特化エージェント（または組み込み `Explore` / `general-purpose`）** — `Agent` ツールの説明文を確認し、`general-purpose` 以外の調査や先行実装の探索に特化した読み取り専用サブエージェント（description に「調査」「探索」「research」等が含まれるもの、あるいは `task-researcher` など）が存在していればそれを選ぶ。見当たらなければ組み込みの読み取り専用エージェント（`Explore`）または `subagent_type: "general-purpose"` を選ぶ。いずれの場合も「Write / Edit などのファイル変更ツールやリダイレクト等の Bash によるファイル変更は一切使用せず、コードベースの探索（Read / Grep / Glob）やチケット・既存ナレッジの読み取り取得（`gh`、`lk`、チケット MCP などの読み取りコマンド・ツール）による調査レポートのみ返すこと」を指示して実行する。チケット本文とコメント、既存ナレッジ、先行実装をまとめて1つの調査結果にして返させる。数十ファイルの探索が自分の文脈に入らない。返ってきたら:
-  1. `## 要件` と `## 受け入れ条件` を数行にしてユーザーに見せる。
-  2. `## 未確定事項` が空でなければ、**ここで人間に聞く**。エージェントは聞けない。未解決のまま
-     計画に持ち込まない。聞き方は「Appendix — 人間に見せて待つ（gate）」の `kind: "question"`:
-     `focus` に**決めてほしいことだけ**を書き、選択肢があるなら `choices` に並べる。
-     ダッシュボードが動いていなければ `AskUserQuestion` に落ちる（gate の節のとおり）。
-     **ここが一番よく出る質問なのだ。** タブに埋もれると、板の上では「進行中」に見えたまま
-     何時間も止まる。
-  3. `## Knowledge to Save` を保存する:
+- **A research agent (or the built-in `Explore` / `general-purpose`)** — Check the description of
+  the `Agent` tool, and if there is a read-only sub-agent other than `general-purpose` that
+  specialises in research or looking for prior art (its description mentions research or
+  exploration, or it is something like `task-researcher`), pick it. If there is none, pick the
+  built-in read-only agent (`Explore`) or `subagent_type: "general-purpose"`. Either way, tell it
+  "Do not use any file-changing tool such as Write / Edit, and do not change files through Bash
+  (redirects and the like); only explore the codebase (Read / Grep / Glob) and read tickets and
+  existing knowledge (read-only commands and tools such as `gh`, `lk` or a ticket MCP), and return
+  a research report." Have it return the ticket body and comments, existing knowledge and prior
+  art as one research result. Dozens of files of exploration stay out of your context. When it
+  comes back:
+  1. Show `## Requirements` and `## Acceptance criteria` to the user in a few lines.
+  2. If `## Open questions` is not empty, **ask a person here**. The agent cannot ask. Do not carry
+     them into the plan unresolved. Ask as `kind: "question"` in "Appendix — Show a person and wait
+     (gate)": put **only what needs deciding** in `focus`, and list the options in `choices` if there
+     are any. If the dashboard is not running, it falls back to `AskUserQuestion` (as the gate
+     section says). **This is the question asked most often.** Buried in a tab, it stalls for hours
+     while the board shows the task as in progress.
+  3. Save `## Knowledge to Save`:
      `lk add "<title>" --keywords "<kw1,kw2>" --category "<category>" --content "<content>" --json`
-     `added: false` で `similar_entries` が返ったら、新規で押し込まずに `lk edit <id>` で統合する。
-- **組み込みの `Plan`** — 順序付きの計画を作らせる読み取り専用エージェント。どのファイルをどの順に
-  変え、受け入れ条件をどう検証するかを出させる。直しを言われたら**同じ Plan エージェントに
-  差し戻す**（新しく立て直さない）。作り直すほうが高くつく。
+     If it returns `added: false` with `similar_entries`, merge with `lk edit <id>` instead of
+     forcing in a new one.
+- **The built-in `Plan`** — a read-only agent that makes an ordered plan. Have it say which files
+  change in which order and how the acceptance criteria are checked. If asked to change the plan,
+  **send it back to the same Plan agent** (do not start a new one). Starting over costs more.
 
-どちらを使っても、**承認を取るのはこのセッション**。エージェントはユーザーと話せない。
+Whichever you use, **the approval is taken by this session**. Agents cannot talk to the user.
 
 ## 2. Implement
 
 `adj phase --set implement`
 
-承認された計画を、いまの cwd で直接実装する。`isolation: worktree` も新しい worktree も要らない
-— すでに作業すべき場所に立っている。サブエージェントは、サブエージェントが要る用途にだけ使う:
-機械的な大量置換と、ツール出力を自分の文脈に入れたくない調査。
+Implement the approved plan directly in the current cwd. Neither `isolation: worktree` nor a new
+worktree is needed — you are already standing where the work belongs. Use sub-agents only for what
+needs one: mechanical bulk replacements, and investigations whose tool output you do not want in
+your own context.
 
-**書き込みをサブエージェントに委譲するときは、プロンプトを自己完結にする**（6項目: 作業場所＝この
-worktree の絶対パスとそこから出ないこと / 背景＝要件と関係するコードと規約 / 承認済みの計画と逸脱時は
-報告 / 完了条件＝受け入れ条件と `verify` が通ること / 制約＝依存を増やさない・既存規約に合わせる・
-計画外のファイルを触らない / 報告＝変更ファイル一覧と要約と `verify` の出力そのまま）。
+**When you delegate writing to a sub-agent, make the prompt self-contained** (six items: where to
+work = the absolute path of this worktree, and not to leave it / background = the requirements,
+the related code and conventions / the approved plan, and to report any deviation / the completion
+condition = the acceptance criteria and `verify` passing / constraints = no new dependencies, follow
+existing conventions, do not touch files outside the plan / the report = the list of changed files,
+a summary and the `verify` output as it is).
 
-- **`subagent_type: "fork"` は使わない。** fork はこのセッションの文脈——計画を組んだときの理屈——を
-  そのまま引き継ぐが、実装役にはそれを計画から再導出させたい。
-- **agent id を保持する。** 差し戻しは毎回**同じ id へ**。新しいエージェントを
-  立て直すと、直させた経緯が消える。
+- **Do not use `subagent_type: "fork"`.** A fork inherits this session's context — the reasoning
+  behind the plan — but the implementer should derive it from the plan again.
+- **Keep the agent id.** Every correction goes back **to the same id**. Starting a new agent loses
+  the history of what it was asked to fix.
 
-## 3. セルフレビュー
+## 3. Self-review
 
 `adj phase --set self-review`
 
-下の **「Appendix — セルフレビューのループ」** を、収束するまで回す。ラウンドごとの
-要約を報告してから次に進む。
+Run **"Appendix — The self-review loop"** below until it converges. Report a summary of each round
+before moving on.
 
-レビュアーを別個体にしている理由が2つあって、どちらも守らないと意味が消える:
+There are two reasons the reviewer is a separate agent, and without both the point is lost:
 
-- レビュアーに渡すのは**差分・ベース ref・受け入れ条件・`reviewEffort` だけ**。自分がなぜその実装に
-  したかの説明は渡さない。理由を聞かされた独立レビュアーは「正しい」と追認する。
-- 修正は自分で当てる。実装を別エージェントに投げていたなら、**同じ id へ差し戻す**。
-  新しいエージェントを立て直さない。一行の些細な修正は自分で `Edit` したほうが速い。
+- Hand the reviewer **only the diff, the base ref, the acceptance criteria and `reviewEffort`**. Do
+  not explain why you implemented it that way. An independent reviewer told the reasons endorses
+  them as correct.
+- Apply the fixes yourself. If you handed the implementation to another agent, **send it back to
+  the same id**. Do not start a new agent. A trivial one-line fix is faster to `Edit` yourself.
 
-ループが止まったら（収束・ラウンド上限・進捗なしのどれでも）`verify` を回し直して、config の
-`skills.commit` があればその手順でコミットする（無ければ
-そのまま Conventional Commits で。
-prefix は付けない。メッセージの言語はそのリポジトリの直近のコミットに合わせる）。
+When the loop stops (converged, round limit or no progress), run `verify` again and commit, with
+the procedure in `skills.commit` in the config if there is one (if not, as Conventional Commits
+without a prefix; match the language of the message to the repository's recent commits).
 
-**コミットしたら、差分を `kind: "diff"` で板に出す。** 人を待つか記録にして進むかは
-「Appendix — 待つか、記録にするか」の規則で決める。**どちらか一方は必ず開く** — 記録を
-開かずに進むと、何をレビューしたかがどこにも残らない。どちらでも、`facts` にラウンド数と
-`verify` の結果と変更行数、`diff` に `git diff {ベース ref}...HEAD`、`reviewRounds` に
-ラウンドごとの内訳、`findings` に指摘とその行き先を入れる（書き方は「Appendix — 人間に
-見せて待つ（gate）」）。
+**Once committed, put the diff on the board as `kind: "diff"`.** Whether it waits on a person or is
+kept as a record and you carry on is decided by the rules in "Appendix — Wait or record". **Always
+open one or the other** — carry on without opening a record and nothing says what was reviewed.
+Either way, put the number of rounds, the `verify` result and the lines changed in `facts`,
+`git diff {base ref}...HEAD` in `diff`, the breakdown per round in `reviewRounds`, and the findings
+and what became of them in `findings` (how to write them is in "Appendix — Show a person and wait
+(gate)").
 
-- **待つとき**は `stoppedBy` に当てはまった規則を全部入れ、`focus` に**判断が要った2〜3点**を
-  書く。差分をなぞらない（差分は添えてある）。ダッシュボードが動いていなければ、このタブで
-  同じことを `AskUserQuestion` で聞く。
-- **記録にするとき**は `"wait": false` を付けて開き、そのまま §4 に進む。ダッシュボードが
-  動いていなければ、いつもどおりこのタブで要約を報告して進む。
+- **When it waits**, put every rule that applied in `stoppedBy`, and write **the two or three points
+  that needed judgement** in `focus`. Do not retell the diff (it is attached). If the dashboard is
+  not running, ask the same in this tab with `AskUserQuestion`.
+- **When it is a record**, open it with `"wait": false` and go straight on to §4. If the dashboard
+  is not running, report the summary in this tab as usual and go on.
 
-## 4. 動作確認のために引き渡す
+## 4. Hand over for verification
 
 `adj phase --set verify`
 
-**引き渡す前に、§7 の棚卸しを1回やる。** 通りがかりで見た別件はここで出す。
+**Before handing over, take the stock in §7 once.** Anything unrelated you passed on the way is
+reported here.
 
-動作確認を `kind: "verify"` で板に出す。§3 と同じく、人を待つか記録にして進むかは
-「Appendix — 待つか、記録にするか」の規則で決め、**どちらか一方は必ず開く**。
+Put the verification on the board as `kind: "verify"`. As in §3, whether it waits on a person or is
+kept as a record is decided by the rules in "Appendix — Wait or record", and **one or the other is
+always opened**.
 
-- `commands` に `verify` の各コマンドを、結果・かかった時間・出力（長ければ末尾）付きで入れる。
-  §3 の収束後に回した結果をそのまま使ってよい。そのあとコードを触ったなら回し直す。落ちたら
-  直して回し直し、直せなかったものは `fail` のまま残す。直して通ったものは `attempts` に
-  通るまでに回した回数を入れる（1回で通ったなら省く）。板はそれを「2回目で通過」と印を付けて出す。
-  **ここでコードを直したら §3 に戻る** — セルフレビュー・コミット・diff の gate か記録をやり直して
-  から §4 を始め直す。そうしないと、レビューした差分と出す差分が食い違う。
-- `manual` に**人の手でしか確かめられないこと**（画面の変化、実機での操作、外部サービスとの
-  やり取りなど）を1件1行で入れる。コマンドで確かめられたものは入れない。無ければ空にする。
-- `run` に**動かし方**（実際に叩くコマンド）を入れる。hub が worktree を作るときに走らせた
-  `postCreate` が gitignore されたファイルとビルド状態を用意済みなので、この worktree だけで
-  ビルドが通る。
+- Put each `verify` command in `commands`, with its result, how long it took and its output (the
+  tail if long). The result of the run after §3 converged can be used as it is. If you touched the
+  code after that, run it again. If something fails, fix it and run again; leave what you could not
+  fix as `fail`. For what passed after a fix, put in `attempts` how many runs it took (leave it out
+  if it passed first time). The board marks it as "passed on the 2nd run".
+  **If you change code here, go back to §3** — redo the self-review, the commit, and the diff gate
+  or record, then start §4 again. Otherwise the diff that was reviewed and the diff you hand over
+  differ.
+- Put in `manual` **what only a person can check** (a change on screen, operating a real device, an
+  exchange with an external service and the like), one per line. Leave out what a command checked.
+  Leave it empty if there is nothing.
+- Put **how to run it** (the actual command) in `run`. The `postCreate` the hub ran when it created
+  the worktree has already prepared the gitignored files and build state, so the build works in this
+  worktree alone.
 
-**待つとき**は `stoppedBy` に当てはまった規則を全部入れ、`focus` に**何を見てほしいか**を
-箇条書きで書く。この gate だけは判定の前に長い作業がある。板は `IDE で開く` を大きく出して、
-戻ってきてから OK / NG を押してもらう形になっている。だから `run` を省かない — 人がそこで
-詰まると、その1件は何時間も板に残る。ダッシュボードが動いていなければ、ユーザーに
-「動作確認してください」と直接伝える（エディタで開くなら `adj ide --worktree .`）。
+**When it waits**, put every rule that applied in `stoppedBy`, and list **what to look at** in
+`focus`. This gate alone has a long piece of work before the decision. The board shows `IDE で開く`
+prominently, and the person presses OK / NG after coming back. So do not leave out `run` — if a
+person gets stuck there, that one card sits on the board for hours. If the dashboard is not
+running, tell the user directly "please verify this" (to open it in the editor, `adj ide --worktree
+.`).
 
-**記録にするとき**は `"wait": false` を付けて開き、そのまま先に進む（完了条件が「PR作成まで」
-なら §5、「動作確認待ちで引き渡しまで」ならここで完了報告）。
+**When it is a record**, open it with `"wait": false` and go straight on (§5 if Done when is "up to
+a PR", or the final report here if it is "up to handing over for verification").
 
-**終わったあと**: 動作確認が済んでこの worktree に用が無くなったら、§9 で片付けを頼む。
+**Afterwards**: once verification is done and this worktree is no longer needed, ask for cleanup
+with §9.
 
-## 5. PR を作る（頼まれたときだけ）
+## 5. Open a PR (only when asked)
 
 `adj phase --set pr`
 
-指示書の完了条件が「PR作成まで」のとき、またはユーザーに直接頼まれたときだけ。
+Only when the brief's Done when is "up to a PR", or the user asked for one directly.
 
-1. config の `skills.prStyle` があれば、その skill を先に読む。PR のタイトル・本文を書く前に必須。
-2. **PR のベースは指示書の「ベースブランチ」行から取る。** hub が決めた結果（`baseBranch` の
-   ルール、またはこの dispatch にだけ指定された分岐元）が commit-ish の形（`origin/main`、
-   `origin/release/1.2`、`origin/feature/x`）で書いてあるので、`origin/` を外したブランチ名
-   （`main` / `release/1.2` / `feature/x`）がベースになる。この行が worktree を何から生やしたかの
-   唯一の記録で、落とすと PR はリポジトリの default branch に向く — リリースブランチを持つ repo では
-   「release にあって default branch に無いコミット」が全部 diff に乗り、レビュアーには身に覚えの
-   無い巨大な差分になるし、マージすると release が default branch に入る。行が無い、または `-` の
-   ときは**推測で default branch を入れない。ユーザーに聞く。** hub が worktree を作らずに指示書
-   だけ書く経路（既存の worktree への引き渡し）では、この行を埋めた人がいない。
-3. config の `skills.createPr` があればそれを呼ぶ（タイトル・本文・draft・テンプレートの扱いを
-   持っているのはそちら）。worktree のパスとタスクの URL、config の `draftPr`（既定 `true` =
-   draft で出す）、それに **step 2 のベースブランチ**を渡す。ベースを createPr に任せないのは、
-   あちらには hub が何を選んだかを知る術が無いから — 判定結果は指示書にしか書かれていない。
-   createPr が無ければ `gh pr create --base '<step 2 のブランチ名>'` で自分で出す
-   （`--base` を省くと PR は default branch に向く）。
-4. **PR が開いたら、まずベースを照合する。** レビューを頼む前にやる:
-   `gh pr view <n> -R <codeRepo> --json baseRefName` が step 2 のブランチと違っていたら
-   `gh pr edit <n> -R <codeRepo> --base '<step 2 のブランチ名>'` で直す。createPr は外部の skill で、
-   ベースをどう決めるかを何も約束していない — 黙って default branch に向いていても、auto mode の
-   worker には気づく手立てがこれしか無い。**直せなかったらここで止めてユーザーに言う**（step 5 以降に
-   進まない）。base が誤ったままレビューを頼むと、bot は巨大な誤 diff を読み、base を直しても
-   レビューは再実行されないので、§6 がその誤レビューをトリアージすることになる。
-5. **板のカードを「レビュー中」に進める。** 指示書の タスクレコード 行が `-` でなければ:
+1. If the config has `skills.prStyle`, read that skill first. It is required before writing the
+   PR's title and body.
+2. **Take the PR's base from the brief's "Base branch" line.** What the hub decided (the
+   `baseBranch` rule, or a branching point given for this dispatch only) is written as a
+   commit-ish (`origin/main`, `origin/release/1.2`, `origin/feature/x`), so the branch name with
+   `origin/` stripped (`main` / `release/1.2` / `feature/x`) is the base. That line is the only
+   record of what the worktree was branched from; drop it and the PR targets the repository's
+   default branch — on a repo with release branches every commit "in release but not in the
+   default branch" lands in the diff, a huge diff the reviewers have never seen, and merging it
+   puts the release into the default branch. When the line is missing or `-`, **do not guess the
+   default branch. Ask the user.** On the route where the hub writes a brief without creating the
+   worktree (handing over an existing worktree), nobody has filled that line.
+3. If the config has `skills.createPr`, call it (the title, body, draft and template are its
+   business). Pass it the worktree path, the task's URL, the config's `draftPr` (default `true` =
+   open as a draft) and **the base branch from step 2**. The base is not left to createPr because
+   it has no way to know what the hub chose — the decision is written only in the brief. Without
+   createPr, open it yourself with `gh pr create --base '<the branch name from step 2>'` (without
+   `--base` the PR targets the default branch).
+4. **Once the PR is open, check its base first.** Do this before asking for a review:
+   if `gh pr view <n> -R <codeRepo> --json baseRefName` differs from the branch in step 2, fix it
+   with `gh pr edit <n> -R <codeRepo> --base '<the branch name from step 2>'`. createPr is an
+   external skill that promises nothing about how it decides the base — if it quietly targets the
+   default branch, this is the only way an auto-mode worker notices. **If it cannot be fixed, stop
+   here and tell the user** (do not go on to step 5). Ask for a review with the wrong base and the
+   bot reads a huge wrong diff; fixing the base afterwards does not re-run the review, so §6 ends
+   up triaging that wrong review.
+5. **Move the board's card to "in review".** If the brief's Task record line is not `-`:
    ```bash
-   adj task update --id {タスクレコード} --status pr --pr <PR の URL>
+   adj task update --id {task record} --status pr --pr <the PR's URL>
    ```
-   これを打たないと、PR が開いたあともカードは「進行中」に残る。板を見ている人には、レビューを
-   待っているのか作業中なのか区別がつかない。
-6. **Copilot にレビューを頼むかは、指示書の「Copilot レビュー依頼」行で決める。** hub が config の
-   `copilotReview` を解決して書いている:
-   - `ask` — `AskUserQuestion` で「Copilotにレビュー依頼を出しますか？」—「出す (Recommended)」/「出さない」。
-   - `always` — 聞かずに step 7 で頼む。
-   - `never` — 聞かず、頼みもしない。step 7 を飛ばす。
-   行が無い、`-`、またはこの3つ以外の値なら `ask` として扱う。既存の worktree への引き渡しのように
-   hub がこの行を書かなかった指示書でも、今までどおり聞いてから頼むことになる。
-   `reviewBots` はどの bot のレビューを待つかの設定で、頼むかどうかはこの行だけで決まる。
-7. 出すなら `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`。
-   フォールバック: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f 'reviewers[]=Copilot'`
-8. PR の URL を出す。
-9. タスクソースが **In Review** を持っているなら移す。In Progress は hub が着手時に済ませてある。
-   `github-project` なら `gh project item-edit` にそのソースの `projectFields.inReviewOptionId` を
-   渡す。**`inReviewOptionId` を持たないボードには何もしない** — Status を PR の状態で自動更新して
-   いるボードでは、手で動かすのが害になるので、キーを置かないことでそれを表している。
+   Without this, the card stays "in progress" after the PR is open. Whoever watches the board
+   cannot tell whether it is waiting for review or still being worked on.
+6. **Whether to ask Copilot for a review is decided by the brief's "Copilot review" line.** The hub
+   writes it from the config's `copilotReview`:
+   - `ask` — `AskUserQuestion` "Request a review from Copilot?" — "Request it (Recommended)" /
+     "Do not request it".
+   - `always` — request it in step 7 without asking.
+   - `never` — do not ask and do not request it. Skip step 7.
+   If the line is missing, `-`, or any value other than these three, treat it as `ask`. A brief the
+   hub did not write this line into (such as handing over an existing worktree) then still asks
+   before requesting, as before.
+   `reviewBots` says which bots' reviews to wait for; whether to request one is decided by this
+   line alone.
+7. To request it, `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`.
+   Fallback: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f
+   'reviewers[]=Copilot'`
+8. Print the PR's URL.
+9. If the task source has an **In Review** state, move it there. The hub already moved it to In
+   Progress when it started. For `github-project`, pass that source's
+   `projectFields.inReviewOptionId` to `gh project item-edit`. **Do nothing on a board without
+   `inReviewOptionId`** — on a board that updates Status from the PR automatically, moving it by
+   hand does harm, and leaving the key out is how that is said.
 
-**終わったあと**: レビュー対応（§6）まで終わってこの worktree に用が無くなったら、§9 で片付けを頼む。
+**Afterwards**: once review (§6) is done too and this worktree is no longer needed, ask for cleanup
+with §9.
 
-## 6. レビュー指摘の対応
+## 6. Handle review comments
 
 `adj phase --set review`
 
-人間のレビューと bot のレビューの両方をここで捌く。Copilot はトリアージと修正の上ではただの
-レビュアーの1人で、唯一違うのは返信の扱い（step 6）。
+Both human reviews and bot reviews are handled here. For triage and fixing, Copilot is just one
+more reviewer; the only difference is how replies are handled (step 6).
 
-### bot レビューを頼んだときは、来るまで待つ
+### If you asked a bot for a review, wait for it
 
-PR 作成時に Copilot レビューを頼んだ（またはリポジトリが自動で頼む）なら数分かかるので、ユーザーに
-出直させずにポーリングする:
+If you asked Copilot for a review when opening the PR (or the repository asks automatically), it
+takes a few minutes, so poll rather than have the user come back later:
 
 ```bash
 gh pr view <n> -R <codeRepo> --json reviews \
   --jq '[.reviews[] | select(.author.login | test("copilot"; "i"))] | length'
 ```
 
-`reviewBots` のログインと突き合わせる。ここの `.author.login` は `gh api .../reviews` と違って
-**`[bot]` サフィックスが付かない**ので、完全一致で比べない。60秒おき、10分で諦めてユーザーに言う。
-レビューを頼んでいないなら、この待ちは飛ばす。
+Match against the logins in `reviewBots`. Unlike `gh api .../reviews`, this `.author.login` **has
+no `[bot]` suffix**, so do not compare for an exact match. Every 60 seconds; give up after 10
+minutes and tell the user. If you did not ask for a review, skip this wait.
 
-### 指摘を捌く手順
+### Working through the comments
 
-1. Find the PR: `gh pr list -R <codeRepo> --head <branch> --json number,url`. If none, say
-   so and return.
-2. `Agent` ツールの説明文を確認し、`general-purpose` 以外のレビューコメントの収集・トリアージに特化したエージェント（description に「triage」「トリアージ」等が含まれるもの、あるいは `review-triage` など）が存在すればそれを起動する。見当たらなければ `subagent_type: "general-purpose"` を選ぶ。いずれの場合も「Write / Edit などのファイル変更ツール、リダイレクト等の Bash によるファイル変更、および PR への書き込みツール・コマンド（コメント投稿、レビュー返信、マージ等）は一切使用せず、PR コメントの読み取り取得（`gh` 読み取りコマンド等）とローカルコードの参照・突合による分類のみを行うこと」を指示して起動する。対象は `owner/repo`、PR 番号、作業ディレクトリ `.`。コメントを全件取得し、現在のコードと突き合わせて重複をまとめ、未対応 / 対応済み / 却下済み / outdated に分類して返させる。
-3. Show the 未対応 list and ask which to address with `AskUserQuestion` (default: all
-   `must`). Include the items the agent flagged as **誤検知の疑い** but mark them — Copilot
-   is confidently wrong often enough that auto-fixing its findings is how a clean file
-   acquires a bug.
-4. 承認された指摘を**自分で**直す（`Edit`）。実装を別エージェントに投げていたなら、その id へ
-   差し戻す。新しいエージェントを立て直さない。
+1. Find the PR: `gh pr list -R <codeRepo> --head <branch> --json number,url`. If none, say so and
+   return.
+2. Check the description of the `Agent` tool, and if there is an agent other than
+   `general-purpose` that specialises in collecting and triaging review comments (its description
+   mentions triage, or it is something like `review-triage`), start it. If there is none, pick
+   `subagent_type: "general-purpose"`. Either way, tell it "Do not use any file-changing tool such
+   as Write / Edit, do not change files through Bash (redirects and the like), and do not use any
+   tool or command that writes to the PR (posting comments, replying to reviews, merging and so
+   on); only read PR comments (read-only `gh` commands and the like) and classify them by checking
+   them against the local code." The target is `owner/repo`, the PR number and the working
+   directory `.`. Have it fetch every comment, check each against the current code, fold
+   duplicates together, and return them classified as unresolved / fixed / declined / outdated.
+3. Show the unresolved list and ask which to address with `AskUserQuestion` (default: all `must`).
+   Include the items the agent flagged as **suspected false positives**, but mark them — Copilot is
+   confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
+4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
+   agent, send it back to that id. Do not start a new agent.
 5. Run `verify`, commit, push.
 6. Replies, and only to humans:
-   - **bot の指摘には返信しない。** Copilot をはじめレビュー bot のスレッドは読み手が bot
-     しかいないので、返信は誰の役にも立たない。妥当なら直すだけ、妥当でないなら直さない
-     だけで、どちらもユーザーに口頭で報告する。人間の読み手に残す価値がある判断なら、
-     スレッドではなく PR 本文に書く。
-   - **人間のレビュアーには返信してよい。** その場合は先に config の `skills.commentStyle`
-     があればそれを読み、ドラフトを見せて、承認を得てから投稿する。投稿をエージェントにやらせない。
-7. Loop back to step 2 until 未対応 is empty, then offer to mark the PR ready for review
+   - **Do not reply to bot comments.** The only reader of a thread from Copilot or any other review
+     bot is a bot, so a reply helps nobody. If it is valid, just fix it; if not, just leave it; tell
+     the user about either one directly. If a judgement is worth keeping for human readers, write it
+     in the PR body rather than in the thread.
+   - **Human reviewers may be replied to.** Then first read `skills.commentStyle` from the config
+     if there is one, show a draft, and post only once it is approved. Do not let an agent post it.
+7. Loop back to step 2 until nothing is unresolved, then offer to mark the PR ready for review
    (`gh pr ready <n>`).
 
-## 7. 別件の不具合を見つけたとき
+## 7. When you find a bug outside the task
 
-いまのタスクと無関係な不具合を踏んだら、**直さない**。`adj skill adj-report`
-（または `adjutant_skill` の `name=adj-report`）の手順で hub に投げて、自分のタスクに戻る。
-症状・`file:line`・発見元・親タスクを揃えて渡すところまでが worker の仕事で、起票と着手判断は
-hub がやる。
+If you run into a bug unrelated to the current task, **do not fix it**. Hand it to the hub with the
+`adj skill adj-report` procedure (or `adjutant_skill` `name=adj-report`), and go back to your task.
+The worker's job is to hand over the symptom, `file:line`, Found in and Parent task; filing and
+deciding whether to start are the hub's.
 
-**思い出すタイミングを決めてある。気づいたら即、ではない。** 実測すると、直さない側は守れても
-渡す側は自分からは発火しない — タスクに集中しているほど、通りすがりの別件は「自分の仕事ではない」
-で終わって、報告もされずに消える。なので**引き渡し直前（§4）に1回だけ棚卸しをする**:
+**When to remember this is fixed. It is not "the moment you notice".** Measured in practice, the
+"do not fix it" half holds, but the "hand it over" half never fires on its own — the more focused on
+the task, the more a bug passed on the way ends as "not my job" and disappears unreported. So **take
+stock once, right before handing over (§4)**:
 
-> このタスクで読んだファイルの中に、**このタスクとは無関係な**壊れ方をしていたものはあったか。
+> Among the files read for this task, was there one broken in a way **unrelated to this task**?
 
-- 思い当たらない → それでいい。**無理に探しに行かない**（探索は別の仕事だし、薄い報告は hub の手を止める）。
-- ある → その1〜2箇所だけ実際に開いて `file:line` を確かめてから渡す。**記憶で書かない。**
-- 複数あるなら1件ずつ渡す。hub は1件ずつ捌く。
+- Nothing comes to mind → fine. **Do not go looking** (exploring is a different job, and a thin
+  report stalls the hub).
+- Something does → open just those one or two places, check the `file:line`, then hand it over.
+  **Do not write it from memory.**
+- If there are several, hand them over one at a time. The hub deals with them one at a time.
 
-理由は2つ。ついでの修正はこのタスクの diff を汚してレビューとリバートを壊す。そして worktree の
-中からは worktree を切れないので、その場で別タスクとして着手することもできない。
+Two reasons. A fix on the side dirties this task's diff and breaks review and revert. And a worktree
+cannot be cut from inside a worktree, so you cannot start it as another task on the spot either.
 
-**投げたあと hub から返事が来たとき**: 1行目が `[ack]`（受け取った通知）なら何も返さない。
-`[質問]`（起票に足りない情報の問い合わせ）なら**1往復だけ答える** — hub は別のブランチを見ていて
-この worktree のコードを読めないので、読めるのは自分だけ。`file:line` を確かめて短く返し、そこで
-終わりにする。それ以外（起票番号の通知）はメモするだけで、返信も議論もしない。
+**When the hub replies after you hand it over**: if the first line is `[ack]` (received), send
+nothing back. If it is `[question]` (asking for what it needs to file), **answer once** — the hub is
+looking at a different branch and cannot read this worktree's code, so only you can. Check the
+`file:line`, reply briefly, and leave it there. Anything else (a notice with the filed number) is
+just noted; no reply and no discussion.
 
-答えるのは `adjutant_send`（`kind` は `answer`、`subject` の頭に hub の `[質問]` に書かれていた
-識別子を置く。無ければ親タスク番号と何への答えかを1行で）。**hub が起動しているかを気にしなくていい** —
-起動していなければ受信箱に書き置きになり、hub は起動時と待機に戻る直前にそこを見る。
-届かない経路が無いので、送る前の在席確認も要らない。
+Answer with `adjutant_send` (`kind` `answer`, with the identifier from the hub's `[question]` at the
+start of `subject`; if there was none, one line with the parent task number and what it answers).
+**You need not care whether the hub is running** — if it is not, the answer waits in its inbox, and
+the hub looks there on startup and right before going back to waiting. No route loses it, so there
+is no need to check who is there before sending.
 
-## 8. 調査だけを頼まれたとき
+## 8. When asked for an investigation only
 
 `adj phase --set report`
 
-指示書の完了条件が「調査だけ（報告して終わり）」のときはこちら。実装タスクの手順（§2 実装 /
-§3 セルフレビュー / §5 PR）は**飛ばす**。直すものが無いので、レビューする差分も出す PR も無い。
+This applies when the brief's Done when is "investigation only (report and stop)". The steps of an
+implementation task (§2 implement / §3 self-review / §5 PR) are **skipped**. There is nothing to
+fix, so there is no diff to review and no PR to open.
 
-1. §1 の 1（タスクを読む）までは同じ。作業対象に URL が無ければ、指示書の依頼文が対象。
-2. 調べる。使う道具は §1 の「使っていい道具」と同じ（調査特化エージェント。数十ファイルの
-   探索を自分の文脈に入れない）。**コードを変更しない** — 直せるものを見つけても直さない。
-   直すのは、この報告を読んだユーザーが次に決めること。
-3. **成果を出す。** hub には送らない（「立ち位置」）。Issue も PR も作らない。起票するかは
-   ユーザーが決める。**順番があるので、この3手をこの順でやる**:
+1. Up to step 1 of §1 (read the task) is the same. If Task has no URL, the request text in the brief
+   is what to work on.
+2. Investigate. The tools are the same as §1's "Tools you may use" (a research agent; keep dozens
+   of files of exploration out of your context). **Do not change the code** — even if you find
+   something you could fix, do not. Fixing it is for the user to decide after reading the report.
+3. **Deliver the result.** Do not send it to the hub ("Where you stand"). Open neither an issue nor
+   a PR. Whether to file one is the user's call. **These three moves come in this order**:
 
-   1. **`adj gate open` を打つ**（「Appendix — 人間に見せて待つ（gate）」の `kind: "result"`）。
-      `body` に報告本文（結論 → 根拠 → 直し方の候補 → 範囲外）を入れる。
-      **タブに報告を書くより先にこれを打つ。** 先に書くと、書いた時点で終わった気になって
-      gate を開かないまま §9 に進んでしまう。
-   2. 返ってきた `server` を見る。`up` なら「板に出したのだ」と1行言って**ターンを終える**。
-      `down` なら板が無いので、いつもどおりこのタブに報告を書く。
-   3. `up` で起こされたら `adj outbox` を読む。`ack`（了解）なら終わり、`ask`（追加で聞く）なら
-      コメントのとおり調べ足して 1 からもう一度。
+   1. **Run `adj gate open`** (`kind: "result"` in "Appendix — Show a person and wait (gate)"). Put
+      the report (conclusion → evidence → candidate fixes → out of scope) in `body`.
+      **Run this before writing the report in the tab.** Write it first and it feels finished the
+      moment it is written, and you move on to §9 without opening the gate.
+   2. Look at the `server` that comes back. If `up`, say in one line that it is on the board and
+      **end the turn**. If `down`, there is no board, so write the report in this tab as usual.
+   3. When woken after `up`, read `adj outbox`. `ack` (acknowledged) means done; `ask` (a follow-up
+      question) means investigate further as the comment says and start again from 1.
 
-   **これは承認をもらうものではなく読んでもらうもの**なので、判定は `ack` と `ask` の2つなのだ。
-4. `lk` に保存できる知見（再利用できる構造の理解、既存実装の在りか）があれば、§1 の
-   `## Knowledge to Save` と同じ流儀で保存する。調査の値打ちはここで残るかどうかで決まる。
-5. 通りがかりで**このタスクと無関係な**不具合を見たなら §7。報告のついでに混ぜない。
-6. 終わったら §9 で片付けを頼む。
+   **This is something to be read, not approved**, so the only decisions are `ack` and `ask`.
+4. If there is knowledge worth saving in `lk` (reusable understanding of the structure, where an
+   existing implementation lives), save it the same way as `## Knowledge to Save` in §1. Whether it
+   is kept here is what an investigation is worth.
+5. If you saw a bug **unrelated to this task** on the way, §7. Do not mix it into the report.
+6. When done, ask for cleanup with §9.
 
-## 9. 終わったので片付けてもらう
+## 9. Done: ask for cleanup
 
-worktree を消せるのは hub だけ（自分の足元は自分では消せない）。**hub から依頼する経路がこれ。**
+Only the hub can remove a worktree (you cannot remove the ground you stand on). **This is how you
+ask the hub.**
 
-- **開いたままの gate が無いか先に見る**（`adj gate list`）。残っているなら、それは人が
-  まだ読んでいないということなので、片付けを頼むのは早い。閉じてから来る。
-- **自分の判断で勝手に投げない。** まずこのタブのユーザーに `AskUserQuestion` で聞く
-  （「片付けを依頼する」/「worktree を残す」）。残すと言われたら送らない。消えるのは成果で、
-  やり直せない。
-- **送る前に自分で確かめる。** `git status --short`（未コミット変更）と
-  `git log --branches --not --remotes`（未 push コミット）、それに成果の置き場所（PR を出したか、
-  報告だけか）。**未コミット / 未 push が残っているなら、それを片付けてから送る。片付けられない
-  なら送らない。**
-- `adjutant_send` を `kind` `done` で**1回**送る。`subject` は結論1行。
-  **`cwd` にこの worktree の絶対パスを渡す** — hub が消しに行く先は、そこから入る `worktree`
-  ヘッダで決まる（本文のパスは人が読むためのもので、宛先にはならない）。渡し忘れると MCP
-  サーバーが立っている場所が送信元として記録され、hub は食い違いを見て聞き返してくる。
-  本文に入れるもの:
+- **First check that no gate is still open** (`adj gate list`). If one remains, a person has not
+  read it yet, so it is too early to ask for cleanup. Come back once it is closed.
+- **Do not send it on your own judgement.** First ask the user at this tab with `AskUserQuestion`
+  ("Ask for cleanup" / "Keep the worktree"). If they say keep it, do not send. What disappears is the
+  results, and that cannot be undone.
+- **Check for yourself before sending.** `git status --short` (uncommitted changes) and
+  `git log --branches --not --remotes` (unpushed commits), plus where the results live (a PR, or a
+  report only). **If anything is uncommitted or unpushed, deal with it before sending. If you
+  cannot, do not send.**
+- Send `adjutant_send` with `kind` `done` **once**. `subject` is the conclusion in one line.
+  **Pass this worktree's absolute path as `cwd`** — where the hub goes to remove is decided by the
+  `worktree` header that comes from it (the path in the body is for people to read and is not an
+  address). Forget it and the place the MCP server runs is recorded as the sender, and the hub sees
+  the mismatch and asks back.
+  What goes in the body:
 
   ```
-  ## worktree      {絶対パス}
-  ## ブランチ       {branch}（ベース {base_branch}）
-  ## 成果          PR の URL、または「報告のみ・コミット0」
-  ## 未コミット・未push  無し（確かめた結果を書く）
-  ## 親タスク       {task_id} {task_url}
+  ## worktree               {absolute path}
+  ## Branch                 {branch} (base {base_branch})
+  ## Result                 the PR's URL, or "report only, 0 commits"
+  ## Uncommitted / unpushed none (write what you checked)
+  ## Task                   {task_id} {task_url}
   ```
 
-  最後の行は**この worktree のタスク**で、指示書の「親タスク」行ではない。hub が片付けで要るのは
-  消す worktree が何の作業だったかで、その親ではない。サブタスクを持つ指示書ではこの2つが
-  食い違うので、指示書からそのまま写さない。
+  The last line is **this worktree's task**, not the brief's "Parent task" line. What the hub needs
+  for cleanup is what work the worktree it removes was for, not that work's parent. In a brief with
+  a parent task the two differ, so do not copy it from the brief as it stands.
 
-- **返事を待たない。** hub が片付けを始めるとこのタブは閉じられるので、`adjutant_outbox` を
-  見に戻る前提を置かない。ユーザーに「hub に片付けを依頼したので、このタブは hub が閉じるのだ」と
-  伝えてターンを終える。
-- 閉じられずに hub の `adjutant_tell` で起こされたら、それは安全確認で何かが引っかかって
-  worktree が残されたということ。書かれている中身を直して、もう一度上から送り直す。
+- **Do not wait for a reply.** Once the hub starts cleaning up, this tab is closed, so do not plan on
+  coming back to `adjutant_outbox`. Tell the user "I asked the hub to clean up, so the hub will close
+  this tab" and end the turn.
+- If the tab is not closed and the hub's `adjutant_tell` wakes you instead, something tripped its
+  safety checks and the worktree was kept. Fix what it says and send again from the top.
 
 ---
 
-## Appendix — Jules に渡す
+## Appendix — Handing to Jules
 
-指示書の「実装」が `jules` のときだけ使う。§1 の計画が承認されたあとに来る。
-`adj phase --set implement` を1回打つ（渡すまでの間、カードが計画のまま止まって見えないように）。
+Used only when the brief's "Implementer" is `jules`. It comes after the plan in §1 is approved.
+Run `adj phase --set implement` once (so the card does not look stuck at the plan until it is
+handed over).
 
-**Jules に渡すのは設計書で、計画の要約ではない。** Jules のモデルはこのセッションより弱い。
-判断を任せるほど外すので、判断はここで全部済ませて、Jules には書いてあるとおりに手を動かして
-もらう。人が読むものではないので、長くなってかまわない。
+**What Jules gets is a design document, not a summary of the plan.** Jules's model is weaker than
+this session's. The more judgement it is left, the more it misses, so make every decision here and
+have Jules do exactly what is written. It is not for people to read, so it may be long.
 
-1. **設計書を書く。** 置き場所は `.claude/jules-prompt.md`（`.claude/` は差分に出ない。
-   gitignore されていなければ worktree の外に書いて、2 のパスもそれに合わせる）。
-   ファイルを書くツールで書く — 中身はタスク由来の文字列を含むので、heredoc に置かない。
-   英語で書く（リポジトリのコメントやドキュメントが日本語なら、そこに入る文言だけ日本語でよい）。
-   入れるもの:
-   - **Goal** — 何ができるようになれば終わりか。受け入れ条件をそのまま。
-   - **Files** — 変えるファイルを全部、パスで。ファイルごとに「何を・どこに・どう変えるか」を
-     関数名・型名・既存の似た実装の場所まで具体的に。迷いそうな箇所は、コードの形
-     （シグネチャ、分岐、呼び出し順）まで書く。新しく作るファイルは置き場所と中身の骨組み。
-   - **Do not** — 触らないファイル、足さない依存、変えない公開 API、やらないリファクタリング。
-     書かないと「ついでに」直してくる。
-   - **Conventions** — このリポジトリの規約のうち、この変更に効くもの（命名、エラーの返し方、
-     コメントの書き方、テストの置き場所と書き方）。AGENTS.md があるならそこを指す。
-   - **Tests** — 足すテストを名前と中身で。実行するコマンドは指示書の `verify`。
-   - **Commit / PR** — コミットメッセージの規約。PR の本文は hub があとで書き直すので、
-     Jules には「変更の要約を簡潔に」とだけ書く。
-2. **渡す。**
+1. **Write the design document.** Put it in `.claude/jules-prompt.md` (`.claude/` does not show in
+   the diff; if it is not gitignored, write it outside the worktree and change the path in 2 to
+   match). Write it with a file-writing tool — it contains text taken from the task, so do not put
+   it in a heredoc. Write it in English (if the repository's comments or documents are in another
+   language, only the text that goes into them may be in that language). What goes in:
+   - **Goal** — what must work for this to be done. The acceptance criteria as they are.
+   - **Files** — every file to change, by path. For each file, "what, where and how to change",
+     down to function names, type names and where a similar existing implementation lives. Where it
+     could go astray, write out the shape of the code (signatures, branches, the order of calls).
+     For new files, where they go and the skeleton of their content.
+   - **Do not** — files not to touch, dependencies not to add, public APIs not to change,
+     refactorings not to do. Leave it out and it fixes things "while it is there".
+   - **Conventions** — the repository's conventions that bear on this change (naming, how errors
+     are returned, how comments are written, where and how tests are written). If there is an
+     AGENTS.md, point to it.
+   - **Tests** — the tests to add, by name and content. The command to run is the brief's `verify`.
+   - **Commit / PR** — the commit message convention. The hub rewrites the PR body later, so tell
+     Jules only "summarise the change briefly".
+2. **Hand it over.**
 
    ```bash
    adj jules start --id {task_record} --prompt-file .claude/jules-prompt.md --base '{branch_name}'
    ```
 
-   `{task_record}` は指示書の値。`{branch_name}` は指示書の「ベースブランチ」行から `origin/` を
-   外したブランチ名（`origin/release/1.2` → `release/1.2`）で、§5 で PR のベースを決めるのと
-   同じ規則。Jules は GitHub 上のブランチ名で受け取るので、`origin/` を付けたまま渡すと
-   存在しないブランチを指すことになる。行が無い、または `-` のときは推測せずユーザーに聞く。
-   **ブランチ名が英数字と `.` `_` `/` `-` 以外の文字を含むなら、コマンド行に置かずユーザーに
-   聞く。** 分岐元は板で人が入力した値のことがあり、git はブランチ名に `;` などを許す。
-   シングルクォートで囲んでも、中に `'` があればそこで閉じて、残りがシェルとして走る。
-   session の id が板のカードに書き込まれ、
-   カードは Jules の状態を出すようになる。**失敗したら理由をユーザーに見せて止まる。** 自分で
-   実装に切り替えない — 誰が実装するかを決めたのはタスクを作った人。
-   `julesKey` が無い・キーチェーンに項目が無いと言われたら、そのメッセージのとおりにユーザーに
-   登録してもらう。**キーを聞き出さない・会話に貼らせない。**
-3. **ユーザーに報告する。** 出てきた session の URL と、このあと起きること（Jules が PR を開くと
-   板がカードをレビュー中に移し、hub が PR の説明を書き直す）を短く。
-4. **§9 で片付けを頼む。** この worktree にはコミットが無いので、未 push の確認はすぐ済む。
-   `## 成果` には「Jules session {id} に渡した（{url}）」と書く。
+   `{task_record}` is the brief's value. `{branch_name}` is the brief's "Base branch" line with
+   `origin/` stripped (`origin/release/1.2` → `release/1.2`), the same rule §5 uses for the PR's
+   base. Jules takes a branch name as it is on GitHub, so passing it with `origin/` points at a
+   branch that does not exist. If the line is missing or `-`, do not guess; ask the user.
+   **If the branch name contains anything other than letters, digits and `.` `_` `/` `-`, do not
+   put it on the command line; ask the user.** The branching point may be a value a person typed
+   on the board, and git allows `;` and the like in branch names. Even in single quotes, a `'`
+   inside closes the quote and the rest runs as shell.
+   The session id is written onto the board's card, and the card starts showing Jules's state.
+   **If it fails, show the user why and stop.** Do not switch to implementing it yourself — who
+   implements was decided by whoever created the task.
+   If you are told there is no `julesKey`, or no item in the keychain, have the user register it as
+   the message says. **Do not ask for the key or have it pasted into the conversation.**
+3. **Report to the user.** The session's URL, and briefly what happens next (when Jules opens a PR
+   the board moves the card to in review, and the hub rewrites the PR's description).
+4. **Ask for cleanup with §9.** This worktree has no commits, so the unpushed check is quick.
+   Under `## Result` write "handed to Jules session {id} ({url})".
 
-やらないこと: 実装しない。コミットしない。PR を開かない。セルフレビューを回さない。
-Jules の PR にコメントしない（レビュー対応は PR 上で人が回す）。
+Do not: implement, commit, open a PR, run a self-review, or comment on Jules's PR (review on the PR
+is driven by a person).
 
-## Appendix — 人間に見せて待つ（gate）
+## Appendix — Show a person and wait (gate)
 
-**gate は「質問」ではなく「提示物 + ボールの受け渡し」なのだ。** 整えたものを板に載せて、
-ターンを終えて待つ。答えは outbox に届く。
+**A gate is not "a question" but "something presented + handing the ball over".** Put what you
+prepared on the board, end the turn, and wait. The answer arrives in the outbox.
 
-### 開き方
+### Opening one
 
-`adj gate open` に JSON を標準入力で渡す。**本文は3枠に分ける**：
+Pass JSON to `adj gate open` on standard input. **Split the text into three slots**:
 
 ```bash
 adj gate open --json <<'JSON'
 {
   "kind": "plan",
-  "task": "{指示書のタスクレコード。`-` なら入れない}",
-  "title": "設計レビュー: 検索結果のキャッシュ",
-  "problem": "同じ検索語でも毎回 API を叩くので、戻る操作のたびに結果が出るまで待たされる。",
-  "goal": "直近に出した検索結果は API を待たずに出る。",
-  "facts": ["触る予定のファイル 6 件", "ベース origin/release/1.2"],
-  "focus": "TTL の持ち方を決めてほしいのだ。ここだけ決まれば実装に入れるのだ。",
-  "decided": "- LRU 64件を `SearchRepository` の中に閉じ込めるのだ\n- 永続化はしないのだ",
-  "unsure": "ヒット率を計測に残すかどうか迷っているのだ。",
+  "task": "{the brief's Task record; leave it out if `-`}",
+  "title": "Design review: caching search results",
+  "problem": "The same search term hits the API every time, so every back navigation waits for results.",
+  "goal": "Recently shown search results appear without waiting for the API.",
+  "facts": ["6 files to touch", "base origin/release/1.2"],
+  "focus": "Please decide how the TTL is held. Once that is settled I can start implementing.",
+  "decided": "- An LRU of 64 entries, kept inside `SearchRepository`\n- Nothing is persisted",
+  "unsure": "Not sure whether to keep the hit rate in metrics.",
   "choices": [
-    { "id": "const", "label": "案A — 定数で持つ", "why": "remote config が無いのだ",
-      "points": ["差分 小(1ファイル)", "QA は値を変えられない"], "recommended": true },
-    { "id": "config", "label": "案B — 設定値にする", "why": "QA が触れるのだ",
-      "points": ["差分 中(3ファイル)", "設定の読み込み経路が1本増える"] }
+    { "id": "const", "label": "Option A — a constant", "why": "there is no remote config",
+      "points": ["small diff (1 file)", "QA cannot change the value"], "recommended": true },
+    { "id": "config", "label": "Option B — a setting", "why": "QA can change it",
+      "points": ["medium diff (3 files)", "one more path for reading settings"] }
   ]
 }
 JSON
 ```
 
-| 枠 | 何を書くか |
+| Slot | What to write |
 | --- | --- |
-| `focus` | **ここだけ読めば判定できる**もの。人間が決めるべき分岐 |
-| `decided` | 確定したこと。板では畳まれる（読まなくていい） |
-| `unsure` | 自信が無かったところ。**黙って飲み込まない** |
+| `focus` | What **alone is enough to decide on**. The fork a person should decide |
+| `decided` | What is settled. Folded on the board (need not be read) |
+| `unsure` | Where you were not confident. **Do not swallow it** |
 
-- `facts` は判定に関わらず真であること（ラウンド数・`verify` の結果・行数）。
-- `choices` は**案を選んでほしいとき**だけ。2案を横に並べて出る。`recommended` は正直に付ける。
-- `kind` ごとの追加フィールド: `diff`（差分の文字列）/ `run`（動かし方）/ `body`（報告本文）。
-- `plan` には `problem` と `goal`（§1 の step 3）。
-- **`title` と `focus` に手を抜かない。** 板の上ではそこしか読まれない。
+- `facts` are what is true whatever the decision (number of rounds, the `verify` result, lines).
+- `choices` only **when you want an option picked**. Two options are shown side by side. Be honest
+  with `recommended`.
+- Extra fields per `kind`: `diff` (the diff as a string) / `run` (how to run it) / `body` (the
+  report).
+- `plan` has `problem` and `goal` (step 3 of §1).
+- **Do not skimp on `title` and `focus`.** On the board they are all that gets read.
 
-`diff` と `verify` には、文章の枠とは別に構造化したフィールドを付ける。板はここから表を作る。
-記録にするなら `"wait": false`、待つなら `stoppedBy` に止めた規則を入れる（どちらにするかは
-「Appendix — 待つか、記録にするか」）。
+`diff` and `verify` carry structured fields apart from the text slots. The board builds its tables
+from them. To keep it as a record, `"wait": false`; to wait, put the rules that stopped it in
+`stoppedBy` (which one is decided by "Appendix — Wait or record").
 
 ```bash
 adj gate open --json <<'JSON'
 {
   "kind": "diff",
   "wait": false,
-  "task": "{指示書のタスクレコード。`-` なら入れない}",
-  "title": "差分レビュー: 検索結果のキャッシュ",
-  "facts": ["セルフレビュー 2 ラウンドで収束", "verify 通過", "+120 / -8 行"],
-  "diff": "{git diff の出力}",
+  "task": "{the brief's Task record; leave it out if `-`}",
+  "title": "Diff review: caching search results",
+  "facts": ["self-review converged in 2 rounds", "verify passed", "+120 / -8 lines"],
+  "diff": "{the output of git diff}",
   "reviewRounds": [
     { "engine": "claude", "must": 1, "want": 1, "scope": 0, "falsePositives": 1 },
     { "engine": "claude", "must": 0, "want": 0, "scope": 0, "falsePositives": 1 }
   ],
   "findings": [
-    { "severity": "must", "location": "src/search/cache.rs:42", "text": "容量を超えたときに古いものが消えない",
+    { "severity": "must", "location": "src/search/cache.rs:42", "text": "old entries are not evicted past capacity",
       "outcome": "fixed" },
-    { "severity": "must", "location": "src/search/cache.rs:10", "text": "ロックを取らずに読んでいる",
-      "outcome": "declined", "reason": "呼び出し元が単一スレッドで、共有されない" },
-    { "severity": "want", "location": "src/search/cache.rs:30", "text": "容量を定数に切り出したい",
+    { "severity": "must", "location": "src/search/cache.rs:10", "text": "read without taking the lock",
+      "outcome": "declined", "reason": "the caller is single-threaded and it is not shared" },
+    { "severity": "want", "location": "src/search/cache.rs:30", "text": "pull the capacity out into a constant",
       "outcome": "open" }
   ]
 }
@@ -514,243 +587,268 @@ adj gate open --json <<'JSON'
 {
   "kind": "verify",
   "stoppedBy": ["manual-check"],
-  "task": "{指示書のタスクレコード。`-` なら入れない}",
-  "title": "動作確認: 検索結果のキャッシュ",
-  "focus": "- 戻る操作で検索結果がすぐ出るか見てほしいのだ",
+  "task": "{the brief's Task record; leave it out if `-`}",
+  "title": "Verification: caching search results",
+  "focus": "- Please check that search results appear at once on back navigation",
   "run": "cargo run -- search 'cache'",
   "commands": [
     { "command": "cargo build", "result": "pass", "time": "12s" },
     { "command": "cargo test", "result": "pass", "time": "48s", "output": "test result: ok. 212 passed" }
   ],
-  "manual": ["検索して戻ったとき、結果が待たずに出る"]
+  "manual": ["After searching and going back, results appear without waiting"]
 }
 JSON
 ```
 
-- `reviewRounds` は1ラウンド1件で、`engine`（`claude` / `codex`）と、そのラウンドの妥当な
-  must / want / scope と誤検知の件数。`rounds`（人との往復の回数）とは別物なので混ぜない。
-- `findings` の `severity` は `must` / `want` / `scope`、`outcome` は `fixed`（直した）/
-  `declined`（誤検知として却下。`reason` に理由1行）/ `open`（直していない）。
-- `commands` の `result` は `pass` / `fail`。`attempts` は落ちてから直して通ったときだけ、回した回数。
-  `manual` は人が見るチェックリストで、1件1行。
+- `reviewRounds` has one entry per round, with `engine` (`claude` / `codex`) and that round's
+  counts of valid must / want / scope and false positives. It is not `rounds` (the number of round
+  trips with a person); do not mix them.
+- In `findings`, `severity` is `must` / `want` / `scope`, and `outcome` is `fixed` (fixed) /
+  `declined` (rejected as a false positive; one line of reason in `reason`) / `open` (not fixed).
+- In `commands`, `result` is `pass` / `fail`. `attempts` is the number of runs, only when it failed
+  and passed after a fix. `manual` is the checklist a person goes through, one per line.
 
-### 開いたあと
+### After opening
 
-`adj gate open` は **`server: "up"` か `"down"`** を返す。ここで分岐する:
+`adj gate open` returns **`server: "up"` or `"down"`**. Branch on it:
 
-- **`"wait": false` で開いた記録** — `server` がどちらでも**待たない。ターンも終えない。**
-  返事に `"wait": false` と「go on with your work」が付いてくるので、そのまま次の手順に進む。
-  `down` でも `AskUserQuestion` は出さない（聞くことが無いから記録にしている）。
-- **`up`** — 「板に出したのだ。判定を待つのだ」と1行言って、**そのターンを終える**。
-  ポーリングしない。`sleep` も張らない。
-- **`down`** — ダッシュボードが動いていない。**誰も見ないので待ってはいけない。**
-  その場で `AskUserQuestion` を出して、いつもどおりこのタブで聞く。
-  （gate のファイルは残るが、それは記録であって待ち合わせ場所ではない）
+- **A record opened with `"wait": false`** — whatever `server` says, **do not wait, and do not end
+  the turn.** The reply carries `"wait": false` and "go on with your work", so go straight on to the
+  next step. Even on `down`, do not ask with `AskUserQuestion` (it is a record because there is
+  nothing to ask).
+- **`up`** — say in one line that it is on the board and waiting for a decision, and **end the
+  turn**. Do not poll. Do not `sleep`.
+- **`down`** — the dashboard is not running. **Nobody will see it, so do not wait.** Ask with
+  `AskUserQuestion` right away, in this tab as usual. (The gate's file remains, but as a record,
+  not a place to meet.)
 
-### 起こされたら
+### When woken
 
-**`adj outbox` を見るところから始める。** これが唯一の受け取り口で、判定はこの形で届く:
+**Start by reading `adj outbox`.** It is the only place answers arrive, and a decision comes in
+this shape:
 
 ```
-## 判定        approve | changes | reject | choice | ack | ask | answer
-## 選ばれた案   案A — 定数で持つ(const)     ← choices を出したときだけ
-## gate       {id} ({kind})          ← 記録への差し戻しなら ({kind}, 記録)
+## Decision   approve | changes | reject | choice | ack | ask | answer
+## Chosen     Option A — a constant (const)     ← only when choices were offered
+## gate       {id} ({kind})                     ← ({kind}, record) when a record is sent back
 
-## コメント
+## Comment
 
-{人が書いたもの。無ければ (なし)}
+{what the person wrote, or (none)}
 ```
 
-- `approve` / `ack` なら次の手順へ進む。
-- `changes` / `ask` ならコメントのとおり直して、**同じ論点なら `rounds` を1つ増やして**
-  開き直す。板はその数を見て「タブで話したほうが速い」と人に勧める。
-- `choice` なら選ばれた案で実装する。**選ばれなかった案の良さを持ち出して蒸し返さない。**
-- `## gate` 行に `記録` と付いた `changes` は、**先に進んだあとの記録を人が差し戻した**もの。
-  いまの作業を区切ってコメントのとおり直し、直した差分を §3 からもう一度通す（新しい gate
-  か記録を開く）。差し戻された記録はそのまま残る。
-- **gate を自分で閉じない。** 答えが来た時点で閉じている。
+- `approve` / `ack`: go on to the next step.
+- `changes` / `ask`: fix it as the comment says, and **if it is the same point, add one to
+  `rounds`** and open it again. The board looks at that number and suggests to the person that
+  talking in the tab would be faster.
+- `choice`: implement the chosen option. **Do not reopen the question by bringing up the merits of
+  the option not chosen.**
+- A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
+  moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
+  through §3 again (opening a new gate or record). The record that was sent back stays as it is.
+- **Do not close a gate yourself.** It is closed once the answer arrives.
 
-### やらないこと
+### Do not
 
-- **待っている間に他のことを進めない。** 承認前の実装は、却下されたときに捨てる分が増えるだけ。
-- **`down` のときに待たない**（上のとおり）。
-- **1つの gate に2つの判断を詰めない。** 人は上から順に1枚ずつ捌く。
+- **Do not move on to other things while waiting.** Implementing before approval only adds to what
+  is thrown away if it is rejected.
+- **Do not wait on `down`** (as above).
+- **Do not pack two decisions into one gate.** People go through them one at a time from the top.
 
-## Appendix — 待つか、記録にするか（diff と verify）
+## Appendix — Wait or record (diff and verify)
 
-`plan` は止める所に関係なく**必ず待つ**。`diff`（§3）と `verify`（§4）は、下の規則が1つでも
-当てはまれば待ち、1つも当てはまらなければ `"wait": false` の記録にして進む。**どちらの場合も
-gate か記録のどちらか一方は必ず開く。** 開かずに進むのは無し。
+`plan` **always waits**, whatever Stop at says. `diff` (§3) and `verify` (§4) wait if even one of
+the rules below applies, and are kept as a `"wait": false` record and carried on past if none
+does. **Either way, one of a gate or a record is always opened.** Carrying on without opening one
+is not allowed.
 
-| `stoppedBy` | 当てはまるとき | 対象 |
+| `stoppedBy` | When it applies | Applies to |
 | --- | --- | --- |
-| `round-limit` | セルフレビューが `selfReviewRounds` に達して、妥当な must が残っている | diff |
-| `verify-failed` | `verify` が落ちて、自分では直せなかった | diff / verify |
-| `manual-check` | 人の手でしか確かめられないこと（画面の変化など）が `manual` にある | verify |
-| `unsure` | `unsure` に書くことがある | diff / verify |
-| `stop-at` | 指示書の止める所がこの gate を含む（`diff` なら diff、`all` なら diff と verify） | diff / verify |
+| `round-limit` | Self-review reached `selfReviewRounds` with a valid must left | diff |
+| `verify-failed` | `verify` failed and you could not fix it | diff / verify |
+| `manual-check` | `manual` holds something only a person can check (a change on screen and the like) | verify |
+| `unsure` | There is something to write in `unsure` | diff / verify |
+| `stop-at` | The brief's Stop at includes this gate (`diff`: the diff; `all`: the diff and verify) | diff / verify |
 
-- **待つときは、当てはまった規則を全部 `stoppedBy` に入れる。** 板はそれを「なぜ止まったか」
-  として出す。人は理由を見て、自分が見るべきものかを決める。
-- **`unsure` を空にするために飲み込まない。** 迷ったところがあるなら書いて止まる。記録にしたい
-  から書かない、は規則を裏返している。セルフレビューが「進捗なし」で止まって must が残って
-  いるときや、entry gate の「1回だけ修正」「修正しない」で途中で止めて must が残っているときも、
-  残った must をここに書く。妥当な must を残したまま記録にして先へ進むことは無い。
-- **規則に無い理由で止まらない。** 「念のため見てほしい」は規則ではない。見てほしいかどうかは
-  タスクを渡した人が止める所で決めている。逆に、規則が当てはまるのに記録にしない。
-- 記録にしても、人は板で読んで `changes` で差し戻せる（「起こされたら」）。
+- **When it waits, put every rule that applied in `stoppedBy`.** The board shows it as "why it
+  stopped". A person looks at the reasons and decides whether it is theirs to look at.
+- **Do not swallow things to keep `unsure` empty.** If you were unsure somewhere, write it and
+  stop. Leaving it out because you want a record turns the rule inside out. When self-review
+  stopped on "no progress" with a must left, or stopped early at the entry gate's "fix once" or
+  "do not fix" with a must left, write the remaining must here as well. A record is never made
+  while a valid must remains.
+- **Do not stop for a reason that is not a rule.** "Just to be safe" is not a rule. Whether a person
+  wants to look was decided by whoever handed the task over, in Stop at. Conversely, do not make a
+  record when a rule applies.
+- A record can still be read on the board and sent back with `changes` ("When woken").
 
-## Appendix — どのエージェントに何をやらせるか
+## Appendix — Which agent does what
 
-| 役 | 実体 | なぜそこに置くか |
+| Role | Who | Why there |
 | --- | --- | --- |
-| 情報収集 | 調査特化エージェント（無ければ組み込み `Explore` / `general-purpose`） | 数十ファイルの探索が自分の文脈に入らない。読み取り専用 |
-| 実装計画 | 組み込み `Plan` | 読み取り専用。計画は人が承認するのでこのセッションに返す必要がある |
-| 実装 | **自分** | すでに作業すべき場所に立っている。機械的な大量置換と、ツール出力を自分の文脈に入れたくない調査にだけサブエージェントを使う |
-| セルフレビュー | レビュー特化エージェント（無ければ `general-purpose`） / codex | 実装の理屈を知らない別個体でないと追認になる。`fork` は不可 |
-| レビュー対応 | トリアージ特化エージェント（無ければ `general-purpose`） → 自分 | 収集と分類は定型作業、採否の判断は人が要る |
-| ユーザーとの対話・成果の報告 | **このセッション** | サブエージェントは質問できない。報告の宛先はこのタブのユーザー（「立ち位置」） |
-| worktree の片付け | hub（§9 で頼む） | 自分が立っている worktree は自分では消せない |
+| Research | A research agent (or the built-in `Explore` / `general-purpose`) | Dozens of files of exploration stay out of your context. Read-only |
+| Implementation plan | The built-in `Plan` | Read-only. A person approves the plan, so it has to come back to this session |
+| Implementation | **You** | You are already where the work belongs. Sub-agents only for mechanical bulk replacements and investigations whose tool output you do not want in your context |
+| Self-review | A review agent (or `general-purpose`) / codex | Only an agent that does not know the implementation's reasoning avoids endorsing it. No `fork` |
+| Handling review | A triage agent (or `general-purpose`) → you | Collecting and classifying is routine; deciding what to address needs a person |
+| Talking to the user, reporting results | **This session** | Sub-agents cannot ask questions. Reports go to the user at this tab ("Where you stand") |
+| Cleaning up the worktree | The hub (asked in §9) | You cannot remove the worktree you stand in |
 
 ---
 
-## Appendix — セルフレビューのループ（収束するまで回す）
+## Appendix — The self-review loop (run until it converges)
 
-§3 から呼ばれる。1ラウンド = レビュー → トリアージ → スイープ → 修正。**収束するまで**回す。1回の再レビューで
-止めない。
+Called from §3. One round = review → triage → sweep → fix. Run it **until it converges**. Do not stop
+after one re-review.
 
-### 深刻度の語彙（両エンジン共通）
+### Severity vocabulary (shared by both engines)
 
-深刻度は以下の3段階に統一する。Claude・codex のどちらに回すラウンドでも**この語彙で報告させる**
-（プロンプトに明記する）。エンジンごとに語彙が変わると、下の収束判定がどちらかの側で空振りする。
+Severity has these three levels. Whether a round goes to Claude or codex, **have it report in this
+vocabulary** (say so in the prompt). If the vocabulary changes with the engine, the convergence check
+below misfires on one side.
 
-- **must** — マージしたら欠陥。誤った挙動・クラッシュ・データ損失・セキュリティ。
-- **want** — 正しいが、もっと良くできる。可読性・再利用・いまは起きない境界条件。
-- **scope** — タスクが求めていない変更。ついでのリファクタ、整形、デバッグログの残り。
+- **must** — a defect if merged. Wrong behaviour, a crash, data loss, security.
+- **want** — correct, but could be better. Readability, reuse, an edge case that does not occur now.
+- **scope** — a change the task did not ask for. A refactor on the side, formatting, leftover debug
+  logging.
 
-収束を左右するのは **must だけ**。want / scope は `findings` に `open` で残し、直すかは diff の
-gate か記録を読んだ人が決める（記録なら `changes` で差し戻せる）。
+Only **must** decides convergence. want / scope are left in `findings` as `open`, and whoever reads
+the diff gate or record decides whether to fix them (a record can be sent back with `changes`).
 
-### レビュー対象の集め方
+### Collecting what to review
 
-レビュー対象はいまの cwd。素の `git …`、レビュアーの作業ディレクトリは `.`、codex なら `--cd .`。
-修正は自分で当てる（`Edit`）。実装を別エージェントに投げていたなら、その id へ差し戻す。
-**`isolation: worktree` は禁止** — いま立っている worktree の下にもう1つ掘ってしまう。
+What is reviewed is the current cwd. Plain `git …`, the reviewer's working directory is `.`, and
+for codex `--cd .`. Apply fixes yourself (`Edit`). If you handed the implementation to another agent,
+send it back to that id. **`isolation: worktree` is forbidden** — it digs another worktree under the
+one you are standing in.
 
-トリアージ・スイープ・収束判定・最終報告は、**常にループを回している側**に残る。レビュアーには
-渡さない。
+Triage, sweep, the convergence check and the final report always stay **with whoever is running the
+loop**. They are not handed to the reviewer.
 
-**ループ中はコミットしない**ので `git diff {base}...HEAD` は空になる。これをレビュー対象にしない
-こと。差分は `git diff "$(git merge-base {base} HEAD)"`（追跡済みの変更）に加えて、
-`git status --short` の `??` 行（未追跡ファイル）を必ず足して集める — 新規ファイルは diff だけ見る
-レビュアーの盲点そのもの。
+**Nothing is committed during the loop**, so `git diff {base}...HEAD` is empty. Do not review that.
+Collect the diff as `git diff "$(git merge-base {base} HEAD)"` (tracked changes) and always add the
+`??` lines of `git status --short` (untracked files) — new files are exactly the blind spot of a
+reviewer who reads only the diff.
 
-### Entry gate（毎ラウンドではなく、一度だけ聞く）
+### Entry gate (ask once, not every round)
 
-まずラウンド1を回し、結果を深刻度順（High → Medium → Low）に見せてから:
+Run round 1 first, show the results in order of severity (High → Medium → Low), then:
 
-- トリアージを生き延びた妥当な must が無い → すでに収束。報告して次へ。
-- それ以外は `AskUserQuestion` で「指摘を修正して、収束するまでレビューを回しますか？」
-  - **回す (Recommended)** → 以降は**毎ラウンド聞かずに**収束まで回す。
-  - **1回だけ修正** → 1回直して1回再レビューして止める。
-  - **修正しない** → 飛ばして次へ。
-  - どちらも、妥当な must が残ったなら §3 の diff gate を `unsure` で止める（「Appendix — 待つか、
-    記録にするか」）。
+- No valid must survived triage → already converged. Report and move on.
+- Otherwise `AskUserQuestion` "Fix the findings and keep reviewing until it converges?"
+  - **Keep going (Recommended)** → from then on, run to convergence **without asking each round**.
+  - **Fix once** → fix once, re-review once, and stop.
+  - **Do not fix** → skip and move on.
+  - In either of the last two, if a valid must is left, stop the diff gate in §3 on `unsure`
+    ("Appendix — Wait or record").
 
-### 1ラウンドの手順
+### One round
 
-1. **レビュー** — ラウンドごとにエンジンを選び（下の「レビューエンジンの選択」）、差分を
-   レビューさせる。**報告だけ**で、レビュアーにファイルを触らせない。
-   - 差分の集め方とレビュアーの作業ディレクトリは、上の「レビュー対象の集め方」のとおり。
-   - **誤検知リストを毎ラウンドのプロンプトに持ち越す**（却下した指摘 + 却下理由1行）。
-     「以下は実コードと突き合わせて誤検知と判断済みなので再提出しないこと」と添える。
-     ここが一番効く: これが無いとレビュアーは同じ誤検知を永遠に出し続け、ループは収束しない。
-   - 直近のラウンドで直した内容も渡す。履歴ではなく現在の状態をレビューさせるため。
-2. **トリアージ — 必ずループを回している側で**。レビュアーに自分の指摘を認定させない。
-   各指摘は、手を付ける前に実コードと突き合わせる（Copilot と同じ原則: 鵜呑みにしない）。
-   - **妥当な must** → このラウンドの修正セットに入れる。
-   - **誤検知** → 理由1行を添えて誤検知リストに積む。
-   - **want / scope** → 記録するが、収束判定には数えない。直すかは上の「深刻度の語彙」のとおり
-     人が決める。
-3. **スイープ** — 妥当な指摘ごとに、報告された行ではなく**欠陥の種類**で差分全体を grep し、
-   出てきた分を同じ修正セットに畳み込む。レビュアーは見たところしか見ていないので、同じ
-   ドリフトが飛ばされたファイルに座っていることが多い。
-4. **修正** — そのラウンドの妥当な指摘を**まとめて一度に**直す（指摘1件ごとに修正を走らせない）。
-5. 次のラウンドへ。
+1. **Review** — pick the engine for the round ("Choosing the review engine" below) and have it
+   review the diff. **Report only**; do not let the reviewer touch files.
+   - How to collect the diff and the reviewer's working directory are as in "Collecting what to
+     review" above.
+   - **Carry the false-positive list into every round's prompt** (the rejected findings + a
+     one-line reason each). Add "these were checked against the real code and judged false
+     positives, so do not raise them again". This is what matters most: without it the reviewer
+     raises the same false positives forever and the loop never converges.
+   - Also pass what was fixed in the latest round, so it reviews the current state rather than the
+     history.
+2. **Triage — always on the side running the loop.** Do not let the reviewer certify its own
+   findings. Check each finding against the real code before touching it (the same principle as
+   with Copilot: do not take it at face value).
+   - **Valid must** → into this round's set of fixes.
+   - **False positive** → onto the false-positive list with a one-line reason.
+   - **want / scope** → recorded but not counted for convergence. A person decides whether to fix
+     them, as in "Severity vocabulary" above.
+3. **Sweep** — for each valid finding, grep the whole diff for **the kind of defect**, not the
+   reported line, and fold what turns up into the same set of fixes. The reviewer only saw what it
+   looked at, and the same drift is often sitting in a file it skipped.
+4. **Fix** — fix the round's valid findings **all at once** (do not run a fix per finding).
+5. On to the next round.
 
-### 収束 / 打ち切り条件
+### Convergence / stopping conditions
 
-どれか1つでも満たしたら止める:
+Stop when any one holds:
 
-- **収束**: そのラウンドの**妥当な must が0件** — 「指摘なし」でも、全部トリアージで
-  誤検知 / want / scope に落ちても同じ。これが目標状態（妥当な指摘が尽き、間違った指摘しか
-  出てこなくなった状態）。「指摘なし」は簡単なほうのケースにすぎない。
-- **ラウンド上限**: `selfReviewRounds`（既定5）。「Nラウンドで打ち切り」と、残っているものを
-  報告する。妥当な must が残っているなら、§3 の diff gate を `round-limit` で止めて、続けるかを
-  そこで聞く（残った must は `findings` に `open` で入れる）。
-- **進捗なし**: 妥当な指摘が自分の修正ラウンドを無傷で生き延びた、または2件が往復し始めた
-  （A を直すと B が再発し、その逆も）。もう1ラウンド回しても好転しない。残った must を `unsure` に
-  書き、§3 の diff gate を `unsure` で止めてユーザーに渡す。
+- **Converged**: **zero valid must** in the round — whether it was "no findings" or everything fell
+  to false positive / want / scope in triage. This is the goal (valid findings have run out and
+  only wrong ones come back). "No findings" is merely the easy case.
+- **Round limit**: `selfReviewRounds` (default 5). Report "stopped after N rounds" and what remains.
+  If a valid must remains, stop the diff gate in §3 on `round-limit` and ask there whether to go on
+  (put the remaining must in `findings` as `open`).
+- **No progress**: a valid finding survived your own fix round untouched, or two findings started
+  going back and forth (fixing A brings B back, and vice versa). Another round will not help. Write
+  the remaining must in `unsure`, and stop the diff gate in §3 on `unsure` to hand it to the user.
 
-### 最終報告
+### Final report
 
-ラウンドごとに、詰めて報告する:
+Per round, compactly:
 
 ```
-セルフレビュー: 3ラウンドで収束 (engine: R1-2 Claude / R3 codex)
-  R1: must 3件 → 修正済 / 誤検知 1件
-  R2: must 1件 → 修正済 / 誤検知 2件
-  R3: must 0件 (誤検知 2件 / want 1件) → 収束
-  誤検知として却下: <指摘> → <却下理由>
-  未対応 want / scope: <指摘>
+Self-review: converged in 3 rounds (engine: R1-2 Claude / R3 codex)
+  R1: must 3 → fixed / false positive 1
+  R2: must 1 → fixed / false positive 2
+  R3: must 0 (false positive 2 / want 1) → converged
+  Rejected as false positive: <finding> → <reason>
+  Open want / scope: <finding>
 ```
 
-誤検知の理由は再利用できる。lk に保存するか提案する（`lk add … --scope user`）。次回以降の
-レビューと、lk をそのまま読む codex が、同じ誤検知を出さなくなる。
+The reasons for false positives can be reused. Offer to save them to lk (`lk add … --scope user`).
+Later reviews, and codex reading lk directly, stop raising the same false positives.
 
-### レビューエンジンの選択（5h / 7d 残量で切り替え）
+### Choosing the review engine (switching on 5h / 7d headroom)
 
-ループはトークンを食うので、Claude のレート制限（5時間枠・7日枠）のどちらかが減ってきたら
-**レビューだけ** codex に回す。`reviewEngine` の設定に従う（既定は `auto`）。
-**毎ラウンドの頭で見直す** — ループを回している間も使用量は上がる。
+The loop eats tokens, so when either of Claude's rate limits (the 5-hour window or the 7-day window)
+runs low, send **only the review** to codex. Follow the `reviewEngine` setting (default `auto`).
+**Check again at the start of every round** — usage keeps rising while the loop runs.
 
-- `reviewEngine: "codex"` → 下記の **codex レビュー実行手順** を行う。
-- `reviewEngine: "claude"` → 下記の **Claude レビュー実行手順** を行う。
-- `reviewEngine: "auto"`（既定）→ 以下のレート制限判定を行ってエンジンを決める:
-  1. `statusline.py` が描画のたびに書くキャッシュを読む。**置き場所はアカウントごと**で、
-     このセッションの設定ディレクトリの直下にある（仕事用など別アカウントの
-     残量を掴まないため）:
+- `reviewEngine: "codex"` → follow **Running a codex review** below.
+- `reviewEngine: "claude"` → follow **Running a Claude review** below.
+- `reviewEngine: "auto"` (default) → decide the engine with the rate-limit check below:
+  1. Read the cache `statusline.py` writes on every draw. **It lives per account**, directly under
+     this session's config directory (so as not to pick up another account's headroom, such as a
+     work one):
      ```bash
      cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/rate-limit-cache.json"
      ```
-     形: `{"captured_at": <epoch>, "five_hour": {"used_percentage": 42.3, "resets_at": <epoch>}, "seven_day": {...}}`
-  2. `five_hour.used_percentage` と `seven_day.used_percentage` で決める。**どちらか**が引っかかれば
+     Shape: `{"captured_at": <epoch>, "five_hour": {"used_percentage": 42.3, "resets_at": <epoch>}, "seven_day": {...}}`
+  2. Decide on `five_hour.used_percentage` and `seven_day.used_percentage`. If **either** trips,
      codex:
-     - `five_hour >= 50` **または** `seven_day > 70` → 一度だけ、引っかかった枠と**その枠自身の** `resets_at` を挙げて言い（両方引っかかったら 5h を挙げる）: 「{5h|7d}が{pct}%なのでレビューをcodexに切り替えます（リセット {resets_at}）」、下記の **codex レビュー実行手順** を行う。
-     - 2つのキーは**独立に**評価する。`seven_day` が無くても 5h の判定は止めないし、逆も同じ。
-     - キャッシュが無い / 壊れている / **両方**のキーが無い / `captured_at` が15分より古い → 不明。
-       使用量チェックを飛ばしたことをユーザーに伝え、下記の **Claude レビュー実行手順** で続ける。
-     - `which codex` が失敗 → その旨をユーザーに言い、下記の **Claude レビュー実行手順** で続ける。
-     - どちらも引っかからない → 下記の **Claude レビュー実行手順** を行う。
+     - `five_hour >= 50` **or** `seven_day > 70` → say once which window tripped and **that
+       window's own** `resets_at` (if both trip, name 5h): "{5h|7d} is at {pct}%, so the review
+       switches to codex (resets {resets_at})", then follow **Running a codex review** below.
+     - The two keys are evaluated **independently**. A missing `seven_day` does not stop the 5h
+       check, and vice versa.
+     - The cache is missing / broken / **both** keys are missing / `captured_at` is older than 15
+       minutes → unknown. Tell the user the usage check was skipped, and go on with **Running a
+       Claude review** below.
+     - `which codex` fails → tell the user, and go on with **Running a Claude review** below.
+     - Neither trips → follow **Running a Claude review** below.
 
-#### codex レビュー実行手順
+#### Running a codex review
 
 ```bash
-codex exec --sandbox read-only --cd . --add-dir ~/.config/lk - < {プロンプトファイル}
+codex exec --sandbox read-only --cd . --add-dir ~/.config/lk - < {prompt file}
 ```
-`{プロンプトファイル}` は自分で書き出した一時ファイルのパス。プロンプトが長くて
-引用符だらけになるので、引数ではなく標準入力から渡す。
-**サンドボックスは `read-only`。** 「コードは変更せず報告のみ」と頼むのだから、
-書き込み権を渡す理由が無い。頼み方だけで守らせて事後に `git status` で気づくより、
-そもそも触れなくしておくほうが確実（レビュアーが直してしまうと、それは独立レビューでは
-なく自分の実装の追認になる）。
-プロンプトには「コードは変更せず報告のみ」と、**深刻度は must / want / scope で返すこと**を
-明記する（上の「深刻度の語彙」）。終わったら念のため worktree が変わっていないことを
-確認する（`git status --short`）。
+`{prompt file}` is the path of a temporary file you wrote out. The prompt is long and full of
+quotes, so pass it on standard input rather than as an argument.
+**The sandbox is `read-only`.** You are asking for "report only, do not change the code", so there
+is no reason to hand over write access. Making it unable to touch anything is surer than relying on
+the request and noticing afterwards in `git status` (a reviewer that fixes things is not an
+independent review but an endorsement of your own implementation).
+Say "report only, do not change the code" in the prompt, and **that severity must come back as
+must / want / scope** ("Severity vocabulary" above). When it is done, check that the worktree has
+not changed, to be safe (`git status --short`).
 
-#### Claude レビュー実行手順
+#### Running a Claude review
 
-`Agent` ツールの説明文を確認し、`general-purpose` やトリアージ用（description や名前に「triage」「トリアージ」等が含まれるもの）を除外した上で、コードレビュー・差分検証に特化したエージェント（description に「差分」「diff」「セルフレビュー」「code review」が含まれるもの、あるいは `self-reviewer` など）が存在すればそれを選ぶ。見当たらなければ `subagent_type: "general-purpose"` を選ぶ。
-いずれの場合も「Write / Edit / Bash などのファイル変更・コマンド実行ツールは一切使用せず、Read / Grep / Glob による差分検証とレビュー報告のみ行うこと」「深刻度は必ず must / want / scope で返すこと」を指示して実行する（`reviewEffort` を渡す）。
-- どちらのエンジンがレビューしても、**トリアージ・スイープ・収束判定・修正は自分に残る**。
-  エンジンの選択は「誰が差分を読むか」だけを変える。
+Check the description of the `Agent` tool; leaving out `general-purpose` and triage agents (whose
+description or name mentions triage), if there is an agent that specialises in code review and
+checking diffs (its description mentions diffs, self-review or code review, or it is something like
+`self-reviewer`), pick it. If there is none, pick `subagent_type: "general-purpose"`.
+Either way, tell it "Do not use any tool that changes files or runs commands, such as Write / Edit /
+Bash; only check the diff with Read / Grep / Glob and report a review" and "always return severity
+as must / want / scope", and run it (pass `reviewEffort`).
+- Whichever engine reviewed, **triage, sweep, the convergence check and the fixes stay with you**.
+  Choosing the engine only changes "who reads the diff".

@@ -64,15 +64,7 @@ fn a_report_says_which_worktree_it_came_from_not_which_repository() {
     );
 
     let sent = fixture
-        .command([
-            "send",
-            "--kind",
-            "done",
-            "--subject",
-            "終わったのだ",
-            "--body",
-            "b",
-        ])
+        .command(["send", "--kind", "done", "--subject", "Done", "--body", "b"])
         .current_dir(&worktree)
         .output()
         .unwrap();
@@ -213,13 +205,13 @@ fn the_hub_leaves_a_message_in_the_worktree_and_the_worker_reads_it_there() {
         "--worktree",
         &worktree,
         "--subject",
-        "[質問 20260908T041500Z] which screen is this about",
+        "[question 20260908T041500Z] which screen is this about",
         "--body",
         "checking before filing WID-1",
     ]);
     let read = fixture.ok(&["outbox", "--worktree", &worktree]);
     assert!(read.contains(&format!("from {HUB}")), "{read}");
-    assert!(read.contains("[質問 20260908T041500Z]"), "{read}");
+    assert!(read.contains("[question 20260908T041500Z]"), "{read}");
     assert!(read.contains("checking before filing WID-1"), "{read}");
 
     // A second message appends rather than replacing the first.

@@ -323,7 +323,14 @@ fn the_hub_finds_a_worktrees_task_and_clears_a_note_by_saying_nothing() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0]["id"], id.as_str());
 
-    fixture.ok(&["task", "update", "--id", &id, "--note", "worker の枠待ち"]);
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--note",
+        "Waiting for a worker slot",
+    ]);
     // A command line cannot say null, and the note has to go once the worker starts.
     let updated = fixture.json(&[
         "task",
@@ -442,7 +449,7 @@ fn a_task_carries_the_stop_point_it_was_handed_over_with() {
     let pending = fixture.json(&["pending", "--json"]);
     let name = pending["messages"][0]["name"].as_str().unwrap();
     let body = fixture.ok(&["pending", "--read", name]);
-    assert!(body.contains("## 止める所     diff（"), "{body}");
+    assert!(body.contains("## Stop at       diff ("), "{body}");
 
     // Refused before an id is claimed, so no empty reservation is left behind.
     let files = || {
@@ -633,7 +640,7 @@ fn a_note_and_a_tab_title_given_as_a_dash_are_read_from_stdin() {
     ]);
     let id = added["task"]["id"].as_str().unwrap().to_string();
 
-    let reason = "着手できなかったのだ: fatal: 'origin/x' is not a commit; $(date)\n";
+    let reason = "Could not start: fatal: 'origin/x' is not a commit; $(date)\n";
     let out = with_stdin(
         &fixture,
         &["task", "update", "--id", &id, "--note", "-", "--json"],

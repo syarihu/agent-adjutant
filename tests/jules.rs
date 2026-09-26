@@ -282,7 +282,7 @@ fn a_jules_task_says_so_in_the_request_the_hub_reads_and_a_typo_is_refused() {
     let listed = fixture.json(&["pending", "--json"]);
     let name = listed["messages"][0]["name"].as_str().unwrap().to_string();
     let pending = fixture.ok(&["pending", "--read", &name]);
-    assert!(pending.contains("## 実装        jules"), "{pending}");
+    assert!(pending.contains("## Implementer   jules"), "{pending}");
 
     let out = fixture.cmd(&[
         "task",
