@@ -1,8 +1,8 @@
 //! `adj jules` — hand a task's approved plan to Jules, and ask how that is going.
 //!
-//! The worker is the caller. It plans in its worktree as it always does, and once the plan
-//! gate is answered it writes the design out for Jules and runs `adj jules start`, which
-//! starts the session and writes its id onto the task record. From there the record is what
+//! The hub is the caller. It has a sub-agent write the plan in a worktree cut only to be read,
+//! and once a person approves that plan it runs `adj jules start` with it, which starts the
+//! session and writes its id onto the task record. From there the record is what
 //! the board and the hub follow: the session id is the only thing about Jules kept locally.
 
 use serde_json::{Value, json};
@@ -32,12 +32,12 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     // and the record would keep whichever wrote last.
     let lock = tasks::lock_task(&ctx, args.id)?;
     let mut task = task::load(&tasks::dir(&ctx), args.id)?;
-    // Handed over by the worker of a task in progress, and by nobody else. The board follows a
+    // Handed over by the hub once the task is in progress, and not before. The board follows a
     // session only while its task is in progress or in review, so one started for a task still
     // in the backlog or the queue would run with nothing watching it.
     if task.status != task::Status::Dispatched {
         return Err(format!(
-            "{} is {}, not in progress: a task goes to Jules from its worker, after the hub has dispatched it",
+            "{} is {}, not in progress: a task goes to Jules once the hub has dispatched it and its plan is approved",
             task.id,
             task.status.as_str()
         ));
@@ -65,7 +65,7 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
         (Some(given), _) => given.to_string(),
         (None, Some(stored)) => branch_on_github(&ctx.repo.main, &ctx.repo.nwo, stored),
         (None, None) => {
-            return Err("which branch should Jules start from? pass --base (the branch this worktree was cut from, without origin/)".to_string());
+            return Err("which branch should Jules start from? write it onto the task with `adj task update --id <task> --base <branch>`, or pass --base (without origin/)".to_string());
         }
     };
     let base = base.as_str();

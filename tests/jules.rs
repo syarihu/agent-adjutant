@@ -219,6 +219,42 @@ fn the_base_comes_from_the_task_when_none_is_given_and_is_asked_for_otherwise() 
     );
 }
 
+/// The hub decides the base when it cuts the worktree and hands the plan over on a later
+/// wake, maybe after a restart, so it writes the base onto the record in between.
+#[test]
+fn a_base_written_onto_the_task_later_is_the_one_jules_starts_from() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let prompt = write_prompt(&fixture);
+    let (path, args, _) = stub_curl(&fixture);
+
+    let id = add_task(&fixture, &[]);
+    let updated = fixture.json(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--base",
+        "release/3.1",
+        "--json",
+    ]);
+    assert_eq!(updated["task"]["base"], "release/3.1", "{updated}");
+    let out = fixture
+        .command(["jules", "start", "--id", &id, "--prompt-file", &prompt])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        std::fs::read_to_string(&args)
+            .unwrap()
+            .contains("release/3.1")
+    );
+}
+
 #[test]
 fn a_session_is_shown_with_its_pull_request() {
     let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));

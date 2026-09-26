@@ -62,7 +62,8 @@ impl Kind {
     ///
     /// Decided by kind because the kind already says who is asking: whether to start a task
     /// and whether to file an issue are the hub's questions, and nothing a worker asks about.
-    /// A kind that either side could open would need the opener written into the gate.
+    /// A kind that either side could open has the opener written into the gate instead (see
+    /// `Gate::answered_by_hub`).
     pub fn answered_by_hub(self) -> bool {
         matches!(self, Kind::Dispatch | Kind::Issue | Kind::Relay)
     }
@@ -85,6 +86,23 @@ impl Kind {
             _ => &["approve", "changes", "reject"],
         };
         options.iter().map(|o| o.to_string()).collect()
+    }
+}
+
+/// Who opened a gate, for the one kind either side can open. A plan is the worker's own
+/// step for a task it implements, and the hub's for a task handed to Jules, where no worker
+/// is started and the hub has a sub-agent write the plan.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Opener {
+    #[default]
+    Worker,
+    Hub,
+}
+
+impl Opener {
+    fn is_worker(&self) -> bool {
+        *self == Opener::Worker
     }
 }
 
@@ -247,6 +265,10 @@ pub struct Gate {
     /// Where the answer goes. A worktree rather than a session, so an answer outlives the
     /// agent that asked for it.
     pub worktree: String,
+    /// Who is waiting on the answer. Only ever written for a plan the hub opened; every other
+    /// gate's opener follows from its kind.
+    #[serde(default, skip_serializing_if = "Opener::is_worker")]
+    pub opened_by: Opener,
     /// The task this belongs to, when there is a record for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
@@ -321,6 +343,15 @@ pub struct Gate {
     /// A record's answers, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<Answer>,
+}
+
+impl Gate {
+    /// Whether the answer goes to the hub's inbox rather than the worktree's outbox: a kind
+    /// only the hub opens, or a plan the hub opened for a task handed to Jules. That plan's
+    /// worktree has no worker in it, and an answer left in its outbox would never be read.
+    pub fn answered_by_hub(&self) -> bool {
+        self.kind.answered_by_hub() || self.opened_by == Opener::Hub
+    }
 }
 
 fn waits() -> bool {
@@ -537,6 +568,7 @@ mod tests {
             id: "20260922T041233Z-plan".to_string(),
             kind,
             worktree: "/tmp/wt".to_string(),
+            opened_by: Opener::Worker,
             task: Some("20260922T041000Z-cache".to_string()),
             title: "Design review: caching search results".to_string(),
             facts: vec!["6 files to touch".to_string()],
@@ -770,5 +802,29 @@ mod tests {
     fn a_result_gate_offers_reading_rather_than_approving() {
         assert_eq!(Kind::Result.default_options(), ["ack", "ask"]);
         assert_eq!(Kind::Diff.default_options(), ["approve", "changes"]);
+    }
+
+    /// A plan the hub opened for a task handed to Jules sits in a worktree with no worker, so
+    /// its answer has to reach the hub. One a worker opened stays the worker's.
+    #[test]
+    fn a_plan_is_answered_by_whoever_opened_it() {
+        let mut plan = gate(Kind::Plan);
+        assert!(!plan.answered_by_hub());
+        plan.opened_by = Opener::Hub;
+        assert!(plan.answered_by_hub());
+        assert!(gate(Kind::Dispatch).answered_by_hub());
+    }
+
+    /// Written only when it says something: every gate a worker opens reads as it always has.
+    #[test]
+    fn the_opener_is_written_only_for_the_hub() {
+        let worker = serde_json::to_value(gate(Kind::Plan)).unwrap();
+        assert!(worker.get("openedBy").is_none());
+        let mut plan = gate(Kind::Plan);
+        plan.opened_by = Opener::Hub;
+        let hub = serde_json::to_value(&plan).unwrap();
+        assert_eq!(hub["openedBy"], "hub");
+        let back: Gate = serde_json::from_value(hub).unwrap();
+        assert_eq!(back, plan);
     }
 }

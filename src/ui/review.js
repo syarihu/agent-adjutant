@@ -14,6 +14,9 @@ const KINDS = {
 };
 /* The kinds the hub opens: their answers go to its inbox, and its tab is the one to raise. */
 const HUB_KINDS = ['dispatch', 'issue', 'relay'];
+/* Whether the hub is the one waiting on this gate: one of its kinds, or a plan it opened for a
+   task handed to Jules, whose worktree has no worker in it. */
+const hubsGate = g => HUB_KINDS.includes(g.kind) || g.openedBy === 'hub';
 const kindOf = k => KINDS[k] || [k, '#898781'];
 
 let focused = null;
@@ -295,10 +298,10 @@ function decideHtml(g) {
     <div style="font-size:11.5px;color:var(--md-sys-color-outline);display:flex;align-items:flex-start;gap:6px;margin-top:8px;">
       <span class="material-symbols-outlined" style="font-size:14px;margin-top:2px;">info</span>
       <span>
-        ${HUB_KINDS.includes(g.kind)
+        ${hubsGate(g)
           ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
           : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
-        <b>「ターミナルで話す」</b>は gate を開いたまま worker タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（worker への outbox 配信なしでアーカイブします）。
+        <b>「ターミナルで話す」</b>は gate を開いたまま${hubsGate(g) ? ' hub' : ' worker'} タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（${hubsGate(g) ? 'hub への配信' : 'worker への outbox 配信'}なしでアーカイブします）。
       </span>
     </div>
   </div>`;
@@ -754,8 +757,8 @@ async function answer(decision, choice, id = focused) {
     const data = await api(`/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
     });
-    // The hub opened dispatch and issue gates, and their answers go to its inbox instead.
-    const toHub = HUB_KINDS.includes(g.kind);
+    // The hub opened this gate, and its answer goes to the hub's inbox instead.
+    const toHub = hubsGate(g);
     note(line, false, toHub
       ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
       : `${g.worktree.split('/').pop()} の outbox に追記` +
@@ -775,7 +778,7 @@ function talk(id = focused) {
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
   // hub's.
-  if (HUB_KINDS.includes(g.kind)) focusHub(); else worktreeAct('focus', g.worktree);
+  if (hubsGate(g)) focusHub(); else worktreeAct('focus', g.worktree);
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 

@@ -255,6 +255,9 @@ pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<De
         ("worktree", &mut task.worktree),
         ("issue", &mut task.issue),
         ("pr", &mut task.pr),
+        // The branching point the hub decided, for a task whose record did not bring one:
+        // `adj jules start` reads it after the hub may have restarted.
+        ("base", &mut task.base),
         ("julesSession", &mut task.jules_session),
         ("julesBy", &mut task.jules_by),
         ("note", &mut task.note),
@@ -676,6 +679,7 @@ pub struct UpdateArgs<'a> {
     pub worktree: Option<&'a str>,
     pub issue: Option<&'a str>,
     pub pr: Option<&'a str>,
+    pub base: Option<&'a str>,
     pub jules_session: Option<&'a str>,
     pub executor: Option<&'a str>,
     pub note: Option<&'a str>,
@@ -698,6 +702,7 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
         ("worktree", args.worktree),
         ("issue", args.issue),
         ("pr", args.pr),
+        ("base", args.base),
         ("julesSession", args.jules_session),
         ("executor", args.executor),
         ("note", note.as_deref()),
