@@ -198,11 +198,23 @@ fn a_dispatch_past_max_workers_starts_nothing_and_says_so_with_its_own_exit_code
 fn a_task_waiting_for_a_slot_is_queued_with_its_worktree_and_sends_the_hub_nothing() {
     let fixture = one_worker_at_a_time();
     let worktree = linked_worktree(&fixture, "wid-3");
-    let added = fixture.json(&[
+    let out = fixture.ok(&[
         "task",
         "add",
         "--title",
         "WID-3",
+        "--body",
+        "画像が潰れる",
+        "--waiting-in",
+        &worktree,
+    ]);
+    assert!(out.contains("Queued, but not handed to "), "{out}");
+
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "WID-4",
         "--body",
         "画像が潰れる",
         "--waiting-in",
