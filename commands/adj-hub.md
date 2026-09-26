@@ -1305,10 +1305,11 @@ after `mkdir -p {worktree}/.claude`.
   again yourself. After opening the PR, the worker decides by this line whether to ask Copilot for a
   review, and whether to ask the user first.
 - **Write the Implementer line too.** `worker` or `jules`. For a request from the dashboard, the
-  `## Implementer` line ("A request from the dashboard"); for one asked in the tab, `jules` only when
-  the user said to have Jules implement it; otherwise `worker`. The worker decides by this line
-  whether to implement the approved plan itself or hand it to Jules, and the task record carries the
-  same value (`--executor` below).
+  leading value of the `## Implementer` line when there is one, and `worker` when there is none (the
+  board writes the line only for `jules`; "A request from the dashboard"). For one asked in the tab,
+  `jules` only when the user said to have Jules implement it; otherwise `worker`. The worker decides
+  by this line whether to implement the approved plan itself or hand it to Jules, and the task record
+  carries the same value (`--executor` below).
 - **For "investigation only", no PR and no issue updates.** Have the results given to the user at
   that tab (the brief's "Report to" says so). Have them reported to you here and the report is
   doubled.
