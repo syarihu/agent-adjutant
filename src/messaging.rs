@@ -222,13 +222,10 @@ fn cannot_tell(path: &Path) -> String {
 /// `read_worker` establishes it, and only then is the record read.
 pub fn hub_liveness(slug: &str) -> Liveness {
     let path = hub_record_path(slug);
-    // `try_exists` rather than `exists`, which answers "no" to every error it meets — and
-    // "no" is the answer that goes on to start a hub. Not perfect in the same way
-    // `read_worker` is not: a symlink pointing nowhere answers `Ok(false)` here while the
-    // claim's own `hard_link` meets it and says the name is taken — the one reading of a
-    // record these two still disagree about. It has no way of arising for a file this tool
-    // writes itself, which writes records by linking them into place.
-    match path.try_exists() {
+    // `record_exists` rather than `exists`, which answers "no" to every error it meets — and
+    // "no" is the answer that goes on to start a hub. A symlink pointing nowhere is
+    // something here, the same thing the claim's own `hard_link` meets and refuses on.
+    match record_exists(&path) {
         // No record is the same answer as a record whose process has gone: nobody holds
         // the name. It is what `create_new` is about to say by succeeding.
         Ok(false) => Liveness::Gone,
@@ -536,9 +533,9 @@ fn worker_hub(start: Option<&Path>) -> Result<Option<String>, String> {
         return Ok(None);
     };
     let path = worker_record_path(Path::new(&worktree));
-    // `try_exists` rather than `exists`, which answers "no" to every error it meets — and
+    // `record_exists` rather than `exists`, which answers "no" to every error it meets — and
     // "no" here is the answer that loses the address.
-    match path.try_exists() {
+    match record_exists(&path) {
         Ok(false) => return Ok(None),
         Err(e) => return Err(unreadable_record(&path, &e.to_string())),
         Ok(true) => {}
@@ -873,10 +870,9 @@ pub enum WorkerRecord {
 /// Read a worktree's worker record once.
 pub fn read_worker(worktree: &Path) -> WorkerRecord {
     let path = worker_record_path(worktree);
-    // `try_exists` rather than `exists`, which answers "no" to every error it meets. It is
-    // still not perfect — a symlink pointing nowhere is `Ok(false)` here — and the
-    // difference has no way of arising for a file this tool writes itself.
-    match path.try_exists() {
+    // `record_exists` rather than `exists`, which answers "no" to every error it meets. A
+    // symlink pointing nowhere is something here, and reading it fails below.
+    match record_exists(&path) {
         Ok(false) => return WorkerRecord::Absent,
         Err(_) => return WorkerRecord::Unreadable,
         Ok(true) => {}
@@ -1683,6 +1679,20 @@ fn create_new_json(path: &Path, value: &Value) -> Result<(), CreateError> {
     };
     let _ = std::fs::remove_file(&staged);
     result
+}
+
+/// Whether anything at all is at `path`, a symlink included — with "cannot tell" kept apart.
+///
+/// `symlink_metadata` rather than `try_exists`: `try_exists` follows a symlink, so one whose
+/// target has gone answers "nothing here", and "nothing here" is the answer each caller goes
+/// on to act on. Asked about the link itself, the answer is that something is there — and the
+/// read that follows fails, which is the "there and cannot be read" each caller already has.
+fn record_exists(path: &Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -2977,5 +2987,58 @@ mod tests {
         // A worker started again writes its record fresh, and starts without a phase.
         register_worker(worktree, "WID-957", None).unwrap();
         assert_eq!(worker_status(worktree).phase, None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_worker_record_that_is_a_broken_symlink_is_unreadable_not_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        let record = worker_record_path(worktree);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(worktree.join("gone.json"), &record).unwrap();
+        assert!(matches!(read_worker(worktree), WorkerRecord::Unreadable));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_worker_record_that_is_a_broken_symlink_is_not_read_as_the_repository_s_own_hub() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        let worktree = std::fs::canonicalize(dir.path()).unwrap();
+        let worktree = worktree.as_path();
+
+        let path = worker_record_path(worktree);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(worktree.join("gone.json"), &path).unwrap();
+
+        let err = hub_id(None, Some(worktree)).unwrap_err();
+        assert!(err.contains(&path.display().to_string()));
+        assert_eq!(
+            hub_id(Some("from-flag"), Some(worktree))
+                .unwrap()
+                .as_deref(),
+            Some("from-flag")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_hub_record_that_is_a_broken_symlink_is_cannot_tell_not_gone() {
+        let _sandbox = Sandbox::empty();
+        let slug = "acme-widget";
+        assert_eq!(hub_liveness(slug), Liveness::Gone);
+        let record = hub_record_path(slug);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(record.with_file_name("gone.json"), &record).unwrap();
+        assert_eq!(hub_liveness(slug), Liveness::CannotTell);
     }
 }
