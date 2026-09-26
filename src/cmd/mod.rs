@@ -15,6 +15,7 @@ use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
 mod gate;
+mod jules;
 mod serve;
 mod task;
 
@@ -22,6 +23,10 @@ pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
     open as gate_open_payload, open_cmd as gate_open, open_json as gate_open_json,
     show as gate_show,
+};
+pub use jules::{
+    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, show as jules_show,
+    start as jules_start,
 };
 pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{

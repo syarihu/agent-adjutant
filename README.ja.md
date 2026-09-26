@@ -68,6 +68,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
 | `adjutant notify --message …` | 人間にデスクトップ通知を送る |
 | `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力 |
+| `adjutant jules start\|show` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 
 エージェント側（`adjutant mcp`）：9つのツールと3つのプロンプトを提供します。
@@ -167,6 +168,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
 | `hubAutoResumeHours` | なし（数値。`0` で無効） | `3`（この時間以内に終了した hub は `adj hub` で自動的に再開する） |
 | `stuckAfterMinutes` | なし（数値。`0` で無効） | `120`（worker が同じ工程にこの分数とどまると板のカードを赤くする。worker が止まっているカードはこの値に関係なく赤くなる） |
+| `julesKey` | なし（Jules の API キーを出力するコマンド） | macOS のキーチェーン項目 `jules-api`（`false` にすると Jules に渡せなくなる） |
 | `maxWorkers` | なし（1以上の整数） | 制限なし（チェックアウトごとに数える。gate で待っている worker と起動中の worker は枠を使い、止まった worker は使わない） |
 | `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
 | `hubServe` | なし（`true` / `false`） | `true`（hub の MCP サーバーがその hub の板を hub と同じ寿命で立てる。`127.0.0.1:4577` が空いていればそこ、埋まっていれば空いている port。URL は `adjutant_config` の `board` に入る。手で立てた板が既に動いていればそのままにする。`false` にすると板は `adj serve` で手で立てる） |
@@ -200,6 +202,28 @@ macOS 以外には組み込みの通知手段がなく、通知できないこ�
 - **カレントディレクトリ**: `spawn` テンプレートに `{cwd}` が含まれている場合はそのコマンド自身でディレクトリ移動を行うものとみなし、含まれていない場合は先頭に `cd` が付与されます。
 - **タブ名**: 新規タブの名前はターミナル API ではなく、タブ内で実行されるシェルが `adjutant title` を呼ぶことで設定されます。
 - **環境変数**: `agentEnv` で、hub および worker の起動時に渡す環境変数を設定できます。別プロファイルでエージェントを動かしたい場合に便利です。
+
+## Jules に実装を渡す
+
+タスクの実装を worker ではなく [Jules](https://jules.google) に任せることもできます。その場合も計画は worker が立てます。強いモデルが必要なのは設計のほうなので、plan gate で承認を受けるところまでは worker が進め、承認された設計を Jules の session に渡して終わります。実装、パッチのセルフレビュー、PR の作成は Jules が行います。
+
+どちらに実装させるかはタスクレコードに持たせます。`adjutant task add --executor jules`（または `task update --executor jules`）で指定します。Jules に渡すのは worker が実行する次のコマンドです。
+
+```bash
+adj jules start --id <task> --prompt-file design.md --base main
+```
+
+このリポジトリを対象に、ファイルの中身を prompt として session を作ります。PR は自動で作らせ、計画は確認なしで承認させます（人がすでに承認しているため）。作った session の id はタスクの `julesSession` に書き込みます。`adj jules show --id <task>` で、session の状態、jules.google.com のページ、PR ができていればその URL を確認できます。1つのタスクを渡せるのは1回だけで、`julesSession` を消すまで2つ目の session は作れません。
+
+API キーはエージェントから読めない場所に置きます。`adj config` はすべての設定を出力し、エージェントはそれを読むので、`julesKey` にはキーそのものではなく、キーを出力するコマンドを書きます。組み込みの既定値は macOS のキーチェーン項目 `jules-api` を読みます。次のコマンドで一度だけ登録してください。キーはコマンド行に書かず、表示されるプロンプトで入力します。
+
+```bash
+security add-generic-password -s jules-api -a "$USER" -w
+```
+
+キーは `curl` に stdin で渡します（引数にすると `ps` で読めてしまうため）。エラーを含め、出力する文字列からはキーを取り除きます。macOS 以外では、キーを保管している場所から読み出して出力するコマンドを `julesKey` に指定してください。
+
+事前に、対象リポジトリへ Jules の GitHub App を入れておく必要があります。Jules から見えないリポジトリは API が受け付けません。
 
 ## 両者はどうやって連絡を取り合うか
 

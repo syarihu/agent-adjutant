@@ -85,6 +85,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
 | `adjutant task add\|list\|show\|update\|refresh` | the records that board is a view of (`refresh`: move the ones whose PR was merged to done) |
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
+| `adjutant jules start\|show` | hand a task's approved plan to Jules, and ask how its session is doing (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as nine tools and three prompts:
@@ -278,6 +279,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *`false` leaves the board to `adj serve`, started by hand* |
 | `stuckAfterMinutes` | — (a number, `0` to turn it off) | `120` |
 | | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless* |
+| `julesKey` | — (a command that prints the Jules API key) | the macOS keychain item `jules-api` |
+| | | *`false` turns handing tasks to Jules off* |
 | `maxWorkers` | — (a whole number, 1 or more) | no limit |
 | | | *counted per checkout; a worker parked at a gate or still starting up takes a slot, a dead one does not* |
 
@@ -495,6 +498,43 @@ view opens rather than on every poll, since the archive only grows.
 Anything that changes state needs it in a header as well, and needs an `Origin` naming this
 server — a page on another site can submit a form to a loopback port, but it cannot set that
 header, and these endpoints are how work gets started.
+
+## Handing a task to Jules
+
+A task can be implemented by [Jules](https://jules.google) instead of by the worker. The
+worker still plans it — that is where a strong model pays for itself — and once the plan
+gate is answered it hands the approved design to a Jules session rather than writing the
+code. Jules implements it, reviews its own patch and opens the pull request.
+
+The choice is on the record: `adjutant task add --executor jules` (or `task update
+--executor jules`). The hand-over is one command, run by the worker:
+
+```bash
+adj jules start --id <task> --prompt-file design.md --base main
+```
+
+It starts a session on this repository with the file as its prompt, asks for the pull
+request to be opened automatically and for the plan to be approved without asking (a person
+already approved it), and writes the session's id onto the task as `julesSession`. `adj
+jules show --id <task>` asks how the session is doing: its state, its page on
+jules.google.com and, once there is one, its pull request. A task is handed over once;
+starting a second session for it is refused until `julesSession` is cleared.
+
+**The key stays out of the agent's reach.** `julesKey` is a command that prints it, not the
+key, because `adj config` prints every setting and an agent reads that. The built-in reads
+the macOS keychain item `jules-api`; add it once, typing the key at the prompt rather than on
+the command line:
+
+```bash
+security add-generic-password -s jules-api -a "$USER" -w
+```
+
+The key reaches `curl` on its stdin — an argument would be readable through `ps` — and is
+taken out of anything printed back, errors included. Off macOS, point `julesKey` at a
+command that prints the key from wherever it is kept.
+
+The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
+see is refused by the API.
 
 ## How the two sides reach each other
 

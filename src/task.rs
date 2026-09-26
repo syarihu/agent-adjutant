@@ -67,6 +67,37 @@ impl StopAt {
     }
 }
 
+/// Who writes the code once the plan is approved.
+///
+/// A worker plans every task either way: the plan is where a strong model earns its keep,
+/// and an agent that implements well from a detailed design does not need to write one.
+/// What changes is what the worker does after the plan gate — implement it, or hand the
+/// approved plan to Jules and stop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Executor {
+    /// The worker implements, reviews and opens the pull request itself.
+    #[default]
+    Worker,
+    /// The worker hands the approved plan to a Jules session, which implements it and opens
+    /// the pull request.
+    Jules,
+}
+
+impl Executor {
+    pub fn parse(text: &str) -> Option<Executor> {
+        Some(match text {
+            "worker" => Executor::Worker,
+            "jules" => Executor::Jules,
+            _ => return None,
+        })
+    }
+
+    fn is_worker(&self) -> bool {
+        *self == Executor::Worker
+    }
+}
+
 /// Six states, and no more.
 ///
 /// There is deliberately no `gate` here. Whether a task is waiting on a human is answered
@@ -127,6 +158,10 @@ pub struct Task {
     /// Absent in a record written before there was a choice, which is what `Plan` means.
     #[serde(default)]
     pub stop_at: StopAt,
+    /// Absent means the worker, which is what every record written before there was a
+    /// choice did. Left out when it is the worker, so those records read back unchanged.
+    #[serde(default, skip_serializing_if = "Executor::is_worker")]
+    pub executor: Executor,
     /// What this one dispatch should branch from. `None` = the repository's `baseBranch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
@@ -151,6 +186,11 @@ pub struct Task {
     pub issue: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr: Option<String>,
+    /// The Jules session implementing this task, once the worker has handed it over. The id
+    /// alone: the board asks the API for the state, which changes long after the worker has
+    /// gone, rather than keeping a copy here that would go stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jules_session: Option<String>,
     /// Why the hub could not take it, when that is the answer. Written where the reply to
     /// the requester would have gone, because for a dashboard request there is no session
     /// to reply to.
@@ -323,6 +363,11 @@ pub fn render_request(task: &Task) -> String {
             StopAt::All => "計画の承認・差分レビュー・動作確認を待つ",
         }
     ));
+    // Only when it is not the worker, so a request reads the way it always has for the tasks
+    // that did not choose.
+    if task.executor == Executor::Jules {
+        out.push_str("## 実装        jules（計画の承認後に Jules へ渡す）\n");
+    }
     let line = |label: &str, value: Option<&str>| format!("## {label}{}\n", value.unwrap_or("-"));
     out.push_str(&line("Issue      ", task.issue_url.as_deref()));
     out.push_str(&line("分岐元      ", task.base.as_deref()));
@@ -370,6 +415,7 @@ mod tests {
                 issue_url: None,
                 done_when,
                 stop_at: StopAt::default(),
+                executor: Executor::default(),
                 base: None,
                 parent: None,
                 worktree_name: None,
@@ -379,6 +425,7 @@ mod tests {
                 worktree: None,
                 issue: None,
                 pr: None,
+                jules_session: None,
                 note: None,
                 instruction: None,
                 gate_answered_at: None,
