@@ -371,7 +371,13 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/history") => {
             reply(out, task_history(server, path))
         }
+        ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/findings") => {
+            reply(out, review_findings(server, path))
+        }
         ("POST", "/api/tasks") => reply(out, create_task(server, &req.body)),
+        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/relay") => {
+            reply(out, relay_findings(server, path, &req.body))
+        }
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
@@ -651,6 +657,42 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
+/// The task id in `/api/tasks/{id}/{what}`, when there is exactly one.
+fn task_id_in<'a>(path: &'a str, what: &str) -> Option<&'a str> {
+    path.strip_prefix("/api/tasks/")
+        .and_then(|rest| rest.strip_suffix(&format!("/{what}")))
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// The review bots' comments on a Jules task's PR, for the side sheet to choose from. Asked
+/// for when a person opens the list, not on every poll: it is a round trip to GitHub.
+fn review_findings(server: &Server, path: &str) -> Result<Value, String> {
+    let id = task_id_in(path, "findings").ok_or("no such task")?;
+    Ok(json!({ "findings": super::jules_findings(&server.ctx, id)? }))
+}
+
+/// Post the chosen comments to the PR for Jules, in the name `gh` is signed in as.
+fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
+    let id = task_id_in(path, "relay").ok_or("no such task")?;
+    let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let chosen: Vec<String> = input
+        .get("comments")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    super::jules_relay(
+        &server.ctx,
+        id,
+        &chosen,
+        input.get("note").and_then(Value::as_str),
+    )
+}
+
 /// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
 /// in its log before it redraws.
 fn refresh_tasks(server: &Server) -> Result<Value, String> {
@@ -786,6 +828,7 @@ mod tests {
             pr: None,
             jules_session: None,
             jules_by: None,
+            relayed: Vec::new(),
             note: None,
             instruction: None,
             gate_answered_at: None,

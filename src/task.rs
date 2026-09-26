@@ -195,6 +195,10 @@ pub struct Task {
     /// account's comments and nobody else's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jules_by: Option<String>,
+    /// Review comments already passed on to Jules, by their GitHub id. Kept so the board can
+    /// say which ones went, and so one comment is not handed over twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relayed: Vec<String>,
     /// Why the hub could not take it, when that is the answer. Written where the reply to
     /// the requester would have gone, because for a dashboard request there is no session
     /// to reply to.
@@ -431,6 +435,7 @@ mod tests {
                 pr: None,
                 jules_session: None,
                 jules_by: None,
+                relayed: Vec::new(),
                 note: None,
                 instruction: None,
                 gate_answered_at: None,

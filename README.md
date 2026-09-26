@@ -85,7 +85,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
 | `adjutant task add\|list\|show\|update\|refresh` | the records that board is a view of (`refresh`: move the ones whose PR was merged to done) |
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
-| `adjutant jules start\|show` | hand a task's approved plan to Jules, and ask how its session is doing (see [Handing a task to Jules](#handing-a-task-to-jules)) |
+| `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
 
 Agent-side (`adjutant mcp`), the same machinery as nine tools and three prompts:
@@ -554,6 +554,18 @@ message arrives, `adj-hub` hands the pull request's description to a subagent on
 to rewrite in the repository's own style, from the design (`adj jules show --json` returns it
 as `prompt`), Jules' own description and the list of changed files. The CodeRabbit summary
 block and Jules' link back to the session are kept as they are.
+
+**Review comments are passed on by hand, in your name.** Jules answers the comments of the
+person who started it and keeps out of other bots' threads, so a review bot's findings do not
+reach it by themselves. The side sheet of a Jules task in review has 「レビュー指摘を Jules に
+回す」: it lists the first comment of each thread by the repository's `reviewBots`
+(`coderabbitai[bot]` when none are named), and posts the ones you tick as one comment on the
+pull request through `gh`, which is signed in as you. Jules is not mentioned in it: it reads
+comments on its own pull requests without one. What each finding carries is the bot's own
+prompt for an agent when the comment has one, and otherwise the comment without its hidden and
+folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. From
+a shell it is `adj jules findings --id <task>` and `adj jules relay --id <task> --comment <id>`.
+Only inline comments are listed; what a bot writes in the body of its review is not.
 
 The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
 see is refused by the API.

@@ -621,3 +621,152 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
     let listed = fixture.json(&["pending", "--json"]);
     assert_eq!(listed["count"], 0, "{listed}");
 }
+
+/// A `gh` that lists three review comments on PR 7 — one from CodeRabbit with a prompt for
+/// agents, a reply to it, and one from a person — and writes down a posted comment.
+fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
+    let stubs = fixture.repo.join("stub-bin");
+    std::fs::create_dir_all(&stubs).unwrap();
+    let posted = fixture.repo.join("gh-posted");
+    let listed = fixture.repo.join("gh-listed");
+    let comments = [
+        serde_json::json!({"id": 11, "path": "src/a.rs", "line": 3, "html_url": "https://github.com/acme/widget/pull/7#discussion_r11",
+            "in_reply_to_id": null, "user": "coderabbitai[bot]",
+            "body": "**Guard the index.**\n\n<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n```\nIn src/a.rs around line 3, check the index first.\n```\n\n</details>\n<!-- fingerprinting -->"}),
+        serde_json::json!({"id": 12, "path": "src/a.rs", "line": 3, "html_url": "u", "in_reply_to_id": 11,
+            "user": "coderabbitai[bot]", "body": "reply"}),
+        serde_json::json!({"id": 13, "path": "src/b.rs", "line": 1, "html_url": "u", "in_reply_to_id": null,
+            "user": "someone", "body": "nit"}),
+    ];
+    std::fs::write(
+        &listed,
+        comments
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let gh = stubs.join("gh");
+    std::fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\n\
+             case \"$1 $2\" in\n\
+             'api repos/acme/widget/pulls/7/comments') cat {listed} ;;\n\
+             'pr comment') echo \"$3\" > {posted}; cat >> {posted}; echo https://github.com/acme/widget/pull/7#issuecomment-1 ;;\n\
+             *) echo \"unexpected: $*\" >&2; exit 1 ;;\n\
+             esac\n",
+            listed = shell_quoted(&listed.to_string_lossy()),
+            posted = shell_quoted(&posted.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        stubs.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (path, posted)
+}
+
+fn task_in_review(fixture: &Fixture) -> String {
+    let id = add_task(fixture, &["--executor", "jules"]);
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "pr",
+        "--pr",
+        "https://github.com/acme/widget/pull/7",
+        "--jules-session",
+        "42",
+        "--no-hand-over",
+    ]);
+    id
+}
+
+#[test]
+fn review_bot_comments_are_listed_and_passed_on_once_in_the_person_s_name() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let run = |args: &[&str]| fixture.command(args).env("PATH", &path).output().unwrap();
+
+    let out = run(&["jules", "findings", "--id", &id, "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    // The reply and the person's comment are not findings.
+    assert_eq!(found.as_array().unwrap().len(), 1, "{found}");
+    assert_eq!(found[0]["id"], "11");
+    assert_eq!(
+        found[0]["text"],
+        "In src/a.rs around line 3, check the index first."
+    );
+
+    let out = run(&[
+        "jules",
+        "relay",
+        "--id",
+        &id,
+        "--comment",
+        "11",
+        "--note",
+        "Keep the API.",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let comment = std::fs::read_to_string(&posted).unwrap();
+    assert!(
+        comment.starts_with("https://github.com/acme/widget/pull/7\n"),
+        "{comment}"
+    );
+    assert!(
+        comment.contains("Please address these review comments."),
+        "{comment}"
+    );
+    assert!(comment.contains("Keep the API."), "{comment}");
+    assert!(comment.contains("`src/a.rs:3`"), "{comment}");
+    assert!(
+        !comment.contains("@jules"),
+        "Jules is not to be mentioned: {comment}"
+    );
+
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["relayed"], serde_json::json!(["11"]));
+    let again = run(&["jules", "findings", "--id", &id, "--json"]);
+    let found: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(found[0]["relayed"], true);
+
+    std::fs::remove_file(&posted).unwrap();
+    let out = run(&["jules", "relay", "--id", &id, "--comment", "11"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("already been passed on"));
+    assert!(!posted.exists(), "posted a second time");
+}
+
+#[test]
+fn a_comment_that_is_not_a_finding_is_not_passed_on() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let out = fixture
+        .command(["jules", "relay", "--id", &id, "--comment", "13"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no review comment 13"));
+    assert!(!posted.exists());
+}

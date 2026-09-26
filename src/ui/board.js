@@ -587,6 +587,72 @@ function goToQueue() {
   else setView('review');
 }
 
+/* The review comments of the task the side sheet is open on, once a person asked for them.
+   Kept here rather than in /api/state: listing them is a round trip to GitHub, done when
+   somebody wants to choose, and the choice has to survive the side sheet being redrawn. */
+let relay = { taskId: null, loading: false, error: '', findings: [], picked: new Set() };
+
+async function loadFindings(id) {
+  relay = { taskId: id, loading: true, error: '', findings: [], picked: new Set() };
+  renderDrawer();
+  try {
+    const data = await api(`/api/tasks/${encodeURIComponent(id)}/findings`);
+    relay.findings = data.findings || [];
+    note(`adj jules findings --id ${id}`, false, `${relay.findings.length} 件`);
+  } catch (e) {
+    relay.error = e.message;
+    note(`adj jules findings --id ${id} → ${e.message}`, true);
+  }
+  relay.loading = false;
+  renderDrawer();
+}
+
+async function relayPicked(id) {
+  const comments = [...relay.picked];
+  if (!comments.length) return;
+  const line = `adj jules relay --id ${id} ${comments.map(c => `--comment ${c}`).join(' ')}`;
+  try {
+    await api(`/api/tasks/${encodeURIComponent(id)}/relay`, { method: 'POST', body: JSON.stringify({ comments }) });
+    note(line, false, `${comments.length} 件を PR にコメントしました。Jules が読んで直します`);
+    await loadFindings(id);
+  } catch (e) { note(`${line} → ${e.message}`, true); }
+}
+
+function relayHtml(task) {
+  const mine = relay.taskId === task.id;
+  let h = `
+    <div class="m3-filled-card">
+      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">レビュー指摘を Jules に回す</div>
+      <p style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0 0 8px;">Jules はレビュー bot のコメントには反応しないので、選んだ指摘をあなたの名前で PR にコメントし直します。</p>`;
+  if (!mine || (!relay.loading && !relay.findings.length && !relay.error)) {
+    h += `<button type="button" class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;align-self:flex-start;" data-findings="${esc(task.id)}">
+      <span class="material-symbols-outlined" style="font-size:16px;">download</span><span>${mine ? '指摘はありません — 読み直す' : '指摘を読み込む'}</span></button>`;
+  } else if (relay.loading) {
+    h += `<div style="font-size:12px;color:var(--md-sys-color-outline);">読み込み中…</div>`;
+  } else if (relay.error) {
+    h += `<div style="font-size:12px;color:var(--md-sys-color-error);overflow-wrap:anywhere;">${esc(relay.error)}</div>
+      <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-findings="${esc(task.id)}">読み直す</button>`;
+  } else {
+    h += `<div style="display:flex;flex-direction:column;gap:6px;">` + relay.findings.map(f => {
+      const place = f.line != null ? `${f.path}:${f.line}` : f.path;
+      return `<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;${f.relayed ? 'opacity:.55;' : ''}">
+        <input type="checkbox" data-relay-pick="${esc(f.id)}" ${relay.picked.has(f.id) ? 'checked' : ''} ${f.relayed ? 'disabled' : ''} style="margin-top:2px;">
+        <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+          <code style="font-family:var(--font-mono);font-size:11.5px;word-break:break-all;">${esc(place)}${f.relayed ? '（回し済み）' : ''}</code>
+          <span style="color:var(--md-sys-color-on-surface-variant);overflow-wrap:anywhere;">${esc((f.text || '').split('\n')[0].slice(0, 160))}</span>
+          ${httpUrl(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-size:11px;">GitHub で見る</a>` : ''}
+        </span>
+      </label>`;
+    }).join('') + `</div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button type="button" class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-relay="${esc(task.id)}" ${relay.picked.size ? '' : 'disabled'}>
+          <span class="material-symbols-outlined" style="font-size:16px;">forward</span><span>選んだ ${relay.picked.size} 件を Jules に回す</span></button>
+        <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-findings="${esc(task.id)}">読み直す</button>
+      </div>`;
+  }
+  return h + `</div>`;
+}
+
 function renderDrawer() {
   const drawer = document.getElementById('task-drawer');
   if (!drawer) return;
@@ -728,6 +794,10 @@ function renderDrawer() {
     `;
   }
 
+  if (task.julesSession && httpUrl(task.pr) && ['dispatched', 'pr'].includes(task.status)) {
+    body += relayHtml(task);
+  }
+
   if (task.instruction && colId !== 'backlog') {
     body += `
       <div class="m3-filled-card">
@@ -779,6 +849,15 @@ function renderDrawer() {
         b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
       part.querySelectorAll('[data-close]').forEach(b =>
         b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
+      part.querySelectorAll('[data-findings]').forEach(b =>
+        b.addEventListener('click', () => loadFindings(b.dataset.findings)));
+      part.querySelectorAll('[data-relay]').forEach(b =>
+        b.addEventListener('click', () => relayPicked(b.dataset.relay)));
+      part.querySelectorAll('[data-relay-pick]').forEach(b =>
+        b.addEventListener('change', () => {
+          if (b.checked) relay.picked.add(b.dataset.relayPick); else relay.picked.delete(b.dataset.relayPick);
+          renderDrawer();
+        }));
     }
     renderHandForm(colId === 'backlog' ? task : null);
   }

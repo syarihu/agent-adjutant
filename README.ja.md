@@ -68,7 +68,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
 | `adjutant notify --message …` | 人間にデスクトップ通知を送る |
 | `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力 |
-| `adjutant jules start\|show` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
+| `adjutant jules start\|show\|findings\|relay` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する。レビュー指摘を Jules に回す（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 
 エージェント側（`adjutant mcp`）：9つのツールと3つのプロンプトを提供します。
@@ -226,6 +226,8 @@ security add-generic-password -s jules-api -a "$USER" -w
 板では、このカードに worker の代わりに session の状態（待機中・作業中・完了・失敗）が表示され、session のページへのリンクになります。worker は Jules に渡したところで終わるので、worker がいなくても赤くしません。session が失敗したときだけ赤くします。状態は板のページが開いている間だけ、進行中とレビュー中のカードについて、1つの session あたり最大45秒に1回問い合わせます。問い合わせはページの応答とは別のスレッドで行うため、API の応答が遅くても板は遅くならず、表示が少し古くなるだけです。PR ができた session を初めて見たとき、板はその PR をタスクに書き込み、カードをレビュー中に移し、hub に `jules-pr` メッセージ（タスクと PR）を送ります。Jules はコメントに対応するたびに完了し直しますが、そのころにはタスクに PR が入っているので、送るのは1回だけです。新規タスクのフォームの「実装」で、どちらに実装させるかを選べます。
 
 その先は手順書が進めます。指示書に「実装」の行があり、`jules` なら `adj-worker` は計画の承認後に Jules 向けの設計書を書きます。変えるファイルをすべて挙げ、それぞれ何をどう変えるか、触らないもの、足すテストまで書きます。受け取る側のモデルが弱いので、要約ではなく判断を済ませた設計書にします。worker はそのファイルで `adj jules start` を実行し、hub に片付けを頼んで終わります。worktree に残すものはありません。`jules-pr` メッセージが届くと、`adj-hub` は PR の説明の書き直しを軽いモデルのサブエージェントに任せます。材料は設計書（`adj jules show --json` の `prompt`）、Jules が書いた本文、変更ファイルの一覧で、リポジトリの書き方に合わせて書き直します。CodeRabbit の要約ブロックと、Jules の session へのリンク行はそのまま残します。
+
+レビュー指摘は、人が選んで本人の名前で Jules に回します。Jules は起動した本人のコメントには対応しますが、ほかの bot のスレッドには入らないため、レビュー bot の指摘はそのままでは届きません。レビュー中の Jules タスクのサイドシートにある「レビュー指摘を Jules に回す」で、リポジトリの `reviewBots`（指定が無ければ `coderabbitai[bot]`）が書いた各スレッドの最初のコメントを一覧し、チェックしたものを1つのコメントにまとめて `gh` で PR に投稿します。`gh` は本人としてログインしているので、本人のコメントになります。Jules は自分の PR へのコメントをメンションなしで読むので、メンションは付けません。各指摘には、コメントにエージェント向けのプロンプトがあればそれを、無ければ隠しコメントと折りたたみ部分を除いた本文を載せます。回したコメントの id はタスクの `relayed` に残し、同じコメントを2回回さないようにします。シェルからは `adj jules findings --id <task>` と `adj jules relay --id <task> --comment <id>` で同じことができます。一覧に出るのは行へのコメントだけで、レビュー本文に書かれた指摘は対象外です。
 
 事前に、対象リポジトリへ Jules の GitHub App を入れておく必要があります。Jules から見えないリポジトリは API が受け付けません。
 

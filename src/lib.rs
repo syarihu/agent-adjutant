@@ -568,6 +568,32 @@ enum JulesAction {
         #[arg(long)]
         json: bool,
     },
+    /// The review bots' comments on the task's pull request that could be passed on to Jules
+    Findings {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Pass review comments on to Jules, as one comment on the pull request in your name
+    Relay {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        /// A comment id from `adj jules findings` (repeat for more)
+        #[arg(long = "comment", required = true)]
+        comments: Vec<String>,
+        /// Something to say to Jules above them (- reads stdin)
+        #[arg(long)]
+        note: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1062,6 +1088,25 @@ fn run_jules(action: &JulesAction) -> Result<(), String> {
             session: session.as_deref(),
             json: *json,
         }),
+        JulesAction::Findings {
+            repo,
+            hub,
+            id,
+            json,
+        } => cmd::jules_findings_cmd(repo.as_deref(), hub.as_deref(), id, *json),
+        JulesAction::Relay {
+            repo,
+            hub,
+            id,
+            comments,
+            note,
+        } => cmd::jules_relay_cmd(
+            repo.as_deref(),
+            hub.as_deref(),
+            id,
+            comments,
+            note.as_deref(),
+        ),
     }
 }
 
