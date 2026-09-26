@@ -368,13 +368,16 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
             task.id, session.id
         ),
     };
-    super::deliver_to_hub(ctx, &message)?;
+    // Posted under the lock, so no second poll can post it again; the hub is woken and the
+    // person told after the lock is let go, since those run commands that may not return.
+    let posted = super::post_to_hub(ctx, &message)?;
     task.pr = Some(pr.clone());
     if task.status == task::Status::Dispatched {
         task.status = task::Status::Pr;
     }
     task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
-    task::save(&tasks::dir(ctx), &task)?;
+    let saved = task::save(&tasks::dir(ctx), &task);
     drop(lock);
-    Ok(())
+    posted.follow_up(ctx, true);
+    saved.map(|_| ())
 }
