@@ -614,13 +614,21 @@ async function loadFindings(id) {
 
 async function relayPicked(id) {
   const comments = [...relay.picked];
-  if (!comments.length) return;
+  // One at a time: a second click while the first is posting would only come back refused.
+  if (!comments.length || relay.posting) return;
+  const asked = relay;
+  asked.posting = true;
+  renderDrawer();
   const line = `adj jules relay --id ${id} ${comments.map(c => `--comment ${c}`).join(' ')}`;
   try {
     await api(`/api/tasks/${encodeURIComponent(id)}/relay`, { method: 'POST', body: JSON.stringify({ comments }) });
     note(line, false, `${comments.length} 件を PR にコメントしました。Jules が読んで直します`);
-    await loadFindings(id);
+    // Read again only if the side sheet is still on this list; otherwise the reload would
+    // replace whatever is being looked at now.
+    if (relay === asked && selectedTaskId === id) await loadFindings(id);
   } catch (e) { note(`${line} → ${e.message}`, true); }
+  asked.posting = false;
+  if (relay === asked) renderDrawer();
 }
 
 function relayHtml(task) {
@@ -650,7 +658,7 @@ function relayHtml(task) {
       </label>`;
     }).join('') + `</div>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button type="button" class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-relay="${esc(task.id)}" ${relay.picked.size ? '' : 'disabled'}>
+        <button type="button" class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-relay="${esc(task.id)}" ${relay.picked.size && !relay.posting ? '' : 'disabled'}>
           <span class="material-symbols-outlined" style="font-size:16px;">forward</span><span>選んだ ${relay.picked.size} 件を Jules に回す</span></button>
         <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-findings="${esc(task.id)}">読み直す</button>
       </div>`;

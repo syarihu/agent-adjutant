@@ -462,7 +462,10 @@ pub fn findings(ctx: &super::Context, id: &str) -> Result<Vec<Finding>, String> 
         .pr
         .as_deref()
         .ok_or(format!("{id} has no pull request yet"))?;
-    let number = pr_number(pr).ok_or(format!("not a pull request URL: {pr}"))?;
+    // The number alone is asked about in this repository, so a URL pointing at another one
+    // would list that number's comments here — and relay would post them to the other PR.
+    let number = pr_number(pr, &ctx.repo.nwo)
+        .ok_or(format!("not a pull request of {}: {pr}", ctx.repo.nwo))?;
     let reviewers = reviewers(ctx);
     let out = std::process::Command::new("gh")
         .args([
@@ -581,9 +584,13 @@ fn reviewers(ctx: &super::Context) -> Vec<String> {
     }
 }
 
-/// The number at the end of a pull request URL.
-fn pr_number(url: &str) -> Option<&str> {
-    let (_, rest) = url.split_once("/pull/")?;
+/// The number of a pull request URL, when it is a pull request of `nwo`.
+fn pr_number<'a>(url: &'a str, nwo: &str) -> Option<&'a str> {
+    let path = url.strip_prefix("https://github.com/")?;
+    let (repo, rest) = path.split_once("/pull/")?;
+    if !repo.eq_ignore_ascii_case(nwo) {
+        return None;
+    }
     let number = rest.split(['/', '?', '#']).next()?;
     (!number.is_empty() && number.chars().all(|c| c.is_ascii_digit())).then_some(number)
 }
@@ -784,13 +791,18 @@ mod tests {
 
     #[test]
     fn a_pr_number_is_read_from_its_url() {
-        assert_eq!(pr_number("https://github.com/a/b/pull/12"), Some("12"));
         assert_eq!(
-            pr_number("https://github.com/a/b/pull/12/files"),
+            pr_number("https://github.com/a/b/pull/12", "a/b"),
             Some("12")
         );
-        assert_eq!(pr_number("https://github.com/a/b/issues/12"), None);
-        assert_eq!(pr_number("https://github.com/a/b/pull/x;y"), None);
+        assert_eq!(
+            pr_number("https://github.com/A/B/pull/12/files", "a/b"),
+            Some("12")
+        );
+        assert_eq!(pr_number("https://github.com/a/b/issues/12", "a/b"), None);
+        assert_eq!(pr_number("https://github.com/a/b/pull/x;y", "a/b"), None);
+        // Another repository's PR is not this one's, whatever its number.
+        assert_eq!(pr_number("https://github.com/a/other/pull/12", "a/b"), None);
     }
 
     #[test]
