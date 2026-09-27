@@ -190,3 +190,51 @@ fn the_shipped_example_config_resolves_without_a_single_warning() {
         );
     }
 }
+
+#[test]
+fn a_relative_config_is_read_and_reported_as_an_absolute_path() {
+    let fixture = Fixture::new(QUIET);
+    let sub = fixture.repo.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+
+    let out = fixture
+        .command(["config"])
+        .current_dir(&sub)
+        .env("ADJUTANT_CONFIG", "../../config.json")
+        .output()
+        .unwrap();
+
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["registered"], true);
+    let reported = std::path::PathBuf::from(json["configPath"].as_str().unwrap());
+    assert!(reported.is_absolute());
+    assert_eq!(
+        std::fs::canonicalize(reported).unwrap(),
+        std::fs::canonicalize(fixture.config).unwrap()
+    );
+}
+
+#[test]
+fn a_relative_xdg_config_home_is_read_and_reported_as_an_absolute_path() {
+    let fixture = Fixture::new(QUIET);
+    let xdg = fixture.repo.parent().unwrap().join("xdg");
+    let adj = xdg.join("adjutant");
+    std::fs::create_dir_all(&adj).unwrap();
+    std::fs::copy(&fixture.config, adj.join("config.json")).unwrap();
+
+    let out = fixture
+        .command(["config"])
+        .current_dir(&fixture.repo)
+        .env_remove("ADJUTANT_CONFIG")
+        .env("XDG_CONFIG_HOME", "../xdg")
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["registered"], true);
+    let reported = std::path::PathBuf::from(json["configPath"].as_str().unwrap());
+    assert!(reported.is_absolute());
+    assert_eq!(
+        std::fs::canonicalize(reported).unwrap(),
+        std::fs::canonicalize(adj.join("config.json")).unwrap()
+    );
+}

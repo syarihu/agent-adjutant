@@ -456,23 +456,28 @@ pub fn spawn(
 /// given a command line and nothing else.
 ///
 /// `ADJUTANT_HUB` already travels as a flag, and `ADJUTANT_STARTUP_DASHBOARD` as one too.
-/// These two have none, and losing them does not fail — it *splits*: the tab reads the
-/// default config and the default state directory, so the agent it starts registers in one
-/// world while the hub that dispatched it waits in another. The worker reports into an
+/// `ADJUTANT_CONFIG`, `XDG_CONFIG_HOME` (which picks the config when `ADJUTANT_CONFIG` is
+/// unset) and `ADJUTANT_STATE_DIR` have none, and losing them does not fail — it *splits*:
+/// the tab reads the default config and the default state directory, so the agent it starts
+/// registers in one world while the hub that dispatched it waits in another. The worker reports into an
 /// inbox nobody is reading, and both halves look healthy from where they stand.
 ///
 /// Forwarded only when this process was given them. A machine that never sets them gets the
 /// command line it always had.
 fn forwarded_env() -> Vec<String> {
-    let set: Vec<String> = [config::CONFIG_ENV, messaging::STATE_DIR_ENV]
-        .iter()
-        .filter_map(|name| {
-            std::env::var(name)
-                .ok()
-                .filter(|value| !value.is_empty())
-                .map(|value| format!("{name}={value}"))
-        })
-        .collect();
+    let set: Vec<String> = [
+        config::CONFIG_ENV,
+        config::XDG_CONFIG_HOME_ENV,
+        messaging::STATE_DIR_ENV,
+    ]
+    .iter()
+    .filter_map(|name| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("{name}={value}"))
+    })
+    .collect();
     if set.is_empty() {
         return Vec::new();
     }
@@ -2015,9 +2020,61 @@ mod tests {
         let _sandbox = crate::testing::Sandbox::empty();
         unsafe {
             std::env::remove_var(config::CONFIG_ENV);
+            std::env::remove_var(config::XDG_CONFIG_HOME_ENV);
             std::env::remove_var(messaging::STATE_DIR_ENV);
         }
         assert!(forwarded_env().is_empty());
+    }
+
+    #[test]
+    fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        unsafe {
+            std::env::set_var(config::CONFIG_ENV, "relative-config.json");
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        config::anchor_config_env();
+        let env = forwarded_env();
+        assert_eq!(env[0], "env");
+        assert!(env.contains(&format!(
+                "{}={}",
+                config::CONFIG_ENV,
+                std::env::current_dir()
+                    .unwrap()
+                    .join("relative-config.json")
+                    .display()
+            )));
+        // The sandbox also sets ADJUTANT_STATE_DIR, but we only care about CONFIG_ENV here
+        // so that the test logic correctly asserts on the rewritten config path.
+    }
+
+    /// With `ADJUTANT_CONFIG` unset, `XDG_CONFIG_HOME` is what picks the config, so a tab
+    /// that did not receive it would read whatever its own shell had.
+    #[test]
+    fn a_relative_xdg_config_home_reaches_a_tab_as_an_absolute_path() {
+        let sandbox = crate::testing::Sandbox::empty();
+        unsafe { std::env::remove_var(config::CONFIG_ENV) };
+        let _xdg =
+            crate::testing::EnvVar::set(&sandbox, config::XDG_CONFIG_HOME_ENV, "relative-xdg");
+        config::anchor_config_env();
+        let env = forwarded_env();
+        assert_eq!(env[0], "env");
+        assert!(
+            env.contains(&format!(
+                "{}={}",
+                config::XDG_CONFIG_HOME_ENV,
+                std::env::current_dir()
+                    .unwrap()
+                    .join("relative-xdg")
+                    .display()
+            )),
+            "{env:?}"
+        );
+        assert!(
+            !env.iter()
+                .any(|p| p.starts_with(&format!("{}=", config::CONFIG_ENV))),
+            "{env:?}"
+        );
     }
 
     /// A `GIT_DIR` left over from whatever started the agent would send every git command it

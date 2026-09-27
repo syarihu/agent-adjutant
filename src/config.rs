@@ -9,7 +9,7 @@
 //! says what is wrong.
 
 use serde_json::{Map, Value, json};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Falls back to `defaults`, then to these. `ide` has no built-in on purpose: guessing an
 /// editor puts the user in the wrong one, and the prompts know how to ask.
@@ -258,6 +258,7 @@ fn required_keys(source_type: &str) -> &'static [&'static str] {
 /// The file this binary reads its configuration out of. Named here rather than spelled in
 /// each place that forwards it: a tab that is handed the wrong one reads a different world.
 pub const CONFIG_ENV: &str = "ADJUTANT_CONFIG";
+pub const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
 
 /// `ADJUTANT_CONFIG` wins, then `$XDG_CONFIG_HOME/adjutant/config.json`, then
 /// `~/.config/adjutant/config.json`. Not under a specific agent's config directory: the
@@ -272,9 +273,49 @@ pub fn config_path() -> PathBuf {
 }
 
 fn config_home() -> PathBuf {
-    match std::env::var("XDG_CONFIG_HOME") {
+    match std::env::var(XDG_CONFIG_HOME_ENV) {
         Ok(dir) if !dir.is_empty() => expand_home(&dir),
         _ => home_dir().join(".config"),
+    }
+}
+
+/// `value` made absolute against `cwd` when it is a relative path, and `None` when it has to
+/// be left exactly as it is: empty, already absolute, or starting with `~` the way
+/// `expand_home` understands it (`~` or `~/...`), which is anchored to `HOME` rather than to
+/// any directory.
+fn anchored(value: &str, cwd: &Path) -> Option<PathBuf> {
+    if value.is_empty() || value == "~" || value.starts_with("~/") {
+        return None;
+    }
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return None;
+    }
+    std::path::absolute(cwd.join(path)).ok()
+}
+
+/// Make a relative `ADJUTANT_CONFIG` and `XDG_CONFIG_HOME` absolute, once, against the
+/// directory this process was started in.
+///
+/// A relative value is otherwise resolved against whichever directory each process stands in,
+/// and every process adjutant starts stands somewhere else — the hub moves to the main
+/// checkout before it execs, and tabs open at the checkout or the worktree. Rewriting the
+/// variable, rather than resolving it where it is read, is what makes the answer travel: exec
+/// and spawned children inherit it, and `forwarded_env` hands the same value to a tab.
+/// `ADJUTANT_STATE_DIR` is deliberately not included; see the comment above the directory move
+/// in `hub`.
+pub fn anchor_config_env() {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    for name in [CONFIG_ENV, XDG_CONFIG_HOME_ENV] {
+        let Ok(value) = std::env::var(name) else {
+            continue;
+        };
+        if let Some(path) = anchored(&value, &cwd) {
+            // SAFETY: called first thing in `run`, before any thread is started.
+            unsafe { std::env::set_var(name, path) };
+        }
     }
 }
 
@@ -1181,6 +1222,31 @@ pub fn resolve_config(nwo: &str) -> Result<Resolved, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relative_value_is_anchored_to_the_directory_it_was_given_in() {
+        let cwd = Path::new("/work/repo");
+        assert_eq!(
+            anchored("my-config.json", cwd),
+            Some(PathBuf::from("/work/repo/my-config.json"))
+        );
+        assert_eq!(
+            anchored("./sub/config.json", cwd),
+            Some(PathBuf::from("/work/repo/sub/config.json"))
+        );
+        let up = anchored("../config.json", cwd).unwrap();
+        assert!(up.is_absolute());
+        assert_eq!(up, PathBuf::from("/work/repo/../config.json"));
+    }
+
+    #[test]
+    fn an_absolute_empty_or_home_relative_value_is_left_as_it_was() {
+        let cwd = Path::new("/work/repo");
+        assert_eq!(anchored("/etc/adjutant/config.json", cwd), None);
+        assert_eq!(anchored("", cwd), None);
+        assert_eq!(anchored("~", cwd), None);
+        assert_eq!(anchored("~/cfg/config.json", cwd), None);
+    }
 
     /// No flag, always and explicitly. The one that a hub exports is `resolve_config`'s to
     /// read, and a test that picked it up from the terminal would be reporting on the tab it
