@@ -301,6 +301,21 @@ fn tool_definitions() -> Value {
             },
         },
         {
+            "name": "adjutant_gate_close",
+            "description": "Archive an open gate without delivering an answer to the outbox, the same as `adj gate close`: used when the question was answered directly in the terminal tab or rendered moot, so the gate does not stay on the board waiting.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The gate id to close." },
+                    "comment": { "type": "string", "description": "Optional reason for closing." },
+                    "repo": repo_property(),
+                    "hub": hub_property(),
+                    "cwd": cwd_property(),
+                },
+                "required": ["id"],
+            },
+        },
+        {
             "name": "adjutant_refresh",
             "description": "Bring the task records up to date with their pull requests, the same as `adj task refresh`: every record with a `pr` that is not done or cancelled is looked up with `gh`, and the ones whose PR was merged are moved to done. A PR still open, closed without merging, or one `gh` cannot read is left alone and listed instead — say those to the person rather than deciding for them. A hub calls this once at startup.",
             "inputSchema": {
@@ -515,7 +530,14 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 fields.insert("worktree".to_string(), json!(here));
             }
             let (gate, served) = crate::cmd::gate_open_payload(&ctx, &payload)?;
-            Ok(crate::cmd::gate_open_json(&gate, served))
+            Ok(crate::cmd::gate_open_json(&ctx, &gate, served))
+        }
+        "adjutant_gate_close" => {
+            let id = args["id"].as_str().ok_or("a gate needs an id")?;
+            let comment = args.get("comment").and_then(Value::as_str);
+            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let gate = crate::cmd::gate_close_payload(&ctx, id, comment)?;
+            Ok(json!({ "gate": gate, "closed": true }))
         }
         "adjutant_refresh" => {
             let ctx = crate::cmd::context_of(resolve_repo(args)?)?;

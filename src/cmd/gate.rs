@@ -398,7 +398,7 @@ pub fn open_cmd(
     let (gate, served) = open(&ctx, &payload)?;
 
     if as_json {
-        println!("{}", open_json(&gate, served));
+        println!("{}", open_json(&ctx, &gate, served));
         return Ok(());
     }
     println!("{} — {}", gate.id, gate.title);
@@ -439,11 +439,22 @@ const RECORDED: &str = "Kept as a record: nobody is asked to answer it. Do not w
 
 /// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
 /// branch on it the same way whichever it used.
-pub fn open_json(gate: &Gate, served: bool) -> Value {
+pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
     let mut out = json!({ "gate": gate, "server": if served { "up" } else { "down" } });
     if !gate.wait {
         out["wait"] = json!(false);
         out["note"] = json!(RECORDED);
+    } else {
+        let wake_line = if gate.answered_by_hub() {
+            ctx.settings
+                .hub_wake
+                .line_or(crate::terminal::HUB_WAKE_LINE)
+        } else {
+            ctx.settings
+                .worker_wake
+                .line_or(crate::terminal::WORKER_WAKE_LINE)
+        };
+        out["wakeLine"] = json!(wake_line);
     }
     out
 }

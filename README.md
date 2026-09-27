@@ -85,19 +85,19 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
 | `adjutant task add\|list\|show\|next\|update\|refresh` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done) |
-| `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
+| `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
 
-Agent-side (`adjutant mcp`), the same machinery as nine tools and three prompts:
+Agent-side (`adjutant mcp`), the same machinery as ten tools and three prompts:
 
 - **prompts** — `adj-hub` (run the hub), `adj-worker` (take a task from brief to handover),
   `adj-report` (hand a bug you found to the hub). Claude Code exposes these as
   `/mcp__adjutant__adj-hub` and so on.
 
 - **tools** — `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`,
-  `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_refresh`,
-  `adjutant_skill`. The last one serves the same procedure text as the prompts, tailored to the target agent format (such
+  `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`,
+  `adjutant_refresh`, `adjutant_skill`. The last one serves the same procedure text as the prompts, tailored to the target agent format (such
   as Claude Code's `AskUserQuestion` or Antigravity's `ask_question`), because MCP prompt
   support is uneven across agents and a procedure nobody can fetch is a procedure nobody
   follows.
@@ -233,8 +233,8 @@ symptom is the hub going quiet.
   "mcp__adjutant__adjutant_config", "mcp__adjutant__adjutant_hub_status",
   "mcp__adjutant__adjutant_send", "mcp__adjutant__adjutant_pending",
   "mcp__adjutant__adjutant_tell", "mcp__adjutant__adjutant_outbox",
-  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_refresh",
-  "mcp__adjutant__adjutant_skill"
+  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_gate_close",
+  "mcp__adjutant__adjutant_refresh", "mcp__adjutant__adjutant_skill"
 ]}
 ```
 

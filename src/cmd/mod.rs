@@ -21,9 +21,9 @@ mod serve;
 mod task;
 
 pub use gate::{
-    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
-    open as gate_open_payload, open_cmd as gate_open, open_json as gate_open_json,
-    show as gate_show,
+    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close as gate_close_payload,
+    close_cmd as gate_close, list as gate_list, open as gate_open_payload, open_cmd as gate_open,
+    open_json as gate_open_json, show as gate_show,
 };
 pub use jules::{
     Chosen as JulesChosen, ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs,
