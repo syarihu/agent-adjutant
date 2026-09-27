@@ -16,10 +16,8 @@ use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::messaging::{self, Message};
-use crate::notify;
 use crate::prompts;
 use crate::repo;
-use crate::terminal;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const SERVER_NAME: &str = "adjutant";
@@ -214,7 +212,8 @@ fn tool_definitions() -> Value {
                     "body": { "type": "string", "description": "The message. Markdown; keep it under 30 lines — the hub reshapes it into an issue." },
                     "subject": { "type": "string", "description": "One line stating the conclusion. This is all a human sees in a listing." },
                     "from": { "type": "string", "description": "Who is sending: your session or worktree name." },
-                    "kind": { "type": "string", "description": "report (default) | question | answer | ack | done | needs-user" },
+                    "kind": { "type": "string", "description": "report (default) | question | answer | ack | done | needs-user | request | next | gate | jules-pr | jules-review" },
+                    "wake": { "type": "boolean", "description": "Whether to wake the hub. Defaults to automatic: wakes for actionable messages (reports, answers, done, requests, next, gate, jules-pr, jules-review); delivers without waking for questions, needs-user, ack, or when sending to yourself." },
                     "repo": repo_property(),
                     "hub": hub_property(),
                     "cwd": cwd_property(),
@@ -246,6 +245,7 @@ fn tool_definitions() -> Value {
                     "subject": { "type": "string", "description": "One line stating the point. `[question <id>]` asks for an answer; `[ack]` acknowledges; anything else is a notice." },
                     "body": { "type": "string", "description": "The message. Markdown." },
                     "from": { "type": "string", "description": "Who is speaking (default: this repository's hub name)." },
+                    "wake": { "type": "boolean", "description": "Whether to wake the worker. Defaults to automatic based on the subject: wakes for `[question <id>]` and gate answers; delivers without waking for `[ack]` and plain notices." },
                     "repo": repo_property(),
                     "hub": hub_property(),
                     "cwd": cwd_property(),
@@ -392,41 +392,19 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 subject: args["subject"].as_str().unwrap_or("").to_string(),
                 body: body.to_string(),
             };
-            let subject = messaging::header_value(&messaging::render_message(&message), "subject")
-                .unwrap_or_default();
-            let delivery = messaging::send(&info.slug, &info.hub_name, &message)?;
-            // A file appearing in a directory wakes nobody. Whichever way this went, the
-            // person is the one who has to go and look, so they get told.
-            let settings = config::resolve_config(&info.nwo)
-                .map(|r| r.settings)
-                .unwrap_or_default();
-            let woken = match (
-                delivery.present,
-                messaging::hub_status(&info.slug, &info.hub_name).pid,
-            ) {
-                (true, Some(pid)) => terminal::wake(
-                    &settings.hub_wake,
-                    pid,
-                    &subject,
-                    terminal::HUB_WAKE_LINE,
-                    false,
-                )
-                .map(|done| done.ran)
-                .unwrap_or(false),
-                _ => false,
-            };
-            if let Some(command) = notify::repo_command(&settings.notification, &info, &subject) {
-                let _ = terminal::run_shell(&command);
-            }
+            let wake = args.get("wake").and_then(|v| v.as_bool());
+            let ctx = crate::cmd::context_of(info)?;
+            let delivered = crate::cmd::deliver_to_hub_with_wake(&ctx, &message, true, wake)?;
             Ok(json!({
-                "hubName": info.hub_name,
-                "present": delivery.present,
-                "woken": woken,
-                "path": delivery.path.to_string_lossy(),
-                "note": match (delivery.present, woken) {
-                    (true, true) => "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
-                    (true, false) => "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
-                    (false, _) => "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
+                "hubName": ctx.repo.hub_name,
+                "present": delivered.delivery.present,
+                "woken": delivered.woken,
+                "path": delivered.delivery.path.to_string_lossy(),
+                "note": match (delivered.delivery.present, delivered.woken, delivered.wake_needed) {
+                    (true, true, _) => "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
+                    (true, false, false) => "The hub is running; waking was skipped because this message needs no action. It will pick this up the next time it checks its inbox.",
+                    (true, false, true) => "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
+                    (false, _, _) => "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
                 },
             }))
         }
@@ -472,40 +450,23 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             if subject.is_empty() || body.is_empty() {
                 return Err("subject and body are both required".to_string());
             }
-            let from = args["from"].as_str().unwrap_or(&info.hub_name).to_string();
-            let path = messaging::tell(&worktree, &from, subject, body)?;
-            let settings = config::resolve_config(&info.nwo)
-                .map(|r| r.settings)
-                .unwrap_or_default();
-            let status = messaging::worker_status(&worktree);
-            let woken = match (status.present, status.pid) {
-                (true, Some(pid)) => terminal::wake(
-                    &settings.worker_wake,
-                    pid,
-                    subject,
-                    terminal::WORKER_WAKE_LINE,
-                    false,
-                )
-                .map(|done| done.ran)
-                .unwrap_or(false),
-                _ => false,
-            };
-            // Only fall back to interrupting the human when the worker itself could not be
-            // reached; a woken worker is about to read it without anyone's help.
-            if !woken
-                && let Some(command) = notify::repo_command(&settings.notification, &info, subject)
-            {
-                let _ = terminal::run_shell(&command);
-            }
+            let ctx = crate::cmd::context_of(info)?;
+            let from = args["from"]
+                .as_str()
+                .unwrap_or(&ctx.repo.hub_name)
+                .to_string();
+            let wake = args.get("wake").and_then(|v| v.as_bool());
+            let told = crate::cmd::deliver_to_worker(&ctx, &worktree, &from, subject, body, wake)?;
             Ok(json!({
                 "worktree": worktree.to_string_lossy(),
-                "outbox": path.to_string_lossy(),
-                "present": status.present,
-                "woken": woken,
-                "note": match (status.present, woken) {
-                    (true, true) => "Woke the worker. Do not wait for a reply, go back to waiting.",
-                    (true, false) => "The worker is running; it will read this the next time it checks its outbox.",
-                    (false, _) => "The worker is not running; it will read this the next time it starts.",
+                "outbox": told.path.to_string_lossy(),
+                "present": told.present,
+                "woken": told.woken,
+                "note": match (told.present, told.woken, told.wake_needed) {
+                    (true, true, _) => "Woke the worker. Do not wait for a reply, go back to waiting.",
+                    (true, false, false) => "The worker is running; waking was skipped because this message needs no action. It will read this the next time it checks its outbox.",
+                    (true, false, true) => "The worker is running; it will read this the next time it checks its outbox.",
+                    (false, _, _) => "The worker is not running; it will read this the next time it starts.",
                 },
             }))
         }

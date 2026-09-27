@@ -192,6 +192,12 @@ enum Commands {
         /// Say nothing on success
         #[arg(long)]
         quiet: bool,
+        /// Wake the receiver (default: automatic based on message kind and sender)
+        #[arg(long, overrides_with = "no_wake")]
+        wake: bool,
+        /// Deliver without waking the receiver
+        #[arg(long, overrides_with = "wake")]
+        no_wake: bool,
     },
     /// Open a terminal tab and run a command there
     Spawn {
@@ -279,6 +285,12 @@ enum Commands {
         from: Option<String>,
         #[arg(long)]
         quiet: bool,
+        /// Wake the receiver (default: automatic based on subject)
+        #[arg(long, overrides_with = "no_wake")]
+        wake: bool,
+        /// Deliver without waking the receiver
+        #[arg(long, overrides_with = "wake")]
+        no_wake: bool,
     },
     /// Print one of the procedures: adj-hub | adj-worker | adj-report
     Skill {
@@ -752,6 +764,16 @@ enum TaskAction {
     },
 }
 
+fn resolve_wake_flag(wake: bool, no_wake: bool) -> Option<bool> {
+    if wake {
+        Some(true)
+    } else if no_wake {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Parse this process's arguments and run the subcommand. Exits; never returns.
 pub fn run() -> ! {
     config::anchor_config_env();
@@ -789,6 +811,8 @@ pub fn run() -> ! {
             subject,
             body,
             quiet,
+            wake,
+            no_wake,
         } => cmd::send(&cmd::SendArgs {
             repo: repo.as_deref(),
             hub: hub.as_deref(),
@@ -797,6 +821,7 @@ pub fn run() -> ! {
             subject: subject.as_deref(),
             body: body.as_deref(),
             quiet: *quiet,
+            wake: resolve_wake_flag(*wake, *no_wake),
         })
         .map(|_| 0),
         Commands::Spawn {
@@ -860,15 +885,18 @@ pub fn run() -> ! {
             body,
             from,
             quiet,
-        } => cmd::tell(
-            repo.as_deref(),
-            hub.as_deref(),
+            wake,
+            no_wake,
+        } => cmd::tell(&cmd::TellArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
             worktree,
             subject,
-            body.as_deref(),
-            from.as_deref(),
-            *quiet,
-        )
+            body: body.as_deref(),
+            from: from.as_deref(),
+            quiet: *quiet,
+            wake: resolve_wake_flag(*wake, *no_wake),
+        })
         .map(|_| 0),
         Commands::Serve {
             repo,
