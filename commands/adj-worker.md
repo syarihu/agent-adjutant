@@ -747,31 +747,21 @@ Later reviews, and codex reading lk directly, stop raising the same false positi
 ### Choosing the review engine (switching on 5h / 7d headroom)
 
 The loop eats tokens, so when either of Claude's rate limits (the 5-hour window or the 7-day window)
-runs low, send **only the review** to codex. Follow the `reviewEngine` setting (default `auto`).
-**Check again at the start of every round** — usage keeps rising while the loop runs.
+runs low, send **only the review** to codex. **Ask again at the start of every round** — usage keeps
+rising while the loop runs:
 
-- `reviewEngine: "codex"` → follow **Running a codex review** below.
-- `reviewEngine: "claude"` → follow **Running a Claude review** below.
-- `reviewEngine: "auto"` (default) → decide the engine with the rate-limit check below:
-  1. Read the cache `statusline.py` writes on every draw. **It lives per account**, directly under
-     this session's config directory (so as not to pick up another account's headroom, such as a
-     work one):
-     ```bash
-     cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/rate-limit-cache.json"
-     ```
-     Shape: `{"captured_at": <epoch>, "five_hour": {"used_percentage": 42.3, "resets_at": <epoch>}, "seven_day": {...}}`
-  2. Decide on `five_hour.used_percentage` and `seven_day.used_percentage`. If **either** trips,
-     codex:
-     - `five_hour >= 50` **or** `seven_day > 70` → say once which window tripped and **that
-       window's own** `resets_at` (if both trip, name 5h): "{5h|7d} is at {pct}%, so the review
-       switches to codex (resets {resets_at})", then follow **Running a codex review** below.
-     - The two keys are evaluated **independently**. A missing `seven_day` does not stop the 5h
-       check, and vice versa.
-     - The cache is missing / broken / **both** keys are missing / `captured_at` is older than 15
-       minutes → unknown. Tell the user the usage check was skipped, and go on with **Running a
-       Claude review** below.
-     - `which codex` fails → tell the user, and go on with **Running a Claude review** below.
-     - Neither trips → follow **Running a Claude review** below.
+```bash
+adj review-engine --json
+```
+
+It applies the `reviewEngine` setting (default `auto`) and, under `auto`, the rate-limit check, and
+answers with `engine` (`claude` or `codex`), `reason`, and `message`. Tell the user `message` as it
+is — it says which window tripped and when it resets, or why the check was skipped — then:
+
+- `engine: "codex"` → follow **Running a codex review** below.
+- `engine: "claude"` → follow **Running a Claude review** below.
+- The command fails → tell the user what it printed, and go on with **Running a Claude review**
+  below.
 
 #### Running a codex review
 

@@ -16,6 +16,7 @@ use crate::terminal::{self, SpawnRequest};
 
 mod gate;
 mod jules;
+mod review_engine;
 mod serve;
 mod task;
 
@@ -29,6 +30,7 @@ pub use jules::{
     Watch as JulesWatch, findings as jules_findings, findings_cmd as jules_findings_cmd,
     relay as jules_relay, relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
+pub use review_engine::run as review_engine;
 pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{
     AddArgs, UpdateArgs, add as task_add, list as task_list, next_cmd as task_next,

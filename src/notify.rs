@@ -54,7 +54,8 @@ fn osascript_command(title: &str, message: &str) -> String {
     format!("osascript -e {}", sh_quote(&script))
 }
 
-fn on_path(program: &str) -> bool {
+/// Answers whether an executable file is on `PATH`. `adj review-engine` asks it about `codex` too.
+pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| in_path(&path, program))
 }
 

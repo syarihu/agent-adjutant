@@ -1,0 +1,659 @@
+//! `adj review-engine` — which engine reads the diff in this self-review round.
+//!
+//! Every round used to redo the same reading and arithmetic by hand. This command
+//! runs it the same way every time and leaves the procedures.
+
+use serde_json::{Value, json};
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+
+use crate::config;
+use crate::messaging;
+use crate::notify;
+
+/// The 5-hour window trips at or above this.
+const FIVE_HOUR_LIMIT: f64 = 50.0;
+/// The 7-day window trips above this.
+const SEVEN_DAY_LIMIT: f64 = 70.0;
+/// A cache older than this says nothing about now.
+const STALE_AFTER_SECS: i64 = 15 * 60;
+/// Written by the status line on every draw, per account, directly under the config directory.
+const CACHE_FILE: &str = "rate-limit-cache.json";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Engine {
+    Claude,
+    Codex,
+}
+
+impl Engine {
+    fn as_str(self) -> &'static str {
+        match self {
+            Engine::Claude => "claude",
+            Engine::Codex => "codex",
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Engine::Claude => "Claude",
+            Engine::Codex => "codex",
+        }
+    }
+}
+
+/// One window that tripped.
+#[derive(Debug, Clone, PartialEq)]
+struct Window {
+    /// "5h" or "7d"
+    name: &'static str,
+    used: f64,
+    resets_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Reason {
+    Pinned,
+    Tripped(Window),
+    CodexMissing(Window),
+    WithinLimits {
+        five_hour: Option<f64>,
+        seven_day: Option<f64>,
+    },
+    CacheMissing,
+    CacheBroken,
+    CacheStale {
+        age_secs: i64,
+    },
+    /// `captured_at` is later than now: clock skew or a broken cache, so it says nothing about now.
+    CacheFuture {
+        ahead_secs: i64,
+    },
+    NoUsage,
+}
+
+impl Reason {
+    fn code(&self) -> &'static str {
+        match self {
+            Reason::Pinned => "pinned",
+            Reason::Tripped(_) => "tripped",
+            Reason::CodexMissing(_) => "codex-missing",
+            Reason::WithinLimits { .. } => "within-limits",
+            Reason::CacheMissing => "cache-missing",
+            Reason::CacheBroken => "cache-broken",
+            Reason::CacheStale { .. } => "cache-stale",
+            Reason::CacheFuture { .. } => "cache-future",
+            Reason::NoUsage => "no-usage",
+        }
+    }
+}
+
+/// The cache as read, not yet judged.
+#[derive(Debug)]
+enum Usage {
+    Missing,
+    Broken,
+    Read(Value),
+}
+
+/// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/rate-limit-cache.json`. Takes both inputs as arguments so a
+/// test answers for values it chose rather than for the machine it runs on.
+fn cache_path(claude_config_dir: Option<&OsStr>, home: &Path) -> PathBuf {
+    let mut dir = claude_config_dir
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".claude"));
+    dir.push(CACHE_FILE);
+    dir
+}
+
+/// NotFound -> Missing; any other read error, invalid JSON -> Broken; otherwise Read.
+fn read_cache(path: &Path) -> Usage {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(v) => Usage::Read(v),
+            Err(_) => Usage::Broken,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Usage::Missing,
+        Err(_) => Usage::Broken,
+    }
+}
+
+/// The decision, as a function of its inputs. `codex_on_path` is only called when a window trips.
+/// Err only for a `reviewEngine` value that is not auto / claude / codex.
+fn decide(
+    setting: &str,
+    usage: &Usage,
+    now: i64,
+    codex_on_path: impl FnOnce() -> bool,
+) -> Result<(Engine, Reason), String> {
+    match setting {
+        "claude" => Ok((Engine::Claude, Reason::Pinned)),
+        "codex" => Ok((Engine::Codex, Reason::Pinned)),
+        "auto" => match usage {
+            Usage::Missing => Ok((Engine::Claude, Reason::CacheMissing)),
+            Usage::Broken => Ok((Engine::Claude, Reason::CacheBroken)),
+            Usage::Read(v) => {
+                if !v.is_object() {
+                    return Ok((Engine::Claude, Reason::CacheBroken));
+                }
+                let captured_at = match v.get("captured_at").and_then(|c| c.as_f64()) {
+                    Some(c) => c as i64,
+                    None => return Ok((Engine::Claude, Reason::CacheBroken)),
+                };
+                if captured_at > now {
+                    return Ok((
+                        Engine::Claude,
+                        Reason::CacheFuture {
+                            ahead_secs: captured_at - now,
+                        },
+                    ));
+                }
+                let age = now - captured_at;
+                if age > STALE_AFTER_SECS {
+                    return Ok((Engine::Claude, Reason::CacheStale { age_secs: age }));
+                }
+
+                let used = |key: &str| {
+                    v.get(key)
+                        .and_then(|w| w.get("used_percentage"))
+                        .and_then(|u| u.as_f64())
+                };
+                let resets_at = |key: &str| {
+                    v.get(key)
+                        .and_then(|w| w.get("resets_at"))
+                        .and_then(|u| u.as_f64())
+                        .map(|u| u as i64)
+                };
+
+                let five = used("five_hour");
+                let seven = used("seven_day");
+
+                if five.is_none() && seven.is_none() {
+                    return Ok((Engine::Claude, Reason::NoUsage));
+                }
+
+                let tripped = if let Some(f) = five {
+                    if f >= FIVE_HOUR_LIMIT {
+                        Some(Window {
+                            name: "5h",
+                            used: f,
+                            resets_at: resets_at("five_hour"),
+                        })
+                    } else if let Some(s) = seven {
+                        if s > SEVEN_DAY_LIMIT {
+                            Some(Window {
+                                name: "7d",
+                                used: s,
+                                resets_at: resets_at("seven_day"),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else if let Some(s) = seven {
+                    if s > SEVEN_DAY_LIMIT {
+                        Some(Window {
+                            name: "7d",
+                            used: s,
+                            resets_at: resets_at("seven_day"),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                match tripped {
+                    None => Ok((
+                        Engine::Claude,
+                        Reason::WithinLimits {
+                            five_hour: five,
+                            seven_day: seven,
+                        },
+                    )),
+                    Some(w) => {
+                        if codex_on_path() {
+                            Ok((Engine::Codex, Reason::Tripped(w)))
+                        } else {
+                            Ok((Engine::Claude, Reason::CodexMissing(w)))
+                        }
+                    }
+                }
+            }
+        },
+        other => Err(format!(
+            "reviewEngine is {other:?}; it takes \"auto\", \"claude\" or \"codex\""
+        )),
+    }
+}
+
+/// The one line the worker tells the user.
+fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i64) -> String {
+    let cache_disp = cache.display();
+    match reason {
+        Reason::Pinned => format!(
+            "reviewEngine is {setting}, so {} reviews this round",
+            engine.display_name()
+        ),
+        Reason::Tripped(w) => {
+            if let Some(r) = w.resets_at {
+                format!(
+                    "{} is at {}%, so the review switches to codex (resets in {})",
+                    w.name,
+                    w.used,
+                    super::ago((r - now).max(0))
+                )
+            } else {
+                format!(
+                    "{} is at {}%, so the review switches to codex",
+                    w.name, w.used
+                )
+            }
+        }
+        Reason::CodexMissing(w) => format!(
+            "{} is at {}%, but codex is not on PATH, so Claude reviews this round",
+            w.name, w.used
+        ),
+        Reason::WithinLimits {
+            five_hour,
+            seven_day,
+        } => {
+            let format_pct = |v: Option<f64>| {
+                v.map(|f| format!("{}%", f))
+                    .unwrap_or_else(|| "unknown".to_string())
+            };
+            format!(
+                "5h at {}, 7d at {}, so Claude reviews this round",
+                format_pct(*five_hour),
+                format_pct(*seven_day)
+            )
+        }
+        Reason::CacheMissing => format!(
+            "The usage check was skipped ({} does not exist), so Claude reviews this round",
+            cache_disp
+        ),
+        Reason::CacheBroken => format!(
+            "The usage check was skipped ({} cannot be read as a rate-limit cache), so Claude reviews this round",
+            cache_disp
+        ),
+        Reason::CacheStale { age_secs } => format!(
+            "The usage check was skipped ({} is {} old), so Claude reviews this round",
+            cache_disp,
+            super::ago(*age_secs)
+        ),
+        Reason::CacheFuture { ahead_secs } => format!(
+            "The usage check was skipped ({} is stamped {} in the future), so Claude reviews this round",
+            cache_disp,
+            super::ago(*ahead_secs)
+        ),
+        Reason::NoUsage => format!(
+            "The usage check was skipped ({} has neither five_hour nor seven_day), so Claude reviews this round",
+            cache_disp
+        ),
+    }
+}
+
+/// `adj review-engine`.
+pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
+    let ctx = super::context_without_hub(repo_arg)?;
+    let setting = match ctx
+        .resolved
+        .config
+        .as_ref()
+        .and_then(|c| c.get("reviewEngine"))
+    {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => return Err(format!("reviewEngine must be a string, not {other}")),
+        None => config::builtin_defaults()["reviewEngine"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    };
+
+    let cache = cache_path(
+        std::env::var_os("CLAUDE_CONFIG_DIR").as_deref(),
+        &config::home_dir(),
+    );
+    let usage = read_cache(&cache);
+    let now = messaging::now_secs();
+    let (engine, reason) = decide(&setting, &usage, now, || notify::on_path("codex"))?;
+    let text = message(engine, &reason, &setting, &cache, now);
+
+    if as_json {
+        let (window, used_percentage, resets_at) = match &reason {
+            Reason::Tripped(w) | Reason::CodexMissing(w) => {
+                (Some(w.name), Some(w.used), w.resets_at)
+            }
+            _ => (None, None, None),
+        };
+
+        let out = json!({
+            "engine": engine.as_str(),
+            "setting": setting,
+            "reason": reason.code(),
+            "window": window,
+            "usedPercentage": used_percentage,
+            "resetsAt": resets_at,
+            "cache": cache.to_string_lossy(),
+            "message": text
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else {
+        println!("{text}");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000;
+
+    #[test]
+    fn a_pinned_engine_does_not_read_the_cache() {
+        let (engine, reason) = decide("claude", &Usage::Missing, NOW, || {
+            panic!("PATH was searched although nothing tripped")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(reason, Reason::Pinned);
+
+        let (engine, reason) = decide("codex", &Usage::Missing, NOW, || {
+            panic!("PATH was searched although nothing tripped")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Codex);
+        assert_eq!(reason, Reason::Pinned);
+    }
+
+    #[test]
+    fn an_unknown_setting_is_an_error() {
+        let err = decide("sometimes", &Usage::Missing, NOW, || false).unwrap_err();
+        assert!(err.contains("reviewEngine"), "{}", err);
+    }
+
+    #[test]
+    fn five_hour_trips_at_fifty() {
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "five_hour": { "used_percentage": 50.0 }
+        }));
+        let (engine, reason) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(engine, Engine::Codex);
+        assert_eq!(
+            reason,
+            Reason::Tripped(Window {
+                name: "5h",
+                used: 50.0,
+                resets_at: None
+            })
+        );
+
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "five_hour": { "used_percentage": 49.9 }
+        }));
+        let (engine, reason) = decide("auto", &usage, NOW, || {
+            panic!("PATH was searched although nothing tripped")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(
+            reason,
+            Reason::WithinLimits {
+                five_hour: Some(49.9),
+                seven_day: None
+            }
+        );
+    }
+
+    #[test]
+    fn seven_day_trips_only_above_seventy() {
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "seven_day": { "used_percentage": 70.0 }
+        }));
+        let (engine, reason) = decide("auto", &usage, NOW, || {
+            panic!("PATH was searched although nothing tripped")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(
+            reason,
+            Reason::WithinLimits {
+                five_hour: None,
+                seven_day: Some(70.0)
+            }
+        );
+
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "seven_day": { "used_percentage": 70.1 }
+        }));
+        let (engine, reason) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(engine, Engine::Codex);
+        assert_eq!(
+            reason,
+            Reason::Tripped(Window {
+                name: "7d",
+                used: 70.1,
+                resets_at: None
+            })
+        );
+    }
+
+    #[test]
+    fn when_both_trip_the_five_hour_window_is_named_with_its_own_reset() {
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "five_hour": { "used_percentage": 60.0, "resets_at": 100 },
+            "seven_day": { "used_percentage": 90.0, "resets_at": 200 }
+        }));
+        let (_, reason) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(
+            reason,
+            Reason::Tripped(Window {
+                name: "5h",
+                used: 60.0,
+                resets_at: Some(100)
+            })
+        );
+    }
+
+    #[test]
+    fn each_window_is_judged_on_its_own() {
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "seven_day": { "used_percentage": 80.0 }
+        }));
+        let (_, reason) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(
+            reason,
+            Reason::Tripped(Window {
+                name: "7d",
+                used: 80.0,
+                resets_at: None
+            })
+        );
+
+        let usage = Usage::Read(json!({
+            "captured_at": NOW,
+            "five_hour": { "used_percentage": 10.0 }
+        }));
+        let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+        assert_eq!(
+            reason,
+            Reason::WithinLimits {
+                five_hour: Some(10.0),
+                seven_day: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_cache_with_neither_window_skips_the_check() {
+        let usage = Usage::Read(json!({ "captured_at": NOW }));
+        let (engine, reason) = decide("auto", &usage, NOW, || {
+            panic!("PATH was searched although nothing tripped")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(reason, Reason::NoUsage);
+    }
+
+    #[test]
+    fn a_cache_older_than_fifteen_minutes_skips_the_check() {
+        let usage = Usage::Read(
+            json!({ "captured_at": NOW - 901, "five_hour": { "used_percentage": 90.0 } }),
+        );
+        let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+        assert_eq!(reason, Reason::CacheStale { age_secs: 901 });
+
+        let usage = Usage::Read(
+            json!({ "captured_at": NOW - 900, "five_hour": { "used_percentage": 90.0 } }),
+        );
+        let (_, reason) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(
+            reason,
+            Reason::Tripped(Window {
+                name: "5h",
+                used: 90.0,
+                resets_at: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_cache_stamped_in_the_future_skips_the_check() {
+        let usage = Usage::Read(
+            json!({ "captured_at": NOW + 1, "five_hour": { "used_percentage": 90.0 } }),
+        );
+        let (engine, reason) = decide("auto", &usage, NOW, || {
+            panic!("PATH was searched although the cache is not trusted")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(reason, Reason::CacheFuture { ahead_secs: 1 });
+        assert_eq!(reason.code(), "cache-future");
+
+        let text = message(engine, &reason, "auto", Path::new("/cache"), NOW);
+        assert_eq!(
+            text,
+            "The usage check was skipped (/cache is stamped less than a minute in the future), so Claude reviews this round"
+        );
+
+        let usage =
+            Usage::Read(json!({ "captured_at": NOW, "five_hour": { "used_percentage": 90.0 } }));
+        let (engine, _) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(engine, Engine::Codex);
+    }
+
+    #[test]
+    fn a_cache_without_captured_at_or_not_an_object_is_broken() {
+        let usage = Usage::Read(json!({ "five_hour": { "used_percentage": 90.0 } }));
+        let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+        assert_eq!(reason, Reason::CacheBroken);
+
+        let usage = Usage::Read(json!([1, 2]));
+        let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+        assert_eq!(reason, Reason::CacheBroken);
+    }
+
+    #[test]
+    fn a_tripped_window_without_codex_stays_with_claude() {
+        let usage =
+            Usage::Read(json!({ "captured_at": NOW, "five_hour": { "used_percentage": 62.0 } }));
+        let (engine, reason) = decide("auto", &usage, NOW, || false).unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(
+            reason,
+            Reason::CodexMissing(Window {
+                name: "5h",
+                used: 62.0,
+                resets_at: None
+            })
+        );
+    }
+
+    #[test]
+    fn the_cache_is_read_as_missing_broken_or_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("missing.json");
+        assert!(matches!(read_cache(&path), Usage::Missing));
+
+        let path = tmp.path().join("broken.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(matches!(read_cache(&path), Usage::Broken));
+
+        let path = tmp.path().join("valid.json");
+        std::fs::write(&path, r#"{"captured_at": 1}"#).unwrap();
+        assert!(matches!(read_cache(&path), Usage::Read(_)));
+    }
+
+    #[test]
+    fn the_cache_sits_under_claude_config_dir_or_home() {
+        let home = Path::new("/home");
+        assert_eq!(
+            cache_path(Some(OsStr::new("/cfg/a")), home),
+            PathBuf::from("/cfg/a/rate-limit-cache.json")
+        );
+        assert_eq!(
+            cache_path(Some(OsStr::new("")), home),
+            PathBuf::from("/home/.claude/rate-limit-cache.json")
+        );
+        assert_eq!(
+            cache_path(None, home),
+            PathBuf::from("/home/.claude/rate-limit-cache.json")
+        );
+    }
+
+    #[test]
+    fn the_message_names_the_window_and_when_it_resets() {
+        let cache = Path::new("/cache");
+        let w = Window {
+            name: "5h",
+            used: 62.0,
+            resets_at: Some(NOW + 3900),
+        };
+        let text = message(
+            Engine::Codex,
+            &Reason::Tripped(w.clone()),
+            "auto",
+            cache,
+            NOW,
+        );
+        assert_eq!(
+            text,
+            "5h is at 62%, so the review switches to codex (resets in 1 h 5 min)"
+        );
+
+        let w_no_reset = Window {
+            name: "5h",
+            used: 62.0,
+            resets_at: None,
+        };
+        let text = message(
+            Engine::Codex,
+            &Reason::Tripped(w_no_reset),
+            "auto",
+            cache,
+            NOW,
+        );
+        assert_eq!(text, "5h is at 62%, so the review switches to codex");
+
+        let text = message(
+            Engine::Claude,
+            &Reason::CacheStale { age_secs: 900 },
+            "auto",
+            cache,
+            NOW,
+        );
+        assert!(text.contains("was skipped"));
+        assert!(text.contains("/cache"));
+    }
+}

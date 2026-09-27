@@ -103,6 +103,29 @@ fn skill_rejects_unknown_agent() {
     assert!(err.contains("invalid value 'invalid-agent'"));
 }
 
+#[test]
+fn the_worker_asks_adj_which_engine_reviews() {
+    let text = std::fs::read_to_string(format!(
+        "{}/commands/adj-worker.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+
+    let start = text.find("\n### Choosing the review engine").unwrap();
+    let end = text.find("\n#### Running a codex review").unwrap();
+    let section = &text[start..end];
+
+    assert!(section.contains("adj review-engine --json"));
+    assert!(section.contains("Running a codex review"));
+    assert!(section.contains("Running a Claude review"));
+    assert!(section.contains("message"));
+
+    assert!(!section.contains("rate-limit-cache.json"));
+    assert!(!section.contains("which codex"));
+    assert!(!section.contains("five_hour"));
+    assert!(!section.contains("seven_day"));
+}
+
 /// The worker decides between waiting on a person and leaving a record by rules written in
 /// its procedure. Those rules name a flag and a field the binary has to accept, and the
 /// examples are what a worker copies, so both are checked against the real command.

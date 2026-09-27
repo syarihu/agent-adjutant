@@ -324,6 +324,14 @@ enum Commands {
         #[arg(long)]
         worktree: Option<String>,
     },
+    /// Which engine reads the diff in this self-review round: reviewEngine, then Claude's rate limits
+    ReviewEngine {
+        #[arg(long)]
+        repo: Option<String>,
+        /// Print the decision, the window that tripped and the message as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
     Close {
         #[arg(long)]
@@ -894,6 +902,9 @@ pub fn run() -> ! {
             .map(|found| i32::from(!found)),
         Commands::Phase { set, worktree } => {
             cmd::phase(worktree.as_deref(), set.as_deref()).map(|_| 0)
+        }
+        Commands::ReviewEngine { repo, json } => {
+            cmd::review_engine(repo.as_deref(), *json).map(|_| 0)
         }
         Commands::Close {
             repo,
