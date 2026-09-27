@@ -302,24 +302,26 @@ pub fn should_wake_worker(subject: &str) -> bool {
 /// Whether a message delivered to the hub requires waking it.
 ///
 /// A hub tab is woken for reports, answers, done notices, task requests, next triggers,
-/// gate decisions, and Jules updates (PRs and reviews). Messages a hub leaves for itself
-/// (`kind: question`, `kind: needs-user`, or any message where `from` is the hub itself)
-/// and acknowledgements do not wake the hub.
+/// gate decisions, Jules updates, and any actionable custom message kinds. Messages a hub
+/// leaves for itself (`kind: question`, `kind: needs-user`, or any message where `from`
+/// is the hub itself), plain notices, and acknowledgements do not wake the hub.
 pub fn should_wake_hub(from: &str, hub_name: &str, kind: &str, subject: &str) -> bool {
     if !hub_name.is_empty() && from == hub_name {
         return false;
     }
-    if kind == "question" || kind == "needs-user" || kind == "ack" {
+    let kind = if kind.trim().is_empty() {
+        "report"
+    } else {
+        kind.trim()
+    };
+    if kind == "question" || kind == "needs-user" || kind == "ack" || kind == "notice" {
         return false;
     }
     let first_line = subject.lines().next().unwrap_or("").trim();
     if has_bracketed_tag(first_line, "[ack") {
         return false;
     }
-    matches!(
-        kind,
-        "report" | "answer" | "done" | "request" | "next" | "gate" | "jules-pr" | "jules-review"
-    )
+    true
 }
 
 /// What became of a message handed to the hub.
@@ -2329,6 +2331,18 @@ mod tests {
         ));
         assert!(should_wake_hub("jules", hub, "jules-pr", "PR ready"));
         assert!(should_wake_hub("jules", hub, "jules-review", "new review"));
+        assert!(should_wake_hub(
+            "custom-sender",
+            hub,
+            "custom-kind",
+            "action needed"
+        ));
+        assert!(should_wake_hub(
+            "worker-1",
+            hub,
+            "",
+            "empty kind defaults to report"
+        ));
 
         // Notes left by the hub for itself or future users do not wake the hub.
         assert!(!should_wake_hub(
@@ -2351,8 +2365,9 @@ mod tests {
         ));
         assert!(!should_wake_hub(hub, hub, "report", "self report"));
 
-        // Acks do not wake the hub.
+        // Acks and notices do not wake the hub.
         assert!(!should_wake_hub("worker-1", hub, "ack", "received"));
+        assert!(!should_wake_hub("worker-1", hub, "notice", "plain notice"));
         assert!(!should_wake_hub(
             "worker-1",
             hub,
