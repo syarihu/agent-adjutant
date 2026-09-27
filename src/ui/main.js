@@ -1,19 +1,19 @@
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    const handoverDialog = document.getElementById('handover-dialog');
-    if (handoverDialog && handoverDialog.open) {
-      closeHandoverDialog();
+    // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
+    // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.
+    if (e.isComposing || e.keyCode === 229) return;
+    // An open dialog takes Escape, whichever it is; the side sheet or task view behind it stays.
+    const dialog = document.querySelector('dialog[open]');
+    if (dialog) {
+      if (dialog.id === 'handover-dialog') closeHandoverDialog();
+      else if (dialog.id === 'form') dialog.close();
+      // Any other dialog closes itself on Escape.
       return;
     }
-    // The dialog closes itself on Escape; the side sheet it was opened from stays.
-    if (document.getElementById('close-dialog').open) return;
-    const formDialog = document.getElementById('form');
-    if (formDialog && formDialog.open) {
-      formDialog.close();
-      return;
-    }
-    // Escape in a comment box must not leave the task and drop what was typed.
-    if (view === 'task' && !e.target.matches('textarea,input,select')) {
+    // Escape in a text field must not close what it is in and drop what was typed.
+    if (e.target.matches('textarea,input,select')) return;
+    if (view === 'task') {
       backToBoard();
       return;
     }
