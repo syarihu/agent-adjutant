@@ -65,6 +65,10 @@ enum Reason {
     CacheStale {
         age_secs: i64,
     },
+    /// `captured_at` is later than now: clock skew or a broken cache, so it says nothing about now.
+    CacheFuture {
+        ahead_secs: i64,
+    },
     NoUsage,
 }
 
@@ -78,6 +82,7 @@ impl Reason {
             Reason::CacheMissing => "cache-missing",
             Reason::CacheBroken => "cache-broken",
             Reason::CacheStale { .. } => "cache-stale",
+            Reason::CacheFuture { .. } => "cache-future",
             Reason::NoUsage => "no-usage",
         }
     }
@@ -136,6 +141,14 @@ fn decide(
                     Some(c) => c as i64,
                     None => return Ok((Engine::Claude, Reason::CacheBroken)),
                 };
+                if captured_at > now {
+                    return Ok((
+                        Engine::Claude,
+                        Reason::CacheFuture {
+                            ahead_secs: captured_at - now,
+                        },
+                    ));
+                }
                 let age = now - captured_at;
                 if age > STALE_AFTER_SECS {
                     return Ok((Engine::Claude, Reason::CacheStale { age_secs: age }));
@@ -271,6 +284,11 @@ fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i6
             "The usage check was skipped ({} is {} old), so Claude reviews this round",
             cache_disp,
             super::ago(*age_secs)
+        ),
+        Reason::CacheFuture { ahead_secs } => format!(
+            "The usage check was skipped ({} is stamped {} in the future), so Claude reviews this round",
+            cache_disp,
+            super::ago(*ahead_secs)
         ),
         Reason::NoUsage => format!(
             "The usage check was skipped ({} has neither five_hour nor seven_day), so Claude reviews this round",
@@ -508,6 +526,31 @@ mod tests {
                 resets_at: None
             })
         );
+    }
+
+    #[test]
+    fn a_cache_stamped_in_the_future_skips_the_check() {
+        let usage = Usage::Read(
+            json!({ "captured_at": NOW + 1, "five_hour": { "used_percentage": 90.0 } }),
+        );
+        let (engine, reason) = decide("auto", &usage, NOW, || {
+            panic!("PATH was searched although the cache is not trusted")
+        })
+        .unwrap();
+        assert_eq!(engine, Engine::Claude);
+        assert_eq!(reason, Reason::CacheFuture { ahead_secs: 1 });
+        assert_eq!(reason.code(), "cache-future");
+
+        let text = message(engine, &reason, "auto", Path::new("/cache"), NOW);
+        assert_eq!(
+            text,
+            "The usage check was skipped (/cache is stamped less than a minute in the future), so Claude reviews this round"
+        );
+
+        let usage =
+            Usage::Read(json!({ "captured_at": NOW, "five_hour": { "used_percentage": 90.0 } }));
+        let (engine, _) = decide("auto", &usage, NOW, || true).unwrap();
+        assert_eq!(engine, Engine::Codex);
     }
 
     #[test]
