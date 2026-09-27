@@ -741,11 +741,11 @@ document.addEventListener('change', e => {
    at once, the hidden one included, so it is looked up inside the one being shown. */
 const commentBox = () => document.querySelector(view === 'task' ? '#task-view .gate-comment' : '#review .gate-comment');
 
-async function answer(decision, choice, id = focused) {
+async function answer(decision, choice, id = focused, commentOverride = null) {
   const g = (state.gates || []).find(x => x.id === id) || recordById(id);
   if (!g) return;
   const box = commentBox();
-  const comment = box?.value.trim();
+  const comment = commentOverride !== null ? commentOverride : box?.value.trim();
   // Sending back something the worker has moved past, without saying what is wrong, gives it
   // nothing to act on.
   if (g.wait === false && !comment) {

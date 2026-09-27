@@ -7,28 +7,204 @@ let view = 'board';
 let log = [];
 let selectedTaskId = null;
 
-const COLUMNS = [
-  { id:'backlog',   label:'Backlog',   hint:'未受付' },
-  { id:'queued',    label:'待ち',       hint:'並べ替え可' },
-  { id:'working',   label:'進行中',     hint:'' },
-  { id:'attention', label:'要対応',     hint:'' },
-  { id:'pr',        label:'レビュー中', hint:'' },
-  { id:'done',      label:'完了',       hint:'' },
+const PREF_KEY = 'adj-board-split';
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human' },
+  (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
+const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
+
+function applyLayout() {
+  const boards = document.getElementById('boards');
+  if (!boards) return;
+  boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
+  document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
+  document.body.classList.toggle('layout-split', prefs.layout === 'split');
+  const ph = document.getElementById('pane-human');
+  const pa = document.getElementById('pane-agent');
+  if (ph) ph.classList.toggle('active', prefs.tab === 'human');
+  if (pa) pa.classList.toggle('active', prefs.tab === 'agent');
+  document.querySelectorAll('[data-tab]').forEach(b => {
+    if (b.dataset.tab === prefs.tab && view === 'board') b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('[data-layout]').forEach(b => b.classList.toggle('active', b.dataset.layout === prefs.layout));
+  document.querySelectorAll('[data-arrange]').forEach(b => b.classList.toggle('active', b.dataset.arrange === prefs.arrange));
+  savePrefs();
+}
+window.setBoardLayout = function(layout) { prefs.layout = layout; applyLayout(); };
+window.setBoardArrange = function(arrange) { prefs.arrange = arrange; applyLayout(); };
+window.showBoard = function(board) {
+  if (view !== 'board') setView('board');
+  if (prefs.tab !== board) { prefs.tab = board; applyLayout(); }
+  if (prefs.layout === 'split') {
+    const pane = document.getElementById(`pane-${board}`);
+    if (pane) {
+      pane.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'nearest' });
+      pane.classList.remove('flash-pane'); void pane.offsetWidth; pane.classList.add('flash-pane');
+    }
+  }
+};
+window.jump = function(board, id) {
+  if (view !== 'board') setView('board');
+  if (prefs.tab !== board) { prefs.tab = board; applyLayout(); }
+  const el = document.getElementById(`${board}-${id}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+};
+
+const AGENT_COLUMNS = [
+  { id:'before',     label:'着手前',          icon:'inbox',          hint:'待ち / Backlog' },
+  { id:'plan',       label:'計画',            icon:'edit_note',      hint:'' },
+  { id:'implement',  label:'実装',            icon:'code',           hint:'' },
+  { id:'selfreview', label:'セルフレビュー',  icon:'rule',           hint:'セルフレビュー / 動作確認' },
+  { id:'pr',         label:'PR・レビュー対応', icon:'merge',          hint:'PR / レビュー対応 / 報告' },
+  { id:'done',       label:'完了',            icon:'check_circle',   hint:'' },
 ];
+const AGENT_COL_OF_PHASE = {
+  plan:'plan',
+  implement:'implement',
+  'self-review':'selfreview',
+  verify:'selfreview',
+  pr:'pr',
+  review:'pr',
+  report:'pr',
+};
+
+const HUMAN_COLUMNS = [
+  { id:'dispatch', label:'着手確認',          icon:'play_circle',    hint:'始めてよいか / 起票確認' },
+  { id:'plan',     label:'計画の承認',        icon:'edit_note',      hint:'進め方を確認' },
+  { id:'diff',     label:'手元のコードレビュー', icon:'difference',   hint:'push 前の差分' },
+  { id:'verify',   label:'動作確認',          icon:'fact_check',     hint:'手で見る項目 / 調査報告' },
+  { id:'prreview', label:'PRレビュー',        icon:'merge',          hint:'PR がこちらのボール' },
+  { id:'question', label:'質問',              icon:'help',           hint:'worker からの質問' },
+];
+
+const COLUMNS = [...AGENT_COLUMNS, ...HUMAN_COLUMNS];
 
 /* 要対応 is derived from the gate directory, never stored as a status — so the board reads
    the thing it is describing rather than a second copy of it. */
 const openGate = t => (state.gates || []).find(g => g.task === t.id);
-/* A queued task with a gate open is the hub asking whether to start it: the ball is the
-   person's, so it sits in 要対応 rather than looking like it is simply waiting its turn. */
-const columnOf = t => ['queued', 'dispatched', 'pr'].includes(t.status) && openGate(t)
-  ? 'attention'
-  : t.status === 'dispatched' ? 'working'
-  : { backlog:'backlog', queued:'queued', pr:'pr', done:'done', cancelled:null }[t.status];
+
+const humanLabel = col => (HUMAN_COLUMNS.find(c => c.id === col) || {}).label || col;
+const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label || col;
+
+const workerOf = t => t && t.worktree && (state.workers || []).find(w => w.worktree === t.worktree);
+const stampSecs = stamp => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
+};
+const updatedMs = t => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(t?.updatedAt || '');
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : Date.now();
+};
+
+function gateHumanCol(kind) {
+  switch (kind) {
+    case 'dispatch':
+    case 'issue':
+      return 'dispatch';
+    case 'plan':
+      return 'plan';
+    case 'diff':
+      return 'diff';
+    case 'verify':
+    case 'result':
+      return 'verify';
+    case 'relay':
+      return 'prreview';
+    case 'question':
+    default:
+      return 'question';
+  }
+}
+
+function humanColOf(t) {
+  if (!t) return null;
+  const g = openGate(t);
+  if (g) return gateHumanCol(g.kind);
+  if (t.status === 'done' || t.status === 'cancelled') return null;
+
+  // Jules tasks
+  if (t.julesSession && t.pr) {
+    if (!t.jules?.working && t.jules?.state !== 'FAILED') {
+      return 'prreview';
+    }
+  }
+
+  // Local worker tasks
+  const w = workerOf(t);
+  if (t.pr) {
+    if (w) {
+      if (w.phase === 'pr') return 'prreview';
+    } else if (t.status === 'pr') {
+      return 'prreview';
+    }
+  }
+  return null;
+}
+
+function agentColOf(t) {
+  if (!t) return 'before';
+  if (t.status === 'backlog' || t.status === 'queued') return 'before';
+  if (t.status === 'done' || t.status === 'cancelled') return 'done';
+
+  // Jules task mapping
+  if (t.executor === 'jules' || t.julesSession) {
+    const js = t.jules?.state;
+    if (t.pr || js === 'COMPLETED') return 'pr';
+    if (['QUEUED', 'PLANNING', 'AWAITING_PLAN_APPROVAL'].includes(js)) return 'plan';
+    if (['IN_PROGRESS', 'AWAITING_USER_FEEDBACK', 'PAUSED', 'FAILED'].includes(js)) return 'implement';
+    const g = openGate(t);
+    if (g?.kind === 'plan') return 'plan';
+    if (g?.kind === 'diff' || g?.kind === 'verify') return 'selfreview';
+    return 'plan';
+  }
+
+  // Local worker mapping
+  const w = workerOf(t);
+  if (w && w.phase && AGENT_COL_OF_PHASE[w.phase]) {
+    return AGENT_COL_OF_PHASE[w.phase];
+  }
+  const g = openGate(t);
+  if (g?.kind === 'plan') return 'plan';
+  if (g?.kind === 'diff' || g?.kind === 'verify') return 'selfreview';
+  if (t.status === 'pr' || t.pr) return 'pr';
+  return 'plan';
+}
+
+function waitingSinceMs(t) {
+  const g = openGate(t);
+  if (g && g.openedAt) {
+    const s = stampSecs(g.openedAt);
+    if (s) return s * 1000;
+  }
+  const w = workerOf(t);
+  if (w && w.phaseAt) return w.phaseAt * 1000;
+  return updatedMs(t);
+}
+
+function waitingMinutes(t) {
+  const since = waitingSinceMs(t);
+  return Math.max(0, Math.floor((Date.now() - since) / 60000));
+}
+
+function waitTone(mins) {
+  return mins >= 480 ? 't2' : mins >= 60 ? 't1' : 't0';
+}
+
+function columnOf(t) {
+  const hc = humanColOf(t);
+  if (hc) return hc;
+  return agentColOf(t);
+}
 
 /* The only human-owned moves. Everything else belongs to the hub and its workers. */
 const ALLOWED = { backlog:['queued'], queued:['backlog','queued'] };
-const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
+const canDrop = (from, to) => {
+  if (from === 'backlog' && to === 'queued') return true;
+  if (from === 'queued' && (to === 'backlog' || to === 'queued')) return true;
+  return (ALLOWED[from] || []).includes(to);
+};
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -153,14 +329,38 @@ function render() {
 
   renderColumns();
 
+  const humanItems = (state.tasks || []).filter(t => humanColOf(t));
+  const gateTaskIds = new Set((state.tasks || []).map(t => t.id));
+  const standaloneGates = (state.gates || []).filter(g => !g.task || !gateTaskIds.has(g.task));
+  const totalHuman = humanItems.length + standaloneGates.length;
+
+  const humanBadge = document.getElementById('human-badge');
+  if (humanBadge) {
+    humanBadge.textContent = totalHuman;
+    humanBadge.classList.toggle('zero', !totalHuman);
+  }
+
   const mine = (state.gates || []).length;
-  document.getElementById('gate-count').textContent = mine;
+  const gateCount = document.getElementById('gate-count');
+  if (gateCount) {
+    gateCount.textContent = mine;
+    gateCount.classList.toggle('zero', !mine);
+  }
+
+  // Count active workers not waiting on human
+  const activeWorkers = (state.tasks || []).filter(t => ['dispatched', 'pr'].includes(t.status) && !humanColOf(t)).length;
+  const agentCount = document.getElementById('agent-count');
+  if (agentCount) {
+    agentCount.textContent = activeWorkers;
+  }
+
   // The ball count belongs in the tab title: you should know it is your turn without
   // having to look at the page.
-  document.title = (mine ? `(${mine}) ` : '') + 'adj';
+  document.title = (totalHuman ? `(${totalHuman}) ` : '') + 'adj';
   updateNotifyButton();
   renderDrawer();
   redrawReview();
   redrawTaskView();
+  applyLayout();
 }
 

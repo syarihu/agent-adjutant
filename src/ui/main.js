@@ -43,12 +43,12 @@ function setView(v) {
   }
 
   // Navigation rail active states
-  const navBoard = document.getElementById('nav-board');
   const navReview = document.getElementById('nav-review');
-  for (const [nav, on] of [[navBoard, v === 'board'], [navReview, v === 'review']]) {
-    if (!nav) continue;
-    if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
+  if (navReview) {
+    if (v === 'review') navReview.setAttribute('aria-current', 'page');
+    else navReview.removeAttribute('aria-current');
   }
+  applyLayout();
 
   // Top App Bar title updates
   const pageTitle = document.getElementById('page-title');
@@ -56,7 +56,7 @@ function setView(v) {
   if (pageTitle && pageSub) {
     if (v === 'board') {
       pageTitle.textContent = 'タスクボード';
-      pageSub.textContent = 'バックグラウンド worker との協調作業カンバン';
+      pageSub.textContent = 'エージェントの作業と、あなたの確認待ちを分けて表示';
     } else if (v === 'review') {
       pageTitle.textContent = '要対応レビュー';
       pageSub.textContent = '人間の判断・承認を待っている Gate 一覧';
