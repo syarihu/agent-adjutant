@@ -352,8 +352,28 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
     );
     let closed = tool_result(&replies[0]);
     assert_eq!(closed["closed"], true);
+    assert_eq!(closed["alreadyAnswered"], false);
     assert_eq!(closed["gate"]["decision"], "closed");
     assert_eq!(closed["gate"]["comment"], "answered in terminal");
+
+    // Calling close again on an already archived gate succeeds idempotently
+    let replies = mcp(
+        &fixture,
+        &[request(
+            3,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id,
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let closed_again = tool_result(&replies[0]);
+    assert_eq!(closed_again["closed"], true);
+    assert_eq!(closed_again["alreadyAnswered"], false);
 
     assert!(
         fixture
@@ -362,6 +382,45 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
             .unwrap()
             .is_empty()
     );
+
+    // When a gate was already answered on the board, closing it reports alreadyAnswered
+    let replies = mcp(
+        &fixture,
+        &[request(
+            4,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "question",
+                    "title": "Board question",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let opened2 = tool_result(&replies[0]);
+    let id2 = opened2["gate"]["id"].as_str().unwrap();
+    fixture.ok(&["gate", "answer", "--id", id2, "--decision", "approve"]);
+
+    let replies = mcp(
+        &fixture,
+        &[request(
+            5,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id2,
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let close_answered = tool_result(&replies[0]);
+    assert_eq!(close_answered["closed"], false);
+    assert_eq!(close_answered["alreadyAnswered"], true);
+    assert_eq!(close_answered["gate"]["decision"], "approve");
 }
 
 /// An MCP server started with a hub's line, talked to until it has said where the board is.

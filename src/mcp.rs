@@ -537,7 +537,8 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let comment = args.get("comment").and_then(Value::as_str);
             let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
             let gate = crate::cmd::gate_close_payload(&ctx, id, comment)?;
-            Ok(json!({ "gate": gate, "closed": true }))
+            let closed = gate.decision.as_deref() == Some("closed");
+            Ok(json!({ "gate": gate, "closed": closed, "alreadyAnswered": !closed }))
         }
         "adjutant_refresh" => {
             let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
