@@ -339,7 +339,8 @@ minutes and tell the user. If you did not ask for a review, skip this wait.
    confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
 4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
    agent, send it back to that id. Do not start a new agent.
-5. Run `verify`, commit, push.
+5. Run `verify`, commit, push. Once pushed, run `adj phase --set pr` so the board shows the ball
+   has returned to reviewers.
 6. Replies, and only to humans:
    - **Do not reply to bot comments.** The only reader of a thread from Copilot or any other review
      bot is a bot, so a reply helps nobody. If it is valid, just fix it; if not, just leave it; tell
@@ -348,7 +349,8 @@ minutes and tell the user. If you did not ask for a review, skip this wait.
    - **Human reviewers may be replied to.** Then first read `skills.commentStyle` from the config
      if there is one, show a draft, and post only once it is approved. Do not let an agent post it.
 7. Loop back to step 2 until nothing is unresolved, then offer to mark the PR ready for review
-   (`gh pr ready <n>`).
+   (`gh pr ready <n>`). Keep the phase as `pr` (`adj phase --set pr`) while waiting for the next
+   review round.
 
 ## 7. When you find a bug outside the task
 
