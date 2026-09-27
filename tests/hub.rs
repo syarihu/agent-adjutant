@@ -504,3 +504,51 @@ fn a_tab_opened_for_a_hub_is_told_whether_to_collect_too() {
     let plain = fixture.ok(&["hub", "--tab", "--dry-run"]);
     assert!(!plain.contains("dashboard"), "{plain}");
 }
+
+#[test]
+fn a_relative_config_reaches_the_hub_tab_as_an_absolute_path() {
+    let fixture = Fixture::new(QUIET);
+    let somewhere = fixture.repo.join("somewhere");
+    std::fs::create_dir_all(&somewhere).unwrap();
+
+    let out = fixture
+        .command(["hub", "--tab", "--dry-run"])
+        .current_dir(&somewhere)
+        .env("ADJUTANT_CONFIG", "../../config.json")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stdout = String::from_utf8(out.stdout).unwrap();
+
+    // Check it contains ADJUTANT_CONFIG= (potentially quoted) with an absolute path
+    // and doesn't contain ADJUTANT_CONFIG=../
+    let config_env_marker = "ADJUTANT_CONFIG=";
+    let idx = stdout
+        .find(config_env_marker)
+        .expect("Did not forward ADJUTANT_CONFIG");
+    let after_marker = &stdout[idx + config_env_marker.len()..];
+
+    // The value might be enclosed in single quotes due to dry-run quoting
+    let start_char = after_marker.chars().next().unwrap();
+    let is_quoted = start_char == '\'';
+    let path_start = if is_quoted {
+        &after_marker[1..]
+    } else {
+        after_marker
+    };
+
+    assert!(
+        path_start.starts_with('/'),
+        "ADJUTANT_CONFIG is not absolute: {}",
+        path_start
+    );
+    assert!(
+        !stdout.contains("ADJUTANT_CONFIG=../") && !stdout.contains("ADJUTANT_CONFIG='../"),
+        "ADJUTANT_CONFIG was kept relative"
+    );
+}

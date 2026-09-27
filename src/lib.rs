@@ -736,6 +736,7 @@ enum TaskAction {
 
 /// Parse this process's arguments and run the subcommand. Exits; never returns.
 pub fn run() -> ! {
+    config::anchor_config_env();
     let cli = Cli::parse();
     let result: Result<i32, String> = match &cli.command {
         Commands::HubName { repo, hub, json } => {

@@ -2018,6 +2018,28 @@ mod tests {
         assert!(forwarded_env().is_empty());
     }
 
+    #[test]
+    fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        unsafe {
+            std::env::set_var(config::CONFIG_ENV, "relative-config.json");
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        config::anchor_config_env();
+        let env = forwarded_env();
+        assert_eq!(env[0], "env");
+        assert!(env.contains(&format!(
+                "{}={}",
+                config::CONFIG_ENV,
+                std::env::current_dir()
+                    .unwrap()
+                    .join("relative-config.json")
+                    .display()
+            )));
+        // The sandbox also sets ADJUTANT_STATE_DIR, but we only care about CONFIG_ENV here
+        // so that the test logic correctly asserts on the rewritten config path.
+    }
+
     /// A `GIT_DIR` left over from whatever started the agent would send every git command it
     /// runs to another repository, while adjutant itself works on this one.
     #[test]
