@@ -489,6 +489,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         "adjutant_outbox" => {
             let worktree = match args["worktree"]
                 .as_str()
+                .filter(|s| !s.is_empty())
                 .or_else(|| args["cwd"].as_str())
                 .filter(|s| !s.is_empty())
             {

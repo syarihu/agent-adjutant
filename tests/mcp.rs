@@ -439,6 +439,30 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
     );
     let outbox = tool_result(&replies[0]);
     assert!(outbox["content"].as_str().unwrap().contains("approve"));
+
+    // An empty worktree string also falls back to cwd
+    let replies = mcp(
+        &fixture,
+        &[request(
+            7,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_outbox",
+                "arguments": {
+                    "action": "read",
+                    "worktree": "",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let outbox_empty_wt = tool_result(&replies[0]);
+    assert!(
+        outbox_empty_wt["content"]
+            .as_str()
+            .unwrap()
+            .contains("approve")
+    );
 }
 
 #[test]
