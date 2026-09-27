@@ -906,6 +906,17 @@ fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<Delivered>) {
 mod tests {
     use super::*;
 
+    /// `adj task next` skips a task by this prefix, and the hub procedure is what writes it.
+    /// The wording guard in `prompts` pins the procedure; this holds the constant to it.
+    #[test]
+    fn the_prefix_the_queue_skips_is_the_one_the_hub_writes() {
+        let hub = crate::prompts::find("adj-hub").unwrap().raw_content;
+        // The procedure is hard-wrapped, so compare with every run of whitespace as one space.
+        let hub = hub.split_whitespace().collect::<Vec<_>>().join(" ");
+        let written = format!("\"{} {{reason}}\"", task::COULD_NOT_START);
+        assert!(hub.contains(&written), "adj-hub never writes {written}");
+    }
+
     #[test]
     fn title_is_taken_verbatim_when_present() {
         let input = json!({ "title": "explicit title", "body": "first line\nsecond line" });

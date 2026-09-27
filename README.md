@@ -83,7 +83,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|update\|refresh` | the records that board is a view of (`refresh`: move the ones whose PR was merged to done) |
+| `adjutant task add\|list\|show\|next\|update\|refresh` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done) |
 | `adjutant gate open\|list\|show\|answer` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |

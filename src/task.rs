@@ -98,12 +98,6 @@ impl Executor {
     }
 }
 
-/// Six states, and no more.
-///
-/// There is deliberately no `gate` here. Whether a task is waiting on a human is answered
-/// by whether an open gate exists for it, and adding a seventh state would mean the worker
-/// has to remember to write it on the way in *and* on the way out — two writes that can
-/// disagree with the gate directory, which is the thing actually being described.
 /// The start of the note the hub writes when it could not start a task ("4. Start the worker",
 /// "A request from the dashboard"). `next` skips a task whose note starts with it until a
 /// person has looked at the reason, so the hub's wording and this check have to be one string.
@@ -156,6 +150,12 @@ pub fn next(tasks: Vec<Task>, gated: &std::collections::HashSet<String>) -> Next
     }
 }
 
+/// Six states, and no more.
+///
+/// There is deliberately no `gate` here. Whether a task is waiting on a human is answered
+/// by whether an open gate exists for it, and adding a seventh state would mean the worker
+/// has to remember to write it on the way in *and* on the way out — two writes that can
+/// disagree with the gate directory, which is the thing actually being described.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {

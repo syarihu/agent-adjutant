@@ -2804,18 +2804,19 @@ mod tests {
     }
 
     /// The hub writes this note when a start fails, and `adj task next` skips a task by it. Two
-    /// copies of one string drift apart silently; this keeps the procedure on the constant.
+    /// copies of one string drift apart silently; this pins the procedure's wording, and a test
+    /// in `cmd::task` holds `task::COULD_NOT_START` to it (a leaf cannot name the constant).
     #[test]
     fn the_note_a_failed_start_leaves_is_the_one_the_queue_skips() {
         let hub = find("adj-hub").unwrap().raw_content;
-        let written = format!("\"{} {{reason}}\"", crate::task::COULD_NOT_START);
+        let written = "\"Could not start: {reason}\"";
         for heading in [
             "### 4. Start the worker",
             "### A request from the dashboard (`kind: request`)",
         ] {
             let text = flow(&step(hub, heading));
             assert!(
-                text.contains(&written),
+                text.contains(written),
                 "{heading} does not write {written}: {text}"
             );
         }
