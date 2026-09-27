@@ -457,16 +457,14 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
         out["wait"] = json!(false);
         out["note"] = json!(RECORDED);
     } else {
-        let wake_line = if gate.answered_by_hub() {
-            ctx.settings
-                .hub_wake
-                .line_or(crate::terminal::HUB_WAKE_LINE)
+        let (wake, default_line) = if gate.answered_by_hub() {
+            (&ctx.settings.hub_wake, crate::terminal::HUB_WAKE_LINE)
         } else {
-            ctx.settings
-                .worker_wake
-                .line_or(crate::terminal::WORKER_WAKE_LINE)
+            (&ctx.settings.worker_wake, crate::terminal::WORKER_WAKE_LINE)
         };
-        out["wakeLine"] = json!(wake_line);
+        if !wake.hook.is_off() {
+            out["wakeLine"] = json!(wake.line_or(default_line));
+        }
     }
     out
 }

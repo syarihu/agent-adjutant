@@ -261,6 +261,7 @@ fn tool_definitions() -> Value {
                 "properties": {
                     "action": { "type": "string", "enum": ["read", "clear"], "description": "Default: read." },
                     "worktree": { "type": "string", "description": "Default: the server's working directory." },
+                    "cwd": cwd_property(),
                 },
             },
         },
@@ -486,7 +487,11 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             }))
         }
         "adjutant_outbox" => {
-            let worktree = match args["worktree"].as_str().filter(|s| !s.is_empty()) {
+            let worktree = match args["worktree"]
+                .as_str()
+                .or_else(|| args["cwd"].as_str())
+                .filter(|s| !s.is_empty())
+            {
                 Some(path) => config::expand_home(path),
                 None => std::env::current_dir()
                     .map_err(|e| format!("cannot determine the current directory: {e}"))?,

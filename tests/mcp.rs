@@ -421,6 +421,52 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
     assert_eq!(close_answered["closed"], false);
     assert_eq!(close_answered["alreadyAnswered"], true);
     assert_eq!(close_answered["gate"]["decision"], "approve");
+
+    // adjutant_outbox with cwd reads the delivered answer from the gate's worktree outbox
+    let replies = mcp(
+        &fixture,
+        &[request(
+            6,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_outbox",
+                "arguments": {
+                    "action": "read",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let outbox = tool_result(&replies[0]);
+    assert!(outbox["content"].as_str().unwrap().contains("approve"));
+}
+
+#[test]
+fn a_gate_opened_with_waking_off_omits_the_wake_line() {
+    let fixture = Fixture::new(
+        r#"{"workerWake": false,
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {"acme/widget": "WID"}, "ide": "code"}}}"#,
+    );
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "plan",
+                    "title": "計画の承認",
+                    "problem": "問題",
+                    "goal": "目標",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let opened = tool_result(&replies[0]);
+    assert!(opened.get("wakeLine").is_none());
 }
 
 /// An MCP server started with a hub's line, talked to until it has said where the board is.
