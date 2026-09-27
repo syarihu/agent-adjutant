@@ -277,6 +277,7 @@ pub fn answer(
             path: handed.delivery.path,
             present: handed.delivery.present,
             woken: handed.woken,
+            wake_needed: handed.wake_needed,
         }
     } else {
         super::deliver_to_worker(
@@ -285,6 +286,7 @@ pub fn answer(
             &ctx.repo.hub_name,
             &subject,
             &body,
+            None,
         )?
     };
 

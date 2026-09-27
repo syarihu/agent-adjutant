@@ -278,11 +278,64 @@ fn a_running_worker_gets_woken_the_same_way_a_hub_does() {
         "--worktree",
         &worktree,
         "--subject",
-        "s2",
+        "[question 20260908T041500Z] which screen is this about",
         "--body",
         "b2",
     ]);
     assert!(out.contains("Woke the worker"), "{out}");
+
+    // A notice needs no action, so waking is skipped.
+    let notice = fixture.ok(&[
+        "tell",
+        "--worktree",
+        &worktree,
+        "--subject",
+        "s2",
+        "--body",
+        "b2",
+    ]);
+    assert!(
+        notice.contains("wake skipped (no action needed)"),
+        "{notice}"
+    );
+
+    // An ack also skips waking.
+    let ack = fixture.ok(&[
+        "tell",
+        "--worktree",
+        &worktree,
+        "--subject",
+        "[ack] Got the report",
+        "--body",
+        "b2",
+    ]);
+    assert!(ack.contains("wake skipped (no action needed)"), "{ack}");
+
+    // --wake overrides the automatic decision on a notice.
+    let forced = fixture.ok(&[
+        "tell",
+        "--wake",
+        "--worktree",
+        &worktree,
+        "--subject",
+        "s2",
+        "--body",
+        "b2",
+    ]);
+    assert!(forced.contains("Woke the worker"), "{forced}");
+
+    // --no-wake overrides a question that would otherwise wake.
+    let suppressed = fixture.ok(&[
+        "tell",
+        "--no-wake",
+        "--worktree",
+        &worktree,
+        "--subject",
+        "[question 20260908T041500Z] which screen is this about",
+        "--body",
+        "b2",
+    ]);
+    assert!(suppressed.contains("wake skipped"), "{suppressed}");
 
     // A stale record — same pid, a start time from another process — must not read as alive.
     std::fs::write(
@@ -345,6 +398,58 @@ fn a_hub_that_is_running_gets_woken_and_the_sender_is_told_so() {
     forge(&ps_started(std::process::id()));
     let out = fixture.ok(&["send", "--subject", "s2", "--body", "b2"]);
     assert!(out.contains("Woke the hub"), "{out}");
+
+    // A self-note (kind: question) skips waking.
+    let self_note = fixture.ok(&[
+        "send",
+        "--kind",
+        "question",
+        "--subject",
+        "[question 20260908T041500Z] s2",
+        "--body",
+        "b2",
+    ]);
+    assert!(
+        self_note.contains("wake skipped (no action needed)"),
+        "{self_note}"
+    );
+
+    // A message from the hub itself skips waking.
+    let hub_name = format!("adjutant-{SLUG}");
+    let from_hub = fixture.ok(&[
+        "send",
+        "--from",
+        &hub_name,
+        "--subject",
+        "s2",
+        "--body",
+        "b2",
+    ]);
+    assert!(
+        from_hub.contains("wake skipped (no action needed)"),
+        "{from_hub}"
+    );
+
+    // An ack skips waking.
+    let ack = fixture.ok(&["send", "--subject", "[ack] received", "--body", "b2"]);
+    assert!(ack.contains("wake skipped (no action needed)"), "{ack}");
+
+    // --wake overrides the decision on a question.
+    let forced = fixture.ok(&[
+        "send",
+        "--wake",
+        "--kind",
+        "question",
+        "--subject",
+        "s2",
+        "--body",
+        "b2",
+    ]);
+    assert!(forced.contains("Woke the hub"), "{forced}");
+
+    // --no-wake overrides a report.
+    let suppressed = fixture.ok(&["send", "--no-wake", "--subject", "s2", "--body", "b2"]);
+    assert!(suppressed.contains("wake skipped"), "{suppressed}");
 
     // Same live pid, a start time that is not its own: a pid that has been recycled onto
     // another process. Reporting that as present is the one mistake that loses a message.

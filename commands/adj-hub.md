@@ -731,9 +731,11 @@ so it arrives whatever that tab is running.
 - Appends one entry to that worktree's `.claude/adjutant-outbox.md` (**the shape of the heading is
   kept by the tool. Do not `cat >>` it yourself** — write the shape into a prompt and it always
   drifts)
-- Wakes the worker if it is running. `present` / `woken` come back
-- Notifies a person only when it could not wake it (a worker that woke reads it itself, so it does not
-  ring twice)
+- Wakes the worker if it is running and the message needs action (`[question …]` or a gate answer).
+  Plain notices and `[ack]` are delivered to the outbox without waking, so an open question in the
+  worker's tab is not answered by the wake line. `present` / `woken` come back
+- Notifies a person only when waking was needed but could not reach the worker (a worker that woke
+  reads it itself, and notices that do not wake need no human interrupt either)
 
 **The first line of `subject` is the signal.** `[question {YYYYMMDD-HHMMSS}]` / `[ack]` / anything
 else (a notice). Always give `[question]` an identifier — the worker's answer comes back to the inbox
@@ -960,7 +962,7 @@ independently:
    Without this the card stays in "in progress" or "in review" forever. When not removed (4), do not
    touch it.
 4. **If even one check trips, do not remove.** The worker is still alive, so reply with
-   `adjutant_tell` saying "what tripped" and keep the worktree. The worker side decides again
+   `adjutant_tell` (`wake: true`) saying "what tripped" and keep the worktree. The worker side decides again
    whether to clean up.
 5. **Do not send `adjutant_tell` after closing the tab.** There is nobody to read it. If there is
    something to say, tell the user.

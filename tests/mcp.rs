@@ -503,3 +503,185 @@ fn a_board_takes_the_record_from_one_that_has_stopped() {
     second.kill().unwrap();
     second.wait().unwrap();
 }
+
+#[test]
+fn adjutant_tell_and_send_wake_heuristics_and_overrides() {
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "workerWake": "true", "hubWake": "true",
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {"acme/widget": "WID"}, "ide": "code"}}}"#,
+    );
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+
+    // Register this process as the worker.
+    let record = fixture.repo.join(".claude").join("adjutant-worker.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": std::process::id(),
+            "psStarted": ps_started(std::process::id()),
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Register this process as the hub too.
+    let exe_name = std::env::current_exe()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let hub_record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(hub_record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hub_record,
+        serde_json::json!({
+            "pid": std::process::id(),
+            "hubName": exe_name,
+            "cwd": "/",
+            "psStarted": ps_started(std::process::id()),
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let replies = mcp(
+        &fixture,
+        &[
+            // 1. Plain notice to worker -> no wake needed.
+            request(
+                1,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_tell", "arguments": {
+                    "worktree": &worktree,
+                    "subject": "Filing note",
+                    "body": "Issue created",
+                }}),
+            ),
+            // 2. Question to worker -> wake needed.
+            request(
+                2,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_tell", "arguments": {
+                    "worktree": &worktree,
+                    "subject": "[question 123] which screen?",
+                    "body": "need clarification",
+                }}),
+            ),
+            // 3. Plain notice to worker with wake: true -> forced wake.
+            request(
+                3,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_tell", "arguments": {
+                    "worktree": &worktree,
+                    "subject": "Filing note",
+                    "body": "Forced wake",
+                    "wake": true,
+                }}),
+            ),
+            // 4. Question to worker with wake: false -> suppressed wake.
+            request(
+                4,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_tell", "arguments": {
+                    "worktree": &worktree,
+                    "subject": "[question 123] which screen?",
+                    "body": "Suppressed wake",
+                    "wake": false,
+                }}),
+            ),
+            // 5. Hub self-note -> no wake needed.
+            request(
+                5,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_send", "arguments": {
+                    "from": HUB,
+                    "kind": "question",
+                    "subject": "Note to self",
+                    "body": "investigate later",
+                }}),
+            ),
+            // 6. Report to hub -> wake needed.
+            request(
+                6,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_send", "arguments": {
+                    "from": "worker-1",
+                    "kind": "report",
+                    "subject": "Task done",
+                    "body": "PR ready",
+                }}),
+            ),
+            // 7. Report to hub with wake: false -> suppressed wake.
+            request(
+                7,
+                "tools/call",
+                serde_json::json!({"name": "adjutant_send", "arguments": {
+                    "from": "worker-1",
+                    "kind": "report",
+                    "subject": "Task done",
+                    "body": "PR ready without wake",
+                    "wake": false,
+                }}),
+            ),
+        ],
+    );
+
+    let res1 = tool_result(&replies[0]);
+    assert_eq!(res1["present"], true);
+    assert_eq!(res1["woken"], false);
+    assert!(
+        res1["note"]
+            .as_str()
+            .unwrap()
+            .contains("waking was skipped because this message needs no action"),
+        "{res1}"
+    );
+
+    let res2 = tool_result(&replies[1]);
+    assert_eq!(res2["present"], true);
+    assert_eq!(res2["woken"], true);
+
+    let res3 = tool_result(&replies[2]);
+    assert_eq!(res3["present"], true);
+    assert_eq!(res3["woken"], true);
+
+    let res4 = tool_result(&replies[3]);
+    assert_eq!(res4["present"], true);
+    assert_eq!(res4["woken"], false);
+    assert!(
+        res4["note"]
+            .as_str()
+            .unwrap()
+            .contains("waking was skipped because this message needs no action"),
+        "{res4}"
+    );
+
+    let res5 = tool_result(&replies[4]);
+    assert_eq!(res5["present"], true);
+    assert_eq!(res5["woken"], false);
+    assert!(
+        res5["note"]
+            .as_str()
+            .unwrap()
+            .contains("waking was skipped because this message needs no action"),
+        "{res5}"
+    );
+
+    let res6 = tool_result(&replies[5]);
+    assert_eq!(res6["present"], true);
+    assert_eq!(res6["woken"], true);
+
+    let res7 = tool_result(&replies[6]);
+    assert_eq!(res7["present"], true);
+    assert_eq!(res7["woken"], false);
+    assert!(
+        res7["note"]
+            .as_str()
+            .unwrap()
+            .contains("waking was skipped because this message needs no action"),
+        "{res7}"
+    );
+}
