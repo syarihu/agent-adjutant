@@ -552,3 +552,34 @@ fn a_relative_config_reaches_the_hub_tab_as_an_absolute_path() {
         "ADJUTANT_CONFIG was kept relative"
     );
 }
+
+#[test]
+fn a_relative_xdg_config_home_reaches_the_hub_tab_as_an_absolute_path() {
+    let fixture = Fixture::new(QUIET);
+    let somewhere = fixture.repo.join("somewhere");
+    std::fs::create_dir_all(&somewhere).unwrap();
+
+    let out = fixture
+        .command(["hub", "--tab", "--dry-run"])
+        .current_dir(&somewhere)
+        .env_remove("ADJUTANT_CONFIG")
+        .env("XDG_CONFIG_HOME", "../xdg")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let marker = "XDG_CONFIG_HOME=";
+    let idx = stdout
+        .find(marker)
+        .expect("Did not forward XDG_CONFIG_HOME");
+    let value = stdout[idx + marker.len()..].trim_start_matches('\'');
+    assert!(
+        value.starts_with('/'),
+        "XDG_CONFIG_HOME is not absolute: {value}"
+    );
+}
