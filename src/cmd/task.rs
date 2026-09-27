@@ -734,6 +734,32 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     Ok(())
 }
 
+/// `adj task next`: the queued task a free worker slot should take, and the queued tasks that
+/// ask first and have no `dispatch` gate open yet.
+pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
+    let ctx = super::context(repo, hub)?;
+    // Open gates only: an answered one has gone to the archive, and its answer is the hub's
+    // to act on from the inbox.
+    let gated: std::collections::HashSet<String> =
+        crate::gate::list_of_kind(&super::gate::dir(&ctx), crate::gate::Kind::Dispatch)
+            .into_iter()
+            .filter_map(|g| g.task)
+            .collect();
+    let next = task::next(task::list(&dir(&ctx)), &gated);
+    if as_json {
+        println!("{}", json!(next));
+        return Ok(());
+    }
+    match &next.task {
+        Some(t) => println!("next: {} — {}", t.id, t.title),
+        None => println!("Nothing queued can be started."),
+    }
+    for t in &next.needs_dispatch_gate {
+        println!("needs a dispatch gate: {} — {}", t.id, t.title);
+    }
+    Ok(())
+}
+
 pub fn list(
     repo: Option<&str>,
     hub: Option<&str>,

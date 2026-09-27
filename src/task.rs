@@ -104,6 +104,58 @@ impl Executor {
 /// by whether an open gate exists for it, and adding a seventh state would mean the worker
 /// has to remember to write it on the way in *and* on the way out — two writes that can
 /// disagree with the gate directory, which is the thing actually being described.
+/// The start of the note the hub writes when it could not start a task ("4. Start the worker",
+/// "A request from the dashboard"). `next` skips a task whose note starts with it until a
+/// person has looked at the reason, so the hub's wording and this check have to be one string.
+pub const COULD_NOT_START: &str = "Could not start:";
+
+/// What a free worker slot should take, and what is waiting on a confirmation nobody has been
+/// asked for yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Next {
+    /// The first queued task that can be started, or `None`.
+    pub task: Option<Task>,
+    /// Queued tasks with `autoStart: false` and no open `dispatch` gate.
+    pub needs_dispatch_gate: Vec<Task>,
+}
+
+/// Pick the next task to start from `tasks`, which is expected in queue order (as `list`
+/// returns it). `gated` holds the ids of tasks that already have an open `dispatch` gate.
+///
+/// A held task at the head must not keep everything behind it from starting, so a task
+/// with `autoStart: false` is skipped until its gate is open, and a task with a note
+/// starting with "Could not start:" is skipped until a person has looked at it.
+pub fn next(tasks: Vec<Task>, gated: &std::collections::HashSet<String>) -> Next {
+    let mut picked = None;
+    let mut needs_dispatch_gate = Vec::new();
+    for task in tasks {
+        if task.status != Status::Queued {
+            continue;
+        }
+        if task
+            .note
+            .as_deref()
+            .is_some_and(|n| n.starts_with(COULD_NOT_START))
+        {
+            continue;
+        }
+        if !task.auto_start {
+            if !gated.contains(&task.id) {
+                needs_dispatch_gate.push(task);
+            }
+            continue;
+        }
+        if picked.is_none() {
+            picked = Some(task);
+        }
+    }
+    Next {
+        task: picked,
+        needs_dispatch_gate,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {
@@ -469,6 +521,120 @@ mod tests {
         );
         task.body = "The retry does not seem to take effect".to_string();
         task
+    }
+
+    #[test]
+    fn next_is_the_first_queued_task_and_ignores_every_other_status() {
+        let mut t1 = sample();
+        t1.id = "1".to_string();
+        t1.status = Status::Backlog;
+        let mut t2 = sample();
+        t2.id = "2".to_string();
+        t2.status = Status::Dispatched;
+        let mut t3 = sample();
+        t3.id = "3".to_string();
+        t3.status = Status::Queued;
+        let mut t4 = sample();
+        t4.id = "4".to_string();
+        t4.status = Status::Queued;
+
+        let gated = std::collections::HashSet::new();
+        let next_result = next(vec![t1, t2, t3.clone(), t4], &gated);
+        assert_eq!(next_result.task, Some(t3));
+        assert!(next_result.needs_dispatch_gate.is_empty());
+    }
+
+    #[test]
+    fn a_task_that_asks_first_is_passed_over_and_listed_until_its_gate_is_open() {
+        let mut t1 = sample();
+        t1.id = "1".to_string();
+        t1.status = Status::Queued;
+        t1.auto_start = false;
+        let mut t2 = sample();
+        t2.id = "2".to_string();
+        t2.status = Status::Queued;
+        t2.auto_start = true;
+
+        let mut gated = std::collections::HashSet::new();
+        let next_result = next(vec![t1.clone(), t2.clone()], &gated);
+        assert_eq!(next_result.task, Some(t2.clone()));
+        assert_eq!(next_result.needs_dispatch_gate, vec![t1.clone()]);
+
+        gated.insert("1".to_string());
+        let next_result_gated = next(vec![t1, t2.clone()], &gated);
+        assert_eq!(next_result_gated.task, Some(t2));
+        assert!(next_result_gated.needs_dispatch_gate.is_empty());
+    }
+
+    #[test]
+    fn a_task_that_could_not_start_waits_for_a_person() {
+        let mut t1 = sample();
+        t1.id = "1".to_string();
+        t1.status = Status::Queued;
+        t1.note = Some(format!("{COULD_NOT_START} fatal: bad base"));
+        let mut t2 = sample();
+        t2.id = "2".to_string();
+        t2.status = Status::Queued;
+        t2.note = Some("Waiting for a worker slot (resume with --resume)".to_string());
+        let mut t3 = sample();
+        t3.id = "3".to_string();
+        t3.status = Status::Queued;
+        t3.note = Some("Waiting for confirmation to start".to_string());
+
+        let gated = std::collections::HashSet::new();
+        let next_result = next(vec![t1, t2.clone(), t3], &gated);
+        assert_eq!(next_result.task, Some(t2));
+    }
+
+    #[test]
+    fn a_task_that_could_not_start_is_not_asked_about_either() {
+        let mut t1 = sample();
+        t1.id = "1".to_string();
+        t1.status = Status::Queued;
+        t1.auto_start = false;
+        t1.note = Some(format!("{COULD_NOT_START} fatal: bad base"));
+        let mut t2 = sample();
+        t2.id = "2".to_string();
+        t2.status = Status::Queued;
+
+        let gated = std::collections::HashSet::new();
+        let next_result = next(vec![t1, t2.clone()], &gated);
+        assert_eq!(next_result.task, Some(t2));
+        assert!(next_result.needs_dispatch_gate.is_empty());
+    }
+
+    #[test]
+    fn the_whole_queue_is_searched_for_tasks_that_need_a_gate() {
+        let mut t1 = sample();
+        t1.id = "1".to_string();
+        t1.status = Status::Queued;
+        t1.auto_start = true;
+        let mut t2 = sample();
+        t2.id = "2".to_string();
+        t2.status = Status::Queued;
+        t2.auto_start = false;
+
+        let gated = std::collections::HashSet::new();
+        let next_result = next(vec![t1.clone(), t2.clone()], &gated);
+        assert_eq!(next_result.task, Some(t1));
+        assert_eq!(next_result.needs_dispatch_gate, vec![t2]);
+    }
+
+    #[test]
+    fn nothing_is_next_when_every_queued_task_is_held() {
+        let mut t1 = sample();
+        t1.id = "1".to_string();
+        t1.status = Status::Queued;
+        t1.auto_start = false;
+        let mut t2 = sample();
+        t2.id = "2".to_string();
+        t2.status = Status::Queued;
+        t2.note = Some(format!("{COULD_NOT_START} fatal: bad base"));
+
+        let gated = std::collections::HashSet::new();
+        let next_result = next(vec![t1.clone(), t2], &gated);
+        assert_eq!(next_result.task, None);
+        assert_eq!(next_result.needs_dispatch_gate, vec![t1]);
     }
 
     #[test]

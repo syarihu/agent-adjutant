@@ -2802,4 +2802,36 @@ mod tests {
             }
         }
     }
+
+    /// The hub writes this note when a start fails, and `adj task next` skips a task by it. Two
+    /// copies of one string drift apart silently; this keeps the procedure on the constant.
+    #[test]
+    fn the_note_a_failed_start_leaves_is_the_one_the_queue_skips() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        let written = format!("\"{} {{reason}}\"", crate::task::COULD_NOT_START);
+        for heading in [
+            "### 4. Start the worker",
+            "### A request from the dashboard (`kind: request`)",
+        ] {
+            let text = flow(&step(hub, heading));
+            assert!(
+                text.contains(&written),
+                "{heading} does not write {written}: {text}"
+            );
+        }
+    }
+
+    /// A free slot is filled from `adj task next`, not by re-deriving its rule from a listing.
+    #[test]
+    fn a_free_slot_is_filled_from_adj_task_next() {
+        let hub = find("adj-hub").unwrap().raw_content;
+        let slot = flow(&between(
+            hub,
+            "#### When a worker slot frees up, start the next",
+            "### Step 2: Collect",
+        ));
+        assert!(slot.contains("adj task next --json"), "{slot}");
+        assert!(slot.contains("needsDispatchGate"), "{slot}");
+        assert!(!slot.contains("adj task list --status queued"), "{slot}");
+    }
 }
