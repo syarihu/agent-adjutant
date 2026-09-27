@@ -980,16 +980,17 @@ Done at the end of a `done` cleanup, on startup, and when `kind: next` arrives. 
 only one.** Even if several slots are free, one is enough, because every worker sends `done` here
 when it finishes.
 
-1. Look through `adj task list --status queued --json` in order (the same as 「待ち」 on the board), and
-   take **the first one that can be started**. Skip the following — one sitting at the head would
-   keep everything behind it from ever starting:
-   - `autoStart: false` (wants a confirmation before starting). If that task's `dispatch` gate is not
-     open yet (see `task` in `adj gate list --json`), open it here and skip it (how to open is in "A
-     request from the dashboard"). It is started once that answer arrives
-   - A `note` starting "Could not start: …". Not taken until a person has looked at the reason and
-     fixed it
+1. Run `adj task next --json`. It walks the queued tasks in queue order (the same as 「待ち」 on
+   the board) and returns `{"task": …, "needsDispatchGate": […]}`:
+   - `task` is **the first one that can be started**, or `null`. It already skips a task with
+     `autoStart: false` (it wants a confirmation before starting) and one whose `note` starts
+     "Could not start:" (not taken until a person has looked at the reason and fixed it), so one
+     sitting at the head does not keep everything behind it from starting.
+   - `needsDispatchGate` lists the `autoStart: false` tasks with no `dispatch` gate open. Open one
+     for each here (how to open is in "A request from the dashboard"). Each is started once that
+     answer arrives.
 
-   If there is none, do nothing.
+   If `task` is `null`, do nothing more.
 2. Run that record as "A request from the dashboard" (including the `adj task show` check). **A
    record whose `executor` is `jules` never gets `adjutant work`**: run "5. Hand it to Jules" for it
    (reusing its worktree if it still exists, otherwise creating it detached in "3. Create the

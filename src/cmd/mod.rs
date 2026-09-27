@@ -31,9 +31,9 @@ pub use jules::{
 };
 pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
 pub use task::{
-    AddArgs, UpdateArgs, add as task_add, list as task_list, refresh as task_refresh,
-    refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
-    update_cmd as task_update,
+    AddArgs, UpdateArgs, add as task_add, list as task_list, next_cmd as task_next,
+    refresh as task_refresh, refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json,
+    show as task_show, update_cmd as task_update,
 };
 
 /// Everything a command needs to know about where it is. Resolved once, at the top, because

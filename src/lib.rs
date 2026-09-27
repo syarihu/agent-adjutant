@@ -681,6 +681,16 @@ enum TaskAction {
         #[arg(long)]
         id: String,
     },
+    /// The queued task a free worker slot should take next, and the ones waiting on a
+    /// confirmation nobody has been asked for
+    Next {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Move every task whose pull request was merged to done, and say what was left alone
     Refresh {
         #[arg(long)]
@@ -979,7 +989,7 @@ fn strip_separator(args: &[String]) -> Vec<String> {
     }
 }
 
-/// The `adj task` verbs. Split out of `run` because the four of them are a subcommand of a
+/// The `adj task` verbs. Split out of `run` because the verbs are a subcommand of a
 /// subcommand, and inlining that match would bury the rest of the dispatch.
 fn run_task(action: &TaskAction) -> Result<(), String> {
     match action {
@@ -1032,6 +1042,9 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             *json,
         ),
         TaskAction::Show { repo, hub, id } => cmd::task_show(repo.as_deref(), hub.as_deref(), id),
+        TaskAction::Next { repo, hub, json } => {
+            cmd::task_next(repo.as_deref(), hub.as_deref(), *json)
+        }
         TaskAction::Refresh { repo, hub, json } => {
             cmd::task_refresh_cmd(repo.as_deref(), hub.as_deref(), *json)
         }
