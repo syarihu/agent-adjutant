@@ -192,107 +192,121 @@ function openRecord(id) {
 
 /* ── Inline reply forms on human board ── */
 const openReplies = {}; // task/gate id -> 'reject' | 'changes' | 'answer' | 'ask'
+const acting = new Set(); // guard against duplicate in-flight requests
 
 async function act(action, id, choice) {
-  const t = (state.tasks || []).find(x => x.id === id);
-  const gate = t ? openGate(t) : (state.gates || []).find(g => g.id === id);
-  const replyEl = document.querySelector(`textarea[data-reply="${id}"]`);
-  const reply = replyEl ? replyEl.value.trim() : '';
+  const isFormOpen = ['reject', 'changes', 'answer', 'ask'].includes(action);
+  if (isFormOpen) {
+    openReplies[id] = action;
+    renderColumns(true);
+    const ta = document.querySelector(`textarea[data-reply="${id}"]`);
+    if (ta) ta.focus();
+    return;
+  }
+  if (action === 'cancel') {
+    delete openReplies[id];
+    renderColumns(true);
+    return;
+  }
 
-  switch (action) {
-    case 'reject':
-    case 'changes':
-    case 'answer':
-    case 'ask': {
-      openReplies[id] = action;
-      renderColumns(true);
-      const ta = document.querySelector(`textarea[data-reply="${id}"]`);
-      if (ta) ta.focus();
-      return;
+  if (acting.has(id)) return;
+  acting.add(id);
+
+  let succeeded = true;
+  const submitAnswer = async (...args) => {
+    succeeded = await answer(...args);
+  };
+
+  try {
+    const t = (state.tasks || []).find(x => x.id === id);
+    const gate = t ? openGate(t) : (state.gates || []).find(g => g.id === id);
+    const replyEl = document.querySelector(`textarea[data-reply="${id}"]`);
+    const reply = replyEl ? replyEl.value.trim() : '';
+
+    switch (action) {
+      case 'start': {
+        if (gate) {
+          await submitAnswer('approve', undefined, gate.id, '');
+        } else if (t) {
+          try {
+            await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+              method: 'POST', body: JSON.stringify({ autoStart: true }),
+            });
+          } catch (e) {
+            note(`adj task update --id ${t.id} → ${e.message}`, true);
+            succeeded = false;
+          }
+        }
+        break;
+      }
+      case 'shelve': {
+        if (gate) {
+          await submitAnswer('reject', undefined, gate.id, '');
+        } else if (t) {
+          await move(t.id, 'backlog');
+        }
+        break;
+      }
+      case 'approve': {
+        const decision = gate?.kind === 'result' ? 'ack' : 'approve';
+        if (gate) {
+          await submitAnswer(decision, undefined, gate.id, reply);
+        }
+        break;
+      }
+      case 'choice': {
+        if (gate && choice) {
+          await submitAnswer('choice', choice, gate.id, reply);
+        }
+        break;
+      }
+      case 'send-reject': {
+        const decision = gate?.kind === 'verify' || gate?.kind === 'diff' ? 'changes' : 'reject';
+        if (gate) {
+          await submitAnswer(decision, undefined, gate.id, reply || '差し戻し');
+        }
+        break;
+      }
+      case 'send-changes': {
+        if (gate) {
+          await submitAnswer('changes', undefined, gate.id, reply || '修正指示');
+        } else if (t && reply) {
+          try {
+            await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+              method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
+            });
+          } catch (e) {
+            note(`adj task update --id ${t.id} → ${e.message}`, true);
+            succeeded = false;
+          }
+        }
+        break;
+      }
+      case 'send-answer': {
+        if (gate) {
+          await submitAnswer('answer', undefined, gate.id, reply || '回答');
+        }
+        break;
+      }
+      case 'send-ask': {
+        if (gate) {
+          await submitAnswer('ask', undefined, gate.id, reply || '追加の質問');
+        }
+        break;
+      }
+      case 'refresh-prs': {
+        await refreshPrs();
+        break;
+      }
     }
-    case 'cancel': {
+    if (succeeded) {
       delete openReplies[id];
       renderColumns(true);
-      return;
+      await refresh(true);
     }
-    case 'start': {
-      if (gate) {
-        await answer('approve', undefined, gate.id, '');
-      } else if (t) {
-        try {
-          await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
-            method: 'POST', body: JSON.stringify({ autoStart: true }),
-          });
-        } catch (e) {
-          note(`adj task update --id ${t.id} → ${e.message}`, true);
-          return;
-        }
-      }
-      break;
-    }
-    case 'shelve': {
-      if (gate) {
-        await answer('reject', undefined, gate.id, '');
-      } else if (t) {
-        await move(t.id, 'backlog');
-      }
-      break;
-    }
-    case 'approve': {
-      const decision = gate?.kind === 'result' ? 'ack' : 'approve';
-      if (gate) {
-        await answer(decision, undefined, gate.id, reply);
-      }
-      break;
-    }
-    case 'choice': {
-      if (gate && choice) {
-        await answer('choice', choice, gate.id, reply);
-      }
-      break;
-    }
-    case 'send-reject': {
-      const decision = gate?.kind === 'verify' || gate?.kind === 'diff' ? 'changes' : 'reject';
-      if (gate) {
-        await answer(decision, undefined, gate.id, reply || '差し戻し');
-      }
-      break;
-    }
-    case 'send-changes': {
-      if (gate) {
-        await answer('changes', undefined, gate.id, reply || '修正指示');
-      } else if (t && reply) {
-        try {
-          await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
-            method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
-          });
-        } catch (e) {
-          note(`adj task update --id ${t.id} → ${e.message}`, true);
-          return;
-        }
-      }
-      break;
-    }
-    case 'send-answer': {
-      if (gate) {
-        await answer('answer', undefined, gate.id, reply || '回答');
-      }
-      break;
-    }
-    case 'send-ask': {
-      if (gate) {
-        await answer('ask', undefined, gate.id, reply || '追加の質問');
-      }
-      break;
-    }
-    case 'refresh-prs': {
-      await refreshPrs();
-      break;
-    }
+  } finally {
+    acting.delete(id);
   }
-  delete openReplies[id];
-  renderColumns(true);
-  await refresh(true);
 }
 
 function humanActions(task, col, gate) {

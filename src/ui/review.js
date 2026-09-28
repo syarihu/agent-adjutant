@@ -743,14 +743,14 @@ const commentBox = () => document.querySelector(view === 'task' ? '#task-view .g
 
 async function answer(decision, choice, id = focused, commentOverride = null) {
   const g = (state.gates || []).find(x => x.id === id) || recordById(id);
-  if (!g) return;
+  if (!g) return false;
   const box = commentBox();
   const comment = commentOverride !== null ? commentOverride : box?.value.trim();
   // Sending back something the worker has moved past, without saying what is wrong, gives it
   // nothing to act on.
   if (g.wait === false && !comment) {
     note(`adj gate answer --id ${g.id} --decision changes`, true, '差し戻す理由をコメントに書いてください');
-    return;
+    return false;
   }
   const line = `adj gate answer --id ${g.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
   try {
@@ -768,7 +768,11 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
     if (g.wait === false && box) box.value = '';
     else if (focused === g.id) focused = null;
     await refresh();
-  } catch (e) { note(line, true, e.message); }
+    return true;
+  } catch (e) {
+    note(line, true, e.message);
+    return false;
+  }
 }
 
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
