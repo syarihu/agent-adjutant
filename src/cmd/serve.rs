@@ -672,12 +672,7 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
         return Ok(json!({ "present": false, "ran": false }));
     };
     let settings = settings_now(server);
-    let done = crate::terminal::focus(
-        settings.terminal.focus.as_deref(),
-        pid,
-        &repo.hub_name,
-        false,
-    )?;
+    let done = crate::terminal::focus(&settings.terminal, pid, &repo.hub_name, false)?;
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 

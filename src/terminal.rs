@@ -14,7 +14,7 @@
 
 use std::process::Command;
 
-use crate::config::{Hook, Wake};
+use crate::config::{TerminalSettings, Wake};
 use crate::template::{Sub, contains_placeholder, render, sh_quote};
 
 pub struct SpawnRequest<'a> {
@@ -35,6 +35,18 @@ pub struct Performed {
     pub description: String,
     pub script: String,
     pub ran: bool,
+}
+
+/// A pane inside a tmux window.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TmuxPane {
+    pub pane_id: String,
+    pub pane_pid: u32,
+    pub pane_tty: String,
+    pub window_id: String,
+    pub session_name: String,
+    pub window_index: u32,
+    pub window_name: String,
 }
 
 /// How long a command line may be before it is staged in a file instead of typed.
@@ -113,7 +125,7 @@ fn sweep_staged(dir: &std::path::Path) {
 }
 
 pub fn spawn(
-    template: Option<&str>,
+    terminal: &TerminalSettings,
     req: &SpawnRequest,
     dry_run: bool,
 ) -> Result<Performed, String> {
@@ -124,91 +136,109 @@ pub fn spawn(
         return Err("the command to run is empty".to_string());
     }
     let title = sanitise_title(req.title, default_title(req.cwd));
-    // `{cwd}` in the template is the signal for what `{command}` *is*.
-    //
-    // A template that asks for the directory separately (`tmux new-window -c {cwd} …
-    // {command}`) is putting `{command}` in an argv slot, so it has to receive one plain
-    // command: prepending `cd … &&` or `( … ) &&` there is a shell syntax error, and every
-    // spawn template in the shipped documentation looks like that. Such a terminal also
-    // names its own tabs, through `{title}`.
-    //
-    // A template with no `{cwd}` — and the built-in, which types into a shell — is taking a
-    // shell line, so it gets the `cd` and the tab naming in front of the command.
-    let takes_argv = template
-        .map(|t| contains_placeholder(t, "cwd"))
-        .unwrap_or(false);
-    let line = if takes_argv {
-        req.command.to_string()
-    } else {
-        let mut line = format!("cd {} && ", sh_quote(req.cwd));
-        if let Some(name_it) = req.title_command {
-            // A title is decoration: a machine where naming fails still has to get the
-            // work started.
-            line.push_str(&format!("( {name_it} || true ) && "));
-        }
-        line.push_str(req.command);
-        line
-    };
 
-    // Staged only when it is actually going to be typed: a dry run is read by a person,
-    // and `sh /tmp/…` tells them nothing about what would have run.
+    if let Some(template) = &terminal.spawn {
+        let takes_argv = contains_placeholder(template, "cwd");
+        let line = if takes_argv {
+            req.command.to_string()
+        } else {
+            let mut line = format!("cd {} && ", sh_quote(req.cwd));
+            if let Some(name_it) = req.title_command {
+                line.push_str(&format!("( {name_it} || true ) && "));
+            }
+            line.push_str(req.command);
+            line
+        };
+        let line = if !dry_run && line.len() > MAX_INLINE_COMMAND {
+            stage_command(&line)?
+        } else {
+            line
+        };
+        let cmd = render(
+            template,
+            &[
+                ("cwd", Sub::Quoted(req.cwd)),
+                ("title", Sub::Quoted(&title)),
+                ("command", Sub::Raw(&line)),
+            ],
+        );
+        if dry_run {
+            return Ok(Performed {
+                description: format!("will start in a new tab: {title} ({})", req.cwd),
+                script: cmd,
+                ran: false,
+            });
+        }
+        run_shell(&cmd)?;
+        return Ok(Performed {
+            description: format!("started in a new tab: {title} ({})", req.cwd),
+            script: cmd,
+            ran: true,
+        });
+    }
+
+    if terminal.is_tmux() {
+        let line = if !dry_run && req.command.len() > MAX_INLINE_COMMAND {
+            stage_command(req.command)?
+        } else {
+            req.command.to_string()
+        };
+        let script = tmux_spawn_script(
+            terminal.tmux_socket(),
+            terminal.tmux_session(),
+            req.cwd,
+            &title,
+            &line,
+        );
+        if dry_run {
+            return Ok(Performed {
+                description: format!("will start in a new tab: {title} ({})", req.cwd),
+                script,
+                ran: false,
+            });
+        }
+        run_shell(&script)?;
+        return Ok(Performed {
+            description: format!("started in a new tab: {title} ({})", req.cwd),
+            script,
+            ran: true,
+        });
+    }
+
+    let mut line = format!("cd {} && ", sh_quote(req.cwd));
+    if let Some(name_it) = req.title_command {
+        line.push_str(&format!("( {name_it} || true ) && "));
+    }
+    line.push_str(req.command);
     let line = if !dry_run && line.len() > MAX_INLINE_COMMAND {
         stage_command(&line)?
     } else {
         line
     };
-
-    match template {
-        Some(template) => {
-            let cmd = render(
-                template,
-                &[
-                    ("cwd", Sub::Quoted(req.cwd)),
-                    ("title", Sub::Quoted(&title)),
-                    ("command", Sub::Raw(&line)),
-                ],
-            );
-            if dry_run {
-                return Ok(Performed {
-                    description: format!("will start in a new tab: {title} ({})", req.cwd),
-                    script: cmd,
-                    ran: false,
-                });
-            }
-            run_shell(&cmd)?;
-            Ok(Performed {
-                description: format!("started in a new tab: {title} ({})", req.cwd),
-                script: cmd,
-                ran: true,
-            })
-        }
-        None => {
-            let script = iterm_spawn_script(&line);
-            if dry_run {
-                return Ok(Performed {
-                    description: format!("will start in a new tab: {title} ({})", req.cwd),
-                    script,
-                    ran: false,
-                });
-            }
-            osascript(&script)?;
-            Ok(Performed {
-                description: format!("started in a new tab: {title} ({})", req.cwd),
-                script,
-                ran: true,
-            })
-        }
+    let script = iterm_spawn_script(&line);
+    if dry_run {
+        return Ok(Performed {
+            description: format!("will start in a new tab: {title} ({})", req.cwd),
+            script,
+            ran: false,
+        });
     }
+    osascript(&script)?;
+    Ok(Performed {
+        description: format!("started in a new tab: {title} ({})", req.cwd),
+        script,
+        ran: true,
+    })
 }
 
 pub fn focus(
-    template: Option<&str>,
+    terminal: &TerminalSettings,
     pid: u32,
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
     let tty = tty_of(pid);
-    if let Some(template) = template {
+    if let Some(template) = &terminal.focus {
         let cmd = render(
             template,
             &[
@@ -223,14 +253,43 @@ pub fn focus(
         return Ok(Performed {
             description: match dry_run {
                 true => format!("will focus the tab (pid {pid})"),
-                // It already has. The future tense here was printed after the command had
-                // run, which reads as "about to" to whoever is looking for what happened.
                 false => format!("focused the tab (pid {pid})"),
             },
             script: cmd,
             ran: !dry_run,
         });
     }
+
+    if terminal.is_tmux() {
+        let panes = list_tmux_panes(terminal.tmux_socket())?;
+        let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
+        let Some(pane) = pane else {
+            return Ok(Performed {
+                description: format!("no tmux pane found for pid {pid}; not focusing"),
+                script: String::new(),
+                ran: false,
+            });
+        };
+        let script =
+            tmux_focus_script(terminal.tmux_socket(), &pane.window_id, Some(&pane.pane_id));
+        if dry_run {
+            return Ok(Performed {
+                description: format!("will focus the tab (pid {pid})"),
+                script,
+                ran: false,
+            });
+        }
+        let ran = run_shell(&script).is_ok();
+        return Ok(Performed {
+            description: match ran {
+                true => format!("focused the tab (pid {pid})"),
+                false => format!("failed to focus the tab (pid {pid})"),
+            },
+            script,
+            ran,
+        });
+    }
+
     let Some(tty) = tty else {
         return Ok(Performed {
             description: format!("no terminal found for pid {pid}; not focusing"),
@@ -284,8 +343,13 @@ fn reported_closing(built_in: bool, output: &str) -> bool {
 /// tab is gone. Nothing at this layer can establish the second: a confirmation dialog and a
 /// template pointed at the wrong pane both produce a perfectly successful close command. A
 /// caller that is about to delete something has to ask the process itself.
-pub fn close(hook: &Hook, pid: u32, title: &str, dry_run: bool) -> Result<Performed, String> {
-    close_with(run_shell, tty_of(pid), hook, pid, title, dry_run)
+pub fn close(
+    terminal: &TerminalSettings,
+    pid: u32,
+    title: &str,
+    dry_run: bool,
+) -> Result<Performed, String> {
+    close_with(run_shell, tty_of(pid), terminal, pid, title, dry_run)
 }
 
 /// The same, with the thing that runs the command handed in.
@@ -296,11 +360,12 @@ pub fn close(hook: &Hook, pid: u32, title: &str, dry_run: bool) -> Result<Perfor
 fn close_with(
     run: impl Fn(&str) -> Result<String, String>,
     tty: Option<String>,
-    hook: &Hook,
+    terminal: &TerminalSettings,
     pid: u32,
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
+    let hook = &terminal.close;
     if hook.is_off() {
         // Off is an answer, not an absence: somebody said not to close tabs here, and the
         // built-in would otherwise close one. `ran` stays false, which is what stops the
@@ -321,22 +386,40 @@ fn close_with(
                 ("title", Sub::Quoted(title)),
             ],
         ),
-        None => match tty.as_deref() {
-            Some(tty) => {
+        None => {
+            if terminal.is_tmux() {
                 built_in = true;
-                // Through a shell line rather than `osascript`'s stdin, the way `wake` goes:
-                // what the script prints is the answer here, and one runner for both paths
-                // is what lets a test supply that answer.
-                format!("osascript -e {}", sh_quote(&iterm_close_script(tty)))
+                let panes = list_tmux_panes_with(&run, terminal.tmux_socket())?;
+                let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
+                match pane {
+                    Some(pane) => tmux_close_script(terminal.tmux_socket(), &pane.window_id),
+                    None => {
+                        return Ok(Performed {
+                            description: format!("no tmux pane found for pid {pid}; not closing"),
+                            script: String::new(),
+                            ran: false,
+                        });
+                    }
+                }
+            } else {
+                match tty.as_deref() {
+                    Some(tty) => {
+                        built_in = true;
+                        // Through a shell line rather than `osascript`'s stdin, the way `wake` goes:
+                        // what the script prints is the answer here, and one runner for both paths
+                        // is what lets a test supply that answer.
+                        format!("osascript -e {}", sh_quote(&iterm_close_script(tty)))
+                    }
+                    None => {
+                        return Ok(Performed {
+                            description: format!("no terminal found for pid {pid}; not closing"),
+                            script: String::new(),
+                            ran: false,
+                        });
+                    }
+                }
             }
-            None => {
-                return Ok(Performed {
-                    description: format!("no terminal found for pid {pid}; not closing"),
-                    script: String::new(),
-                    ran: false,
-                });
-            }
-        },
+        }
     };
     if dry_run {
         return Ok(Performed {
@@ -404,7 +487,12 @@ fn default_title_command(title: &str, tty: &str) -> String {
 ///
 /// Distinct from the title `spawn` gives a tab it is creating: this one is for a session
 /// naming *itself*, which is the only way a hub's own tab gets a name.
-pub fn set_title(hook: &Hook, title: &str, dry_run: bool) -> Result<Performed, String> {
+pub fn set_title(
+    terminal: &TerminalSettings,
+    title: &str,
+    dry_run: bool,
+) -> Result<Performed, String> {
+    let hook = &terminal.title;
     if hook.is_off() {
         return Ok(Performed {
             description: "tab naming is turned off".to_string(),
@@ -415,17 +503,23 @@ pub fn set_title(hook: &Hook, title: &str, dry_run: bool) -> Result<Performed, S
     let title = sanitise_title(title, "adjutant".to_string());
     let command = match hook.template() {
         Some(template) => render(template, &[("title", Sub::Quoted(&title))]),
-        None => match own_tty() {
-            Some(tty) => default_title_command(&title, &tty),
-            None => {
-                return Ok(Performed {
-                    description: "no terminal found for this process; not naming the tab"
-                        .to_string(),
-                    script: String::new(),
-                    ran: false,
-                });
+        None => {
+            if terminal.is_tmux() {
+                tmux_set_title_script(terminal.tmux_socket(), &title)
+            } else {
+                match own_tty() {
+                    Some(tty) => default_title_command(&title, &tty),
+                    None => {
+                        return Ok(Performed {
+                            description: "no terminal found for this process; not naming the tab"
+                                .to_string(),
+                            script: String::new(),
+                            ran: false,
+                        });
+                    }
+                }
             }
-        },
+        }
     };
     if !dry_run {
         // A tab with the wrong name is a cosmetic problem; failing the caller over it is not.
@@ -533,21 +627,33 @@ pub const WORKER_WAKE_LINE: &str = "The hub sent you something. Check it with ad
 
 /// `default_line` is what to type when the config has not overridden it — the caller knows
 /// which direction this is, and the two directions read different boxes.
+pub struct WakeRequest<'a> {
+    pub pid: u32,
+    pub subject: &'a str,
+    pub line: &'a str,
+    pub dry_run: bool,
+}
+
 pub fn wake(
+    terminal: &TerminalSettings,
     wake: &Wake,
     pid: u32,
     subject: &str,
     default_line: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
+    let line = wake.line_or(default_line);
     wake_with(
         run_shell,
         tty_of(pid),
+        terminal,
         wake,
-        pid,
-        subject,
-        default_line,
-        dry_run,
+        &WakeRequest {
+            pid,
+            subject,
+            line,
+            dry_run,
+        },
     )
 }
 
@@ -560,14 +666,14 @@ pub fn wake(
 fn wake_with(
     run: impl Fn(&str) -> Result<String, String>,
     tty: Option<String>,
+    terminal: &TerminalSettings,
     wake: &Wake,
-    pid: u32,
-    subject: &str,
-    default_line: &str,
-    dry_run: bool,
+    req: &WakeRequest,
 ) -> Result<Performed, String> {
     let hook = &wake.hook;
-    let line = wake.line_or(default_line);
+    let line = req.line;
+    let pid = req.pid;
+    let dry_run = req.dry_run;
     if hook.is_off() {
         return Ok(Performed {
             description: "waking is turned off".to_string(),
@@ -585,23 +691,45 @@ fn wake_with(
             &[
                 ("pid", Sub::Quoted(&pid.to_string())),
                 ("tty", Sub::Quoted(tty.as_deref().unwrap_or(""))),
-                ("subject", Sub::Quoted(subject)),
+                ("subject", Sub::Quoted(req.subject)),
                 ("line", Sub::Quoted(line)),
             ],
         ),
-        None => match tty {
-            Some(tty) => {
+        None => {
+            if terminal.is_tmux() {
                 built_in = true;
-                default_wake_command(&tty, line)
+                let panes = list_tmux_panes_with(&run, terminal.tmux_socket())?;
+                let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
+                match pane {
+                    Some(pane) => tmux_wake_script(terminal.tmux_socket(), &pane.pane_id, line),
+                    None => {
+                        return Ok(Performed {
+                            description: format!(
+                                "no tmux pane found for pid {pid}; nothing to wake"
+                            ),
+                            script: String::new(),
+                            ran: false,
+                        });
+                    }
+                }
+            } else {
+                match tty {
+                    Some(tty) => {
+                        built_in = true;
+                        default_wake_command(&tty, line)
+                    }
+                    None => {
+                        return Ok(Performed {
+                            description: format!(
+                                "no terminal found for pid {pid}; nothing to wake"
+                            ),
+                            script: String::new(),
+                            ran: false,
+                        });
+                    }
+                }
             }
-            None => {
-                return Ok(Performed {
-                    description: format!("no terminal found for pid {pid}; nothing to wake"),
-                    script: String::new(),
-                    ran: false,
-                });
-            }
-        },
+        }
     };
     if dry_run {
         return Ok(Performed {
@@ -817,9 +945,243 @@ pub fn run_shell(command: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+// ── tmux ─────────────────────────────────────────────────────────────
+
+pub fn tmux_cmd_prefix(socket: Option<&str>) -> String {
+    match socket.filter(|s| !s.trim().is_empty()) {
+        Some(s) if s.contains('/') => format!("tmux -S {}", sh_quote(s)),
+        Some(s) => format!("tmux -L {}", sh_quote(s)),
+        None => "tmux".to_string(),
+    }
+}
+
+pub fn parse_tmux_panes(output: &str) -> Vec<TmuxPane> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_end();
+            if line.is_empty() {
+                return None;
+            }
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 7 {
+                return None;
+            }
+            Some(TmuxPane {
+                pane_id: parts[0].to_string(),
+                pane_pid: parts[1].parse().ok()?,
+                pane_tty: parts[2].to_string(),
+                window_id: parts[3].to_string(),
+                session_name: parts[4].to_string(),
+                window_index: parts[5].parse().ok()?,
+                window_name: parts[6].to_string(),
+            })
+        })
+        .collect()
+}
+
+pub fn find_matching_pane<'a>(
+    panes: &'a [TmuxPane],
+    pid: Option<u32>,
+    tty: Option<&str>,
+) -> Option<&'a TmuxPane> {
+    if let Some(tty) = tty.filter(|t| !t.trim().is_empty()) {
+        let norm_tty = tty.trim().trim_start_matches("/dev/");
+        if let Some(pane) = panes
+            .iter()
+            .find(|p| p.pane_tty.trim_start_matches("/dev/") == norm_tty)
+        {
+            return Some(pane);
+        }
+    }
+    if let Some(pid) = pid {
+        if let Some(pane) = panes.iter().find(|p| p.pane_pid == pid) {
+            return Some(pane);
+        }
+        if let Some(proc_tty) = tty_of(pid) {
+            let norm_proc_tty = proc_tty.trim().trim_start_matches("/dev/");
+            if let Some(pane) = panes
+                .iter()
+                .find(|p| p.pane_tty.trim_start_matches("/dev/") == norm_proc_tty)
+            {
+                return Some(pane);
+            }
+        }
+        let mut curr = pid;
+        for _ in 0..16 {
+            if let Some(ppid) = parent_of(curr) {
+                if let Some(pane) = panes.iter().find(|p| p.pane_pid == ppid) {
+                    return Some(pane);
+                }
+                if ppid <= 1 {
+                    break;
+                }
+                curr = ppid;
+            } else {
+                break;
+            }
+        }
+    }
+    None
+}
+
+pub fn list_tmux_panes_with(
+    run: impl Fn(&str) -> Result<String, String>,
+    socket: Option<&str>,
+) -> Result<Vec<TmuxPane>, String> {
+    let prefix = tmux_cmd_prefix(socket);
+    let cmd = format!(
+        "{prefix} list-panes -a -F '#{{pane_id}}\t#{{pane_pid}}\t#{{pane_tty}}\t#{{window_id}}\t#{{session_name}}\t#{{window_index}}\t#{{window_name}}'"
+    );
+    match run(&cmd) {
+        Ok(out) => Ok(parse_tmux_panes(&out)),
+        Err(err) => {
+            let lower = err.to_ascii_lowercase();
+            if lower.contains("no server running")
+                || lower.contains("error connecting to")
+                || lower.contains("failed to connect")
+                || lower.contains("no such file or directory")
+            {
+                Ok(Vec::new())
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+pub fn list_tmux_panes(socket: Option<&str>) -> Result<Vec<TmuxPane>, String> {
+    list_tmux_panes_with(run_shell, socket)
+}
+
+pub fn find_tmux_pane(
+    socket: Option<&str>,
+    pid: Option<u32>,
+    tty: Option<&str>,
+) -> Result<Option<TmuxPane>, String> {
+    let panes = list_tmux_panes(socket)?;
+    Ok(find_matching_pane(&panes, pid, tty).cloned())
+}
+
+pub fn tmux_spawn_script(
+    socket: Option<&str>,
+    session: &str,
+    cwd: &str,
+    title: &str,
+    command: &str,
+) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let session_q = sh_quote(session);
+    let cwd_q = sh_quote(cwd);
+    let title_q = sh_quote(title);
+    let cmd_q = sh_quote(command);
+    format!(
+        "{prefix} has-session -t {session_q} 2>/dev/null || {prefix} new-session -d -s {session_q} -n main; {prefix} new-window -d -t {session_q} -c {cwd_q} -n {title_q} {cmd_q}"
+    )
+}
+
+pub fn tmux_wake_script(socket: Option<&str>, pane_id: &str, line: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let pane_q = sh_quote(pane_id);
+    let line_q = sh_quote(line);
+    format!(
+        "{prefix} send-keys -l -t {pane_q} {line_q} && sleep {WAKE_ENTER_DELAY} && {prefix} send-keys -t {pane_q} Enter && echo {WOKE_MARKER}"
+    )
+}
+
+pub fn tmux_close_script(socket: Option<&str>, window_id: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let win_q = sh_quote(window_id);
+    format!("{prefix} kill-window -t {win_q} && echo {CLOSED_MARKER}")
+}
+
+pub fn tmux_focus_script(socket: Option<&str>, window_id: &str, pane_id: Option<&str>) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let win_q = sh_quote(window_id);
+    let mut script = format!("{prefix} select-window -t {win_q}");
+    if let Some(pane) = pane_id {
+        script.push_str(&format!(" && {prefix} select-pane -t {}", sh_quote(pane)));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        script.push_str(
+            " && ( ( [ -n \"$ITERM_SESSION_ID\" ] || [ \"$TERM_PROGRAM\" = \"iTerm.app\" ] ) && osascript -e 'tell application \"iTerm2\" to activate' 2>/dev/null || true )",
+        );
+    }
+    script
+}
+
+pub fn tmux_set_title_script(socket: Option<&str>, title: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let title_q = sh_quote(title);
+    format!("{prefix} rename-window {title_q}")
+}
+
+pub fn tmux_wake(
+    socket: Option<&str>,
+    pid: u32,
+    line: Option<&str>,
+    dry_run: bool,
+) -> Result<Performed, String> {
+    let default_line = WORKER_WAKE_LINE;
+    let wake_line = line.unwrap_or(default_line);
+    let term = TerminalSettings {
+        preset: Some("tmux".to_string()),
+        socket: socket.map(str::to_string),
+        ..Default::default()
+    };
+    wake(&term, &Wake::default(), pid, "", wake_line, dry_run)
+}
+
+pub fn tmux_focus(socket: Option<&str>, pid: u32, dry_run: bool) -> Result<Performed, String> {
+    let term = TerminalSettings {
+        preset: Some("tmux".to_string()),
+        socket: socket.map(str::to_string),
+        ..Default::default()
+    };
+    focus(&term, pid, "", dry_run)
+}
+
+pub fn tmux_close(socket: Option<&str>, pid: u32, dry_run: bool) -> Result<Performed, String> {
+    let term = TerminalSettings {
+        preset: Some("tmux".to_string()),
+        socket: socket.map(str::to_string),
+        ..Default::default()
+    };
+    close(&term, pid, "", dry_run)
+}
+
+pub fn tmux_spawn(
+    socket: Option<&str>,
+    session: Option<&str>,
+    cwd: &str,
+    title: &str,
+    command: &[String],
+    dry_run: bool,
+) -> Result<Performed, String> {
+    let term = TerminalSettings {
+        preset: Some("tmux".to_string()),
+        socket: socket.map(str::to_string),
+        session: session.map(str::to_string),
+        ..Default::default()
+    };
+    let cmd_str = crate::template::sh_join(command);
+    spawn(
+        &term,
+        &SpawnRequest {
+            cwd,
+            title,
+            command: &cmd_str,
+            title_command: None,
+        },
+        dry_run,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Hook;
 
     /// A line the terminal would mangle is put in a file instead. The failure this prevents
     /// is silent: the tab opens and runs something that was never written.
@@ -840,8 +1202,12 @@ mod tests {
     #[test]
     fn a_dry_run_shows_the_command_rather_than_a_path_to_it() {
         let long = format!("claude {}", "y".repeat(MAX_INLINE_COMMAND));
+        let term = TerminalSettings {
+            spawn: Some("tmux new-window -c {cwd} -n {title} {command}".into()),
+            ..Default::default()
+        };
         let done = spawn(
-            Some("tmux new-window -c {cwd} -n {title} {command}"),
+            &term,
             &SpawnRequest {
                 cwd: ".",
                 title: "t",
@@ -858,8 +1224,12 @@ mod tests {
     /// A short one is left alone, so the common case stays inspectable and leaves no files.
     #[test]
     fn a_short_command_is_not_staged() {
+        let term = TerminalSettings {
+            spawn: Some("tmux new-window -c {cwd} -n {title} {command}".into()),
+            ..Default::default()
+        };
         let done = spawn(
-            Some("tmux new-window -c {cwd} -n {title} {command}"),
+            &term,
             &SpawnRequest {
                 cwd: ".",
                 title: "t",
@@ -918,7 +1288,7 @@ mod tests {
     #[test]
     fn the_builtin_spawn_cds_first_and_keeps_the_command_in_one_piece() {
         let out = spawn(
-            None,
+            &TerminalSettings::default(),
             &SpawnRequest {
                 cwd: "/tmp",
                 title: "WID-957",
@@ -941,8 +1311,12 @@ mod tests {
 
     #[test]
     fn a_terminal_template_receives_the_whole_command_as_one_shell_line() {
+        let term = TerminalSettings {
+            spawn: Some("tmux new-window -c {cwd} -n {title} {command}".into()),
+            ..Default::default()
+        };
         let out = spawn(
-            Some("tmux new-window -c {cwd} -n {title} {command}"),
+            &term,
             &SpawnRequest {
                 cwd: "/tmp",
                 title: "WID-957",
@@ -973,8 +1347,12 @@ mod tests {
             "sh -c '{command}'",
             "open -a Terminal {command}",
         ] {
+            let term = TerminalSettings {
+                spawn: Some(template.into()),
+                ..Default::default()
+            };
             let done = spawn(
-                Some(template),
+                &term,
                 &SpawnRequest {
                     cwd: "/tmp",
                     title: "WID-1",
@@ -1002,8 +1380,12 @@ mod tests {
         // `{cwd}` says the terminal handles the directory, so it is putting {command} in an
         // argv slot: no `cd`, and no tab naming either — that terminal names its own tabs
         // through `{title}`.
+        let term = TerminalSettings {
+            spawn: Some("tmux new-window -c {cwd} -n {title} {command}".into()),
+            ..Default::default()
+        };
         let done = spawn(
-            Some("tmux new-window -c {cwd} -n {title} {command}"),
+            &term,
             &SpawnRequest {
                 cwd: "/tmp",
                 title: "WID-1",
@@ -1018,8 +1400,12 @@ mod tests {
 
     #[test]
     fn a_terminal_template_with_no_cwd_placeholder_gets_a_cd_instead() {
+        let term = TerminalSettings {
+            spawn: Some("open -a Terminal {command}".into()),
+            ..Default::default()
+        };
         let out = spawn(
-            Some("open -a Terminal {command}"),
+            &term,
             &SpawnRequest {
                 cwd: "/tmp",
                 title: "WID-957",
@@ -1038,7 +1424,7 @@ mod tests {
     #[test]
     fn spawning_into_a_directory_that_is_not_there_fails_before_opening_anything() {
         let err = spawn(
-            None,
+            &TerminalSettings::default(),
             &SpawnRequest {
                 cwd: "/definitely/not/here",
                 title: "x",
@@ -1054,7 +1440,7 @@ mod tests {
     #[test]
     fn focus_without_a_template_on_a_pid_with_no_terminal_is_a_quiet_no_op() {
         // pid 1 has no controlling terminal on macOS or Linux.
-        let out = focus(None, 1, "hub", true).unwrap();
+        let out = focus(&TerminalSettings::default(), 1, "hub", true).unwrap();
         assert!(!out.ran);
     }
 
@@ -1073,7 +1459,7 @@ mod tests {
     fn closing_without_a_template_on_a_pid_with_no_terminal_is_a_quiet_no_op() {
         // Same shape as `focus`: pid 1 has no controlling terminal, and there is no tab to
         // dispose of for a session nobody can locate.
-        let out = close(&Hook::BuiltIn, 1, "WID-957", true).unwrap();
+        let out = close(&TerminalSettings::default(), 1, "WID-957", true).unwrap();
         assert!(!out.ran);
         assert!(out.description.contains("not closing"), "{out:?}");
         assert!(out.script.is_empty(), "{out:?}");
@@ -1085,10 +1471,14 @@ mod tests {
         // point here: read as unset, the built-in would dispose of the very tab somebody
         // had just declared off limits. `ran` has to stay false too, or the caller reads
         // "turned off" as "the tab is gone" and carries on removing the worktree.
+        let term = TerminalSettings {
+            close: Hook::Off,
+            ..Default::default()
+        };
         let done = close_with(
             |_| panic!("a close that is turned off ran a command"),
             Some("ttys004".to_string()),
-            &Hook::Off,
+            &term,
             std::process::id(),
             "WID-957",
             false,
@@ -1110,8 +1500,11 @@ mod tests {
             sh_quote(&marker.to_string_lossy())
         );
 
-        let template = Hook::Command(template);
-        let planned = close(&template, 4321, "WID-957", true).unwrap();
+        let term = TerminalSettings {
+            close: Hook::Command(template),
+            ..Default::default()
+        };
+        let planned = close(&term, 4321, "WID-957", true).unwrap();
         assert!(!planned.ran);
         assert!(planned.script.contains("4321"), "{}", planned.script);
         // A pid with no terminal still substitutes, as the empty string. Left standing, the
@@ -1120,7 +1513,7 @@ mod tests {
         assert!(!marker.exists(), "a dry run ran the template");
 
         let ours = std::process::id();
-        let done = close(&template, ours, "WID-957", false).unwrap();
+        let done = close(&term, ours, "WID-957", false).unwrap();
         assert!(done.ran);
         let recorded = std::fs::read_to_string(&marker).unwrap();
         let (pid, tty) = recorded.split_once('|').unwrap();
@@ -1141,11 +1534,12 @@ mod tests {
     #[test]
     fn the_builtin_close_only_reports_success_when_it_reached_a_session() {
         let ours = std::process::id();
+        let term = TerminalSettings::default();
 
         let quiet = close_with(
             |_| Ok(String::new()),
             Some("ttys004".to_string()),
-            &Hook::BuiltIn,
+            &term,
             ours,
             "WID-957",
             false,
@@ -1158,7 +1552,7 @@ mod tests {
         let done = close_with(
             |_| Ok(CLOSED_MARKER.to_string()),
             Some("ttys004".to_string()),
-            &Hook::BuiltIn,
+            &term,
             ours,
             "WID-957",
             false,
@@ -1167,10 +1561,14 @@ mod tests {
         assert!(done.ran, "{done:?}");
 
         // A configured template is answered for by its exit status alone.
+        let template_term = TerminalSettings {
+            close: Hook::Command("close-tab --pid {pid}".to_string()),
+            ..Default::default()
+        };
         let template = close_with(
             |_| Ok(String::new()),
             None,
-            &Hook::Command("close-tab --pid {pid}".to_string()),
+            &template_term,
             ours,
             "WID-957",
             false,
@@ -1182,7 +1580,7 @@ mod tests {
         let failed = close_with(
             |_| Err("no iTerm2 window is open".to_string()),
             Some("ttys004".to_string()),
-            &Hook::BuiltIn,
+            &term,
             ours,
             "WID-957",
             false,
@@ -1208,12 +1606,11 @@ mod tests {
 
     #[test]
     fn naming_this_tab_is_a_template_like_everything_else() {
-        let done = set_title(
-            &Hook::Command("tmux rename-window {title}".into()),
-            "🗂 hub widget",
-            true,
-        )
-        .unwrap();
+        let term = TerminalSettings {
+            title: Hook::Command("tmux rename-window {title}".into()),
+            ..Default::default()
+        };
+        let done = set_title(&term, "🗂 hub widget", true).unwrap();
         assert_eq!(done.script, "tmux rename-window '🗂 hub widget'");
     }
 
@@ -1221,7 +1618,7 @@ mod tests {
     fn the_builtin_title_writes_to_a_terminal_rather_than_to_stdout() {
         // stdout is whatever captured the process — for an agent's shell tool, the
         // transcript. The escape sequence has to reach the tty or it is just noise.
-        let done = set_title(&Hook::BuiltIn, "hub", true).unwrap();
+        let done = set_title(&TerminalSettings::default(), "hub", true).unwrap();
         if !done.script.is_empty() {
             assert!(done.script.contains("> /dev/"), "{}", done.script);
             assert!(done.script.contains("033]0;"), "{}", done.script);
@@ -1230,7 +1627,11 @@ mod tests {
 
     #[test]
     fn a_title_that_is_turned_off_runs_nothing_at_all() {
-        let done = set_title(&Hook::Off, "hub", false).unwrap();
+        let term = TerminalSettings {
+            title: Hook::Off,
+            ..Default::default()
+        };
+        let done = set_title(&term, "hub", false).unwrap();
         assert!(!done.ran);
         assert!(done.script.is_empty());
     }
@@ -1238,6 +1639,7 @@ mod tests {
     #[test]
     fn waking_a_hub_is_a_template_and_can_be_turned_off() {
         let done = wake(
+            &TerminalSettings::default(),
             &Wake {
                 hook: Hook::Command("tmux send-keys -t {tty} {line} Enter".into()),
                 line: None,
@@ -1256,6 +1658,7 @@ mod tests {
         assert!(done.script.contains(HUB_WAKE_LINE), "{}", done.script);
 
         let off = wake(
+            &TerminalSettings::default(),
             &Wake {
                 hook: Hook::Off,
                 line: None,
@@ -1289,6 +1692,7 @@ mod tests {
         // The default names MCP tools. An agent that only has the CLI, or one that wants a
         // slash command, needs a different sentence through the same terminal.
         let done = wake(
+            &TerminalSettings::default(),
             &Wake {
                 hook: Hook::Command("tmux send-keys -t {tty} {line} Enter".into()),
                 line: Some("check adjutant pending".into()),
@@ -1309,13 +1713,25 @@ mod tests {
 
     #[test]
     fn waking_a_pid_with_no_terminal_is_a_quiet_no_op() {
-        let done = wake(&Wake::default(), 1, "s", HUB_WAKE_LINE, false).unwrap();
+        let done = wake(
+            &TerminalSettings::default(),
+            &Wake::default(),
+            1,
+            "s",
+            HUB_WAKE_LINE,
+            false,
+        )
+        .unwrap();
         assert!(!done.ran);
     }
 
     #[test]
     fn a_focus_template_gets_the_pid() {
-        let out = focus(Some("raise-tab --pid {pid}"), 4321, "hub", true).unwrap();
+        let term = TerminalSettings {
+            focus: Some("raise-tab --pid {pid}".into()),
+            ..Default::default()
+        };
+        let out = focus(&term, 4321, "hub", true).unwrap();
         assert_eq!(out.script, "raise-tab --pid 4321");
     }
 
@@ -1327,17 +1743,21 @@ mod tests {
     fn the_builtin_wake_only_claims_success_when_it_typed_something() {
         let built_in = Wake::default();
         let ours = std::process::id();
+        let term = TerminalSettings::default();
 
         // The built-in, having walked every window and found no matching tab, prints
         // nothing and exits 0 — which is what a session in another terminal looks like.
         let quiet = wake_with(
             |_| Ok(String::new()),
             Some("ttys004".to_string()),
+            &term,
             &built_in,
-            ours,
-            "s",
-            "check your inbox",
-            false,
+            &WakeRequest {
+                pid: ours,
+                subject: "s",
+                line: "check your inbox",
+                dry_run: false,
+            },
         )
         .unwrap();
         assert!(!quiet.ran, "{quiet:?}");
@@ -1347,11 +1767,14 @@ mod tests {
         let woken = wake_with(
             |_| Ok(WOKE_MARKER.to_string()),
             Some("ttys004".to_string()),
+            &term,
             &built_in,
-            ours,
-            "s",
-            "check your inbox",
-            false,
+            &WakeRequest {
+                pid: ours,
+                subject: "s",
+                line: "check your inbox",
+                dry_run: false,
+            },
         )
         .unwrap();
         assert!(woken.ran, "{woken:?}");
@@ -1365,11 +1788,14 @@ mod tests {
         let ran = wake_with(
             |_| Ok(String::new()),
             None,
+            &term,
             &template,
-            ours,
-            "s",
-            "check your inbox",
-            false,
+            &WakeRequest {
+                pid: ours,
+                subject: "s",
+                line: "check your inbox",
+                dry_run: false,
+            },
         )
         .unwrap();
         assert!(ran.ran, "{ran:?}");
@@ -1399,5 +1825,151 @@ mod tests {
         let entered = script.find("write text \"\"\n").unwrap();
         assert!(typed < paused && paused < entered, "{script}");
         assert_eq!(script.matches("write text").count(), 2, "{script}");
+    }
+
+    #[test]
+    fn tmux_pane_parsing_and_matching() {
+        let raw = "\
+%0\t1000\t/dev/ttys001\t@0\tadjutant\t0\tmain
+%1\t2000\t/dev/ttys002\t@1\tadjutant\t1\tworker-task
+%2\t3000\t/dev/ttys003\t@2\tother session with space\t0\tworker with spaces in title
+";
+        let panes = parse_tmux_panes(raw);
+        assert_eq!(panes.len(), 3);
+        assert_eq!(panes[0].pane_id, "%0");
+        assert_eq!(panes[0].pane_pid, 1000);
+        assert_eq!(panes[0].pane_tty, "/dev/ttys001");
+        assert_eq!(panes[0].window_id, "@0");
+        assert_eq!(panes[0].session_name, "adjutant");
+        assert_eq!(panes[0].window_index, 0);
+        assert_eq!(panes[0].window_name, "main");
+
+        assert_eq!(panes[2].session_name, "other session with space");
+        assert_eq!(panes[2].window_name, "worker with spaces in title");
+
+        // Matching by tty (with and without /dev/ prefix)
+        let found = find_matching_pane(&panes, None, Some("ttys002")).unwrap();
+        assert_eq!(found.pane_id, "%1");
+        let found2 = find_matching_pane(&panes, None, Some("/dev/ttys001")).unwrap();
+        assert_eq!(found2.pane_id, "%0");
+
+        // Matching by direct PID
+        let found_pid = find_matching_pane(&panes, Some(2000), None).unwrap();
+        assert_eq!(found_pid.pane_id, "%1");
+
+        // Unknown PID / TTY
+        assert!(find_matching_pane(&panes, Some(9999), Some("ttys999")).is_none());
+    }
+
+    #[test]
+    fn tmux_spawn_script_generates_session_and_window() {
+        let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help");
+        assert!(script.starts_with("tmux has-session -t adjutant"));
+        assert!(script.contains("new-session -d -s adjutant -n main"));
+        assert!(script.contains("new-window -d -t adjutant -c /tmp -n task-1 'claude --help'"));
+
+        let socket_script =
+            tmux_spawn_script(Some("custom-sock"), "sess", "/dir", "title", "echo hi");
+        assert!(socket_script.starts_with("tmux -L custom-sock has-session"));
+        assert!(socket_script.contains("tmux -L custom-sock new-session"));
+        assert!(socket_script.contains("tmux -L custom-sock new-window"));
+
+        let path_socket_script =
+            tmux_spawn_script(Some("/path/to/sock"), "sess", "/dir", "title", "echo hi");
+        assert!(path_socket_script.starts_with("tmux -S /path/to/sock has-session"));
+    }
+
+    #[test]
+    fn tmux_wake_script_generates_literal_send_and_enter() {
+        let script = tmux_wake_script(Some("test-sock"), "%2", "check inbox");
+        assert!(script.contains("tmux -L test-sock send-keys -l -t %2 'check inbox'"));
+        assert!(script.contains(&format!("sleep {WAKE_ENTER_DELAY}")));
+        assert!(script.contains("tmux -L test-sock send-keys -t %2 Enter"));
+        assert!(script.contains(&format!("echo {WOKE_MARKER}")));
+    }
+
+    #[test]
+    fn tmux_close_script_generates_kill_window_and_marker() {
+        let script = tmux_close_script(Some("test-sock"), "@1");
+        assert_eq!(
+            script,
+            format!("tmux -L test-sock kill-window -t @1 && echo {CLOSED_MARKER}")
+        );
+    }
+
+    #[test]
+    fn tmux_focus_script_generates_select_window_and_pane() {
+        let script = tmux_focus_script(Some("test-sock"), "@1", Some("%2"));
+        assert!(script.contains("tmux -L test-sock select-window -t @1"));
+        assert!(script.contains("tmux -L test-sock select-pane -t %2"));
+    }
+
+    #[test]
+    fn tmux_wake_with_runner_mock() {
+        let term = TerminalSettings {
+            preset: Some("tmux".to_string()),
+            ..Default::default()
+        };
+        let wake_cfg = Wake::default();
+
+        let raw_panes = "%1\t12345\t/dev/ttys005\t@1\tadjutant\t1\tworker\n";
+        let runner = |cmd: &str| {
+            if cmd.contains("list-panes") {
+                Ok(raw_panes.to_string())
+            } else if cmd.contains("send-keys") {
+                Ok(format!("typed\n{WOKE_MARKER}\n"))
+            } else {
+                Err(format!("unexpected command: {cmd}"))
+            }
+        };
+
+        let performed = wake_with(
+            runner,
+            Some("ttys005".to_string()),
+            &term,
+            &wake_cfg,
+            &WakeRequest {
+                pid: 12345,
+                subject: "sub",
+                line: "wake up",
+                dry_run: false,
+            },
+        )
+        .unwrap();
+        assert!(performed.ran, "{performed:?}");
+        assert!(performed.script.contains("send-keys -l -t %1 'wake up'"));
+        assert!(performed.description.contains("woke the session"));
+    }
+
+    #[test]
+    fn tmux_close_with_runner_mock() {
+        let term = TerminalSettings {
+            preset: Some("tmux".to_string()),
+            ..Default::default()
+        };
+
+        let raw_panes = "%1\t12345\t/dev/ttys005\t@1\tadjutant\t1\tworker\n";
+        let runner = |cmd: &str| {
+            if cmd.contains("list-panes") {
+                Ok(raw_panes.to_string())
+            } else if cmd.contains("kill-window") {
+                Ok(format!("killed\n{CLOSED_MARKER}\n"))
+            } else {
+                Err(format!("unexpected command: {cmd}"))
+            }
+        };
+
+        let performed = close_with(
+            runner,
+            Some("ttys005".to_string()),
+            &term,
+            12345,
+            "worker",
+            false,
+        )
+        .unwrap();
+        assert!(performed.ran, "{performed:?}");
+        assert!(performed.script.contains("kill-window -t @1"));
+        assert!(performed.description.contains("closed the tab"));
     }
 }

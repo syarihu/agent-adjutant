@@ -19,6 +19,7 @@ mod jules;
 mod review_engine;
 mod serve;
 mod task;
+pub mod tmux;
 
 pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close as gate_close_payload,
@@ -409,6 +410,7 @@ impl Posted {
                 messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
             ) {
                 (true, Some(pid)) => terminal::wake(
+                    &ctx.settings.terminal,
                     &ctx.settings.hub_wake,
                     pid,
                     &subject,
@@ -522,7 +524,7 @@ pub fn spawn(
     let settings = settings_for(repo_arg);
     let name_it = title_command(&settings, title);
     let done = terminal::spawn(
-        settings.terminal.spawn.as_deref(),
+        &settings.terminal,
         &SpawnRequest {
             cwd: &config::expand_home(cwd).to_string_lossy(),
             title,
@@ -558,6 +560,8 @@ fn forwarded_env() -> Vec<String> {
         config::CONFIG_ENV,
         config::XDG_CONFIG_HOME_ENV,
         messaging::STATE_DIR_ENV,
+        config::TMUX_SOCKET_ENV,
+        config::TMUX_SESSION_ENV,
     ]
     .iter()
     .filter_map(|name| {
@@ -627,10 +631,9 @@ fn spawn_worker(
     request: &SpawnRequest<'_>,
     dry_run: bool,
 ) -> Result<i32, String> {
-    let done = terminal::spawn(ctx.settings.terminal.spawn.as_deref(), request, dry_run)
-        .inspect_err(|_| {
-            let _ = messaging::unmark_worker_starting(std::path::Path::new(worktree));
-        })?;
+    let done = terminal::spawn(&ctx.settings.terminal, request, dry_run).inspect_err(|_| {
+        let _ = messaging::unmark_worker_starting(std::path::Path::new(worktree));
+    })?;
     if dry_run {
         println!("{}", done.script);
     } else {
@@ -816,12 +819,7 @@ pub fn focus(
         }
         return Ok(false);
     };
-    let done = terminal::focus(
-        ctx.settings.terminal.focus.as_deref(),
-        pid,
-        &ctx.repo.hub_name,
-        dry_run,
-    )?;
+    let done = terminal::focus(&ctx.settings.terminal, pid, &ctx.repo.hub_name, dry_run)?;
     if dry_run {
         println!("{}", done.script);
     } else if !quiet {
@@ -853,7 +851,7 @@ pub fn focus_worker(
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default(),
     );
-    terminal::focus(settings.terminal.focus.as_deref(), pid, &title, dry_run).map(Some)
+    terminal::focus(&settings.terminal, pid, &title, dry_run).map(Some)
 }
 
 pub fn focus_worker_cmd(
@@ -1037,7 +1035,7 @@ pub fn close(
         messaging::Liveness::Alive => {}
     }
     let done = terminal::close(
-        &settings.terminal.close,
+        &settings.terminal,
         pid,
         // The name the tab actually carries: `spawn` put the record's title through
         // `sanitise_title` with the directory name behind it, and a template that matches
@@ -1142,7 +1140,7 @@ pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result
 pub fn set_title(repo_arg: Option<&str>, title: &str, dry_run: bool) -> Result<(), String> {
     let settings = settings_for(repo_arg);
     let title = dash_is_stdin(title)?;
-    let done = terminal::set_title(&settings.terminal.title, &title, dry_run)?;
+    let done = terminal::set_title(&settings.terminal, &title, dry_run)?;
     if dry_run {
         println!("{}", done.script);
     } else {
@@ -1267,12 +1265,7 @@ fn go_to_running_hub(
         status.pid.unwrap_or(0)
     );
     if let Some(pid) = status.pid {
-        let _ = terminal::focus(
-            ctx.settings.terminal.focus.as_deref(),
-            pid,
-            &ctx.repo.hub_name,
-            dry_run,
-        );
+        let _ = terminal::focus(&ctx.settings.terminal, pid, &ctx.repo.hub_name, dry_run);
     }
     Ok(())
 }
@@ -1363,7 +1356,7 @@ fn open_hub_tab(
     }
     let name_it = title_command(&ctx.settings, &ctx.repo.hub_name);
     let done = terminal::spawn(
-        ctx.settings.terminal.spawn.as_deref(),
+        &ctx.settings.terminal,
         &SpawnRequest {
             // The main checkout, never a worktree: a hub that cannot cut worktrees is not a
             // hub, and this is the one thing `hub` moves to before it starts.
@@ -1901,6 +1894,7 @@ pub fn deliver_to_worker(
     let woken = if wake_needed {
         match (status.present, status.pid) {
             (true, Some(pid)) => terminal::wake(
+                &ctx.settings.terminal,
                 &ctx.settings.worker_wake,
                 pid,
                 subject,
