@@ -2835,4 +2835,20 @@ mod tests {
         assert!(slot.contains("needsDispatchGate"), "{slot}");
         assert!(!slot.contains("adj task list --status queued"), "{slot}");
     }
+
+    /// The review step returns the phase to `pr` once fixes are pushed so the board shows the
+    /// ball is back in the reviewers' court.
+    #[test]
+    fn review_step_returns_phase_to_pr_once_pushed() {
+        let worker = section(find("adj-worker").unwrap().raw_content, "## 6. ");
+        let flowed = flow(&worker);
+        assert!(
+            flowed.contains("adj phase --set pr"),
+            "the review step never sets the phase back to pr: {worker}"
+        );
+        assert!(
+            flowed.contains("ball has returned to reviewers"),
+            "the review step does not say why the phase is set back to pr: {worker}"
+        );
+    }
 }

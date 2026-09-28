@@ -245,7 +245,7 @@ fn without_json_it_prints_the_message_alone() {
         tmp.path(),
         serde_json::json!({
             "captured_at": n,
-            "five_hour": {"used_percentage": 62, "resets_at": n + 3600},
+            "five_hour": {"used_percentage": 62},
             "seven_day": {"used_percentage": 10}
         }),
     );
