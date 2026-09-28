@@ -279,11 +279,12 @@ pub fn focus(
                 ran: false,
             });
         }
-        let ran = run_shell(&script).is_ok();
+        let result = run_shell(&script);
+        let ran = result.is_ok();
         return Ok(Performed {
-            description: match ran {
-                true => format!("focused the tab (pid {pid})"),
-                false => format!("failed to focus the tab (pid {pid})"),
+            description: match result {
+                Ok(_) => format!("focused the tab (pid {pid})"),
+                Err(e) => format!("failed to focus the tab (pid {pid}): {e}"),
             },
             script,
             ran,
