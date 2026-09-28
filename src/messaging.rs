@@ -501,24 +501,26 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
         }
     }
 
-    // 4. Discover from linked worktrees
+    // 4. Discover from linked worktrees and the main checkout
+    let mut checkouts = vec![repo.main.clone()];
     if let Ok(worktrees) = crate::repo::linked_worktrees(&repo.main) {
-        for wt in worktrees {
-            if let Some(record) = read_json(&worker_record_path(Path::new(&wt)))
-                && let Some(hub_key) = record
-                    .get("hub")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-            {
-                let slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
-                let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
-                let entry = hubs_by_slug
-                    .entry(slug)
-                    .or_insert((Some(hub_key.to_string()), hub_name));
-                if entry.0.is_none() {
-                    entry.0 = Some(hub_key.to_string());
-                }
+        checkouts.extend(worktrees);
+    }
+    for wt in checkouts {
+        if let Some(record) = read_json(&worker_record_path(Path::new(&wt)))
+            && let Some(hub_key) = record
+                .get("hub")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        {
+            let slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
+            let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
+            let entry = hubs_by_slug
+                .entry(slug)
+                .or_insert((Some(hub_key.to_string()), hub_name));
+            if entry.0.is_none() {
+                entry.0 = Some(hub_key.to_string());
             }
         }
     }
@@ -3234,8 +3236,17 @@ mod tests {
         )
         .unwrap();
 
+        // 4. Main checkout worker record naming a parent hub
+        write_json(
+            &worker_record_path(Path::new(&main_path)),
+            &json!({
+                "hub": "main-worker-hub",
+            }),
+        )
+        .unwrap();
+
         let hubs = all_repo_hubs(&repo);
-        assert_eq!(hubs.len(), 3);
+        assert_eq!(hubs.len(), 4);
         // Repository hub is always first
         assert_eq!(hubs[0].id, "hub");
         assert_eq!(hubs[0].key, None);
@@ -3243,6 +3254,14 @@ mod tests {
 
         // The remaining hubs are sorted by id
         let ids: Vec<_> = hubs.iter().map(|h| h.id.as_str()).collect();
-        assert_eq!(ids, vec!["hub", "hub-other-hub", "hub-parent-task"]);
+        assert_eq!(
+            ids,
+            vec![
+                "hub",
+                "hub-main-worker-hub",
+                "hub-other-hub",
+                "hub-parent-task"
+            ]
+        );
     }
 }
