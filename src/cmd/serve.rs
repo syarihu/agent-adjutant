@@ -19,6 +19,8 @@ use serde_json::{Value, json};
 use crate::gate;
 use crate::http::{self, Request};
 use crate::messaging;
+use crate::runner;
+use crate::session;
 use crate::task;
 
 /// The page. One file, no build step, no network fetches — it is read from the binary and
@@ -430,6 +432,44 @@ fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result
 
 // ── what the board reads ─────────────────────────────────────────────
 
+fn build_session_terminal(
+    terminal_settings: &crate::config::TerminalSettings,
+    tmux_panes: &[crate::terminal::TmuxPane],
+    pid: Option<u32>,
+) -> session::SessionTerminal {
+    let (window, pane) = if terminal_settings.is_tmux() {
+        match pid.and_then(|p| crate::terminal::find_matching_pane(tmux_panes, Some(p), None)) {
+            Some(p) => (Some(p.window_id.clone()), Some(p.pane_id.clone())),
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
+    session::SessionTerminal {
+        backend: if terminal_settings.is_tmux() {
+            "tmux".to_string()
+        } else {
+            terminal_settings
+                .preset
+                .clone()
+                .unwrap_or_else(|| "iterm2".to_string())
+        },
+        socket: if terminal_settings.is_tmux() {
+            terminal_settings.tmux_socket().map(str::to_string)
+        } else {
+            None
+        },
+        session: if terminal_settings.is_tmux() {
+            Some(terminal_settings.tmux_session().to_string())
+        } else {
+            None
+        },
+        window,
+        pane,
+    }
+}
+
 fn state(server: &Server) -> Value {
     let repo = &server.ctx.repo;
     let hub = messaging::hub_status(&repo.slug, &repo.hub_name);
@@ -460,28 +500,192 @@ fn state(server: &Server) -> Value {
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
     let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
-    let workers: Vec<Value> = crate::repo::linked_worktrees(&repo.main)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|path| {
-            let status = messaging::worker_status(Path::new(&path));
-            // A present worker holds a slot without asking `ps` again; the rest are asked
-            // the way `adj work` asks, so the header and the refusal cannot disagree.
-            if status.present || messaging::holds_worker_slot(Path::new(&path), now) {
-                busy += 1;
-            }
-            json!({
-                "worktree": path,
-                "name": Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()),
-                "branch": branch_of(&path),
-                "present": status.present,
-                "stale": status.stale,
-                "title": status.title,
-                "phase": status.phase,
-                "phaseAt": status.phase_at,
+    let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
+    let mut workers_data = Vec::with_capacity(linked_paths.len());
+    let mut workers: Vec<Value> = Vec::with_capacity(linked_paths.len());
+    for path in &linked_paths {
+        let status = messaging::worker_status(Path::new(path));
+        // A present worker holds a slot without asking `ps` again; the rest are asked
+        // the way `adj work` asks, so the header and the refusal cannot disagree.
+        if status.present || messaging::holds_worker_slot(Path::new(path), now) {
+            busy += 1;
+        }
+        let branch = branch_of(path);
+        let name = Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        workers.push(json!({
+            "worktree": path,
+            "name": name,
+            "branch": branch.clone(),
+            "present": status.present,
+            "stale": status.stale,
+            "title": status.title,
+            "phase": status.phase,
+            "phaseAt": status.phase_at,
+        }));
+        workers_data.push((status, branch));
+    }
+
+    let hubs = messaging::all_repo_hubs(repo);
+
+    let terminal_settings = &settings.terminal;
+    let tmux_panes = if terminal_settings.is_tmux() {
+        crate::terminal::list_tmux_panes(terminal_settings.tmux_socket()).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let hub_agent = runner::agent_from_runner(
+        settings
+            .hub_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_HUB_RUNNER),
+    );
+    let worker_agent = runner::agent_from_runner(
+        settings
+            .agent_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
+    );
+
+    let main_branch = branch_of(&repo.main);
+    let mut sessions: Vec<session::Session> = Vec::new();
+
+    // 1. Hub sessions from hubs
+    for h in &hubs {
+        let terminal = build_session_terminal(terminal_settings, &tmux_panes, h.state.pid);
+
+        sessions.push(session::Session {
+            id: h.id.clone(),
+            kind: "hub".to_string(),
+            agent: hub_agent.clone(),
+            terminal,
+            hub: None,
+            key: h.key.clone(),
+            worktree: repo.main.clone(),
+            branch: main_branch.clone(),
+            task: None,
+            title: Some(h.name.clone()),
+            present: h.state.present,
+            stale: h.state.stale,
+            pid: h.state.pid,
+            started_at: h.state.started_at.clone(),
+            phase: None,
+            phase_at: None,
+        });
+    }
+
+    // 2. Worker sessions from linked worktrees
+    for (path, (status, branch)) in linked_paths.iter().zip(workers_data) {
+        let record_json = messaging::read_json(&messaging::worker_record_path(Path::new(path)));
+        let parent_hub = match record_json
+            .as_ref()
+            .and_then(|r| r.get("hub"))
+            .and_then(Value::as_str)
+        {
+            Some(hub_key) if !hub_key.is_empty() => format!("hub-{hub_key}"),
+            _ => "hub".to_string(),
+        };
+        let started_at = record_json
+            .as_ref()
+            .and_then(|r| r.get("startedAt"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let worktree_name = Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
+
+        let task_id = tasks
+            .iter()
+            .find_map(|t| {
+                if t.get("worktree").and_then(Value::as_str) == Some(path.as_str()) {
+                    t.get("id").and_then(Value::as_str).map(str::to_string)
+                } else {
+                    None
+                }
             })
-        })
-        .collect();
+            .or_else(|| {
+                record_json
+                    .as_ref()
+                    .and_then(|r| r.get("task"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+
+        sessions.push(session::Session {
+            id: format!("worker-{worktree_name}"),
+            kind: "worker".to_string(),
+            agent: worker_agent.clone(),
+            terminal,
+            hub: Some(parent_hub),
+            key: None,
+            worktree: path.clone(),
+            branch,
+            task: task_id,
+            title: status.title,
+            present: status.present,
+            stale: status.stale,
+            pid: status.pid,
+            started_at,
+            phase: status.phase,
+            phase_at: status.phase_at,
+        });
+    }
+
+    // Also check worker in main checkout if one exists
+    let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
+    if let Some(record_json) = messaging::read_json(&main_record_path) {
+        let status = messaging::worker_status(Path::new(&repo.main));
+        let parent_hub = match record_json.get("hub").and_then(Value::as_str) {
+            Some(hub_key) if !hub_key.is_empty() => format!("hub-{hub_key}"),
+            _ => "hub".to_string(),
+        };
+        let started_at = record_json
+            .get("startedAt")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+
+        let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
+
+        let task_id = tasks
+            .iter()
+            .find_map(|t| {
+                if t.get("worktree").and_then(Value::as_str) == Some(repo.main.as_str()) {
+                    t.get("id").and_then(Value::as_str).map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                record_json
+                    .get("task")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+
+        sessions.push(session::Session {
+            id: "worker-main".to_string(),
+            kind: "worker".to_string(),
+            agent: worker_agent.clone(),
+            terminal,
+            hub: Some(parent_hub),
+            key: None,
+            worktree: repo.main.clone(),
+            branch: main_branch,
+            task: task_id,
+            title: status.title,
+            present: status.present,
+            stale: status.stale,
+            pid: status.pid,
+            started_at,
+            phase: status.phase,
+            phase_at: status.phase_at,
+        });
+    }
 
     let pending: Vec<Value> = messaging::list(&repo.slug)
         .iter()
@@ -506,6 +710,8 @@ fn state(server: &Server) -> Value {
             "pid": hub.pid,
             "startedAt": hub.started_at,
         },
+        "hubs": hubs,
+        "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
         // The slot count `adj work` decides by, counted the same way — a worker still

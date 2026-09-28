@@ -105,9 +105,10 @@ pub fn claim_hub(
     hub_name: &str,
     cwd: &str,
     name_in_command: bool,
+    hub: Option<&str>,
 ) -> Result<Claim, String> {
     let path = hub_record_path(slug);
-    let record = json!({
+    let mut record = json!({
         "pid": std::process::id(),
         "hubName": hub_name,
         "cwd": cwd,
@@ -115,6 +116,11 @@ pub fn claim_hub(
         "psStarted": ps_started(std::process::id()),
         "nameInCommand": name_in_command,
     });
+    if let Some(hub) = said(hub)
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("hub".to_string(), json!(hub));
+    }
     match create_new_json(&path, &record) {
         Ok(()) => return Ok(Claim::Ours),
         Err(CreateError::Taken) => {}
@@ -430,6 +436,136 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
         _ => status.stale = true,
     }
     status
+}
+
+/// All hubs belonging to `repo`, repository hub first, followed by any parent-task hubs.
+pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHub> {
+    use crate::session::{RepoHub, RepoHubState};
+    use std::collections::HashMap;
+
+    let mut hubs_by_slug: HashMap<String, (Option<String>, String)> = HashMap::new();
+    // 1. Always include the repository hub itself.
+    hubs_by_slug.insert(repo.slug.clone(), (None, repo.hub_name.clone()));
+
+    // 2. Discover from state_dir/hubs
+    let hubs_dir = state_dir().join("hubs");
+    if let Ok(entries) = std::fs::read_dir(&hubs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json")
+                && let Some(record) = read_json(&path)
+            {
+                let cwd_matches = record
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .is_some_and(|cwd| {
+                        cwd == repo.main
+                            || Path::new(cwd).canonicalize().ok()
+                                == Path::new(&repo.main).canonicalize().ok()
+                    });
+                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if cwd_matches && !file_stem.is_empty() {
+                    let hub_name = record
+                        .get("hubName")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{}{}", crate::repo::HUB_PREFIX, file_stem));
+                    let key = record
+                        .get("hub")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    let entry = hubs_by_slug
+                        .entry(file_stem.to_string())
+                        .or_insert((key.clone(), hub_name));
+                    if entry.0.is_none() && key.is_some() {
+                        entry.0 = key;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Discover from saved sessions in state_dir/sessions
+    for saved in hub_sessions_for(&repo.nwo) {
+        let slug = crate::repo::slug_for(&repo.nwo, saved.hub.as_deref());
+        let hub_name = saved
+            .hub_name
+            .unwrap_or_else(|| format!("{}{}", crate::repo::HUB_PREFIX, slug));
+        let entry = hubs_by_slug
+            .entry(slug)
+            .or_insert((saved.hub.clone(), hub_name));
+        if entry.0.is_none() && saved.hub.is_some() {
+            entry.0 = saved.hub;
+        }
+    }
+
+    // 4. Discover from linked worktrees
+    if let Ok(worktrees) = crate::repo::linked_worktrees(&repo.main) {
+        for wt in worktrees {
+            if let Some(record) = read_json(&worker_record_path(Path::new(&wt)))
+                && let Some(hub_key) = record
+                    .get("hub")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            {
+                let slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
+                let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
+                let entry = hubs_by_slug
+                    .entry(slug)
+                    .or_insert((Some(hub_key.to_string()), hub_name));
+                if entry.0.is_none() {
+                    entry.0 = Some(hub_key.to_string());
+                }
+            }
+        }
+    }
+
+    // Convert to RepoHub
+    let mut result: Vec<RepoHub> = hubs_by_slug
+        .into_iter()
+        .map(|(slug, (mut key, hub_name))| {
+            if key.is_none()
+                && slug != repo.slug
+                && let Some(session) = read_session(&hub_session_path(&slug))
+            {
+                key = session.hub;
+            }
+            let status = hub_status(&slug, &hub_name);
+            let inbox_count = list(&slug).len();
+            let id = match &key {
+                Some(k) => format!("hub-{k}"),
+                None if slug == repo.slug => "hub".to_string(),
+                None => format!("hub-{slug}"),
+            };
+            RepoHub {
+                id,
+                key,
+                name: hub_name,
+                slug,
+                state: RepoHubState {
+                    present: status.present,
+                    stale: status.stale,
+                    pid: status.pid,
+                    started_at: status.started_at,
+                },
+                inbox_count,
+            }
+        })
+        .collect();
+
+    // Repository hub first, then sorted by id
+    result.sort_by(|a, b| {
+        let a_is_repo = a.slug == repo.slug;
+        let b_is_repo = b.slug == repo.slug;
+        match (a_is_repo, b_is_repo) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.id.cmp(&b.id),
+        }
+    });
+
+    result
 }
 
 // ── which hub is being addressed ─────────────────────────────────────
@@ -1695,7 +1831,7 @@ fn record_exists(path: &Path) -> std::io::Result<bool> {
     }
 }
 
-fn read_json(path: &Path) -> Option<Value> {
+pub(crate) fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
@@ -1765,7 +1901,7 @@ mod tests {
     }
 
     fn claim_ours(slug: &str, hub_name: &str) {
-        match claim_hub(slug, hub_name, "/src/widget", true).unwrap() {
+        match claim_hub(slug, hub_name, "/src/widget", true, None).unwrap() {
             Claim::Ours => {}
             Claim::Taken(status) => panic!("expected to win the claim, but {status:?} holds it"),
         }
@@ -2025,7 +2161,7 @@ mod tests {
                 matches!(holder(&hub_record_path("acme-widget")), Liveness::Alive),
                 "{blank:?}"
             );
-            match claim_hub("acme-widget", &name, "/", true).unwrap() {
+            match claim_hub("acme-widget", &name, "/", true, None).unwrap() {
                 Claim::Taken(_) => {}
                 Claim::Ours => panic!("{blank:?}: a live hub's name was taken away"),
             }
@@ -2527,7 +2663,7 @@ mod tests {
         let name = this_process_name();
         let outcomes: Vec<Result<Claim, String>> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..5)
-                .map(|_| scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true)))
+                .map(|_| scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None)))
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
@@ -2591,7 +2727,13 @@ mod tests {
         assert!(!status.stale);
         // And a launch arriving now is told someone holds it, rather than taking it.
         assert!(matches!(
-            claim_hub("acme-widget", "adjutant-acme-widget", "/src/widget", true),
+            claim_hub(
+                "acme-widget",
+                "adjutant-acme-widget",
+                "/src/widget",
+                true,
+                None
+            ),
             Ok(Claim::Taken(_))
         ));
     }
@@ -2619,7 +2761,7 @@ mod tests {
         let name = this_process_name();
         let outcomes: Vec<Result<Claim, String>> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..5)
-                .map(|_| scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true)))
+                .map(|_| scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None)))
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
@@ -2840,7 +2982,7 @@ mod tests {
 
         let name = this_process_name();
         assert!(matches!(
-            claim_hub("acme-widget", &name, "/src/widget", true),
+            claim_hub("acme-widget", &name, "/src/widget", true, None),
             Ok(Claim::Taken(_))
         ));
 
@@ -3040,5 +3182,65 @@ mod tests {
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(record.with_file_name("gone.json"), &record).unwrap();
         assert_eq!(hub_liveness(slug), Liveness::CannotTell);
+    }
+
+    #[test]
+    fn all_repo_hubs_discovers_all_sources_and_sorts_repo_first() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().to_string_lossy().to_string();
+        let repo = crate::repo::RepoInfo {
+            main: main_path.clone(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+
+        // 1. Repo hub record in hubs/
+        write_json(
+            &hub_record_path("acme-widget"),
+            &json!({
+                "hubName": "adjutant-acme-widget",
+                "cwd": main_path,
+            }),
+        )
+        .unwrap();
+
+        // 2. Parent task hub in hubs/
+        let parent_slug = crate::repo::slug_for("acme/widget", Some("parent-task"));
+        write_json(
+            &hub_record_path(&parent_slug),
+            &json!({
+                "hubName": format!("adjutant-{parent_slug}"),
+                "cwd": main_path,
+                "hub": "parent-task",
+            }),
+        )
+        .unwrap();
+
+        // 3. Saved session in sessions/
+        let session_slug = crate::repo::slug_for("acme/widget", Some("other-hub"));
+        save_hub_session(
+            &session_slug,
+            "acme/widget",
+            Some("other-hub"),
+            &format!("adjutant-{session_slug}"),
+            "sess-123",
+        )
+        .unwrap();
+
+        let hubs = all_repo_hubs(&repo);
+        assert_eq!(hubs.len(), 3);
+        // Repository hub is always first
+        assert_eq!(hubs[0].id, "hub");
+        assert_eq!(hubs[0].key, None);
+        assert_eq!(hubs[0].name, "adjutant-acme-widget");
+
+        // The remaining hubs are sorted by id
+        let ids: Vec<_> = hubs.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, vec!["hub", "hub-other-hub", "hub-parent-task"]);
     }
 }

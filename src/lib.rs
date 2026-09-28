@@ -20,6 +20,7 @@ mod notify;
 mod prompts;
 mod repo;
 mod runner;
+mod session;
 mod task;
 mod template;
 mod terminal;

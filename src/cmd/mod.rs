@@ -1539,7 +1539,13 @@ pub fn hub(
     // away does not, and only the finished line knows which.
 
     let named = command.contains(&ctx.repo.hub_name);
-    match messaging::claim_hub(&ctx.repo.slug, &ctx.repo.hub_name, &ctx.repo.main, named)? {
+    match messaging::claim_hub(
+        &ctx.repo.slug,
+        &ctx.repo.hub_name,
+        &ctx.repo.main,
+        named,
+        ctx.repo.hub.as_deref(),
+    )? {
         messaging::Claim::Ours => {}
         messaging::Claim::Taken(status) => return go_to_running_hub(&ctx, &status, dry_run),
     }

@@ -214,6 +214,27 @@ fn with_env(env: &[(String, String)], command: String) -> String {
     format!("env {} {command}", assignments.join(" "))
 }
 
+/// Extract the agent harness / program name from a runner command template.
+///
+/// Skips any `env` wrappers or variable assignments (`KEY=VAL`), returning the base name
+/// of the first executable token (e.g. "claude", "agy", "codex"). Defaults to "claude"
+/// when no executable token can be identified.
+pub fn agent_from_runner(runner: &str) -> String {
+    for part in runner.split_whitespace() {
+        if part == "env" || part.contains('=') {
+            continue;
+        }
+        let name = std::path::Path::new(part)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| part.to_string());
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    "claude".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,5 +416,22 @@ mod tests {
             ),
             format!("env K=v myagent resume {SID} --in /wt/x 'go on'")
         );
+    }
+
+    #[test]
+    fn agent_from_runner_extracts_executable_name() {
+        assert_eq!(
+            agent_from_runner("claude --session-id {sessionId} --permission-mode auto"),
+            "claude"
+        );
+        assert_eq!(
+            agent_from_runner("agy --dangerously-skip-permissions -i {prompt}"),
+            "agy"
+        );
+        assert_eq!(
+            agent_from_runner("env FOO=bar BAZ=1 /opt/bin/codex exec {prompt}"),
+            "codex"
+        );
+        assert_eq!(agent_from_runner(""), "claude");
     }
 }
