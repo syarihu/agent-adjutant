@@ -258,6 +258,18 @@ security add-generic-password -s jules-api -a "$USER" -w
 
 これらをテンプレート経由で抽象化しているため、ターミナルやエージェントの種類を問わず柔軟に連携できます。
 
+### tmux バックエンド（`terminal.preset: "tmux"`）
+
+設定に `"terminal": { "preset": "tmux" }` を指定すると、tmux を標準バックエンドとして利用できます。
+
+- **デタッチウィンドウ起動**: worker をバックグラウンドウィンドウ（`tmux new-window -d`）として起動するため、現在の作業画面のフォーカスを奪いません。対象セッションが存在しない場合は自動で初期セッションを作成します。
+- **PID/TTYからペインへの自動解決**: プロセスツリーと TTY を探索して tmux ペインを特定するため、手書きのラッパースクリプトなしで wake や focus、close が動きます。
+- **入力通知（wake）**: `tmux send-keys -l` でリテラル文字列を送信し、少し遅れて Enter を押します。
+- **フォーカスと終了**: `adj focus` でウィンドウとペインを選択し、`adj close` で worker のウィンドウを片付けます（`tmux kill-window`）。
+- **アタッチ**: `tmux attach -t adjutant` や `tmux -CC attach -t adjutant`（iTerm2 連携）、`ttyd` 等でいつでもセッションに接続できます。
+- **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）で tmux セッションの状態確認や操作を直接行えます。
+- **環境変数**: `$ADJUTANT_TMUX_SESSION`（既定のセッション名 `"adjutant"` を上書き）および `$ADJUTANT_TMUX_SOCKET`（`tmux -L <socket>` でソケットを指定）に対応しています。
+
 ## レイヤ構成
 
 ```

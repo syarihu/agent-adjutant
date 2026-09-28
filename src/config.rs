@@ -211,6 +211,9 @@ fn check_shapes(place: &str, map: &Map<String, Value>, warnings: &mut Vec<String
         return;
     };
     for (key, accepted) in [
+        ("preset", &["a string"][..]),
+        ("session", &["a string"][..]),
+        ("socket", &["a string"][..]),
         ("spawn", &["a string"][..]),
         ("focus", &["a string"][..]),
         // `false` as well as a string, unlike its neighbours: `close` is the one of these
@@ -259,6 +262,8 @@ fn required_keys(source_type: &str) -> &'static [&'static str] {
 /// each place that forwards it: a tab that is handed the wrong one reads a different world.
 pub const CONFIG_ENV: &str = "ADJUTANT_CONFIG";
 pub const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
+pub const TMUX_SOCKET_ENV: &str = "ADJUTANT_TMUX_SOCKET";
+pub const TMUX_SESSION_ENV: &str = "ADJUTANT_TMUX_SESSION";
 
 /// `ADJUTANT_CONFIG` wins, then `$XDG_CONFIG_HOME/adjutant/config.json`, then
 /// `~/.config/adjutant/config.json`. Not under a specific agent's config directory: the
@@ -515,6 +520,12 @@ impl serde::Serialize for Wake {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub socket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub spawn: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus: Option<String>,
@@ -530,6 +541,20 @@ pub struct TerminalSettings {
     /// Name the tab this process is running in. Distinct from `spawn`'s title, which names
     /// a tab being created.
     pub title: Hook,
+}
+
+impl TerminalSettings {
+    pub fn is_tmux(&self) -> bool {
+        self.preset.as_deref() == Some("tmux")
+    }
+
+    pub fn tmux_session(&self) -> &str {
+        self.session.as_deref().unwrap_or("adjutant")
+    }
+
+    pub fn tmux_socket(&self) -> Option<&str> {
+        self.socket.as_deref()
+    }
 }
 
 /// `Default` is hand-written rather than derived because `startup_dashboard` is the one
@@ -815,8 +840,27 @@ fn resolve_settings(
     // The one setting whose answer comes partly from outside the config file. Picked here,
     // decided by a function of two arguments, and the outside half arrives as one of them.
     let configured_dashboard = pick("startupDashboard");
+    let preset = str_field(&terminal, "preset");
+    let session = std::env::var(TMUX_SESSION_ENV)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| str_field(&terminal, "session"))
+        .or_else(|| {
+            if preset.as_deref() == Some("tmux") {
+                Some("adjutant".to_string())
+            } else {
+                None
+            }
+        });
+    let socket = std::env::var(TMUX_SOCKET_ENV)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| str_field(&terminal, "socket"));
     Settings {
         terminal: TerminalSettings {
+            preset,
+            session,
+            socket,
             spawn: str_field(&terminal, "spawn"),
             focus: str_field(&terminal, "focus"),
             close: Hook::read(terminal.get("close").cloned()),
@@ -2082,5 +2126,62 @@ mod tests {
                 home.display()
             );
         }
+    }
+
+    #[test]
+    fn terminal_tmux_preset_resolves() {
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"terminal": {"preset": "tmux"}})), "acme/app");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.terminal.is_tmux());
+        assert_eq!(settings.terminal.preset.as_deref(), Some("tmux"));
+        assert_eq!(settings.terminal.tmux_session(), "adjutant");
+        assert_eq!(settings.terminal.tmux_socket(), None);
+    }
+
+    #[test]
+    fn terminal_tmux_object_with_custom_session_and_socket() {
+        let (_, settings, warnings) = resolve(
+            a_repo(json!({
+                "terminal": {
+                    "preset": "tmux",
+                    "session": "custom-session",
+                    "socket": "custom-sock",
+                    "focus": "adj tmux focus {pid}"
+                }
+            })),
+            "acme/app",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.terminal.is_tmux());
+        assert_eq!(settings.terminal.tmux_session(), "custom-session");
+        assert_eq!(settings.terminal.tmux_socket(), Some("custom-sock"));
+        assert_eq!(
+            settings.terminal.focus.as_deref(),
+            Some("adj tmux focus {pid}")
+        );
+    }
+
+    #[test]
+    fn terminal_preset_overlays_with_nested_object() {
+        let config = json!({
+            "terminal": { "preset": "tmux" },
+            "defaults": {
+                "terminal": { "socket": "shared-socket" },
+                "ide": "code"
+            },
+            "repos": {
+                "acme/app": {
+                    "taskSource": "github",
+                    "issueRepo": "acme/app",
+                    "issueKeys": { "acme/app": "WID" }
+                }
+            }
+        });
+        let (_, settings, warnings) = resolve(config, "acme/app");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(settings.terminal.is_tmux());
+        assert_eq!(settings.terminal.tmux_socket(), Some("shared-socket"));
+        assert_eq!(settings.terminal.tmux_session(), "adjutant");
     }
 }

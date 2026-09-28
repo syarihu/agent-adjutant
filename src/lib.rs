@@ -484,6 +484,11 @@ enum Commands {
         #[arg(long, default_value = "claude-code")]
         target: String,
     },
+    /// Tmux backend helpers: pane inspection, window spawning, wake, close, and focus
+    Tmux {
+        #[command(subcommand)]
+        action: TmuxAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -624,6 +629,75 @@ enum JulesAction {
         /// Something to say to Jules above them (- reads stdin)
         #[arg(long)]
         note: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TmuxAction {
+    /// Inspect tmux panes matching a pid or tty
+    Pane {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        pid: Option<u32>,
+        #[arg(long)]
+        tty: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Wake a process running in a tmux window
+    Wake {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        pid: u32,
+        #[arg(long)]
+        line: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Focus a tmux window running a process
+    Focus {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        pid: u32,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Close a tmux window running a process
+    Close {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        pid: u32,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Spawn a command in a detached tmux window
+    Spawn {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
     },
 }
 
@@ -1010,6 +1084,7 @@ pub fn run() -> ! {
         Commands::Mcp => mcp::run_server().map(|_| 0).map_err(|e| e.to_string()),
         Commands::InstallMcp { target } => mcp::install(target).map(|_| 0),
         Commands::UninstallMcp { target } => mcp::uninstall(target).map(|_| 0),
+        Commands::Tmux { action } => run_tmux(action).map(|_| 0),
     };
     match result {
         Ok(code) => std::process::exit(code),
@@ -1231,5 +1306,66 @@ fn run_gate(action: &GateAction) -> Result<(), String> {
             comment: comment.as_deref(),
             json: *json,
         }),
+    }
+}
+
+/// The `adj tmux` verbs.
+fn run_tmux(action: &TmuxAction) -> Result<(), String> {
+    match action {
+        TmuxAction::Pane {
+            repo,
+            socket,
+            pid,
+            tty,
+            json,
+        } => cmd::tmux::pane(
+            repo.as_deref(),
+            socket.as_deref(),
+            *pid,
+            tty.as_deref(),
+            *json,
+        ),
+        TmuxAction::Wake {
+            repo,
+            socket,
+            pid,
+            line,
+            dry_run,
+        } => cmd::tmux::wake(
+            repo.as_deref(),
+            socket.as_deref(),
+            *pid,
+            line.as_deref(),
+            *dry_run,
+        ),
+        TmuxAction::Focus {
+            repo,
+            socket,
+            pid,
+            dry_run,
+        } => cmd::tmux::focus(repo.as_deref(), socket.as_deref(), *pid, *dry_run),
+        TmuxAction::Close {
+            repo,
+            socket,
+            pid,
+            dry_run,
+        } => cmd::tmux::close(repo.as_deref(), socket.as_deref(), *pid, *dry_run),
+        TmuxAction::Spawn {
+            repo,
+            socket,
+            session,
+            cwd,
+            title,
+            command,
+            dry_run,
+        } => cmd::tmux::spawn(
+            repo.as_deref(),
+            socket.as_deref(),
+            session.as_deref(),
+            cwd.as_deref(),
+            title,
+            &strip_separator(command),
+            *dry_run,
+        ),
     }
 }

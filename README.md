@@ -257,13 +257,16 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 
 | key | placeholders | default |
 | --- | --- | --- |
-| `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
-| `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
-| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 |
+| `terminal.preset` | — | none (iTerm2 on macOS) — `"tmux"` for built-in tmux backend |
+| `terminal.session` | — | `"adjutant"` (when `preset` is `"tmux"`, overridden by `$ADJUTANT_TMUX_SESSION`) |
+| `terminal.socket` | — | none (when `preset` is `"tmux"`, overridden by `$ADJUTANT_TMUX_SOCKET`) |
+| `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 (or tmux detached window with `preset: "tmux"`) |
+| `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 (or tmux window/pane selection with `preset: "tmux"`) |
+| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 (or tmux window kill with `preset: "tmux"`) |
 | | | *`false` closes no tabs: `adjutant close` then exits 1 and clears nothing* |
-| `terminal.title` | `{title}` | OSC escape written to this process's tty |
+| `terminal.title` | `{title}` | OSC escape written to this process's tty (or `tmux rename-window` with `preset: "tmux"`) |
 | | | *also names every tab `spawn` opens* |
-| `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session |
+| `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session (or tmux literal `send-keys` with `preset: "tmux"`) |
 | `hubWake` / `workerWake` | the same | override `wake` for one direction |
 | `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
 | `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
@@ -363,6 +366,22 @@ mechanism that does not generalise, since a profile whose title format is driven
 variables ignores it and the tab silently keeps the wrong name. `agentEnv` is an object of environment variables
 both the hub and its workers are started with, for a repository that runs under a separate
 agent profile.
+
+### Running Workers in tmux
+
+When `"terminal": { "preset": "tmux" }` is configured, adjutant acts as a first-class tmux backend:
+- **Detached window spawning**: Workers start in detached windows (`tmux new-window -d -t <session> -c <cwd> -n <title> <command>`) so current focus is not stolen. If the session does not exist, an initial session is created.
+- **Process-to-pane mapping**: adjutant automatically maps worker `{pid}` and `{tty}` to tmux panes by inspecting pane PIDs, TTYs, and process hierarchy. No wrapper scripts required.
+- **Waking**: Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, followed by Enter after a short delay.
+- **Focus & Close**: `adj focus` selects the window and pane (`tmux select-window`, `tmux select-pane`). `adj close` disposes of the worker's window (`tmux kill-window`).
+- **Attaching**: Connect to the session at any time with `tmux attach -t adjutant`, control mode with `tmux -CC attach -t adjutant`, or browse via web terminal (e.g. `ttyd`).
+- **CLI helpers**: `adj tmux` provides subcommands to inspect and manage tmux sessions directly:
+  - `adj tmux pane [--pid <pid>] [--tty <tty>] [--json]`: list panes or look up pane info.
+  - `adj tmux spawn [--title <title>] [--cwd <cwd>] <command...>`: spawn a detached window.
+  - `adj tmux wake --pid <pid> [--line <line>] [--dry-run]`: type into a worker pane.
+  - `adj tmux focus --pid <pid> [--dry-run]`: select a worker window and pane.
+  - `adj tmux close --pid <pid> [--dry-run]`: close a worker window.
+- **Environment variables**: `$ADJUTANT_TMUX_SESSION` (overrides default `"adjutant"`) and `$ADJUTANT_TMUX_SOCKET` (runs `tmux -L <socket>`).
 
 ## The board
 
