@@ -507,10 +507,27 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
         checkouts.extend(worktrees);
     }
     for wt in checkouts {
-        if let Some(record) = read_json(&worker_record_path(Path::new(&wt)))
+        let wt_path = Path::new(&wt);
+        if let Some(record) = read_json(&worker_record_path(wt_path))
             && let Some(hub_key) = record
                 .get("hub")
                 .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        {
+            let slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
+            let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
+            let entry = hubs_by_slug
+                .entry(slug)
+                .or_insert((Some(hub_key.to_string()), hub_name));
+            if entry.0.is_none() {
+                entry.0 = Some(hub_key.to_string());
+            }
+        }
+        if let Some(saved) = worker_session(wt_path)
+            && let Some(hub_key) = saved
+                .hub
+                .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
         {
@@ -3263,5 +3280,35 @@ mod tests {
                 "hub-parent-task"
             ]
         );
+    }
+
+    #[test]
+    fn all_repo_hubs_discovers_hub_from_saved_worker_session_when_record_absent() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().to_string_lossy().to_string();
+        let repo = crate::repo::RepoInfo {
+            main: main_path.clone(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+
+        save_worker_session(
+            Path::new(&main_path),
+            "Previous worker task",
+            Some("unregistered-worker-hub"),
+            "sid-prev",
+        )
+        .unwrap();
+
+        let hubs = all_repo_hubs(&repo);
+        assert_eq!(hubs.len(), 2);
+        assert_eq!(hubs[0].id, "hub");
+        assert_eq!(hubs[1].id, "hub-unregistered-worker-hub");
+        assert_eq!(hubs[1].key.as_deref(), Some("unregistered-worker-hub"));
     }
 }

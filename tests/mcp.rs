@@ -679,6 +679,47 @@ fn the_board_state_reports_worker_session_with_metadata() {
 }
 
 #[test]
+fn the_board_state_reports_main_worker_from_saved_session_when_unregistered() {
+    let fixture = Fixture::new(QUIET);
+    let claude_dir = fixture.repo.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-session.json"),
+        serde_json::json!({
+            "sessionId": "sid-main-worker",
+            "title": "Main checkout previous worker",
+            "hub": "parent-main-saved",
+            "savedAt": "20260928T120000Z",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+
+    // hubs must discover parent-main-saved from the main checkout saved session
+    let hubs = state["hubs"].as_array().expect("hubs array");
+    assert!(hubs.iter().any(|h| h["key"] == "parent-main-saved"));
+
+    // sessions must contain worker-main as an inactive worker
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let main_worker = sessions
+        .iter()
+        .find(|s| s["id"] == "worker-main")
+        .expect("worker-main session found");
+    assert_eq!(main_worker["kind"], "worker");
+    assert_eq!(main_worker["title"], "Main checkout previous worker");
+    assert_eq!(main_worker["hub"], "hub-parent-main-saved");
+    assert_eq!(main_worker["present"], false);
+    assert_eq!(main_worker["stale"], false);
+    assert_eq!(main_worker["startedAt"], "20260928T120000Z");
+
+    board.kill().unwrap();
+    board.wait().unwrap();
+}
+
+#[test]
 fn a_hub_s_mcp_server_serves_its_board_for_as_long_as_it_runs() {
     let fixture = Fixture::new(QUIET);
     let (mut child, config) = hub_mcp(&fixture, SLUG);

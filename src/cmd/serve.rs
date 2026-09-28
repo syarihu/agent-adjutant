@@ -694,7 +694,7 @@ fn state(server: &Server) -> Value {
             hub: Some(parent_hub),
             key: None,
             worktree: repo.main.clone(),
-            branch: main_branch,
+            branch: main_branch.clone(),
             task: task_id,
             title: status.title,
             present: status.present,
@@ -703,6 +703,50 @@ fn state(server: &Server) -> Value {
             started_at,
             phase: status.phase,
             phase_at: status.phase_at,
+        });
+    } else if let Some(saved) = messaging::worker_session(Path::new(&repo.main)) {
+        let parent_hub = match saved
+            .hub
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(hub_key) => {
+                let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
+                hubs.iter()
+                    .find(|h| h.slug == worker_slug)
+                    .map(|h| h.id.clone())
+                    .unwrap_or_else(|| format!("hub-{hub_key}"))
+            }
+            None => "hub".to_string(),
+        };
+        let terminal = build_session_terminal(terminal_settings, &tmux_panes, None);
+
+        let task_id = tasks.iter().find_map(|t| {
+            if t.get("worktree").and_then(Value::as_str) == Some(repo.main.as_str()) {
+                t.get("id").and_then(Value::as_str).map(str::to_string)
+            } else {
+                None
+            }
+        });
+
+        sessions.push(session::Session {
+            id: "worker-main".to_string(),
+            kind: "worker".to_string(),
+            agent: worker_agent.clone(),
+            terminal,
+            hub: Some(parent_hub),
+            key: None,
+            worktree: repo.main.clone(),
+            branch: main_branch,
+            task: task_id,
+            title: saved.title,
+            present: false,
+            stale: false,
+            pid: None,
+            started_at: saved.saved_at,
+            phase: None,
+            phase_at: None,
         });
     }
 
