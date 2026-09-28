@@ -642,6 +642,13 @@ fn the_board_state_reports_worker_session_with_metadata() {
             "phase": "implement",
             "phaseAt": 1700000000,
             "psStarted": ps_started(pid),
+            "terminal": {
+                "backend": "tmux",
+                "socket": "/tmp/tmux-501/elsewhere",
+                "session": "work",
+                "window": "@3",
+                "pane": "%7",
+            },
         })
         .to_string(),
     )
@@ -673,6 +680,18 @@ fn the_board_state_reports_worker_session_with_metadata() {
     assert_eq!(worker_sess["phase"], "implement");
     assert_eq!(worker_sess["phaseAt"], 1700000000);
     assert_eq!(worker_sess["present"], true);
+    // Where the worker was started, as recorded, not the settings (the fixture has none)
+    // or a live lookup.
+    assert_eq!(
+        worker_sess["terminal"],
+        serde_json::json!({
+            "backend": "tmux",
+            "socket": "/tmp/tmux-501/elsewhere",
+            "session": "work",
+            "window": "@3",
+            "pane": "%7",
+        })
+    );
 
     board.kill().unwrap();
     board.wait().unwrap();
@@ -1100,4 +1119,44 @@ fn adjutant_tell_and_send_wake_heuristics_and_overrides() {
             .contains("waking was skipped because this message needs no action"),
         "{res7}"
     );
+}
+
+#[test]
+fn a_worker_record_without_a_terminal_reports_the_backend_a_spawn_template_uses() {
+    let fixture = Fixture::new(QUIET);
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["terminal"] = serde_json::json!({
+        "preset": "tmux",
+        "spawn": "wezterm cli spawn --cwd {cwd} -- {command}",
+    });
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+
+    // A record written before workers recorded where they run.
+    let pid = std::process::id();
+    let claude_dir = fixture.repo.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-worker.json"),
+        serde_json::json!({
+            "pid": pid,
+            "title": "WID-1",
+            "psStarted": ps_started(pid),
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let worker = sessions
+        .iter()
+        .find(|s| s["id"] == "worker-main")
+        .expect("worker-main session found");
+    // The template wins over the preset, as it does when a tab is opened.
+    assert_eq!(worker["terminal"], serde_json::json!({"backend": "custom"}));
+
+    board.kill().unwrap();
+    board.wait().unwrap();
 }

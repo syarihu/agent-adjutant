@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTerminal {
-    /// Terminal backend name: e.g. "tmux", "iterm2", or configured preset.
+    /// Terminal backend name: "tmux", "iterm2" (the built-in one), or "custom" for a
+    /// `terminal.spawn` template.
     pub backend: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socket: Option<String>,
@@ -78,7 +79,12 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 pub struct RepoHub {
     pub id: String,
-    /// null for the repository hub, the key string for parent-task hubs.
+    /// Whether this is a parent-task hub rather than the repository's own one. Said apart from
+    /// `key` because a parent-task hub started before its record carried the key can have
+    /// none that can be told.
+    pub parent: bool,
+    /// null for the repository hub, the key string for parent-task hubs, and null for a
+    /// parent-task hub whose key cannot be told (`parent` says which).
     pub key: Option<String>,
     pub name: String,
     pub slug: String,

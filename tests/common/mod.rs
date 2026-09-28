@@ -36,7 +36,7 @@ pub const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-pub const AMBIENT: [&str; 9] = [
+pub const AMBIENT: [&str; 11] = [
     "ADJUTANT_HUB",
     "ADJUTANT_STARTUP_DASHBOARD",
     // A hub's MCP server beats for the session this names; a test child that inherited it
@@ -48,6 +48,10 @@ pub const AMBIENT: [&str; 9] = [
     // the developer's live tmux session.
     "ADJUTANT_TMUX_SOCKET",
     "ADJUTANT_TMUX_SESSION",
+    // A worker records the tmux pane it runs in from these, so a `cargo test` typed inside
+    // tmux would have it ask the developer's own server where it is.
+    "TMUX",
+    "TMUX_PANE",
     // `cargo test` run from a git hook has these pointing at the developer's own checkout,
     // and a fixture set up with git would be set up there instead of in its tempdir.
     "GIT_DIR",

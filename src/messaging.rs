@@ -445,7 +445,10 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
 
     let (default_slug, default_hub_name) = match &repo.hub {
         Some(_) => {
-            let default_repo = repo.clone().addressed(None).unwrap_or_else(|_| repo.clone());
+            let default_repo = repo
+                .clone()
+                .addressed(None)
+                .unwrap_or_else(|_| repo.clone());
             (default_repo.slug, default_repo.hub_name)
         }
         None => (repo.slug.clone(), repo.hub_name.clone()),
@@ -562,11 +565,13 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
     let mut result: Vec<RepoHub> = hubs_by_slug
         .into_iter()
         .map(|(slug, (mut key, hub_name))| {
-            if key.is_none()
-                && slug != default_slug
-                && let Some(session) = read_session(&hub_session_path(&slug))
-            {
-                key = session.hub;
+            let parent = slug != default_slug;
+            // A record written before it carried the key: the saved session may still say,
+            // and failing that the slug itself does, when it can be read back unambiguously.
+            if key.is_none() && parent {
+                key = read_session(&hub_session_path(&slug))
+                    .and_then(|session| session.hub)
+                    .or_else(|| crate::repo::hub_key_from_slug(&repo.nwo, &slug));
             }
             let status = hub_status(&slug, &hub_name);
             let inbox_count = list(&slug).len();
@@ -577,6 +582,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
             };
             RepoHub {
                 id,
+                parent,
                 key,
                 name: hub_name,
                 slug,
@@ -821,6 +827,7 @@ pub fn register_worker(
     title: &str,
     hub: Option<&str>,
     task: Option<&str>,
+    terminal: Option<&crate::session::SessionTerminal>,
 ) -> Result<PathBuf, String> {
     let path = worker_record_path(worktree);
     let mut record = json!({
@@ -838,6 +845,14 @@ pub fn register_worker(
         && let Some(fields) = record.as_object_mut()
     {
         fields.insert("task".to_string(), json!(task));
+    }
+    // Where the worker runs, read at the moment it starts. Settings and live lookups say
+    // where a new tab would go or where some pane is now, not where this one was opened.
+    if let Some(terminal) = terminal
+        && let Ok(value) = serde_json::to_value(terminal)
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("terminal".to_string(), value);
     }
     write_json(&path, &record)?;
     // The slot is held by the record from here on. Failing to drop the marker only keeps it
@@ -2069,7 +2084,14 @@ mod tests {
         )
         .unwrap();
         // `close` clears the presence record; the session is not its to clear.
-        register_worker(dir.path(), "WID-1 fix", Some("ALPHA-1"), Some("WID-1")).unwrap();
+        register_worker(
+            dir.path(),
+            "WID-1 fix",
+            Some("ALPHA-1"),
+            Some("WID-1"),
+            None,
+        )
+        .unwrap();
         unregister_worker(dir.path()).unwrap();
         let saved = worker_session(dir.path()).unwrap();
         assert_eq!(saved.session_id, "sid-w");
@@ -2280,7 +2302,7 @@ mod tests {
             );
         }
 
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         let WorkerRecord::Named(worker) = read_worker(worktree) else {
             panic!("a record this process just wrote does not name it");
         };
@@ -2337,7 +2359,7 @@ mod tests {
     fn a_record_is_only_cleared_while_it_still_names_the_worker_it_was_read_from() {
         let dir = tempfile::tempdir().unwrap();
         let worktree = dir.path();
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         let WorkerRecord::Named(worker) = read_worker(worktree) else {
             panic!("a record this process just wrote does not name it");
         };
@@ -2356,7 +2378,7 @@ mod tests {
         );
 
         // Its own record it may clear, and a record already gone is the outcome it wanted.
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         let WorkerRecord::Named(worker) = read_worker(worktree) else {
             panic!("a record this process just wrote does not name it");
         };
@@ -2421,7 +2443,7 @@ mod tests {
 
         // The record alone. This is the worker's case, and the only one where the answer
         // comes from where the caller is standing rather than from what it was told.
-        register_worker(worktree, "WID-957", Some("from-record"), None).unwrap();
+        register_worker(worktree, "WID-957", Some("from-record"), None, None).unwrap();
         assert_eq!(
             hub_id(None, Some(worktree)).unwrap().as_deref(),
             Some("from-record")
@@ -2463,7 +2485,7 @@ mod tests {
         // worker` runs in a tab opened at the worktree it is about to register in, so
         // reading a record there is reading somebody else's answer, or one's own from a
         // previous life.
-        register_worker(worktree, "WID-957", Some("from-record"), None).unwrap();
+        register_worker(worktree, "WID-957", Some("from-record"), None, None).unwrap();
         assert_eq!(
             hub_id(None, Some(worktree)).unwrap().as_deref(),
             Some("from-record")
@@ -2477,7 +2499,7 @@ mod tests {
         // A worker dispatched by a repository's own hub records no identifier at all, and
         // the key is absent rather than null: a record this version writes has to read the
         // same way to every other version of this tool on the machine.
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         assert_eq!(hub_id(None, Some(worktree)).unwrap(), None);
         assert!(
             read_json(&worker_record_path(worktree))
@@ -3062,7 +3084,7 @@ mod tests {
         let worktree = dir.path();
         assert!(!holds_worker_slot(worktree, now_secs()));
 
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         assert!(holds_worker_slot(worktree, now_secs()));
 
         // A pid that is not running. Counting it would hold the slot for good, since nothing
@@ -3118,7 +3140,7 @@ mod tests {
         assert!(!holds_worker_slot(worktree, now - 3600));
 
         // Registering takes the marker away: from then on the record answers.
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         assert!(!starting_marker_path(worktree).exists());
         unregister_worker(worktree).unwrap();
         assert!(!holds_worker_slot(worktree, now));
@@ -3174,7 +3196,7 @@ mod tests {
         // Nobody registered: there is no run of a worker to describe.
         assert!(set_worker_phase(worktree, "plan").is_err());
 
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         set_worker_phase(worktree, "implement").unwrap();
         let status = worker_status(worktree);
         assert_eq!(status.phase.as_deref(), Some("implement"));
@@ -3190,7 +3212,7 @@ mod tests {
 
         assert!(set_worker_phase(worktree, "implementing").is_err());
         // A worker started again writes its record fresh, and starts without a phase.
-        register_worker(worktree, "WID-957", None, None).unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
         assert_eq!(worker_status(worktree).phase, None);
     }
 
@@ -3356,10 +3378,89 @@ mod tests {
     }
 
     #[test]
+    fn a_parent_hub_record_without_its_key_is_still_told_apart_from_the_repository_hub() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().to_string_lossy().to_string();
+        let repo = crate::repo::RepoInfo {
+            main: main_path.clone(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        // Written by a version that did not record `hub`: the key comes back out of the slug.
+        let readable = crate::repo::slug_for("acme/widget", Some("WID-100"));
+        write_json(
+            &hub_record_path(&readable),
+            &json!({"hubName": format!("adjutant-{readable}"), "cwd": main_path}),
+        )
+        .unwrap();
+        // And one whose key the slug cannot give back: still a parent hub, key unknown.
+        let lossy = crate::repo::slug_for("acme/widget", Some("v1.2"));
+        write_json(
+            &hub_record_path(&lossy),
+            &json!({"hubName": format!("adjutant-{lossy}"), "cwd": main_path}),
+        )
+        .unwrap();
+
+        let hubs = all_repo_hubs(&repo);
+        assert_eq!(hubs.len(), 3, "{hubs:?}");
+        assert_eq!(hubs[0].id, "hub");
+        assert!(!hubs[0].parent);
+        let recovered = hubs.iter().find(|h| h.slug == readable).unwrap();
+        assert!(recovered.parent);
+        assert_eq!(recovered.key.as_deref(), Some("wid-100"));
+        assert_eq!(recovered.id, "hub-wid-100");
+        let unknown = hubs.iter().find(|h| h.slug == lossy).unwrap();
+        assert!(unknown.parent);
+        assert_eq!(unknown.key, None);
+        assert_eq!(unknown.id, format!("hub-{lossy}"));
+    }
+
+    #[test]
+    fn register_worker_records_where_the_worker_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        let at = crate::session::SessionTerminal {
+            backend: "tmux".into(),
+            socket: Some("/tmp/tmux-501/default".into()),
+            session: Some("adjutant".into()),
+            window: Some("@3".into()),
+            pane: Some("%7".into()),
+        };
+        register_worker(worktree, "WID-957", None, None, Some(&at)).unwrap();
+        let record = read_json(&worker_record_path(worktree)).unwrap();
+        assert_eq!(
+            record["terminal"],
+            json!({
+                "backend": "tmux",
+                "socket": "/tmp/tmux-501/default",
+                "session": "adjutant",
+                "window": "@3",
+                "pane": "%7",
+            })
+        );
+        // A phase written later keeps it.
+        set_worker_phase(worktree, "plan").unwrap();
+        let record = read_json(&worker_record_path(worktree)).unwrap();
+        assert_eq!(record["terminal"]["window"], "@3");
+    }
+
+    #[test]
     fn register_worker_persists_task_id_when_provided() {
         let dir = tempfile::tempdir().unwrap();
         let worktree = dir.path();
-        register_worker(worktree, "WID-957", Some("hub-1"), Some("task-wid-957")).unwrap();
+        register_worker(
+            worktree,
+            "WID-957",
+            Some("hub-1"),
+            Some("task-wid-957"),
+            None,
+        )
+        .unwrap();
         let record = read_json(&worker_record_path(worktree)).unwrap();
         assert_eq!(
             record.get("task").and_then(Value::as_str),

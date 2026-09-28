@@ -432,41 +432,53 @@ fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result
 
 // ── what the board reads ─────────────────────────────────────────────
 
-fn build_session_terminal(
+/// Where a session runs: what its record says it was started in, or — for a record written
+/// before it said so, and for a hub, whose record does not — the settings and a live look
+/// through tmux for the pid.
+fn session_terminal(
+    record: Option<&Value>,
     terminal_settings: &crate::config::TerminalSettings,
     tmux_panes: &[crate::terminal::TmuxPane],
     pid: Option<u32>,
 ) -> session::SessionTerminal {
-    let (window, pane) = if terminal_settings.is_tmux() {
-        match pid.and_then(|p| crate::terminal::find_matching_pane(tmux_panes, Some(p), None)) {
-            Some(p) => (Some(p.window_id.clone()), Some(p.pane_id.clone())),
-            None => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-
+    if let Some(recorded) = record
+        .and_then(|r| r.get("terminal"))
+        .and_then(|t| serde_json::from_value::<session::SessionTerminal>(t.clone()).ok())
+    {
+        return recorded;
+    }
+    let tmux = terminal_settings.spawn.is_none() && terminal_settings.is_tmux();
+    let pane = pid
+        .filter(|_| tmux)
+        .and_then(|p| crate::terminal::find_matching_pane(tmux_panes, Some(p), None));
     session::SessionTerminal {
-        backend: if terminal_settings.is_tmux() {
-            "tmux".to_string()
-        } else {
-            terminal_settings
-                .preset
-                .clone()
-                .unwrap_or_else(|| "iterm2".to_string())
-        },
-        socket: if terminal_settings.is_tmux() {
-            terminal_settings.tmux_socket().map(str::to_string)
-        } else {
-            None
-        },
-        session: if terminal_settings.is_tmux() {
-            Some(terminal_settings.tmux_session().to_string())
-        } else {
-            None
-        },
-        window,
-        pane,
+        backend: crate::terminal::backend_name(terminal_settings).to_string(),
+        socket: terminal_settings
+            .tmux_socket()
+            .filter(|_| tmux)
+            .map(str::to_string),
+        session: tmux.then(|| terminal_settings.tmux_session().to_string()),
+        window: pane.map(|p| p.window_id.clone()),
+        pane: pane.map(|p| p.pane_id.clone()),
+    }
+}
+
+/// The `hubs[]` id of the hub a worker names by `key`: the repository's own hub when it
+/// names none, and one made from the key when no hub of that key was found.
+fn parent_hub_id(
+    repo: &crate::repo::RepoInfo,
+    hubs: &[session::RepoHub],
+    key: Option<&str>,
+) -> String {
+    match key.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(key) => {
+            let slug = crate::repo::slug_for(&repo.nwo, Some(key));
+            hubs.iter()
+                .find(|h| h.slug == slug)
+                .map(|h| h.id.clone())
+                .unwrap_or_else(|| format!("hub-{key}"))
+        }
+        None => "hub".to_string(),
     }
 }
 
@@ -530,7 +542,7 @@ fn state(server: &Server) -> Value {
     let hubs = messaging::all_repo_hubs(repo);
 
     let terminal_settings = &settings.terminal;
-    let tmux_panes = if terminal_settings.is_tmux() {
+    let tmux_panes = if terminal_settings.spawn.is_none() && terminal_settings.is_tmux() {
         crate::terminal::list_tmux_panes(terminal_settings.tmux_socket()).unwrap_or_default()
     } else {
         Vec::new()
@@ -554,7 +566,7 @@ fn state(server: &Server) -> Value {
 
     // 1. Hub sessions from hubs
     for h in &hubs {
-        let terminal = build_session_terminal(terminal_settings, &tmux_panes, h.state.pid);
+        let terminal = session_terminal(None, terminal_settings, &tmux_panes, h.state.pid);
 
         sessions.push(session::Session {
             id: h.id.clone(),
@@ -581,28 +593,16 @@ fn state(server: &Server) -> Value {
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
-        let parent_hub = match record_json
-            .as_ref()
-            .and_then(|r| r.get("hub"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                saved_session
-                    .as_ref()
-                    .and_then(|s| s.hub.as_deref())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-            }) {
-            Some(hub_key) => {
-                let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
-                hubs.iter()
-                    .find(|h| h.slug == worker_slug)
-                    .map(|h| h.id.clone())
-                    .unwrap_or_else(|| format!("hub-{hub_key}"))
-            }
-            None => "hub".to_string(),
-        };
+        let parent_hub = parent_hub_id(
+            repo,
+            &hubs,
+            record_json
+                .as_ref()
+                .and_then(|r| r.get("hub"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| saved_session.as_ref().and_then(|s| s.hub.as_deref())),
+        );
         let started_at = record_json
             .as_ref()
             .and_then(|r| r.get("startedAt"))
@@ -613,7 +613,12 @@ fn state(server: &Server) -> Value {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
+        let terminal = session_terminal(
+            record_json.as_ref(),
+            terminal_settings,
+            &tmux_panes,
+            status.pid,
+        );
 
         let (saved_title, saved_task) =
             saved_session.map(|s| (s.title, s.task)).unwrap_or_default();
@@ -652,27 +657,18 @@ fn state(server: &Server) -> Value {
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
     if let Some(record_json) = messaging::read_json(&main_record_path) {
         let status = messaging::worker_status(Path::new(&repo.main));
-        let parent_hub = match record_json
-            .get("hub")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(hub_key) => {
-                let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
-                hubs.iter()
-                    .find(|h| h.slug == worker_slug)
-                    .map(|h| h.id.clone())
-                    .unwrap_or_else(|| format!("hub-{hub_key}"))
-            }
-            None => "hub".to_string(),
-        };
+        let parent_hub = parent_hub_id(repo, &hubs, record_json.get("hub").and_then(Value::as_str));
         let started_at = record_json
             .get("startedAt")
             .and_then(Value::as_str)
             .map(str::to_string);
 
-        let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
+        let terminal = session_terminal(
+            Some(&record_json),
+            terminal_settings,
+            &tmux_panes,
+            status.pid,
+        );
 
         let task_id = record_json
             .get("task")
@@ -698,22 +694,8 @@ fn state(server: &Server) -> Value {
             phase_at: status.phase_at,
         });
     } else if let Some(saved) = messaging::worker_session(Path::new(&repo.main)) {
-        let parent_hub = match saved
-            .hub
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(hub_key) => {
-                let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
-                hubs.iter()
-                    .find(|h| h.slug == worker_slug)
-                    .map(|h| h.id.clone())
-                    .unwrap_or_else(|| format!("hub-{hub_key}"))
-            }
-            None => "hub".to_string(),
-        };
-        let terminal = build_session_terminal(terminal_settings, &tmux_panes, None);
+        let parent_hub = parent_hub_id(repo, &hubs, saved.hub.as_deref());
+        let terminal = session_terminal(None, terminal_settings, &tmux_panes, None);
 
         sessions.push(session::Session {
             id: "worker-main".to_string(),

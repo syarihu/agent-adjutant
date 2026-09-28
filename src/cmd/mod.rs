@@ -1812,7 +1812,14 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         .map_err(|e| format!("cannot change directory to {}: {e}", worktree.display()))?;
     // The address goes into the record here, at the last moment before this process stops
     // being a launcher. Everything the worker's agent later sends is addressed from it.
-    messaging::register_worker(&worktree, &title, ctx.repo.hub.as_deref(), task)?;
+    let location = terminal::own_location(&ctx.settings.terminal);
+    messaging::register_worker(
+        &worktree,
+        &title,
+        ctx.repo.hub.as_deref(),
+        task,
+        Some(&location),
+    )?;
     // Said and got past, as for the hub: a worker that cannot be resumed still works. And as
     // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
     if resumed.is_none() {
@@ -1830,18 +1837,6 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
-    } else if let Some(saved) = &resumed
-        && task.is_some()
-        && task != saved.task.as_deref()
-        && let Err(e) = messaging::save_worker_session(
-            &worktree,
-            &title,
-            ctx.repo.hub.as_deref(),
-            task,
-            &saved.session_id,
-        )
-    {
-        eprintln!("adjutant: {e}; --resume may not reopen this worker with the updated task");
     }
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on
