@@ -422,9 +422,11 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
     assert_eq!(close_answered["alreadyAnswered"], true);
     assert_eq!(close_answered["gate"]["decision"], "approve");
 
-    // adjutant_outbox with cwd reads the delivered answer from the gate's worktree outbox
-    let replies = mcp(
+    // An MCP process running outside the repository (e.g. in state directory)
+    // resolves worktree from the passed cwd.
+    let replies = mcp_in(
         &fixture,
+        &fixture.state,
         &[request(
             6,
             "tools/call",
@@ -441,8 +443,9 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
     assert!(outbox["content"].as_str().unwrap().contains("approve"));
 
     // An empty worktree string also falls back to cwd
-    let replies = mcp(
+    let replies = mcp_in(
         &fixture,
+        &fixture.state,
         &[request(
             7,
             "tools/call",

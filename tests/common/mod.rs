@@ -193,9 +193,18 @@ pub fn shell_quoted(text: &str) -> String {
 
 /// Feed the server a batch of requests and collect one reply per line.
 pub fn mcp(fixture: &Fixture, requests: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    mcp_in(fixture, &fixture.repo, requests)
+}
+
+/// Feed the server running in a specified directory a batch of requests.
+pub fn mcp_in(
+    fixture: &Fixture,
+    dir: impl AsRef<Path>,
+    requests: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
     let mut child = Command::new(BIN)
         .arg("mcp")
-        .current_dir(&fixture.repo)
+        .current_dir(dir)
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
         .hermetic()
