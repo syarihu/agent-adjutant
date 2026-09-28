@@ -583,9 +583,17 @@ fn state(server: &Server) -> Value {
             .as_ref()
             .and_then(|r| r.get("hub"))
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
-            Some(hub_key) if !hub_key.is_empty() => format!("hub-{hub_key}"),
-            _ => "hub".to_string(),
+            Some(hub_key) => {
+                let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
+                hubs.iter()
+                    .find(|h| h.slug == worker_slug)
+                    .map(|h| h.id.clone())
+                    .unwrap_or_else(|| format!("hub-{hub_key}"))
+            }
+            None => "hub".to_string(),
         };
         let started_at = record_json
             .as_ref()
@@ -640,9 +648,20 @@ fn state(server: &Server) -> Value {
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
     if let Some(record_json) = messaging::read_json(&main_record_path) {
         let status = messaging::worker_status(Path::new(&repo.main));
-        let parent_hub = match record_json.get("hub").and_then(Value::as_str) {
-            Some(hub_key) if !hub_key.is_empty() => format!("hub-{hub_key}"),
-            _ => "hub".to_string(),
+        let parent_hub = match record_json
+            .get("hub")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(hub_key) => {
+                let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
+                hubs.iter()
+                    .find(|h| h.slug == worker_slug)
+                    .map(|h| h.id.clone())
+                    .unwrap_or_else(|| format!("hub-{hub_key}"))
+            }
+            None => "hub".to_string(),
         };
         let started_at = record_json
             .get("startedAt")

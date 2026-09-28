@@ -460,8 +460,10 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                     .and_then(Value::as_str)
                     .is_some_and(|cwd| {
                         cwd == repo.main
-                            || Path::new(cwd).canonicalize().ok()
-                                == Path::new(&repo.main).canonicalize().ok()
+                            || matches!(
+                                (Path::new(cwd).canonicalize(), Path::new(&repo.main).canonicalize()),
+                                (Ok(a), Ok(b)) if a == b
+                            )
                     });
                 let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if cwd_matches && !file_stem.is_empty() {
@@ -534,7 +536,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
             let status = hub_status(&slug, &hub_name);
             let inbox_count = list(&slug).len();
             let id = match &key {
-                Some(k) => format!("hub-{k}"),
+                Some(k) => format!("hub-{}", k.trim()),
                 None if slug == repo.slug => "hub".to_string(),
                 None => format!("hub-{slug}"),
             };

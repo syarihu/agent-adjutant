@@ -220,8 +220,20 @@ fn with_env(env: &[(String, String)], command: String) -> String {
 /// of the first executable token (e.g. "claude", "agy", "codex"). Defaults to "claude"
 /// when no executable token can be identified.
 pub fn agent_from_runner(runner: &str) -> String {
+    let mut in_quote: Option<char> = None;
     for part in runner.split_whitespace() {
+        if let Some(q) = in_quote {
+            if part.contains(q) {
+                in_quote = None;
+            }
+            continue;
+        }
         if part == "env" || part.contains('=') {
+            for q in ['\'', '"'] {
+                if part.matches(q).count() % 2 == 1 {
+                    in_quote = Some(q);
+                }
+            }
             continue;
         }
         let name = std::path::Path::new(part)
@@ -431,6 +443,14 @@ mod tests {
         assert_eq!(
             agent_from_runner("env FOO=bar BAZ=1 /opt/bin/codex exec {prompt}"),
             "codex"
+        );
+        assert_eq!(
+            agent_from_runner("env CLAUDE_CONFIG_DIR='/cfg/app one' claude --resume {sessionId}"),
+            "claude"
+        );
+        assert_eq!(
+            agent_from_runner("env A=\"val with spaces\" B='another space' agy -i {prompt}"),
+            "agy"
         );
         assert_eq!(agent_from_runner(""), "claude");
     }
