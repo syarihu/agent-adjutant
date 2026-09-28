@@ -615,21 +615,19 @@ fn state(server: &Server) -> Value {
 
         let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
 
-        let task_id = tasks
-            .iter()
-            .find_map(|t| {
-                if t.get("worktree").and_then(Value::as_str) == Some(path.as_str()) {
-                    t.get("id").and_then(Value::as_str).map(str::to_string)
-                } else {
-                    None
-                }
-            })
+        let task_id = record_json
+            .as_ref()
+            .and_then(|r| r.get("task"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
             .or_else(|| {
-                record_json
-                    .as_ref()
-                    .and_then(|r| r.get("task"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
+                tasks.iter().find_map(|t| {
+                    if t.get("worktree").and_then(Value::as_str) == Some(path.as_str()) {
+                        t.get("id").and_then(Value::as_str).map(str::to_string)
+                    } else {
+                        None
+                    }
+                })
             });
 
         let title = status.title.or_else(|| saved_session.and_then(|s| s.title));
@@ -680,20 +678,18 @@ fn state(server: &Server) -> Value {
 
         let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
 
-        let task_id = tasks
-            .iter()
-            .find_map(|t| {
-                if t.get("worktree").and_then(Value::as_str) == Some(repo.main.as_str()) {
-                    t.get("id").and_then(Value::as_str).map(str::to_string)
-                } else {
-                    None
-                }
-            })
+        let task_id = record_json
+            .get("task")
+            .and_then(Value::as_str)
+            .map(str::to_string)
             .or_else(|| {
-                record_json
-                    .get("task")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
+                tasks.iter().find_map(|t| {
+                    if t.get("worktree").and_then(Value::as_str) == Some(repo.main.as_str()) {
+                        t.get("id").and_then(Value::as_str).map(str::to_string)
+                    } else {
+                        None
+                    }
+                })
             });
 
         sessions.push(session::Session {
