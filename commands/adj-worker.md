@@ -46,6 +46,9 @@ in this procedure says what to tell them, not the words to use.
   person is when most piles up, and also when being woken goes unnoticed). Concretely: plan
   approval, the self-review entry gate, PR body approval, the Copilot request confirmation, the
   choice of which review comments to address, and before the final report.
+  If the answer returned by `AskUserQuestion` matches or contains the wake line (starts with
+  `The hub sent you something`), the person answered on the board; take the answer from
+  `adjutant_outbox` rather than treating the wake line as their choice.
   When you have dealt with them, clear them with `adjutant_outbox` `action: clear` (the file is
   append-only, so anything not cleared is read again every time). If the first line is
   `[question {id}]`, answer it (§7).
@@ -100,9 +103,8 @@ in this procedure says what to tell them, not the words to use.
 2. Read the code and make an ordered implementation plan.
 3. Show the plan and get it approved before implementing. If asked to change it, change it and
    confirm again.
-   **Show it as `kind: "plan"` in "Appendix — Show a person and wait (gate)".** If the dashboard is
-   running, put it on the board and end the turn; if not, ask with `AskUserQuestion` in this tab.
-   Either way **the approval is taken by this session**; sub-agents cannot talk to the user.
+   **Show it as `kind: "plan"` following "Appendix — Show a person and wait (gate)".**
+   **The approval is taken by this session**; sub-agents cannot talk to the user.
    **The plan always waits, whatever Stop at says.** Write "what is wrong now" in `problem` and
    "what things look like when this is done" in `goal`, one to three sentences each, from the
    request and the issue read in step 1. The board's overview shows these, so do not restate the
@@ -123,10 +125,9 @@ in this procedure says what to tell them, not the words to use.
   comes back:
   1. Show `## Requirements` and `## Acceptance criteria` to the user in a few lines.
   2. If `## Open questions` is not empty, **ask a person here**. The agent cannot ask. Do not carry
-     them into the plan unresolved. Ask as `kind: "question"` in "Appendix — Show a person and wait
+     them into the plan unresolved. Ask as `kind: "question"` following "Appendix — Show a person and wait
      (gate)": put **only what needs deciding** in `focus`, and list the options in `choices` if there
-     are any. If the dashboard is not running, it falls back to `AskUserQuestion` (as the gate
-     section says). **This is the question asked most often.** Buried in a tab, it stalls for hours
+     are any. **This is the question asked most often.** Buried in a tab, it stalls for hours
      while the board shows the task as in progress.
   3. Save `## Knowledge to Save`:
      `lk add "<title>" --keywords "<kw1,kw2>" --category "<category>" --content "<content>" --json`
@@ -187,10 +188,10 @@ and what became of them in `findings` (how to write them is in "Appendix — Sho
 (gate)").
 
 - **When it waits**, put every rule that applied in `stoppedBy`, and write **the two or three points
-  that needed judgement** in `focus`. Do not retell the diff (it is attached). If the dashboard is
-  not running, ask the same in this tab with `AskUserQuestion`.
-- **When it is a record**, open it with `"wait": false` and go straight on to §4. If the dashboard
-  is not running, report the summary in this tab as usual and go on.
+  that needed judgement** in `focus`. Do not retell the diff (it is attached). Follow
+  "Appendix — Show a person and wait (gate)".
+- **When it is a record**, open it with `"wait": false` and go straight on to §4. Follow
+  "Appendix — Show a person and wait (gate)".
 
 ## 4. Hand over for verification
 
@@ -221,9 +222,8 @@ always opened**.
 **When it waits**, put every rule that applied in `stoppedBy`, and list **what to look at** in
 `focus`. This gate alone has a long piece of work before the decision. The board shows `IDE で開く`
 prominently, and the person presses OK / NG after coming back. So do not leave out `run` — if a
-person gets stuck there, that one card sits on the board for hours. If the dashboard is not
-running, tell the user directly "please verify this" (to open it in the editor, `adj ide --worktree
-.`).
+person gets stuck there, that one card sits on the board for hours. Follow
+"Appendix — Show a person and wait (gate)". (To open it in the editor, `adj ide --worktree .`).
 
 **When it is a record**, open it with `"wait": false` and go straight on (§5 if Done when is "up to
 a PR", or the final report here if it is "up to handing over for verification").
@@ -271,8 +271,10 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    cannot tell whether it is waiting for review or still being worked on.
 6. **Whether to ask Copilot for a review is decided by the brief's "Copilot review" line.** The hub
    writes it from the config's `copilotReview`:
-   - `ask` — `AskUserQuestion` "Request a review from Copilot?" — "Request it (Recommended)" /
-     "Do not request it".
+   - `ask` — open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
+     `title: "Request a review from Copilot?"`, `focus: "Should Copilot be asked to review this PR?"`,
+     `choices`: `[{"id": "request", "label": "Request it", "recommended": true}, {"id": "skip", "label": "Do not request it"}]`.
+     If `request` was approved or chosen, request it in step 7; if `skip`, skip step 7.
    - `always` — request it in step 7 without asking.
    - `never` — do not ask and do not request it. Skip step 7.
    If the line is missing, `-`, or any value other than these three, treat it as `ask`. A brief the
@@ -328,7 +330,11 @@ minutes and tell the user. If you did not ask for a review, skip this wait.
    them against the local code." The target is `owner/repo`, the PR number and the working
    directory `.`. Have it fetch every comment, check each against the current code, fold
    duplicates together, and return them classified as unresolved / fixed / declined / outdated.
-3. Show the unresolved list and ask which to address with `AskUserQuestion` (default: all `must`).
+3. Show the unresolved list and ask which to address following "Appendix — Show a person and wait (gate)":
+   open a `kind: "question"` gate (`title: "Review findings to address"`,
+   `focus: "Which unresolved review comments should be addressed?"`,
+   `choices`: e.g. `[{"id": "must", "label": "Address all must findings", "recommended": true}, {"id": "all", "label": "Address all findings (must and want)"}, {"id": "custom", "label": "Custom selection (specify in comment / Other)"}]`).
+   Default: all `must`.
    Include the items the agent flagged as **suspected false positives**, but mark them — Copilot is
    confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
 4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
@@ -403,7 +409,8 @@ fix, so there is no diff to review and no PR to open.
       **Run this before writing the report in the tab.** Write it first and it feels finished the
       moment it is written, and you move on to §9 without opening the gate.
    2. Look at the `server` that comes back. If `up`, say in one line that it is on the board and
-      **end the turn**. If `down`, there is no board, so write the report in this tab as usual.
+      **end the turn**. If `down`, there is no board, so close the gate with `adjutant_gate_close`
+      (or `adj gate close`) and write the report in this tab as usual.
    3. When woken after `up`, read `adj outbox`. `ack` (acknowledged) means done; `ask` (a follow-up
       question) means investigate further as the comment says and start again from 1.
 
@@ -421,9 +428,11 @@ ask the hub.**
 
 - **First check that no gate is still open** (`adj gate list`). If one remains, a person has not
   read it yet, so it is too early to ask for cleanup. Come back once it is closed.
-- **Do not send it on your own judgement.** First ask the user at this tab with `AskUserQuestion`
-  ("Ask for cleanup" / "Keep the worktree"). If they say keep it, do not send. What disappears is the
-  results, and that cannot be undone.
+- **Do not send it on your own judgement.** First ask the user following "Appendix — Show a person and wait (gate)":
+  open a `kind: "question"` gate (`title: "Work done: clean up worktree?"`,
+  `focus: "The work is done. Ask the hub to remove this worktree, or keep it for now?"`,
+  `choices`: `[{"id": "cleanup", "label": "Ask for cleanup", "recommended": true}, {"id": "keep", "label": "Keep the worktree"}]`).
+  If they choose to keep it, do not send. What disappears is the results, and that cannot be undone.
 - **Check for yourself before sending.** `git status --short` (uncommitted changes) and
   `git log --branches --not --remotes` (unpushed commits), plus where the results live (a PR, or a
   report only). **If anything is uncommitted or unpushed, deal with it before sending. If you
@@ -458,7 +467,8 @@ ask the hub.**
 ## Appendix — Show a person and wait (gate)
 
 **A gate is not "a question" but "something presented + handing the ball over".** Put what you
-prepared on the board, end the turn, and wait. The answer arrives in the outbox.
+prepared on the board, and while the board is up, ask in both places. The answer arrives in the
+outbox or right from the terminal prompt.
 
 ### Opening one
 
@@ -557,17 +567,18 @@ JSON
 
 ### After opening
 
-`adj gate open` returns **`server: "up"` or `"down"`**. Branch on it:
+`adj gate open` returns **`server: "up"` or `"down"`**, and for a waiting gate the **`wakeLine`** that will be typed when answered on the board (absent when terminal waking is turned off in settings). Branch on it:
 
 - **A record opened with `"wait": false`** — whatever `server` says, **do not wait, and do not end
   the turn.** The reply carries `"wait": false` and "go on with your work", so go straight on to the
   next step. Even on `down`, do not ask with `AskUserQuestion` (it is a record because there is
   nothing to ask).
-- **`up`** — say in one line that it is on the board and waiting for a decision, and **end the
-  turn**. Do not poll. Do not `sleep`.
-- **`down`** — the dashboard is not running. **Nobody will see it, so do not wait.** Ask with
-  `AskUserQuestion` right away, in this tab as usual. (The gate's file remains, but as a record,
-  not a place to meet.)
+- **When the gate waits (`wait: true`)**:
+  - **`up` with `wakeLine`** — the gate is open on the board and waking is enabled. **Ask the same thing with `AskUserQuestion` in this tab too** (a single-question prompt with options matching the gate's `choices`, or the default options such as "Approve (Recommended)" / "Request changes" / "Reject" for plan, or "Approve (Recommended)" / "Request changes" for diff / verify). Whichever answer comes first is taken:
+    - **Answered on the board**: Answering the gate on the board wakes the worker by typing `wakeLine` (or the default starting with `The hub sent you something...`) followed by Enter into the tab. That wake line lands in `AskUserQuestion` as a free-text response. When the response equals or contains the wake line (or starts with `The hub sent you something`), **do not treat it as the person's choice**. Call `adjutant_outbox` (or `adj outbox` in the worker tab), verify that the answer's `## gate` line matches the current gate ID, take the decision/chosen choice/comment from the outbox, and clear the outbox (`adjutant_outbox` `action: clear`). If the outbox message was for something else (such as a hub notice or question), handle that message and continue waiting for the gate answer.
+    - **Answered in the terminal**: When `AskUserQuestion` returns with an actual choice or comment from the user (not the wake line), **immediately close the gate on the board** with `adjutant_gate_close` (or `adj gate close --id {gate id}`) so the card does not linger on the board waiting. If `adjutant_gate_close` reports `alreadyAnswered: true` (or the gate was already answered on the board), the board answer arrived first: take the decision from the board/outbox instead. Otherwise, proceed with the choice made in the terminal.
+  - **`up` without `wakeLine`** (terminal waking disabled) — say in one line that it is on the board and waiting for a decision, and **end the turn**. Do not poll. Do not enter `AskUserQuestion` (because answering on the board cannot wake the tab).
+  - **`down`** — the dashboard is not running. **Nobody will see it on the board.** Close the gate with `adjutant_gate_close` (or `adj gate close --id {gate id}`) so it does not linger, and ask with `AskUserQuestion` in this tab as usual. Proceed with the terminal answer.
 
 ### When woken
 
@@ -593,7 +604,7 @@ this shape:
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
   moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
   through §3 again (opening a new gate or record). The record that was sent back stays as it is.
-- **Do not close a gate yourself.** It is closed once the answer arrives.
+- **Do not close a gate yourself when answered on the board.** Answering on the board archives it automatically. Close it with `adjutant_gate_close` (or `adj gate close --id {gate id}`) only when the person answered in the terminal tab instead, or when `server` was `down`.
 
 ### Do not
 
@@ -682,10 +693,13 @@ reviewer who reads only the diff.
 Run round 1 first, show the results in order of severity (High → Medium → Low), then:
 
 - No valid must survived triage → already converged. Report and move on.
-- Otherwise `AskUserQuestion` "Fix the findings and keep reviewing until it converges?"
-  - **Keep going (Recommended)** → from then on, run to convergence **without asking each round**.
-  - **Fix once** → fix once, re-review once, and stop.
-  - **Do not fix** → skip and move on.
+- Otherwise open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
+  `title: "Self-review: continue until convergence?"`,
+  `focus: "Self-review round 1 found must-level issues. Should I continue reviewing and fixing until convergence?"`,
+  `choices`: `[{"id": "continue", "label": "Keep going", "recommended": true}, {"id": "once", "label": "Fix once"}, {"id": "skip", "label": "Do not fix"}]`.
+  - **Keep going (Recommended)** (choice: `continue`) → from then on, run to convergence **without asking each round**.
+  - **Fix once** (choice: `once`) → fix once, re-review once, and stop.
+  - **Do not fix** (choice: `skip`) → skip and move on.
   - In either of the last two, if a valid must is left, stop the diff gate in §3 on `unsure`
     ("Appendix — Wait or record").
 

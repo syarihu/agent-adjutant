@@ -68,7 +68,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
         !procedure.starts_with("---"),
         "frontmatter leaked into the procedure"
     );
-    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 10);
 
     let hub = tool_result(&replies[4]);
     assert_eq!(hub["hubName"], HUB);
@@ -303,6 +303,197 @@ fn a_record_kept_through_the_server_is_one_the_cli_can_show() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn a_waiting_gate_opened_and_closed_through_the_server() {
+    let fixture = Fixture::new(QUIET);
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "plan",
+                    "title": "計画の承認",
+                    "problem": "問題",
+                    "goal": "目標",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let opened = tool_result(&replies[0]);
+    assert_eq!(opened["server"], "down");
+    assert!(
+        opened["wakeLine"]
+            .as_str()
+            .unwrap()
+            .contains("adjutant_outbox")
+    );
+    let id = opened["gate"]["id"].as_str().unwrap();
+
+    let replies = mcp(
+        &fixture,
+        &[request(
+            2,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id,
+                    "comment": "answered in terminal",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let closed = tool_result(&replies[0]);
+    assert_eq!(closed["closed"], true);
+    assert_eq!(closed["alreadyAnswered"], false);
+    assert_eq!(closed["gate"]["decision"], "closed");
+    assert_eq!(closed["gate"]["comment"], "answered in terminal");
+
+    // Calling close again on an already archived gate succeeds idempotently
+    let replies = mcp(
+        &fixture,
+        &[request(
+            3,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id,
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let closed_again = tool_result(&replies[0]);
+    assert_eq!(closed_again["closed"], true);
+    assert_eq!(closed_again["alreadyAnswered"], false);
+
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // When a gate was already answered on the board, closing it reports alreadyAnswered
+    let replies = mcp(
+        &fixture,
+        &[request(
+            4,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "question",
+                    "title": "Board question",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let opened2 = tool_result(&replies[0]);
+    let id2 = opened2["gate"]["id"].as_str().unwrap();
+    fixture.ok(&["gate", "answer", "--id", id2, "--decision", "approve"]);
+
+    let replies = mcp(
+        &fixture,
+        &[request(
+            5,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id2,
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let close_answered = tool_result(&replies[0]);
+    assert_eq!(close_answered["closed"], false);
+    assert_eq!(close_answered["alreadyAnswered"], true);
+    assert_eq!(close_answered["gate"]["decision"], "approve");
+
+    // An MCP process running outside the repository (e.g. in state directory)
+    // resolves worktree from the passed cwd.
+    let replies = mcp_in(
+        &fixture,
+        &fixture.state,
+        &[request(
+            6,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_outbox",
+                "arguments": {
+                    "action": "read",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let outbox = tool_result(&replies[0]);
+    assert!(outbox["content"].as_str().unwrap().contains("approve"));
+
+    // An empty worktree string also falls back to cwd
+    let replies = mcp_in(
+        &fixture,
+        &fixture.state,
+        &[request(
+            7,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_outbox",
+                "arguments": {
+                    "action": "read",
+                    "worktree": "",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let outbox_empty_wt = tool_result(&replies[0]);
+    assert!(
+        outbox_empty_wt["content"]
+            .as_str()
+            .unwrap()
+            .contains("approve")
+    );
+}
+
+#[test]
+fn a_gate_opened_with_waking_off_omits_the_wake_line() {
+    let fixture = Fixture::new(
+        r#"{"workerWake": false,
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {"acme/widget": "WID"}, "ide": "code"}}}"#,
+    );
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "plan",
+                    "title": "計画の承認",
+                    "problem": "問題",
+                    "goal": "目標",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let opened = tool_result(&replies[0]);
+    assert!(opened.get("wakeLine").is_none());
 }
 
 /// An MCP server started with a hub's line, talked to until it has said where the board is.

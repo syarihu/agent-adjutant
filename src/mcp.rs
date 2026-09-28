@@ -261,6 +261,7 @@ fn tool_definitions() -> Value {
                 "properties": {
                     "action": { "type": "string", "enum": ["read", "clear"], "description": "Default: read." },
                     "worktree": { "type": "string", "description": "Default: the server's working directory." },
+                    "cwd": cwd_property(),
                 },
             },
         },
@@ -298,6 +299,21 @@ fn tool_definitions() -> Value {
                     "cwd": cwd_property(),
                 },
                 "required": ["kind", "title"],
+            },
+        },
+        {
+            "name": "adjutant_gate_close",
+            "description": "Archive an open gate without delivering an answer to the outbox, the same as `adj gate close`: used when the question was answered directly in the terminal tab or rendered moot, so the gate does not stay on the board waiting.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The gate id to close." },
+                    "comment": { "type": "string", "description": "Optional reason for closing." },
+                    "repo": repo_property(),
+                    "hub": hub_property(),
+                    "cwd": cwd_property(),
+                },
+                "required": ["id"],
             },
         },
         {
@@ -471,7 +487,12 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             }))
         }
         "adjutant_outbox" => {
-            let worktree = match args["worktree"].as_str().filter(|s| !s.is_empty()) {
+            let worktree = match args["worktree"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or_else(|| args["cwd"].as_str())
+                .filter(|s| !s.is_empty())
+            {
                 Some(path) => config::expand_home(path),
                 None => std::env::current_dir()
                     .map_err(|e| format!("cannot determine the current directory: {e}"))?,
@@ -515,7 +536,15 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 fields.insert("worktree".to_string(), json!(here));
             }
             let (gate, served) = crate::cmd::gate_open_payload(&ctx, &payload)?;
-            Ok(crate::cmd::gate_open_json(&gate, served))
+            Ok(crate::cmd::gate_open_json(&ctx, &gate, served))
+        }
+        "adjutant_gate_close" => {
+            let id = args["id"].as_str().ok_or("a gate needs an id")?;
+            let comment = args.get("comment").and_then(Value::as_str);
+            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let gate = crate::cmd::gate_close_payload(&ctx, id, comment)?;
+            let closed = gate.decision.as_deref() == Some("closed");
+            Ok(json!({ "gate": gate, "closed": closed, "alreadyAnswered": !closed }))
         }
         "adjutant_refresh" => {
             let ctx = crate::cmd::context_of(resolve_repo(args)?)?;

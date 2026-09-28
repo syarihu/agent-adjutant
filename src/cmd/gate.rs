@@ -330,8 +330,20 @@ pub fn answer(
 /// Used when the conversation happened directly in a terminal tab, or when a gate was
 /// rendered moot. It leaves the gate in `answered/` with decision "closed" so the record
 /// survives, but skips the delivery and the wake.
+///
+/// If the gate was already answered and archived on the board, returns the existing archived gate
+/// rather than failing: the caller can inspect whether `decision` is "closed" or an actual
+/// decision made on the board.
 pub fn close(ctx: &Context, id: &str, comment: Option<&str>) -> Result<Gate, String> {
-    let mut gate = gate::load(&dir(ctx), id)?;
+    let mut gate = match gate::load(&dir(ctx), id) {
+        Ok(g) => g,
+        Err(e) => {
+            if let Ok(archived) = gate::load(&answered_dir(ctx), id) {
+                return Ok(archived);
+            }
+            return Err(e);
+        }
+    };
     gate.decision = Some("closed".to_string());
     gate.comment = comment
         .map(str::trim)
@@ -398,7 +410,7 @@ pub fn open_cmd(
     let (gate, served) = open(&ctx, &payload)?;
 
     if as_json {
-        println!("{}", open_json(&gate, served));
+        println!("{}", open_json(&ctx, &gate, served));
         return Ok(());
     }
     println!("{} — {}", gate.id, gate.title);
@@ -439,11 +451,20 @@ const RECORDED: &str = "Kept as a record: nobody is asked to answer it. Do not w
 
 /// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
 /// branch on it the same way whichever it used.
-pub fn open_json(gate: &Gate, served: bool) -> Value {
+pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
     let mut out = json!({ "gate": gate, "server": if served { "up" } else { "down" } });
     if !gate.wait {
         out["wait"] = json!(false);
         out["note"] = json!(RECORDED);
+    } else {
+        let (wake, default_line) = if gate.answered_by_hub() {
+            (&ctx.settings.hub_wake, crate::terminal::HUB_WAKE_LINE)
+        } else {
+            (&ctx.settings.worker_wake, crate::terminal::WORKER_WAKE_LINE)
+        };
+        if !wake.hook.is_off() {
+            out["wakeLine"] = json!(wake.line_or(default_line));
+        }
     }
     out
 }
@@ -533,6 +554,7 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     Ok(())
 }
 
+/// Arguments for `adj gate close`.
 pub struct CloseArgs<'a> {
     pub repo: Option<&'a str>,
     pub hub: Option<&'a str>,
@@ -541,13 +563,26 @@ pub struct CloseArgs<'a> {
     pub json: bool,
 }
 
+/// `adj gate close`: archive an open gate from the command line.
 pub fn close_cmd(args: &CloseArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
     let gate = close(&ctx, args.id, args.comment)?;
+    let closed = gate.decision.as_deref() == Some("closed");
     if args.json {
-        println!("{}", json!({ "gate": gate, "closed": true }));
+        println!(
+            "{}",
+            json!({ "gate": gate, "closed": closed, "alreadyAnswered": !closed })
+        );
         return Ok(());
     }
-    println!("{} → closed", gate.id);
+    if closed {
+        println!("{} → closed", gate.id);
+    } else {
+        println!(
+            "{} → already answered ({})",
+            gate.id,
+            gate.decision.as_deref().unwrap_or("unknown")
+        );
+    }
     Ok(())
 }
