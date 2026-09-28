@@ -713,7 +713,61 @@ fn the_board_state_reports_main_worker_from_saved_session_when_unregistered() {
     assert_eq!(main_worker["hub"], "hub-parent-main-saved");
     assert_eq!(main_worker["present"], false);
     assert_eq!(main_worker["stale"], false);
-    assert_eq!(main_worker["startedAt"], "20260928T120000Z");
+    assert!(main_worker.get("startedAt").is_none());
+    assert!(main_worker.get("task").is_none());
+
+    board.kill().unwrap();
+    board.wait().unwrap();
+}
+
+#[test]
+fn the_board_state_reports_linked_worker_from_saved_session_when_unregistered() {
+    let fixture = Fixture::new(QUIET);
+    let worktree_dir = fixture.repo.join("worktree-saved-1");
+    let out = Command::new("git")
+        .hermetic()
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "saved-1",
+            worktree_dir.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let claude_dir = worktree_dir.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-session.json"),
+        serde_json::json!({
+            "sessionId": "sid-linked-saved",
+            "title": "Saved linked worker task",
+            "hub": "parent-linked-saved",
+            "savedAt": "20260928T120000Z",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+
+    let hubs = state["hubs"].as_array().expect("hubs array");
+    assert!(hubs.iter().any(|h| h["key"] == "parent-linked-saved"));
+
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let worker_sess = sessions
+        .iter()
+        .find(|s| s["id"] == "worker-worktree-saved-1")
+        .expect("worker session found");
+    assert_eq!(worker_sess["kind"], "worker");
+    assert_eq!(worker_sess["title"], "Saved linked worker task");
+    assert_eq!(worker_sess["hub"], "hub-parent-linked-saved");
+    assert_eq!(worker_sess["present"], false);
 
     board.kill().unwrap();
     board.wait().unwrap();

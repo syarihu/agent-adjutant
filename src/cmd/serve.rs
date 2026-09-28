@@ -578,14 +578,22 @@ fn state(server: &Server) -> Value {
 
     // 2. Worker sessions from linked worktrees
     for (path, (status, branch)) in linked_paths.iter().zip(workers_data) {
-        let record_json = messaging::read_json(&messaging::worker_record_path(Path::new(path)));
+        let wt_path = Path::new(path);
+        let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
+        let saved_session = messaging::worker_session(wt_path);
         let parent_hub = match record_json
             .as_ref()
             .and_then(|r| r.get("hub"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
-        {
+            .or_else(|| {
+                saved_session
+                    .as_ref()
+                    .and_then(|s| s.hub.as_deref())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            }) {
             Some(hub_key) => {
                 let worker_slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
                 hubs.iter()
@@ -624,6 +632,8 @@ fn state(server: &Server) -> Value {
                     .map(str::to_string)
             });
 
+        let title = status.title.or_else(|| saved_session.and_then(|s| s.title));
+
         sessions.push(session::Session {
             id: format!("worker-{worktree_name}"),
             kind: "worker".to_string(),
@@ -634,7 +644,7 @@ fn state(server: &Server) -> Value {
             worktree: path.clone(),
             branch,
             task: task_id,
-            title: status.title,
+            title,
             present: status.present,
             stale: status.stale,
             pid: status.pid,
@@ -722,14 +732,6 @@ fn state(server: &Server) -> Value {
         };
         let terminal = build_session_terminal(terminal_settings, &tmux_panes, None);
 
-        let task_id = tasks.iter().find_map(|t| {
-            if t.get("worktree").and_then(Value::as_str) == Some(repo.main.as_str()) {
-                t.get("id").and_then(Value::as_str).map(str::to_string)
-            } else {
-                None
-            }
-        });
-
         sessions.push(session::Session {
             id: "worker-main".to_string(),
             kind: "worker".to_string(),
@@ -739,12 +741,12 @@ fn state(server: &Server) -> Value {
             key: None,
             worktree: repo.main.clone(),
             branch: main_branch,
-            task: task_id,
+            task: None,
             title: saved.title,
             present: false,
             stale: false,
             pid: None,
-            started_at: saved.saved_at,
+            started_at: None,
             phase: None,
             phase_at: None,
         });
