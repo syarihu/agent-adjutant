@@ -619,16 +619,7 @@ fn state(server: &Server) -> Value {
             .as_ref()
             .and_then(|r| r.get("task"))
             .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                tasks.iter().find_map(|t| {
-                    if t.get("worktree").and_then(Value::as_str) == Some(path.as_str()) {
-                        t.get("id").and_then(Value::as_str).map(str::to_string)
-                    } else {
-                        None
-                    }
-                })
-            });
+            .map(str::to_string);
 
         let title = status.title.or_else(|| saved_session.and_then(|s| s.title));
 
@@ -681,16 +672,7 @@ fn state(server: &Server) -> Value {
         let task_id = record_json
             .get("task")
             .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                tasks.iter().find_map(|t| {
-                    if t.get("worktree").and_then(Value::as_str) == Some(repo.main.as_str()) {
-                        t.get("id").and_then(Value::as_str).map(str::to_string)
-                    } else {
-                        None
-                    }
-                })
-            });
+            .map(str::to_string);
 
         sessions.push(session::Session {
             id: "worker-main".to_string(),

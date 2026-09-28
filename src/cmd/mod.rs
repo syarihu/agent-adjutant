@@ -724,6 +724,9 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
     if let Some(hub) = &ctx.repo.hub {
         parts.push(format!("--hub={hub}"));
     }
+    if let Some(task) = task_id {
+        parts.push(format!("--task={task}"));
+    }
     let name_it = title_command(&ctx.settings, title);
     spawn_worker(
         &ctx,
@@ -1701,16 +1704,30 @@ fn resume_template<'a>(configured: Option<&'a str>, key: &str) -> Result<Option<
 /// The mirror image of `hub`: write down who we are, then become the agent. Running the
 /// agent as a child instead would record a PID that exits the moment the agent does
 /// anything, and waking a dead launcher wakes nobody.
-pub fn worker(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    worktree: Option<&str>,
-    title: Option<&str>,
-    prompt: Option<&str>,
-    resume: bool,
-    dry_run: bool,
-) -> Result<(), String> {
+pub struct WorkerArgs<'a> {
+    pub repo: Option<&'a str>,
+    pub hub: Option<&'a str>,
+    pub worktree: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub task: Option<&'a str>,
+    pub prompt: Option<&'a str>,
+    pub resume: bool,
+    pub dry_run: bool,
+}
+
+pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
+
+    let WorkerArgs {
+        repo: repo_arg,
+        hub: hub_arg,
+        worktree,
+        title,
+        task,
+        prompt,
+        resume,
+        dry_run,
+    } = *args;
 
     let worktree = worker_worktree(worktree)?;
     let resumed = match resume {
@@ -1794,7 +1811,7 @@ pub fn worker(
         .map_err(|e| format!("cannot change directory to {}: {e}", worktree.display()))?;
     // The address goes into the record here, at the last moment before this process stops
     // being a launcher. Everything the worker's agent later sends is addressed from it.
-    messaging::register_worker(&worktree, &title, ctx.repo.hub.as_deref())?;
+    messaging::register_worker(&worktree, &title, ctx.repo.hub.as_deref(), task)?;
     // Said and got past, as for the hub: a worker that cannot be resumed still works. And as
     // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
     if resumed.is_none() {

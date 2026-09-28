@@ -264,6 +264,9 @@ enum Commands {
         /// Reopen the worker session saved in this worktree instead of starting a new one
         #[arg(long)]
         resume: bool,
+        /// The task record ID when one is linked
+        #[arg(long)]
+        task: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -939,18 +942,20 @@ pub fn run() -> ! {
             hub,
             worktree,
             title,
+            task,
             prompt,
             resume,
             dry_run,
-        } => cmd::worker(
-            repo.as_deref(),
-            hub.as_deref(),
-            worktree.as_deref(),
-            title.as_deref(),
-            prompt.as_deref(),
-            *resume,
-            *dry_run,
-        )
+        } => cmd::worker(&cmd::WorkerArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            worktree: worktree.as_deref(),
+            title: title.as_deref(),
+            task: task.as_deref(),
+            prompt: prompt.as_deref(),
+            resume: *resume,
+            dry_run: *dry_run,
+        })
         .map(|_| 0),
         Commands::Tell {
             repo,

@@ -800,7 +800,12 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
 /// agent about to be `exec`ed here reports with no address in its hands, so the address has
 /// to be somewhere it can be found from the worktree. Omitted entirely when there is none,
 /// so a record written by this version and read by any other says the same thing.
-pub fn register_worker(worktree: &Path, title: &str, hub: Option<&str>) -> Result<PathBuf, String> {
+pub fn register_worker(
+    worktree: &Path,
+    title: &str,
+    hub: Option<&str>,
+    task: Option<&str>,
+) -> Result<PathBuf, String> {
     let path = worker_record_path(worktree);
     let mut record = json!({
         "pid": std::process::id(),
@@ -812,6 +817,11 @@ pub fn register_worker(worktree: &Path, title: &str, hub: Option<&str>) -> Resul
         && let Some(fields) = record.as_object_mut()
     {
         fields.insert("hub".to_string(), json!(hub));
+    }
+    if let Some(task) = said(task)
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("task".to_string(), json!(task));
     }
     write_json(&path, &record)?;
     // The slot is held by the record from here on. Failing to drop the marker only keeps it
@@ -2028,7 +2038,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         save_worker_session(dir.path(), "WID-1 fix", Some("ALPHA-1"), "sid-w").unwrap();
         // `close` clears the presence record; the session is not its to clear.
-        register_worker(dir.path(), "WID-1 fix", Some("ALPHA-1")).unwrap();
+        register_worker(dir.path(), "WID-1 fix", Some("ALPHA-1"), None).unwrap();
         unregister_worker(dir.path()).unwrap();
         let saved = worker_session(dir.path()).unwrap();
         assert_eq!(saved.session_id, "sid-w");
@@ -2238,7 +2248,7 @@ mod tests {
             );
         }
 
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         let WorkerRecord::Named(worker) = read_worker(worktree) else {
             panic!("a record this process just wrote does not name it");
         };
@@ -2295,7 +2305,7 @@ mod tests {
     fn a_record_is_only_cleared_while_it_still_names_the_worker_it_was_read_from() {
         let dir = tempfile::tempdir().unwrap();
         let worktree = dir.path();
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         let WorkerRecord::Named(worker) = read_worker(worktree) else {
             panic!("a record this process just wrote does not name it");
         };
@@ -2314,7 +2324,7 @@ mod tests {
         );
 
         // Its own record it may clear, and a record already gone is the outcome it wanted.
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         let WorkerRecord::Named(worker) = read_worker(worktree) else {
             panic!("a record this process just wrote does not name it");
         };
@@ -2379,7 +2389,7 @@ mod tests {
 
         // The record alone. This is the worker's case, and the only one where the answer
         // comes from where the caller is standing rather than from what it was told.
-        register_worker(worktree, "WID-957", Some("from-record")).unwrap();
+        register_worker(worktree, "WID-957", Some("from-record"), None).unwrap();
         assert_eq!(
             hub_id(None, Some(worktree)).unwrap().as_deref(),
             Some("from-record")
@@ -2421,7 +2431,7 @@ mod tests {
         // worker` runs in a tab opened at the worktree it is about to register in, so
         // reading a record there is reading somebody else's answer, or one's own from a
         // previous life.
-        register_worker(worktree, "WID-957", Some("from-record")).unwrap();
+        register_worker(worktree, "WID-957", Some("from-record"), None).unwrap();
         assert_eq!(
             hub_id(None, Some(worktree)).unwrap().as_deref(),
             Some("from-record")
@@ -2435,7 +2445,7 @@ mod tests {
         // A worker dispatched by a repository's own hub records no identifier at all, and
         // the key is absent rather than null: a record this version writes has to read the
         // same way to every other version of this tool on the machine.
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         assert_eq!(hub_id(None, Some(worktree)).unwrap(), None);
         assert!(
             read_json(&worker_record_path(worktree))
@@ -3020,7 +3030,7 @@ mod tests {
         let worktree = dir.path();
         assert!(!holds_worker_slot(worktree, now_secs()));
 
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         assert!(holds_worker_slot(worktree, now_secs()));
 
         // A pid that is not running. Counting it would hold the slot for good, since nothing
@@ -3076,7 +3086,7 @@ mod tests {
         assert!(!holds_worker_slot(worktree, now - 3600));
 
         // Registering takes the marker away: from then on the record answers.
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         assert!(!starting_marker_path(worktree).exists());
         unregister_worker(worktree).unwrap();
         assert!(!holds_worker_slot(worktree, now));
@@ -3132,7 +3142,7 @@ mod tests {
         // Nobody registered: there is no run of a worker to describe.
         assert!(set_worker_phase(worktree, "plan").is_err());
 
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         set_worker_phase(worktree, "implement").unwrap();
         let status = worker_status(worktree);
         assert_eq!(status.phase.as_deref(), Some("implement"));
@@ -3148,7 +3158,7 @@ mod tests {
 
         assert!(set_worker_phase(worktree, "implementing").is_err());
         // A worker started again writes its record fresh, and starts without a phase.
-        register_worker(worktree, "WID-957", None).unwrap();
+        register_worker(worktree, "WID-957", None, None).unwrap();
         assert_eq!(worker_status(worktree).phase, None);
     }
 
@@ -3310,5 +3320,19 @@ mod tests {
         assert_eq!(hubs[0].id, "hub");
         assert_eq!(hubs[1].id, "hub-unregistered-worker-hub");
         assert_eq!(hubs[1].key.as_deref(), Some("unregistered-worker-hub"));
+    }
+
+    #[test]
+    fn register_worker_persists_task_id_when_provided() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957", Some("hub-1"), Some("task-wid-957")).unwrap();
+        let record = read_json(&worker_record_path(worktree)).unwrap();
+        assert_eq!(
+            record.get("task").and_then(Value::as_str),
+            Some("task-wid-957")
+        );
+        assert_eq!(record.get("hub").and_then(Value::as_str), Some("hub-1"));
+        assert_eq!(record.get("title").and_then(Value::as_str), Some("WID-957"));
     }
 }
