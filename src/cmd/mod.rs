@@ -1833,14 +1833,15 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     } else if let Some(saved) = &resumed
         && task.is_some()
         && task != saved.task.as_deref()
-    {
-        let _ = messaging::save_worker_session(
+        && let Err(e) = messaging::save_worker_session(
             &worktree,
             &title,
             ctx.repo.hub.as_deref(),
             task,
             &saved.session_id,
-        );
+        )
+    {
+        eprintln!("adjutant: {e}; --resume may not reopen this worker with the updated task");
     }
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on

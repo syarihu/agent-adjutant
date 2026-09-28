@@ -443,9 +443,25 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
     use crate::session::{RepoHub, RepoHubState};
     use std::collections::HashMap;
 
+    let (default_slug, default_hub_name) = match &repo.hub {
+        Some(_) => {
+            let default_repo = repo.clone().addressed(None).unwrap_or_else(|_| repo.clone());
+            (default_repo.slug, default_repo.hub_name)
+        }
+        None => (repo.slug.clone(), repo.hub_name.clone()),
+    };
+
     let mut hubs_by_slug: HashMap<String, (Option<String>, String)> = HashMap::new();
-    // 1. Always include the repository hub itself.
-    hubs_by_slug.insert(repo.slug.clone(), (None, repo.hub_name.clone()));
+    // 1. Always include the repository default hub itself.
+    hubs_by_slug.insert(default_slug.clone(), (None, default_hub_name));
+
+    // If the repo context explicitly addresses a parent hub, ensure it is also included.
+    if let Some(hub_key) = &repo.hub {
+        hubs_by_slug.insert(
+            repo.slug.clone(),
+            (Some(hub_key.clone()), repo.hub_name.clone()),
+        );
+    }
 
     // 2. Discover from state_dir/hubs
     let hubs_dir = state_dir().join("hubs");
@@ -547,7 +563,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
         .into_iter()
         .map(|(slug, (mut key, hub_name))| {
             if key.is_none()
-                && slug != repo.slug
+                && slug != default_slug
                 && let Some(session) = read_session(&hub_session_path(&slug))
             {
                 key = session.hub;
@@ -556,7 +572,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
             let inbox_count = list(&slug).len();
             let id = match &key {
                 Some(k) => format!("hub-{}", k.trim()),
-                None if slug == repo.slug => "hub".to_string(),
+                None if slug == default_slug => "hub".to_string(),
                 None => format!("hub-{slug}"),
             };
             RepoHub {
@@ -575,10 +591,10 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
         })
         .collect();
 
-    // Repository hub first, then sorted by id
+    // Repository default hub first, then sorted by id
     result.sort_by(|a, b| {
-        let a_is_repo = a.slug == repo.slug;
-        let b_is_repo = b.slug == repo.slug;
+        let a_is_repo = a.slug == default_slug;
+        let b_is_repo = b.slug == default_slug;
         match (a_is_repo, b_is_repo) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
@@ -3351,5 +3367,30 @@ mod tests {
         );
         assert_eq!(record.get("hub").and_then(Value::as_str), Some("hub-1"));
         assert_eq!(record.get("title").and_then(Value::as_str), Some("WID-957"));
+    }
+
+    #[test]
+    fn all_repo_hubs_seeds_default_hub_when_repo_addresses_parent_hub() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().to_string_lossy().to_string();
+        let repo = crate::repo::RepoInfo {
+            main: main_path,
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: Some("WID-100".to_string()),
+            slug: "acme-widget-wid-100".to_string(),
+            hub_name: "adjutant-wid-100".to_string(),
+            nwo_source: "dirname",
+        };
+
+        let hubs = all_repo_hubs(&repo);
+        assert_eq!(hubs.len(), 2);
+        assert_eq!(hubs[0].id, "hub");
+        assert_eq!(hubs[0].slug, crate::repo::slug_for("acme/widget", None));
+        assert_eq!(hubs[0].key, None);
+        assert_eq!(hubs[1].id, "hub-WID-100");
+        assert_eq!(hubs[1].slug, "acme-widget-wid-100");
+        assert_eq!(hubs[1].key.as_deref(), Some("WID-100"));
     }
 }

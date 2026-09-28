@@ -618,12 +618,13 @@ fn state(server: &Server) -> Value {
         let (saved_title, saved_task) =
             saved_session.map(|s| (s.title, s.task)).unwrap_or_default();
 
-        let task_id = record_json
-            .as_ref()
-            .and_then(|r| r.get("task"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or(saved_task);
+        let task_id = match record_json.as_ref() {
+            Some(record) => record
+                .get("task")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            None => saved_task,
+        };
 
         let title = status.title.or(saved_title);
 
