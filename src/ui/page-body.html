@@ -18,25 +18,25 @@
 
   <div class="rail-destinations">
     <div class="rail-section-label">ボード</div>
-    <button class="rail-item" data-tab="human" title="あなたの確認を待っているもの" onclick="showBoard('human')">
-      <span class="material-symbols-outlined">person</span>
+    <button type="button" class="rail-item" data-tab="human" title="あなたの確認を待っているもの" onclick="showBoard('human')">
+      <span class="material-symbols-outlined" aria-hidden="true">person</span>
       <span class="rail-text"><span>人</span><span class="rail-sub">あなたの確認待ち</span></span>
       <span class="rail-badge" id="human-badge">0</span>
     </button>
-    <button class="rail-item" data-tab="agent" title="worker の工程" onclick="showBoard('agent')">
-      <span class="material-symbols-outlined">smart_toy</span>
+    <button type="button" class="rail-item" data-tab="agent" title="worker の工程" onclick="showBoard('agent')">
+      <span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>
       <span class="rail-text"><span>エージェント</span><span class="rail-sub">worker の工程</span></span>
       <span class="rail-count" id="agent-count" title="作業中の worker">0</span>
     </button>
 
     <div class="rail-view">
       <div class="m3-segmented-tabs" id="layout-switch">
-        <button class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined">tab</span>タブ</button>
-        <button class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined">splitscreen</span>並べる</button>
+        <button type="button" class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>タブ</button>
+        <button type="button" class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
       </div>
       <div class="m3-segmented-tabs" id="arrange-switch">
-        <button class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined">splitscreen_top</span>人を上</button>
-        <button class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined">splitscreen_left</span>人を左</button>
+        <button type="button" class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
+        <button type="button" class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
       </div>
     </div>
 

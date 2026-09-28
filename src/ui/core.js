@@ -26,8 +26,16 @@ function applyLayout() {
     if (b.dataset.tab === prefs.tab && view === 'board') b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  document.querySelectorAll('[data-layout]').forEach(b => b.classList.toggle('active', b.dataset.layout === prefs.layout));
-  document.querySelectorAll('[data-arrange]').forEach(b => b.classList.toggle('active', b.dataset.arrange === prefs.arrange));
+  document.querySelectorAll('[data-layout]').forEach(b => {
+    const on = b.dataset.layout === prefs.layout;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  document.querySelectorAll('[data-arrange]').forEach(b => {
+    const on = b.dataset.arrange === prefs.arrange;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
   savePrefs();
 }
 window.setBoardLayout = function(layout) { prefs.layout = layout; applyLayout(); };
@@ -193,6 +201,8 @@ function waitTone(mins) {
 }
 
 function columnOf(t) {
+  // Human-owned moves and the hand-over form key off the status-level columns.
+  if (t && (t.status === 'backlog' || t.status === 'queued')) return t.status;
   const hc = humanColOf(t);
   if (hc) return hc;
   return agentColOf(t);
@@ -200,11 +210,7 @@ function columnOf(t) {
 
 /* The only human-owned moves. Everything else belongs to the hub and its workers. */
 const ALLOWED = { backlog:['queued'], queued:['backlog','queued'] };
-const canDrop = (from, to) => {
-  if (from === 'backlog' && to === 'queued') return true;
-  if (from === 'queued' && (to === 'backlog' || to === 'queued')) return true;
-  return (ALLOWED[from] || []).includes(to);
-};
+const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 

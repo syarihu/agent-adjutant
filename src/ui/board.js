@@ -205,29 +205,34 @@ async function act(action, id, choice) {
     case 'answer':
     case 'ask': {
       openReplies[id] = action;
-      renderColumns();
+      renderColumns(true);
       const ta = document.querySelector(`textarea[data-reply="${id}"]`);
       if (ta) ta.focus();
       return;
     }
     case 'cancel': {
       delete openReplies[id];
-      renderColumns();
+      renderColumns(true);
       return;
     }
     case 'start': {
       if (gate) {
-        await answer('approve', undefined, gate.id);
+        await answer('approve', undefined, gate.id, '');
       } else if (t) {
-        await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
-          method: 'POST', body: JSON.stringify({ autoStart: true }),
-        });
+        try {
+          await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+            method: 'POST', body: JSON.stringify({ autoStart: true }),
+          });
+        } catch (e) {
+          note(`adj task update --id ${t.id} → ${e.message}`, true);
+          return;
+        }
       }
       break;
     }
     case 'shelve': {
       if (gate) {
-        await answer('reject', undefined, gate.id);
+        await answer('reject', undefined, gate.id, '');
       } else if (t) {
         await move(t.id, 'backlog');
       }
@@ -236,13 +241,13 @@ async function act(action, id, choice) {
     case 'approve': {
       const decision = gate?.kind === 'result' ? 'ack' : 'approve';
       if (gate) {
-        await answer(decision, undefined, gate.id, reply || null);
+        await answer(decision, undefined, gate.id, reply);
       }
       break;
     }
     case 'choice': {
       if (gate && choice) {
-        await answer('choice', choice, gate.id, reply || null);
+        await answer('choice', choice, gate.id, reply);
       }
       break;
     }
@@ -256,10 +261,15 @@ async function act(action, id, choice) {
     case 'send-changes': {
       if (gate) {
         await answer('changes', undefined, gate.id, reply || '修正指示');
-      } else if (t) {
-        await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
-          method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
-        });
+      } else if (t && reply) {
+        try {
+          await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+            method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
+          });
+        } catch (e) {
+          note(`adj task update --id ${t.id} → ${e.message}`, true);
+          return;
+        }
       }
       break;
     }
@@ -281,6 +291,7 @@ async function act(action, id, choice) {
     }
   }
   delete openReplies[id];
+  renderColumns(true);
   await refresh(true);
 }
 
@@ -531,7 +542,7 @@ function humanGateCard(gate, col) {
     ${humanGateActions(gate, col)}
     <div class="hcard-foot">
       <span>${esc(wtName)}</span>
-      <button type="button" class="btn-m3-text" style="padding:0;font-size:11px;" onclick="judgeGate('${esc(gate.id)}')">詳細判定画面 →</button>
+      <button type="button" class="btn-m3-text" style="padding:0;font-size:11px;" data-gate="${esc(gate.id)}">詳細判定画面 →</button>
     </div>
   `;
 
@@ -712,11 +723,19 @@ function agentCard(task) {
   return el;
 }
 
+let boardHeld = false;
 /* Draws the columns afresh across both Human board and Agent board. */
-function renderColumns() {
+function renderColumns(force = false) {
   const hb = document.getElementById('board-human');
   const ab = document.getElementById('board-agent');
   if (!hb && !ab) return;
+
+  // Same rule as redrawReview: a redraw loses the IME composition being typed.
+  if (!force && document.activeElement?.matches('textarea[data-reply]')) {
+    boardHeld = true;
+    return;
+  }
+  boardHeld = false;
 
   // Preserve scroll positions
   const scrolled = {};
@@ -1301,6 +1320,7 @@ function renderHandForm(task) {
 }
 
 document.addEventListener('click', e => {
+  if (!e.target.closest('#boards')) return;
   const a = e.target.closest('[data-act]');
   if (a) {
     e.stopPropagation();
@@ -1352,6 +1372,14 @@ document.addEventListener('keydown', e => {
       if (open) act(`send-${open}`, id);
     }
   }
+});
+
+document.getElementById('boards')?.addEventListener('focusout', e => {
+  if (!boardHeld || !e.target.matches('textarea[data-reply]')) return;
+  setTimeout(() => {
+    if (!boardHeld || document.activeElement?.matches('textarea[data-reply]')) return;
+    renderColumns();
+  });
 });
 
 

@@ -348,9 +348,9 @@ minutes and tell the user. If you did not ask for a review, skip this wait.
      in the PR body rather than in the thread.
    - **Human reviewers may be replied to.** Then first read `skills.commentStyle` from the config
      if there is one, show a draft, and post only once it is approved. Do not let an agent post it.
-7. Loop back to step 2 until nothing is unresolved, then offer to mark the PR ready for review
-   (`gh pr ready <n>`). Keep the phase as `pr` (`adj phase --set pr`) while waiting for the next
-   review round.
+7. Loop back to step 2 until nothing is unresolved (run `adj phase --set review` again when a new
+   round starts), then offer to mark the PR ready for review (`gh pr ready <n>`). Keep the phase
+   as `pr` (`adj phase --set pr`) while waiting for the next review round.
 
 ## 7. When you find a bug outside the task
 
