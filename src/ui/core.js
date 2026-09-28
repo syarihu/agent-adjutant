@@ -73,7 +73,7 @@ const AGENT_COL_OF_PHASE = {
 const HUMAN_COLUMNS = [
   { id:'dispatch', label:'着手確認',          icon:'play_circle',    hint:'始めてよいか / 起票確認' },
   { id:'plan',     label:'計画の承認',        icon:'edit_note',      hint:'進め方を確認' },
-  { id:'diff',     label:'手元のコードレビュー', icon:'difference',   hint:'push 前の差分' },
+  { id:'diff',     label:'差分レビュー',      icon:'difference',     hint:'手元の差分 / push 前の確認' },
   { id:'verify',   label:'動作確認',          icon:'fact_check',     hint:'手で見る項目 / 調査報告' },
   { id:'prreview', label:'PRレビュー',        icon:'merge',          hint:'PR がこちらのボール' },
   { id:'question', label:'質問',              icon:'help',           hint:'worker からの質問' },

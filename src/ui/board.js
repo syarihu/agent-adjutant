@@ -692,9 +692,14 @@ function agentCard(task) {
     const mins = waitingMinutes(task);
     h += `
       <button type="button" class="wait-link" data-jump-human="${esc(task.id)}" title="人のボードでこのカードを開く">
-        <span class="material-symbols-outlined">person_alert</span>
-        <span>人の確認待ち<br>${esc(humanLabel(hcol))}</span>
-        <span class="go">${minutesLabel(mins)}<span class="material-symbols-outlined">arrow_outward</span></span>
+        <div class="wait-link-row">
+          <span class="wait-link-badge">
+            <span class="material-symbols-outlined">person_alert</span>
+            <span>人の確認待ち</span>
+          </span>
+          <span class="go">${minutesLabel(mins)}<span class="material-symbols-outlined">arrow_outward</span></span>
+        </div>
+        <div class="wait-link-target">${esc(humanLabel(hcol))}</div>
       </button>
     `;
   }
@@ -750,13 +755,13 @@ function renderColumns() {
         <div class="col-header">
           <div class="col-header-top">
             <div class="col-title-badge">
-              <span class="material-symbols-outlined" style="font-size:18px;">${def.icon}</span>
-              <span>${esc(def.label)}</span>
+              <span class="material-symbols-outlined">${def.icon}</span>
+              <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
               <span class="col-count-pill">${allItems.length}</span>
             </div>
-            ${def.id === 'prreview' ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:14px;">sync</span><span>PR確認</span></button>` : ''}
+            ${def.id === 'prreview' ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
           </div>
-          ${def.hint ? `<div class="col-subtext">${esc(def.hint)}</div>` : ''}
+          ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
         </div>
       `;
       col.insertAdjacentHTML('afterbegin', headerHtml);
@@ -803,10 +808,6 @@ function renderColumns() {
     for (const def of AGENT_COLUMNS) {
       const items = (state.tasks || []).filter(t => agentColOf(t) === def.id);
       const isNarrow = def.id === 'before' || def.id === 'done';
-      const col = document.createElement('section');
-      col.className = 'col' + (isNarrow ? ' narrow' : '');
-      col.dataset.col = def.id;
-
       let older = [];
       let displayItems = items;
       if (def.id === 'done') {
@@ -816,22 +817,26 @@ function renderColumns() {
       }
 
       const totalCount = def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length;
+      const isEmpty = totalCount === 0;
+      const col = document.createElement('section');
+      col.className = 'col' + (isNarrow ? ' narrow' : '') + (isEmpty ? ' empty' : '');
+      col.dataset.col = def.id;
 
       const nextBtn = def.id === 'before'
-        ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" onclick="nudgeHub()"><span class="material-symbols-outlined" style="font-size:14px;">bolt</span><span>次を流す</span></button>'
+        ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" onclick="nudgeHub()"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
         : '';
 
       const headerHtml = `
         <div class="col-header">
           <div class="col-header-top">
             <div class="col-title-badge">
-              <span class="material-symbols-outlined" style="font-size:18px;">${def.icon}</span>
-              <span>${esc(def.label)}</span>
+              <span class="material-symbols-outlined">${def.icon}</span>
+              <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
               <span class="col-count-pill">${totalCount}</span>
             </div>
             ${nextBtn}
           </div>
-          ${def.hint ? `<div class="col-subtext">${esc(def.hint)}</div>` : ''}
+          ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
         </div>
       `;
       col.insertAdjacentHTML('afterbegin', headerHtml);
