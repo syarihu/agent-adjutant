@@ -615,13 +615,17 @@ fn state(server: &Server) -> Value {
 
         let terminal = build_session_terminal(terminal_settings, &tmux_panes, status.pid);
 
+        let (saved_title, saved_task) =
+            saved_session.map(|s| (s.title, s.task)).unwrap_or_default();
+
         let task_id = record_json
             .as_ref()
             .and_then(|r| r.get("task"))
             .and_then(Value::as_str)
-            .map(str::to_string);
+            .map(str::to_string)
+            .or(saved_task);
 
-        let title = status.title.or_else(|| saved_session.and_then(|s| s.title));
+        let title = status.title.or(saved_title);
 
         sessions.push(session::Session {
             id: format!("worker-{worktree_name}"),
@@ -719,7 +723,7 @@ fn state(server: &Server) -> Value {
             key: None,
             worktree: repo.main.clone(),
             branch: main_branch,
-            task: None,
+            task: saved.task,
             title: saved.title,
             present: false,
             stale: false,

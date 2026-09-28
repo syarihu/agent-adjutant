@@ -747,6 +747,7 @@ fn the_board_state_reports_linked_worker_from_saved_session_when_unregistered() 
             "sessionId": "sid-linked-saved",
             "title": "Saved linked worker task",
             "hub": "parent-linked-saved",
+            "task": "WID-99",
             "savedAt": "20260928T120000Z",
         })
         .to_string(),
@@ -767,6 +768,7 @@ fn the_board_state_reports_linked_worker_from_saved_session_when_unregistered() 
     assert_eq!(worker_sess["kind"], "worker");
     assert_eq!(worker_sess["title"], "Saved linked worker task");
     assert_eq!(worker_sess["hub"], "hub-parent-linked-saved");
+    assert_eq!(worker_sess["task"], "WID-99");
     assert_eq!(worker_sess["present"], false);
 
     board.kill().unwrap();

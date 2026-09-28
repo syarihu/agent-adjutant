@@ -1734,6 +1734,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         true => Some(saved_worker_session(&worktree)?),
         false => None,
     };
+    let task = task.or_else(|| resumed.as_ref().and_then(|saved| saved.task.as_deref()));
     // This tab was opened *at* the worktree, so `context` would read the record this is
     // about to replace. A worker that crashed without being closed leaves one behind, and
     // re-dispatching that task would file the new worker under the hub that ran the old.
@@ -1816,15 +1817,30 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
     if resumed.is_none() {
         let saved = match &fresh_session {
-            Some(session) => {
-                messaging::save_worker_session(&worktree, &title, ctx.repo.hub.as_deref(), session)
-                    .map(|_| ())
-            }
+            Some(session) => messaging::save_worker_session(
+                &worktree,
+                &title,
+                ctx.repo.hub.as_deref(),
+                task,
+                session,
+            )
+            .map(|_| ()),
             None => messaging::forget_worker_session(&worktree),
         };
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
+    } else if let Some(saved) = &resumed
+        && task.is_some()
+        && task != saved.task.as_deref()
+    {
+        let _ = messaging::save_worker_session(
+            &worktree,
+            &title,
+            ctx.repo.hub.as_deref(),
+            task,
+            &saved.session_id,
+        );
     }
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on

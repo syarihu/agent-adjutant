@@ -1204,6 +1204,7 @@ pub struct SavedSession {
     pub hub_name: Option<String>,
     /// The worker's tab title, so a resumed worker is named what it was named before.
     pub title: Option<String>,
+    pub task: Option<String>,
     pub saved_at: Option<String>,
 }
 
@@ -1316,6 +1317,7 @@ pub fn save_worker_session(
     worktree: &Path,
     title: &str,
     hub: Option<&str>,
+    task: Option<&str>,
     session_id: &str,
 ) -> Result<PathBuf, String> {
     let path = worker_session_path(worktree);
@@ -1328,6 +1330,11 @@ pub fn save_worker_session(
         && let Some(fields) = record.as_object_mut()
     {
         fields.insert("hub".to_string(), json!(hub));
+    }
+    if let Some(task) = said(task)
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("task".to_string(), json!(task));
     }
     write_json(&path, &record)?;
     Ok(path)
@@ -1390,6 +1397,7 @@ fn read_session(path: &Path) -> Option<SavedSession> {
         nwo: text("nwo"),
         hub_name: text("hubName"),
         title: text("title"),
+        task: text("task"),
         saved_at: text("savedAt"),
     })
 }
@@ -2036,14 +2044,22 @@ mod tests {
     #[test]
     fn a_worker_session_carries_what_the_worker_was_started_with() {
         let dir = tempfile::tempdir().unwrap();
-        save_worker_session(dir.path(), "WID-1 fix", Some("ALPHA-1"), "sid-w").unwrap();
+        save_worker_session(
+            dir.path(),
+            "WID-1 fix",
+            Some("ALPHA-1"),
+            Some("WID-1"),
+            "sid-w",
+        )
+        .unwrap();
         // `close` clears the presence record; the session is not its to clear.
-        register_worker(dir.path(), "WID-1 fix", Some("ALPHA-1"), None).unwrap();
+        register_worker(dir.path(), "WID-1 fix", Some("ALPHA-1"), Some("WID-1")).unwrap();
         unregister_worker(dir.path()).unwrap();
         let saved = worker_session(dir.path()).unwrap();
         assert_eq!(saved.session_id, "sid-w");
         assert_eq!(saved.title.as_deref(), Some("WID-1 fix"));
         assert_eq!(saved.hub.as_deref(), Some("ALPHA-1"));
+        assert_eq!(saved.task.as_deref(), Some("WID-1"));
     }
 
     #[test]
@@ -3311,6 +3327,7 @@ mod tests {
             Path::new(&main_path),
             "Previous worker task",
             Some("unregistered-worker-hub"),
+            None,
             "sid-prev",
         )
         .unwrap();
