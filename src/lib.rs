@@ -467,6 +467,11 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// The resident server: every repository's board, whether or not a hub is running
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
     /// Tasks handed to this repository's hub
     Task {
         #[command(subcommand)]
@@ -492,6 +497,29 @@ enum Commands {
     Tmux {
         #[command(subcommand)]
         action: TmuxAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Start the resident server, detached unless --foreground
+    Start {
+        /// 0 picks a free port; a taken port falls back to a free one
+        #[arg(long, default_value_t = cmd::DEFAULT_PORT)]
+        port: u16,
+        /// Stay in this process, for a service manager
+        #[arg(long)]
+        foreground: bool,
+        /// Print the URL without opening a browser
+        #[arg(long)]
+        no_open: bool,
+    },
+    /// Stop the resident server. Hubs keep running
+    Stop,
+    /// Whether the resident server is running, and which boards it serves (exit 1 when not)
+    Status {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -984,6 +1012,15 @@ pub fn run() -> ! {
             port,
             no_open,
         } => cmd::serve(repo.as_deref(), hub.as_deref(), *port, !*no_open).map(|_| 0),
+        Commands::Server { action } => match action {
+            ServerAction::Start {
+                port,
+                foreground,
+                no_open,
+            } => cmd::server_start(*port, *foreground, !*no_open),
+            ServerAction::Stop => cmd::server_stop(),
+            ServerAction::Status { json } => cmd::server_status(*json),
+        },
         Commands::Gate { action } => run_gate(action).map(|_| 0),
         Commands::Task { action } => run_task(action).map(|_| 0),
         Commands::Jules { action } => run_jules(action).map(|_| 0),

@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use crate::cmd::HubBoard;
 use crate::config;
 use crate::messaging::{self, Message};
 use crate::prompts;
@@ -372,9 +373,10 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 "main": info.main,
                 "hub": info.hub,
                 "hubName": info.hub_name,
-                // The board running for this hub, or null. Read from its record, so one
-                // started by hand with `adj serve` is found as well as the hub's own.
-                "board": crate::cmd::board_url(&info.slug).map(|url| json!({ "url": url })),
+                // The board running for this hub, or null, and whether the resident server
+                // serves it. Read from records, so one started by hand with `adj serve` is
+                // found as well as the hub's own.
+                "board": crate::cmd::board_json(&info),
                 "registered": resolved.registered,
                 "configPath": resolved.config_path,
                 "warnings": resolved.warnings,
@@ -661,8 +663,9 @@ fn start_board() {
     };
     let served = hub_board_context(&slug).and_then(crate::cmd::serve_for_hub);
     match served {
-        Ok(Some(url)) => say_serving(&url),
-        Ok(None) => {
+        Ok(HubBoard::Serving(url)) => say_serving(&url),
+        Ok(HubBoard::Resident(url)) => say_resident(&url),
+        Ok(HubBoard::AlreadyRunning) => {
             std::thread::spawn(move || take_over_board(&slug));
         }
         Err(e) => eprintln!("adjutant: not serving the board: {e}"),
@@ -677,6 +680,12 @@ fn say_serving(url: &str) {
     eprintln!("adjutant: serving the board at {place}");
 }
 
+/// The same for a board the resident server serves, which this hub started nothing for.
+fn say_resident(url: &str) {
+    let place = url.split('?').next().unwrap_or(url);
+    eprintln!("adjutant: the resident server serves the board at {place}");
+}
+
 /// Wait out a board that is recorded as running, then serve one — or, if it outlasts
 /// `BOARD_HANDOVER`, leave it be.
 fn take_over_board(slug: &str) {
@@ -688,9 +697,10 @@ fn take_over_board(slug: &str) {
             continue;
         }
         match hub_board_context(slug).and_then(crate::cmd::serve_for_hub) {
-            Ok(Some(url)) => say_serving(&url),
+            Ok(HubBoard::Serving(url)) => say_serving(&url),
+            Ok(HubBoard::Resident(url)) => say_resident(&url),
             // Another server got there between the check and the bind.
-            Ok(None) => {}
+            Ok(HubBoard::AlreadyRunning) => {}
             Err(e) => eprintln!("adjutant: not serving the board: {e}"),
         }
         return;

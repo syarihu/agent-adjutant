@@ -270,6 +270,12 @@ fn fnv1a(text: &str) -> u64 {
     hash
 }
 
+/// The first eight hex digits of `fnv1a(text)`: short enough to read in an id, stable for the
+/// reason `fnv1a` is.
+pub(crate) fn short_digest(text: &str) -> String {
+    format!("{:016x}", fnv1a(text))[..8].to_string()
+}
+
 pub fn hub_name(nwo: &str, hub: Option<&str>) -> Result<String, String> {
     let slug = slug_for(nwo, hub);
     if slug.is_empty() {

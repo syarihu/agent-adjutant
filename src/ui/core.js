@@ -2,6 +2,10 @@
    header — which is also the half of the CSRF defence a cross-site form cannot reproduce. */
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
+/* Where this page's board lives: the root for a board served on its own, and `/b/<slug>` when
+   the resident server serves it. Every call the page makes is relative to it. */
+const BASE = location.pathname.replace(/\/(index\.html)?$/, '');
+
 let state = { tasks: [], workers: [], pending: [], gates: [] };
 let view = 'board';
 let log = [];
@@ -220,7 +224,7 @@ const ideReady = () => state.ideConfigured !== false;
 const ideTitle = () => ideReady() ? 'IDEでworktreeを開く' : 'エディタが未設定です（押すと設定方法を表示します）';
 
 async function api(path, options = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(BASE + path, {
     ...options,
     headers: { 'X-Adjutant-Token': TOKEN, 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
@@ -326,6 +330,8 @@ function render() {
     ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-success);">check_circle</span><span>hub 稼働中</span>'
     : hub.stale ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">error</span><span>hub の記録が残っているが止まっている</span>'
                 : '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">radio_button_unchecked</span><span>hub は止まっている</span>';
+
+  renderHubRows();
 
   const waiting = (state.pending || []).length;
   document.getElementById('inbox').innerHTML = waiting

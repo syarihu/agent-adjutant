@@ -81,6 +81,82 @@ document.getElementById('close-dialog').addEventListener('close', e => {
   if (e.target.returnValue === 'close' && worktree && running) worktreeAct('close', worktree, true);
 });
 
+/* The repository's hubs, one row each under 「自律 hub」, with a button to start or stop it.
+   Only on a board the resident server serves: the buttons reach outside this repository's
+   records, and a board a hub serves itself lives and dies with that hub. */
+function hubLabel(h) {
+  if (!h.parent) return 'リポジトリの hub';
+  return h.key ? `親タスク ${h.key} の hub` : '親タスクの hub（キー不明）';
+}
+function renderHubRows() {
+  const box = document.getElementById('hub-rows');
+  if (!box) return;
+  if (!state.resident) { box.innerHTML = ''; return; }
+  box.innerHTML = (state.hubs || []).map(h => {
+    const present = h.state?.present;
+    const text = present ? '稼働中' : h.state?.stale ? '記録が残っているが止まっている' : '止まっている';
+    let button;
+    if (present) {
+      button = `<button class="btn-m3-text" data-hub-act="stop" data-hub-id="${esc(h.id)}" title="hub が動いている tmux のペインを閉じます">停止</button>`;
+    } else if (h.parent && !h.key) {
+      button = '<button class="btn-m3-text" disabled title="キーが分からないため起動できません。adj hub --hub &lt;キー&gt; で起動してください">起動</button>';
+    } else if (!state.hubStart?.available) {
+      button = '<button class="btn-m3-text" disabled title="ボードからの起動は terminal.preset が &quot;tmux&quot; のときだけ使えます">起動</button>';
+    } else {
+      button = `<button class="btn-m3-text" data-hub-act="start" data-hub-id="${esc(h.id)}" title="tmux の新しいウィンドウで adj hub を実行します">起動</button>`;
+    }
+    return `<div class="status-row"><span>${esc(hubLabel(h))}</span><span class="state ${present ? 'good' : h.state?.stale ? 'bad' : 'warn'}">${esc(text)}</span>${button}</div>`;
+  }).join('');
+}
+document.getElementById('hub-rows').addEventListener('click', e => {
+  const button = e.target.closest('button[data-hub-act]');
+  if (!button) return;
+  if (button.dataset.hubAct === 'start') hubStart(button.dataset.hubId);
+  else openHubStopDialog(button.dataset.hubId);
+});
+
+async function hubStart(id) {
+  const h = (state.hubs || []).find(x => x.id === id);
+  if (!h) return;
+  const line = h.key ? `adj hub --tab --hub=${h.key}` : 'adj hub --tab';
+  try {
+    const data = await api(`/api/hubs/${encodeURIComponent(id)}/start`, { method: 'POST', body: '{}' });
+    note(line, false, data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました');
+    await refresh();
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+  }
+}
+
+let hubStopTarget = null;
+function openHubStopDialog(id) {
+  const h = (state.hubs || []).find(x => x.id === id);
+  if (!h) return;
+  hubStopTarget = id;
+  document.getElementById('hub-stop-lead').textContent = `${h.name} が動いている tmux のペインを閉じます。hub は止まります。`;
+  const dialog = document.getElementById('hub-stop-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+}
+document.getElementById('hub-stop-dialog').addEventListener('close', e => {
+  const id = hubStopTarget;
+  hubStopTarget = null;
+  if (e.target.returnValue === 'stop' && id) hubStop(id);
+});
+
+async function hubStop(id) {
+  const h = (state.hubs || []).find(x => x.id === id);
+  if (!h) return;
+  const line = `tmux kill-pane (hub ${h.name})`;
+  try {
+    const data = await api(`/api/hubs/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' });
+    note(line, false, data.wasRunning ? 'hub を止めました' : 'hub はすでに止まっていました（記録を片付けました）');
+    await refresh();
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+  }
+}
+
 function openHandoverDialog(id, before = null) {
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task) return;

@@ -9,10 +9,10 @@
 //! It holds no clock. Nothing here polls a tracker or wakes on a timer: a request arrives
 //! because a person clicked, and that is the only thing that moves.
 
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
@@ -54,6 +54,9 @@ struct Server {
     ctx: super::Context,
     token: String,
     port: u16,
+    /// Whether the resident server is the one answering, which serves this board at a path
+    /// of its own. The page reads it from the state.
+    resident: bool,
     /// What Jules last said about each session a card follows. The one thing here that
     /// changes after startup, and it is a cache: the record on disk stays the answer.
     jules: Arc<super::JulesWatch>,
@@ -88,9 +91,20 @@ pub fn serve(
     Ok(())
 }
 
+/// What serving the board of a hub from inside its MCP server came to.
+pub enum HubBoard {
+    /// This process is serving the board, at this URL.
+    Serving(String),
+    /// The resident server serves it, at this URL. Nothing was bound here.
+    Resident(String),
+    /// A board for the hub is already running: one somebody started by hand with `adj serve`
+    /// is left to go on serving, rather than joined by a second.
+    AlreadyRunning,
+}
+
 /// Serve the board of the hub `ctx` addresses from inside that hub's MCP server, and hand
-/// back its URL. `Ok(None)` when a board for the hub is already running — one somebody
-/// started by hand with `adj serve` is left to go on serving, rather than joined by a second.
+/// back where it is. A live resident server (see `server_start`) serves every board already,
+/// so it is asked first: the hub only tells it where the repository is and binds nothing.
 ///
 /// The socket and the record are both in place before this returns, so a tool call that
 /// asks for the URL straight after finds it; only the accept loop goes to a thread, and it
@@ -99,16 +113,19 @@ pub fn serve(
 ///
 /// Nothing here writes to stdout. In that process stdout carries JSON-RPC, and a stray line
 /// on it breaks the protocol for the whole session.
-pub fn serve_for_hub(ctx: super::Context) -> Result<Option<String>, String> {
-    if running(&ctx.repo.slug).is_some() {
-        return Ok(None);
+pub fn serve_for_hub(ctx: super::Context) -> Result<HubBoard, String> {
+    if let Some(url) = resident_url(&ctx.repo) {
+        return Ok(HubBoard::Resident(url));
+    }
+    if dashboards_running(&ctx.repo.slug).is_some() {
+        return Ok(HubBoard::AlreadyRunning);
     }
     let listener =
         bind_preferring(DEFAULT_PORT).map_err(|e| format!("cannot listen on 127.0.0.1: {e}"))?;
     let board = Board::new(ctx, listener)?;
     let url = board.url();
     std::thread::spawn(move || board.run());
-    Ok(Some(url))
+    Ok(HubBoard::Serving(url))
 }
 
 /// `port` on the loopback address, or any free port when `port` is taken — a second hub of
@@ -143,6 +160,7 @@ impl Board {
                 ctx,
                 token,
                 port,
+                resident: false,
                 jules: Arc::default(),
             }),
             listener,
@@ -178,12 +196,61 @@ fn board_url(port: u16, token: &str) -> String {
     format!("http://127.0.0.1:{port}/?token={token}")
 }
 
-/// The URL of the board running for `slug`, or `None` when none is. Whoever started it —
-/// the hub's MCP server or a person with `adj serve` — the port is in its record and the
-/// token is the one every board on this machine shares.
-pub fn url(slug: &str) -> Option<String> {
-    let port = running(slug)?;
-    Some(board_url(port, &stored_token()?))
+/// The same board as the resident server serves it: under a path of its own.
+fn resident_board_url(port: u16, slug: &str, token: &str) -> String {
+    format!("http://127.0.0.1:{port}/b/{slug}/?token={token}")
+}
+
+/// Where a board for a hub is being served from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Served {
+    Resident(u16),
+    Dedicated(u16),
+}
+
+/// The resident server when there is one, the hub's own board otherwise. The resident wins
+/// because it is the one that outlives the hub, and a URL that named the hub's board would
+/// stop working when the hub did.
+fn prefer(resident: Option<u16>, dedicated: Option<u16>) -> Option<Served> {
+    resident
+        .map(Served::Resident)
+        .or(dedicated.map(Served::Dedicated))
+}
+
+fn served(repo: &crate::repo::RepoInfo) -> Option<Served> {
+    let resident = live_resident().map(|(_, port)| port);
+    if resident.is_some() {
+        // Told where the repository is, so that the board this answers with can be opened.
+        note_board(repo);
+    }
+    prefer(resident, dashboards_running(&repo.slug))
+}
+
+/// The board serving `repo`'s hub — its URL and whether the resident server is the one — or
+/// `None`. Whoever started it, the token is the one every board on this machine shares.
+fn located(repo: &crate::repo::RepoInfo) -> Option<(String, bool)> {
+    let token = stored_token()?;
+    match served(repo)? {
+        Served::Resident(port) => Some((resident_board_url(port, &repo.slug, &token), true)),
+        Served::Dedicated(port) => Some((board_url(port, &token), false)),
+    }
+}
+
+/// `board` as `adj config` and `adjutant_config` report it: where it is, and whether the
+/// resident server serves it. `null` when nothing does.
+pub fn board_json(repo: &crate::repo::RepoInfo) -> Value {
+    match located(repo) {
+        Some((url, resident)) => json!({ "url": url, "resident": resident }),
+        None => Value::Null,
+    }
+}
+
+/// Where the resident server serves `repo`'s board, when a resident is live.
+fn resident_url(repo: &crate::repo::RepoInfo) -> Option<String> {
+    let (_, port) = live_resident()?;
+    let token = stored_token()?;
+    note_board(repo);
+    Some(resident_board_url(port, &repo.slug, &token))
 }
 
 // ── is anybody serving? ──────────────────────────────────────────────
@@ -195,7 +262,12 @@ fn record_path(slug: &str) -> PathBuf {
 }
 
 fn live_record(slug: &str) -> Option<(u32, u16)> {
-    let record: Value = std::fs::read_to_string(record_path(slug))
+    live_at(&record_path(slug))
+}
+
+/// The pid and port `path` records, when the process is still the one that wrote them.
+fn live_at(path: &Path) -> Option<(u32, u16)> {
+    let record: Value = std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())?;
     let pid = record.get("pid").and_then(Value::as_u64)? as u32;
@@ -210,14 +282,23 @@ fn live_record(slug: &str) -> Option<(u32, u16)> {
     Some((pid, port))
 }
 
-/// The port a live dashboard is on, or `None`.
+/// The port a live dashboard is on for `repo`'s hub, the resident server's or the hub's own,
+/// or `None`.
 ///
 /// This is what `adj gate open` asks before it hands the ball over: a gate written with
 /// nobody serving is a message into a directory no one opens, and an agent that waited on
 /// one would wait for ever. Anchored on the recorded process start time like every other
 /// record here, so a crashed server leaves a file that reads as absent rather than as a
 /// dashboard that is about to answer.
-pub fn running(slug: &str) -> Option<u16> {
+pub fn running(repo: &crate::repo::RepoInfo) -> Option<u16> {
+    match served(repo)? {
+        Served::Resident(port) | Served::Dedicated(port) => Some(port),
+    }
+}
+
+/// The port of a board of its own for `slug`, one started by a hub or by `adj serve`. The
+/// resident server is not asked: this is what a hub's MCP server checks before it binds one.
+pub fn dashboards_running(slug: &str) -> Option<u16> {
     live_record(slug).map(|(_, port)| port)
 }
 
@@ -377,6 +458,626 @@ fn random_hex() -> String {
     format!("{:x}{:x}", std::process::id(), messaging::now_secs())
 }
 
+// ── the resident server ──────────────────────────────────────────────
+//
+// One process per state directory that serves every repository's board, each under
+// `/b/<slug>/`, whether or not a hub is running. It finds the repositories through an
+// address book — `boards/<slug>.json`, written by whoever learns where a repository is —
+// and builds each board's context from that on first use.
+
+fn server_lock_path() -> PathBuf {
+    messaging::state_dir().join("server.lock")
+}
+
+fn server_record_path() -> PathBuf {
+    messaging::state_dir().join("server.json")
+}
+
+fn server_log_path() -> PathBuf {
+    messaging::state_dir().join("server.log")
+}
+
+fn boards_dir() -> PathBuf {
+    messaging::state_dir().join("boards")
+}
+
+/// The pid and port of the resident server, when one is running. Anchored on the recorded
+/// process start time like every other record here, so a killed server leaves a file that
+/// reads as absent.
+fn live_resident() -> Option<(u32, u16)> {
+    live_at(&server_record_path())
+}
+
+/// Write `text` to `path` whole or not at all: to a file of our own beside it, then a rename.
+/// A reader — `adj server status`, a hub asking where the board is — never sees half a record.
+fn write_whole(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let staged = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&staged, text)
+        .and_then(|()| std::fs::rename(&staged, path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&staged);
+            format!("cannot write {}: {e}", path.display())
+        })
+}
+
+/// Tell the resident server where `repo` is, so that it can serve its board. Skipped when the
+/// entry is already what it would write, and a failure is not one for the caller: the address
+/// is only ever a convenience for a server that may not be running.
+pub fn note_board(repo: &crate::repo::RepoInfo) {
+    let entry = json!({ "main": repo.main, "nwo": repo.nwo, "hub": repo.hub });
+    let path = boards_dir().join(format!("{}.json", repo.slug));
+    if messaging::read_json(&path).as_ref() == Some(&entry) {
+        return;
+    }
+    let _ = write_whole(&path, &format!("{entry:#}\n"));
+}
+
+/// The pieces of the address book entry `slug` names, when they still describe that board:
+/// the checkout is there and the repository and hub still come to the same slug.
+struct Address {
+    slug: String,
+    main: String,
+    nwo: String,
+    hub: Option<String>,
+}
+
+fn address_of(slug: &str) -> Option<Address> {
+    let entry = messaging::read_json(&boards_dir().join(format!("{slug}.json")))?;
+    let text = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_string);
+    let address = Address {
+        slug: slug.to_string(),
+        main: text("main")?,
+        nwo: text("nwo")?,
+        hub: text("hub").filter(|hub| !hub.is_empty()),
+    };
+    (Path::new(&address.main).is_dir()
+        && crate::repo::slug_for(&address.nwo, address.hub.as_deref()) == slug)
+        .then_some(address)
+}
+
+/// Every board the address book names, by slug.
+fn addresses() -> Vec<Address> {
+    let mut slugs: Vec<String> = std::fs::read_dir(boards_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|path| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+        })
+        .collect();
+    slugs.sort();
+    slugs.iter().filter_map(|slug| address_of(slug)).collect()
+}
+
+/// The board list as `/api/boards` and `adj server status` give it.
+fn boards_json(port: u16, token: &str) -> Vec<Value> {
+    addresses()
+        .into_iter()
+        .map(|a| {
+            let present = crate::repo::hub_name(&a.nwo, a.hub.as_deref())
+                .map(|name| messaging::hub_status(&a.slug, &name).present)
+                .unwrap_or(false);
+            json!({
+                "slug": a.slug,
+                "nwo": a.nwo,
+                "hub": a.hub,
+                "url": resident_board_url(port, &a.slug, token),
+                "hubPresent": present,
+            })
+        })
+        .collect()
+}
+
+/// The repository this process stands in, if it stands in one. Whether it is one is not the
+/// business of the commands that ask.
+fn checkout_here() -> Option<crate::repo::RepoInfo> {
+    super::resolve(None, None).ok()
+}
+
+/// Seed the address book from where this process stands and from the hub records already on
+/// disk, so that the boards of hubs started before the resident are there from the first
+/// request.
+fn seed_boards() {
+    if let Some(repo) = checkout_here() {
+        note_board(&repo);
+    }
+    let Ok(entries) = std::fs::read_dir(messaging::state_dir().join("hubs")) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let Some(slug) = path
+            .extension()
+            .filter(|ext| *ext == "json")
+            .and_then(|_| path.file_stem())
+            .and_then(|stem| stem.to_str())
+        else {
+            continue;
+        };
+        let Some(record) = messaging::read_json(&path) else {
+            continue;
+        };
+        let Some(cwd) = record.get("cwd").and_then(Value::as_str) else {
+            continue;
+        };
+        let hub = record.get("hub").and_then(Value::as_str);
+        if let Ok(repo) = crate::repo::resolve_in(Some(Path::new(cwd)), None, hub)
+            && repo.slug == slug
+        {
+            note_board(&repo);
+        }
+    }
+}
+
+/// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
+/// `repo::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
+/// board, so nothing that reaches the address book or the file system is ever a stranger's
+/// string.
+fn split_board_path(path: &str) -> Option<(&str, &str)> {
+    let rest = path.strip_prefix("/b/")?;
+    let (slug, tail) = match rest.find('/') {
+        Some(at) => rest.split_at(at),
+        None => (rest, "/"),
+    };
+    (!slug.is_empty()
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+    .then_some((slug, tail))
+}
+
+/// The resident server: its token and port, and the boards it has opened. A board is opened
+/// on the first request for it and kept, for the same reason a dedicated one keeps its
+/// `JulesWatch`: what it remembers between polls is a cache, and the records stay the answer.
+struct Resident {
+    token: String,
+    port: u16,
+    boards: Mutex<std::collections::HashMap<String, Arc<Server>>>,
+}
+
+impl Resident {
+    /// The board for `slug`, or `None` when the address book has no such board any more.
+    fn board(&self, slug: &str) -> Option<Arc<Server>> {
+        if let Some(open) = self.boards.lock().ok()?.get(slug) {
+            return Some(Arc::clone(open));
+        }
+        // Outside the lock: resolving the checkout asks git, and every other board waits on
+        // this map.
+        let address = address_of(slug)?;
+        // Never `set_current_dir`: this process is threaded, and the checkout is named to
+        // each call instead.
+        let repo = crate::repo::resolve_in(
+            Some(Path::new(&address.main)),
+            Some(&address.nwo),
+            address.hub.as_deref(),
+        )
+        .ok()
+        .filter(|repo| repo.slug == slug)?;
+        let ctx = super::context_of(repo).ok()?;
+        let server = Arc::new(Server {
+            ctx,
+            token: self.token.clone(),
+            port: self.port,
+            resident: true,
+            jules: Arc::default(),
+        });
+        let mut boards = self.boards.lock().ok()?;
+        Some(Arc::clone(boards.entry(slug.to_string()).or_insert(server)))
+    }
+}
+
+fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::Result<()> {
+    // A connection that opens and says nothing must not hold a thread for ever: this process
+    // is meant to run for days, and a browser opens speculative connections all the time.
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let Some(req) = http::read_request(&mut reader)? else {
+        return Ok(());
+    };
+    if let Some((status, why)) = refuse(&resident.token, resident.port, &req) {
+        return http::json(&mut stream, status, &json!({ "error": why }).to_string());
+    }
+    route_resident(resident, &req, &mut stream)
+}
+
+fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    if let Some((slug, rest)) = split_board_path(&req.path) {
+        let Some(server) = resident.board(slug) else {
+            return http::json(out, 404, &json!({ "error": "no such board" }).to_string());
+        };
+        let inner = Request {
+            path: rest.to_string(),
+            ..req.clone()
+        };
+        return route(&server, &inner, out);
+    }
+    match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/" | "/index.html") => http::html(out, &index_page(resident)),
+        ("GET", "/api/boards") => http::json(
+            out,
+            200,
+            &Value::Array(boards_json(resident.port, &resident.token)).to_string(),
+        ),
+        _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
+    }
+}
+
+fn html_escaped(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The list of boards, for `/`. Plain HTML with no script: it is a list of links.
+fn index_page(resident: &Resident) -> String {
+    let boards = boards_json(resident.port, &resident.token);
+    let items: String = boards
+        .iter()
+        .map(|b| {
+            let slug = b["slug"].as_str().unwrap_or_default();
+            let nwo = b["nwo"].as_str().unwrap_or_default();
+            let name = match b["hub"].as_str() {
+                Some(key) => format!("{nwo}（{key}）"),
+                None => nwo.to_string(),
+            };
+            let state = if b["hubPresent"].as_bool().unwrap_or(false) {
+                "hub 稼働中"
+            } else {
+                "hub 停止中"
+            };
+            format!(
+                "<li><a href=\"/b/{slug}/?token={}\">{}</a> <span class=\"state\">{state}</span></li>\n",
+                resident.token,
+                html_escaped(&name)
+            )
+        })
+        .collect();
+    let body = if items.is_empty() {
+        "<p>まだボードがありません。リポジトリで adj server start か adj hub を実行してください。</p>"
+            .to_string()
+    } else {
+        format!("<ul>\n{items}</ul>")
+    };
+    format!(
+        "<!DOCTYPE html>\n<html lang=\"ja\">\n<head>\n<meta charset=\"utf-8\">\n\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <title>adj ボード一覧</title>\n\
+         <style>body{{font-family:system-ui,sans-serif;margin:2rem auto;max-width:40rem;padding:0 1rem;line-height:1.7}}\
+         li{{margin:.4rem 0}}.state{{color:#666;font-size:.85em;margin-left:.5em}}</style>\n\
+         </head>\n<body>\n<h1>ボード</h1>\n{body}\n</body>\n</html>\n"
+    )
+}
+
+/// A relative `ADJUTANT_STATE_DIR`, made absolute against where this was started, so that
+/// the resident and the process that started it — which stand in different places once the
+/// resident is detached — read the same directory. The resident never changes directory.
+fn anchor_state_dir() {
+    let Ok(value) = std::env::var(messaging::STATE_DIR_ENV) else {
+        return;
+    };
+    let path = Path::new(&value);
+    if value.is_empty() || value == "~" || value.starts_with("~/") || path.is_absolute() {
+        return;
+    }
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    if let Ok(absolute) = std::path::absolute(cwd.join(path)) {
+        // SAFETY: called from `server_start` before it starts a thread.
+        unsafe { std::env::set_var(messaging::STATE_DIR_ENV, absolute) };
+    }
+}
+
+/// `adj server start`. Detached unless `foreground`, which is what a service manager and the
+/// tests run.
+pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, String> {
+    anchor_state_dir();
+    if foreground {
+        return serve_resident(port, open);
+    }
+    let here = checkout_here();
+    if let Some((pid, port)) = live_resident() {
+        if let Some(repo) = &here {
+            note_board(repo);
+        }
+        let shown = shown_url(port, here.as_ref())?;
+        println!("adj server: already running (pid {pid}) — {shown}");
+        return Ok(0);
+    }
+    let child = spawn_resident(port)?;
+    let port = wait_for_resident(child)?;
+    let index = resident_index_url(port)?;
+    println!("adj server: serving on {index}");
+    if let Some(repo) = &here {
+        note_board(repo);
+        println!(
+            "adj server: {} — {}",
+            repo.nwo,
+            shown_url(port, here.as_ref())?
+        );
+    }
+    if open {
+        open_browser(&shown_url(port, here.as_ref())?);
+    }
+    Ok(0)
+}
+
+fn resident_index_url(port: u16) -> Result<String, String> {
+    Ok(board_url(port, &token()?))
+}
+
+/// The URL worth showing: the board of the checkout this stands in, else the index.
+fn shown_url(port: u16, here: Option<&crate::repo::RepoInfo>) -> Result<String, String> {
+    match here {
+        Some(repo) => Ok(resident_board_url(port, &repo.slug, &token()?)),
+        None => resident_index_url(port),
+    }
+}
+
+/// `path` opened for appending, readable by its owner alone. The log is written by a server
+/// that holds a secret, and a file another user on the machine can read is a way to it — so a
+/// log an earlier version made with looser permissions is tightened too.
+fn private_log(path: &Path) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("cannot restrict {}: {e}", path.display()))?;
+    Ok(file)
+}
+
+/// The resident, started in a process group of its own so that closing the terminal it was
+/// started from does not take it along, with what it says written to `server.log`.
+fn spawn_resident(port: u16) -> Result<std::process::Child, String> {
+    use std::os::unix::process::CommandExt;
+
+    let log = server_log_path();
+    if let Some(parent) = log.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let open_log = || private_log(&log);
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+    let mut command = std::process::Command::new(exe);
+    command
+        .args(["server", "start", "--foreground", "--no-open", "--port"])
+        .arg(port.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(open_log()?)
+        .stderr(open_log()?)
+        // What the agent is started without, for the same reason: this one answers for every
+        // repository and must not inherit the identity of the hub it was started from.
+        .env_remove(messaging::HUB_SESSION_ENV)
+        .env_remove(messaging::HUB_SERVE_ENV)
+        .env_remove(messaging::HUB_ENV)
+        .process_group(0);
+    for name in crate::repo::REPOSITORY_LOCATION_ENV {
+        command.env_remove(name);
+    }
+    command
+        .spawn()
+        .map_err(|e| format!("cannot start adj server: {e}"))
+}
+
+/// Wait for the resident to say where it is — it writes `server.json` once it is listening.
+fn wait_for_resident(mut child: std::process::Child) -> Result<u16, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some((_, port)) = live_resident() {
+            return Ok(port);
+        }
+        // A child that has exited is not yet a failure: it exits when another resident holds
+        // the lock, and that one may be a moment from writing its record. Asked for its status
+        // either way, which is also what reaps it.
+        let _ = child.try_wait();
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "adj server did not start; see {}",
+                server_log_path().display()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// The resident itself: holds `server.lock` for as long as it runs, binds, says where it is,
+/// and answers.
+fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
+    let lock_path = server_lock_path();
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    // Held for the process's lifetime and released by the system when it ends, however it
+    // ends — the same lock `messaging::take_over` takes, for the same reason.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            return Err(match live_resident() {
+                Some((pid, _)) => format!("another adj server is running (pid {pid})"),
+                None => "another adj server is running".to_string(),
+            });
+        }
+        Err(std::fs::TryLockError::Error(e)) => {
+            return Err(format!("cannot lock {}: {e}", lock_path.display()));
+        }
+    }
+    let listener =
+        bind_preferring(port).map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e}"))?;
+    let bound = listener
+        .local_addr()
+        .map(|a| a.port())
+        .map_err(|e| format!("cannot read the server's port: {e}"))?;
+    if port != 0 && bound != port {
+        eprintln!("adj server: 127.0.0.1:{port} is taken; serving on {bound} instead");
+    }
+    let token = token()?;
+    let pid = std::process::id();
+    let record = json!({
+        "pid": pid,
+        "psStarted": messaging::ps_started(pid),
+        "port": bound,
+        "startedAt": messaging::utc_stamp(messaging::now_secs()),
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    write_whole(&server_record_path(), &format!("{record:#}\n"))?;
+    seed_boards();
+    let index = board_url(bound, &token);
+    // The token goes to a terminal and nowhere else: detached, or under a service manager,
+    // stdout is a log file, and a log is kept, attached to bug reports and read by others. The
+    // process that started it prints the whole URL to the person who asked.
+    if std::io::stdout().is_terminal() {
+        println!("adj server: serving on {index}");
+    } else {
+        println!("adj server: serving on http://127.0.0.1:{bound}/");
+    }
+    if open {
+        open_browser(&index);
+    }
+    let resident = Arc::new(Resident {
+        token,
+        port: bound,
+        boards: Mutex::default(),
+    });
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let resident = Arc::clone(&resident);
+                // A thread per connection, for the reason `Board::run` gives.
+                std::thread::spawn(move || {
+                    if let Err(e) = handle_resident(&resident, stream) {
+                        eprintln!("adj server: connection error: {e}");
+                    }
+                });
+            }
+            Err(e) => eprintln!("adj server: accept error: {e}"),
+        }
+    }
+    drop(lock);
+    Ok(0)
+}
+
+/// What `server.json` names, whether or not that process is still there.
+fn recorded_resident() -> Option<(u32, Option<String>)> {
+    let record = messaging::read_json(&server_record_path())?;
+    let pid = record.get("pid").and_then(Value::as_u64)? as u32;
+    let started = record
+        .get("psStarted")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some((pid, started))
+}
+
+/// Whether `record` still names the process `pid` started at `started`. The rule for removing
+/// `server.json`: a supervisor that restarts the server may already have written the next
+/// record, and that one is not ours to remove.
+fn names_resident(record: Option<&(u32, Option<String>)>, pid: u32, started: Option<&str>) -> bool {
+    record.is_some_and(|(p, s)| *p == pid && s.as_deref() == started)
+}
+
+fn forget_resident(pid: u32, started: Option<&str>) {
+    if names_resident(recorded_resident().as_ref(), pid, started) {
+        let _ = std::fs::remove_file(server_record_path());
+    }
+}
+
+/// `adj server stop`. Only the server: a hub is a session of its own and goes on running.
+pub fn server_stop() -> Result<i32, String> {
+    let named = recorded_resident();
+    let Some((pid, _)) = live_resident() else {
+        if let Some((pid, started)) = &named {
+            forget_resident(*pid, started.as_deref());
+        }
+        println!("adj server is not running");
+        return Ok(0);
+    };
+    let started = named.and_then(|(_, s)| s);
+    let status = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .map_err(|e| format!("cannot run kill: {e}"))?;
+    if !status.success() {
+        return Err(format!("cannot stop adj server (pid {pid})"));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // The process this record named, not whatever the record names by now: a supervisor may
+    // already have started the next one.
+    let still_there = || match &started {
+        Some(started) => messaging::ps_started(pid).as_deref() == Some(started.as_str()),
+        None => live_resident().is_some_and(|(p, _)| p == pid),
+    };
+    while still_there() {
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("adj server (pid {pid}) did not stop within 5s"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    forget_resident(pid, started.as_deref());
+    println!("stopped adj server (pid {pid})");
+    Ok(0)
+}
+
+/// `adj server status`. Exit 1 when there is no resident, so a script can ask.
+pub fn server_status(as_json: bool) -> Result<i32, String> {
+    let Some((pid, port)) = live_resident() else {
+        if as_json {
+            println!("{}", json!({ "running": false }));
+        } else {
+            println!("adj server is not running");
+        }
+        return Ok(1);
+    };
+    let token = stored_token().ok_or("the dashboard token is missing")?;
+    let index = board_url(port, &token);
+    let boards = boards_json(port, &token);
+    if as_json {
+        let out = json!({
+            "running": true,
+            "pid": pid,
+            "port": port,
+            "url": index,
+            "boards": boards,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return Ok(0);
+    }
+    println!("adj server: running (pid {pid}) on port {port}");
+    println!("index: {index}");
+    for board in &boards {
+        let hub = board["hub"].as_str().unwrap_or("-");
+        let state = if board["hubPresent"].as_bool().unwrap_or(false) {
+            "running"
+        } else {
+            "stopped"
+        };
+        println!(
+            "{} (hub {hub}, {state}) — {}",
+            board["nwo"].as_str().unwrap_or_default(),
+            board["url"].as_str().unwrap_or_default()
+        );
+    }
+    Ok(0)
+}
+
 // ── routing ──────────────────────────────────────────────────────────
 
 fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
@@ -408,6 +1109,11 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
             reply(out, update_task(server, req.tail(), &req.body))
         }
         ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
+        // Only on the resident's boards: starting and stopping a hub reaches outside the
+        // repository's own records, and a board a hub serves lives and dies with that hub.
+        ("POST", path) if server.resident && hub_route(path).is_some() => {
+            reply(out, act_on_hub(server, path, &req.body))
+        }
         ("POST", "/api/hub/next") => reply(out, nudge_hub(server)),
         ("POST", "/api/hub/focus") => reply(out, focus_hub(server)),
         ("POST", path) if path.starts_with("/api/worktrees/") => {
@@ -480,6 +1186,33 @@ fn parent_hub_id(
         }
         None => "hub".to_string(),
     }
+}
+
+/// The board ids of the workers in `paths`, in order: `worker-<name>` for the worktree's own
+/// name, and `worker-<name>-<digest of the path>` when another of them has that name. A
+/// worktree called `main` keeps `worker-main` unless the main checkout's own session
+/// (`main_listed`) is on the board and has it. A name that is not shared keeps the id it always
+/// had, so nothing that already holds one is told a new one.
+fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
+    let name_of = |path: &str| {
+        Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+    let names: Vec<String> = paths.iter().map(|p| name_of(p)).collect();
+    paths
+        .iter()
+        .zip(&names)
+        .map(|(path, name)| {
+            let shared = names.iter().filter(|other| *other == name).count() > 1
+                || (main_listed && name == "main");
+            match shared {
+                true => format!("worker-{name}-{}", crate::repo::short_digest(path)),
+                false => format!("worker-{name}"),
+            }
+        })
+        .collect()
 }
 
 fn state(server: &Server) -> Value {
@@ -566,10 +1299,13 @@ fn state(server: &Server) -> Value {
 
     // 1. Hub sessions from hubs
     for h in &hubs {
-        let terminal = session_terminal(None, terminal_settings, &tmux_panes, h.state.pid);
+        let record = messaging::read_json(&messaging::hub_record_path(&h.slug));
+        let terminal =
+            session_terminal(record.as_ref(), terminal_settings, &tmux_panes, h.state.pid);
 
         sessions.push(session::Session {
             id: h.id.clone(),
+            conversation: messaging::hub_session(&h.slug).map(|s| s.session_id),
             kind: "hub".to_string(),
             agent: hub_agent.clone(),
             terminal,
@@ -589,7 +1325,13 @@ fn state(server: &Server) -> Value {
     }
 
     // 2. Worker sessions from linked worktrees
-    for (path, (status, branch)) in linked_paths.iter().zip(workers_data) {
+    // Whether the main checkout is listed below as `worker-main`, which a worktree of that
+    // name would otherwise collide with.
+    let main_listed = messaging::read_json(&messaging::worker_record_path(Path::new(&repo.main)))
+        .is_some()
+        || messaging::worker_session(Path::new(&repo.main)).is_some();
+    let worker_ids = worker_session_ids(&linked_paths, main_listed);
+    for ((path, id), (status, branch)) in linked_paths.iter().zip(worker_ids).zip(workers_data) {
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
@@ -608,10 +1350,7 @@ fn state(server: &Server) -> Value {
             .and_then(|r| r.get("startedAt"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        let worktree_name = Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let conversation = saved_session.as_ref().map(|s| s.session_id.clone());
 
         let terminal = session_terminal(
             record_json.as_ref(),
@@ -634,7 +1373,8 @@ fn state(server: &Server) -> Value {
         let title = status.title.or(saved_title);
 
         sessions.push(session::Session {
-            id: format!("worker-{worktree_name}"),
+            id,
+            conversation,
             kind: "worker".to_string(),
             agent: worker_agent.clone(),
             terminal,
@@ -677,6 +1417,7 @@ fn state(server: &Server) -> Value {
 
         sessions.push(session::Session {
             id: "worker-main".to_string(),
+            conversation: messaging::worker_session(Path::new(&repo.main)).map(|s| s.session_id),
             kind: "worker".to_string(),
             agent: worker_agent.clone(),
             terminal,
@@ -699,6 +1440,7 @@ fn state(server: &Server) -> Value {
 
         sessions.push(session::Session {
             id: "worker-main".to_string(),
+            conversation: Some(saved.session_id.clone()),
             kind: "worker".to_string(),
             agent: worker_agent.clone(),
             terminal,
@@ -741,6 +1483,11 @@ fn state(server: &Server) -> Value {
             "startedAt": hub.started_at,
         },
         "hubs": hubs,
+        // Whether the resident server serves this board, which is also what tells the page
+        // it lives under a path of its own.
+        "resident": server.resident,
+        // Whether the board may start a hub: only where the settings mean a tmux window.
+        "hubStart": { "available": super::hub_startable(&settings.terminal) },
         "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
@@ -912,6 +1659,72 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
+/// `/api/hubs/<id>/<action>` as its id and action, for the two actions there are.
+fn hub_route(path: &str) -> Option<(&str, &str)> {
+    let (id, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
+    (!id.is_empty() && !id.contains('/') && matches!(action, "start" | "stop"))
+        .then_some((id, action))
+}
+
+/// Start or stop one of the repository's hubs from the board. `id` is the `hubs[].id` the
+/// page was given, so the page can only name a hub this repository was found to have.
+fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
+    let (id, action) = hub_route(path).ok_or("no such route")?;
+    let input: Value = match body.is_empty() {
+        true => json!({}),
+        false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
+    };
+    let repo = &server.ctx.repo;
+    let hub = messaging::all_repo_hubs(repo)
+        .into_iter()
+        .find(|h| h.id == id)
+        .ok_or_else(|| format!("no such hub: {id}"))?;
+    let settings = settings_now(server);
+    match action {
+        "start" => {
+            let start = match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
+                "auto" => super::HubStart::Auto,
+                "resume" => super::HubStart::Resume,
+                "new" => super::HubStart::New,
+                other => return Err(format!("no such start: {other}")),
+            };
+            if hub.parent && hub.key.is_none() {
+                return Err(
+                    "the key of this hub is not known; start it with adj hub --hub <key>"
+                        .to_string(),
+                );
+            }
+            let ctx = super::Context {
+                repo: repo.clone().addressed(hub.key.as_deref())?,
+                resolved: server.ctx.resolved.clone(),
+                settings,
+            };
+            match super::start_hub(&ctx, start)? {
+                super::TabOutcome::Opened(done) => {
+                    Ok(json!({ "started": true, "description": done.description }))
+                }
+                super::TabOutcome::AlreadyRunning(status) => {
+                    Ok(json!({ "alreadyRunning": true, "pid": status.pid }))
+                }
+            }
+        }
+        _ => {
+            // Addressed by the slug the hub was listed under: a hub whose key cannot be told
+            // can still be stopped, and nothing here needs the key for it.
+            let mut stopping = repo.clone();
+            stopping.slug = hub.slug.clone();
+            stopping.hub_name = hub.name.clone();
+            let ctx = super::Context {
+                repo: stopping,
+                resolved: server.ctx.resolved.clone(),
+                settings,
+            };
+            let was_running = super::stop_hub(&ctx)?;
+            Ok(json!({ "stopped": true, "wasRunning": was_running }))
+        }
+    }
+}
+
 /// The task id in `/api/tasks/{id}/{what}`, when there is exactly one.
 fn task_id_in<'a>(path: &'a str, what: &str) -> Option<&'a str> {
     path.strip_prefix("/api/tasks/")
@@ -1044,6 +1857,148 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_board_path_names_one_slug() {
+        assert_eq!(
+            split_board_path("/b/acme-x-1/api/state"),
+            Some(("acme-x-1", "/api/state"))
+        );
+        assert_eq!(split_board_path("/b/acme-x-1"), Some(("acme-x-1", "/")));
+        assert_eq!(split_board_path("/b/acme-x-1/"), Some(("acme-x-1", "/")));
+        for refused in [
+            "/b//x",
+            "/b/../x",
+            "/b/ACME/",
+            "/b/",
+            "/api/state",
+            "/board/x",
+        ] {
+            assert_eq!(split_board_path(refused), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_board_url_carries_its_path() {
+        assert_eq!(
+            resident_board_url(4577, "acme-x-1", "tok"),
+            "http://127.0.0.1:4577/b/acme-x-1/?token=tok"
+        );
+        assert_eq!(board_url(4577, "tok"), "http://127.0.0.1:4577/?token=tok");
+    }
+
+    #[test]
+    fn the_resident_is_preferred_over_a_dedicated_board() {
+        assert_eq!(prefer(Some(1), Some(2)), Some(Served::Resident(1)));
+        assert_eq!(prefer(Some(1), None), Some(Served::Resident(1)));
+        assert_eq!(prefer(None, Some(2)), Some(Served::Dedicated(2)));
+        assert_eq!(prefer(None, None), None);
+    }
+
+    #[test]
+    fn a_post_to_a_board_path_needs_the_same_origin() {
+        let path = "/b/acme-x-1/api/tasks";
+        let with = |origin: Option<&str>| {
+            let mut headers = vec![("X-Adjutant-Token", "t")];
+            headers.extend(origin.map(|o| ("Origin", o)));
+            refuse("t", 4577, &request("POST", path, &headers))
+        };
+        assert_eq!(with(Some("http://127.0.0.1:4577")), None);
+        assert_eq!(with(Some("http://localhost:4577")), None);
+        assert_eq!(
+            with(Some("http://127.0.0.1:9999")),
+            Some((403, "cross-origin request"))
+        );
+        assert_eq!(
+            with(Some("https://example.com")),
+            Some((403, "cross-origin request"))
+        );
+        assert_eq!(with(None), Some((403, "no Origin header")));
+    }
+
+    #[test]
+    fn worker_ids_are_unique_within_a_board() {
+        let paths: Vec<String> = ["/w/a/app", "/w/b/app", "/w/c/main", "/w/d/solo"]
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        let ids = worker_session_ids(&paths, true);
+        // A name nobody else has keeps the id it always had.
+        assert_eq!(ids[3], "worker-solo");
+        // The rest gain a digest of their path, so two of one name are two ids, and
+        // `worker-main` stays the main checkout's.
+        assert!(ids[0].starts_with("worker-app-") && ids[1].starts_with("worker-app-"));
+        assert!(ids[2].starts_with("worker-main-"));
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        assert_eq!(ids, worker_session_ids(&paths, true));
+        assert_eq!(ids[0].len(), "worker-app-".len() + 8);
+    }
+
+    #[test]
+    fn a_worktree_called_main_keeps_its_id_unless_the_main_checkout_has_it() {
+        let paths = vec!["/w/c/main".to_string(), "/w/d/solo".to_string()];
+        assert_eq!(
+            worker_session_ids(&paths, false),
+            ["worker-main", "worker-solo"]
+        );
+        assert!(worker_session_ids(&paths, true)[0].starts_with("worker-main-"));
+    }
+
+    #[test]
+    fn a_record_is_removed_only_while_it_names_the_stopped_server() {
+        let old = (7, Some("Mon Jan  1 00:00:00 2024".to_string()));
+        assert!(names_resident(
+            Some(&old),
+            7,
+            Some("Mon Jan  1 00:00:00 2024")
+        ));
+        // A supervisor's restart has written another pid, or the same pid started later.
+        assert!(!names_resident(
+            Some(&old),
+            8,
+            Some("Mon Jan  1 00:00:00 2024")
+        ));
+        assert!(!names_resident(Some(&old), 7, Some("later")));
+        assert!(!names_resident(None, 7, None));
+    }
+
+    #[test]
+    fn the_server_log_is_readable_by_its_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.log");
+        drop(private_log(&path).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // A log an older version made with the default mask is tightened, not trusted.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        drop(private_log(&path).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn a_hub_route_names_an_id_and_an_action() {
+        assert_eq!(hub_route("/api/hubs/hub/start"), Some(("hub", "start")));
+        assert_eq!(
+            hub_route("/api/hubs/hub-wid-957/stop"),
+            Some(("hub-wid-957", "stop"))
+        );
+        for refused in [
+            "/api/hubs/hub/restart",
+            "/api/hubs//start",
+            "/api/hubs/a/b/start",
+            "/api/hubs/hub",
+            "/api/tasks/hub/start",
+        ] {
+            assert_eq!(hub_route(refused), None, "{refused}");
         }
     }
 

@@ -407,6 +407,52 @@ already running, started by hand, it is left alone. `hubServe: false` turns this
 hub whose agent has no adjutant MCP server gets no board; for both, `adj serve` is the way.
 Nothing opens a browser.
 
+**One resident server for every repository.** `adj server start` runs a single server per
+state directory that serves the board of every repository on this machine, each at
+`/b/<slug>/`, whether or not a hub is running. `/` lists the boards it knows. It detaches
+(its output goes to `server.log` in the state directory); `--foreground` keeps it in the
+terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
+and any free port when it is not; `--port 0` asks for any. A second `adj server start` says
+where the first one is. `adj server status` lists the boards (`--json` for a script, exit 1
+when nothing runs) and `adj server stop` stops it. It never stops a hub.
+
+While it runs, it is the board: `adj config`, `adjutant_config` and `adj gate open` report it
+(`board.resident` is `true`), and a hub's MCP server binds nothing of its own. The server
+learns where a repository is from the hubs that start in it and from `adj config` and
+`adj gate open` run in it, and reads the hubs already recorded when it starts; a repository
+none of these has seen is added by running `adj server start` inside it. Without a resident
+server, everything is as described above.
+
+To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
+does it:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>adj.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/adj</string>
+    <string>server</string>
+    <string>start</string>
+    <string>--foreground</string>
+    <string>--no-open</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
+```
+
+Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/adj.server.plist`. Under
+`KeepAlive`, `adj server stop` is undone as soon as it lands; stop it with `launchctl bootout
+gui/$(id -u)/adj.server`.
+
 **It holds almost no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
 arrives because a person clicked. The page asks for state every two seconds, and the one
 thing that answer reaches outside for is a task handed to Jules: its session is asked about

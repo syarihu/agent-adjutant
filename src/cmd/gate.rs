@@ -225,7 +225,7 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     let gate: Gate = serde_json::from_value(value).map_err(|e| format!("bad gate: {e}"))?;
 
     gate::save(&home, &gate)?;
-    Ok((gate, super::serve::running(&ctx.repo.slug).is_some()))
+    Ok((gate, super::serve::running(&ctx.repo).is_some()))
 }
 
 /// Hand the ball back. The gate leaves the queue and the answer lands in the outbox.
