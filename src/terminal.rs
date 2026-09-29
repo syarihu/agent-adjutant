@@ -1445,6 +1445,8 @@ struct Line {
 struct InputBox {
     /// What is typed in it, apart from a suggestion the agent drew there.
     text: String,
+    /// The row of its bottom border.
+    bottom: usize,
 }
 
 /// The input box nearest the bottom: a line starting with the prompt glyph that has a border
@@ -1482,6 +1484,7 @@ fn input_box(agent: Agent, lines: &[Line]) -> Option<InputBox> {
         }
         return Some(InputBox {
             text: text.trim().to_string(),
+            bottom,
         });
     }
     None
@@ -1516,16 +1519,23 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
         Agent::Agy => AGY_ASKING_HINTS,
         _ => CLAUDE_ASKING_HINTS,
     };
-    let asking = lines.iter().any(|l| {
+    let input = input_box(agent, &lines);
+    // A pointed option is looked for only where a question would be drawn. Above a live input
+    // box is the transcript, where an echo of what the person once typed (`❯ 1. do this`)
+    // looks the same; a real menu or question replaces the box, so with none on screen every
+    // line counts. The box's own line is above its bottom border and is not looked at, so
+    // someone typing `1. foo` is still typing.
+    let pointed_from = input.as_ref().map_or(0, |b| b.bottom + 1);
+    let asking = lines.iter().enumerate().any(|(row, l)| {
         let lower = l.plain.to_lowercase();
-        is_pointed_option(&l.plain)
+        (row >= pointed_from && is_pointed_option(&l.plain))
             || ASKING_HINTS.iter().any(|h| lower.contains(h))
             || hints.iter().any(|h| lower.contains(h))
     });
     if asking {
         return reading(PaneState::Asking);
     }
-    let Some(input) = input_box(agent, &lines) else {
+    let Some(input) = input else {
         return reading(PaneState::Unknown);
     };
     if !input.text.is_empty() {
@@ -3318,6 +3328,25 @@ mod tests {
             .text
             .replace("✻ Pondering… (3s · thinking)", "* item in a list");
         assert_eq!(pane_state(Agent::Claude, &bullet), PaneState::Idle);
+    }
+
+    #[test]
+    fn an_echo_of_an_old_numbered_message_in_the_transcript_is_not_a_question() {
+        for (agent, name, echo) in [
+            (Agent::Claude, "claude-idle-after-turn", "❯ 1. do this"),
+            (Agent::Agy, "agy-idle-after-turn", "> 1. do this"),
+        ] {
+            let mut screen = parse_pane_screen(fixture(name));
+            screen.text = format!("{echo}\n{}", screen.text);
+            assert_eq!(pane_state(agent, &screen), PaneState::Idle, "{name}");
+        }
+        // Typed in the box, it is still somebody typing.
+        let mut typing = parse_pane_screen(fixture("claude-typing"));
+        typing.text = typing.text.replace("hello typed", "1. foo");
+        assert_eq!(pane_state(Agent::Claude, &typing), PaneState::Typing);
+        let mut typing = parse_pane_screen(fixture("agy-typing"));
+        typing.text = typing.text.replace("hello typed", "1. foo");
+        assert_eq!(pane_state(Agent::Agy, &typing), PaneState::Typing);
     }
 
     #[test]
