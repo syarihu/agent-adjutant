@@ -1175,10 +1175,15 @@ pub fn tmux_version() -> Option<(u32, u32)> {
 /// Where a window lives now: its session and that session's group, asked of tmux by the
 /// window id the record holds. It also says whether the window is still there at all, before
 /// anything is created on its behalf.
+///
+/// `-u` because tmux answers in the locale it is run in: without one that is UTF-8 (a resident
+/// started by launchd or systemd usually has none) it rewrites the tab between the fields and
+/// every non-ASCII character of a session name to `_`, and the group named from that answer
+/// would not exist. With `-u` the answer is kept as it is.
 pub fn tmux_window_home_script(socket: Option<&str>, window_id: &str) -> String {
     format!(
         "{} display-message -p -t {} '#{{session_name}}\t#{{session_group}}'",
-        tmux_cmd_prefix(socket),
+        tmux_cmd_prefix(socket).replacen("tmux", "tmux -u", 1),
         sh_quote(window_id)
     )
 }
@@ -1195,35 +1200,40 @@ pub fn parse_window_home(output: &str) -> Option<String> {
 }
 
 /// Make the session `name` in `group`, showing `window`.
-///
-/// With `end_with_window` (tmux 3.1 and later) the session also gets a hook of its own — never
-/// a global one, and the original session is not touched — that detaches its client when
-/// `window` is unlinked. Without it, closing the window would switch the client to another
-/// window of the group and what is typed next would go to a different agent.
 pub fn board_attach_prepare_script(
     socket: Option<&str>,
     group: &str,
     name: &str,
     window: &str,
-    end_with_window: bool,
 ) -> String {
     let prefix = tmux_cmd_prefix(socket);
-    let mut script = format!(
+    format!(
         "{prefix} new-session -d -s {} -t {} && {prefix} select-window -t {}",
         sh_quote(name),
         sh_quote(group),
         sh_quote(&format!("={name}:{window}"))
-    );
-    if end_with_window {
-        let hook =
-            format!("if -F \"#{{==:#{{hook_window}},{window}}}\" \"detach-client -s ={name}\"");
-        script.push_str(&format!(
-            " && {prefix} set-hook -t {} window-unlinked {}",
-            sh_quote(&format!("={name}:")),
-            sh_quote(&hook)
-        ));
-    }
-    script
+    )
+}
+
+/// The window ids the session `name` has, one per line: what the board terminal checks its
+/// target against. There is no hook for this on purpose: a `window-unlinked` hook on a session
+/// that is later destroyed crashed the tmux server (3.4 on Linux, under load), which takes every
+/// agent's window with it.
+pub fn board_windows_script(socket: Option<&str>, name: &str) -> String {
+    format!(
+        "{} list-windows -t {} -F '#{{window_id}}'",
+        tmux_cmd_prefix(socket),
+        sh_quote(&format!("={name}"))
+    )
+}
+
+/// Detach whatever is attached to the session `name`.
+pub fn board_detach_script(socket: Option<&str>, name: &str) -> String {
+    format!(
+        "{} detach-client -s {}",
+        tmux_cmd_prefix(socket),
+        sh_quote(&format!("={name}"))
+    )
 }
 
 /// The command line of the client a board connection runs on its terminal. `-E` leaves the
@@ -2380,18 +2390,29 @@ mod tests {
         let script = tmux_window_home_script(Some("adj-test"), "@4");
         assert_eq!(
             script,
-            "tmux -L adj-test display-message -p -t @4 '#{session_name}\t#{session_group}'"
+            "tmux -u -L adj-test display-message -p -t @4 '#{session_name}\t#{session_group}'"
         );
         assert_eq!(parse_window_home("work\tteam\n").as_deref(), Some("team"));
         assert_eq!(parse_window_home("work\t\n").as_deref(), Some("work"));
         assert_eq!(parse_window_home("work").as_deref(), Some("work"));
         assert_eq!(parse_window_home("\n"), None);
+        // Names that are not ASCII are the answer as they are, and the default server (no
+        // socket) gets the flag too.
+        assert_eq!(parse_window_home("ｓ日本-a\tg1\n").as_deref(), Some("g1"));
+        assert_eq!(
+            parse_window_home("ｓ日本-a\t\n").as_deref(),
+            Some("ｓ日本-a")
+        );
+        assert!(tmux_window_home_script(None, "@4").starts_with("tmux -u display-message"));
+        assert!(
+            tmux_window_home_script(Some("/tmp/t/sock"), "@4")
+                .starts_with("tmux -u -S /tmp/t/sock display-message")
+        );
     }
 
     #[test]
     fn the_prepare_script_makes_a_grouped_session_and_picks_the_window_by_id() {
-        let script =
-            board_attach_prepare_script(Some("/tmp/t/sock"), "work", "adjboard-1-2", "@5", false);
+        let script = board_attach_prepare_script(Some("/tmp/t/sock"), "work", "adjboard-1-2", "@5");
         assert_eq!(
             script,
             "tmux -S /tmp/t/sock new-session -d -s adjboard-1-2 -t work && \
@@ -2401,15 +2422,11 @@ mod tests {
         assert!(!script.contains("window-size"), "{script}");
         assert!(!script.contains("ignore-size"), "{script}");
         assert!(!script.contains("destroy-unattached"), "{script}");
+        // No hooks: one on a session that is destroyed later crashed the tmux server.
         assert!(!script.contains("set-hook"), "{script}");
 
-        let spaced = board_attach_prepare_script(
-            Some("adj-test"),
-            "my session",
-            "adjboard-1-2",
-            "@5",
-            false,
-        );
+        let spaced =
+            board_attach_prepare_script(Some("adj-test"), "my session", "adjboard-1-2", "@5");
         assert!(
             spaced
                 .starts_with("tmux -L adj-test new-session -d -s adjboard-1-2 -t 'my session' &&"),
@@ -2418,19 +2435,15 @@ mod tests {
     }
 
     #[test]
-    fn the_session_ends_with_its_window_by_a_hook_of_its_own() {
-        let script =
-            board_attach_prepare_script(Some("adj-test"), "work", "adjboard-1-2", "@5", true);
-        assert!(
-            script.ends_with(
-                "&& tmux -L adj-test set-hook -t =adjboard-1-2: window-unlinked \
-                 'if -F \"#{==:#{hook_window},@5}\" \"detach-client -s =adjboard-1-2\"'"
-            ),
-            "{script}"
+    fn the_watch_scripts_address_only_the_board_session() {
+        assert_eq!(
+            board_windows_script(Some("adj-test"), "adjboard-1-2"),
+            "tmux -L adj-test list-windows -t =adjboard-1-2 -F '#{window_id}'"
         );
-        // Session scoped: never a global or server hook, nor the original session's.
-        assert!(!script.contains("set-hook -g"), "{script}");
-        assert_eq!(script.matches("set-hook").count(), 1, "{script}");
+        assert_eq!(
+            board_detach_script(Some("/tmp/t/sock"), "adjboard-1-2"),
+            "tmux -S /tmp/t/sock detach-client -s =adjboard-1-2"
+        );
     }
 
     #[test]

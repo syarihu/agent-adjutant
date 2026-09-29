@@ -171,6 +171,8 @@ mod imp {
     struct Attached {
         pty: pty::Pty,
         _release: Release,
+        /// The window the terminal was opened on, which it ends with.
+        window: String,
     }
 
     /// Gives the session `name` back when dropped.
@@ -231,11 +233,7 @@ mod imp {
             name: name.clone(),
         };
         terminal::run_shell(&terminal::board_attach_prepare_script(
-            socket,
-            &group,
-            &name,
-            &window,
-            version >= (3, 1),
+            socket, &group, &name, &window,
         ))
         .map_err(|e| (CLOSE_TMUX_FAILED, e))?;
 
@@ -255,6 +253,7 @@ mod imp {
         Ok(Attached {
             pty,
             _release: release,
+            window,
         })
     }
 
@@ -279,6 +278,34 @@ mod imp {
         }
     }
 
+    /// How often the target window is looked for.
+    const WATCH_EVERY: Duration = Duration::from_secs(1);
+
+    /// Detach the client of the session `name` once `window` is no longer one of its windows,
+    /// or return when `stop` is set. A tmux that does not answer is not taken to mean the window
+    /// is gone, and a detach that fails is tried again on the next look rather than given up,
+    /// since until it succeeds the page shows whichever window tmux moved on to. That is at most
+    /// `WATCH_EVERY` in the common case.
+    fn watch_window(stop: &AtomicBool, socket: Option<&str>, name: &str, window: &str) {
+        let step = Duration::from_millis(100);
+        'watching: loop {
+            let mut waited = Duration::ZERO;
+            while waited < WATCH_EVERY {
+                if stop.load(Ordering::SeqCst) {
+                    break 'watching;
+                }
+                std::thread::sleep(step);
+                waited += step;
+            }
+            if let Ok(windows) = terminal::run_shell(&terminal::board_windows_script(socket, name))
+                && !windows.lines().any(|w| w.trim() == window)
+                && terminal::run_shell(&terminal::board_detach_script(socket, name)).is_ok()
+            {
+                break;
+            }
+        }
+    }
+
     /// Carry bytes both ways until either side is done, then take everything down.
     fn relay(
         attached: Attached,
@@ -288,7 +315,11 @@ mod imp {
         // Bound in this order on purpose: bindings drop in reverse, so on any early return the
         // client (which is dropped by shutting it down) goes before the session made for it is
         // given back.
-        let Attached { _release, mut pty } = attached;
+        let Attached {
+            _release,
+            mut pty,
+            window,
+        } = attached;
         let mut master = pty.reader()?;
         // Set once the connection's side has sent its own close frame, so that the client going
         // away afterwards is not announced a second time.
@@ -310,6 +341,18 @@ mod imp {
                     let _ = stream.shutdown(std::net::Shutdown::Both);
                 }
             })
+        };
+
+        // The client is shown one window. If it goes (the agent exited), tmux would move the
+        // client on to another window of the group and what is typed next would reach another
+        // agent — so the terminal ends instead. Polled rather than hooked: see
+        // `terminal::board_windows_script`.
+        let stop = Arc::new(AtomicBool::new(false));
+        let watch = {
+            let stop = Arc::clone(&stop);
+            let socket = _release.socket.clone();
+            let name = _release.name.clone();
+            std::thread::spawn(move || watch_window(&stop, socket.as_deref(), &name, &window))
         };
 
         let mut decoder = ws::Decoder::new();
@@ -372,8 +415,10 @@ mod imp {
         // The one place this ends, however it got here: the client goes, then the thread that
         // reads it, and the session made for it and the slot are given back as this returns.
         closing.store(told, Ordering::SeqCst);
+        stop.store(true, Ordering::SeqCst);
         pty.shutdown(Duration::from_secs(1));
         let _ = pump.join();
+        let _ = watch.join();
         if let Ok(stream) = wire.lock() {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
