@@ -110,6 +110,59 @@ fn a_hub_resumes_the_session_it_was_started_into() {
 }
 
 #[test]
+fn closing_a_parent_hub_clears_its_record_and_board_but_keeps_its_session() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    fixture.ok(&["hub", "--hub", FEATURE]);
+    let session = fixture
+        .state
+        .join("sessions")
+        .join(format!("{FEATURE_SLUG}.json"));
+    assert!(session.exists());
+
+    let record = fixture
+        .state
+        .join("hubs")
+        .join(format!("{FEATURE_SLUG}.json"));
+    let board = fixture
+        .state
+        .join("boards")
+        .join(format!("{FEATURE_SLUG}.json"));
+    for (path, body) in [
+        (
+            &record,
+            serde_json::json!({"hubName": FEATURE_HUB, "hub": FEATURE, "cwd": fixture.repo.to_str().unwrap()}),
+        ),
+        (
+            &board,
+            serde_json::json!({"main": fixture.repo.to_str().unwrap(), "nwo": "acme/widget", "hub": FEATURE}),
+        ),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body.to_string()).unwrap();
+    }
+
+    let said = fixture.ok(&["hub-close", "--hub", FEATURE]);
+    assert!(said.contains(&format!("closed {FEATURE_HUB}")), "{said}");
+    assert!(!record.exists());
+    assert!(!board.exists());
+    // The same key can still be resumed.
+    assert!(session.exists());
+    let resumed = fixture.ok(&["hub", "--resume", "--hub", FEATURE, "--dry-run"]);
+    assert!(resumed.contains("--resume "), "{resumed}");
+}
+
+#[test]
+fn the_repository_hub_is_not_closed() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.cmd(&["hub-close"]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("hub-stop"), "{said}");
+}
+
+#[test]
 fn resuming_a_hub_with_nothing_saved_says_which_hubs_can_be() {
     let fixture = Fixture::new(QUIET);
     let spawned = fixture.repo.join("spawned.txt");

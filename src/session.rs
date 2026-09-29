@@ -97,6 +97,9 @@ pub struct RepoHub {
     pub slug: String,
     pub state: RepoHubState,
     pub inbox_count: usize,
+    /// How many checkouts have a worker that reports to this hub, running or ended.
+    #[serde(default)]
+    pub children: usize,
 }
 
 /// The status / state of a hub.

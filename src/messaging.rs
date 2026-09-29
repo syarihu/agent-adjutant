@@ -497,7 +497,22 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
     status
 }
 
+/// The hub a checkout's worker reports to: the key its record says, and failing that the one
+/// its saved session says. The record wins because `adj worker --hub` rewrites it on a
+/// resume, while the session is only written when a session starts.
+pub fn worker_hub_key(worktree: &Path) -> Option<String> {
+    let clean = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+    read_json(&worker_record_path(worktree))
+        .and_then(|record| record.get("hub").and_then(Value::as_str).and_then(clean))
+        .or_else(|| worker_session(worktree).and_then(|saved| saved.hub.as_deref().and_then(clean)))
+}
+
 /// All hubs belonging to `repo`, repository hub first, followed by any parent-task hubs.
+///
+/// A parent-task hub is listed while something points at it: a hub record, or a checkout
+/// whose worker reports to it (`children`, counted by slug, so `WID-957` and `wid-957` are
+/// one hub). A saved hub session alone does not list it, so a stopped hub whose last
+/// checkout is gone leaves the list; its session stays for `--resume`.
 pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHub> {
     use crate::session::{RepoHub, RepoHubState};
     use std::collections::HashMap;
@@ -565,58 +580,43 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
         }
     }
 
-    // 3. Discover from saved sessions in state_dir/sessions
-    for saved in hub_sessions_for(&repo.nwo) {
-        let slug = crate::repo::slug_for(&repo.nwo, saved.hub.as_deref());
-        let hub_name = saved
-            .hub_name
-            .unwrap_or_else(|| format!("{}{}", crate::repo::HUB_PREFIX, slug));
-        let entry = hubs_by_slug
-            .entry(slug)
-            .or_insert((saved.hub.clone(), hub_name));
-        if entry.0.is_none() && saved.hub.is_some() {
-            entry.0 = saved.hub;
-        }
-    }
-
-    // 4. Discover from linked worktrees and the main checkout
+    // 3. Discover from linked worktrees and the main checkout, counting the ones each hub
+    // has. A checkout counts for the hub its worker reports to: the record's, and failing
+    // that the saved session's, which is what keeps counting after the worker has ended.
+    let mut children: HashMap<String, usize> = HashMap::new();
     let mut checkouts = vec![repo.main.clone()];
     if let Ok(worktrees) = crate::repo::linked_worktrees(&repo.main) {
         checkouts.extend(worktrees);
     }
     for wt in checkouts {
-        let wt_path = Path::new(&wt);
-        if let Some(record) = read_json(&worker_record_path(wt_path))
-            && let Some(hub_key) = record
-                .get("hub")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-        {
-            let slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
-            let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
-            let entry = hubs_by_slug
-                .entry(slug)
-                .or_insert((Some(hub_key.to_string()), hub_name));
-            if entry.0.is_none() {
-                entry.0 = Some(hub_key.to_string());
-            }
+        let Some(hub_key) = worker_hub_key(Path::new(&wt)) else {
+            continue;
+        };
+        let slug = crate::repo::slug_for(&repo.nwo, Some(&hub_key));
+        *children.entry(slug.clone()).or_insert(0) += 1;
+        let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
+        let entry = hubs_by_slug
+            .entry(slug)
+            .or_insert((Some(hub_key.clone()), hub_name));
+        if entry.0.is_none() {
+            entry.0 = Some(hub_key);
         }
-        if let Some(saved) = worker_session(wt_path)
-            && let Some(hub_key) = saved
-                .hub
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+    }
+
+    // 4. Saved sessions in state_dir/sessions only say more about a hub already listed: a
+    // parent-task hub nobody has a record or a checkout for is finished, and stays gone.
+    for saved in hub_sessions_for(&repo.nwo) {
+        let slug = crate::repo::slug_for(&repo.nwo, saved.hub.as_deref());
+        let Some(entry) = hubs_by_slug.get_mut(&slug) else {
+            continue;
+        };
+        if entry.0.is_none() && saved.hub.is_some() {
+            entry.0 = saved.hub;
+        }
+        if let Some(name) = saved.hub_name
+            && entry.1 == format!("{}{}", crate::repo::HUB_PREFIX, slug)
         {
-            let slug = crate::repo::slug_for(&repo.nwo, Some(hub_key));
-            let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
-            let entry = hubs_by_slug
-                .entry(slug)
-                .or_insert((Some(hub_key.to_string()), hub_name));
-            if entry.0.is_none() {
-                entry.0 = Some(hub_key.to_string());
-            }
+            entry.1 = name;
         }
     }
 
@@ -639,6 +639,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                 None if slug == default_slug => "hub".to_string(),
                 None => format!("hub-{slug}"),
             };
+            let children = children.get(&slug).copied().unwrap_or(0);
             RepoHub {
                 id,
                 parent,
@@ -652,6 +653,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                     started_at: status.started_at,
                 },
                 inbox_count,
+                children,
             }
         })
         .collect();
@@ -3391,7 +3393,9 @@ mod tests {
         .unwrap();
 
         let hubs = all_repo_hubs(&repo);
-        assert_eq!(hubs.len(), 4);
+        // `other-hub` is known only from its saved session, which no longer lists a parent
+        // hub on its own (#161): nothing points at it, so it is finished.
+        assert_eq!(hubs.len(), 3);
         // Repository hub is always first
         assert_eq!(hubs[0].id, "hub");
         assert_eq!(hubs[0].key, None);
@@ -3399,15 +3403,7 @@ mod tests {
 
         // The remaining hubs are sorted by id
         let ids: Vec<_> = hubs.iter().map(|h| h.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "hub",
-                "hub-main-worker-hub",
-                "hub-other-hub",
-                "hub-parent-task"
-            ]
-        );
+        assert_eq!(ids, vec!["hub", "hub-main-worker-hub", "hub-parent-task"]);
     }
 
     #[test]
@@ -3439,6 +3435,118 @@ mod tests {
         assert_eq!(hubs[0].id, "hub");
         assert_eq!(hubs[1].id, "hub-unregistered-worker-hub");
         assert_eq!(hubs[1].key.as_deref(), Some("unregistered-worker-hub"));
+    }
+
+    fn widget_repo(main: &Path) -> crate::repo::RepoInfo {
+        crate::repo::RepoInfo {
+            main: main.to_string_lossy().to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        }
+    }
+
+    #[test]
+    fn a_parent_hub_known_only_from_its_saved_session_is_not_listed() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let slug = crate::repo::slug_for("acme/widget", Some("WID-957"));
+        save_hub_session(
+            &slug,
+            "acme/widget",
+            Some("WID-957"),
+            "adjutant-x",
+            "sess-1",
+        )
+        .unwrap();
+
+        let hubs = all_repo_hubs(&widget_repo(dir.path()));
+        assert_eq!(hubs.len(), 1, "{hubs:?}");
+        assert_eq!(hubs[0].id, "hub");
+        assert_eq!(hubs[0].children, 0);
+        // The session is still there to resume.
+        assert_eq!(hub_sessions_for("acme/widget").len(), 1);
+    }
+
+    #[test]
+    fn a_parent_hub_with_an_ended_worker_is_listed_with_its_count() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        // The worker's record is gone; its saved session still names the hub.
+        save_worker_session(dir.path(), "WID-957", Some("WID-957"), None, "sid-1").unwrap();
+
+        let hubs = all_repo_hubs(&widget_repo(dir.path()));
+        assert_eq!(hubs.len(), 2, "{hubs:?}");
+        assert_eq!(hubs[0].children, 0);
+        assert!(hubs[1].parent);
+        assert_eq!(hubs[1].key.as_deref(), Some("WID-957"));
+        assert_eq!(hubs[1].children, 1);
+    }
+
+    #[test]
+    fn children_are_counted_by_slug_not_by_spelling() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        write_json(&worker_record_path(dir.path()), &json!({"hub": "WID-957"})).unwrap();
+        let slug = crate::repo::slug_for("acme/widget", Some("wid-957"));
+        save_hub_session(
+            &slug,
+            "acme/widget",
+            Some("wid-957"),
+            "adjutant-x",
+            "sess-1",
+        )
+        .unwrap();
+
+        let hubs = all_repo_hubs(&widget_repo(dir.path()));
+        assert_eq!(hubs.len(), 2, "{hubs:?}");
+        assert_eq!(hubs[1].slug, slug);
+        assert_eq!(hubs[1].children, 1);
+        // The hub session's own name is the better one to show.
+        assert_eq!(hubs[1].name, "adjutant-x");
+    }
+
+    #[test]
+    fn a_worker_moved_to_another_hub_counts_only_there() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        // Dispatched by A, moved to B: the record says B, the session still says A.
+        write_json(&worker_record_path(dir.path()), &json!({"hub": "B"})).unwrap();
+        save_worker_session(dir.path(), "t", Some("A"), None, "sid-1").unwrap();
+        let a = crate::repo::slug_for("acme/widget", Some("A"));
+        save_hub_session(&a, "acme/widget", Some("A"), "adjutant-a", "sess-a").unwrap();
+
+        let hubs = all_repo_hubs(&widget_repo(dir.path()));
+        let keys: Vec<_> = hubs.iter().map(|h| h.key.as_deref()).collect();
+        assert_eq!(keys, vec![None, Some("B")], "{hubs:?}");
+        assert_eq!(hubs[1].children, 1);
+    }
+
+    #[test]
+    fn worker_hub_key_prefers_the_record_and_skips_a_blank_one() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(worker_hub_key(dir.path()), None);
+        save_worker_session(dir.path(), "t", Some(" A "), None, "sid-1").unwrap();
+        assert_eq!(worker_hub_key(dir.path()).as_deref(), Some("A"));
+        write_json(&worker_record_path(dir.path()), &json!({"hub": "  "})).unwrap();
+        assert_eq!(worker_hub_key(dir.path()).as_deref(), Some("A"));
+        write_json(&worker_record_path(dir.path()), &json!({"hub": "B"})).unwrap();
+        assert_eq!(worker_hub_key(dir.path()).as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn a_hub_known_only_from_a_worker_is_given_a_name() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        write_json(&worker_record_path(dir.path()), &json!({"hub": "WID-957"})).unwrap();
+
+        let hubs = all_repo_hubs(&widget_repo(dir.path()));
+        let slug = crate::repo::slug_for("acme/widget", Some("WID-957"));
+        assert_eq!(hubs[1].name, format!("adjutant-{slug}"));
     }
 
     #[test]

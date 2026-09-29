@@ -562,7 +562,14 @@ fn every_flag_the_help_lists_describes_itself_and_not_its_neighbour() {
         );
     }
     for command in [
-        "send", "pending", "tell", "focus", "hub-stop", "hub-name", "config",
+        "send",
+        "pending",
+        "tell",
+        "focus",
+        "hub-stop",
+        "hub-close",
+        "hub-name",
+        "config",
     ] {
         let help = fixture.ok(&[command, "--help"]);
         assert!(

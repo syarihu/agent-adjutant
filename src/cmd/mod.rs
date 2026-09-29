@@ -2283,6 +2283,60 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
     Ok(())
 }
 
+/// Why `hub` cannot be closed, or `Ok` when it can. Only a parent-task hub none of whose
+/// checkouts report to it any more is closable: the repository hub is always there, and a
+/// hub with workers is still in use. Unread messages, open tasks and gates do not stop it —
+/// they are kept, and starting the same key again finds them.
+fn closable_check(hub: &crate::session::RepoHub) -> Result<(), String> {
+    if !hub.parent {
+        return Err("the repository hub can only be stopped, not closed; use hub-stop".to_string());
+    }
+    if hub.children > 0 {
+        return Err(format!(
+            "{} checkout(s) still report to {}; use hub-stop to stop it, or clean them up first",
+            hub.children, hub.name
+        ));
+    }
+    Ok(())
+}
+
+/// Close a parent-task hub whose workers are all gone: clear its record and take it off the
+/// board's address book, so it drops out of the list. Like `hub-stop` it ends no process, so
+/// a hub can run it on itself. Its saved session, tasks, gates and inbox stay, and starting
+/// the same key with `--resume` picks them up again.
+pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
+    let info = resolve(repo_arg, hub_arg)?;
+    let hub = messaging::all_repo_hubs(&info)
+        .into_iter()
+        .find(|h| h.slug == info.slug)
+        .unwrap_or_else(|| crate::session::RepoHub {
+            id: format!("hub-{}", info.slug),
+            parent: info.hub.is_some(),
+            key: info.hub.clone(),
+            name: info.hub_name.clone(),
+            slug: info.slug.clone(),
+            state: crate::session::RepoHubState {
+                present: false,
+                stale: false,
+                pid: None,
+                started_at: None,
+            },
+            inbox_count: 0,
+            children: 0,
+        });
+    closable_check(&hub)?;
+    messaging::unregister_hub(&hub.slug)?;
+    serve::forget_board(&hub.slug)?;
+    println!("closed {}", hub.name);
+    if hub.inbox_count > 0 {
+        println!(
+            "{} unread message(s) remain for it; starting the same key shows them",
+            hub.inbox_count
+        );
+    }
+    Ok(())
+}
+
 // ── shared ───────────────────────────────────────────────────────────
 
 /// A value given as `-` is read from stdin, trailing newlines dropped.

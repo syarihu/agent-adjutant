@@ -521,6 +521,196 @@ fn hub_stop_is_refused_for_a_record_with_no_start_time() {
     assert!(!ps_started(sleeper).is_empty(), "the process was killed");
 }
 
+/// A process that is nobody's child but init's, killed when the guard goes.
+struct Sleeper(u32);
+
+impl Sleeper {
+    fn start() -> Sleeper {
+        let out = Command::new("sh")
+            .args(["-c", "sleep 300 >/dev/null 2>&1 & echo $!"])
+            .output()
+            .unwrap();
+        Sleeper(String::from_utf8_lossy(&out.stdout).trim().parse().unwrap())
+    }
+}
+
+impl Drop for Sleeper {
+    fn drop(&mut self) {
+        let _ = Command::new("kill")
+            .arg(self.0.to_string())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// A running parent-task hub `FEATURE`, as `adj hub --hub` leaves it: its record, its board
+/// address, its saved session and a task, with a pane in the fake tmux to close.
+fn running_parent_hub(fixture: &Fixture, tmux: &FakeTmux, sleeper: u32) -> (PathBuf, PathBuf) {
+    let record = fixture
+        .state
+        .join("hubs")
+        .join(format!("{FEATURE_SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": sleeper,
+            "psStarted": ps_started(sleeper),
+            "hubName": FEATURE_HUB,
+            "hub": FEATURE,
+            "cwd": fixture.repo.to_str().unwrap(),
+            "nameInCommand": false,
+            "terminal": {"backend": "tmux", "socket": "scratch", "pane": "%3"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let board = fixture
+        .state
+        .join("boards")
+        .join(format!("{FEATURE_SLUG}.json"));
+    std::fs::create_dir_all(board.parent().unwrap()).unwrap();
+    std::fs::write(
+        &board,
+        serde_json::json!({"main": fixture.repo.to_str().unwrap(), "nwo": "acme/widget", "hub": FEATURE})
+            .to_string(),
+    )
+    .unwrap();
+    let session = fixture
+        .state
+        .join("sessions")
+        .join(format!("{FEATURE_SLUG}.json"));
+    std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+    std::fs::write(
+        &session,
+        serde_json::json!({
+            "sessionId": "0b7e6a52-0000-4000-8000-000000000001",
+            "hub": FEATURE,
+            "nwo": "acme/widget",
+            "hubName": FEATURE_HUB,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let tasks = fixture.state.join("tasks").join(FEATURE_SLUG);
+    std::fs::create_dir_all(&tasks).unwrap();
+    std::fs::write(tasks.join("task-1.json"), "{}").unwrap();
+    std::fs::write(
+        &tmux.panes,
+        format!("%3\t{sleeper}\t/dev/ttys999\t@1\tadjutant-test\t1\tmain\n"),
+    )
+    .unwrap();
+    (record, board)
+}
+
+fn hub_ids(resident: &Resident) -> Vec<String> {
+    let state: serde_json::Value =
+        serde_json::from_str(&resident.get(&format!("/b/{SLUG}/api/state")).1).unwrap();
+    state["hubs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn closing_a_parent_hub_with_no_workers_stops_it_and_takes_it_off_the_list() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let (record, board) = running_parent_hub(&fixture, &tmux, sleeper.0);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    assert!(hub_ids(&resident).contains(&"hub-wid-957".to_string()));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/close"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["closed"], true, "{body}");
+    assert_eq!(answer["wasRunning"], true, "{body}");
+    assert_eq!(answer["unread"], 0, "{body}");
+    assert!(
+        tmux.logged().contains("-L scratch kill-pane -t %3"),
+        "{}",
+        tmux.logged()
+    );
+    assert!(!record.exists(), "the record was left behind");
+    assert!(!board.exists(), "the board address was left behind");
+    assert_eq!(ps_started(sleeper.0), "", "the hub is still running");
+    assert!(!hub_ids(&resident).contains(&"hub-wid-957".to_string()));
+    // What the hub knew is kept, so the same key picks it up again.
+    assert!(
+        fixture
+            .state
+            .join("sessions")
+            .join(format!("{FEATURE_SLUG}.json"))
+            .exists()
+    );
+    assert!(
+        fixture
+            .state
+            .join("tasks")
+            .join(FEATURE_SLUG)
+            .join("task-1.json")
+            .exists()
+    );
+}
+
+#[test]
+fn a_parent_hub_with_a_worker_is_not_closed_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let (record, board) = running_parent_hub(&fixture, &tmux, sleeper.0);
+
+    // A worker that has ended: only its saved session in a linked worktree names the hub.
+    let worktree = fixture._dir.path().join("widget-wid-957");
+    let out = Command::new("git")
+        .hermetic()
+        .args(["worktree", "add", "-q", "-b", "wid-957"])
+        .arg(&worktree)
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+    std::fs::write(
+        worktree.join(".claude").join("adjutant-session.json"),
+        serde_json::json!({"sessionId": "sid-1", "hub": FEATURE}).to_string(),
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/close"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("still report"), "{body}");
+    assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+    assert!(record.exists());
+    assert!(board.exists());
+    assert!(hub_ids(&resident).contains(&"hub-wid-957".to_string()));
+
+    // Stopping is still what it always was.
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/stop"), "{}");
+    assert_eq!(status, 200, "{body}");
+    assert!(hub_ids(&resident).contains(&"hub-wid-957".to_string()));
+}
+
+#[test]
+fn the_repository_hub_cannot_be_closed_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/close"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("hub-stop"), "{body}");
+    assert!(hub_ids(&resident).contains(&"hub".to_string()));
+}
+
 #[test]
 fn a_hub_whose_key_needs_percent_encoding_can_be_named_from_the_board() {
     let fixture = Fixture::new(QUIET);

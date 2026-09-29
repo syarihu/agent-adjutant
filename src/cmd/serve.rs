@@ -566,6 +566,16 @@ pub fn note_board(repo: &crate::repo::RepoInfo) {
     let _ = write_whole(&path, &format!("{entry:#}\n"));
 }
 
+/// Take `slug` out of the address book, so a closed hub is not offered a board any more.
+pub(super) fn forget_board(slug: &str) -> Result<(), String> {
+    let path = boards_dir().join(format!("{slug}.json"));
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("cannot remove {}: {e}", path.display())),
+    }
+}
+
 /// The pieces of the address book entry `slug` names, when they still describe that board:
 /// the checkout is there and the repository and hub still come to the same slug.
 #[derive(Clone, PartialEq, Eq)]
@@ -1529,16 +1539,7 @@ fn sessions_of(
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
-        let parent_hub = parent_hub_id(
-            repo,
-            hubs,
-            record_json
-                .as_ref()
-                .and_then(|r| r.get("hub"))
-                .and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| saved_session.as_ref().and_then(|s| s.hub.as_deref())),
-        );
+        let parent_hub = parent_hub_id(repo, hubs, messaging::worker_hub_key(wt_path).as_deref());
         let started_at = record_json
             .as_ref()
             .and_then(|r| r.get("startedAt"))
@@ -1591,7 +1592,11 @@ fn sessions_of(
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
     if let Some(record_json) = messaging::read_json(&main_record_path) {
         let status = messaging::worker_status(Path::new(&repo.main));
-        let parent_hub = parent_hub_id(repo, hubs, record_json.get("hub").and_then(Value::as_str));
+        let parent_hub = parent_hub_id(
+            repo,
+            hubs,
+            messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
+        );
         let started_at = record_json
             .get("startedAt")
             .and_then(Value::as_str)
@@ -1828,7 +1833,7 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
 /// is not UTF-8 is an error for the caller to say, not a different route.
 fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
     let (raw, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
-    (!raw.is_empty() && !raw.contains('/') && matches!(action, "start" | "stop"))
+    (!raw.is_empty() && !raw.contains('/') && matches!(action, "start" | "stop" | "close"))
         .then(|| (decode_segment(raw), action))
 }
 
@@ -1890,7 +1895,7 @@ fn decode_segment(raw: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|_| format!("the id is not valid UTF-8: {raw}"))
 }
 
-/// Start or stop one of the repository's hubs from the board. `id` is the `hubs[].id` the
+/// Start, stop or close one of the repository's hubs from the board. `id` is the `hubs[].id` the
 /// page was given, so the page can only name a hub this repository was found to have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
     let (id, action) = hub_route(path).ok_or("no such route")?;
@@ -1934,7 +1939,11 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                 }
             }
         }
-        _ => {
+        "stop" | "close" => {
+            let closing = action == "close";
+            if closing {
+                super::closable_check(&hub)?;
+            }
             // Addressed by the slug the hub was listed under: a hub whose key cannot be told
             // can still be stopped, and nothing here needs the key for it.
             let mut stopping = repo.clone();
@@ -1945,9 +1954,17 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                 resolved: server.ctx.resolved.clone(),
                 settings,
             };
+            // A hub that will not stop is not closed: nothing is forgotten until it is gone.
             let was_running = super::stop_hub(&ctx)?;
-            Ok(json!({ "stopped": true, "wasRunning": was_running }))
+            if closing {
+                messaging::unregister_hub(&hub.slug)?;
+                forget_board(&hub.slug)?;
+                Ok(json!({ "closed": true, "wasRunning": was_running, "unread": hub.inbox_count }))
+            } else {
+                Ok(json!({ "stopped": true, "wasRunning": was_running }))
+            }
         }
+        other => Err(format!("no such action: {other}")),
     }
 }
 
@@ -2236,6 +2253,10 @@ mod tests {
         assert_eq!(
             route("/api/hubs/hub-%E8%A6%AA%20%E3%82%AD%E3%83%BC/stop"),
             Some(("hub-親 キー".into(), "stop"))
+        );
+        assert_eq!(
+            route("/api/hubs/hub-wid-957/close"),
+            Some(("hub-wid-957".into(), "close"))
         );
         assert_eq!(route("/api/hubs/a+b/start"), Some(("a+b".into(), "start")));
         // An encoding that is wrong is the caller's mistake to be told, not another route.

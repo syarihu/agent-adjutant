@@ -401,6 +401,14 @@ enum Commands {
         #[arg(long)]
         hub: Option<String>,
     },
+    /// Close a parent-task hub whose workers are all gone: clear its record and take it off the board
+    HubClose {
+        #[arg(long)]
+        repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
+    },
     /// Open a worktree in the configured editor
     Ide {
         #[arg(long)]
@@ -1114,6 +1122,9 @@ pub fn run() -> ! {
         .map(|_| 0),
         Commands::HubStop { repo, hub } => {
             cmd::hub_stop(repo.as_deref(), hub.as_deref()).map(|_| 0)
+        }
+        Commands::HubClose { repo, hub } => {
+            cmd::hub_close(repo.as_deref(), hub.as_deref()).map(|_| 0)
         }
         Commands::Ide {
             repo,
