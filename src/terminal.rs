@@ -12,9 +12,12 @@
 //! rather than with those: whoever asked for it is about to remove the worktree that tab is
 //! sitting in, so a failure nobody was told about is a worker killed by the cleanup.
 
+use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use crate::config::{TerminalSettings, Wake};
+use crate::prompts::Agent;
 use crate::session::SessionTerminal;
 use crate::template::{Sub, contains_placeholder, render, sh_quote};
 
@@ -36,6 +39,10 @@ pub struct Performed {
     pub description: String,
     pub script: String,
     pub ran: bool,
+    /// The built-in tmux wake declined because of what the agent's screen showed, or could
+    /// not confirm what it typed. Only then is the reason worth telling the person; every
+    /// other failure is reported as it always was.
+    pub screen: bool,
 }
 
 /// A pane inside a tmux window.
@@ -168,6 +175,7 @@ pub fn spawn(
                 description: format!("will start in a new tab: {title} ({})", req.cwd),
                 script: cmd,
                 ran: false,
+                screen: false,
             });
         }
         run_shell(&cmd)?;
@@ -175,6 +183,7 @@ pub fn spawn(
             description: format!("started in a new tab: {title} ({})", req.cwd),
             script: cmd,
             ran: true,
+            screen: false,
         });
     }
 
@@ -196,6 +205,7 @@ pub fn spawn(
                 description: format!("will start in a new tab: {title} ({})", req.cwd),
                 script,
                 ran: false,
+                screen: false,
             });
         }
         run_shell(&script)?;
@@ -203,6 +213,7 @@ pub fn spawn(
             description: format!("started in a new tab: {title} ({})", req.cwd),
             script,
             ran: true,
+            screen: false,
         });
     }
 
@@ -222,6 +233,7 @@ pub fn spawn(
             description: format!("will start in a new tab: {title} ({})", req.cwd),
             script,
             ran: false,
+            screen: false,
         });
     }
     osascript(&script)?;
@@ -229,6 +241,7 @@ pub fn spawn(
         description: format!("started in a new tab: {title} ({})", req.cwd),
         script,
         ran: true,
+        screen: false,
     })
 }
 
@@ -258,6 +271,7 @@ pub fn focus(
             },
             script: cmd,
             ran: !dry_run,
+            screen: false,
         });
     }
 
@@ -269,6 +283,7 @@ pub fn focus(
                 description: format!("no tmux pane found for pid {pid}; not focusing"),
                 script: String::new(),
                 ran: false,
+                screen: false,
             });
         };
         let script =
@@ -278,6 +293,7 @@ pub fn focus(
                 description: format!("will focus the tab (pid {pid})"),
                 script,
                 ran: false,
+                screen: false,
             });
         }
         let result = run_shell(&script);
@@ -289,6 +305,7 @@ pub fn focus(
             },
             script,
             ran,
+            screen: false,
         });
     }
 
@@ -297,6 +314,7 @@ pub fn focus(
             description: format!("no terminal found for pid {pid}; not focusing"),
             script: String::new(),
             ran: false,
+            screen: false,
         });
     };
     let script = iterm_focus_script(&tty);
@@ -305,6 +323,7 @@ pub fn focus(
             description: format!("will focus the tab (pid {pid}, {tty})"),
             script,
             ran: false,
+            screen: false,
         });
     }
     // A window that cannot be raised is not worth failing a send over.
@@ -313,6 +332,7 @@ pub fn focus(
         description: format!("focused the tab (pid {pid}, {tty})"),
         script,
         ran: true,
+        screen: false,
     })
 }
 
@@ -376,6 +396,7 @@ fn close_with(
             description: "closing tabs is turned off; the tab was left open".to_string(),
             script: String::new(),
             ran: false,
+            screen: false,
         });
     }
     let mut built_in = false;
@@ -400,6 +421,7 @@ fn close_with(
                             description: format!("no tmux pane found for pid {pid}; not closing"),
                             script: String::new(),
                             ran: false,
+                            screen: false,
                         });
                     }
                 }
@@ -417,6 +439,7 @@ fn close_with(
                             description: format!("no terminal found for pid {pid}; not closing"),
                             script: String::new(),
                             ran: false,
+                            screen: false,
                         });
                     }
                 }
@@ -428,6 +451,7 @@ fn close_with(
             description: format!("will close the tab (pid {pid})"),
             script: command,
             ran: false,
+            screen: false,
         });
     }
     // Not swallowed the way `focus` and `wake` swallow their own failures. A window that
@@ -440,12 +464,14 @@ fn close_with(
             description: format!("no tab of this terminal is running pid {pid}; nothing closed"),
             script: command,
             ran: false,
+            screen: false,
         });
     }
     Ok(Performed {
         description: format!("closed the tab (pid {pid})"),
         script: command,
         ran: true,
+        screen: false,
     })
 }
 
@@ -500,6 +526,7 @@ pub fn set_title(
             description: "tab naming is turned off".to_string(),
             script: String::new(),
             ran: false,
+            screen: false,
         });
     }
     let title = sanitise_title(title, "adjutant".to_string());
@@ -517,6 +544,7 @@ pub fn set_title(
                                 .to_string(),
                             script: String::new(),
                             ran: false,
+                            screen: false,
                         });
                     }
                 }
@@ -531,6 +559,7 @@ pub fn set_title(
         description: format!("named the tab: {title}"),
         script: command,
         ran: !dry_run,
+        screen: false,
     })
 }
 
@@ -629,10 +658,14 @@ pub const WORKER_WAKE_LINE: &str = "The hub sent you something. Check it with ad
 
 /// `default_line` is what to type when the config has not overridden it — the caller knows
 /// which direction this is, and the two directions read different boxes.
+///
+/// `agent` is what the woken session runs. The built-in tmux wake reads the pane before typing
+/// and needs to know whose screen it is looking at; `Generic` is typed into without looking.
 pub struct WakeRequest<'a> {
     pub pid: u32,
     pub subject: &'a str,
     pub line: &'a str,
+    pub agent: Agent,
     pub dry_run: bool,
 }
 
@@ -642,6 +675,7 @@ pub fn wake(
     pid: u32,
     subject: &str,
     default_line: &str,
+    agent: Agent,
     dry_run: bool,
 ) -> Result<Performed, String> {
     let line = wake.line_or(default_line);
@@ -654,6 +688,7 @@ pub fn wake(
             pid,
             subject,
             line,
+            agent,
             dry_run,
         },
     )
@@ -672,6 +707,28 @@ fn wake_with(
     wake: &Wake,
     req: &WakeRequest,
 ) -> Result<Performed, String> {
+    wake_with_clock(
+        run,
+        std::thread::sleep,
+        &wake_lock_dir(),
+        tty,
+        terminal,
+        wake,
+        req,
+    )
+}
+
+/// `wake_with`, with the thing that waits handed in as well: waiting for an agent to come
+/// back to its prompt is a loop, and a test that slept through it would take the budget.
+fn wake_with_clock(
+    run: impl Fn(&str) -> Result<String, String>,
+    wait: impl Fn(Duration),
+    lock_dir: &Path,
+    tty: Option<String>,
+    terminal: &TerminalSettings,
+    wake: &Wake,
+    req: &WakeRequest,
+) -> Result<Performed, String> {
     let hook = &wake.hook;
     let line = req.line;
     let pid = req.pid;
@@ -681,12 +738,15 @@ fn wake_with(
             description: "waking is turned off".to_string(),
             script: String::new(),
             ran: false,
+            screen: false,
         });
     }
     // A template is answered for by its exit status and nothing else — it is someone else's
     // command and only it knows what success means. The built-in knows more about itself
     // than that, and says so.
     let mut built_in = false;
+    // The pane to read before typing, when the built-in tmux wake is the one in use.
+    let mut look_at: Option<String> = None;
     let command = match hook.template() {
         Some(template) => render(
             template,
@@ -703,7 +763,12 @@ fn wake_with(
                 let panes = list_tmux_panes_with(&run, terminal.tmux_socket())?;
                 let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
                 match pane {
-                    Some(pane) => tmux_wake_script(terminal.tmux_socket(), &pane.pane_id, line),
+                    Some(pane) => {
+                        if req.agent != Agent::Generic {
+                            look_at = Some(pane.pane_id.clone());
+                        }
+                        tmux_wake_script(terminal.tmux_socket(), &pane.pane_id, line)
+                    }
                     None => {
                         return Ok(Performed {
                             description: format!(
@@ -711,6 +776,7 @@ fn wake_with(
                             ),
                             script: String::new(),
                             ran: false,
+                            screen: false,
                         });
                     }
                 }
@@ -727,6 +793,7 @@ fn wake_with(
                             ),
                             script: String::new(),
                             ran: false,
+                            screen: false,
                         });
                     }
                 }
@@ -738,7 +805,19 @@ fn wake_with(
             description: format!("will wake the session (pid {pid})"),
             script: command,
             ran: false,
+            screen: false,
         });
+    }
+    if let Some(pane_id) = look_at {
+        return Ok(wake_after_looking(
+            &run,
+            &wait,
+            terminal.tmux_socket(),
+            &pane_id,
+            lock_dir,
+            req,
+            command,
+        ));
     }
     match run(&command) {
         // The message is already delivered by the time this runs. Failing to ring the bell
@@ -747,6 +826,7 @@ fn wake_with(
             description: format!("cannot wake the session: {e}"),
             script: command,
             ran: false,
+            screen: false,
         }),
         // The built-in walks every iTerm2 window looking for one tty and quietly does
         // nothing when no tab has it — which is what a session in any other terminal looks
@@ -757,11 +837,13 @@ fn wake_with(
             description: format!("no tab of this terminal is running pid {pid}; nothing woken"),
             script: command,
             ran: false,
+            screen: false,
         }),
         Ok(_) => Ok(Performed {
             description: format!("woke the session (pid {pid})"),
             script: command,
             ran: true,
+            screen: false,
         }),
     }
 }
@@ -1097,6 +1179,569 @@ pub fn tmux_wake_script(socket: Option<&str>, pane_id: &str, line: &str) -> Stri
     )
 }
 
+// ── looking at a pane before typing into it ──────────────────────────
+//
+// A wake types a line and Enter into whatever the agent is showing. Enter answers a question
+// the agent is asking, and a line typed while a person is halfway through a message is
+// appended to theirs and sent. So the built-in tmux wake reads the pane first and types only
+// at an empty prompt.
+//
+// What "an empty prompt" looks like is each agent's business, and the markers below were read
+// off captures of the real thing (`src/fixtures/panes`). They are structural — a numbered
+// list with a pointer, a key-hint line, a bordered input box — rather than the wording of
+// one release, and a screen that matches none of them is not typed into.
+
+/// The line `tmux_capture_script` prints between the screen and the pane's own state.
+const PANE_META_SEPARATOR: &str = "@@adjutant:pane@@";
+
+/// How long to wait for the agent to come back to its prompt, looking every so often. Long
+/// enough for a turn that is just ending; a person who is answering a question is not waited
+/// for, and falls back to being notified.
+const WAKE_READY_BUDGET: Duration = Duration::from_secs(5);
+const WAKE_READY_POLL: Duration = Duration::from_millis(500);
+
+/// After typing: how many times to look for the line at the prompt, and how far apart. The
+/// agent draws what it is sent asynchronously, so the first look can be too early.
+const WAKE_ECHO_LOOKS: u32 = 5;
+const WAKE_ECHO_POLL: Duration = Duration::from_millis(250);
+
+/// A box at the bottom of the screen with more than this under it is not an input box but
+/// something drawn over one.
+const MAX_LINES_BELOW_INPUT: usize = 5;
+
+/// What an agent's screen says it is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneState {
+    /// Sitting at an empty input prompt: the one state a wake is typed into.
+    Idle,
+    /// A question, a permission prompt or a menu is up, and Enter would answer it.
+    Asking,
+    /// There is text in the input box: a person is midway through writing.
+    Typing,
+    /// In the middle of a turn. Typed text would be taken as a message to the running turn
+    /// rather than the next one, which the wake was not written for.
+    Working,
+    /// The pane is scrolled back or searching (tmux copy mode); keys go to tmux, not the agent.
+    CopyMode,
+    /// None of the above could be told from the screen.
+    Unknown,
+}
+
+impl PaneState {
+    /// Why nothing was typed, for whoever is told the wake did not happen.
+    pub fn why_not_typed(self) -> &'static str {
+        match self {
+            PaneState::Idle => "its prompt is empty",
+            PaneState::Asking => "its screen shows a question or a menu",
+            PaneState::Typing => "there is text typed at its prompt",
+            PaneState::Working => "it is in the middle of a turn",
+            PaneState::CopyMode => "its pane is in tmux copy mode",
+            PaneState::Unknown => "its screen was not recognised",
+        }
+    }
+}
+
+/// A capture of a pane: what is on it, and what tmux says about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneScreen {
+    /// One line per row, with the colour and attribute escapes `capture-pane -e` leaves in.
+    pub text: String,
+    /// Whether the pane is in a tmux mode (copy mode and the like).
+    pub in_mode: bool,
+    pub cursor_x: u32,
+    pub cursor_y: u32,
+}
+
+/// The command that prints a pane's screen, then `PANE_META_SEPARATOR`, then
+/// `pane_in_mode`, `cursor_x` and `cursor_y` separated by tabs.
+///
+/// `-u` for the reason `tmux_window_home_script` gives: without a UTF-8 locale tmux rewrites
+/// every non-ASCII character it prints to `_`, and the prompt glyph is one. `-e` keeps the
+/// attributes, because the only thing telling an agent's placeholder text from typed text is
+/// that the placeholder is drawn faint. `-J` joins rows the terminal wrapped.
+pub fn tmux_capture_script(socket: Option<&str>, pane_id: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket).replacen("tmux", "tmux -u", 1);
+    let pane_q = sh_quote(pane_id);
+    format!(
+        "{prefix} capture-pane -p -e -J -t {pane_q} && echo {PANE_META_SEPARATOR} && {prefix} display-message -p -t {pane_q} '#{{pane_in_mode}}\t#{{cursor_x}}\t#{{cursor_y}}'"
+    )
+}
+
+pub fn parse_pane_screen(output: &str) -> PaneScreen {
+    let (text, meta) = match output.rsplit_once(PANE_META_SEPARATOR) {
+        Some((text, meta)) => (text, meta.trim()),
+        None => (output, ""),
+    };
+    let mut fields = meta.split('\t');
+    let mut next = || fields.next().and_then(|f| f.trim().parse::<u32>().ok());
+    PaneScreen {
+        text: text.trim_end().to_string(),
+        in_mode: next().is_some_and(|n| n != 0),
+        cursor_x: next().unwrap_or(0),
+        cursor_y: next().unwrap_or(0),
+    }
+}
+
+/// The character an agent draws in front of its input line. Old messages in the transcript
+/// start with it too; the box around the live one is what tells them apart.
+fn prompt_glyph(agent: Agent) -> char {
+    match agent {
+        Agent::Agy => '>',
+        _ => '❯',
+    }
+}
+
+/// Lines that mean a choice is on screen and Enter would make it, whichever agent draws it.
+const ASKING_HINTS: &[&str] = &["(y/n)", "[y/n]", "(yes/no)", "[yes/no]"];
+const CLAUDE_ASKING_HINTS: &[&str] = &[
+    "esc to cancel",
+    "enter to select",
+    "enter to confirm",
+    "tab to amend",
+];
+// agy's footer says `esc to cancel` while it works as well as while it asks, so that is not a
+// marker for it; the navigation hint is only ever drawn with a list.
+const AGY_ASKING_HINTS: &[&str] = &["↑/↓ navigate"];
+
+/// A line the spinner is drawn on. Claude counts the seconds it has been at it in brackets
+/// after an ellipsis (`✻ … (3s · thinking)`, and `1m 5s` once it passes a minute), with a verb the user can change, so it is the
+/// shape that is looked for; the line left behind when a turn ends (`✻ Baked for 4s · done`)
+/// has no ellipsis and no brackets.
+fn claude_spinner(line: &str) -> bool {
+    let line = line.trim_start();
+    let Some(first) = line.chars().next() else {
+        return false;
+    };
+    if !"✻✽✶✳✢·*".contains(first) {
+        return false;
+    }
+    // Before the first tick there is no timer yet: `✻ Pondering…`. Not with the dot, which
+    // also leads ordinary list lines.
+    if first != '·' && line.trim_end().ends_with('…') {
+        return true;
+    }
+    let Some((_, rest)) = line.split_once("… (") else {
+        return false;
+    };
+    // The timer is `3s`, then `1m 5s`, then `1h 2m`: a turn of a minute or more still counts.
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && rest[digits..].starts_with(['h', 'm', 's'])
+}
+
+/// agy draws a braille spinner in front of what it is doing.
+fn agy_spinner(line: &str) -> bool {
+    line.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|c| ('\u{2800}'..='\u{28ff}').contains(&c))
+}
+
+fn working_marker(agent: Agent, line: &str) -> bool {
+    let lower = line.to_lowercase();
+    match agent {
+        Agent::Claude => claude_spinner(line) || lower.contains("esc to interrupt"),
+        Agent::Agy => agy_spinner(line) || lower.trim_start().starts_with("esc to cancel"),
+        Agent::Generic => false,
+    }
+}
+
+/// `line` without the escape sequences `capture-pane -e` puts in it.
+fn strip_escapes(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            // A control sequence ends at its first byte in @..~.
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether everything drawn after the prompt glyph on this line is drawn faint, which is how
+/// an agent shows the suggestion it fills an empty box with. Text someone typed is not.
+fn faint_after_glyph(raw: &str, glyph: char) -> bool {
+    let mut faint = false;
+    let mut past_glyph = false;
+    let mut any = false;
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() != Some(&'[') {
+                continue;
+            }
+            chars.next();
+            let mut params = String::new();
+            let mut last = ' ';
+            for c in chars.by_ref() {
+                last = c;
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+                params.push(c);
+            }
+            if last == 'm' {
+                let mut parts = params.split(';');
+                while let Some(p) = parts.next() {
+                    match p {
+                        "" | "0" | "22" => faint = false,
+                        "2" => faint = true,
+                        // A colour's own arguments are not attributes: `38;5;2` is not faint.
+                        "38" | "48" => {
+                            let skip = if parts.next() == Some("2") { 3 } else { 1 };
+                            for _ in 0..skip {
+                                parts.next();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            continue;
+        }
+        if !past_glyph {
+            past_glyph = c == glyph;
+        } else if !c.is_whitespace() {
+            any = true;
+            if !faint {
+                return false;
+            }
+        }
+    }
+    any
+}
+
+/// A line that is a horizontal rule: the edge of the input box.
+fn is_border(plain: &str) -> bool {
+    let line = plain.trim();
+    line.starts_with("───") && line.chars().filter(|&c| c == '─').count() >= 10
+}
+
+/// A line that is one of a numbered list's items with the pointer on it: `❯ 1. Yes`.
+fn is_pointed_option(plain: &str) -> bool {
+    let line = plain.trim_start();
+    let Some(rest) = line.strip_prefix(['❯', '>', '›']) else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && rest[digits..].starts_with(['.', ')'])
+}
+
+struct Line {
+    raw: String,
+    plain: String,
+}
+
+struct InputBox {
+    /// What is typed in it, apart from a suggestion the agent drew there.
+    text: String,
+}
+
+/// The input box nearest the bottom: a line starting with the prompt glyph that has a border
+/// above it and, further down, another one.
+fn input_box(agent: Agent, lines: &[Line]) -> Option<InputBox> {
+    let glyph = prompt_glyph(agent);
+    for top in (0..lines.len().saturating_sub(1)).rev() {
+        if !is_border(&lines[top].plain) || !lines[top + 1].plain.trim_start().starts_with(glyph) {
+            continue;
+        }
+        let Some(bottom) = (top + 2..lines.len()).find(|&i| is_border(&lines[i].plain)) else {
+            continue;
+        };
+        let below = lines[bottom + 1..]
+            .iter()
+            .filter(|l| !l.plain.trim().is_empty())
+            .count();
+        if below > MAX_LINES_BELOW_INPUT {
+            continue;
+        }
+        let first = &lines[top + 1];
+        let mut text = first
+            .plain
+            .trim_start()
+            .trim_start_matches(glyph)
+            .trim()
+            .to_string();
+        let suggestion = agent == Agent::Claude && faint_after_glyph(&first.raw, glyph);
+        if suggestion {
+            text.clear();
+        }
+        for line in &lines[top + 2..bottom] {
+            text.push(' ');
+            text.push_str(line.plain.trim());
+        }
+        return Some(InputBox {
+            text: text.trim().to_string(),
+        });
+    }
+    None
+}
+
+/// What `pane_state` decided, and what it found typed in the input box on the way.
+struct Reading {
+    state: PaneState,
+    typed: String,
+}
+
+fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
+    let reading = |state| Reading {
+        state,
+        typed: String::new(),
+    };
+    if agent == Agent::Generic {
+        return reading(PaneState::Idle);
+    }
+    if screen.in_mode {
+        return reading(PaneState::CopyMode);
+    }
+    let lines: Vec<Line> = screen
+        .text
+        .lines()
+        .map(|raw| Line {
+            plain: strip_escapes(raw),
+            raw: raw.to_string(),
+        })
+        .collect();
+    let hints = match agent {
+        Agent::Agy => AGY_ASKING_HINTS,
+        _ => CLAUDE_ASKING_HINTS,
+    };
+    let asking = lines.iter().any(|l| {
+        let lower = l.plain.to_lowercase();
+        is_pointed_option(&l.plain)
+            || ASKING_HINTS.iter().any(|h| lower.contains(h))
+            || hints.iter().any(|h| lower.contains(h))
+    });
+    if asking {
+        return reading(PaneState::Asking);
+    }
+    let Some(input) = input_box(agent, &lines) else {
+        return reading(PaneState::Unknown);
+    };
+    if !input.text.is_empty() {
+        return Reading {
+            state: PaneState::Typing,
+            typed: input.text,
+        };
+    }
+    if lines.iter().any(|l| working_marker(agent, &l.plain)) {
+        return reading(PaneState::Working);
+    }
+    reading(PaneState::Idle)
+}
+
+/// What the agent's screen says it is doing. `Generic` is `Idle` without looking: nothing is
+/// known of how its screen reads, and it is how the wake behaved before it looked at all.
+pub fn pane_state(agent: Agent, screen: &PaneScreen) -> PaneState {
+    read_pane(agent, screen).state
+}
+
+/// Does the input box hold the line and nothing else? Whitespace is ignored because a line
+/// the box is too narrow for is wrapped at a space that was not in it. Anything more in the
+/// box is someone else's typing that the line has been appended to, and Enter would send both.
+fn shows_typed_line(agent: Agent, screen: &PaneScreen, line: &str) -> bool {
+    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
+    let reading = read_pane(agent, screen);
+    reading.state == PaneState::Typing && squeeze(&reading.typed) == squeeze(line)
+}
+
+/// The line, typed and not sent. The pause is the same one `tmux_wake_script` leaves before
+/// Enter; here it is also what gives the agent time to draw the line before it is looked for.
+fn tmux_type_script(socket: Option<&str>, pane_id: &str, line: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    format!(
+        "{prefix} send-keys -l -t {} {} && sleep {WAKE_ENTER_DELAY}",
+        sh_quote(pane_id),
+        sh_quote(line)
+    )
+}
+
+fn tmux_enter_script(socket: Option<&str>, pane_id: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    format!(
+        "{prefix} send-keys -t {} Enter && echo {WOKE_MARKER}",
+        sh_quote(pane_id)
+    )
+}
+
+fn look_at_pane(
+    run: &impl Fn(&str) -> Result<String, String>,
+    capture: &str,
+) -> Result<PaneScreen, String> {
+    run(capture).map(|out| parse_pane_screen(&out))
+}
+
+/// Where the per-pane locks live. Not the state directory: that is a matter for a layer above
+/// this one, and all a lock needs is a place every wake on this machine agrees on.
+fn wake_lock_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join("adjutant-wake-locks")
+}
+
+/// Take the lock that lets one wake at a time look at a pane and type into it.
+///
+/// Two workers reporting to one hub at the same moment would both see an empty prompt and
+/// both type; the box would then hold two lines, neither would be sent, and the stale text
+/// would block every wake after. An advisory lock on an open file, like the dispatch lock:
+/// the system lets go of it when its holder dies. The wait comes out of the same budget as
+/// waiting for the prompt. `Err` is running out of it; a lock that cannot be made at all is
+/// not a reason to stop waking, so that is `Ok(None)`.
+fn lock_pane(
+    dir: &Path,
+    socket: Option<&str>,
+    pane_id: &str,
+    wait: &impl Fn(Duration),
+    waited: &mut Duration,
+) -> Result<Option<std::fs::File>, ()> {
+    let key: String = format!("{}-{pane_id}", socket.unwrap_or("default"))
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if std::fs::create_dir_all(dir).is_err() {
+        return Ok(None);
+    }
+    // Never removed, for the reason the dispatch lock gives.
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(format!("{key}.lock")))
+    else {
+        return Ok(None);
+    };
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if *waited >= WAKE_READY_BUDGET {
+                    return Err(());
+                }
+                wait(WAKE_READY_POLL);
+                *waited += WAKE_READY_POLL;
+            }
+            Err(std::fs::TryLockError::Error(_)) => return Ok(None),
+        }
+    }
+}
+
+/// The built-in tmux wake for an agent whose screen is known: wait for its prompt to be
+/// empty, type the line, check that it landed at the prompt, and only then press Enter.
+///
+/// The second look is what keeps a screen that changed between the first look and the typing
+/// from being answered: if the line is not where it should be, Enter is not pressed and the
+/// caller is told, which is the same as a wake that could not be done. `script` is what the
+/// wake amounts to, for the caller to report.
+fn wake_after_looking(
+    run: &impl Fn(&str) -> Result<String, String>,
+    wait: &impl Fn(Duration),
+    socket: Option<&str>,
+    pane_id: &str,
+    lock_dir: &Path,
+    req: &WakeRequest,
+    script: String,
+) -> Performed {
+    let (pid, agent, line) = (req.pid, req.agent, req.line);
+    let capture = tmux_capture_script(socket, pane_id);
+    let refused = |description: String, script: &str, screen: bool| Performed {
+        description,
+        script: script.to_string(),
+        ran: false,
+        screen,
+    };
+    let mut waited = Duration::ZERO;
+    // Held until this returns: from the first look to Enter, or to giving up.
+    let _turn = match lock_pane(lock_dir, socket, pane_id, wait, &mut waited) {
+        Ok(held) => held,
+        Err(()) => {
+            return refused(
+                format!(
+                    "the wake was not typed into the session (pid {pid}): another wake was still typing into its pane"
+                ),
+                &capture,
+                true,
+            );
+        }
+    };
+    loop {
+        let screen = match look_at_pane(run, &capture) {
+            Ok(screen) => screen,
+            Err(e) => {
+                return refused(
+                    format!(
+                        "the wake was not typed into the session (pid {pid}): its screen could not be read ({e})"
+                    ),
+                    &capture,
+                    true,
+                );
+            }
+        };
+        let state = pane_state(agent, &screen);
+        if state == PaneState::Idle {
+            break;
+        }
+        if waited >= WAKE_READY_BUDGET {
+            return refused(
+                format!(
+                    "the wake was not typed into the session (pid {pid}): {}",
+                    state.why_not_typed()
+                ),
+                &capture,
+                true,
+            );
+        }
+        wait(WAKE_READY_POLL);
+        waited += WAKE_READY_POLL;
+    }
+    let typed = tmux_type_script(socket, pane_id, line);
+    if let Err(e) = run(&typed) {
+        return refused(format!("cannot wake the session: {e}"), &typed, false);
+    }
+    let mut shown = false;
+    for look in 0..WAKE_ECHO_LOOKS {
+        if look > 0 {
+            wait(WAKE_ECHO_POLL);
+        }
+        if let Ok(screen) = look_at_pane(run, &capture)
+            && shows_typed_line(agent, &screen, line)
+        {
+            shown = true;
+            break;
+        }
+    }
+    if !shown {
+        return refused(
+            format!(
+                "the wake was not sent to the session (pid {pid}): its prompt did not hold just the line typed, so Enter was not pressed; the line may have been left at the prompt"
+            ),
+            &script,
+            true,
+        );
+    }
+    match run(&tmux_enter_script(socket, pane_id)) {
+        Err(e) => refused(format!("cannot wake the session: {e}"), &script, false),
+        Ok(out) if !woke(true, &out) => refused(
+            format!("no tab of this terminal is running pid {pid}; nothing woken"),
+            &script,
+            false,
+        ),
+        Ok(_) => Performed {
+            description: format!("woke the session (pid {pid})"),
+            script,
+            ran: true,
+            screen: false,
+        },
+    }
+}
+
 pub fn tmux_close_script(socket: Option<&str>, window_id: &str) -> String {
     let prefix = tmux_cmd_prefix(socket);
     let win_q = sh_quote(window_id);
@@ -1390,6 +2035,7 @@ pub fn tmux_wake(
     socket: Option<&str>,
     pid: u32,
     line: Option<&str>,
+    agent: Agent,
     dry_run: bool,
 ) -> Result<Performed, String> {
     let default_line = WORKER_WAKE_LINE;
@@ -1399,7 +2045,7 @@ pub fn tmux_wake(
         socket: socket.map(str::to_string),
         ..Default::default()
     };
-    wake(&term, &Wake::default(), pid, "", wake_line, dry_run)
+    wake(&term, &Wake::default(), pid, "", wake_line, agent, dry_run)
 }
 
 pub fn tmux_focus(socket: Option<&str>, pid: u32, dry_run: bool) -> Result<Performed, String> {
@@ -1916,6 +2562,7 @@ mod tests {
             4321,
             "画像が潰れる",
             HUB_WAKE_LINE,
+            Agent::Generic,
             true,
         )
         .unwrap();
@@ -1935,6 +2582,7 @@ mod tests {
             4321,
             "s",
             HUB_WAKE_LINE,
+            Agent::Generic,
             false,
         )
         .unwrap();
@@ -1969,6 +2617,7 @@ mod tests {
             4321,
             "s",
             HUB_WAKE_LINE,
+            Agent::Generic,
             true,
         )
         .unwrap();
@@ -1988,6 +2637,7 @@ mod tests {
             1,
             "s",
             HUB_WAKE_LINE,
+            Agent::Generic,
             false,
         )
         .unwrap();
@@ -2025,6 +2675,7 @@ mod tests {
                 pid: ours,
                 subject: "s",
                 line: "check your inbox",
+                agent: Agent::Generic,
                 dry_run: false,
             },
         )
@@ -2042,6 +2693,7 @@ mod tests {
                 pid: ours,
                 subject: "s",
                 line: "check your inbox",
+                agent: Agent::Generic,
                 dry_run: false,
             },
         )
@@ -2063,6 +2715,7 @@ mod tests {
                 pid: ours,
                 subject: "s",
                 line: "check your inbox",
+                agent: Agent::Generic,
                 dry_run: false,
             },
         )
@@ -2213,6 +2866,7 @@ mod tests {
                 pid: 12345,
                 subject: "sub",
                 line: "wake up",
+                agent: Agent::Generic,
                 dry_run: false,
             },
         )
@@ -2530,5 +3184,663 @@ mod tests {
             "{script}"
         );
         assert!(board_release_script(Some("/a/b"), "x").contains("tmux -S /a/b kill-session"));
+    }
+
+    // ── reading a pane before waking it ──────────────────────────────
+
+    /// A capture as `tmux_capture_script` prints it, from a real one kept in `src/fixtures`.
+    fn fixture(name: &str) -> &'static str {
+        match name {
+            "claude-idle" => include_str!("fixtures/panes/claude-idle.txt"),
+            "claude-idle-after-turn" => include_str!("fixtures/panes/claude-idle-after-turn.txt"),
+            "claude-typing" => include_str!("fixtures/panes/claude-typing.txt"),
+            "claude-working" => include_str!("fixtures/panes/claude-working.txt"),
+            "claude-working-tool" => include_str!("fixtures/panes/claude-working-tool.txt"),
+            "claude-working-typed" => include_str!("fixtures/panes/claude-working-typed.txt"),
+            "claude-question" => include_str!("fixtures/panes/claude-question.txt"),
+            "claude-permission" => include_str!("fixtures/panes/claude-permission.txt"),
+            "claude-menu" => include_str!("fixtures/panes/claude-menu.txt"),
+            "agy-idle" => include_str!("fixtures/panes/agy-idle.txt"),
+            "agy-idle-after-turn" => include_str!("fixtures/panes/agy-idle-after-turn.txt"),
+            "agy-typing" => include_str!("fixtures/panes/agy-typing.txt"),
+            "agy-working" => include_str!("fixtures/panes/agy-working.txt"),
+            "agy-working-typed" => include_str!("fixtures/panes/agy-working-typed.txt"),
+            "agy-question" => include_str!("fixtures/panes/agy-question.txt"),
+            "agy-permission" => include_str!("fixtures/panes/agy-permission.txt"),
+            "agy-menu" => include_str!("fixtures/panes/agy-menu.txt"),
+            other => panic!("no fixture called {other}"),
+        }
+    }
+
+    const FIXTURES: &[(Agent, &str, PaneState)] = &[
+        (Agent::Claude, "claude-idle", PaneState::Idle),
+        (Agent::Claude, "claude-idle-after-turn", PaneState::Idle),
+        (Agent::Claude, "claude-typing", PaneState::Typing),
+        (Agent::Claude, "claude-working", PaneState::Working),
+        (Agent::Claude, "claude-working-tool", PaneState::Working),
+        (Agent::Claude, "claude-working-typed", PaneState::Typing),
+        (Agent::Claude, "claude-question", PaneState::Asking),
+        (Agent::Claude, "claude-permission", PaneState::Asking),
+        (Agent::Claude, "claude-menu", PaneState::Asking),
+        (Agent::Agy, "agy-idle", PaneState::Idle),
+        (Agent::Agy, "agy-idle-after-turn", PaneState::Idle),
+        (Agent::Agy, "agy-typing", PaneState::Typing),
+        (Agent::Agy, "agy-working", PaneState::Working),
+        (Agent::Agy, "agy-working-typed", PaneState::Typing),
+        (Agent::Agy, "agy-question", PaneState::Asking),
+        (Agent::Agy, "agy-permission", PaneState::Asking),
+        (Agent::Agy, "agy-menu", PaneState::Asking),
+    ];
+
+    #[test]
+    fn every_captured_screen_reads_as_what_it_was() {
+        for (agent, name, expected) in FIXTURES {
+            let screen = parse_pane_screen(fixture(name));
+            assert_eq!(pane_state(*agent, &screen), *expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_capture_carries_escapes_on_every_line_and_reads_the_same() {
+        // The fixtures keep escapes only where the placeholder needs them; a real capture
+        // has them everywhere.
+        for (agent, name, expected) in FIXTURES {
+            let mut screen = parse_pane_screen(fixture(name));
+            screen.text = screen
+                .text
+                .lines()
+                .map(|l| format!("\x1b[38;5;244m{l}\x1b[0m"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(pane_state(*agent, &screen), *expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_suggestion_in_an_empty_box_is_not_typed_text() {
+        // Claude fills an empty box with a suggestion, drawn faint. Read as text it would
+        // make every fresh session look like somebody was typing.
+        let screen = parse_pane_screen(fixture("claude-idle"));
+        assert!(screen.text.contains("Try \""), "{}", screen.text);
+        assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Idle);
+        // The same words, not faint, are typed text.
+        let mut typed = screen.clone();
+        typed.text = typed.text.replace("\x1b[2m", "");
+        assert_eq!(pane_state(Agent::Claude, &typed), PaneState::Typing);
+    }
+
+    #[test]
+    fn a_turn_past_a_minute_is_still_a_turn_in_progress() {
+        // The timer runs `3s`, then `1m 5s`, then `1h 2m`.
+        let working = fixture("claude-working");
+        assert!(working.contains("(3s ·"), "{working}");
+        for timer in ["(59s ·", "(1m 5s ·", "(12m ·", "(1h 2m ·"] {
+            let mut screen = parse_pane_screen(working);
+            screen.text = screen.text.replace("(3s ·", timer);
+            assert_eq!(
+                pane_state(Agent::Claude, &screen),
+                PaneState::Working,
+                "{timer}"
+            );
+        }
+        // The line a finished turn leaves has no brackets to read.
+        let mut done = parse_pane_screen(working);
+        done.text = done
+            .text
+            .replace("Pondering… (3s · thinking)", "Baked for 1m 5s · done");
+        assert_eq!(pane_state(Agent::Claude, &done), PaneState::Idle);
+    }
+
+    #[test]
+    fn a_spinner_line_before_its_first_tick_is_a_turn_too() {
+        let working = fixture("claude-working");
+        let mut screen = parse_pane_screen(working);
+        screen.text = screen
+            .text
+            .replace("Pondering… (3s · thinking)", "Pondering…");
+        assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Working);
+        // The dot also leads ordinary lines; one ending in an ellipsis is not a spinner.
+        let mut listed = parse_pane_screen(working);
+        listed.text = listed
+            .text
+            .replace("✻ Pondering… (3s · thinking)", "· and so on…");
+        assert_eq!(pane_state(Agent::Claude, &listed), PaneState::Idle);
+    }
+
+    #[test]
+    fn the_ascii_spinner_of_other_platforms_is_a_turn_and_a_bullet_is_not() {
+        let working = fixture("claude-working");
+        let mut star = parse_pane_screen(working);
+        star.text = star.text.replace('✻', "*");
+        assert_eq!(pane_state(Agent::Claude, &star), PaneState::Working);
+        let mut bullet = parse_pane_screen(working);
+        bullet.text = bullet
+            .text
+            .replace("✻ Pondering… (3s · thinking)", "* item in a list");
+        assert_eq!(pane_state(Agent::Claude, &bullet), PaneState::Idle);
+    }
+
+    #[test]
+    fn a_pane_in_copy_mode_is_not_typed_into() {
+        for (agent, name, _) in FIXTURES {
+            let mut screen = parse_pane_screen(fixture(name));
+            screen.in_mode = true;
+            assert_eq!(pane_state(*agent, &screen), PaneState::CopyMode, "{name}");
+        }
+    }
+
+    #[test]
+    fn an_agent_of_unknown_kind_is_never_looked_at() {
+        for (_, name, _) in FIXTURES {
+            let screen = parse_pane_screen(fixture(name));
+            assert_eq!(
+                pane_state(Agent::Generic, &screen),
+                PaneState::Idle,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_screen_that_is_not_the_agents_is_unknown() {
+        for text in [
+            "",
+            "$ ",
+            "user@host project % ls\nCargo.toml  src\nuser@host project %",
+            "❯ not in a box\n",
+        ] {
+            let screen = parse_pane_screen(&format!("{text}\n{PANE_META_SEPARATOR}\n0\t0\t0\n"));
+            for agent in [Agent::Claude, Agent::Agy] {
+                assert_eq!(pane_state(agent, &screen), PaneState::Unknown, "{text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_prompt_with_a_lot_under_it_is_not_taken_for_the_input_box() {
+        let rule = "─".repeat(40);
+        let mut text = format!("{rule}\n❯\n{rule}\n");
+        for n in 0..=MAX_LINES_BELOW_INPUT {
+            text.push_str(&format!("something drawn over it {n}\n"));
+        }
+        let screen = parse_pane_screen(&format!("{text}{PANE_META_SEPARATOR}\n0\t0\t0\n"));
+        assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Unknown);
+    }
+
+    #[test]
+    fn a_confirmation_is_a_question_whatever_the_box_says() {
+        let rule = "─".repeat(40);
+        let text = format!("Overwrite the file? (y/n)\n{rule}\n❯\n{rule}\n");
+        let screen = parse_pane_screen(&format!("{text}{PANE_META_SEPARATOR}\n0\t0\t0\n"));
+        assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Asking);
+    }
+
+    #[test]
+    fn the_capture_reads_the_pane_in_utf8_and_keeps_its_attributes() {
+        let script = tmux_capture_script(Some("adj-test"), "%3");
+        assert!(
+            script.starts_with("tmux -u -L adj-test capture-pane -p -e -J -t %3"),
+            "{script}"
+        );
+        assert!(script.contains("display-message -p -t %3"), "{script}");
+        assert!(script.contains("#{pane_in_mode}"), "{script}");
+        assert!(script.contains(PANE_META_SEPARATOR), "{script}");
+        let by_path = tmux_capture_script(Some("/tmp/t.sock"), "%3");
+        assert!(
+            by_path.starts_with("tmux -u -S /tmp/t.sock capture-pane"),
+            "{by_path}"
+        );
+        assert!(tmux_capture_script(None, "%3").starts_with("tmux -u capture-pane"));
+    }
+
+    #[test]
+    fn a_capture_is_split_from_what_tmux_says_about_the_pane() {
+        let screen = parse_pane_screen(&format!("one\ntwo\n{PANE_META_SEPARATOR}\n1\t12\t3"));
+        assert_eq!(screen.text, "one\ntwo");
+        assert!(screen.in_mode);
+        assert_eq!((screen.cursor_x, screen.cursor_y), (12, 3));
+        let bare = parse_pane_screen("one");
+        assert!(!bare.in_mode);
+        assert_eq!(bare.text, "one");
+    }
+
+    /// A pane the wake looks at, played back: each capture returns the next screen (the last
+    /// one for as long as it is asked), and everything run is written down.
+    struct FakePane {
+        screens: std::cell::RefCell<std::collections::VecDeque<String>>,
+        log: std::cell::RefCell<Vec<String>>,
+        waits: std::cell::RefCell<Vec<Duration>>,
+    }
+
+    impl FakePane {
+        fn new(screens: &[String]) -> Self {
+            FakePane {
+                screens: std::cell::RefCell::new(screens.iter().cloned().collect()),
+                log: Default::default(),
+                waits: Default::default(),
+            }
+        }
+
+        fn run(&self, cmd: &str) -> Result<String, String> {
+            self.log.borrow_mut().push(cmd.to_string());
+            if cmd.contains("list-panes") {
+                Ok("%1\t12345\t/dev/ttys005\t@1\tadjutant\t1\tworker\n".to_string())
+            } else if cmd.contains("capture-pane") {
+                let mut screens = self.screens.borrow_mut();
+                let next = if screens.len() > 1 {
+                    screens.pop_front()
+                } else {
+                    screens.front().cloned()
+                };
+                next.ok_or_else(|| "no screen".to_string())
+            } else if cmd.contains("send-keys") {
+                Ok(format!("{WOKE_MARKER}\n"))
+            } else {
+                Err(format!("unexpected command: {cmd}"))
+            }
+        }
+
+        fn count(&self, needle: &str) -> usize {
+            self.log
+                .borrow()
+                .iter()
+                .filter(|c| c.contains(needle))
+                .count()
+        }
+
+        fn wake(&self, agent: Agent, line: &str) -> Performed {
+            let term = TerminalSettings {
+                preset: Some("tmux".to_string()),
+                ..Default::default()
+            };
+            let locks = tempfile::tempdir().unwrap();
+            wake_with_clock(
+                |cmd| self.run(cmd),
+                |d| self.waits.borrow_mut().push(d),
+                locks.path(),
+                Some("ttys005".to_string()),
+                &term,
+                &Wake::default(),
+                &WakeRequest {
+                    pid: 12345,
+                    subject: "s",
+                    line,
+                    agent,
+                    dry_run: false,
+                },
+            )
+            .unwrap()
+        }
+    }
+
+    /// `screen` with `line` typed at its prompt, as the agent would show it after the keys.
+    fn with_typed(screen: &str, empty: &str, line: &str) -> String {
+        screen.replacen(empty, line, 1)
+    }
+
+    const WAKE: &str =
+        "Something arrived in the inbox. Check it with adjutant_pending and deal with it.";
+
+    fn claude_idle_with_line_typed() -> String {
+        with_typed(fixture("claude-typing"), "hello typed", WAKE)
+    }
+
+    #[test]
+    fn a_question_on_screen_is_not_answered_by_the_wake() {
+        let pane = FakePane::new(&[fixture("claude-question").to_string()]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(
+            done.description.contains("question or a menu"),
+            "{}",
+            done.description
+        );
+        assert!(
+            done.description.contains("not typed"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("send-keys"), 0, "{:?}", pane.log.borrow());
+        // It is waited for, in case the person answers, and then given up on.
+        let looks = 1 + (WAKE_READY_BUDGET.as_millis() / WAKE_READY_POLL.as_millis()) as usize;
+        assert_eq!(pane.count("capture-pane"), looks);
+        assert_eq!(pane.waits.borrow().len(), looks - 1);
+    }
+
+    #[test]
+    fn a_busy_agent_is_typed_into_once_it_is_back_at_its_prompt() {
+        let pane = FakePane::new(&[
+            fixture("claude-working").to_string(),
+            fixture("claude-idle").to_string(),
+            claude_idle_with_line_typed(),
+        ]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(done.ran, "{done:?}");
+        assert!(
+            done.description.contains("woke the session"),
+            "{}",
+            done.description
+        );
+        assert_eq!(*pane.waits.borrow(), vec![WAKE_READY_POLL]);
+        let log = pane.log.borrow();
+        let typed = log.iter().position(|c| c.contains("send-keys -l")).unwrap();
+        let enter = log
+            .iter()
+            .position(|c| c.contains("send-keys -t %1 Enter"))
+            .unwrap();
+        assert!(typed < enter, "{log:?}");
+        assert!(log[typed].contains(WAKE), "{log:?}");
+    }
+
+    #[test]
+    fn an_agent_busy_for_good_is_looked_at_for_the_whole_budget_and_then_left() {
+        let pane = FakePane::new(&[fixture("agy-working").to_string()]);
+        let done = pane.wake(Agent::Agy, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(
+            done.description.contains("middle of a turn"),
+            "{}",
+            done.description
+        );
+        let looks = 1 + (WAKE_READY_BUDGET.as_millis() / WAKE_READY_POLL.as_millis()) as usize;
+        assert_eq!(pane.count("capture-pane"), looks);
+        assert_eq!(pane.count("send-keys"), 0);
+    }
+
+    #[test]
+    fn a_person_partway_through_a_message_is_left_alone() {
+        let pane = FakePane::new(&[fixture("agy-typing").to_string()]);
+        let done = pane.wake(Agent::Agy, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(
+            done.description.contains("text typed"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("send-keys"), 0);
+    }
+
+    #[test]
+    fn a_screen_that_is_not_recognised_is_not_typed_into() {
+        let pane = FakePane::new(&["$ \n@@adjutant:pane@@\n0\t2\t0\n".to_string()]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(
+            done.description.contains("not recognised"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("send-keys"), 0);
+    }
+
+    #[test]
+    fn a_pane_that_cannot_be_read_is_not_typed_into() {
+        let pane = FakePane::new(&[]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(
+            done.description.contains("could not be read"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("send-keys"), 0);
+    }
+
+    #[test]
+    fn enter_is_not_pressed_when_the_line_did_not_reach_the_prompt() {
+        // The screen changed between looking and typing, or the keys went somewhere else:
+        // Enter would answer whatever is there.
+        let pane = FakePane::new(&[fixture("claude-idle").to_string()]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(
+            done.description.contains("Enter was not pressed"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("send-keys -l"), 1);
+        assert_eq!(pane.count("Enter"), 0);
+        assert_eq!(pane.count("capture-pane"), 1 + WAKE_ECHO_LOOKS as usize);
+    }
+
+    #[test]
+    fn enter_is_not_pressed_when_the_person_started_typing_before_the_line_went_in() {
+        // Their text and the line are in the box together; Enter would send both.
+        let both = with_typed(
+            fixture("claude-typing"),
+            "hello typed",
+            &format!("hello typed {WAKE}"),
+        );
+        let pane = FakePane::new(&[fixture("claude-idle").to_string(), both]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(!done.ran, "{done:?}");
+        assert!(done.screen, "{done:?}");
+        assert!(
+            done.description.contains("left at the prompt"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("Enter"), 0);
+    }
+
+    /// One pane shared by wakes running at the same moment: what is typed in its box, and
+    /// what has been sent from it.
+    struct SharedPane {
+        state: std::sync::Mutex<(String, Vec<String>)>,
+    }
+
+    impl SharedPane {
+        fn run(&self, cmd: &str) -> Result<String, String> {
+            if cmd.contains("list-panes") {
+                return Ok("%1\t12345\t/dev/ttys005\t@1\tadjutant\t1\tworker\n".to_string());
+            }
+            if cmd.contains("capture-pane") {
+                let typed = self.state.lock().unwrap().0.clone();
+                // Slow enough for another wake to look in between.
+                std::thread::sleep(Duration::from_millis(30));
+                return Ok(if typed.is_empty() {
+                    fixture("claude-idle").to_string()
+                } else {
+                    with_typed(fixture("claude-typing"), "hello typed", &typed)
+                });
+            }
+            let mut state = self.state.lock().unwrap();
+            if cmd.contains("send-keys -l") {
+                let line = cmd.split('\'').nth(1).unwrap().to_string();
+                if !state.0.is_empty() {
+                    state.0.push(' ');
+                }
+                state.0.push_str(&line);
+            } else if cmd.contains("Enter") {
+                let sent = std::mem::take(&mut state.0);
+                state.1.push(sent);
+                return Ok(format!("{WOKE_MARKER}\n"));
+            }
+            Ok(String::new())
+        }
+    }
+
+    #[test]
+    fn wakes_at_the_same_moment_take_turns_at_the_pane() {
+        let pane = std::sync::Arc::new(SharedPane {
+            state: Default::default(),
+        });
+        let locks = tempfile::tempdir().unwrap();
+        let term = TerminalSettings {
+            preset: Some("tmux".to_string()),
+            ..Default::default()
+        };
+        let lines = ["first line from one worker", "second line from another"];
+        let results: Vec<Performed> = std::thread::scope(|scope| {
+            let handles: Vec<_> = lines
+                .iter()
+                .map(|line| {
+                    let (pane, term, locks) = (&pane, &term, locks.path());
+                    scope.spawn(move || {
+                        wake_with_clock(
+                            |cmd| pane.run(cmd),
+                            std::thread::sleep,
+                            locks,
+                            Some("ttys005".to_string()),
+                            term,
+                            &Wake::default(),
+                            &WakeRequest {
+                                pid: 12345,
+                                subject: "s",
+                                line,
+                                agent: Agent::Claude,
+                                dry_run: false,
+                            },
+                        )
+                        .unwrap()
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert!(results.iter().all(|r| r.ran), "{results:?}");
+        let mut sent = pane.state.lock().unwrap().1.clone();
+        sent.sort();
+        assert_eq!(sent, vec![lines[0].to_string(), lines[1].to_string()]);
+    }
+
+    #[test]
+    fn a_wake_that_cannot_get_the_pane_within_the_budget_gives_up() {
+        let pane = FakePane::new(&[fixture("claude-idle").to_string()]);
+        let locks = tempfile::tempdir().unwrap();
+        let term = TerminalSettings {
+            preset: Some("tmux".to_string()),
+            ..Default::default()
+        };
+        // Someone else holds the pane, as `lock_pane` takes it.
+        let mut waited = Duration::ZERO;
+        let held = lock_pane(locks.path(), term.tmux_socket(), "%1", &|_| {}, &mut waited)
+            .unwrap()
+            .unwrap();
+        let done = wake_with_clock(
+            |cmd| pane.run(cmd),
+            |d| pane.waits.borrow_mut().push(d),
+            locks.path(),
+            Some("ttys005".to_string()),
+            &term,
+            &Wake::default(),
+            &WakeRequest {
+                pid: 12345,
+                subject: "s",
+                line: WAKE,
+                agent: Agent::Claude,
+                dry_run: false,
+            },
+        )
+        .unwrap();
+        assert!(!done.ran && done.screen, "{done:?}");
+        assert!(
+            done.description.contains("another wake"),
+            "{}",
+            done.description
+        );
+        assert_eq!(pane.count("send-keys"), 0);
+        assert_eq!(pane.count("capture-pane"), 0);
+        let waits = (WAKE_READY_BUDGET.as_millis() / WAKE_READY_POLL.as_millis()) as usize;
+        assert_eq!(pane.waits.borrow().len(), waits);
+        drop(held);
+    }
+
+    #[test]
+    fn a_line_wrapped_in_the_box_still_counts_as_shown() {
+        let (first, second) = WAKE.split_at(60);
+        let rule = "─".repeat(40);
+        let wrapped = format!(
+            "{rule}\n❯ {first}\n  {second}\n{rule}\n  footer\n{PANE_META_SEPARATOR}\n0\t2\t0\n"
+        );
+        let pane = FakePane::new(&[fixture("claude-idle").to_string(), wrapped]);
+        let done = pane.wake(Agent::Claude, WAKE);
+        assert!(done.ran, "{done:?}");
+    }
+
+    #[test]
+    fn agy_is_typed_into_at_its_prompt_too() {
+        let pane = FakePane::new(&[
+            fixture("agy-idle").to_string(),
+            with_typed(fixture("agy-typing"), "hello typed", WAKE),
+        ]);
+        let done = pane.wake(Agent::Agy, WAKE);
+        assert!(done.ran, "{done:?}");
+        assert!(pane.waits.borrow().is_empty());
+    }
+
+    #[test]
+    fn where_the_screen_is_not_read_nothing_is_captured() {
+        // Generic: today's single script, typed without looking.
+        let pane = FakePane::new(&[]);
+        let done = pane.wake(Agent::Generic, WAKE);
+        assert!(done.ran, "{done:?}");
+        assert_eq!(pane.count("capture-pane"), 0);
+        assert!(done.script.contains("sleep"), "{}", done.script);
+
+        // A dry run only prints.
+        let pane = FakePane::new(&[]);
+        let term = TerminalSettings {
+            preset: Some("tmux".to_string()),
+            ..Default::default()
+        };
+        let locks = tempfile::tempdir().unwrap();
+        let done = wake_with_clock(
+            |cmd| pane.run(cmd),
+            |d| pane.waits.borrow_mut().push(d),
+            locks.path(),
+            None,
+            &term,
+            &Wake::default(),
+            &WakeRequest {
+                pid: 12345,
+                subject: "s",
+                line: WAKE,
+                agent: Agent::Claude,
+                dry_run: true,
+            },
+        );
+        // No tty, so the pane is found by pid.
+        let done = done.unwrap();
+        assert_eq!(pane.count("capture-pane"), 0);
+        assert!(done.script.contains("send-keys -l"), "{}", done.script);
+        assert!(!done.ran);
+
+        // A template is someone else's command; the built-in for another terminal is too.
+        for (wake, terminal) in [
+            (
+                Wake {
+                    hook: Hook::Command("tmux send-keys -t {tty} {line} Enter".into()),
+                    line: None,
+                },
+                term.clone(),
+            ),
+            (Wake::default(), TerminalSettings::default()),
+        ] {
+            let pane = FakePane::new(&[]);
+            let locks = tempfile::tempdir().unwrap();
+            let done = wake_with_clock(
+                |cmd| {
+                    pane.log.borrow_mut().push(cmd.to_string());
+                    Ok(WOKE_MARKER.to_string())
+                },
+                |d| pane.waits.borrow_mut().push(d),
+                locks.path(),
+                Some("ttys005".to_string()),
+                &terminal,
+                &wake,
+                &WakeRequest {
+                    pid: 12345,
+                    subject: "s",
+                    line: WAKE,
+                    agent: Agent::Claude,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+            assert!(done.ran, "{done:?}");
+            assert_eq!(pane.count("capture-pane"), 0, "{:?}", pane.log.borrow());
+            assert!(pane.waits.borrow().is_empty());
+        }
     }
 }

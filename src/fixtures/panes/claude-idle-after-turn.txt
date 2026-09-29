@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.284
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+  Sonnet 5.5 is here, and it's faster and excels at well-scoped tasks. Opus 5.5 is still your
+  default. Switch with /model.
+
+❯ Use the Bash tool to run: touch probe.txt
+
+  Ran 1 shell command
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Baked for 4s · done 2:20
+
+❯ Use the AskUserQuestion tool to ask me which tea I prefer: green or black.
+
+⏺ User declined to answer questions
+  ⎿  · Which tea do you prefer? (Green tea / Black tea)
+
+✻ Brewed for 3s · done 2:20
+
+
+
+                                                                                ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏸ manual mode on · ← for agents
+@@adjutant:pane@@
+0	2	26

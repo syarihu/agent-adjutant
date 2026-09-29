@@ -299,3 +299,127 @@ fn tmux_spawn_after_a_window_named_like_the_session() {
     assert!(names.lines().any(|n| n == hub_title), "{names}");
     assert!(names.lines().any(|n| n == "after-the-hub"), "{names}");
 }
+
+// ── waking an agent whose screen is read first ───────────────────────
+
+const WAKE_LINE: &str = "wake me up now please";
+
+fn pane_fixture(name: &str) -> String {
+    format!(
+        "{}/src/fixtures/panes/{name}.txt",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
+/// Open a window whose only process is `sh` running `script`, and say which pane it is:
+/// its id, and the pid `adj tmux wake` is given.
+fn spawn_fake_pane(fixture: &Fixture, title: &str, script: &str) -> (String, String) {
+    fixture.ok(&["tmux", "spawn", "--title", title, "sh", "-c", script]);
+    let panes = fixture.json(&["tmux", "pane", "--json"]);
+    let pane = panes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["window_name"].as_str() == Some(title))
+        .unwrap_or_else(|| panic!("no pane for {title}: {panes}"));
+    (
+        pane["pane_id"].as_str().unwrap().to_string(),
+        pane["pane_pid"].as_u64().unwrap().to_string(),
+    )
+}
+
+fn screen_of(tmux: &IsolatedTmux, pane_id: &str) -> String {
+    let out = tmux.tmux_cmd(&["capture-pane", "-p", "-J", "-t", pane_id]);
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// Drawn until the last line of its text is on screen, whatever the machine is doing.
+fn wait_for_screen(tmux: &IsolatedTmux, pane_id: &str, needle: &str) -> String {
+    for _ in 0..50 {
+        let screen = screen_of(tmux, pane_id);
+        if screen.contains(needle) {
+            return screen;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("{needle:?} never appeared:\n{}", screen_of(tmux, pane_id));
+}
+
+#[test]
+fn a_question_on_the_agents_screen_is_not_answered_by_a_wake() {
+    let Some(tmux) = IsolatedTmux::new("wake-asking") else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let fixture = Fixture::new(&tmux_config(&tmux.socket, &tmux.session));
+    let script = format!(
+        "sed '/@@adjutant:pane@@/,$d' {}; sleep 60",
+        shell_quoted(&pane_fixture("claude-question"))
+    );
+    let (pane_id, pid) = spawn_fake_pane(&fixture, "asking", &script);
+    wait_for_screen(&tmux, &pane_id, "Esc to cancel");
+
+    let out = fixture.cmd(&[
+        "tmux", "wake", "--pid", &pid, "--agent", "claude", "--line", WAKE_LINE,
+    ]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("question or a menu"), "{err}");
+    assert!(err.contains("not typed"), "{err}");
+    assert!(
+        !screen_of(&tmux, &pane_id).contains(WAKE_LINE),
+        "the line was typed anyway"
+    );
+
+    // Without an agent named, the pane is typed into without looking, as it always was.
+    let generic = fixture.ok(&["tmux", "wake", "--pid", &pid, "--line", WAKE_LINE]);
+    assert!(generic.contains("woke the session"), "{generic}");
+}
+
+#[test]
+fn an_agent_at_an_empty_prompt_is_woken() {
+    let Some(tmux) = IsolatedTmux::new("wake-idle") else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let fixture = Fixture::new(&tmux_config(&tmux.socket, &tmux.session));
+    // As wide as the screens were captured: at 80 columns the fixture's rules wrap, and the
+    // rows the script moves the cursor back over are not the lines it printed.
+    let made = tmux.tmux_cmd(&[
+        "new-session",
+        "-d",
+        "-s",
+        &tmux.session,
+        "-n",
+        "main",
+        "-x",
+        "100",
+        "-y",
+        "30",
+    ]);
+    assert!(made.status.success(), "{made:?}");
+    // The last lines of the fixture above its input line, an input line the terminal echoes
+    // into, and the rest of the fixture under it; then the cursor goes back up to the input
+    // line and waits for it to be sent.
+    let script = format!(
+        r#"f={}
+n=$(grep -n '❯' "$f" | tail -1 | cut -d: -f1)
+sed -n "$((n - 8)),$((n - 1))p" "$f"
+printf '❯ \n'
+rest=$(sed -n "$((n + 1)),\$p" "$f" | sed '/@@adjutant:pane@@/,$d')
+printf '%s\n' "$rest"
+printf '\033[%dA\033[3G' $(($(printf '%s\n' "$rest" | wc -l) + 1))
+read -r line
+echo "sent: $line"
+sleep 60"#,
+        shell_quoted(&pane_fixture("claude-idle-after-turn"))
+    );
+    let (pane_id, pid) = spawn_fake_pane(&fixture, "idle", &script);
+    wait_for_screen(&tmux, &pane_id, "manual mode on");
+
+    let out = fixture.ok(&[
+        "tmux", "wake", "--pid", &pid, "--agent", "claude", "--line", WAKE_LINE,
+    ]);
+    assert!(out.contains("woke the session"), "{out}");
+    wait_for_screen(&tmux, &pane_id, &format!("sent: {WAKE_LINE}"));
+}

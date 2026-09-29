@@ -278,6 +278,7 @@ pub fn answer(
             present: handed.delivery.present,
             woken: handed.woken,
             wake_needed: handed.wake_needed,
+            wake_note: handed.wake_note,
         }
     } else {
         super::deliver_to_worker(
@@ -457,13 +458,30 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
         out["wait"] = json!(false);
         out["note"] = json!(RECORDED);
     } else {
-        let (wake, default_line) = if gate.answered_by_hub() {
-            (&ctx.settings.hub_wake, crate::terminal::HUB_WAKE_LINE)
+        let (wake, default_line, runner) = if gate.answered_by_hub() {
+            (
+                &ctx.settings.hub_wake,
+                crate::terminal::HUB_WAKE_LINE,
+                ctx.settings.hub_runner.as_deref(),
+            )
         } else {
-            (&ctx.settings.worker_wake, crate::terminal::WORKER_WAKE_LINE)
+            (
+                &ctx.settings.worker_wake,
+                crate::terminal::WORKER_WAKE_LINE,
+                ctx.settings.agent_runner.as_deref(),
+            )
         };
         if !wake.hook.is_off() {
             out["wakeLine"] = json!(wake.line_or(default_line));
+            // Said only where it holds: the built-in tmux wake reads the screen and holds
+            // its line back from a question, and a caller that knows that can end its turn
+            // at an empty prompt instead of asking the same thing in the terminal too.
+            if ctx.settings.terminal.is_tmux()
+                && wake.hook.template().is_none()
+                && super::wake_agent(runner) != crate::prompts::Agent::Generic
+            {
+                out["wakeChecksScreen"] = json!(true);
+            }
         }
     }
     out
@@ -516,15 +534,16 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
     let (gate, told) = answer(&ctx, args.id, args.decision, args.choice, args.comment)?;
     if args.json {
-        println!(
-            "{}",
-            json!({
-                "gate": gate,
-                "present": told.present,
-                "woken": told.woken,
-                "path": told.path.display().to_string(),
-            })
-        );
+        let mut out = json!({
+            "gate": gate,
+            "present": told.present,
+            "woken": told.woken,
+            "path": told.path.display().to_string(),
+        });
+        if let Some(why) = &told.wake_note {
+            out["wakeNote"] = json!(why);
+        }
+        println!("{out}");
         return Ok(());
     }
     println!("{} → {}", gate.id, args.decision);
@@ -533,7 +552,12 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
         match (told.present, told.woken) {
             (true, true) => println!("Woke the hub."),
             (true, false) => {
-                println!("The hub is running; it will read this the next time it checks its inbox.")
+                println!(
+                    "The hub is running; it will read this the next time it checks its inbox."
+                );
+                if let Some(note) = &told.wake_note {
+                    println!("{}", super::wake_note_sentence(note));
+                }
             }
             (false, _) => println!(
                 "The hub is not running. The answer waits in its inbox for the next time it starts."
@@ -544,7 +568,12 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     match (told.present, told.woken) {
         (true, true) => println!("Woke the worker."),
         (true, false) => {
-            println!("The worker is running; it will read this the next time it checks its outbox.")
+            println!(
+                "The worker is running; it will read this the next time it checks its outbox."
+            );
+            if let Some(note) = &told.wake_note {
+                println!("{}", super::wake_note_sentence(note));
+            }
         }
         (false, _) => println!(
             "The worker is not running. The answer waits in that worktree's outbox for \

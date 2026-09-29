@@ -706,7 +706,9 @@ itself.
   line telling you to check the inbox). That this one line is all that arrives, with the report's body
   out of sight, is deliberate: the body is in the inbox, and copying it into the prompt would put the
   same thing in two places and ack only one of them.
-  **When woken, start by looking at `adjutant_pending`.**
+  **When woken, start by looking at `adjutant_pending`.** On tmux the wake is typed only at an empty
+  prompt: while this tab shows a question or someone's own typing (or a screen it does not
+  recognise), nothing is typed and the person is notified instead.
 
 - **Even so, do not count on being woken.** Some setups turn `hubWake` off, and waking can fail
   (delivery succeeded, so the sender gets no error). That is why when to look at `adjutant_pending`
@@ -737,7 +739,10 @@ so it arrives whatever that tab is running.
   Plain notices and `[ack]` are delivered to the outbox without waking, so an open question in the
   worker's tab is not answered by the wake line. `present` / `woken` come back
 - Notifies a person only when waking was needed but could not reach the worker (a worker that woke
-  reads it itself, and notices that do not wake need no human interrupt either)
+  reads it itself, and notices that do not wake need no human interrupt either). On tmux the wake
+  is typed only at the worker's empty prompt: while its screen shows a question or someone's own
+  typing (or one it does not recognise), nothing is typed, `woken` is false and the reply's
+  `wakeNote` says why
 
 **The first line of `subject` is the signal.** `[question {YYYYMMDD-HHMMSS}]` / `[ack]` / anything
 else (a notice). Always give `[question]` an identifier — the worker's answer comes back to the inbox

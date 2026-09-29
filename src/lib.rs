@@ -692,6 +692,10 @@ enum TmuxAction {
         pid: u32,
         #[arg(long)]
         line: Option<String>,
+        /// The agent in the pane, whose screen is read before typing: claude | agy | generic
+        /// (default: generic, which types without looking)
+        #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
+        agent: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -1376,12 +1380,14 @@ fn run_tmux(action: &TmuxAction) -> Result<(), String> {
             socket,
             pid,
             line,
+            agent,
             dry_run,
         } => cmd::tmux::wake(
             repo.as_deref(),
             socket.as_deref(),
             *pid,
             line.as_deref(),
+            agent.as_deref(),
             *dry_run,
         ),
         TmuxAction::Focus {

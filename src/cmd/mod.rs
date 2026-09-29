@@ -334,6 +334,52 @@ pub struct Delivered {
     pub delivery: messaging::Delivery,
     pub woken: bool,
     pub wake_needed: bool,
+    /// Why the wake did not happen, when one was tried: what the receiver's screen was
+    /// showing, or what went wrong. `None` when it was woken or there was nothing to try.
+    pub wake_note: Option<String>,
+}
+
+/// The agent a wake will find on the other end, which decides how its screen is read.
+///
+/// Decided from the receiver's runner alone. `ADJUTANT_AGENT` is the setting of whichever
+/// process is sending, and it says nothing about the session being woken: an agy worker
+/// sending to a Claude hub would read the hub's screen with agy's table. And stricter than
+/// `prompts::resolve_agent`, which falls back to Claude for anything it does not know: a
+/// procedure in the wrong dialect is a wording problem, but a screen read with the wrong
+/// agent's table is never recognised and the wake would never be typed. So only a runner that
+/// is Claude Code or agy is read; any other custom runner is typed into without looking.
+pub(crate) fn wake_agent(runner: Option<&str>) -> crate::prompts::Agent {
+    use crate::prompts::Agent;
+    let Some(runner) = runner else {
+        return Agent::Claude;
+    };
+    // The program the line runs, past `env` and `KEY=VALUE` words: a runner is often written
+    // `env CLAUDE_CONFIG_DIR=… claude --resume {sessionId}`.
+    match crate::runner::agent_from_runner(runner).as_str() {
+        "claude" => Agent::Claude,
+        "agy" => Agent::Agy,
+        _ => Agent::Generic,
+    }
+}
+
+/// A wake note as a sentence for the person at the terminal.
+pub(crate) fn wake_note_sentence(note: &str) -> String {
+    let mut chars = note.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+/// What `terminal::wake` came to, as the pair the callers keep: whether the session was
+/// woken, and, when the screen is what stopped it, the reason. Any other failure is left
+/// unsaid, as it always was.
+fn woken_and_why(tried: Result<terminal::Performed, String>) -> (bool, Option<String>) {
+    match tried {
+        Ok(done) if done.ran => (true, None),
+        Ok(done) if done.screen => (false, Some(done.description)),
+        _ => (false, None),
+    }
 }
 
 /// Leave a message for the hub, poke its tab if needed, and tell the person.
@@ -408,25 +454,24 @@ impl Posted {
             wake_needed,
         } = self;
 
-        let woken = if wake_needed {
+        let (woken, wake_note) = if wake_needed {
             match (
                 delivery.present,
                 messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
             ) {
-                (true, Some(pid)) => terminal::wake(
+                (true, Some(pid)) => woken_and_why(terminal::wake(
                     &ctx.settings.terminal,
                     &ctx.settings.hub_wake,
                     pid,
                     &subject,
                     terminal::HUB_WAKE_LINE,
+                    wake_agent(ctx.settings.hub_runner.as_deref()),
                     false,
-                )
-                .map(|done| done.ran)
-                .unwrap_or(false),
-                _ => false,
+                )),
+                _ => (false, None),
             }
         } else {
-            false
+            (false, None)
         };
 
         if announce
@@ -440,6 +485,7 @@ impl Posted {
             delivery,
             woken,
             wake_needed,
+            wake_note,
         }
     }
 }
@@ -460,6 +506,7 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
         delivery,
         woken,
         wake_needed,
+        wake_note,
     } = deliver_to_hub_with_wake(&ctx, &message, true, args.wake)?;
 
     if args.quiet {
@@ -478,7 +525,10 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
             )
         }
         (true, false, true) => {
-            println!("The hub is running; it will pick this up the next time it checks its inbox.")
+            println!("The hub is running; it will pick this up the next time it checks its inbox.");
+            if let Some(note) = wake_note {
+                println!("{}", wake_note_sentence(&note));
+            }
         }
         (false, _, _) => {
             println!(
@@ -2069,6 +2119,8 @@ pub struct Told {
     pub present: bool,
     pub woken: bool,
     pub wake_needed: bool,
+    /// As `Delivered::wake_note`.
+    pub wake_note: Option<String>,
 }
 
 /// Append to a worktree's outbox, poke the worker sitting in it if waking is needed,
@@ -2090,22 +2142,21 @@ pub fn deliver_to_worker(
     let path = messaging::tell(worktree, from, subject, body)?;
     let status = messaging::worker_status(worktree);
     let wake_needed = wake.unwrap_or_else(|| should_wake_worker(subject));
-    let woken = if wake_needed {
+    let (woken, wake_note) = if wake_needed {
         match (status.present, status.pid) {
-            (true, Some(pid)) => terminal::wake(
+            (true, Some(pid)) => woken_and_why(terminal::wake(
                 &ctx.settings.terminal,
                 &ctx.settings.worker_wake,
                 pid,
                 subject,
                 terminal::WORKER_WAKE_LINE,
+                wake_agent(ctx.settings.agent_runner.as_deref()),
                 false,
-            )
-            .map(|done| done.ran)
-            .unwrap_or(false),
-            _ => false,
+            )),
+            _ => (false, None),
         }
     } else {
-        false
+        (false, None)
     };
     if wake_needed
         && !woken
@@ -2118,6 +2169,7 @@ pub fn deliver_to_worker(
         present: status.present,
         woken,
         wake_needed,
+        wake_note,
     })
 }
 
@@ -2145,6 +2197,7 @@ pub fn tell(args: &TellArgs<'_>) -> Result<(), String> {
         present,
         woken,
         wake_needed,
+        wake_note,
     } = deliver_to_worker(&ctx, &worktree, &from, args.subject, &body, args.wake)?;
 
     if args.quiet {
@@ -2159,7 +2212,12 @@ pub fn tell(args: &TellArgs<'_>) -> Result<(), String> {
             )
         }
         (true, false, true) => {
-            println!("The worker is running; it will read this the next time it checks its outbox.")
+            println!(
+                "The worker is running; it will read this the next time it checks its outbox."
+            );
+            if let Some(note) = wake_note {
+                println!("{}", wake_note_sentence(&note));
+            }
         }
         (false, _, _) => {
             println!("The worker is not running; it will read this the next time it starts.")
@@ -2290,6 +2348,56 @@ fn settings_for(repo_arg: Option<&str>) -> Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_claude_and_agy_runners_have_their_screens_read() {
+        use crate::prompts::Agent;
+        // The built-in runner is Claude Code.
+        assert_eq!(wake_agent(None), Agent::Claude);
+        assert_eq!(wake_agent(Some("claude {prompt}")), Agent::Claude);
+        assert_eq!(
+            wake_agent(Some("/opt/bin/claude --resume {sessionId}")),
+            Agent::Claude
+        );
+        assert_eq!(wake_agent(Some("agy")), Agent::Agy);
+        assert_eq!(wake_agent(Some("/usr/local/bin/agy")), Agent::Agy);
+        assert_eq!(
+            wake_agent(Some(
+                "env CLAUDE_CONFIG_DIR=/tmp/c claude --resume {sessionId}"
+            )),
+            Agent::Claude
+        );
+        assert_eq!(
+            wake_agent(Some("AGY_HOME=/tmp/a env agy {prompt}")),
+            Agent::Agy
+        );
+        assert_eq!(
+            wake_agent(Some("env X=1 codex exec {prompt}")),
+            Agent::Generic
+        );
+        // A path or a word among the arguments is not the program.
+        assert_eq!(
+            wake_agent(Some("codex exec --tool /usr/bin/agy {prompt}")),
+            Agent::Generic
+        );
+        assert_eq!(wake_agent(Some("agy {prompt}")), Agent::Agy);
+        assert_eq!(wake_agent(Some("/usr/local/bin/agy {prompt}")), Agent::Agy);
+        // Anything else is somebody else's agent, typed into without looking.
+        assert_eq!(wake_agent(Some("codex exec {prompt}")), Agent::Generic);
+        assert_eq!(wake_agent(Some("my-wrapper {prompt}")), Agent::Generic);
+        assert_eq!(wake_agent(Some("claude-wrapper {prompt}")), Agent::Generic);
+    }
+
+    #[test]
+    fn a_wake_note_reads_as_a_sentence() {
+        assert_eq!(
+            wake_note_sentence(
+                "the wake was not typed into the session (pid 7): its screen shows a question or a menu"
+            ),
+            "The wake was not typed into the session (pid 7): its screen shows a question or a menu."
+        );
+        assert_eq!(wake_note_sentence(""), "");
+    }
 
     /// A hub told where to read and write has to hand both to the tabs it opens. Losing
     /// them does not fail: the worker registers in the default world and reports into an

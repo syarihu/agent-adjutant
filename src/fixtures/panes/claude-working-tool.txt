@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.284
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+  Sonnet 5.5 is here, and it's faster and excels at well-scoped tasks. Opus 5.5 is still your
+  default. Switch with /model.
+
+❯ Run the shell command: sleep 25. Then reply with just: ok
+
+  Waiting 25 seconds
+  ⎿  $ sleep 25
+
+
+
+
+
+
+
+
+
+
+
+✻ Pondering… (5s · ↓ 264 tokens · thought for 2s)
+  tmux detected · scroll with PgUp/PgDn · or add 'set -g mouse on' to ~/.tmux.conf for wheel scro…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ [39m
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+@@adjutant:pane@@
+0	2	26

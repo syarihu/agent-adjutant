@@ -1,0 +1,28 @@
+Screens of the two agents the built-in tmux wake reads before typing (`terminal::pane_state`).
+
+Captured from real sessions, one file per state:
+
+    idle              an empty input box (claude: with its suggestion; `idle-after-turn`: without)
+    typing            text typed at the box, not sent
+    working           a turn in progress, box empty (`working-tool`: a tool running)
+    working-typed     a turn in progress, text typed at the box
+    question          the agent asked a question (claude AskUserQuestion, agy ask_question)
+    permission        a shell command waiting for approval
+    menu              the folder-trust dialog shown on first start in a directory
+
+Versions: Claude Code 2.1.284, Antigravity CLI (agy) 1.2.6, tmux 3.7c. Each ran in its own
+pane of 100x30 on an isolated tmux server, driven with `send-keys`.
+
+Format: what `tmux_capture_script` prints. The screen, from `capture-pane -p -e -J`; a line
+`@@adjutant:pane@@`; then `pane_in_mode`, `cursor_x` and `cursor_y` separated by tabs.
+
+Editing applied, since the repository is public: the escape sequences were dropped from every
+line except claude's input line (its suggestion is told from typed text by being faint; a
+test puts escapes back on every line to check nothing else depends on them; a few other lines
+still carry theirs, such as the OSC 8 link in claude-menu.txt and the `❯` line in
+claude-working.txt); the account, plan
+and working directory were replaced with placeholders; a custom status line, spinner wording
+and question text were replaced with plain English; trailing spaces were trimmed.
+
+When an agent release changes how it draws these, capture the screen again the same way
+rather than editing the files by hand.

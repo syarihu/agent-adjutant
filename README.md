@@ -372,13 +372,13 @@ agent profile.
 When `"terminal": { "preset": "tmux" }` is configured, adjutant acts as a first-class tmux backend:
 - **Detached window spawning**: Workers start in detached windows (`tmux new-window -d -t <session> -c <cwd> -n <title> <command>`) so current focus is not stolen. If the session does not exist, an initial session is created.
 - **Process-to-pane mapping**: adjutant automatically maps worker `{pid}` and `{tty}` to tmux panes by inspecting pane PIDs, TTYs, and process hierarchy. No wrapper scripts required.
-- **Waking**: Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, followed by Enter after a short delay.
+- **Waking**: The built-in wake reads the pane first (`tmux capture-pane`) and types only when the agent (Claude Code for the built-in runner or a `claude` one, agy for an `agy` one) sits at an empty input prompt. Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, the line is checked to have landed at the prompt, and Enter follows after a short delay. A question, permission prompt or menu on screen, text someone is midway through typing, and a screen that is not recognised are left alone: nothing is typed, the reply of `send` / `tell` says why (`wakeNote`), and the person is notified as for any wake that did not happen. A turn in progress is waited for, up to five seconds. With a `wake` template, on iTerm2, or for any other custom runner, the line is typed without looking. The line typed has to be all that is in the input box before Enter is pressed.
 - **Focus & Close**: `adj focus` selects the window and pane (`tmux select-window`, `tmux select-pane`). `adj close` disposes of the worker's window (`tmux kill-window`).
 - **Attaching**: Connect to the session at any time with `tmux attach -t adjutant`, control mode with `tmux -CC attach -t adjutant`, or browse via web terminal (e.g. `ttyd`).
 - **CLI helpers**: `adj tmux` provides subcommands to inspect and manage tmux sessions directly:
   - `adj tmux pane [--pid <pid>] [--tty <tty>] [--json]`: list panes or look up pane info.
   - `adj tmux spawn [--title <title>] [--cwd <cwd>] <command...>`: spawn a detached window.
-  - `adj tmux wake --pid <pid> [--line <line>] [--dry-run]`: type into a worker pane.
+  - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: type into a worker pane; with `--agent claude` or `agy` the pane is read first, and the default `generic` types without looking.
   - `adj tmux focus --pid <pid> [--dry-run]`: select a worker window and pane.
   - `adj tmux close --pid <pid> [--dry-run]`: close a worker window.
 - **Environment variables**: `$ADJUTANT_TMUX_SESSION` (overrides default `"adjutant"`) and `$ADJUTANT_TMUX_SOCKET` (runs `tmux -L <socket>`).
@@ -710,7 +710,9 @@ reaches an interactive agent exactly as if the person had typed it. The line
 typed points at the inbox rather than repeating the report, so the text lives in one place.
 `send` fires `notification` either way; `tell` fires it only when the worker could not be
 woken, since a woken worker reads the message without anyone's help. Both replies say which
-of `present` / `woken` happened. Waking is best-effort by construction: the message is already delivered before the
+of `present` / `woken` happened. Under tmux the built-in wake types only when the agent's screen
+shows an empty prompt: over a question or someone's own typing nothing is typed, and the person is
+notified instead. Waking is best-effort by construction: the message is already delivered before the
 hook runs, so a failed poke never fails a send, and the hub re-reads its inbox at three fixed
 points anyway.
 
