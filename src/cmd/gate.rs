@@ -419,7 +419,7 @@ pub fn close(
 /// a worker that has changed phase, or opened another gate, since it opened this one is not
 /// waiting on it any more, and the board should not go on asking for an answer nobody is
 /// waiting for. Only gates a worker opened are considered (`gate::resumed_at` says which),
-/// and the same worker: the worktree's worker record must have started no later than the
+/// and the same worker: the worktree's worker record must have started before the
 /// gate was opened. Best effort, and silent: this runs inside the board's poll, and in a hub
 /// process whose stdout is the MCP stream.
 pub fn close_resumed(ctx: &Context) -> Vec<Gate> {

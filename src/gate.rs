@@ -369,8 +369,9 @@ pub enum Signal {
 /// `None` for a gate nobody waits on the worker for (a record, or one the hub opened), and
 /// for a worktree whose worker record does not show the worker that opened this gate:
 /// `worker_started` is that record's `startedAt`, and a worker started after the gate was
-/// opened cannot be the one that opened it. Stamps are fixed-width, so they compare as
-/// strings, and the same second is not later.
+/// opened cannot be the one that opened it. A worker started in the same second cannot be
+/// told apart from it either, so only one started strictly earlier is believed. Stamps are
+/// fixed-width, so they compare as strings, and the same second is not later.
 pub fn resumed_at(
     gate: &Gate,
     worker_started: Option<&str>,
@@ -380,7 +381,7 @@ pub fn resumed_at(
     if !gate.wait || gate.answered_by_hub() {
         return None;
     }
-    if worker_started.is_none_or(|started| started > gate.opened_at.as_str()) {
+    if worker_started.is_none_or(|started| started >= gate.opened_at.as_str()) {
         return None;
     }
     let later = |at: Option<&str>, signal| {
@@ -747,7 +748,9 @@ mod tests {
         let later = Some("20260922T050000Z");
         assert_eq!(resumed_at(&g, Some("20260922T041234Z"), later, later), None);
         assert_eq!(resumed_at(&g, None, later, later), None);
-        assert!(resumed_at(&g, Some("20260922T041233Z"), later, None).is_some());
+        // Started in the same second as the gate: it may be a replacement, so it is not believed.
+        assert_eq!(resumed_at(&g, Some("20260922T041233Z"), later, later), None);
+        assert!(resumed_at(&g, Some("20260922T041232Z"), later, None).is_some());
     }
 
     #[test]
