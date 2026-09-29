@@ -455,6 +455,26 @@ pub fn ps_started(pid: u32) -> Option<String> {
     ps_field(pid, "lstart").filter(|s| !s.is_empty())
 }
 
+/// Whether this process is `pid` or runs somewhere below it: how a command run by an agent
+/// tells that it was run by that agent, whatever shells sit between them.
+pub fn is_self_or_descendant_of(pid: u32) -> bool {
+    let mut curr = std::process::id();
+    for _ in 0..32 {
+        if curr == pid {
+            return true;
+        }
+        match parent_of(curr) {
+            Some(parent) if parent > 1 => curr = parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn parent_of(pid: u32) -> Option<u32> {
+    ps_field(pid, "ppid")?.parse().ok()
+}
+
 /// Is `pid` still the process that was recorded?
 ///
 /// The recorded start time is the anchor, and where there is one it is the *whole* check.
@@ -531,6 +551,17 @@ pub fn worker_hub_key(worktree: &Path) -> Option<String> {
     read_json(&worker_record_path(worktree))
         .and_then(|record| record.get("hub").and_then(Value::as_str).and_then(clean))
         .or_else(|| worker_session(worktree).and_then(|saved| saved.hub.as_deref().and_then(clean)))
+}
+
+/// The task a checkout's worker is on: what its record says, and only when it has no record
+/// what its saved session says. A record without a task is a session that has none, and a
+/// session saved before it was linked must not give it back one it has since been moved off.
+pub fn worker_task(worktree: &Path) -> Option<String> {
+    let clean = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+    match read_json(&worker_record_path(worktree)) {
+        Some(record) => record.get("task").and_then(Value::as_str).and_then(clean),
+        None => worker_session(worktree).and_then(|saved| saved.task.as_deref().and_then(clean)),
+    }
 }
 
 /// All hubs belonging to `repo`, repository hub first, followed by any parent-task hubs.
@@ -746,7 +777,8 @@ pub fn hub_id_configured(agent_env: &[(String, String)]) -> Option<String> {
 ///
 /// 1. what the caller passed — somebody said it outright;
 /// 2. `ADJUTANT_HUB` — this process was started by a hub, so it *is* that hub; a hub
-///    running a command inside a worker's worktree is still itself;
+///    running a command inside a worker's worktree is still itself — except for the worker
+///    itself, which follows its record when that names another hub (see `hub_id_with`);
 /// 3. the worker record in the worktree we are standing in — nobody said anything and
 ///    nothing launched us, so the answer is whoever dispatched this worktree.
 ///
@@ -761,10 +793,39 @@ pub fn hub_id_configured(agent_env: &[(String, String)]) -> Option<String> {
 /// record is opened at all, so a damaged record never takes the way out with it — `--hub`,
 /// or `ADJUTANT_HUB`, still addresses whatever the caller names.
 pub fn hub_id(explicit: Option<&str>, start: Option<&Path>) -> Result<Option<String>, String> {
-    match hub_id_told(explicit) {
-        told @ Some(_) => Ok(told),
-        None => worker_hub(start),
+    hub_id_with(explicit, start, is_self_or_descendant_of)
+}
+
+/// `hub_id`, with the question "is this process at or below that pid" handed in, so the order
+/// of the answers can be pinned without starting a process tree.
+///
+/// One case sits between the flag and `ADJUTANT_HUB`: this process *is* the worker the
+/// worktree's record names (or its MCP server, or a shell under it). Such a process was
+/// started with whatever `ADJUTANT_HUB` said at the time, and a board that has since linked
+/// the worker to another hub rewrote the record and not the environment of a running agent —
+/// so the record is the newer word, and its saying "no hub" means the repository's own. It is
+/// only asked when the environment names a hub the record does not, which is not the common
+/// case, and a hub running a command in the worktree is not below the worker, so it stays
+/// itself. A record that cannot be read never gets in the way here: the environment settled
+/// this before it was opened, and still does.
+fn hub_id_with(
+    explicit: Option<&str>,
+    start: Option<&Path>,
+    is_ancestor: impl Fn(u32) -> bool,
+) -> Result<Option<String>, String> {
+    if let told @ Some(_) = said(explicit) {
+        return Ok(told);
     }
+    let Some(inherited) = said(std::env::var(HUB_ENV).ok().as_deref()) else {
+        return Ok(worker_hub(start)?.and_then(|record| record.hub));
+    };
+    if let Ok(Some(record)) = worker_hub(start)
+        && record.hub.as_deref() != Some(inherited.as_str())
+        && record.pid.is_some_and(is_ancestor)
+    {
+        return Ok(record.hub);
+    }
+    Ok(Some(inherited))
 }
 
 /// Blank is silence. An identifier that is empty or only spaces is a caller passing the
@@ -794,7 +855,7 @@ fn said(value: Option<&str>) -> Option<String> {
 /// `read_worker` draws the same line for the same reason and is deliberately not reused:
 /// it also insists on a usable pid, which is its caller's question — whether a worktree may
 /// be taken apart — and has nothing to do with where a report goes.
-fn worker_hub(start: Option<&Path>) -> Result<Option<String>, String> {
+fn worker_hub(start: Option<&Path>) -> Result<Option<RecordedHub>, String> {
     let Some(worktree) = current_worktree(start) else {
         return Ok(None);
     };
@@ -815,15 +876,30 @@ fn worker_hub(start: Option<&Path>) -> Result<Option<String>, String> {
     let Some(record) = record.as_object() else {
         return Err(unreadable_record(&path, "it is not an object"));
     };
-    match record.get("hub") {
+    let hub = match record.get("hub") {
         // Absent is a worker the repository's own hub dispatched, which records no
         // identifier at all. Null is read the same way rather than refused: the key is
         // absent in what this version writes, and a record has to read the same to every
         // other version of this tool on the machine.
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(hub)) => Ok(said(Some(hub))),
-        Some(_) => Err(unreadable_record(&path, "its hub is not a name")),
-    }
+        None | Some(Value::Null) => None,
+        Some(Value::String(hub)) => said(Some(hub)),
+        Some(_) => return Err(unreadable_record(&path, "its hub is not a name")),
+    };
+    let pid = record
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid > 0);
+    Ok(Some(RecordedHub { hub, pid }))
+}
+
+/// What a worker record says about where its worker reports: `None` for a repository's own
+/// hub. Kept apart from "no record", which `worker_hub` answers with `None` around this.
+struct RecordedHub {
+    hub: Option<String>,
+    /// The process that then `exec`s the agent, so the agent and the servers it starts are it
+    /// or below it.
+    pid: Option<u32>,
 }
 
 /// A worktree was dispatched and the record no longer says by whom. Named, because the one
@@ -900,6 +976,56 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
     fields.insert("phase".to_string(), json!(phase));
     fields.insert("phaseAt".to_string(), json!(now_secs()));
     write_json(&path, &record)
+}
+
+/// Join the worker in `worktree` to a task and to the hub that task belongs to.
+///
+/// Written into the record the worker already has rather than a new one: the process fields
+/// are what say it is still the same worker, and only the answers to "which task" and "which
+/// hub" change. `hub` is `None` for the repository's own hub, which a record says by having
+/// no key. A worker linked to a task is at work on it, so a record with no phase yet gets
+/// `implement` — the card needs one to show, and nothing else has said otherwise.
+///
+/// The saved session is rewritten too, because `all_repo_hubs` counts a hub's children from
+/// both, and one that kept naming the old hub would keep it from closing.
+pub fn relink_worker(worktree: &Path, hub: Option<&str>, task: &str) -> Result<(), String> {
+    let path = worker_record_path(worktree);
+    let Some(mut record) = read_json(&path) else {
+        return Err(format!("no worker is registered in {}", worktree.display()));
+    };
+    let fields = record
+        .as_object_mut()
+        .ok_or_else(|| format!("cannot read the worker record at {}", path.display()))?;
+    fields.insert("task".to_string(), json!(task));
+    match said(hub) {
+        Some(hub) => fields.insert("hub".to_string(), json!(hub)),
+        None => fields.remove("hub"),
+    };
+    if fields.get("phase").and_then(Value::as_str).is_none() {
+        fields.insert("phase".to_string(), json!("implement"));
+        fields.insert("phaseAt".to_string(), json!(now_secs()));
+    }
+    // The saved session first and the record last: the record is what the board and the
+    // worker read, so a failure in the second write must not leave it naming a task the
+    // caller then takes back. The session is put back if the record cannot be written.
+    let saved_path = worker_session_path(worktree);
+    let previous = std::fs::read_to_string(&saved_path).ok();
+    if let Some(saved) = worker_session(worktree) {
+        save_worker_session(
+            worktree,
+            saved.title.as_deref().unwrap_or_default(),
+            hub,
+            Some(task),
+            &saved.session_id,
+        )?;
+    }
+    if let Err(e) = write_json(&path, &record) {
+        if let Some(previous) = previous {
+            let _ = std::fs::write(&saved_path, previous);
+        }
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Record this process as the worker for `worktree`, before `exec`ing the agent over it —
@@ -2499,6 +2625,133 @@ mod tests {
         .unwrap();
     }
 
+    /// The record's pid is put on a process that is not this one, so that a test which means
+    /// to read the record from outside the worker can.
+    fn as_another_process(worktree: &Path) {
+        let path = worker_record_path(worktree);
+        let mut record = read_json(&path).unwrap();
+        record["pid"] = json!(1);
+        write_json(&path, &record).unwrap();
+    }
+
+    /// A git checkout for `current_worktree` to answer about, its path as git prints it.
+    fn checkout(dir: &tempfile::TempDir) -> PathBuf {
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::canonicalize(dir.path()).unwrap()
+    }
+
+    #[test]
+    fn hub_id_follows_the_record_for_the_worker_it_names() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = checkout(&dir);
+        register_worker_as(&worktree, 4242, "t");
+        let mut record = read_json(&worker_record_path(&worktree)).unwrap();
+        record["hub"] = json!("moved-to");
+        write_json(&worker_record_path(&worktree), &record).unwrap();
+
+        // Started under one hub, linked to another since: the environment is the old word.
+        unsafe { std::env::set_var(HUB_ENV, "started-under") };
+        let answer = hub_id_with(None, Some(&worktree), |pid| pid == 4242);
+        assert_eq!(answer.unwrap().as_deref(), Some("moved-to"));
+        // Said outright still beats it.
+        let answer = hub_id_with(Some("flag"), Some(&worktree), |pid| pid == 4242);
+        assert_eq!(answer.unwrap().as_deref(), Some("flag"));
+        // Nothing to ask when the two agree: a common case must not walk the process tree.
+        unsafe { std::env::set_var(HUB_ENV, "moved-to") };
+        let answer = hub_id_with(None, Some(&worktree), |_| panic!("asked for nothing"));
+        assert_eq!(answer.unwrap().as_deref(), Some("moved-to"));
+        unsafe { std::env::remove_var(HUB_ENV) };
+    }
+
+    #[test]
+    fn a_record_without_a_hub_answers_the_repository_hub_for_its_own_worker() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = checkout(&dir);
+        register_worker_as(&worktree, 4242, "t");
+
+        unsafe { std::env::set_var(HUB_ENV, "started-under") };
+        let answer = hub_id_with(None, Some(&worktree), |pid| pid == 4242);
+        assert_eq!(answer.unwrap(), None);
+        unsafe { std::env::remove_var(HUB_ENV) };
+    }
+
+    #[test]
+    fn a_process_not_under_the_worker_keeps_the_hub_it_was_told() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = checkout(&dir);
+        register_worker_as(&worktree, 4242, "t");
+        let mut record = read_json(&worker_record_path(&worktree)).unwrap();
+        record["hub"] = json!("moved-to");
+        write_json(&worker_record_path(&worktree), &record).unwrap();
+
+        // A hub running a command inside the worktree.
+        unsafe { std::env::set_var(HUB_ENV, "the-hub") };
+        let answer = hub_id_with(None, Some(&worktree), |_| false);
+        assert_eq!(answer.unwrap().as_deref(), Some("the-hub"));
+        // A record that cannot be read does not take the environment's answer with it.
+        std::fs::write(worker_record_path(&worktree), "[").unwrap();
+        let answer = hub_id_with(None, Some(&worktree), |_| true);
+        assert_eq!(answer.unwrap().as_deref(), Some("the-hub"));
+        unsafe { std::env::remove_var(HUB_ENV) };
+    }
+
+    #[test]
+    fn a_process_is_itself_but_not_init_or_a_stranger() {
+        assert!(is_self_or_descendant_of(std::process::id()));
+        assert!(!is_self_or_descendant_of(1));
+        let mut stranger = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        // A child is below this process, not above it.
+        assert!(!is_self_or_descendant_of(stranger.id()));
+        let _ = stranger.kill();
+        let _ = stranger.wait();
+    }
+
+    #[test]
+    fn relinking_keeps_the_process_fields_and_sets_task_and_hub() {
+        let _sandbox = Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "try-retry", None, None, None).unwrap();
+        let before = read_json(&worker_record_path(worktree)).unwrap();
+        save_worker_session(worktree, "try-retry", None, None, "sid-1").unwrap();
+
+        relink_worker(worktree, Some("WID-957"), "task-1").unwrap();
+        let after = read_json(&worker_record_path(worktree)).unwrap();
+        for key in ["pid", "psStarted", "startedAt", "title"] {
+            assert_eq!(after[key], before[key], "{key}");
+        }
+        assert_eq!(after["task"], "task-1");
+        assert_eq!(after["hub"], "WID-957");
+        assert_eq!(after["phase"], "implement");
+        assert!(after["phaseAt"].as_i64().is_some());
+        let saved = worker_session(worktree).unwrap();
+        assert_eq!(saved.session_id, "sid-1");
+        assert_eq!(saved.hub.as_deref(), Some("WID-957"));
+        assert_eq!(saved.task.as_deref(), Some("task-1"));
+
+        // Back to the repository's own hub: no key at all, and a phase already there stays.
+        set_worker_phase(worktree, "verify").unwrap();
+        relink_worker(worktree, None, "task-2").unwrap();
+        let after = read_json(&worker_record_path(worktree)).unwrap();
+        assert!(after.get("hub").is_none());
+        assert_eq!(after["phase"], "verify");
+        assert_eq!(after["task"], "task-2");
+        assert_eq!(worker_session(worktree).unwrap().hub, None);
+    }
+
     /// Which hub an invocation is addressing, and the order the three answers are asked in.
     ///
     /// The order is the whole design. A worker's agent is told never to write down an
@@ -2530,7 +2783,11 @@ mod tests {
 
         // The record alone. This is the worker's case, and the only one where the answer
         // comes from where the caller is standing rather than from what it was told.
+        // Written as a worker that is not this process: `register_worker` writes this one's
+        // own pid, and a process that is the recorded worker follows its record over the
+        // environment (`hub_id_follows_the_record_for_the_worker_it_names`).
         register_worker(worktree, "WID-957", Some("from-record"), None, None).unwrap();
+        as_another_process(worktree);
         assert_eq!(
             hub_id(None, Some(worktree)).unwrap().as_deref(),
             Some("from-record")
@@ -2573,6 +2830,7 @@ mod tests {
         // reading a record there is reading somebody else's answer, or one's own from a
         // previous life.
         register_worker(worktree, "WID-957", Some("from-record"), None, None).unwrap();
+        as_another_process(worktree);
         assert_eq!(
             hub_id(None, Some(worktree)).unwrap().as_deref(),
             Some("from-record")

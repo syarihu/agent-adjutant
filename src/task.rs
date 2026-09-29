@@ -399,7 +399,7 @@ pub fn dir(state_dir: &Path, slug: &str) -> PathBuf {
 /// `20260922T041233Z-login-retry`. The stamp comes from the caller so this stays a leaf —
 /// and so a test can pin it.
 pub fn new_id(stamp: &str, title: &str) -> String {
-    let slug = slugify(title);
+    let slug = slug(title);
     if slug.is_empty() {
         stamp.to_string()
     } else {
@@ -410,7 +410,7 @@ pub fn new_id(stamp: &str, title: &str) -> String {
 /// Lower-cased ASCII words joined by hyphens, cut short. Anything else — Japanese, most
 /// punctuation — is a separator rather than transliterated: a filename is not where a title
 /// is preserved, and the title itself is right there in the record.
-fn slugify(title: &str) -> String {
+pub fn slug(title: &str) -> String {
     let mut out = String::new();
     for ch in title.chars() {
         if ch.is_ascii_alphanumeric() {
@@ -423,6 +423,12 @@ fn slugify(title: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
+}
+
+/// Whether `id` can only name a file inside the task directory. Ids reach here from a request
+/// body and a URL, and a `/` or a `..` in one would name a file somewhere else.
+pub fn is_plain_id(id: &str) -> bool {
+    !id.is_empty() && id != ".." && !id.contains(['/', '\\', '\0']) && !id.contains("..")
 }
 
 pub fn path_of(dir: &Path, id: &str) -> PathBuf {
@@ -480,6 +486,9 @@ pub fn save(dir: &Path, task: &Task) -> Result<PathBuf, String> {
 }
 
 pub fn load(dir: &Path, id: &str) -> Result<Task, String> {
+    if !is_plain_id(id) {
+        return Err(format!("no such task: {id}"));
+    }
     let path = path_of(dir, id);
     let text = std::fs::read_to_string(&path).map_err(|_| format!("no such task: {id}"))?;
     serde_json::from_str(&text).map_err(|e| format!("cannot read {}: {e}", path.display()))
@@ -896,7 +905,7 @@ mod tests {
 
     #[test]
     fn slug_does_not_run_past_its_cap_or_end_on_a_separator() {
-        let slug = slugify("a very long english title that keeps going and going and going");
+        let slug = slug("a very long english title that keeps going and going and going");
         assert!(slug.len() <= 32, "{slug}");
         assert!(!slug.ends_with('-'), "{slug}");
     }

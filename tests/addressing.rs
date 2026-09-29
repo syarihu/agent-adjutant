@@ -735,3 +735,74 @@ fn a_worker_hands_its_agent_the_hub_it_registered_under_not_the_one_it_inherited
     assert!(read(&record).get("hub").is_none(), "{}", read(&record));
     assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "[]");
 }
+
+/// A worker's agent started under one hub and linked to another since still addresses the one
+/// its record now names, though `ADJUTANT_HUB` on its line says the first. Run through a real
+/// agent process, because what is under test is that a command it starts sits below the pid
+/// the record holds.
+#[test]
+fn a_running_worker_addresses_the_hub_its_record_was_moved_to() {
+    let fixture = Fixture::new(QUIET);
+    let script = fixture.repo.join("agent.sh");
+    let up = fixture.repo.join("up.txt");
+    let go = fixture.repo.join("go.txt");
+    let seen = fixture.repo.join("seen.txt");
+    std::fs::write(
+        &script,
+        format!(
+            "echo \"[$ADJUTANT_HUB]\" > {up}\n\
+             while [ ! -f {go} ]; do sleep 0.1; done\n\
+             {bin} pending --path > {seen}\n",
+            up = shell_quoted(&up.to_string_lossy()),
+            go = shell_quoted(&go.to_string_lossy()),
+            bin = shell_quoted(BIN),
+            seen = shell_quoted(&seen.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    let runner = format!(
+        "sh {} ; true {{sessionId}} {{prompt}}",
+        shell_quoted(&script.to_string_lossy())
+    );
+    set_config(&fixture, "agentRunner", runner.into());
+    let waited = |path: &Path| {
+        for _ in 0..200 {
+            if path.exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("{} never appeared", path.display());
+    };
+
+    let mut worker = fixture
+        .command([
+            "worker",
+            "--worktree",
+            fixture.repo.to_str().unwrap(),
+            "--hub",
+            FEATURE,
+        ])
+        .spawn()
+        .unwrap();
+    waited(&up);
+    assert_eq!(
+        std::fs::read_to_string(&up).unwrap().trim(),
+        format!("[{FEATURE}]")
+    );
+
+    // Linked to a task on the repository's own board: the record loses its hub.
+    let record = fixture.repo.join(".claude").join("adjutant-worker.json");
+    let mut moved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    moved.as_object_mut().unwrap().remove("hub");
+    std::fs::write(&record, moved.to_string()).unwrap();
+    std::fs::write(&go, "").unwrap();
+    waited(&seen);
+    let _ = worker.wait();
+
+    let own = fixture.ok(&["pending", "--path"]);
+    let parent = fixture.ok(&["pending", "--path", "--hub", FEATURE]);
+    assert_ne!(own.trim(), parent.trim());
+    assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), own.trim());
+}

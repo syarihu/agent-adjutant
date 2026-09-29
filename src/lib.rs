@@ -455,6 +455,9 @@ enum Commands {
         /// The task source's branchPattern, if it has one
         #[arg(long)]
         pattern: Option<String>,
+        /// With --name: take the first of name, name-2, name-3… whose path and branch are free
+        #[arg(long, requires = "name", conflicts_with = "branch")]
+        unique: bool,
     },
     /// Run the stdio MCP server
     Mcp,
@@ -1148,12 +1151,14 @@ pub fn run() -> ! {
             name,
             user,
             pattern,
+            unique,
         } => cmd::worktree_path(&cmd::WorktreeArgs {
             repo: repo.as_deref(),
             branch: branch.as_deref(),
             name: name.as_deref(),
             user: user.as_deref(),
             pattern: pattern.as_deref(),
+            unique: *unique,
         })
         .map(|_| 0),
         Commands::Mcp => mcp::run_server().map(|_| 0).map_err(|e| e.to_string()),

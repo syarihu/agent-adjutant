@@ -227,6 +227,7 @@ heavy collection to a sub-agent.
    | --- | --- | --- |
    | `report` | a worker | Run "When a request arrives" from Step 0 |
    | `request` | a person (the dashboard) | Run "When a request arrives" **from Step 2** (→ "A request from the dashboard") |
+   | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
    | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
    | `question` | the hub itself (its copy of a report it asked back about and is waiting on) | If the matching `answer` has come, resume. If not, leave it without ack |
    | `needs-user` | the hub itself (waiting on the user's judgement) | Show its content and ask when a person is at this tab |
@@ -279,6 +280,10 @@ heavy collection to a sub-agent.
 A hub whose `adjutant_config` `hub` holds an identifier is **the hub for the parent task that
 identifier names**. If it is `null` this is the repository's own hub, and this whole section does not
 apply.
+
+A worker can also join or leave this hub after it started, by being linked to a task on the board;
+its record then names this hub (or no hub) and it reports there from then on. That is not a dispatch,
+and nothing arrives in the inbox for it.
 
 **The identifier is the parent task's key itself** (`ALPHA-233` / `ABC-819`). So what to read needs
 no place in the config or the state — reverse the identifier and the tracker and repo fall out. The
@@ -873,6 +878,9 @@ every start when nobody asked", not the list itself. Two reasons:
   the result: say it is being collected, end the turn, and show it when the notification comes.
 - **So as not to pollute the transcript.** The hub lives all day, so raw JSON piling up makes every
   later turn heavy. The agent returns only the table and the machine rows.
+
+**A worktree of a session started with no task is cleaned up only when a person asks.** Nothing marks
+it as finished, so Step 1 does not offer it.
 
 **Cleanup (Step 1) is done by the hub.** It is one proctor call and a confirmation from the user, and
 a sub-agent cannot ask for that. **The order is: send out Step 2's agent, then Step 1.** The proctor
@@ -1947,6 +1955,49 @@ worker's `report`; only the two ends differ.**
 
 - Ack the inbox message after writing back to the record.
 
+### A session request from the dashboard (`kind: session`)
+
+A person asked the board for a session with **no task**: a worker to talk to in its own tab, with
+nothing filed and no card yet. The body's `##` lines are the answers (`## Agent`, `## Worktree name`)
+and `## Instruction` is what the person wants done, verbatim to the end of the body.
+
+**No task record is made.** Do not run Steps 2 to 5 of "When a request arrives", and do not
+`adj task add` for it. If the person later links the session to a task on the board, the record is
+made or picked there and the session is told; that is not the hub's step.
+
+1. **Create the worktree as in "3. Create the worktree"**, with one difference: the name is a
+   *request*, not a fact. Choose the final name with
+
+   ```bash
+   adj worktree-path --name '{worktree name}' --unique --user '{GitHub user}'
+   ```
+
+   which prints `name`, `branch`, `path` and `main` for the first of `{name}`, `{name}-2`, `{name}-3`…
+   that nothing holds yet. Use `branch` and `path` from that answer as they are, even where proctor is
+   installed (it does not know a task-less name is free). The branching point is the usual one
+   ("Base branch", the config's `baseBranch`). Then run the config's `postCreate` commands.
+   The name is already checked for a safe charset where it came in, so it may be put on a command line;
+   the instruction may not.
+2. **Write the brief** to `{worktree}/.claude/task-brief.md` after `mkdir -p {worktree}/.claude`, with
+   a file-writing tool, from Appendix — The session's brief. **The instruction goes into the file, never
+   onto a command line** ("Keep task text off the shell").
+3. **Start the worker:**
+
+   ```bash
+   adjutant work --worktree '{path}' --title '{final name}'
+   ```
+
+   `--title` rather than `--task`, since there is no record to take a title from. Run it one at a time,
+   as in Step 3 of "4. Start the worker".
+   - **Exit code 3 is "no free worker slot".** There is no record to wait in, so nothing will pick this
+     up later. Leave the worktree and the brief, and say in one line that the session was not started
+     and that `adjutant work --worktree '{path}' --title '{final name}'` on that path starts it when a
+     slot is free.
+   - **Any other failure:** say what failed in this tab, and run `adj notify` so a person at the board
+     hears of it, because the requester is a browser and nothing else will tell them.
+4. **Ack the inbox message** (`adjutant_pending` `action: ack`) once the worker is started or the
+   failure is said. Tell the person in one line which worktree and tab it is, then go back to waiting.
+
 ### The answer to a gate the hub opened (`kind: gate`)
 
 When a person answers a gate the hub opened (`dispatch` / `relay`, or a `plan` for Jules) on the board, the answer arrives in
@@ -2717,6 +2768,42 @@ name, it can be fetched with `adjutant_skill` or `adj skill adj-worker`. **This 
 file itself** — when one procedure mentions another, it writes `adj-worker` by name.
 (Even in Claude Code, `/adj-worker` does not resolve. Procedures served over MCP are named
 `/mcp__adjutant__adj-worker`.)
+
+## Appendix — The session's brief
+
+Written out to `{worktree}/.claude/task-brief.md` in "A session request from the dashboard". It is
+the worker's brief with the task lines empty and the person's instruction in their place, so the
+worker still finds the same file where the default start prompt sends it. **Do not fill a task in by
+guessing**: there is none, and a worker handed an id that does not exist ties its gates to no card.
+
+```
+You are the one working in this worktree. You are not the hub (the side that hands tasks out).
+
+- Task: -
+- Workspace: the current cwd is that worktree (branch {branch})
+- Base branch: {base_branch}
+- Parent task: -
+- Task record: -
+- Done when: as the instruction says
+- Report to: **the user at this tab**.
+
+This session has no task. Do what the instruction says, with the person in this tab. The gates, the
+card and the PR steps of `adj-worker` apply only once a task is linked to this session: until then
+there is no record to open a gate for or to move to "in review". Check `adjutant_outbox` after each
+step and before you answer the person — a message headed `[linked {id}]` means the person has linked
+this session to a task, and `adj skill adj-worker` says what to do from there.
+
+Important overrides. If you remember the hub's procedure, the following take precedence:
+
+1. Do not use `isolation: worktree` or `EnterWorktree`. You are already inside; work in the current cwd.
+2. Neither `git -C <worktree_path>` nor an absolute worktree path is needed.
+3. If you find "a bug unrelated to what you were asked" while working, **do not fix it yourself**.
+   Hand it to the hub following the `adj skill adj-report` procedure, and go back to what you were doing.
+
+## Instruction
+
+{the instruction, verbatim}
+```
 
 ## Do not
 

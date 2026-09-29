@@ -19,6 +19,7 @@ mod gate;
 mod jules;
 mod review_engine;
 mod serve;
+mod session;
 mod task;
 pub mod tmux;
 
@@ -295,7 +296,9 @@ fn has_bracketed_tag(first_line: &str, tag: &str) -> bool {
 /// Whether a message left for a worker requires waking it.
 ///
 /// A worker tab is woken only when there is something it has to act on: a question asked
-/// back by the hub, or a decision on a gate it opened. Notices (`[ack]`, issue filed, etc.)
+/// back by the hub, a decision on a gate it opened, or a link to a task. The last is woken
+/// because a session that was started with no task is idle at its prompt and would never
+/// look at its outbox on its own. Notices (`[ack]`, issue filed, etc.)
 /// are left in the outbox for the worker to read the next time it checks; waking on a notice
 /// risks typing the wake line into an interactive prompt or question the person is looking at.
 pub fn should_wake_worker(subject: &str) -> bool {
@@ -303,6 +306,7 @@ pub fn should_wake_worker(subject: &str) -> bool {
     has_bracketed_tag(first_line, "[question")
         || first_line.starts_with("[質問")
         || has_bracketed_tag(first_line, "[gate")
+        || has_bracketed_tag(first_line, "[linked")
 }
 
 /// Whether a message delivered to the hub requires waking it.
@@ -1257,6 +1261,37 @@ pub struct WorktreeArgs<'a> {
     pub user: Option<&'a str>,
     /// The selected task source's `branchPattern`, when it has one.
     pub pattern: Option<&'a str>,
+    /// With `name`: the first of `name`, `name-2`, `name-3`… that nothing holds yet, for a
+    /// caller that picks the name itself and so has no one to tell it is taken.
+    pub unique: bool,
+}
+
+/// Whether a worktree of this name could be created now: its path is free, no local branch
+/// has its name, and git does not list a worktree there (a listed one whose directory is gone
+/// still holds the branch it had checked out).
+fn worktree_name_free(
+    main: &str,
+    layout: &str,
+    pattern: &str,
+    user: &str,
+    name: &str,
+    listed: &[String],
+) -> Result<bool, String> {
+    let branch = repo::branch_fallback(pattern, user, name);
+    let path = repo::worktree_fallback(layout, main, &branch)?;
+    if std::path::Path::new(&path).exists() || listed.contains(&path) {
+        return Ok(false);
+    }
+    let taken = repo::git(
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+        Some(std::path::Path::new(main)),
+    )?;
+    Ok(!taken.status.success())
 }
 
 pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
@@ -1284,14 +1319,29 @@ pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
         // only the last resort.
         None => std::env::var("USER").unwrap_or_else(|_| "worker".to_string()),
     };
-    let branch = repo::branch_fallback(
-        args.pattern.unwrap_or(repo::DEFAULT_BRANCH_PATTERN),
-        &user,
-        name,
-    );
+    let pattern = args.pattern.unwrap_or(repo::DEFAULT_BRANCH_PATTERN);
+    let name = match args.unique {
+        true => {
+            let listed = repo::linked_worktrees(&ctx.repo.main)?;
+            let mut candidates =
+                std::iter::once(name.to_string()).chain((2..1000).map(|n| format!("{name}-{n}")));
+            loop {
+                let Some(candidate) = candidates.next() else {
+                    return Err(format!("no free worktree name starting from {name}"));
+                };
+                if worktree_name_free(&ctx.repo.main, layout, pattern, &user, &candidate, &listed)?
+                {
+                    break candidate;
+                }
+            }
+        }
+        false => name.to_string(),
+    };
+    let branch = repo::branch_fallback(pattern, &user, &name);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
+            "name": name,
             "branch": branch,
             "path": repo::worktree_fallback(layout, &ctx.repo.main, &branch)?,
             // Named for what it is: the checkout to run `git worktree add` *in*. It was
@@ -2361,7 +2411,7 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             messaging::Liveness::Gone => {}
             messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
             messaging::Liveness::Alive => {
-                if !terminal::is_self_or_descendant_of(pid) {
+                if !messaging::is_self_or_descendant_of(pid) {
                     return Err(format!(
                         "{} is still running (pid {pid}); close it from the board, or stop it first \
                          (`adj hub-stop` from inside it, or the board's stop) and then close it",
@@ -2712,6 +2762,9 @@ mod tests {
         ));
         assert!(should_wake_worker("[gate 20260927-123456] approve"));
         assert!(should_wake_worker("[Gate 123] changes"));
+        assert!(should_wake_worker(
+            "[linked 20260922T050000Z-x] this session is now a task's worker"
+        ));
 
         // Plain notices, acknowledgements, words starting with gate/question, and empty subjects do not wake the worker.
         assert!(!should_wake_worker("[ack] received"));

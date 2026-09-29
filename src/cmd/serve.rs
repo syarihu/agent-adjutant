@@ -83,7 +83,7 @@ pub(super) struct Server {
     port: u16,
     /// Whether the resident server is the one answering, which serves this board at a path
     /// of its own. The page reads it from the state.
-    resident: bool,
+    pub(super) resident: bool,
     /// What Jules last said about each session a card follows. The one thing here that
     /// changes after startup, and it is a cache: the record on disk stays the answer.
     jules: Arc<super::JulesWatch>,
@@ -1244,6 +1244,13 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
             reply(out, update_task(server, req.tail(), &req.body))
         }
         ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
+        ("POST", "/api/sessions") => reply(out, super::session::start_request(server, &req.body)),
+        ("POST", path) if link_route(path).is_some() => {
+            let result = link_route(path)
+                .unwrap_or_else(|| Err("no such route".to_string()))
+                .and_then(|id| super::session::link(server, &id, &req.body));
+            reply(out, result)
+        }
         // Only on the resident's boards: starting and stopping a hub reaches outside the
         // repository's own records, and a board a hub serves lives and dies with that hub.
         ("POST", path) if server.resident && hub_route(path).is_some() => {
@@ -1397,6 +1404,7 @@ fn state(server: &Server) -> Value {
         let name = Path::new(path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string());
+        let task = messaging::worker_task(Path::new(path));
         workers.push(json!({
             "worktree": path,
             "name": name,
@@ -1404,6 +1412,9 @@ fn state(server: &Server) -> Value {
             "present": status.present,
             "stale": status.stale,
             "title": status.title,
+            // The task this worker reports for, which is what the card joins on: a worker
+            // with none is a session that has no card until it is linked.
+            "task": task,
             "phase": status.phase,
             "phaseAt": status.phase_at,
         }));
@@ -1554,16 +1565,8 @@ fn sessions_of(
             status.pid,
         );
 
-        let (saved_title, saved_task) =
-            saved_session.map(|s| (s.title, s.task)).unwrap_or_default();
-
-        let task_id = match record_json.as_ref() {
-            Some(record) => record
-                .get("task")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            None => saved_task,
-        };
+        let saved_title = saved_session.and_then(|s| s.title);
+        let task_id = messaging::worker_task(wt_path);
 
         let title = status.title.or(saved_title);
 
@@ -1844,6 +1847,12 @@ fn terminal_route(path: &str) -> Option<Result<String, String>> {
     let raw = path
         .strip_prefix("/api/sessions/")?
         .strip_suffix("/terminal")?;
+    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
+}
+
+/// `/api/sessions/<id>/link` as the session id, percent-decoded as `terminal_route` does.
+fn link_route(path: &str) -> Option<Result<String, String>> {
+    let raw = path.strip_prefix("/api/sessions/")?.strip_suffix("/link")?;
     (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
 }
 
@@ -2672,6 +2681,30 @@ mod tests {
             "/",
         ] {
             assert!(terminal_route(other).is_none(), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_link_route_names_a_session_id() {
+        fn id(path: &str) -> Option<String> {
+            link_route(path).map(|id| id.unwrap())
+        }
+        assert_eq!(id("/api/sessions/worker-x/link"), Some("worker-x".into()));
+        // As `encodeURIComponent` sends an id with a slash or a space in it.
+        assert_eq!(
+            id("/api/sessions/worker-a%2Fb%20c/link"),
+            Some("worker-a/b c".into())
+        );
+        assert!(link_route("/api/sessions/%FF/link").is_some_and(|id| id.is_err()));
+        for other in [
+            "/api/sessions",
+            "/api/sessions//link",
+            "/api/sessions/a/b/link",
+            "/api/sessions/worker-x/terminal",
+            "/api/sessions/worker-x/link/x",
+            "/api/tasks/x/link",
+        ] {
+            assert!(link_route(other).is_none(), "{other}");
         }
     }
 

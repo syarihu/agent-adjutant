@@ -82,7 +82,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
-| `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
+| `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
 | `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
@@ -130,6 +130,13 @@ told where to send. `adj worker` puts the identifier it registered under on its 
 command line too, and takes an inherited `ADJUTANT_HUB` out of the environment first: a
 terminal template that passes its environment on (tmux does) would otherwise hand the agent
 the identifier of whichever hub opened the tab, which outranks the record.
+
+A running worker follows its record, though: a command run by the worker itself — its agent,
+that agent's MCP server, or a shell under it — reads the hub from the worker record in its
+worktree even when `ADJUTANT_HUB` says otherwise, and a record with no hub means the
+repository's own. That is what lets the board move a worker to another hub by linking it to a
+task (see [The board](#the-board)) without restarting its agent. Anything else keeps the old
+order, so a hub running a command inside a worker's worktree is still itself.
 
 `agentEnv` may name `ADJUTANT_HUB`. It is a default: `hub`, `work` and `worker` take it when
 neither `--hub` nor the environment says anything, and claim that hub rather than the
@@ -516,6 +523,29 @@ and the body to 16 KiB, and a cut body is marked. Other updates do not read it, 
 never polls a tracker: an issue edited afterwards is read again only when someone clicks
 「再取得」 on the task or runs `adjutant task fetch-issue --id <id>`. A `gh` that cannot read
 the issue leaves the record as it was and prints why; other trackers' URLs are left alone.
+
+### Sessions without a task
+
+A worker normally starts from a task, and the board joins a task to its worker by worktree,
+so a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
+`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Only
+`instruction` is required. The hub defaults to this board's own; the name is checked as a
+task's is, and taken from the instruction when it is left out; `agent`, when given, has to be
+the one `agentRunner` starts. The request is a `session` message in that hub's inbox, and the
+hub starts its tab if it is not running and the resident server can. Nothing is queued for a
+free worker slot, so the request is refused when none is free. The hub creates the worktree
+under the first free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with
+the instruction in its brief; no task record is made.
+
+`POST /api/sessions/<id>/link` gives that session a task afterwards: `{"task": "<id>"}` for an
+existing one or `{"newTask": {…}}` with the fields `POST /api/tasks` takes, and an optional
+`hub`. The hub the session belongs to follows the task: the one whose task directory holds it,
+so a task on a parent-task hub's board moves the worker to that hub, a repository-board task
+moves it back to the repository's, and a new task made under a parent-task hub is a child of
+that parent. The task becomes `dispatched` (or stays `pr`) with the worktree, the worker's
+record gets the task and, if it has none, the `implement` phase, and the worker is told in its
+outbox (`[linked <id>]`) and woken, as for a question. A session that has not started, one that has ended (no worker running), one that already has a different
+task, a finished task, a Jules task and one another running worker holds are refused.
 
 ### Gates
 

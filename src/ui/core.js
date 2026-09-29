@@ -100,7 +100,9 @@ const openGate = t => (state.gates || []).find(g => g.task === t.id);
 const humanLabel = col => (HUMAN_COLUMNS.find(c => c.id === col) || {}).label || col;
 const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label || col;
 
-const workerOf = t => t && t.worktree && (state.workers || []).find(w => w.worktree === t.worktree);
+// A worker that names another task is that task's, whatever worktree a stale record still points
+// at; one that names none is a session waiting to be linked, and the worktree joins it.
+const workerOf = t => t && t.worktree && (state.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
 const stampSecs = stamp => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;

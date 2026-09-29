@@ -34,6 +34,34 @@ fn derive_title(input: &Value) -> Option<String> {
     if title.is_empty() { None } else { Some(title) }
 }
 
+/// A worktree name as the hub will use it: a path and a branch, so its characters are
+/// limited and git has to agree it can name a branch.
+pub(super) fn check_worktree_name(name: &str) -> Result<(), String> {
+    let charset = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !charset {
+        return Err(format!(
+            "a worktree name may only use letters, digits, '.', '_' and '-': {name}"
+        ));
+    }
+    // Whether it can name a branch is git's to say, not a list kept here: saved, a name git
+    // refuses would sit in the queue until the hub failed to create its branch. Asked with
+    // the name alone, which `branchPattern` puts after a prefix — a name that fails on its
+    // own fails there too. A leading '-' is refused first so git cannot read it as a flag.
+    let branchable = !name.starts_with('-')
+        && std::process::Command::new("git")
+            .args(["check-ref-format", "--branch", name])
+            .output()
+            .is_ok_and(|out| out.status.success());
+    if !branchable {
+        return Err(format!(
+            "git cannot name a branch after this worktree name: {name}"
+        ));
+    }
+    Ok(())
+}
+
 /// Refuse the two values a person types on the board that the hub later puts on a command
 /// line: the worktree name becomes a path and a branch, and the issue URL is quoted as it is.
 /// Checked here, where they come in, rather than in every command the procedures write — an
@@ -47,28 +75,7 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
             .filter(|v| !v.is_empty())
     };
     if let Some(name) = typed("worktreeName") {
-        let charset = name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-        if !charset {
-            return Err(format!(
-                "a worktree name may only use letters, digits, '.', '_' and '-': {name}"
-            ));
-        }
-        // Whether it can name a branch is git's to say, not a list kept here: saved, a name git
-        // refuses would sit in the queue until the hub failed to create its branch. Asked with
-        // the name alone, which `branchPattern` puts after a prefix — a name that fails on its
-        // own fails there too. A leading '-' is refused first so git cannot read it as a flag.
-        let branchable = !name.starts_with('-')
-            && std::process::Command::new("git")
-                .args(["check-ref-format", "--branch", name])
-                .output()
-                .is_ok_and(|out| out.status.success());
-        if !branchable {
-            return Err(format!(
-                "git cannot name a branch after this worktree name: {name}"
-            ));
-        }
+        check_worktree_name(name)?;
     }
     // Not typed, but refused here all the same: past this point the id is claimed, and a
     // value serde turns away afterwards would leave the reservation behind.
@@ -215,6 +222,9 @@ fn text_field(key: &str, value: &Value) -> Result<Option<String>, String> {
 /// there is nothing to clear by hand. Held only across a load and a save, so waiting on it
 /// is short.
 pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
+    if !task::is_plain_id(id) {
+        return Err(format!("no such task: {id}"));
+    }
     let dir = dir(ctx);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     // Beside the record, and not named `.json`, so the listing never reads it as a task.
@@ -231,8 +241,20 @@ pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
 }
 
 pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {
+    update_checked(ctx, id, input, |_| Ok(()))
+}
+
+/// `update`, refusing when `check` says so about the record as it is *under the lock*: a
+/// check made before the lock is taken can pass for two callers at once.
+pub fn update_checked(
+    ctx: &Context,
+    id: &str,
+    input: &Value,
+    check: impl FnOnce(&Task) -> Result<(), String>,
+) -> Result<(Task, Option<Delivered>), String> {
     let lock = lock_task(ctx, id)?;
     let mut task = task::load(&dir(ctx), id)?;
+    check(&task)?;
     let was = task.status;
 
     if let Some(status) = string(input, "status") {
