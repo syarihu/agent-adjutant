@@ -30,8 +30,11 @@ pub struct SessionTerminal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
-    /// Unique session identifier: "hub" for repo hub, "hub-{key}" for parent-task hub,
-    /// or "worker-{worktree_name}" for a worker.
+    /// Names a slot on one board, unique within that board's state and derived when it is
+    /// read, never stored: "hub" for the repo hub, "hub-{key}" for a parent-task hub, and
+    /// "worker-{worktree_name}" for a worker — with a short digest of the path added when
+    /// another worktree has the same name. Across boards it is addressed as
+    /// "{board slug}/{id}".
     pub id: String,
     /// "hub" or "worker" (later "taskless").
     pub kind: String,
@@ -56,6 +59,10 @@ pub struct Session {
     /// Session title or task title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The agent's own session id (its conversation) saved for this session, when there is
+    /// one: what a resume would reopen. Not the `id` above, which names a slot on the board.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
     /// Process is alive and matches recorded identity.
     pub present: bool,
     /// Recorded process is no longer running.

@@ -165,6 +165,8 @@ Issue all of the following **in a single tool block**. None of them waits on ano
 - `adjutant_config` — this repository's resolved config. `repo` / `main` / `hubName` / `board` /
   `registered` / `warnings` / `settings` / `config` come back in one go. **Do not read the config
   file again yourself.**
+  `board.url` is where the board is: the resident server's (`board.resident` is `true`, and the
+  path under it is this repository's) when `adj server` runs, this hub's own otherwise.
 - `adjutant_pending` — reports waiting in the inbox
 - `adjutant_refresh` — brings task records with a PR in line with the PR's state. Only tasks whose
   PR was merged become `done`; PRs that are open, closed without merging, or unreadable with `gh`

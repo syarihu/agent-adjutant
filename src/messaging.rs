@@ -106,6 +106,7 @@ pub fn claim_hub(
     cwd: &str,
     name_in_command: bool,
     hub: Option<&str>,
+    terminal: Option<&crate::session::SessionTerminal>,
 ) -> Result<Claim, String> {
     let path = hub_record_path(slug);
     let mut record = json!({
@@ -120,6 +121,15 @@ pub fn claim_hub(
         && let Some(fields) = record.as_object_mut()
     {
         fields.insert("hub".to_string(), json!(hub));
+    }
+    // Where this hub runs, so that something outside its tab — the board's stop button — can
+    // find its pane without guessing from the pid. Absent for a record written before this,
+    // which readers fall back from.
+    if let Some(terminal) = terminal
+        && let Some(fields) = record.as_object_mut()
+        && let Ok(value) = serde_json::to_value(terminal)
+    {
+        fields.insert("terminal".to_string(), value);
     }
     match create_new_json(&path, &record) {
         Ok(()) => return Ok(Claim::Ours),
@@ -318,6 +328,55 @@ pub enum Liveness {
 
 pub fn unregister_hub(slug: &str) -> Result<(), String> {
     remove_if_present(&hub_record_path(slug))
+}
+
+/// Remove the hub record only while it still names the process `pid` started at `started`.
+/// `Ok(true)` when the record is gone afterwards — removed, or already absent — and
+/// `Ok(false)` when it names another process, which registered since and is not this call's
+/// to clear.
+///
+/// Under the lock a takeover takes, so that it cannot read a record a claim is part-way
+/// through replacing: unlike the launcher's own cleanup, whoever calls this is acting on a
+/// hub it did not start, some time after it looked.
+pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<bool, String> {
+    let path = hub_record_path(slug);
+    let lock_path = path.with_extension("claiming");
+    parent_dir(&lock_path)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
+    lock.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", lock_path.display()))?;
+    let named = match read_json(&path) {
+        None if !path.exists() => return Ok(true),
+        None => return Ok(false),
+        Some(record) => record,
+    };
+    let same = named.get("pid").and_then(Value::as_u64) == Some(u64::from(pid))
+        && recorded_anchor(&named) == started.map(str::trim).filter(|s| !s.is_empty());
+    if !same {
+        return Ok(false);
+    }
+    remove_if_present(&path)?;
+    Ok(true)
+}
+
+/// Whether the process a hub record named is still that process, without going through the
+/// record: for a caller that has read the record once and must go on asking about the same
+/// hub after another has claimed the name. A record with no anchor names a live pid as
+/// alive, as `holder` reads it.
+pub fn hub_process_liveness(pid: u32, started: Option<&str>) -> Liveness {
+    match ps_answer(pid, "lstart") {
+        Answer::NoSuchProcess => Liveness::Gone,
+        Answer::CannotTell => Liveness::CannotTell,
+        Answer::Said(now) => match started.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(recorded) if recorded != now => Liveness::Gone,
+            _ => Liveness::Alive,
+        },
+    }
 }
 
 /// Is the process in the record still alive, and still the one that was recorded?
@@ -1971,7 +2030,7 @@ mod tests {
     }
 
     fn claim_ours(slug: &str, hub_name: &str) {
-        match claim_hub(slug, hub_name, "/src/widget", true, None).unwrap() {
+        match claim_hub(slug, hub_name, "/src/widget", true, None, None).unwrap() {
             Claim::Ours => {}
             Claim::Taken(status) => panic!("expected to win the claim, but {status:?} holds it"),
         }
@@ -2246,7 +2305,7 @@ mod tests {
                 matches!(holder(&hub_record_path("acme-widget")), Liveness::Alive),
                 "{blank:?}"
             );
-            match claim_hub("acme-widget", &name, "/", true, None).unwrap() {
+            match claim_hub("acme-widget", &name, "/", true, None, None).unwrap() {
                 Claim::Taken(_) => {}
                 Claim::Ours => panic!("{blank:?}: a live hub's name was taken away"),
             }
@@ -2748,7 +2807,9 @@ mod tests {
         let name = this_process_name();
         let outcomes: Vec<Result<Claim, String>> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..5)
-                .map(|_| scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None)))
+                .map(|_| {
+                    scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None, None))
+                })
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
@@ -2817,6 +2878,7 @@ mod tests {
                 "adjutant-acme-widget",
                 "/src/widget",
                 true,
+                None,
                 None
             ),
             Ok(Claim::Taken(_))
@@ -2846,7 +2908,9 @@ mod tests {
         let name = this_process_name();
         let outcomes: Vec<Result<Claim, String>> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..5)
-                .map(|_| scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None)))
+                .map(|_| {
+                    scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None, None))
+                })
                 .collect();
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
@@ -3067,7 +3131,7 @@ mod tests {
 
         let name = this_process_name();
         assert!(matches!(
-            claim_hub("acme-widget", &name, "/src/widget", true, None),
+            claim_hub("acme-widget", &name, "/src/widget", true, None, None),
             Ok(Claim::Taken(_))
         ));
 
@@ -3493,5 +3557,72 @@ mod tests {
         assert_eq!(hubs[1].id, "hub-WID-100");
         assert_eq!(hubs[1].slug, "acme-widget-wid-100");
         assert_eq!(hubs[1].key.as_deref(), Some("WID-100"));
+    }
+
+    #[test]
+    fn unregister_hub_if_leaves_a_record_naming_another_process() {
+        let _sandbox = Sandbox::empty();
+        let path = hub_record_path("acme-widget");
+        let record = json!({"pid": 4242, "psStarted": "Mon Jan  1 00:00:00 2024"});
+        write_json(&path, &record).unwrap();
+
+        // Another start time is another process on a recycled pid, and another pid is
+        // another hub: neither is this call's to clear.
+        assert_eq!(
+            unregister_hub_if("acme-widget", 4242, Some("later")),
+            Ok(false)
+        );
+        assert_eq!(
+            unregister_hub_if("acme-widget", 4243, Some("Mon Jan  1 00:00:00 2024")),
+            Ok(false)
+        );
+        assert!(path.exists());
+
+        assert_eq!(
+            unregister_hub_if("acme-widget", 4242, Some("Mon Jan  1 00:00:00 2024")),
+            Ok(true)
+        );
+        assert!(!path.exists());
+        // Already gone is the same end state.
+        assert_eq!(unregister_hub_if("acme-widget", 4242, None), Ok(true));
+    }
+
+    #[test]
+    fn a_claimed_hub_record_carries_where_it_runs() {
+        let _sandbox = Sandbox::empty();
+        let terminal = crate::session::SessionTerminal {
+            backend: "tmux".into(),
+            socket: Some("scratch".into()),
+            session: Some("adj".into()),
+            window: Some("@1".into()),
+            pane: Some("%3".into()),
+        };
+        match claim_hub(
+            "acme-widget",
+            "adjutant-acme-widget",
+            "/src/widget",
+            true,
+            None,
+            Some(&terminal),
+        )
+        .unwrap()
+        {
+            Claim::Ours => {}
+            Claim::Taken(status) => panic!("{status:?}"),
+        }
+        let record = read_json(&hub_record_path("acme-widget")).unwrap();
+        assert_eq!(record["terminal"]["socket"], "scratch");
+        assert_eq!(record["terminal"]["pane"], "%3");
+        assert_eq!(record["terminal"]["backend"], "tmux");
+
+        // A launch that does not know where it is leaves the field out, as records always were.
+        unregister_hub("acme-widget").unwrap();
+        claim_ours("acme-widget", "adjutant-acme-widget");
+        assert!(
+            read_json(&hub_record_path("acme-widget"))
+                .unwrap()
+                .get("terminal")
+                .is_none()
+        );
     }
 }

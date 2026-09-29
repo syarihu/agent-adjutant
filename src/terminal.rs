@@ -1097,6 +1097,14 @@ pub fn tmux_close_script(socket: Option<&str>, window_id: &str) -> String {
     format!("{prefix} kill-window -t {win_q} && echo {CLOSED_MARKER}")
 }
 
+/// Close one pane. Where a hub is the only thing in its window this closes the window too,
+/// and where it is not, only the hub goes.
+pub fn tmux_kill_pane_script(socket: Option<&str>, pane_id: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let pane_q = sh_quote(pane_id);
+    format!("{prefix} kill-pane -t {pane_q} && echo {CLOSED_MARKER}")
+}
+
 pub fn tmux_focus_script(socket: Option<&str>, window_id: &str, pane_id: Option<&str>) -> String {
     let prefix = tmux_cmd_prefix(socket);
     let win_q = sh_quote(window_id);
@@ -1973,6 +1981,18 @@ mod tests {
         assert_eq!(
             script,
             format!("tmux -L test-sock kill-window -t @1 && echo {CLOSED_MARKER}")
+        );
+    }
+
+    #[test]
+    fn a_hub_is_stopped_by_its_pane_on_its_socket() {
+        assert_eq!(
+            tmux_kill_pane_script(Some("scratch"), "%3"),
+            format!("tmux -L scratch kill-pane -t %3 && echo {CLOSED_MARKER}")
+        );
+        assert_eq!(
+            tmux_kill_pane_script(Some("/tmp/t.sock"), "%3"),
+            format!("tmux -S /tmp/t.sock kill-pane -t %3 && echo {CLOSED_MARKER}")
         );
     }
 

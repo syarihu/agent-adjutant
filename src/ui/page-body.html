@@ -54,6 +54,7 @@
         <span style="font-weight:700">自律 hub</span>
         <span id="hub" class="state warn">…</span>
       </div>
+      <div id="hub-rows"></div>
       <div class="status-row" id="inbox-row" style="display:none">
         <span>受信箱</span>
         <span id="inbox" class="state warn"></span>
@@ -296,6 +297,31 @@
     </div>
     <div class="foot">
       <button type="submit" class="btn-m3-primary">閉じる</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="hub-stop-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-error);">warning</span>
+        <span>hub を止める</span>
+      </div>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body close-help">
+      <p id="hub-stop-lead"></p>
+      <p>受信箱・タスク・gate の記録は残ります。次に起動すると、hubAutoResumeHours 以内なら同じ会話を再開します。</p>
+    </div>
+    <div class="foot">
+      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
+      <button type="submit" value="stop" class="btn-m3-danger">
+        <span class="material-symbols-outlined" style="font-size:16px;">stop_circle</span>
+        <span>hub を止める</span>
+      </button>
     </div>
   </form>
 </dialog>

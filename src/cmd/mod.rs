@@ -32,7 +32,10 @@ pub use jules::{
     relay as jules_relay, relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
 pub use review_engine::run as review_engine;
-pub use serve::{DEFAULT_PORT, running as board_running, serve, serve_for_hub, url as board_url};
+pub use serve::{
+    DEFAULT_PORT, HubBoard, board_json, dashboards_running as board_running, resident_running,
+    serve, serve_for_hub, server_start, server_status, server_stop,
+};
 pub use task::{
     AddArgs, UpdateArgs, add as task_add, list as task_list, next_cmd as task_next,
     refresh as task_refresh, refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json,
@@ -180,7 +183,7 @@ pub fn show_config(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), 
             "main": ctx.repo.main,
             "hub": ctx.repo.hub,
             "hubName": ctx.repo.hub_name,
-            "board": board_url(&ctx.repo.slug).map(|url| json!({ "url": url })),
+            "board": board_json(&ctx.repo),
             "registered": ctx.resolved.registered,
             "configPath": ctx.resolved.config_path,
             "warnings": ctx.resolved.warnings,
@@ -1298,6 +1301,185 @@ fn hub_env(ctx: &Context, dashboard: Option<bool>) -> Vec<(String, String)> {
     env
 }
 
+/// What starting a hub in a tab came to.
+pub enum TabOutcome {
+    /// A hub is up under this name already, so no tab was opened.
+    AlreadyRunning(messaging::HubStatus),
+    Opened(terminal::Performed),
+}
+
+/// The saved session `--resume` names, or a refusal — and, for the template it will run,
+/// the same. Looked up before either route, so that asking for a session that is not there is
+/// refused here, in the tab it was typed in — not in a tab opened to show the refusal. The
+/// template is checked here too, for the same reason: on the tab route the refusal would
+/// otherwise come from inside a tab this one had already reported as opened.
+fn asked_session(
+    ctx: &Context,
+    start: HubStart,
+) -> Result<Option<messaging::SavedSession>, String> {
+    match start {
+        HubStart::Resume => {
+            let saved = saved_hub_session(ctx)?;
+            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
+            Ok(Some(saved))
+        }
+        HubStart::Auto | HubStart::New => Ok(None),
+    }
+}
+
+fn print_performed(done: &terminal::Performed, dry_run: bool) {
+    if dry_run {
+        println!("{}", done.script);
+    } else {
+        println!("{}", done.description);
+    }
+}
+
+/// Start the hub `ctx` addresses in a new tab under `terminal`, unless it is already up.
+///
+/// The route `adj hub --tab` takes, and the one the board's start button takes: neither
+/// claims anything here, since the claim belongs to the `adj hub` the tab runs (see
+/// `open_hub_tab`), so everything that can be refused is refused before a tab is opened.
+///
+/// `present: false` answers two different questions the same way: nobody is there, and
+/// whether anybody is there could not be established — an unreadable record, or a `ps` that
+/// would not run. Only the first is a reason to start a hub, and the other route never has to
+/// tell them apart because its claim refuses the second in exactly these words. This one
+/// leaves the claim to the tab it opens, so the refusal happens here or nowhere — and nowhere
+/// means the caller this route exists for, which is not a person, is told a hub was started
+/// in a new tab and handed `exit 0`, for a hub whose own claim is about to refuse it.
+///
+/// `Alive` is a hub running under a name the presence check no longer matches on. The tab's
+/// own claim would bring it forward, so the hub ends up in the same place either way — but
+/// this side would have said it started one and exited 0 for a hub that was already up, which
+/// is the same untruth told to the same non-human caller.
+pub fn hub_in_tab(
+    ctx: &Context,
+    repo_arg: Option<&str>,
+    extra: &[String],
+    start: HubStart,
+    dashboard: Option<bool>,
+    terminal: &config::TerminalSettings,
+    dry_run: bool,
+) -> Result<TabOutcome, String> {
+    let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
+    if status.present {
+        return Ok(TabOutcome::AlreadyRunning(status));
+    }
+    asked_session(ctx, start)?;
+    match messaging::hub_liveness(&ctx.repo.slug) {
+        messaging::Liveness::CannotTell => Err(messaging::hub_cannot_tell(&ctx.repo.slug)),
+        messaging::Liveness::Alive => Ok(TabOutcome::AlreadyRunning(status)),
+        messaging::Liveness::Gone => {
+            open_hub_tab(ctx, repo_arg, extra, start, dashboard, terminal, dry_run)
+                .map(TabOutcome::Opened)
+        }
+    }
+}
+
+/// Start a hub from the board: a new tmux window running `adj hub`, exactly as `adj hub --tab`
+/// would open it. Refused unless that is what the settings mean by a tab — a custom `spawn`
+/// template runs whatever the person wrote, and the built-in terminal is not one this process
+/// can be sure to reach from a server that has no terminal of its own.
+pub fn start_hub(ctx: &Context, start: HubStart) -> Result<TabOutcome, String> {
+    if !hub_startable(&ctx.settings.terminal) {
+        return Err("starting a hub from the board needs terminal.preset \"tmux\"".to_string());
+    }
+    hub_in_tab(ctx, None, &[], start, None, &ctx.settings.terminal, false)
+}
+
+/// Whether the board may start a hub under these settings.
+pub fn hub_startable(terminal: &config::TerminalSettings) -> bool {
+    terminal.spawn.is_none() && terminal.is_tmux()
+}
+
+/// Stop the hub `ctx` addresses by closing the tmux pane it runs in. `Ok(true)` when a hub
+/// was running and is gone, `Ok(false)` when there was none (a record it left is cleared).
+///
+/// Everything is about **one** hub, read out of the record once: the pane that is closed,
+/// the process that has to be gone afterwards, and the record that may then be cleared. Asked
+/// separately, each could be answered about a different hub — one that started in the
+/// meantime — and the record cleared would be its.
+pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
+    let slug = &ctx.repo.slug;
+    let record = messaging::read_json(&messaging::hub_record_path(slug));
+    let named = record.as_ref().and_then(|r| {
+        let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
+        let started = r
+            .get("psStarted")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        Some((pid, started))
+    });
+    let Some((pid, started)) = named else {
+        // No record, or none that names a process: no hub, and nothing that is safe to clear.
+        return match messaging::hub_liveness(slug) {
+            messaging::Liveness::CannotTell => Err(messaging::hub_cannot_tell(slug)),
+            _ => Ok(false),
+        };
+    };
+    // Before anything is looked up or closed: the start time is what tells this hub from
+    // whatever inherited its pid, and closing a pane on the strength of the pid alone could
+    // close somebody else's.
+    if started.as_deref().is_none_or(|s| s.trim().is_empty()) {
+        return Err("the hub record carries no start time, so the process cannot be told apart from a reused pid; stop it where it runs".to_string());
+    }
+    match messaging::hub_process_liveness(pid, started.as_deref()) {
+        messaging::Liveness::Gone => {
+            messaging::unregister_hub_if(slug, pid, started.as_deref())?;
+            return Ok(false);
+        }
+        messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(slug)),
+        messaging::Liveness::Alive => {}
+    }
+    let recorded = record
+        .as_ref()
+        .and_then(|r| r.get("terminal"))
+        .and_then(|t| serde_json::from_value::<crate::session::SessionTerminal>(t.clone()).ok());
+    // Only a hub known to sit in tmux is looked for there: asking tmux about a hub that runs
+    // anywhere else would start by talking to whichever server is the default.
+    let in_tmux = match &recorded {
+        Some(t) => t.backend == "tmux",
+        None => hub_startable(&ctx.settings.terminal),
+    };
+    let socket = recorded
+        .as_ref()
+        .and_then(|t| t.socket.clone())
+        .or_else(|| ctx.settings.terminal.tmux_socket().map(str::to_string));
+    if !in_tmux {
+        return Err(format!(
+            "the hub is not in a tmux pane on socket {}; stop it where it runs",
+            socket.as_deref().unwrap_or("default")
+        ));
+    }
+    let panes = terminal::list_tmux_panes(socket.as_deref())?;
+    let pane = terminal::find_matching_pane(&panes, Some(pid), terminal::tty_of(pid).as_deref())
+        .ok_or_else(|| {
+            format!(
+                "the hub is not in a tmux pane on socket {}; stop it where it runs",
+                socket.as_deref().unwrap_or("default")
+            )
+        })?;
+    terminal::run_shell(&terminal::tmux_kill_pane_script(
+        socket.as_deref(),
+        &pane.pane_id,
+    ))?;
+    match settled(
+        || messaging::hub_process_liveness(pid, started.as_deref()),
+        std::thread::sleep,
+        GONE_BUDGET,
+        GONE_POLL,
+    ) {
+        messaging::Liveness::Gone => {
+            messaging::unregister_hub_if(slug, pid, started.as_deref())?;
+            Ok(true)
+        }
+        _ => Err(format!(
+            "closed the pane, but the hub (pid {pid}) is still running"
+        )),
+    }
+}
+
 /// Open a tab and start this repository's hub in it, rather than becoming it here.
 ///
 /// What the tab runs is `adj hub` — this same command without `--tab`. The claim is left to
@@ -1317,8 +1499,9 @@ fn open_hub_tab(
     extra: &[String],
     start: HubStart,
     dashboard: Option<bool>,
+    terminal: &config::TerminalSettings,
     dry_run: bool,
-) -> Result<(), String> {
+) -> Result<terminal::Performed, String> {
     let mut parts = forwarded_env();
     parts.extend([exe_path(), "hub".to_string()]);
     if let Some(repo) = repo_arg {
@@ -1358,8 +1541,8 @@ fn open_hub_tab(
         parts.extend(extra.iter().cloned());
     }
     let name_it = title_command(&ctx.settings, &ctx.repo.hub_name);
-    let done = terminal::spawn(
-        &ctx.settings.terminal,
+    terminal::spawn(
+        terminal,
         &SpawnRequest {
             // The main checkout, never a worktree: a hub that cannot cut worktrees is not a
             // hub, and this is the one thing `hub` moves to before it starts.
@@ -1369,13 +1552,7 @@ fn open_hub_tab(
             title_command: name_it.as_deref(),
         },
         dry_run,
-    )?;
-    if dry_run {
-        println!("{}", done.script);
-    } else {
-        println!("{}", done.description);
-    }
-    Ok(())
+    )
 }
 
 /// Three things go wrong when a person types the agent command by hand, and this exists to
@@ -1431,45 +1608,27 @@ pub fn hub(
     if status.present {
         return go_to_running_hub(&ctx, &status, dry_run);
     }
-    // Looked up before either route, so that asking for a session that is not there is
-    // refused here, in the tab it was typed in — not in a tab opened to show the refusal.
-    // The template is checked here too, for the same reason: on the tab route the refusal
-    // would otherwise come from inside a tab this one had already reported as opened.
-    let asked = match start {
-        HubStart::Resume => {
-            let saved = saved_hub_session(&ctx)?;
-            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
-            Some(saved)
-        }
-        HubStart::Auto | HubStart::New => None,
-    };
     // Below the presence check, and deliberately: one hub per address is the invariant, and
     // opening a tab for one that is already up would break it in the one way nothing later
     // repairs — two sessions answering to the same name, with the record naming one of them.
     if tab {
-        // `present: false` answers two different questions the same way: nobody is there,
-        // and whether anybody is there could not be established — an unreadable record, or
-        // a `ps` that would not run. Only the first is a reason to start a hub, and the
-        // other route never has to tell them apart because its claim refuses the second in
-        // exactly these words. This one leaves the claim to the tab it opens, so the
-        // refusal happens here or nowhere — and nowhere means the caller this route exists
-        // for, which is not a person, is told a hub was started in a new tab and handed
-        // `exit 0`, for a hub whose own claim is about to refuse it.
-        //
-        // `Alive` is a hub running under a name the check above no longer matches on. The
-        // tab's own claim would bring it forward, so the hub ends up in the same place
-        // either way — but this side would have said it started one and exited 0 for a hub
-        // that was already up, which is the same untruth told to the same non-human caller.
-        // It is brought forward from here instead, and no tab is opened for it.
-        match messaging::hub_liveness(&ctx.repo.slug) {
-            messaging::Liveness::CannotTell => {
-                return Err(messaging::hub_cannot_tell(&ctx.repo.slug));
+        return match hub_in_tab(
+            &ctx,
+            repo_arg,
+            extra,
+            start,
+            dashboard,
+            &ctx.settings.terminal,
+            dry_run,
+        )? {
+            TabOutcome::AlreadyRunning(status) => go_to_running_hub(&ctx, &status, dry_run),
+            TabOutcome::Opened(done) => {
+                print_performed(&done, dry_run);
+                Ok(())
             }
-            messaging::Liveness::Alive => return go_to_running_hub(&ctx, &status, dry_run),
-            messaging::Liveness::Gone => {}
-        }
-        return open_hub_tab(&ctx, repo_arg, extra, start, dashboard, dry_run);
+        };
     }
+    let asked = asked_session(&ctx, start)?;
     // Only on this route: the tab route hands the question to the `adj hub` in the new tab,
     // which asks it a moment later with the same answer.
     let resumed = match start {
@@ -1548,10 +1707,14 @@ pub fn hub(
         &ctx.repo.main,
         named,
         ctx.repo.hub.as_deref(),
+        Some(&terminal::own_location(&ctx.settings.terminal)),
     )? {
         messaging::Claim::Ours => {}
         messaging::Claim::Taken(status) => return go_to_running_hub(&ctx, &status, dry_run),
     }
+    // Where this repository is, for a resident server that may serve its board without
+    // being told anything else. Only the address: nothing here needs the server to be up.
+    serve::note_board(&ctx.repo);
     // A hub that cannot be resumed later is still a hub, so failing to write this down is
     // said and then got past — refusing to start over it would trade a working hub for a
     // convenience.
