@@ -2302,10 +2302,13 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
 /// checkouts report to it any more is closable: the repository hub is always there, and a
 /// hub with workers is still in use. Unread messages, open tasks and gates do not stop it —
 /// they are kept, and starting the same key again finds them.
-fn closable_check(hub: &crate::session::RepoHub) -> Result<(), String> {
+fn closable_check(repo: &RepoInfo, hub: &crate::session::RepoHub) -> Result<(), String> {
     if !hub.parent {
         return Err("the repository hub can only be stopped, not closed; use hub-stop".to_string());
     }
+    // The list is lenient about checkouts it cannot read; closing must not be.
+    repo::linked_worktrees(&repo.main)
+        .map_err(|e| format!("cannot tell which checkouts report to {}: {e}", hub.name))?;
     if hub.children > 0 {
         return Err(format!(
             "{} checkout(s) still report to {}; use hub-stop to stop it, or clean them up first",
@@ -2339,7 +2342,7 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             inbox_count: 0,
             children: 0,
         });
-    closable_check(&hub)?;
+    closable_check(&info, &hub)?;
     // This ends no process, so a hub that is still running would be left running with no
     // record, and the next `adj hub` would start a second one beside it. Only the hub itself
     // may clear its own record; from anywhere else it has to be stopped first.
@@ -2352,7 +2355,8 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             .map(str::to_string);
         Some((pid, started))
     });
-    if let Some((pid, started)) = named {
+    if let Some((pid, started)) = &named {
+        let pid = *pid;
         match messaging::hub_process_liveness(pid, started.as_deref()) {
             messaging::Liveness::Gone => {}
             messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
@@ -2381,7 +2385,15 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             }
         }
     }
-    messaging::unregister_hub(&hub.slug)?;
+    // Under the claim lock and only while the record is still the one that was looked at:
+    // a hub that registered since is not this call's to unregister.
+    let removed = match &named {
+        Some((pid, started)) => messaging::unregister_hub_if(&hub.slug, *pid, started.as_deref())?,
+        None => messaging::unregister_hub_if_unnamed(&hub.slug)?,
+    };
+    if !removed {
+        return Err(format!("{} changed while it was being closed", hub.name));
+    }
     serve::forget_board(&hub.slug)?;
     println!("closed {}", hub.name);
     if hub.inbox_count > 0 {

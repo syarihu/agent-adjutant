@@ -364,6 +364,32 @@ pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<
     Ok(true)
 }
 
+/// Remove the hub record only while it still names no process. `Ok(true)` when it is gone
+/// afterwards — removed, or already absent — and `Ok(false)` when it names a pid (a hub
+/// claimed the name since the caller looked) or cannot be read.
+///
+/// Under the same lock as `unregister_hub_if`, for a caller that has stopped or checked a
+/// hub and must not delete the record of one that registered in the meantime.
+pub fn unregister_hub_if_unnamed(slug: &str) -> Result<bool, String> {
+    let path = hub_record_path(slug);
+    let lock_path = path.with_extension("claiming");
+    parent_dir(&lock_path)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
+    lock.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", lock_path.display()))?;
+    match read_json(&path) {
+        None if !path.exists() => Ok(true),
+        None => Ok(false),
+        Some(record) if record.get("pid").is_some_and(|pid| !pid.is_null()) => Ok(false),
+        Some(_) => remove_if_present(&path).map(|()| true),
+    }
+}
+
 /// Whether the process a hub record named is still that process, without going through the
 /// record: for a caller that has read the record once and must go on asking about the same
 /// hub after another has claimed the name. A record with no anchor names a live pid as
@@ -3665,6 +3691,25 @@ mod tests {
         assert_eq!(hubs[1].id, "hub-WID-100");
         assert_eq!(hubs[1].slug, "acme-widget-wid-100");
         assert_eq!(hubs[1].key.as_deref(), Some("WID-100"));
+    }
+
+    #[test]
+    fn unregister_hub_if_unnamed_removes_only_a_record_naming_no_process() {
+        let _sandbox = Sandbox::empty();
+        let path = hub_record_path("acme-widget");
+        assert!(unregister_hub_if_unnamed("acme-widget").unwrap());
+
+        write_json(
+            &path,
+            &json!({"pid": 4242, "psStarted": "Mon Jan  1 00:00:00 2024"}),
+        )
+        .unwrap();
+        assert!(!unregister_hub_if_unnamed("acme-widget").unwrap());
+        assert!(path.exists());
+
+        write_json(&path, &json!({"hubName": "adjutant-acme-widget"})).unwrap();
+        assert!(unregister_hub_if_unnamed("acme-widget").unwrap());
+        assert!(!path.exists());
     }
 
     #[test]

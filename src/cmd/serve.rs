@@ -1942,7 +1942,7 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
         "stop" | "close" => {
             let closing = action == "close";
             if closing {
-                super::closable_check(&hub)?;
+                super::closable_check(repo, &hub)?;
             }
             // Addressed by the slug the hub was listed under: a hub whose key cannot be told
             // can still be stopped, and nothing here needs the key for it.
@@ -1957,7 +1957,11 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
             // A hub that will not stop is not closed: nothing is forgotten until it is gone.
             let was_running = super::stop_hub(&ctx)?;
             if closing {
-                messaging::unregister_hub(&hub.slug)?;
+                // `stop_hub` cleared a record naming the process it stopped; what is left
+                // names none, unless a hub registered in the meantime, which stays.
+                if !messaging::unregister_hub_if_unnamed(&hub.slug)? {
+                    return Err(format!("{} changed while it was being closed", hub.name));
+                }
                 forget_board(&hub.slug)?;
                 Ok(json!({ "closed": true, "wasRunning": was_running, "unread": hub.inbox_count }))
             } else {
