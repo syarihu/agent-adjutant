@@ -174,11 +174,14 @@ fn a_worker_resumes_in_its_worktree_under_the_hub_that_dispatched_it() {
         "WID-1 画像が潰れる",
         "--hub",
         FEATURE,
+        "--task",
+        "WID-1",
     ]);
     let saved = saved_session(&fixture.repo.join(".claude").join("adjutant-session.json"));
     let sid = saved["sessionId"].as_str().unwrap().to_string();
     assert_eq!(saved["title"], "WID-1 画像が潰れる");
     assert_eq!(saved["hub"], FEATURE);
+    assert_eq!(saved["task"], "WID-1");
 
     // Typed from inside the worktree with nothing else said: the worktree, the title and
     // the session all come from what was saved.
@@ -208,9 +211,52 @@ fn a_worker_resumes_in_its_worktree_under_the_hub_that_dispatched_it() {
     let record = saved_session(&fixture.repo.join(".claude").join("adjutant-worker.json"));
     assert_eq!(record["hub"], FEATURE, "{record}");
     assert_eq!(record["title"], "WID-1 画像が潰れる", "{record}");
+    assert_eq!(record["task"], "WID-1", "{record}");
     // Resuming reopens the session; it does not replace the one that was saved.
     let again = saved_session(&fixture.repo.join(".claude").join("adjutant-session.json"));
     assert_eq!(again["sessionId"], sid.as_str());
+    assert_eq!(again["task"], "WID-1");
+}
+
+#[test]
+fn resuming_a_worker_with_explicit_task_records_it_without_resaving_the_session() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+
+    fixture.ok(&[
+        "worker",
+        "--worktree",
+        &worktree,
+        "--title",
+        "WID-1 画像が潰れる",
+        "--hub",
+        FEATURE,
+        "--task",
+        "WID-1",
+    ]);
+
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["agentResumeRunner"] = "true {sessionId}".into();
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+
+    let out = fixture
+        .command(["worker", "--resume", "--task", "WID-2"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record = saved_session(&fixture.repo.join(".claude").join("adjutant-worker.json"));
+    assert_eq!(record["task"], "WID-2", "{record}");
+    // The running worker's record is what says which task it is on; resuming does not
+    // rewrite the saved session, which stays as it was saved.
+    let saved = saved_session(&fixture.repo.join(".claude").join("adjutant-session.json"));
+    assert_eq!(saved["task"], "WID-1");
 }
 
 #[test]
@@ -590,5 +636,47 @@ fn reopening_a_worker_is_held_to_max_workers_like_starting_one() {
         &Path::new(crashed)
             .join(".claude")
             .join("adjutant-session.json"),
+    );
+}
+
+#[test]
+fn a_worker_records_the_terminal_it_was_started_in() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+    let record_path = fixture.repo.join(".claude").join("adjutant-worker.json");
+
+    // Outside tmux: only the backend, and a `terminal.spawn` template is not iTerm2.
+    fixture.ok(&["worker", "--worktree", &worktree, "--title", "WID-1"]);
+    let record = saved_session(&record_path);
+    assert_eq!(
+        record["terminal"],
+        serde_json::json!({"backend": "custom"}),
+        "{record}"
+    );
+
+    // Inside tmux: the socket and pane come from the pane itself. No server answers on this
+    // socket, so the session and window are left out rather than guessed from the settings.
+    let out = fixture
+        .command(["worker", "--worktree", &worktree, "--title", "WID-1"])
+        .env("TMUX", "/nonexistent/adjutant-test-socket,1,0")
+        .env("TMUX_PANE", "%7")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record = saved_session(&record_path);
+    assert_eq!(
+        record["terminal"],
+        serde_json::json!({
+            "backend": "tmux",
+            "socket": "/nonexistent/adjutant-test-socket",
+            "pane": "%7",
+        }),
+        "{record}"
     );
 }

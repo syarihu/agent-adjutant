@@ -550,6 +550,250 @@ fn fetch(url: &str) -> String {
     status
 }
 
+/// `GET /api/state` from the board, whole.
+fn fetch_state(url: &str) -> serde_json::Value {
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, query) = rest.split_once('/').unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+    let mut stream = std::net::TcpStream::connect(host).unwrap();
+    write!(
+        stream,
+        "GET /api/state?token={token} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    std::io::Read::read_to_string(&mut stream, &mut answer).unwrap();
+    let body = answer.split_once("\r\n\r\n").unwrap().1;
+    serde_json::from_str(body).unwrap()
+}
+
+#[test]
+fn the_board_state_reports_hubs_and_sessions_alongside_hub_and_workers() {
+    let fixture = Fixture::new(QUIET);
+    let (mut board, url) = start_board(&fixture);
+
+    let state = fetch_state(&url);
+    // Legacy fields preserved for existing board callers
+    assert!(state.get("hub").is_some());
+    assert!(state.get("workers").is_some());
+
+    // New fields: hubs and sessions
+    let hubs = state["hubs"].as_array().expect("hubs array");
+    assert!(!hubs.is_empty());
+    let repo_hub = &hubs[0];
+    assert_eq!(repo_hub["id"], "hub");
+    assert!(repo_hub["name"].as_str().unwrap().contains("adjutant-"));
+    assert!(repo_hub.get("state").is_some());
+    assert!(repo_hub["state"].get("present").is_some());
+    assert!(repo_hub["state"].get("stale").is_some());
+    assert!(repo_hub.get("slug").is_some());
+    assert!(repo_hub.get("inboxCount").is_some());
+
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    assert!(
+        sessions
+            .iter()
+            .any(|s| s["kind"] == "hub" && s["id"] == "hub")
+    );
+    for session in sessions {
+        assert!(session.get("terminal").is_some());
+        assert!(session.get("agent").is_some());
+        assert!(session.get("present").is_some());
+        assert!(session.get("stale").is_some());
+    }
+
+    board.kill().unwrap();
+    board.wait().unwrap();
+}
+
+#[test]
+fn the_board_state_reports_worker_session_with_metadata() {
+    let fixture = Fixture::new(QUIET);
+    let worktree_dir = fixture.repo.join("worktree-wid-1");
+    let out = Command::new("git")
+        .hermetic()
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wid-1",
+            worktree_dir.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let pid = std::process::id();
+    let claude_dir = worktree_dir.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-worker.json"),
+        serde_json::json!({
+            "pid": pid,
+            "title": "WID-1 Fix widget",
+            "task": "task-wid-1",
+            "hub": "parent-1",
+            "phase": "implement",
+            "phaseAt": 1700000000,
+            "psStarted": ps_started(pid),
+            "terminal": {
+                "backend": "tmux",
+                "socket": "/tmp/tmux-501/elsewhere",
+                "session": "work",
+                "window": "@3",
+                "pane": "%7",
+            },
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+
+    // hubs must discover parent-1 from the worktree's worker record
+    let hubs = state["hubs"].as_array().expect("hubs array");
+    assert!(hubs.iter().any(|h| h["key"] == "parent-1"));
+
+    // sessions must contain the worker session
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let worker_sess = sessions
+        .iter()
+        .find(|s| s["kind"] == "worker")
+        .expect("worker session found");
+    assert_eq!(
+        worker_sess["worktree"],
+        worktree_dir
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(worker_sess["task"], "task-wid-1");
+    assert_eq!(worker_sess["hub"], "hub-parent-1");
+    assert_eq!(worker_sess["phase"], "implement");
+    assert_eq!(worker_sess["phaseAt"], 1700000000);
+    assert_eq!(worker_sess["present"], true);
+    // Where the worker was started, as recorded, not the settings (the fixture has none)
+    // or a live lookup.
+    assert_eq!(
+        worker_sess["terminal"],
+        serde_json::json!({
+            "backend": "tmux",
+            "socket": "/tmp/tmux-501/elsewhere",
+            "session": "work",
+            "window": "@3",
+            "pane": "%7",
+        })
+    );
+
+    board.kill().unwrap();
+    board.wait().unwrap();
+}
+
+#[test]
+fn the_board_state_reports_main_worker_from_saved_session_when_unregistered() {
+    let fixture = Fixture::new(QUIET);
+    let claude_dir = fixture.repo.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-session.json"),
+        serde_json::json!({
+            "sessionId": "sid-main-worker",
+            "title": "Main checkout previous worker",
+            "hub": "parent-main-saved",
+            "savedAt": "20260928T120000Z",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+
+    // hubs must discover parent-main-saved from the main checkout saved session
+    let hubs = state["hubs"].as_array().expect("hubs array");
+    assert!(hubs.iter().any(|h| h["key"] == "parent-main-saved"));
+
+    // sessions must contain worker-main as an inactive worker
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let main_worker = sessions
+        .iter()
+        .find(|s| s["id"] == "worker-main")
+        .expect("worker-main session found");
+    assert_eq!(main_worker["kind"], "worker");
+    assert_eq!(main_worker["title"], "Main checkout previous worker");
+    assert_eq!(main_worker["hub"], "hub-parent-main-saved");
+    assert_eq!(main_worker["present"], false);
+    assert_eq!(main_worker["stale"], false);
+    assert!(main_worker.get("startedAt").is_none());
+    assert!(main_worker.get("task").is_none());
+
+    board.kill().unwrap();
+    board.wait().unwrap();
+}
+
+#[test]
+fn the_board_state_reports_linked_worker_from_saved_session_when_unregistered() {
+    let fixture = Fixture::new(QUIET);
+    let worktree_dir = fixture.repo.join("worktree-saved-1");
+    let out = Command::new("git")
+        .hermetic()
+        .args([
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "saved-1",
+            worktree_dir.to_str().unwrap(),
+        ])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let claude_dir = worktree_dir.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-session.json"),
+        serde_json::json!({
+            "sessionId": "sid-linked-saved",
+            "title": "Saved linked worker task",
+            "hub": "parent-linked-saved",
+            "task": "WID-99",
+            "savedAt": "20260928T120000Z",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+
+    let hubs = state["hubs"].as_array().expect("hubs array");
+    assert!(hubs.iter().any(|h| h["key"] == "parent-linked-saved"));
+
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let worker_sess = sessions
+        .iter()
+        .find(|s| s["id"] == "worker-worktree-saved-1")
+        .expect("worker session found");
+    assert_eq!(worker_sess["kind"], "worker");
+    assert_eq!(worker_sess["title"], "Saved linked worker task");
+    assert_eq!(worker_sess["hub"], "hub-parent-linked-saved");
+    assert_eq!(worker_sess["task"], "WID-99");
+    assert_eq!(worker_sess["present"], false);
+
+    board.kill().unwrap();
+    board.wait().unwrap();
+}
+
 #[test]
 fn a_hub_s_mcp_server_serves_its_board_for_as_long_as_it_runs() {
     let fixture = Fixture::new(QUIET);
@@ -875,4 +1119,44 @@ fn adjutant_tell_and_send_wake_heuristics_and_overrides() {
             .contains("waking was skipped because this message needs no action"),
         "{res7}"
     );
+}
+
+#[test]
+fn a_worker_record_without_a_terminal_reports_the_backend_a_spawn_template_uses() {
+    let fixture = Fixture::new(QUIET);
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["terminal"] = serde_json::json!({
+        "preset": "tmux",
+        "spawn": "wezterm cli spawn --cwd {cwd} -- {command}",
+    });
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+
+    // A record written before workers recorded where they run.
+    let pid = std::process::id();
+    let claude_dir = fixture.repo.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        claude_dir.join("adjutant-worker.json"),
+        serde_json::json!({
+            "pid": pid,
+            "title": "WID-1",
+            "psStarted": ps_started(pid),
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (mut board, url) = start_board(&fixture);
+    let state = fetch_state(&url);
+    let sessions = state["sessions"].as_array().expect("sessions array");
+    let worker = sessions
+        .iter()
+        .find(|s| s["id"] == "worker-main")
+        .expect("worker-main session found");
+    // The template wins over the preset, as it does when a tab is opened.
+    assert_eq!(worker["terminal"], serde_json::json!({"backend": "custom"}));
+
+    board.kill().unwrap();
+    board.wait().unwrap();
 }

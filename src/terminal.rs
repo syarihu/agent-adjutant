@@ -15,6 +15,7 @@
 use std::process::Command;
 
 use crate::config::{TerminalSettings, Wake};
+use crate::session::SessionTerminal;
 use crate::template::{Sub, contains_placeholder, render, sh_quote};
 
 pub struct SpawnRequest<'a> {
@@ -1118,6 +1119,83 @@ pub fn tmux_set_title_script(socket: Option<&str>, title: &str) -> String {
     format!("{prefix} rename-window {title_q}")
 }
 
+/// The backend `spawn` opens a tab with under `terminal`, in the order `spawn` decides it: a
+/// `terminal.spawn` template first, then the tmux preset, then the built-in iTerm2.
+pub fn backend_name(terminal: &TerminalSettings) -> &'static str {
+    if terminal.spawn.is_some() {
+        "custom"
+    } else if terminal.is_tmux() {
+        "tmux"
+    } else {
+        "iterm2"
+    }
+}
+
+/// Where this process is running, as the session record keeps it.
+///
+/// Read from inside the tab rather than from the settings, which only say where a *new* tab
+/// would go: a session started under other settings, or in a tmux the settings do not name,
+/// would otherwise be reported somewhere it is not. tmux says where a pane is through
+/// `$TMUX` (whose first field is the server's socket) and `$TMUX_PANE`; outside tmux there
+/// is nothing addressable to record beyond the backend.
+///
+/// So the backend here can differ from `backend_name`: a `terminal.spawn` template that
+/// opens a tmux window records "tmux", because that is what a later attach has to talk to.
+pub fn own_location(terminal: &TerminalSettings) -> SessionTerminal {
+    location_with(
+        run_shell,
+        std::env::var("TMUX").ok().as_deref(),
+        std::env::var("TMUX_PANE").ok().as_deref(),
+        terminal,
+    )
+}
+
+pub fn location_with(
+    run: impl Fn(&str) -> Result<String, String>,
+    tmux_env: Option<&str>,
+    tmux_pane: Option<&str>,
+    terminal: &TerminalSettings,
+) -> SessionTerminal {
+    let socket = tmux_env
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let pane = tmux_pane.map(str::trim).filter(|s| !s.is_empty());
+    let (Some(socket), Some(pane)) = (socket, pane) else {
+        return SessionTerminal {
+            backend: backend_name(terminal).to_string(),
+            socket: None,
+            session: None,
+            window: None,
+            pane: None,
+        };
+    };
+    // Asked once, now: a pane id stays the pane's for its life, and the window it sits in
+    // is what the browser terminal will later attach to.
+    let cmd = format!(
+        "{} display-message -p -t {} '#{{session_name}}\t#{{window_id}}'",
+        tmux_cmd_prefix(Some(socket)),
+        sh_quote(pane)
+    );
+    let (session, window) = match run(&cmd) {
+        Ok(out) => match out.trim().split_once('\t') {
+            Some((session, window)) => (
+                Some(session.to_string()).filter(|s| !s.is_empty()),
+                Some(window.to_string()).filter(|s| !s.is_empty()),
+            ),
+            None => (None, None),
+        },
+        Err(_) => (None, None),
+    };
+    SessionTerminal {
+        backend: "tmux".to_string(),
+        socket: Some(socket.to_string()),
+        session,
+        window,
+        pane: Some(pane.to_string()),
+    }
+}
+
 pub fn tmux_wake(
     socket: Option<&str>,
     pid: u32,
@@ -1972,5 +2050,90 @@ mod tests {
         assert!(performed.ran, "{performed:?}");
         assert!(performed.script.contains("kill-window -t @1"));
         assert!(performed.description.contains("closed the tab"));
+    }
+
+    #[test]
+    fn the_backend_is_the_one_spawn_would_use() {
+        let custom = TerminalSettings {
+            spawn: Some("wezterm cli spawn --cwd {cwd} -- {command}".into()),
+            ..Default::default()
+        };
+        assert_eq!(backend_name(&custom), "custom");
+        // A template wins over the preset in `spawn`, so it does here too.
+        let both = TerminalSettings {
+            preset: Some("tmux".into()),
+            spawn: Some("tmux new-window {command}".into()),
+            ..Default::default()
+        };
+        assert_eq!(backend_name(&both), "custom");
+        let tmux = TerminalSettings {
+            preset: Some("tmux".into()),
+            ..Default::default()
+        };
+        assert_eq!(backend_name(&tmux), "tmux");
+        assert_eq!(backend_name(&TerminalSettings::default()), "iterm2");
+    }
+
+    #[test]
+    fn a_location_inside_tmux_is_read_from_the_pane_not_the_settings() {
+        // Settings that name another socket and session: what is recorded is where the
+        // process actually is.
+        let term = TerminalSettings {
+            preset: Some("tmux".into()),
+            socket: Some("elsewhere".into()),
+            session: Some("other".into()),
+            ..Default::default()
+        };
+        let runner = |cmd: &str| {
+            assert!(cmd.contains("tmux -S /tmp/tmux-501/default"), "{cmd}");
+            assert!(cmd.contains("display-message -p -t %7"), "{cmd}");
+            Ok("work\t@3\n".to_string())
+        };
+        let at = location_with(
+            runner,
+            Some("/tmp/tmux-501/default,4242,0"),
+            Some("%7"),
+            &term,
+        );
+        assert_eq!(
+            at,
+            SessionTerminal {
+                backend: "tmux".into(),
+                socket: Some("/tmp/tmux-501/default".into()),
+                session: Some("work".into()),
+                window: Some("@3".into()),
+                pane: Some("%7".into()),
+            }
+        );
+
+        // tmux not answering still leaves the socket and pane, which are enough to find it.
+        let at = location_with(
+            |_: &str| Err("no server running".to_string()),
+            Some("/tmp/tmux-501/default,4242,0"),
+            Some("%7"),
+            &term,
+        );
+        assert_eq!(at.backend, "tmux");
+        assert_eq!(at.pane.as_deref(), Some("%7"));
+        assert_eq!(at.window, None);
+    }
+
+    #[test]
+    fn a_location_outside_tmux_carries_only_the_backend() {
+        let custom = TerminalSettings {
+            spawn: Some("wezterm cli spawn --cwd {cwd} -- {command}".into()),
+            ..Default::default()
+        };
+        let at = location_with(
+            |cmd: &str| Err(format!("nothing should be asked: {cmd}")),
+            None,
+            None,
+            &custom,
+        );
+        assert_eq!(at.backend, "custom");
+        assert_eq!(
+            (at.socket, at.session, at.window, at.pane),
+            (None, None, None, None)
+        );
     }
 }

@@ -223,6 +223,23 @@ pub fn slug_for(nwo: &str, hub: Option<&str>) -> String {
     }
 }
 
+/// The hub identifier a parent-task hub's slug was made from, read back out of the slug.
+///
+/// For hub records written before they carried the identifier. Only the readable half is
+/// there to read, so the answer is that half, accepted only when it hashes back to the same
+/// slug: the address is case-insensitive, so a lowercased identifier still names the same
+/// hub, but one that lost characters to the collapse would name another. `None` when the
+/// slug is the repository's own, or the identifier cannot be told from it.
+pub fn hub_key_from_slug(nwo: &str, slug: &str) -> Option<String> {
+    let base = readable(nwo);
+    let rest = slug.strip_prefix(&base)?.strip_prefix('-')?;
+    let (tail, digest) = rest.rsplit_once('-')?;
+    if digest.len() != 16 || tail.is_empty() {
+        return None;
+    }
+    (slug_for(nwo, Some(tail)) == slug).then(|| tail.to_string())
+}
+
 /// The half of a slug a person recognises: lowercase, `.` `_` `/` collapsed to `-`, and
 /// everything else dropped.
 fn readable(text: &str) -> String {
@@ -411,6 +428,27 @@ fn normalise(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hub_key_is_read_back_from_its_slug_only_when_it_hashes_back() {
+        let slug = slug_for("acme/widget", Some("WID-100"));
+        // Lowercased, and still the same address.
+        assert_eq!(
+            hub_key_from_slug("acme/widget", &slug).as_deref(),
+            Some("wid-100")
+        );
+        // `.` collapsed to `-`: the readable half names another hub, so nothing is claimed.
+        let lossy = slug_for("acme/widget", Some("v1.2"));
+        assert_eq!(hub_key_from_slug("acme/widget", &lossy), None);
+        assert_eq!(
+            hub_key_from_slug("acme/widget", &slug_for("acme/widget", None)),
+            None
+        );
+        assert_eq!(
+            hub_key_from_slug("acme/widget", &slug_for("acme/other", Some("x"))),
+            None
+        );
+    }
 
     #[test]
     fn git_s_repository_location_variables_do_not_move_the_current_worktree() {
