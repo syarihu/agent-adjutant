@@ -683,3 +683,49 @@ fn a_hub_whose_key_needs_percent_encoding_can_be_named_from_the_board() {
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("percent-encoding"), "{body}");
 }
+
+#[test]
+fn a_board_follows_its_address_when_the_checkout_changes() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let state_main = |resident: &Resident| {
+        let (status, body) = resident.get(&format!("/b/{SLUG}/api/state"));
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["main"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(state_main(&resident), fixture.repo.to_string_lossy());
+
+    // A second checkout of the same repository, and the address book pointed at it.
+    let second = fixture._dir.path().join("widget-moved");
+    std::fs::create_dir_all(&second).unwrap();
+    for args in [
+        vec!["init", "-q", "-b", "main"],
+        vec!["config", "user.email", "test@example.invalid"],
+        vec!["config", "user.name", "test"],
+        vec!["remote", "add", "origin", "git@github.com:acme/widget.git"],
+        vec!["commit", "-q", "--allow-empty", "-m", "init"],
+    ] {
+        let out = Command::new("git")
+            .hermetic()
+            .args(&args)
+            .current_dir(&second)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    }
+    let second = std::fs::canonicalize(&second).unwrap();
+    std::fs::write(
+        fixture.state.join("boards").join(format!("{SLUG}.json")),
+        serde_json::json!({"main": second.to_str().unwrap(), "nwo": "acme/widget", "hub": null})
+            .to_string(),
+    )
+    .unwrap();
+    assert_eq!(state_main(&resident), second.to_string_lossy());
+
+    // And a board the address book no longer has is not served from memory.
+    std::fs::remove_file(fixture.state.join("boards").join(format!("{SLUG}.json"))).unwrap();
+    assert_eq!(resident.get(&format!("/b/{SLUG}/api/state")).0, 404);
+}

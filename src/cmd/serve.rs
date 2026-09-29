@@ -523,6 +523,7 @@ pub fn note_board(repo: &crate::repo::RepoInfo) {
 
 /// The pieces of the address book entry `slug` names, when they still describe that board:
 /// the checkout is there and the repository and hub still come to the same slug.
+#[derive(Clone, PartialEq, Eq)]
 struct Address {
     slug: String,
     main: String,
@@ -644,37 +645,67 @@ fn split_board_path(path: &str) -> Option<(&str, &str)> {
 struct Resident {
     token: String,
     port: u16,
-    boards: Mutex<std::collections::HashMap<String, Arc<Server>>>,
+    /// Each open board with the address it was built from, so that one whose address has
+    /// changed since is not served from the old context.
+    boards: Mutex<std::collections::HashMap<String, (Address, Arc<Server>)>>,
 }
 
 impl Resident {
     /// The board for `slug`, or `None` when the address book has no such board any more.
+    ///
+    /// The address is read on every call — a small file — and the open board is used only
+    /// while it is the one the file still names: a checkout that moved, or was replaced under
+    /// the same slug, is served from where it is now.
     fn board(&self, slug: &str) -> Option<Arc<Server>> {
-        if let Some(open) = self.boards.lock().ok()?.get(slug) {
-            return Some(Arc::clone(open));
+        // Bounded: a file rewritten again and again while this builds is not worth chasing.
+        for _ in 0..3 {
+            let Some(address) = address_of(slug) else {
+                self.boards.lock().ok()?.remove(slug);
+                return None;
+            };
+            if let Some((built_from, open)) = self.boards.lock().ok()?.get(slug)
+                && *built_from == address
+            {
+                return Some(Arc::clone(open));
+            }
+            // Outside the lock: resolving the checkout asks git, and every other board waits
+            // on this map.
+            //
+            // Never `set_current_dir`: this process is threaded, and the checkout is named to
+            // each call instead.
+            let repo = crate::repo::resolve_in(
+                Some(Path::new(&address.main)),
+                Some(&address.nwo),
+                address.hub.as_deref(),
+            )
+            .ok()
+            .filter(|repo| repo.slug == slug)?;
+            let ctx = super::context_of(repo).ok()?;
+            let server = Arc::new(Server {
+                ctx,
+                token: self.token.clone(),
+                port: self.port,
+                resident: true,
+                jules: Arc::default(),
+            });
+            let mut boards = self.boards.lock().ok()?;
+            // Asked again under the lock: what was built is only put in place while it is still
+            // what the file says, so a slower build of an older address cannot replace a newer
+            // one — and one that lost the race is thrown away and built again.
+            if address_of(slug).as_ref() != Some(&address) {
+                continue;
+            }
+            match boards.get(slug) {
+                Some((built_from, open)) if *built_from == address => {
+                    return Some(Arc::clone(open));
+                }
+                _ => {
+                    boards.insert(slug.to_string(), (address, Arc::clone(&server)));
+                    return Some(server);
+                }
+            }
         }
-        // Outside the lock: resolving the checkout asks git, and every other board waits on
-        // this map.
-        let address = address_of(slug)?;
-        // Never `set_current_dir`: this process is threaded, and the checkout is named to
-        // each call instead.
-        let repo = crate::repo::resolve_in(
-            Some(Path::new(&address.main)),
-            Some(&address.nwo),
-            address.hub.as_deref(),
-        )
-        .ok()
-        .filter(|repo| repo.slug == slug)?;
-        let ctx = super::context_of(repo).ok()?;
-        let server = Arc::new(Server {
-            ctx,
-            token: self.token.clone(),
-            port: self.port,
-            resident: true,
-            jules: Arc::default(),
-        });
-        let mut boards = self.boards.lock().ok()?;
-        Some(Arc::clone(boards.entry(slug.to_string()).or_insert(server)))
+        None
     }
 }
 
