@@ -79,6 +79,8 @@ function mountSessionTerminal(container, { sessionId, onEnd } = {}) {
     ws = new WebSocket(`${scheme}//${location.host}${BASE}/api/sessions/${encodeURIComponent(sessionId)}/terminal?${query}`);
     ws.binaryType = 'arraybuffer';
     const open = () => ws && ws.readyState === WebSocket.OPEN;
+    // A resize while connecting was not sent; the size now is what the PTY should have.
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
     ws.onclose = e => {
       if (disposed) return;
@@ -145,7 +147,9 @@ document.getElementById('term-close').addEventListener('click', closeTerminalOve
 const boardTerminalReady = s =>
   !!(state.boardTerminal?.available && s?.present && s.terminal?.backend === 'tmux' && s.terminal.window);
 const sessionOfTask = task => task && (state.sessions || []).find(s =>
-  s.kind === 'worker' && ((task.id && s.task === task.id) || (task.worktree && s.worktree === task.worktree)));
+  // The worktree stands in only for a session with no task of its own: one that belongs to
+  // another task is not this card's, even where a worktree was reused.
+  s.kind === 'worker' && (s.task ? s.task === task.id : !!task.worktree && s.worktree === task.worktree));
 const readySessionOfTask = task => {
   const s = sessionOfTask(task);
   return boardTerminalReady(s) ? s : null;

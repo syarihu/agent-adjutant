@@ -294,6 +294,13 @@ fn data_message(opcode: u8, data: Vec<u8>) -> Result<Message, Error> {
     }
 }
 
+/// Whether a close code may appear on the wire (RFC 6455 §7.4): the defined ones, without
+/// 1004 to 1006 and 1015, which only stand for what an endpoint saw and are never sent, and
+/// the ranges for libraries (3000 to 3999) and applications (4000 to 4999).
+fn is_wire_close_code(code: u16) -> bool {
+    matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
+}
+
 fn close_message(payload: Vec<u8>) -> Result<Message, Error> {
     match payload.len() {
         0 => Ok(Message::Close {
@@ -301,10 +308,17 @@ fn close_message(payload: Vec<u8>) -> Result<Message, Error> {
             reason: String::new(),
         }),
         1 => Err(Error::Protocol("close payload of one byte")),
-        _ => Ok(Message::Close {
-            code: Some(u16::from_be_bytes([payload[0], payload[1]])),
-            reason: String::from_utf8_lossy(&payload[2..]).into_owned(),
-        }),
+        _ => {
+            let code = u16::from_be_bytes([payload[0], payload[1]]);
+            if !is_wire_close_code(code) {
+                return Err(Error::Protocol("invalid close code"));
+            }
+            let reason = String::from_utf8(payload[2..].to_vec()).map_err(|_| Error::BadText)?;
+            Ok(Message::Close {
+                code: Some(code),
+                reason,
+            })
+        }
     }
 }
 
@@ -740,7 +754,8 @@ mod tests {
                 reason: String::new()
             }]
         );
-        assert!(decode_all(&masked(true, OP_CLOSE, b"x")).is_err());
+        let one = decode_all(&masked(true, OP_CLOSE, b"x")).unwrap_err();
+        assert_eq!(one.close_code(), 1002);
     }
 
     #[test]
@@ -758,5 +773,31 @@ mod tests {
         let len = usize::from(frame[1]);
         assert!(len <= 125, "{len}");
         assert!(std::str::from_utf8(&frame[4..]).is_ok());
+    }
+
+    #[test]
+    fn a_close_code_that_may_not_be_on_the_wire_is_a_protocol_error() {
+        // Never sent (1004 to 1006, 1015), unassigned (1016 to 2999) and out of range.
+        for code in [0u16, 999, 1004, 1005, 1006, 1015, 1016, 2999, 5000, 65535] {
+            let err = decode_all(&masked(true, OP_CLOSE, &code.to_be_bytes())).unwrap_err();
+            assert_eq!(err.close_code(), 1002, "{code}");
+        }
+        for code in [
+            1000u16, 1001, 1002, 1003, 1007, 1011, 1012, 1014, 3000, 4404, 4999,
+        ] {
+            assert!(
+                decode_all(&masked(true, OP_CLOSE, &code.to_be_bytes())).is_ok(),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_close_reason_that_is_not_utf8_is_refused_with_1007() {
+        let mut payload = 1000u16.to_be_bytes().to_vec();
+        payload.extend_from_slice(&[0xff, 0xfe]);
+        let err = decode_all(&masked(true, OP_CLOSE, &payload)).unwrap_err();
+        assert_eq!(err, Error::BadText);
+        assert_eq!(err.close_code(), 1007);
     }
 }

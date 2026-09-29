@@ -128,7 +128,8 @@ mod imp {
         }
     }
 
-    /// Silence this long is answered with a ping, and two in a row end the connection.
+    /// Silence this long is answered with a ping, and three in a row end the connection: a pong
+    /// can queue behind a large write of output, so one or two misses do not mean the page is gone.
     const KEEPALIVE: Duration = Duration::from_secs(30);
 
     fn size_param(req: &Request, name: &str, default: u16) -> u16 {
@@ -329,7 +330,7 @@ mod imp {
                     ) =>
                 {
                     silent += 1;
-                    if silent >= 2 || send(&wire, &ws::encode(ws::OP_PING, b"")).is_err() {
+                    if silent >= 3 || send(&wire, &ws::encode(ws::OP_PING, b"")).is_err() {
                         break;
                     }
                     continue;
