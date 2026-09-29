@@ -167,6 +167,7 @@ pub fn respond(
         404 => "Not Found",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
+        503 => "Service Unavailable",
         _ => "Internal Server Error",
     };
     // `no-store` because every one of these answers is about state that changes under the

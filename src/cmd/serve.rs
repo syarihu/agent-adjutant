@@ -12,6 +12,7 @@
 use std::io::{BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -22,6 +23,7 @@ use crate::messaging;
 use crate::runner;
 use crate::session;
 use crate::task;
+use crate::ws;
 
 /// The page. One file, no build step, no network fetches — it is read from the binary and
 /// runs from there. The source is kept in pieces under `src/ui/` only so it can be read; they
@@ -36,8 +38,10 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/review.css"),
     include_str!("../ui/task-view.css"),
     include_str!("../ui/console-and-dialog.css"),
+    include_str!("../ui/terminal.css"),
     include_str!("../ui/page-body.html"),
     include_str!("../ui/core.js"),
+    include_str!("../ui/terminal.js"),
     include_str!("../ui/board.js"),
     include_str!("../ui/actions.js"),
     include_str!("../ui/review.js"),
@@ -46,12 +50,35 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/page-end.html"),
 );
 
+/// The terminal the board opens on a tmux session, served only by the resident server and only
+/// when a page asks for it: xterm.js and the two addons it is used with, as one script. The
+/// license notice comes first, as the licenses ask for it to travel with the code (the files
+/// themselves are documented in `src/ui/vendor/xterm/README.md`).
+const XTERM_JS: &str = concat!(
+    "/*! xterm.js - MIT License\n",
+    include_str!("../ui/vendor/xterm/LICENSE"),
+    "\n@xterm/addon-fit and @xterm/addon-unicode11: Copyright (c) 2019, The xterm.js authors\n",
+    "(https://github.com/xtermjs/xterm.js), under the same license.\n*/\n",
+    include_str!("../ui/vendor/xterm/xterm.js"),
+    "\n",
+    include_str!("../ui/vendor/xterm/addon-fit.js"),
+    "\n",
+    include_str!("../ui/vendor/xterm/addon-unicode11.js"),
+);
+
+const XTERM_CSS: &str = concat!(
+    "/*! xterm.js - MIT License\n",
+    include_str!("../ui/vendor/xterm/LICENSE"),
+    "*/\n",
+    include_str!("../ui/vendor/xterm/xterm.css"),
+);
+
 pub const DEFAULT_PORT: u16 = 4577;
 
 /// Everything a connection needs. Shared across threads, read-only after startup — the
 /// state that changes lives on disk, where the hub and its workers can also reach it.
-struct Server {
-    ctx: super::Context,
+pub(super) struct Server {
+    pub(super) ctx: super::Context,
     token: String,
     port: u16,
     /// Whether the resident server is the one answering, which serves this board at a path
@@ -60,6 +87,11 @@ struct Server {
     /// What Jules last said about each session a card follows. The one thing here that
     /// changes after startup, and it is a cache: the record on disk stays the answer.
     jules: Arc<super::JulesWatch>,
+    /// What tmux this machine has, when the board may open terminals on it: only the resident
+    /// server serves one, and only where `tmux -V` answered when it started.
+    pub(super) tmux: Option<(u32, u32)>,
+    /// How many board terminals are open across every board, which is what is capped.
+    pub(super) terminals: Arc<AtomicUsize>,
 }
 
 pub fn serve(
@@ -162,6 +194,8 @@ impl Board {
                 port,
                 resident: false,
                 jules: Arc::default(),
+                tmux: None,
+                terminals: Arc::default(),
             }),
             listener,
             recorded,
@@ -347,6 +381,17 @@ fn refuse(token: &str, port: u16, req: &Request) -> Option<(u16, &'static str)> 
         .or_else(|| req.param("token"));
     if !given.is_some_and(|t| http::secret_eq(t, token)) {
         return Some((403, "bad or missing token"));
+    }
+
+    // A WebSocket handshake is a GET, so nothing above stops a page on another site from
+    // opening one, and what it opens here is a terminal. A browser always sends `Origin` on
+    // a handshake and a page cannot forge it, so it has to be ours and it has to be there.
+    if ws::is_upgrade(&req.headers) {
+        match req.header("origin") {
+            Some(origin) if is_own_origin(origin, port) => {}
+            Some(_) => return Some((403, "cross-origin request")),
+            None => return Some((403, "no Origin header")),
+        }
     }
 
     // A form on another site can POST here without reading the answer, and that is enough
@@ -648,6 +693,10 @@ struct Resident {
     /// Each open board with the address it was built from, so that one whose address has
     /// changed since is not served from the old context.
     boards: Mutex<std::collections::HashMap<String, (Address, Arc<Server>)>>,
+    /// The tmux version, asked once at start: the board terminal is offered only with one.
+    tmux: Option<(u32, u32)>,
+    /// Open board terminals, over all boards.
+    terminals: Arc<AtomicUsize>,
 }
 
 impl Resident {
@@ -687,6 +736,8 @@ impl Resident {
                 port: self.port,
                 resident: true,
                 jules: Arc::default(),
+                tmux: self.tmux,
+                terminals: Arc::clone(&self.terminals),
             });
             let mut boards = self.boards.lock().ok()?;
             // Asked again under the lock: what was built is only put in place while it is still
@@ -720,7 +771,36 @@ fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::Resul
     if let Some((status, why)) = refuse(&resident.token, resident.port, &req) {
         return http::json(&mut stream, status, &json!({ "error": why }).to_string());
     }
+    if ws::is_upgrade(&req.headers) {
+        return upgrade_resident(resident, &req, stream, reader);
+    }
     route_resident(resident, &req, &mut stream)
+}
+
+/// A WebSocket handshake: there is exactly one thing it may ask for, the terminal of a session
+/// on a board this server serves. Anything else is a 404, and so is that on a board a hub or a
+/// dedicated `adj serve` serves, which never reach here.
+fn upgrade_resident(
+    resident: &Resident,
+    req: &Request,
+    mut stream: TcpStream,
+    reader: BufReader<TcpStream>,
+) -> std::io::Result<()> {
+    let found = split_board_path(&req.path).and_then(|(slug, rest)| {
+        let id = terminal_route(rest)?;
+        Some((resident.board(slug)?, id))
+    });
+    let Some((server, id)) = found else {
+        return http::json(
+            &mut stream,
+            404,
+            &json!({ "error": "no such route" }).to_string(),
+        );
+    };
+    match id {
+        Ok(id) => super::board_terminal::serve(&server, &id, req, stream, reader),
+        Err(e) => http::json(&mut stream, 400, &json!({ "error": e }).to_string()),
+    }
 }
 
 fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
@@ -993,6 +1073,8 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
         token,
         port: bound,
         boards: Mutex::default(),
+        tmux: board_terminal_tmux(),
+        terminals: Arc::default(),
     });
     for stream in listener.incoming() {
         match stream {
@@ -1131,6 +1213,10 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/" | "/index.html") => http::html(out, UI_HTML),
         ("GET", "/api/state") => http::json(out, 200, &state(server).to_string()),
+        ("GET", path) if vendor_asset(path, server.resident).is_some() => {
+            let (kind, body) = vendor_asset(path, server.resident).unwrap_or_default();
+            http::respond(out, 200, kind, body.as_bytes())
+        }
         ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/history") => {
             reply(out, task_history(server, path))
         }
@@ -1310,6 +1396,72 @@ fn state(server: &Server) -> Value {
 
     let hubs = messaging::all_repo_hubs(repo);
 
+    let sessions = sessions_of(server, &settings, &hubs, &linked_paths, workers_data);
+
+    let pending: Vec<Value> = messaging::list(&repo.slug)
+        .iter()
+        .map(|entry| {
+            json!({
+                "name": entry.name,
+                "subject": entry.subject,
+                "from": entry.from,
+                "kind": entry.kind,
+                "worktree": entry.worktree,
+            })
+        })
+        .collect();
+
+    json!({
+        "repo": repo.nwo,
+        "main": repo.main,
+        "hubName": repo.hub_name,
+        "hub": {
+            "present": hub.present,
+            "stale": hub.stale,
+            "pid": hub.pid,
+            "startedAt": hub.started_at,
+        },
+        "hubs": hubs,
+        // Whether the resident server serves this board, which is also what tells the page
+        // it lives under a path of its own.
+        "resident": server.resident,
+        // Whether the board may start a hub: only where the settings mean a tmux window.
+        "hubStart": { "available": super::hub_startable(&settings.terminal) },
+        // Whether the board can open a terminal on a session that runs in tmux: the resident
+        // server, on a machine that has tmux. Which sessions is for the page to read from
+        // `sessions[].terminal` and `present`.
+        "boardTerminal": { "available": server.resident && server.tmux.is_some() },
+        "sessions": sessions,
+        "tasks": tasks,
+        "workers": workers,
+        // The slot count `adj work` decides by, counted the same way — a worker still
+        // starting up holds one — so the header and the refusal cannot disagree.
+        "workerSlots": {
+            "busy": busy,
+            "max": settings.max_workers,
+        },
+        // Minutes in one phase before a card is flagged. `0` = never.
+        "stuckAfterMinutes": settings.stuck_after_minutes,
+        // Whether the IDE buttons can do anything, and where to set it when they cannot. Read
+        // on every poll, so an `ide` written into the config shows up without a restart.
+        "ideConfigured": crate::ide::configured(settings.ide.as_deref()),
+        "configPath": crate::config::config_path().to_string_lossy(),
+        "now": now,
+        "pending": pending,
+        "gates": gate::list(&super::gate::dir(&server.ctx)),
+    })
+}
+
+/// The sessions this board lists, hubs first and then the workers of `linked_paths` (with what
+/// was already asked of each), as the page reads them and as a board terminal resolves an id.
+fn sessions_of(
+    server: &Server,
+    settings: &crate::config::Settings,
+    hubs: &[session::RepoHub],
+    linked_paths: &[String],
+    workers_data: Vec<(messaging::WorkerStatus, Option<String>)>,
+) -> Vec<session::Session> {
+    let repo = &server.ctx.repo;
     let terminal_settings = &settings.terminal;
     let tmux_panes = if terminal_settings.spawn.is_none() && terminal_settings.is_tmux() {
         crate::terminal::list_tmux_panes(terminal_settings.tmux_socket()).unwrap_or_default()
@@ -1334,7 +1486,7 @@ fn state(server: &Server) -> Value {
     let mut sessions: Vec<session::Session> = Vec::new();
 
     // 1. Hub sessions from hubs
-    for h in &hubs {
+    for h in hubs {
         let record = messaging::read_json(&messaging::hub_record_path(&h.slug));
         let terminal =
             session_terminal(record.as_ref(), terminal_settings, &tmux_panes, h.state.pid);
@@ -1366,14 +1518,14 @@ fn state(server: &Server) -> Value {
     let main_listed = messaging::read_json(&messaging::worker_record_path(Path::new(&repo.main)))
         .is_some()
         || messaging::worker_session(Path::new(&repo.main)).is_some();
-    let worker_ids = worker_session_ids(&linked_paths, main_listed);
+    let worker_ids = worker_session_ids(linked_paths, main_listed);
     for ((path, id), (status, branch)) in linked_paths.iter().zip(worker_ids).zip(workers_data) {
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
         let parent_hub = parent_hub_id(
             repo,
-            &hubs,
+            hubs,
             record_json
                 .as_ref()
                 .and_then(|r| r.get("hub"))
@@ -1433,7 +1585,7 @@ fn state(server: &Server) -> Value {
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
     if let Some(record_json) = messaging::read_json(&main_record_path) {
         let status = messaging::worker_status(Path::new(&repo.main));
-        let parent_hub = parent_hub_id(repo, &hubs, record_json.get("hub").and_then(Value::as_str));
+        let parent_hub = parent_hub_id(repo, hubs, record_json.get("hub").and_then(Value::as_str));
         let started_at = record_json
             .get("startedAt")
             .and_then(Value::as_str)
@@ -1471,7 +1623,7 @@ fn state(server: &Server) -> Value {
             phase_at: status.phase_at,
         });
     } else if let Some(saved) = messaging::worker_session(Path::new(&repo.main)) {
-        let parent_hub = parent_hub_id(repo, &hubs, saved.hub.as_deref());
+        let parent_hub = parent_hub_id(repo, hubs, saved.hub.as_deref());
         let terminal = session_terminal(None, terminal_settings, &tmux_panes, None);
 
         sessions.push(session::Session {
@@ -1494,55 +1646,23 @@ fn state(server: &Server) -> Value {
             phase_at: None,
         });
     }
+    sessions
+}
 
-    let pending: Vec<Value> = messaging::list(&repo.slug)
+/// The sessions of this board, asked for on their own: what the board terminal resolves a
+/// session id against, so that the page never names a socket or a window.
+pub(super) fn board_sessions(
+    server: &Server,
+    settings: &crate::config::Settings,
+) -> Vec<session::Session> {
+    let repo = &server.ctx.repo;
+    let hubs = messaging::all_repo_hubs(repo);
+    let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
+    let workers_data = linked_paths
         .iter()
-        .map(|entry| {
-            json!({
-                "name": entry.name,
-                "subject": entry.subject,
-                "from": entry.from,
-                "kind": entry.kind,
-                "worktree": entry.worktree,
-            })
-        })
+        .map(|path| (messaging::worker_status(Path::new(path)), branch_of(path)))
         .collect();
-
-    json!({
-        "repo": repo.nwo,
-        "main": repo.main,
-        "hubName": repo.hub_name,
-        "hub": {
-            "present": hub.present,
-            "stale": hub.stale,
-            "pid": hub.pid,
-            "startedAt": hub.started_at,
-        },
-        "hubs": hubs,
-        // Whether the resident server serves this board, which is also what tells the page
-        // it lives under a path of its own.
-        "resident": server.resident,
-        // Whether the board may start a hub: only where the settings mean a tmux window.
-        "hubStart": { "available": super::hub_startable(&settings.terminal) },
-        "sessions": sessions,
-        "tasks": tasks,
-        "workers": workers,
-        // The slot count `adj work` decides by, counted the same way — a worker still
-        // starting up holds one — so the header and the refusal cannot disagree.
-        "workerSlots": {
-            "busy": busy,
-            "max": settings.max_workers,
-        },
-        // Minutes in one phase before a card is flagged. `0` = never.
-        "stuckAfterMinutes": settings.stuck_after_minutes,
-        // Whether the IDE buttons can do anything, and where to set it when they cannot. Read
-        // on every poll, so an `ide` written into the config shows up without a restart.
-        "ideConfigured": crate::ide::configured(settings.ide.as_deref()),
-        "configPath": crate::config::config_path().to_string_lossy(),
-        "now": now,
-        "pending": pending,
-        "gates": gate::list(&super::gate::dir(&server.ctx)),
-    })
+    sessions_of(server, settings, &hubs, &linked_paths, workers_data)
 }
 
 /// The tasks as the board reads them, each live one with what its worker recorded without
@@ -1616,7 +1736,7 @@ fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate::Gate>) -> 
 /// from the ones the server started with, because `adj work` reads the config each time it
 /// runs, and a limit changed under a running board would otherwise show one number while
 /// dispatches are refused by another.
-fn settings_now(server: &Server) -> crate::config::Settings {
+pub(super) fn settings_now(server: &Server) -> crate::config::Settings {
     crate::config::resolve_config(&server.ctx.repo.nwo)
         .map(|resolved| resolved.settings)
         .unwrap_or_else(|_| server.ctx.settings.clone())
@@ -1706,6 +1826,40 @@ fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
         .then(|| (decode_segment(raw), action))
 }
 
+/// `/api/sessions/<id>/terminal` as the session id, percent-decoded as `hub_route` does. Only
+/// the path is looked at: whether the id names a session, and one that runs in tmux, is
+/// answered once the socket is open, where the page can be told why not.
+fn terminal_route(path: &str) -> Option<Result<String, String>> {
+    let raw = path
+        .strip_prefix("/api/sessions/")?
+        .strip_suffix("/terminal")?;
+    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
+}
+
+/// The scripts and styles the board terminal loads, as `(content type, body)`. Only the
+/// resident server has them to give, and a page fetches them only when it opens a terminal.
+fn vendor_asset(path: &str, resident: bool) -> Option<(&'static str, &'static str)> {
+    match path {
+        "/vendor/xterm.js" if resident => Some(("text/javascript; charset=utf-8", XTERM_JS)),
+        "/vendor/xterm.css" if resident => Some(("text/css; charset=utf-8", XTERM_CSS)),
+        _ => None,
+    }
+}
+
+/// The tmux version when the board terminal can be offered at all: a unix machine with tmux 3.1
+/// or later. Older tmux has neither `window-size latest` nor the hook that ends the terminal with
+/// its window, so the board would follow tmux on to another agent's window when the target closes.
+fn board_terminal_tmux() -> Option<(u32, u32)> {
+    #[cfg(unix)]
+    {
+        crate::terminal::tmux_version().filter(|&v| v >= (3, 1))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 /// `%XX` escapes in one path segment, and nothing else: unlike a query string, a `+` here is a
 /// plus.
 fn decode_segment(raw: &str) -> Result<String, String> {
@@ -1723,11 +1877,11 @@ fn decode_segment(raw: &str) -> Result<String, String> {
             .and_then(|hex| std::str::from_utf8(hex).ok())
             .filter(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
             .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-            .ok_or_else(|| format!("bad percent-encoding in the hub id: {raw}"))?;
+            .ok_or_else(|| format!("bad percent-encoding in the id: {raw}"))?;
         out.push(byte);
         i += 3;
     }
-    String::from_utf8(out).map_err(|_| format!("the hub id is not valid UTF-8: {raw}"))
+    String::from_utf8(out).map_err(|_| format!("the id is not valid UTF-8: {raw}"))
 }
 
 /// Start or stop one of the repository's hubs from the board. `id` is the `hubs[].id` the
@@ -2350,5 +2504,146 @@ mod tests {
         let huge = (http::MAX_BODY + 1).to_string();
         let req = request("POST", "/api/tasks", &[("Content-Length", &huge)]);
         assert_eq!(refuse(TOKEN, PORT, &req), Some((413, "body too large")));
+    }
+
+    fn upgrade_headers(origin: Option<&str>) -> Vec<(&str, &str)> {
+        let mut headers = vec![
+            ("Connection", "Upgrade"),
+            ("Upgrade", "websocket"),
+            ("Sec-WebSocket-Version", "13"),
+            ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+        ];
+        headers.extend(origin.map(|o| ("Origin", o)));
+        headers
+    }
+
+    #[test]
+    fn a_handshake_with_no_origin_is_refused_even_with_the_token() {
+        let req = request(
+            "GET",
+            "/b/x/api/sessions/hub/terminal?token=s3cret",
+            &upgrade_headers(None),
+        );
+        assert_eq!(refuse(TOKEN, PORT, &req), Some((403, "no Origin header")));
+    }
+
+    #[test]
+    fn a_handshake_from_another_site_is_refused() {
+        for origin in [
+            "http://evil.example",
+            "http://127.0.0.1:4578",
+            "https://127.0.0.1:4577",
+            "null",
+        ] {
+            let req = request(
+                "GET",
+                "/b/x/api/sessions/hub/terminal?token=s3cret",
+                &upgrade_headers(Some(origin)),
+            );
+            assert_eq!(
+                refuse(TOKEN, PORT, &req),
+                Some((403, "cross-origin request")),
+                "{origin}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_handshake_needs_the_token_however_good_its_origin() {
+        for path in [
+            "/b/x/api/sessions/hub/terminal",
+            "/b/x/api/sessions/hub/terminal?token=guess",
+        ] {
+            let req = request("GET", path, &upgrade_headers(Some("http://127.0.0.1:4577")));
+            assert_eq!(
+                refuse(TOKEN, PORT, &req),
+                Some((403, "bad or missing token")),
+                "{path}"
+            );
+        }
+    }
+
+    /// A browser cannot set headers on a WebSocket, so the token rides in the URL.
+    #[test]
+    fn a_handshake_from_the_boards_own_origin_may_carry_the_token_in_the_url() {
+        for origin in ["http://127.0.0.1:4577", "http://localhost:4577"] {
+            let req = request(
+                "GET",
+                "/b/x/api/sessions/hub/terminal?token=s3cret",
+                &upgrade_headers(Some(origin)),
+            );
+            assert_eq!(refuse(TOKEN, PORT, &req), None, "{origin}");
+        }
+    }
+
+    /// The origin rule is for handshakes: the page and its polling GETs are as they were.
+    #[test]
+    fn a_plain_get_is_still_asked_for_no_origin() {
+        let req = request("GET", "/b/x/api/state?token=s3cret", &[]);
+        assert_eq!(refuse(TOKEN, PORT, &req), None);
+    }
+
+    #[test]
+    fn a_terminal_route_names_a_session_id() {
+        fn id(path: &str) -> Option<String> {
+            terminal_route(path).map(|id| id.unwrap())
+        }
+        assert_eq!(id("/api/sessions/hub/terminal"), Some("hub".into()));
+        assert_eq!(
+            id("/api/sessions/worker-widget/terminal"),
+            Some("worker-widget".into())
+        );
+        // As `encodeURIComponent` sends a hub id with a slash or a space in it.
+        assert_eq!(
+            id("/api/sessions/hub-foo%2Fbar/terminal"),
+            Some("hub-foo/bar".into())
+        );
+        assert_eq!(
+            id("/api/sessions/hub-%E8%A6%AA%20%E3%82%AD%E3%83%BC/terminal"),
+            Some("hub-親 キー".into())
+        );
+        for bad in [
+            "/api/sessions/hub-%zz/terminal",
+            "/api/sessions/%FF/terminal",
+        ] {
+            assert!(terminal_route(bad).is_some_and(|id| id.is_err()), "{bad}");
+        }
+        for other in [
+            "/api/sessions//terminal",
+            "/api/sessions/a/b/terminal",
+            "/api/sessions/hub",
+            "/api/sessions/hub/terminal/x",
+            "/api/hubs/hub/terminal",
+            "/terminal",
+            "/",
+        ] {
+            assert!(terminal_route(other).is_none(), "{other}");
+        }
+    }
+
+    #[test]
+    fn the_terminal_assets_are_only_served_by_the_resident_server() {
+        assert!(vendor_asset("/vendor/xterm.js", false).is_none());
+        assert!(vendor_asset("/vendor/xterm.css", false).is_none());
+        let (kind, js) = vendor_asset("/vendor/xterm.js", true).unwrap();
+        assert!(kind.starts_with("text/javascript"));
+        assert!(js.starts_with("/*! xterm.js - MIT License"));
+        assert!(js.contains("Permission is hereby granted"));
+        // The library and both addons come in the one script, each defining its global.
+        for global in ["Terminal", "FitAddon", "Unicode11Addon"] {
+            assert!(js.contains(global), "{global}");
+        }
+        assert!(!js.contains("sourceMappingURL"));
+        let (kind, css) = vendor_asset("/vendor/xterm.css", true).unwrap();
+        assert!(kind.starts_with("text/css"));
+        assert!(css.starts_with("/*! xterm.js - MIT License"));
+        assert!(css.contains(".xterm"));
+        assert!(vendor_asset("/vendor/other.js", true).is_none());
+    }
+
+    /// The library is fetched by a page that opens a terminal, not carried by every page.
+    #[test]
+    fn the_page_does_not_carry_the_terminal_library() {
+        assert!(!UI_HTML.contains("Permission is hereby granted"));
     }
 }

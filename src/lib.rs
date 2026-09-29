@@ -18,12 +18,15 @@ mod mcp;
 mod messaging;
 mod notify;
 mod prompts;
+#[cfg(unix)]
+mod pty;
 mod repo;
 mod runner;
 mod session;
 mod task;
 mod template;
 mod terminal;
+mod ws;
 
 /// Scaffolding the tests share. Not a layer — nothing outside `#[cfg(test)]` may reach it,
 /// which is why `check-layering.sh` lets any module name it.

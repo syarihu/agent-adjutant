@@ -105,10 +105,18 @@ function renderHubRows() {
     } else {
       button = `<button class="btn-m3-text" data-hub-act="start" data-hub-id="${esc(h.id)}" title="tmux の新しいウィンドウで adj hub を実行します">起動</button>`;
     }
-    return `<div class="status-row"><span>${esc(hubLabel(h))}</span><span class="state ${present ? 'good' : h.state?.stale ? 'bad' : 'warn'}">${esc(text)}</span>${button}</div>`;
+    const session = (state.sessions || []).find(s => s.id === h.id);
+    const term = boardTerminalReady(session)
+      ? `<button class="btn-m3-text" data-hub-term="${esc(h.id)}" title="この hub の tmux をボードで開く">端末</button>` : '';
+    return `<div class="status-row"><span>${esc(hubLabel(h))}</span><span class="state ${present ? 'good' : h.state?.stale ? 'bad' : 'warn'}">${esc(text)}</span>${term}${button}</div>`;
   }).join('');
 }
 document.getElementById('hub-rows').addEventListener('click', e => {
+  const term = e.target.closest('button[data-hub-term]');
+  if (term) {
+    const h = (state.hubs || []).find(x => x.id === term.dataset.hubTerm);
+    return openTerminalOverlay(term.dataset.hubTerm, h ? hubLabel(h) : term.dataset.hubTerm);
+  }
   const button = e.target.closest('button[data-hub-act]');
   if (!button) return;
   if (button.dataset.hubAct === 'start') hubStart(button.dataset.hubId);

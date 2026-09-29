@@ -1127,6 +1127,160 @@ pub fn tmux_set_title_script(socket: Option<&str>, title: &str) -> String {
     format!("{prefix} rename-window {title_q}")
 }
 
+// ── tmux, for the board terminal ─────────────────────────────────────
+//
+// The board shows a session by attaching a client of its own to it. A plain `attach-session`
+// would share the session with whoever is already attached — their current window would
+// follow the browser's — so each board connection gets a session of its own *in the same
+// group*: it shares every window with the original and has a current window of its own.
+
+/// What every session made for a board connection is called, followed by the pid of the
+/// process that made it and a counter. A leftover one is recognised by it.
+pub const BOARD_SESSION_PREFIX: &str = "adjboard-";
+
+/// `-S <path>` for a socket that is a path, `-L <name>` for one that is a name, and nothing
+/// for the default server: the arguments `tmux_cmd_prefix` spells as a shell prefix.
+pub fn tmux_socket_args(socket: Option<&str>) -> Vec<String> {
+    match socket.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) if s.contains('/') => vec!["-S".to_string(), s.to_string()],
+        Some(s) => vec!["-L".to_string(), s.to_string()],
+        None => Vec::new(),
+    }
+}
+
+/// `(major, minor)` out of what `tmux -V` prints: `tmux 3.7c`, `tmux 3.1`, `tmux next-3.5`.
+/// A build from the development branch (`tmux master`) is newer than any release.
+pub fn parse_tmux_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.trim().strip_prefix("tmux")?.trim();
+    if version == "master" {
+        return Some((u32::MAX, 0));
+    }
+    let version = version.strip_prefix("next-").unwrap_or(version);
+    let (major, rest) = version.split_once('.')?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    Some((major.parse().ok()?, digits.parse().ok()?))
+}
+
+/// The installed tmux's version, or `None` when there is no tmux to ask.
+pub fn tmux_version() -> Option<(u32, u32)> {
+    parse_tmux_version(&run_shell("tmux -V").ok()?)
+}
+
+/// Where a window lives now: its session and that session's group, asked of tmux by the
+/// window id the record holds. It also says whether the window is still there at all, before
+/// anything is created on its behalf.
+pub fn tmux_window_home_script(socket: Option<&str>, window_id: &str) -> String {
+    format!(
+        "{} display-message -p -t {} '#{{session_name}}\t#{{session_group}}'",
+        tmux_cmd_prefix(socket),
+        sh_quote(window_id)
+    )
+}
+
+/// The group to join for `tmux_window_home_script`'s answer: the session's group when it has
+/// one, and the session itself otherwise (which makes it the group's first member).
+pub fn parse_window_home(output: &str) -> Option<String> {
+    let (session, group) = output
+        .trim_end()
+        .split_once('\t')
+        .unwrap_or((output.trim(), ""));
+    let target = if group.is_empty() { session } else { group };
+    (!target.is_empty()).then(|| target.to_string())
+}
+
+/// Make the session `name` in `group`, showing `window`.
+///
+/// With `end_with_window` (tmux 3.1 and later) the session also gets a hook of its own — never
+/// a global one, and the original session is not touched — that detaches its client when
+/// `window` is unlinked. Without it, closing the window would switch the client to another
+/// window of the group and what is typed next would go to a different agent.
+pub fn board_attach_prepare_script(
+    socket: Option<&str>,
+    group: &str,
+    name: &str,
+    window: &str,
+    end_with_window: bool,
+) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    let mut script = format!(
+        "{prefix} new-session -d -s {} -t {} && {prefix} select-window -t {}",
+        sh_quote(name),
+        sh_quote(group),
+        sh_quote(&format!("={name}:{window}"))
+    );
+    if end_with_window {
+        let hook =
+            format!("if -F \"#{{==:#{{hook_window}},{window}}}\" \"detach-client -s ={name}\"");
+        script.push_str(&format!(
+            " && {prefix} set-hook -t {} window-unlinked {}",
+            sh_quote(&format!("={name}:")),
+            sh_quote(&hook)
+        ));
+    }
+    script
+}
+
+/// The command line of the client a board connection runs on its terminal. `-E` leaves the
+/// session's environment alone; `active-pane` (tmux 3.3 and later) keeps the client from
+/// resizing panes it is not looking at.
+///
+/// With `keep_last` (tmux 3.4 and later) tmux also removes the session when its last client
+/// leaves, for this session only. It is a second command in the same invocation because on a
+/// session nobody is attached to yet, setting the option destroys it on the spot.
+pub fn board_attach_args(
+    socket: Option<&str>,
+    name: &str,
+    active_pane: bool,
+    keep_last: bool,
+) -> Vec<String> {
+    let mut args = vec!["-u".to_string()];
+    args.extend(tmux_socket_args(socket));
+    args.push("attach-session".to_string());
+    args.push("-E".to_string());
+    if active_pane {
+        args.extend(["-f".to_string(), "active-pane".to_string()]);
+    }
+    args.extend(["-t".to_string(), format!("={name}")]);
+    if keep_last {
+        args.extend(
+            [";", "set-option", "-t"]
+                .map(str::to_string)
+                .into_iter()
+                .chain([format!("={name}:")])
+                .chain(["destroy-unattached", "keep-last"].map(str::to_string)),
+        );
+    }
+    args
+}
+
+/// Remove board sessions nobody is attached to, left behind by a process that did not get to
+/// clean up. Only those that are in a group with something else (they hold no windows of their
+/// own) and that are not new: one made a moment ago by another connection is not attached
+/// *yet*.
+pub fn board_sweep_script(socket: Option<&str>) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    format!(
+        "now=$(date +%s); {prefix} list-sessions -F '#{{session_attached}} #{{session_group_size}} #{{session_created}} #{{session_name}}' 2>/dev/null | while read attached size created name; do case \"$name\" in {BOARD_SESSION_PREFIX}*) if [ \"$attached\" = 0 ] && [ \"$size\" -gt 1 ] && [ $((now - created)) -gt 30 ]; then {prefix} kill-session -t \"=$name\"; fi;; esac; done; true"
+    )
+}
+
+/// What `board_release_script` prints when it left the session alone.
+pub const KEPT_MARKER: &str = "adjutant:kept";
+
+/// Remove the session `name` once its client has gone, unless it is the only holder of the
+/// windows: if the original session was killed meanwhile, the group has shrunk to this one and
+/// killing it would take every window with it — that it was left is what `KEPT_MARKER` says.
+pub fn board_release_script(socket: Option<&str>, name: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    // `=name` alone is not a pane target, so the ones that want one end in a colon, which makes
+    // it the session's current pane; `kill-session` takes a session and no colon.
+    let target = sh_quote(&format!("={name}:"));
+    let session = sh_quote(&format!("={name}"));
+    format!(
+        "size=$({prefix} display-message -p -t {target} '#{{session_group_size}}' 2>/dev/null); if [ \"${{size:-0}}\" -gt 1 ]; then {prefix} kill-session -t {session}; elif [ \"${{size:-0}}\" = 1 ]; then echo {KEPT_MARKER}; fi; true"
+    )
+}
+
 /// The backend `spawn` opens a tab with under `terminal`, in the order `spawn` decides it: a
 /// `terminal.spawn` template first, then the tmux preset, then the built-in iTerm2.
 pub fn backend_name(terminal: &TerminalSettings) -> &'static str {
@@ -1181,18 +1335,29 @@ pub fn location_with(
     // Asked once, now: a pane id stays the pane's for its life, and the window it sits in
     // is what the browser terminal will later attach to.
     let cmd = format!(
-        "{} display-message -p -t {} '#{{session_name}}\t#{{window_id}}'",
+        "{} display-message -p -t {} '#{{session_name}}\t#{{window_id}}\t#{{session_group}}'",
         tmux_cmd_prefix(Some(socket)),
         sh_quote(pane)
     );
     let (session, window) = match run(&cmd) {
-        Ok(out) => match out.trim().split_once('\t') {
-            Some((session, window)) => (
+        Ok(out) => {
+            let mut fields = out.trim().split('\t');
+            let (name, window, group) = (
+                fields.next().unwrap_or(""),
+                fields.next().unwrap_or(""),
+                fields.next().unwrap_or(""),
+            );
+            // Started from inside a board connection's own session: the session the person
+            // knows is the one it is grouped with, and the one that outlives the connection.
+            let session = match name.starts_with(BOARD_SESSION_PREFIX) && !group.is_empty() {
+                true => group,
+                false => name,
+            };
+            (
                 Some(session.to_string()).filter(|s| !s.is_empty()),
                 Some(window.to_string()).filter(|s| !s.is_empty()),
-            ),
-            None => (None, None),
-        },
+            )
+        }
         Err(_) => (None, None),
     };
     SessionTerminal {
@@ -2155,5 +2320,195 @@ mod tests {
             (at.socket, at.session, at.window, at.pane),
             (None, None, None, None)
         );
+    }
+
+    #[test]
+    fn a_location_recorded_from_a_board_session_names_the_real_one() {
+        let term = TerminalSettings::default();
+        let at = location_with(
+            |cmd: &str| {
+                assert!(cmd.contains("#{session_group}"), "{cmd}");
+                Ok("adjboard-42-1\t@3\twork\n".to_string())
+            },
+            Some("/tmp/tmux-501/default,4242,0"),
+            Some("%7"),
+            &term,
+        );
+        assert_eq!(at.session.as_deref(), Some("work"));
+        assert_eq!(at.window.as_deref(), Some("@3"));
+
+        // A group that is not ours does not replace the session's own name.
+        let at = location_with(
+            |_: &str| Ok("dev\t@3\tteam\n".to_string()),
+            Some("/tmp/tmux-501/default,4242,0"),
+            Some("%7"),
+            &term,
+        );
+        assert_eq!(at.session.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn socket_arguments_follow_the_prefix_rule() {
+        assert_eq!(
+            tmux_socket_args(Some("/tmp/t/default")),
+            ["-S", "/tmp/t/default"]
+        );
+        assert_eq!(tmux_socket_args(Some("adj-test")), ["-L", "adj-test"]);
+        assert!(tmux_socket_args(None).is_empty());
+        assert!(tmux_socket_args(Some("  ")).is_empty());
+    }
+
+    #[test]
+    fn tmux_versions_are_read_from_what_dash_v_prints() {
+        assert_eq!(parse_tmux_version("tmux 3.7c\n"), Some((3, 7)));
+        assert_eq!(parse_tmux_version("tmux 3.1"), Some((3, 1)));
+        assert_eq!(parse_tmux_version("tmux 2.9a"), Some((2, 9)));
+        assert_eq!(parse_tmux_version("tmux next-3.5"), Some((3, 5)));
+        assert_eq!(parse_tmux_version("tmux master"), Some((u32::MAX, 0)));
+        assert_eq!(parse_tmux_version("tmux"), None);
+        assert_eq!(parse_tmux_version("zsh: command not found: tmux"), None);
+    }
+
+    #[test]
+    fn the_window_home_is_asked_by_window_id_and_names_the_group_to_join() {
+        let script = tmux_window_home_script(Some("adj-test"), "@4");
+        assert_eq!(
+            script,
+            "tmux -L adj-test display-message -p -t @4 '#{session_name}\t#{session_group}'"
+        );
+        assert_eq!(parse_window_home("work\tteam\n").as_deref(), Some("team"));
+        assert_eq!(parse_window_home("work\t\n").as_deref(), Some("work"));
+        assert_eq!(parse_window_home("work").as_deref(), Some("work"));
+        assert_eq!(parse_window_home("\n"), None);
+    }
+
+    #[test]
+    fn the_prepare_script_makes_a_grouped_session_and_picks_the_window_by_id() {
+        let script =
+            board_attach_prepare_script(Some("/tmp/t/sock"), "work", "adjboard-1-2", "@5", false);
+        assert_eq!(
+            script,
+            "tmux -S /tmp/t/sock new-session -d -s adjboard-1-2 -t work && \
+             tmux -S /tmp/t/sock select-window -t =adjboard-1-2:@5"
+        );
+        assert!(!script.contains("select-pane"), "{script}");
+        assert!(!script.contains("window-size"), "{script}");
+        assert!(!script.contains("ignore-size"), "{script}");
+        assert!(!script.contains("destroy-unattached"), "{script}");
+        assert!(!script.contains("set-hook"), "{script}");
+
+        let spaced = board_attach_prepare_script(
+            Some("adj-test"),
+            "my session",
+            "adjboard-1-2",
+            "@5",
+            false,
+        );
+        assert!(
+            spaced
+                .starts_with("tmux -L adj-test new-session -d -s adjboard-1-2 -t 'my session' &&"),
+            "{spaced}"
+        );
+    }
+
+    #[test]
+    fn the_session_ends_with_its_window_by_a_hook_of_its_own() {
+        let script =
+            board_attach_prepare_script(Some("adj-test"), "work", "adjboard-1-2", "@5", true);
+        assert!(
+            script.ends_with(
+                "&& tmux -L adj-test set-hook -t =adjboard-1-2: window-unlinked \
+                 'if -F \"#{==:#{hook_window},@5}\" \"detach-client -s =adjboard-1-2\"'"
+            ),
+            "{script}"
+        );
+        // Session scoped: never a global or server hook, nor the original session's.
+        assert!(!script.contains("set-hook -g"), "{script}");
+        assert_eq!(script.matches("set-hook").count(), 1, "{script}");
+    }
+
+    #[test]
+    fn the_attach_command_is_gated_on_the_tmux_version() {
+        assert_eq!(
+            board_attach_args(Some("adj-test"), "adjboard-1-2", true, true),
+            [
+                "-u",
+                "-L",
+                "adj-test",
+                "attach-session",
+                "-E",
+                "-f",
+                "active-pane",
+                "-t",
+                "=adjboard-1-2",
+                ";",
+                "set-option",
+                "-t",
+                "=adjboard-1-2:",
+                "destroy-unattached",
+                "keep-last"
+            ]
+        );
+        assert_eq!(
+            board_attach_args(Some("/tmp/t/sock"), "adjboard-1-2", false, false),
+            [
+                "-u",
+                "-S",
+                "/tmp/t/sock",
+                "attach-session",
+                "-E",
+                "-t",
+                "=adjboard-1-2"
+            ]
+        );
+        assert_eq!(
+            board_attach_args(None, "adjboard-1-2", true, false),
+            [
+                "-u",
+                "attach-session",
+                "-E",
+                "-f",
+                "active-pane",
+                "-t",
+                "=adjboard-1-2"
+            ]
+        );
+        // Never the option for every session.
+        assert!(!board_attach_args(None, "x", true, true).contains(&"-g".to_string()));
+    }
+
+    #[test]
+    fn the_sweep_only_takes_old_unattached_board_sessions_that_share_their_windows() {
+        let script = board_sweep_script(Some("/tmp/t/sock"));
+        assert!(
+            script.contains("tmux -S /tmp/t/sock list-sessions"),
+            "{script}"
+        );
+        assert!(script.contains("adjboard-*"), "{script}");
+        assert!(script.contains("\"$attached\" = 0"), "{script}");
+        assert!(script.contains("\"$size\" -gt 1"), "{script}");
+        assert!(script.contains("-gt 30"), "{script}");
+        assert!(
+            script.contains("tmux -S /tmp/t/sock kill-session -t \"=$name\""),
+            "{script}"
+        );
+        assert!(board_sweep_script(Some("adj-test")).contains("tmux -L adj-test kill-session"));
+    }
+
+    #[test]
+    fn the_release_script_keeps_the_last_holder_of_the_windows() {
+        let script = board_release_script(Some("adj-test"), "adjboard-1-2");
+        assert!(
+            script.contains(
+                "tmux -L adj-test display-message -p -t =adjboard-1-2: '#{session_group_size}'"
+            ),
+            "{script}"
+        );
+        assert!(script.contains("-gt 1"), "{script}");
+        assert!(
+            script.contains("tmux -L adj-test kill-session -t =adjboard-1-2"),
+            "{script}"
+        );
+        assert!(board_release_script(Some("/a/b"), "x").contains("tmux -S /a/b kill-session"));
     }
 }

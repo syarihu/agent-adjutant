@@ -4,46 +4,6 @@ mod common;
 
 use common::*;
 
-struct IsolatedTmux {
-    socket: String,
-    session: String,
-}
-
-impl IsolatedTmux {
-    fn new(name: &str) -> Option<Self> {
-        let out = Command::new("tmux").arg("-V").output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let socket = format!("adj-test-{name}-{nanos}");
-        let session = "adjutant-test".to_string();
-        Some(IsolatedTmux { socket, session })
-    }
-
-    fn tmux_cmd(&self, args: &[&str]) -> std::process::Output {
-        Command::new("tmux")
-            .arg("-L")
-            .arg(&self.socket)
-            .args(args)
-            .output()
-            .unwrap()
-    }
-}
-
-impl Drop for IsolatedTmux {
-    fn drop(&mut self) {
-        let _ = Command::new("tmux")
-            .arg("-L")
-            .arg(&self.socket)
-            .arg("kill-server")
-            .output();
-    }
-}
-
 fn tmux_config(socket: &str, session: &str) -> String {
     serde_json::json!({
         "notification": "true",

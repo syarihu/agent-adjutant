@@ -1,0 +1,36 @@
+/* ── Session terminal ── */
+.adj-terminal {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  background: #101014;
+  overflow: hidden;
+}
+.adj-terminal .xterm { height: 100%; }
+.adj-terminal-overlay {
+  position: fixed;
+  inset: 4vh 4vw;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: #101014;
+  color: #e6e1e9;
+  border-radius: var(--md-shape-corner-xl);
+  box-shadow: var(--md-elevation-4);
+  overflow: hidden;
+}
+.adj-terminal-overlay[hidden] { display: none; }
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #2b2b33;
+  font-size: 12.5px;
+}
+.term-title { font-weight: 700; }
+.term-where { font-family: var(--font-mono); color: #9a94a3; }
+.term-note { margin-left: auto; color: #9a94a3; font-size: 11.5px; }
+.term-host { flex: 1; min-height: 0; }
