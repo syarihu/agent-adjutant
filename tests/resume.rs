@@ -272,6 +272,46 @@ fn a_worker_resumes_in_its_worktree_under_the_hub_that_dispatched_it() {
 }
 
 #[test]
+fn a_worker_resumed_under_another_hub_is_saved_under_it() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    let worktree = fixture.repo.to_str().unwrap().to_string();
+    fixture.ok(&[
+        "worker",
+        "--worktree",
+        &worktree,
+        "--title",
+        "WID-1",
+        "--hub",
+        FEATURE,
+        "--task",
+        "WID-1",
+    ]);
+    let session_path = fixture.repo.join(".claude").join("adjutant-session.json");
+    let sid = saved_session(&session_path)["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config["agentResumeRunner"] = "true {sessionId}".into();
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+
+    // Resumed under the same hub, spelled differently: nothing to say again.
+    fixture.ok(&["worker", "--resume", "--hub", "WID-957"]);
+    assert_eq!(saved_session(&session_path)["hub"], FEATURE);
+
+    fixture.ok(&["worker", "--resume", "--hub", "wid-958"]);
+    let moved = saved_session(&session_path);
+    assert_eq!(moved["hub"], "wid-958", "{moved}");
+    assert_eq!(moved["sessionId"], sid.as_str());
+    assert_eq!(moved["title"], "WID-1");
+    assert_eq!(moved["task"], "WID-1");
+}
+
+#[test]
 fn resuming_a_worker_with_explicit_task_records_it_without_resaving_the_session() {
     let fixture = Fixture::new(QUIET);
     let spawned = fixture.repo.join("spawned.txt");

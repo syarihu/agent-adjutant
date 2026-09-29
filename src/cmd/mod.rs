@@ -2052,6 +2052,21 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
+    } else if let Some(saved) = &resumed {
+        // Resumed under another hub than the session remembers: say so there too, or the
+        // worker would count for the old hub once it has ended and its record is gone.
+        let slug_of = |hub: Option<&str>| repo::slug_for(&ctx.repo.nwo, hub);
+        if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
+            && let Err(e) = messaging::save_worker_session(
+                &worktree,
+                &title,
+                ctx.repo.hub.as_deref(),
+                task,
+                &saved.session_id,
+            )
+        {
+            eprintln!("adjutant: {e}; the worker may still be counted for its old hub");
+        }
     }
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on
