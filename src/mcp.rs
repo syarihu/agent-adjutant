@@ -628,6 +628,16 @@ fn start_heartbeat() -> Option<(String, String)> {
 const BOARD_HANDOVER: std::time::Duration = std::time::Duration::from_secs(5);
 const BOARD_HANDOVER_STEP: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How often a hub that left its board to the resident server looks whether the resident is
+/// still there. Not a tight loop: a stopped resident is noticed within this, and nothing is
+/// lost meanwhile, since the board is only a view of records that stay on disk.
+const RESIDENT_WATCH: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The second look before a hub serves a board of its own in the resident's place: a poll that
+/// lands in the middle of a restart sees no resident, and a board bound then would stay bound
+/// beside the one that comes back.
+const RESIDENT_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// The slug of the hub whose board this server serves, if any — `ADJUTANT_HUB_SERVE`, put
 /// on the line `adj hub` execs when `hubServe` is on.
 fn hub_serve() -> Option<String> {
@@ -662,13 +672,16 @@ fn start_board() {
         return;
     };
     let served = hub_board_context(&slug).and_then(crate::cmd::serve_for_hub);
-    match served {
-        Ok(HubBoard::Serving(url)) => say_serving(&url),
-        Ok(HubBoard::Resident(url)) => say_resident(&url),
-        Ok(HubBoard::AlreadyRunning) => {
-            std::thread::spawn(move || take_over_board(&slug));
-        }
+    match &served {
+        Ok(HubBoard::Serving(url)) => say_serving(url),
+        Ok(HubBoard::Resident(url)) => say_resident(url),
+        Ok(HubBoard::AlreadyRunning) => {}
         Err(e) => eprintln!("adjutant: not serving the board: {e}"),
+    }
+    // The one thread that looks after this hub's board from here on, whichever way it got
+    // here: nothing else starts one, so two never run.
+    if let Some(mode) = watch_mode(&served, false) {
+        std::thread::spawn(move || watch_board(&slug, mode));
     }
 }
 
@@ -686,26 +699,89 @@ fn say_resident(url: &str) {
     eprintln!("adjutant: the resident server serves the board at {place}");
 }
 
-/// Wait out a board that is recorded as running, then serve one — or, if it outlasts
-/// `BOARD_HANDOVER`, leave it be.
-fn take_over_board(slug: &str) {
-    let mut waited = std::time::Duration::ZERO;
-    while waited < BOARD_HANDOVER {
-        std::thread::sleep(BOARD_HANDOVER_STEP);
-        waited += BOARD_HANDOVER_STEP;
-        if crate::cmd::board_running(slug).is_some() {
-            continue;
-        }
-        match hub_board_context(slug).and_then(crate::cmd::serve_for_hub) {
-            Ok(HubBoard::Serving(url)) => say_serving(&url),
-            Ok(HubBoard::Resident(url)) => say_resident(&url),
-            // Another server got there between the check and the bind.
-            Ok(HubBoard::AlreadyRunning) => {}
-            Err(e) => eprintln!("adjutant: not serving the board: {e}"),
-        }
-        return;
+/// What a hub's board watcher is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// The resident server serves the board; wait for it to go away.
+    Resident,
+    /// A board recorded as running is somebody else's or a previous server's; wait
+    /// `BOARD_HANDOVER` for it to go away, and leave it be if it does not.
+    Handover,
+}
+
+/// The mode to watch in after an attempt to serve the board, or `None` when there is nothing
+/// left to watch. `retrying` is a watcher that has been through one before: an error there is
+/// tried again on the next poll, while at the very start it is said and got past — the hub
+/// works without a board, as it always has.
+fn watch_mode(served: &Result<HubBoard, String>, retrying: bool) -> Option<Mode> {
+    match served {
+        Ok(HubBoard::Serving(_)) => None,
+        Ok(HubBoard::Resident(_)) => Some(Mode::Resident),
+        Ok(HubBoard::AlreadyRunning) => Some(Mode::Handover),
+        Err(_) => retrying.then_some(Mode::Resident),
     }
-    eprintln!("adjutant: a board for this hub is already running; leaving it be");
+}
+
+/// Whether an error is worth saying: the first of a kind, not the same one on every poll.
+fn is_new_error(last: &mut Option<String>, message: &str) -> bool {
+    if last.as_deref() == Some(message) {
+        return false;
+    }
+    *last = Some(message.to_string());
+    true
+}
+
+/// Look after this hub's board for as long as there is something to look after: the resident
+/// that serves it may stop or crash, and a board that was in the way may go. Lives as long as
+/// this server does and looks only at intervals, never in a tight loop.
+fn watch_board(slug: &str, mut mode: Mode) {
+    let mut last_error: Option<String> = None;
+    let mut waited = std::time::Duration::ZERO;
+    loop {
+        match mode {
+            Mode::Resident => {
+                std::thread::sleep(RESIDENT_WATCH);
+                if crate::cmd::resident_running() {
+                    continue;
+                }
+                std::thread::sleep(RESIDENT_RECHECK);
+                if crate::cmd::resident_running() {
+                    continue;
+                }
+            }
+            Mode::Handover => {
+                if waited >= BOARD_HANDOVER {
+                    eprintln!("adjutant: a board for this hub is already running; leaving it be");
+                    return;
+                }
+                std::thread::sleep(BOARD_HANDOVER_STEP);
+                waited += BOARD_HANDOVER_STEP;
+                if crate::cmd::board_running(slug).is_some() {
+                    continue;
+                }
+            }
+        }
+        let served = hub_board_context(slug).and_then(crate::cmd::serve_for_hub);
+        match &served {
+            Ok(HubBoard::Serving(url)) => say_serving(url),
+            Ok(HubBoard::Resident(url)) => say_resident(url),
+            Ok(HubBoard::AlreadyRunning) => {}
+            Err(e) => {
+                if is_new_error(&mut last_error, e) {
+                    eprintln!("adjutant: not serving the board: {e}");
+                }
+            }
+        }
+        match watch_mode(&served, true) {
+            None => return,
+            Some(next) => {
+                if next != mode {
+                    waited = std::time::Duration::ZERO;
+                }
+                mode = next;
+            }
+        }
+    }
 }
 
 pub fn run_server() -> Result<(), Box<dyn std::error::Error>> {
@@ -1390,5 +1466,31 @@ mod tests {
     fn install_validates_target_names() {
         assert!(install("unknown-agent").is_err());
         assert!(uninstall("unknown-agent").is_err());
+    }
+
+    #[test]
+    fn a_watcher_goes_on_until_this_process_serves_the_board() {
+        let url = || "http://127.0.0.1:1/".to_string();
+        assert_eq!(watch_mode(&Ok(HubBoard::Serving(url())), true), None);
+        assert_eq!(
+            watch_mode(&Ok(HubBoard::Resident(url())), false),
+            Some(Mode::Resident)
+        );
+        assert_eq!(
+            watch_mode(&Ok(HubBoard::AlreadyRunning), false),
+            Some(Mode::Handover)
+        );
+        // An error at the start is said and got past; in a watcher it is tried again.
+        assert_eq!(watch_mode(&Err("no".into()), false), None);
+        assert_eq!(watch_mode(&Err("no".into()), true), Some(Mode::Resident));
+    }
+
+    #[test]
+    fn an_error_is_said_once_until_it_changes() {
+        let mut last = None;
+        assert!(is_new_error(&mut last, "a"));
+        assert!(!is_new_error(&mut last, "a"));
+        assert!(is_new_error(&mut last, "b"));
+        assert!(is_new_error(&mut last, "a"));
     }
 }

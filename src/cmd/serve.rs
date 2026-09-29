@@ -488,6 +488,11 @@ fn live_resident() -> Option<(u32, u16)> {
     live_at(&server_record_path())
 }
 
+/// Whether a resident server is running.
+pub fn resident_running() -> bool {
+    live_resident().is_some()
+}
+
 /// Write `text` to `path` whole or not at all: to a file of our own beside it, then a rename.
 /// A reader — `adj server status`, a hub asking where the board is — never sees half a record.
 fn write_whole(path: &Path, text: &str) -> Result<(), String> {
@@ -1659,17 +1664,47 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
-/// `/api/hubs/<id>/<action>` as its id and action, for the two actions there are.
-fn hub_route(path: &str) -> Option<(&str, &str)> {
-    let (id, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
-    (!id.is_empty() && !id.contains('/') && matches!(action, "start" | "stop"))
-        .then_some((id, action))
+/// `/api/hubs/<id>/<action>` as its id and action, for the two actions there are. The id is
+/// one path segment, percent-decoded — the page sends it through `encodeURIComponent`, and a
+/// key may hold a `/`, a space or a letter that is not ASCII. The raw segment is checked for a
+/// `/` first, so an encoded one names an id and a bare one is another route. An encoding that
+/// is not UTF-8 is an error for the caller to say, not a different route.
+fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
+    let (raw, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
+    (!raw.is_empty() && !raw.contains('/') && matches!(action, "start" | "stop"))
+        .then(|| (decode_segment(raw), action))
+}
+
+/// `%XX` escapes in one path segment, and nothing else: unlike a query string, a `+` here is a
+/// plus.
+fn decode_segment(raw: &str) -> Result<String, String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        let byte = bytes
+            .get(i + 1..i + 3)
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .filter(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+            .ok_or_else(|| format!("bad percent-encoding in the hub id: {raw}"))?;
+        out.push(byte);
+        i += 3;
+    }
+    String::from_utf8(out).map_err(|_| format!("the hub id is not valid UTF-8: {raw}"))
 }
 
 /// Start or stop one of the repository's hubs from the board. `id` is the `hubs[].id` the
 /// page was given, so the page can only name a hub this repository was found to have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
     let (id, action) = hub_route(path).ok_or("no such route")?;
+    let id = id?;
+    let id = id.as_str();
     let input: Value = match body.is_empty() {
         true => json!({}),
         false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
@@ -1986,11 +2021,32 @@ mod tests {
 
     #[test]
     fn a_hub_route_names_an_id_and_an_action() {
-        assert_eq!(hub_route("/api/hubs/hub/start"), Some(("hub", "start")));
+        fn route(path: &str) -> Option<(String, &str)> {
+            hub_route(path).map(|(id, action)| (id.unwrap(), action))
+        }
+        assert_eq!(route("/api/hubs/hub/start"), Some(("hub".into(), "start")));
         assert_eq!(
-            hub_route("/api/hubs/hub-wid-957/stop"),
-            Some(("hub-wid-957", "stop"))
+            route("/api/hubs/hub-wid-957/stop"),
+            Some(("hub-wid-957".into(), "stop"))
         );
+        // As `encodeURIComponent` sends them.
+        assert_eq!(
+            route("/api/hubs/hub-foo%2Fbar/start"),
+            Some(("hub-foo/bar".into(), "start"))
+        );
+        assert_eq!(
+            route("/api/hubs/hub-%E8%A6%AA%20%E3%82%AD%E3%83%BC/stop"),
+            Some(("hub-親 キー".into(), "stop"))
+        );
+        assert_eq!(route("/api/hubs/a+b/start"), Some(("a+b".into(), "start")));
+        // An encoding that is wrong is the caller's mistake to be told, not another route.
+        for bad in [
+            "/api/hubs/hub-%zz/start",
+            "/api/hubs/hub-%2/start",
+            "/api/hubs/%FF/start",
+        ] {
+            assert!(hub_route(bad).is_some_and(|(id, _)| id.is_err()), "{bad}");
+        }
         for refused in [
             "/api/hubs/hub/restart",
             "/api/hubs//start",
@@ -1998,7 +2054,7 @@ mod tests {
             "/api/hubs/hub",
             "/api/tasks/hub/start",
         ] {
-            assert_eq!(hub_route(refused), None, "{refused}");
+            assert!(hub_route(refused).is_none(), "{refused}");
         }
     }
 

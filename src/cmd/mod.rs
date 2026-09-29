@@ -33,8 +33,8 @@ pub use jules::{
 };
 pub use review_engine::run as review_engine;
 pub use serve::{
-    DEFAULT_PORT, HubBoard, board_json, dashboards_running as board_running, serve, serve_for_hub,
-    server_start, server_status, server_stop,
+    DEFAULT_PORT, HubBoard, board_json, dashboards_running as board_running, resident_running,
+    serve, serve_for_hub, server_start, server_status, server_stop,
 };
 pub use task::{
     AddArgs, UpdateArgs, add as task_add, list as task_list, next_cmd as task_next,
@@ -1418,6 +1418,12 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
             _ => Ok(false),
         };
     };
+    // Before anything is looked up or closed: the start time is what tells this hub from
+    // whatever inherited its pid, and closing a pane on the strength of the pid alone could
+    // close somebody else's.
+    if started.as_deref().is_none_or(|s| s.trim().is_empty()) {
+        return Err("the hub record carries no start time, so the process cannot be told apart from a reused pid; stop it where it runs".to_string());
+    }
     match messaging::hub_process_liveness(pid, started.as_deref()) {
         messaging::Liveness::Gone => {
             messaging::unregister_hub_if(slug, pid, started.as_deref())?;

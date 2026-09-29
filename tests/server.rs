@@ -585,3 +585,101 @@ fn hub_stop_kills_the_pane_and_clears_the_record() {
     let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(answer["wasRunning"], false, "{body}");
 }
+
+#[test]
+fn hub_stop_is_refused_for_a_record_with_no_start_time() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let out = Command::new("sh")
+        .args(["-c", "sleep 300 >/dev/null 2>&1 & echo $!"])
+        .output()
+        .unwrap();
+    let sleeper: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+    struct Reap(u32);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = Command::new("kill")
+                .arg(self.0.to_string())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+    let _reap = Reap(sleeper);
+
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": sleeper,
+            "hubName": HUB,
+            "cwd": fixture.repo.to_str().unwrap(),
+            "nameInCommand": false,
+            "terminal": {"backend": "tmux", "socket": "scratch", "pane": "%3"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &tmux.panes,
+        format!("%3\t{sleeper}\t/dev/ttys999\t@1\tadjutant-test\t1\tmain\n"),
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/stop"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no start time"), "{body}");
+    // Nothing was looked up in tmux, let alone closed, and the record is as it was.
+    assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+    assert!(!tmux.logged().contains("list-panes"), "{}", tmux.logged());
+    assert!(record.exists());
+    assert!(!ps_started(sleeper).is_empty(), "the process was killed");
+}
+
+#[test]
+fn a_hub_whose_key_needs_percent_encoding_can_be_named_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    // A parent-task hub whose key has a space, a slash and letters that are not ASCII, known to
+    // the board only through its record.
+    let record = fixture.state.join("hubs").join("acme-widget-kt-1.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "hubName": "adjutant-acme-widget-kt-1",
+            "cwd": fixture.repo.to_str().unwrap(),
+            "hub": "親 キー/x",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let resident = Resident::start(&fixture);
+
+    let state: serde_json::Value =
+        serde_json::from_str(&resident.get(&format!("/b/{SLUG}/api/state")).1).unwrap();
+    assert!(
+        state["hubs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["id"] == "hub-親 キー/x"),
+        "{state}"
+    );
+
+    let id = "hub-%E8%A6%AA%20%E3%82%AD%E3%83%BC%2Fx";
+    // Past the check that the hub exists: what refuses the start is the settings.
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/{id}/start"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(!body.contains("no such hub"), "{body}");
+    assert!(body.contains("tmux"), "{body}");
+    // And a stop of a hub that is not running is an answer, not an error.
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/{id}/stop"), "{}");
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"wasRunning\":false"), "{body}");
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-%zz/start"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("percent-encoding"), "{body}");
+}
