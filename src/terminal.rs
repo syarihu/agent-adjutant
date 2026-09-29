@@ -1349,10 +1349,11 @@ pub fn location_with(
         };
     };
     // Asked once, now: a pane id stays the pane's for its life, and the window it sits in
-    // is what the browser terminal will later attach to.
+    // is what the browser terminal will later attach to. `-u` for the same reason as
+    // `tmux_window_home_script`: without a UTF-8 locale tmux turns the tabs into `_`.
     let cmd = format!(
         "{} display-message -p -t {} '#{{session_name}}\t#{{window_id}}\t#{{session_group}}'",
-        tmux_cmd_prefix(Some(socket)),
+        tmux_cmd_prefix(Some(socket)).replacen("tmux", "tmux -u", 1),
         sh_quote(pane)
     );
     let (session, window) = match run(&cmd) {
@@ -2286,7 +2287,7 @@ mod tests {
             ..Default::default()
         };
         let runner = |cmd: &str| {
-            assert!(cmd.contains("tmux -S /tmp/tmux-501/default"), "{cmd}");
+            assert!(cmd.contains("tmux -u -S /tmp/tmux-501/default"), "{cmd}");
             assert!(cmd.contains("display-message -p -t %7"), "{cmd}");
             Ok("work\t@3\n".to_string())
         };
