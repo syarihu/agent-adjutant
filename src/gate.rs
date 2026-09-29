@@ -14,6 +14,7 @@
 //! A leaf: handed the directory to work in, and told the time rather than asking.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -519,6 +520,29 @@ pub fn list(dir: &Path) -> Vec<Gate> {
     list_where(dir, |_| true)
 }
 
+/// The gates in `dir` whose file was written at or after `since`, oldest first. For a caller
+/// that can only care about gates opened after some moment: a gate's file is written after it
+/// is opened, so an older file cannot be one, and the directory's history is not parsed.
+/// Only prunes: a caller still checks what it needs of each gate it gets.
+pub fn list_modified_since(dir: &Path, since: SystemTime) -> Vec<Gate> {
+    let mut gates: Vec<Gate> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .filter(|e| {
+                e.metadata()
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|modified| modified >= since)
+            })
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .filter_map(|text| serde_json::from_str::<Gate>(&text).ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    gates.sort_by(|a, b| a.opened_at.cmp(&b.opened_at));
+    gates
+}
+
 /// The gates of one kind, told apart by their file names before any is read. For the
 /// archive, which only grows: the board asks it for plans on every poll, and parsing every
 /// diff ever answered to find them would cost more each day.
@@ -737,6 +761,30 @@ mod tests {
         let mut plan = gate(Kind::Plan);
         plan.opened_by = Opener::Hub;
         assert_eq!(resumed_at(&plan, Some(STARTED), later, later), None);
+    }
+
+    #[test]
+    fn listing_by_modification_time_skips_older_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut old, mut new) = (gate(Kind::Plan), gate(Kind::Plan));
+        old.id = "old".to_string();
+        new.id = "new".to_string();
+        save(dir.path(), &old).unwrap();
+        save(dir.path(), &new).unwrap();
+        let now = SystemTime::now();
+        let then = now - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(path_of(dir.path(), "old"))
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        let since = now - std::time::Duration::from_secs(60);
+        let ids: Vec<String> = list_modified_since(dir.path(), since)
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
+        assert_eq!(ids, ["new"]);
     }
 
     #[test]
