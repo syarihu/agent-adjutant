@@ -185,6 +185,50 @@ body:not(.layout-split) #arrange-switch { display: none; }
   align-items: center;
   justify-content: space-between;
 }
+.hub-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 0;
+}
+.hub-text { flex: 1; min-width: 0; }
+.hub-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-surface);
+}
+.hub-name > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-state {
+  padding-left: 14px;
+  font-size: 10.5px;
+  color: var(--md-sys-color-outline);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hub-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.hub-dot.good { background: var(--md-sys-color-success); }
+.hub-dot.warn { background: var(--md-sys-color-warning); }
+.hub-dot.bad { background: var(--md-sys-color-error); }
+.hub-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  cursor: pointer;
+}
+.hub-btn:hover:not(:disabled) { background: var(--md-sys-color-surface-container-highest); }
+.hub-btn:disabled { color: var(--md-sys-color-outline); opacity: .5; cursor: default; }
+.hub-btn .material-symbols-outlined { font-size: 18px; }
 .live-dot {
   width: 8px;
   height: 8px;

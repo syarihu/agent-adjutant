@@ -88,27 +88,41 @@ function hubLabel(h) {
   if (!h.parent) return 'リポジトリの hub';
   return h.key ? `親タスク ${h.key} の hub` : '親タスクの hub（キー不明）';
 }
+/* The name a hub's row has room for; the whole of `hubLabel` is its title. */
+function hubShortName(h) {
+  if (!h.parent) return 'リポジトリ';
+  return h.key || '親タスク（キー不明）';
+}
+function hubIconButton(icon, label, title, attrs = '') {
+  return `<button type="button" class="hub-btn" ${attrs} title="${esc(title)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+}
 function renderHubRows() {
   const box = document.getElementById('hub-rows');
   if (!box) return;
   if (!state.resident) { box.innerHTML = ''; return; }
   box.innerHTML = (state.hubs || []).map(h => {
     const present = h.state?.present;
-    const text = present ? '稼働中' : h.state?.stale ? '記録が残っているが止まっている' : '止まっている';
+    const stale = !present && h.state?.stale;
+    const text = present ? '稼働中' : stale ? '停止中（記録あり）' : '停止中';
     let button;
     if (present) {
-      button = `<button class="btn-m3-text" data-hub-act="stop" data-hub-id="${esc(h.id)}" title="hub が動いている tmux のペインを閉じます">停止</button>`;
+      button = hubIconButton('stop', '停止', 'hub が動いている tmux のペインを閉じます', `data-hub-act="stop" data-hub-id="${esc(h.id)}"`);
     } else if (h.parent && !h.key) {
-      button = '<button class="btn-m3-text" disabled title="キーが分からないため起動できません。adj hub --hub &lt;キー&gt; で起動してください">起動</button>';
+      button = hubIconButton('play_arrow', '起動', 'キーが分からないため起動できません。adj hub --hub <キー> で起動してください', 'disabled');
     } else if (!state.hubStart?.available) {
-      button = '<button class="btn-m3-text" disabled title="ボードからの起動は terminal.preset が &quot;tmux&quot; のときだけ使えます">起動</button>';
+      button = hubIconButton('play_arrow', '起動', 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます', 'disabled');
     } else {
-      button = `<button class="btn-m3-text" data-hub-act="start" data-hub-id="${esc(h.id)}" title="tmux の新しいウィンドウで adj hub を実行します">起動</button>`;
+      button = hubIconButton('play_arrow', '起動', 'tmux の新しいウィンドウで adj hub を実行します', `data-hub-act="start" data-hub-id="${esc(h.id)}"`);
     }
     const session = (state.sessions || []).find(s => s.id === h.id);
     const term = boardTerminalReady(session)
-      ? `<button class="btn-m3-text" data-hub-term="${esc(h.id)}" title="この hub の tmux をボードで開く">端末</button>` : '';
-    return `<div class="status-row"><span>${esc(hubLabel(h))}</span><span class="state ${present ? 'good' : h.state?.stale ? 'bad' : 'warn'}">${esc(text)}</span>${term}${button}</div>`;
+      ? hubIconButton('web_asset', '端末を開く', 'この hub の tmux をボードで開く', `data-hub-term="${esc(h.id)}"`) : '';
+    const tone = present ? 'good' : stale ? 'bad' : 'warn';
+    return `<div class="hub-row" title="${esc(hubLabel(h))}">
+      <div class="hub-text">
+        <div class="hub-name"><span class="hub-dot ${tone}"></span><span>${esc(hubShortName(h))}</span></div>
+        <div class="hub-state">${esc(text)}</div>
+      </div>${term}${button}</div>`;
   }).join('');
 }
 document.getElementById('hub-rows').addEventListener('click', e => {
