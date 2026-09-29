@@ -1992,7 +1992,8 @@ made or picked there and the session is told; that is not the hub's step.
    - **Exit code 3 is "no free worker slot".** There is no record to wait in, so nothing will pick this
      up later. Leave the worktree and the brief, and say in one line that the session was not started
      and that `adjutant work --worktree '{path}' --title '{final name}'` on that path starts it when a
-     slot is free.
+     slot is free. Run `adj notify` too: the board checked for a free slot when the request came in,
+     so the requester believes it is starting and nothing else will tell them it did not.
    - **Any other failure:** say what failed in this tab, and run `adj notify` so a person at the board
      hears of it, because the requester is a browser and nothing else will tell them.
 4. **Ack the inbox message** (`adjutant_pending` `action: ack`) once the worker is started or the

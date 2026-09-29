@@ -109,7 +109,9 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
         None => derived_name(instruction),
     };
     // Unlike a task, a session request has no record to wait in for a free slot, so a full
-    // machine is refused here rather than left for the hub to turn away.
+    // machine is refused here rather than left for the hub to turn away. The check is advisory:
+    // nothing reserves the slot, so two requests at once can both pass, and the hub's exit
+    // code 3 from `adjutant work` is what finally turns the loser away.
     if let Some(max) = settings.max_workers {
         let mut candidates = crate::repo::linked_worktrees(&server.ctx.repo.main)?;
         candidates.push(server.ctx.repo.main.clone());
