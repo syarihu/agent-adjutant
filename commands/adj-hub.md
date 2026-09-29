@@ -33,7 +33,9 @@ rules** — both sides calling the same command is the only thing that guarantee
   another but moves focus to that tab. With two hubs, which one empties the inbox first is luck.
 
 The process it starts registers itself in the register (it replaces itself with `exec`, so the
-recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off.
+recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off. A parent
+task's hub that has finished for good (no worktree reports to it any more) is taken off the board's
+list with `adjutant hub-close --hub {identifier}` instead; the saved conversation stays for `--resume`.
 
 **A hub that went down, for an agent update or the like, comes back into the same conversation with
 a plain `adj hub` within a few hours of ending (`hubAutoResumeHours`).** A conversation that ended
@@ -314,6 +316,13 @@ that entry to use:
 claim a parent task has nothing to say about one. Say so in one line and skip this section. Do not
 guess by leaning towards a similar key — a hub reading and reporting under another task is a hub
 that is silently wrong.
+
+**A hub for a parent task can be closed once its last worktree is gone.** The board lists it while
+some worktree still reports to it (running or ended), and drops it when the last one has been
+cleaned up or moved to another hub. When you have cleaned up the last worktree, say in one line that
+this hub can be closed (from the board, or with `adj hub-close --hub {identifier}`). **Do not close
+it on your own** while sub-issues of the parent task may still be dispatched: closing it ends this
+hub for the board, and a person is the one who knows the parent task is finished.
 
 ### Read at startup
 
@@ -981,6 +990,8 @@ independently:
 8. **When `settings.maxWorkers` is set, finally run "When a worker slot frees up, start the next"
    once.** One worker fewer, so a task waiting for a slot is picked up here. If it was not removed in
    4, the worker is still there, so it can be skipped.
+9. **If this is a hub for a parent task and that was its last worktree**, say in one line that it can
+   be closed (see "A hub for a parent task"). Do not close it yourself.
 
 #### When a worker slot frees up, start the next
 

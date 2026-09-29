@@ -88,6 +88,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
+| `adjutant hub-close --hub KEY` | close a parent-task hub none of whose checkouts report to it any more: clear its record and take it off the board's list (its saved session, tasks, gates and inbox stay) |
 
 Agent-side (`adjutant mcp`), the same machinery as ten tools and three prompts:
 
@@ -136,7 +137,7 @@ repository's own, so the command and the agent it starts agree on one address. A
 inherited `ADJUTANT_HUB` still wins, and replaces the configured value on the agent's line.
 Stop a running hub of the repository before adding the key: from then on a plain `adj hub`
 looks for, and starts, the configured hub instead, and `adj work` files new workers under it.
-The commands that address a hub (`send`, `pending`, `hub-stop` and the rest) do not read
+The commands that address a hub (`send`, `pending`, `hub-stop`, `hub-close` and the rest) do not read
 `agentEnv`, so from a shell that is not the hub's own, pass `--hub` or set `ADJUTANT_HUB`.
 
 `--no-dashboard` and `--dashboard` ride the same channel: they become
@@ -171,6 +172,13 @@ them: the hub's id under `sessions/` in the state directory, the worker's in the
 leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
 (Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
 the agent to check its inbox or outbox for whatever arrived while it was gone.
+
+A parent-task hub is listed while a hub record or a checkout (a worktree whose worker record or
+saved session names its key) points at it. A stopped one with no such checkout is no longer
+listed, and neither is one known only from its saved session. `adjutant hub-close --hub KEY`, or
+「閉じる」 on the board, closes a parent-task hub that has no checkouts left: the board stops it if it
+is running and drops it from the list. Its saved session, tasks, gates and inbox stay, so
+`adj hub --hub KEY --resume` picks them up again. The repository's own hub can only be stopped.
 
 When the hub ended is written by the hub's own MCP server. For a start that records a session
 (a runner that takes `{sessionId}`, or a resume), `adj hub` puts `ADJUTANT_HUB_SESSION` on the
