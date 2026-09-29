@@ -612,3 +612,145 @@ fn a_board_follows_its_address_when_the_checkout_changes() {
     std::fs::remove_file(fixture.state.join("boards").join(format!("{SLUG}.json"))).unwrap();
     assert_eq!(resident.get(&format!("/b/{SLUG}/api/state")).0, 404);
 }
+
+/// Open a waiting question gate in `worktree`, with `openedAt` written as given so a test
+/// does not have to sleep to get gates in order.
+fn open_question_in(fixture: &Fixture, worktree: &Path, kind: &str, opened_at: &str) -> String {
+    let file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({
+            "kind": kind,
+            "task": "t-1",
+            "title": "どちらにするか",
+            "worktree": worktree.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&["gate", "open", "--file", file.to_str().unwrap(), "--json"]);
+    let id = opened["gate"]["id"].as_str().unwrap().to_string();
+    let path = fixture
+        .state
+        .join("gates")
+        .join(SLUG)
+        .join(format!("{id}.json"));
+    let mut gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    gate["openedAt"] = serde_json::json!(opened_at);
+    std::fs::write(&path, gate.to_string()).unwrap();
+    id
+}
+
+fn write_worker(worktree: &Path, started_at: &str, phase_at: Option<i64>) {
+    std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+    let mut record = serde_json::json!({ "pid": 1, "startedAt": started_at, "phase": "implement" });
+    if let Some(at) = phase_at {
+        record["phaseAt"] = serde_json::json!(at);
+    }
+    std::fs::write(
+        worktree.join(".claude").join("adjutant-worker.json"),
+        record.to_string(),
+    )
+    .unwrap();
+}
+
+fn open_ids(resident: &Resident) -> Vec<String> {
+    let (status, body) = resident.get(&format!("/b/{SLUG}/api/state"));
+    assert_eq!(status, 200, "{body}");
+    let state: serde_json::Value = serde_json::from_str(&body).unwrap();
+    state["gates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn archived_gate(fixture: &Fixture, id: &str) -> Option<serde_json::Value> {
+    let path = fixture
+        .state
+        .join("gates")
+        .join(SLUG)
+        .join("answered")
+        .join(format!("{id}.json"));
+    Some(serde_json::from_str(&std::fs::read_to_string(path).ok()?).unwrap())
+}
+
+// 2026-09-22T05:00:00Z, well after the gates below are opened, and its stamp.
+const LATER_SECS: i64 = 1_790_053_200;
+const LATER_STAMP: &str = "20260922T050000Z";
+
+#[test]
+fn a_gate_whose_worker_moved_to_a_later_phase_is_closed_as_answered_in_the_terminal() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let worktree = fixture.repo.clone();
+    write_worker(&worktree, "20260922T040000Z", Some(LATER_SECS));
+    let id = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
+
+    assert!(!open_ids(&resident).contains(&id));
+    let gate = archived_gate(&fixture, &id).expect("archived");
+    assert_eq!(gate["decision"], "terminal", "{gate}");
+    assert_eq!(gate["answeredAt"], LATER_STAMP, "{gate}");
+    assert!(
+        gate["comment"].as_str().unwrap().contains("implement"),
+        "{gate}"
+    );
+}
+
+#[test]
+fn a_gate_stays_open_unless_the_same_worker_visibly_moved_on() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let worktree = fixture.repo.clone();
+
+    // A worker started after the gate was opened is not the one that opened it.
+    write_worker(&worktree, "20260922T045000Z", Some(LATER_SECS));
+    let late_worker = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
+    assert!(open_ids(&resident).contains(&late_worker));
+
+    // Nothing happened after it was opened.
+    write_worker(&worktree, "20260922T040000Z", None);
+    assert!(open_ids(&resident).contains(&late_worker));
+    std::fs::remove_file(
+        fixture
+            .state
+            .join("gates")
+            .join(SLUG)
+            .join(format!("{late_worker}.json")),
+    )
+    .unwrap();
+
+    // The hub's gates are never swept, whatever the worktree's worker did.
+    write_worker(&worktree, "20260922T040000Z", Some(LATER_SECS));
+    let dispatch = open_question_in(&fixture, &worktree, "dispatch", "20260922T041233Z");
+    assert!(open_ids(&resident).contains(&dispatch));
+    assert!(archived_gate(&fixture, &dispatch).is_none());
+
+    // No worker record at all.
+    std::fs::remove_file(worktree.join(".claude").join("adjutant-worker.json")).unwrap();
+    let orphan = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
+    assert!(open_ids(&resident).contains(&orphan));
+}
+
+#[test]
+fn opening_a_later_gate_closes_the_earlier_one_as_answered_in_the_terminal() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let worktree = fixture.repo.clone();
+    write_worker(&worktree, "20260922T040000Z", None);
+    let first = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
+    let second = open_question_in(&fixture, &worktree, "question", "20260922T042000Z");
+
+    let open = open_ids(&resident);
+    assert!(!open.contains(&first), "{open:?}");
+    assert!(open.contains(&second), "{open:?}");
+    let gate = archived_gate(&fixture, &first).expect("archived");
+    assert_eq!(gate["decision"], "terminal", "{gate}");
+    assert_eq!(gate["answeredAt"], "20260922T042000Z", "{gate}");
+    assert!(
+        gate["comment"].as_str().unwrap().contains(&second),
+        "{gate}"
+    );
+}

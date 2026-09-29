@@ -345,7 +345,65 @@ pub struct Gate {
     pub answers: Vec<Answer>,
 }
 
+/// The decision a gate is archived under when it is closed without an answer.
+pub const CLOSED: &str = "closed";
+
+/// The decision a gate is archived under when the person answered it in the worker's
+/// terminal instead of on the board.
+pub const TERMINAL: &str = "terminal";
+
+/// What showed a worker had moved on from a waiting gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Signal {
+    /// The worker's phase changed.
+    Phase,
+    /// The worker opened a later gate or record.
+    Gate,
+}
+
+/// When the worker that opened `gate` visibly moved on, and by what: the earlier of its
+/// phase changing and a later gate or record coming from the same worktree, either strictly
+/// after the gate was opened.
+///
+/// `None` for a gate nobody waits on the worker for (a record, or one the hub opened), and
+/// for a worktree whose worker record does not show the worker that opened this gate:
+/// `worker_started` is that record's `startedAt`, and a worker started after the gate was
+/// opened cannot be the one that opened it. Stamps are fixed-width, so they compare as
+/// strings, and the same second is not later.
+pub fn resumed_at(
+    gate: &Gate,
+    worker_started: Option<&str>,
+    phase_at: Option<&str>,
+    later_opened: Option<&str>,
+) -> Option<(String, Signal)> {
+    if !gate.wait || gate.answered_by_hub() {
+        return None;
+    }
+    if worker_started.is_none_or(|started| started > gate.opened_at.as_str()) {
+        return None;
+    }
+    let later = |at: Option<&str>, signal| {
+        at.filter(|at| *at > gate.opened_at.as_str())
+            .map(|at| (at.to_string(), signal))
+    };
+    match (
+        later(phase_at, Signal::Phase),
+        later(later_opened, Signal::Gate),
+    ) {
+        (Some(phase), Some(opened)) => Some(if opened.0 < phase.0 { opened } else { phase }),
+        (phase, opened) => phase.or(opened),
+    }
+}
+
 impl Gate {
+    /// Whether a person decided this on the board: it has a decision, and that decision is
+    /// not one of the two ways a gate is closed without the board's answer.
+    pub fn answered_on_board(&self) -> bool {
+        self.decision
+            .as_deref()
+            .is_some_and(|d| d != CLOSED && d != TERMINAL)
+    }
+
     /// Whether the answer goes to the hub's inbox rather than the worktree's outbox: a kind
     /// only the hub opens, or a plan the hub opened for a task handed to Jules. That plan's
     /// worktree has no worker in it, and an answer left in its outbox would never be read.
@@ -602,6 +660,83 @@ mod tests {
             answered_at: None,
             answers: Vec::new(),
         }
+    }
+
+    #[test]
+    fn only_a_decision_made_on_the_board_counts_as_answered_there() {
+        let mut g = gate(Kind::Plan);
+        assert!(!g.answered_on_board());
+        for (decision, on_board) in [(CLOSED, false), (TERMINAL, false), ("approve", true)] {
+            g.decision = Some(decision.to_string());
+            assert_eq!(g.answered_on_board(), on_board, "{decision}");
+        }
+    }
+
+    const STARTED: &str = "20260922T040000Z";
+
+    #[test]
+    fn a_later_phase_shows_the_worker_moved_on() {
+        let g = gate(Kind::Question);
+        let got = resumed_at(&g, Some(STARTED), Some("20260922T041300Z"), None);
+        assert_eq!(got, Some(("20260922T041300Z".to_string(), Signal::Phase)));
+        // The same second is not later, and neither is earlier.
+        assert_eq!(
+            resumed_at(&g, Some(STARTED), Some("20260922T041233Z"), None),
+            None
+        );
+        assert_eq!(
+            resumed_at(&g, Some(STARTED), Some("20260922T041000Z"), None),
+            None
+        );
+        assert_eq!(resumed_at(&g, Some(STARTED), None, None), None);
+    }
+
+    #[test]
+    fn a_later_gate_shows_the_worker_moved_on() {
+        let g = gate(Kind::Question);
+        let got = resumed_at(&g, Some(STARTED), None, Some("20260922T042000Z"));
+        assert_eq!(got, Some(("20260922T042000Z".to_string(), Signal::Gate)));
+    }
+
+    #[test]
+    fn with_both_signals_the_earlier_one_is_the_time() {
+        let g = gate(Kind::Question);
+        let got = resumed_at(
+            &g,
+            Some(STARTED),
+            Some("20260922T043000Z"),
+            Some("20260922T042000Z"),
+        );
+        assert_eq!(got, Some(("20260922T042000Z".to_string(), Signal::Gate)));
+        let got = resumed_at(
+            &g,
+            Some(STARTED),
+            Some("20260922T041500Z"),
+            Some("20260922T042000Z"),
+        );
+        assert_eq!(got, Some(("20260922T041500Z".to_string(), Signal::Phase)));
+    }
+
+    #[test]
+    fn a_worker_that_is_not_the_one_that_opened_the_gate_is_not_believed() {
+        let g = gate(Kind::Question);
+        let later = Some("20260922T050000Z");
+        assert_eq!(resumed_at(&g, Some("20260922T041234Z"), later, later), None);
+        assert_eq!(resumed_at(&g, None, later, later), None);
+        assert!(resumed_at(&g, Some("20260922T041233Z"), later, None).is_some());
+    }
+
+    #[test]
+    fn a_record_and_the_hub_s_gates_are_never_resumed() {
+        let later = Some("20260922T050000Z");
+        let mut record = gate(Kind::Verify);
+        record.wait = false;
+        assert_eq!(resumed_at(&record, Some(STARTED), later, later), None);
+        let dispatch = gate(Kind::Dispatch);
+        assert_eq!(resumed_at(&dispatch, Some(STARTED), later, later), None);
+        let mut plan = gate(Kind::Plan);
+        plan.opened_by = Opener::Hub;
+        assert_eq!(resumed_at(&plan, Some(STARTED), later, later), None);
     }
 
     #[test]

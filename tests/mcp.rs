@@ -385,6 +385,47 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
             .is_empty()
     );
 
+    // Answered in the terminal: recorded as such, and not as a board answer.
+    let replies = mcp(
+        &fixture,
+        &[request(
+            30,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "question",
+                    "title": "どちらか",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let id_t = tool_result(&replies[0])["gate"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let replies = mcp(
+        &fixture,
+        &[request(
+            31,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id_t,
+                    "terminal": true,
+                    "comment": "chose A",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let terminal = tool_result(&replies[0]);
+    assert_eq!(terminal["gate"]["decision"], "terminal", "{terminal}");
+    assert_eq!(terminal["closed"], true);
+    assert_eq!(terminal["alreadyAnswered"], false);
+
     // When a gate was already answered on the board, closing it reports alreadyAnswered
     let replies = mcp(
         &fixture,

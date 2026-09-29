@@ -6,7 +6,7 @@ const TASK_TABS = [['overview', '概要'], ['review', 'コードレビュー'], 
 const TAB_OF_KIND = { plan:'overview', diff:'review', verify:'check' };
 const KIND_OF_TAB = { overview:'plan', review:'diff', check:'verify' };
 const DECISION = { approve:'承認した', changes:'修正を指示した', reject:'却下した', choice:'案を選んだ',
-                   ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた' };
+                   ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };
 
 /* `pick` is the gate a tab shows when a person chose one from 経過; otherwise a tab shows the
    one waiting, else the latest. */

@@ -11,7 +11,7 @@ use super::Context;
 use crate::gate::{self, Gate, Kind};
 use crate::messaging;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn dir(ctx: &Context) -> PathBuf {
     gate::dir(&messaging::state_dir(), &ctx.repo.slug)
@@ -39,13 +39,11 @@ fn find(ctx: &Context, id: &str) -> Result<Gate, String> {
     Err(format!("no open gate or record: {id}"))
 }
 
-/// Hold the write lock of one record until the returned handle is dropped. The same advisory
-/// lock `task::lock_task` takes, for the same reason: appending an answer is a read and a
-/// write of the whole file, and two at once would each write back what they read.
-fn lock_record(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
-    let dir = records_dir(ctx);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    // Not named `.json`, so the listing never reads it as a record.
+/// Open the lock file of one gate or record, next to it in `dir`.
+fn open_lock(dir: &Path, id: &str) -> Result<(std::fs::File, PathBuf), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Not named `.json`, so the listing never reads it as a gate. Never removed, for the
+    // reason given at `with_dispatch_lock`: a lock file that is unlinked can be locked twice.
     let path = dir.join(format!("{id}.lock"));
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -53,9 +51,29 @@ fn lock_record(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
         .write(true)
         .open(&path)
         .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    Ok((file, path))
+}
+
+/// Hold the write lock of one gate or record until the returned handle is dropped. The same
+/// advisory lock `task::lock_task` takes, for the same reason: appending an answer is a read
+/// and a write of the whole file, and two at once would each write back what they read. On
+/// an open gate it is what lets only one of the board's answer, the worker's close and the
+/// board's own sweep decide it.
+fn lock_in(dir: &Path, id: &str) -> Result<std::fs::File, String> {
+    let (file, path) = open_lock(dir, id)?;
     file.lock()
         .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
     Ok(file)
+}
+
+/// `lock_in` without waiting: `None` when somebody else holds it.
+fn try_lock_in(dir: &Path, id: &str) -> Result<Option<std::fs::File>, String> {
+    let (file, path) = open_lock(dir, id)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(format!("cannot lock {}: {e}", path.display())),
+    }
 }
 
 fn stamp() -> String {
@@ -240,7 +258,22 @@ pub fn answer(
     choice: Option<&str>,
     comment: Option<&str>,
 ) -> Result<(Gate, super::Told), String> {
-    let mut gate = find(ctx, id)?;
+    // Locked before the gate is read, and held until it is archived: the worker's close and
+    // the board's sweep decide a gate under the same lock, and an answer delivered to a gate
+    // somebody else has just closed would wake a worker to something that was settled.
+    let held = if gate::path_of(&dir(ctx), id).exists() {
+        let lock = lock_in(&dir(ctx), id)?;
+        if !gate::path_of(&dir(ctx), id).exists() {
+            return Err(already_decided(ctx, id).unwrap_or_else(|| format!("no open gate: {id}")));
+        }
+        Some(lock)
+    } else {
+        None
+    };
+    let mut gate = match find(ctx, id) {
+        Ok(gate) => gate,
+        Err(e) => return Err(already_decided(ctx, id).unwrap_or(e)),
+    };
     // Nothing else means anything to a worker that is not waiting: an approval of a record
     // would wake it to be told to carry on with what it is already doing.
     if !gate.wait && (decision != "changes" || choice.is_some()) {
@@ -301,7 +334,7 @@ pub fn answer(
         // delivery: the board and `adj gate answer` can send the same record back at once,
         // and the second write would otherwise drop the first answer the worker has already
         // been given.
-        let lock = lock_record(ctx, id)?;
+        let lock = lock_in(&records_dir(ctx), id)?;
         let mut gate = gate::load(&records_dir(ctx), id).unwrap_or(gate);
         gate.answers.push(gate::Answer {
             decision: decision.to_string(),
@@ -322,30 +355,53 @@ pub fn answer(
     let at = stamp();
     gate.answered_at = Some(at.clone());
     gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
+    drop(held);
     note_answered(ctx, gate.task.as_deref(), &at);
     Ok((gate, told))
+}
+
+/// What became of a gate that is no longer open, said as an error for whoever tried to
+/// answer it.
+fn already_decided(ctx: &Context, id: &str) -> Option<String> {
+    let archived = gate::load(&answered_dir(ctx), id).ok()?;
+    Some(format!(
+        "gate {id} was already answered or closed ({})",
+        archived.decision.as_deref().unwrap_or("unknown")
+    ))
 }
 
 /// Archive a gate without delivering an answer to the worker's outbox.
 ///
 /// Used when the conversation happened directly in a terminal tab, or when a gate was
-/// rendered moot. It leaves the gate in `answered/` with decision "closed" so the record
-/// survives, but skips the delivery and the wake.
+/// rendered moot. It leaves the gate in `answered/` with decision "closed", or "terminal"
+/// when the person answered it in the worker's terminal, so the record survives, but skips
+/// the delivery and the wake.
 ///
-/// If the gate was already answered and archived on the board, returns the existing archived gate
-/// rather than failing: the caller can inspect whether `decision` is "closed" or an actual
-/// decision made on the board.
-pub fn close(ctx: &Context, id: &str, comment: Option<&str>) -> Result<Gate, String> {
+/// If the gate was already archived (answered on the board, or closed by the board's sweep),
+/// returns the archived gate rather than failing: the caller can inspect `decision`.
+pub fn close(
+    ctx: &Context,
+    id: &str,
+    comment: Option<&str>,
+    terminal: bool,
+) -> Result<Gate, String> {
+    if !gate::path_of(&dir(ctx), id).exists() {
+        return gate::load(&answered_dir(ctx), id).map_err(|_| format!("no open gate: {id}"));
+    }
+    let _lock = lock_in(&dir(ctx), id)?;
+    // Read under the lock: an answer or a sweep that got there first has archived it.
     let mut gate = match gate::load(&dir(ctx), id) {
         Ok(g) => g,
-        Err(e) => {
-            if let Ok(archived) = gate::load(&answered_dir(ctx), id) {
-                return Ok(archived);
-            }
-            return Err(e);
-        }
+        Err(e) => return gate::load(&answered_dir(ctx), id).map_err(|_| e),
     };
-    gate.decision = Some("closed".to_string());
+    gate.decision = Some(
+        if terminal {
+            gate::TERMINAL
+        } else {
+            gate::CLOSED
+        }
+        .to_string(),
+    );
     gate.comment = comment
         .map(str::trim)
         .filter(|c| !c.is_empty())
@@ -355,6 +411,81 @@ pub fn close(ctx: &Context, id: &str, comment: Option<&str>) -> Result<Gate, Str
     gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
     note_answered(ctx, gate.task.as_deref(), &at);
     Ok(gate)
+}
+
+/// Close the waiting gates whose worker has visibly moved on, as answered in the terminal.
+///
+/// The fallback for a worker that was answered in its terminal and did not close the gate:
+/// a worker that has changed phase, or opened another gate, since it opened this one is not
+/// waiting on it any more, and the board should not go on asking for an answer nobody is
+/// waiting for. Only gates a worker opened are considered (`gate::resumed_at` says which),
+/// and the same worker: the worktree's worker record must have started no later than the
+/// gate was opened. Best effort, and silent: this runs inside the board's poll, and in a hub
+/// process whose stdout is the MCP stream.
+pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
+    let open = gate::list(&dir(ctx));
+    if open.iter().all(|g| !g.wait || g.answered_by_hub()) {
+        return Vec::new();
+    }
+    // A gate already answered on the board still shows the worker got as far as opening it.
+    let signals: Vec<Gate> = open
+        .iter()
+        .cloned()
+        .chain(gate::list(&records_dir(ctx)))
+        .chain(gate::list(&answered_dir(ctx)))
+        .filter(|g| !g.answered_by_hub())
+        .collect();
+    let mut closed = Vec::new();
+    for g in &open {
+        if !g.wait || g.answered_by_hub() {
+            continue;
+        }
+        let record = messaging::read_json(&messaging::worker_record_path(Path::new(&g.worktree)));
+        let field = |name: &str| record.as_ref().and_then(|r| r.get(name));
+        let started = field("startedAt").and_then(Value::as_str);
+        let phase_at = field("phaseAt")
+            .and_then(Value::as_i64)
+            .map(messaging::utc_stamp);
+        let later = signals
+            .iter()
+            .filter(|s| s.worktree == g.worktree && s.id != g.id && s.opened_at > g.opened_at)
+            .min_by(|a, b| a.opened_at.cmp(&b.opened_at));
+        let Some((at, signal)) = gate::resumed_at(
+            g,
+            started,
+            phase_at.as_deref(),
+            later.map(|s| s.opened_at.as_str()),
+        ) else {
+            continue;
+        };
+        let comment = match signal {
+            gate::Signal::Phase => format!(
+                "closed by the board: the worker moved on to phase {} at {at}",
+                field("phase").and_then(Value::as_str).unwrap_or("unknown")
+            ),
+            gate::Signal::Gate => format!(
+                "closed by the board: the worker opened gate {}",
+                later.map_or("", |s| s.id.as_str())
+            ),
+        };
+        // Skipped when somebody is deciding it right now: whoever holds the lock is
+        // answering or closing it, and that is the decision that stands.
+        let Ok(Some(_lock)) = try_lock_in(&dir(ctx), &g.id) else {
+            continue;
+        };
+        let Ok(mut fresh) = gate::load(&dir(ctx), &g.id) else {
+            continue;
+        };
+        fresh.decision = Some(gate::TERMINAL.to_string());
+        fresh.comment = Some(comment);
+        fresh.answered_at = Some(at.clone());
+        if gate::archive(&dir(ctx), &answered_dir(ctx), &fresh).is_err() {
+            continue;
+        }
+        note_answered(ctx, fresh.task.as_deref(), &at);
+        closed.push(fresh);
+    }
+    closed
 }
 
 /// Write the answer's time onto the gate's task, for the board's stuck badge. Best effort:
@@ -589,29 +720,33 @@ pub struct CloseArgs<'a> {
     pub hub: Option<&'a str>,
     pub id: &'a str,
     pub comment: Option<&'a str>,
+    /// The person answered in the worker's terminal.
+    pub terminal: bool,
     pub json: bool,
 }
 
 /// `adj gate close`: archive an open gate from the command line.
 pub fn close_cmd(args: &CloseArgs<'_>) -> Result<(), String> {
     let ctx = super::context(args.repo, args.hub)?;
-    let gate = close(&ctx, args.id, args.comment)?;
-    let closed = gate.decision.as_deref() == Some("closed");
+    let gate = close(&ctx, args.id, args.comment, args.terminal)?;
+    let on_board = gate.answered_on_board();
     if args.json {
         println!(
             "{}",
-            json!({ "gate": gate, "closed": closed, "alreadyAnswered": !closed })
+            json!({ "gate": gate, "closed": !on_board, "alreadyAnswered": on_board })
         );
         return Ok(());
     }
-    if closed {
-        println!("{} → closed", gate.id);
-    } else {
+    if on_board {
         println!(
             "{} → already answered ({})",
             gate.id,
             gate.decision.as_deref().unwrap_or("unknown")
         );
+    } else if gate.decision.as_deref() == Some(gate::TERMINAL) {
+        println!("{} → answered in the terminal", gate.id);
+    } else {
+        println!("{} → closed", gate.id);
     }
     Ok(())
 }

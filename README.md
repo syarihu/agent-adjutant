@@ -535,6 +535,11 @@ conversation, and a conversation is faster in the tab than through an outbox —
 counts the rounds, says so, and offers a button that raises the tab *without* closing the
 gate. Leaving is not failing.
 
+A gate the person answers in the worker's terminal instead is closed by the worker with
+`adj gate close --terminal --comment "<what was decided>"`. If it forgets, the board closes
+the gate once the same worker moves to a later phase or opens its next gate, and shows it as
+answered in the terminal; a gate the hub opened is never closed this way.
+
 `adj gate open` reads its payload as JSON on stdin and answers with `server: up` or
 `server: down`. That second answer is the whole reason it reports rather than just
 succeeding: with nothing serving, a gate is a message into a directory no one opens, so the

@@ -591,6 +591,9 @@ enum GateAction {
         /// Reason or note for closing
         #[arg(long)]
         comment: Option<String>,
+        /// The person answered in the worker's terminal
+        #[arg(long)]
+        terminal: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1365,12 +1368,14 @@ fn run_gate(action: &GateAction) -> Result<(), String> {
             hub,
             id,
             comment,
+            terminal,
             json,
         } => cmd::gate_close(&cmd::CloseArgs {
             repo: repo.as_deref(),
             hub: hub.as_deref(),
             id,
             comment: comment.as_deref(),
+            terminal: *terminal,
             json: *json,
         }),
     }

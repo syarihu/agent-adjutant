@@ -2822,12 +2822,17 @@ mod tests {
             claude.contains("close the gate with `adjutant_gate_close`"),
             "the person's own message is not treated as the terminal answer: {claude}"
         );
+        assert!(
+            claude.contains("`terminal: true`"),
+            "a terminal answer is not closed as one: {claude}"
+        );
         // The blind wake keeps asking in both places.
         assert!(claude.contains("without `wakeChecksScreen`"), "{claude}");
 
         let agy = after(&render_for(worker, "", Agent::Agy));
         assert!(agy.contains("end the turn without `ask_question`"), "{agy}");
         assert!(!agy.contains("AskUserQuestion"), "{agy}");
+        assert!(agy.contains("`terminal: true`"), "{agy}");
     }
 
     /// The hub writes this note when a start fails, and `adj task next` skips a task by it. Two

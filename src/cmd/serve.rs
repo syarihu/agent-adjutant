@@ -1341,6 +1341,9 @@ fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
 }
 
 fn state(server: &Server) -> Value {
+    // Before the gates are read: a gate whose worker has moved on is closed here rather than
+    // by a timer, since nothing in the server polls on one.
+    let _ = super::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
     let hub = messaging::hub_status(&repo.slug, &repo.hub_name);
     let tasks = with_records(
@@ -2014,6 +2017,7 @@ fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
             &server.ctx,
             id,
             input.get("comment").and_then(Value::as_str),
+            false,
         )?;
         return Ok(json!({ "gate": gate, "closed": true }));
     }
