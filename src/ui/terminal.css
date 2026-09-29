@@ -3,16 +3,26 @@
   width: 100%;
   height: 100%;
   min-height: 0;
-  box-sizing: border-box;
-  padding: 6px 8px;
   background: #101014;
   overflow: hidden;
 }
-.adj-terminal .xterm { height: 100%; }
+/* The padding sits on `.xterm` itself: the fit addon subtracts the terminal element's padding
+   but reads its parent's height as is, so padding on the parent would give a row too many. */
+.adj-terminal .xterm { height: 100%; box-sizing: border-box; padding: 6px 8px; }
+/* The same dimmed, blurred backdrop as the dialogs; a click on it does not close the terminal. */
 .adj-terminal-overlay {
   position: fixed;
-  inset: 4vh 4vw;
+  inset: 0;
   z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+}
+.term-panel {
+  width: min(1100px, 88vw);
+  height: 86vh;
   display: flex;
   flex-direction: column;
   background: #101014;
