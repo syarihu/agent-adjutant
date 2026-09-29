@@ -178,8 +178,9 @@ saved session names its key) points at it. A stopped one with no such checkout i
 listed, and neither is one known only from its saved session. `adjutant hub-close --hub KEY`, or
 「閉じる」 on the board, closes a parent-task hub that has no checkouts left and drops it from the
 list. The board's close stops a running hub first; `adjutant hub-close` does not stop one, so it
-is for the hub itself or a hub that is no longer running, and refuses a running hub from outside. Its saved session, tasks, gates and inbox stay, so
-`adj hub --hub KEY --resume` picks them up again. The repository's own hub can only be stopped.
+is for the hub itself or a hub that is no longer running, and refuses a running hub from outside.
+Its saved session, tasks, gates and inbox stay, so `adj hub --hub KEY --resume` picks them up
+again. The repository's own hub can only be stopped.
 
 When the hub ended is written by the hub's own MCP server. For a start that records a session
 (a runner that takes `{sessionId}`, or a resume), `adj hub` puts `ADJUTANT_HUB_SESSION` on the

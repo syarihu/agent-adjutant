@@ -36,7 +36,8 @@ The process it starts registers itself in the register (it replaces itself with 
 recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off. A parent
 task's hub that has finished for good (no worktree reports to it any more) is taken off the board's
 list with `adjutant hub-close --hub {identifier}` instead (run it from inside this hub; it stops no
-process, and refuses to close a hub that is still running when run from outside); the saved conversation stays for `--resume`.
+process, and refuses to close a hub that is still running when run from outside); the saved
+conversation stays for `--resume`.
 
 **A hub that went down, for an agent update or the like, comes back into the same conversation with
 a plain `adj hub` within a few hours of ending (`hubAutoResumeHours`).** A conversation that ended

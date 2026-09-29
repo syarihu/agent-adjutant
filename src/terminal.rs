@@ -2121,6 +2121,20 @@ pub fn tmux_spawn(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_process_is_itself_but_not_init_or_a_stranger() {
+        assert!(super::is_self_or_descendant_of(std::process::id()));
+        assert!(!super::is_self_or_descendant_of(1));
+        let mut stranger = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        // A child is below this process, not above it.
+        assert!(!super::is_self_or_descendant_of(stranger.id()));
+        let _ = stranger.kill();
+        let _ = stranger.wait();
+    }
+
     use super::*;
     use crate::config::Hook;
 

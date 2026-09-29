@@ -2366,6 +2366,20 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
                 }
             }
         }
+    } else if messaging::hub_record_path(&hub.slug).exists() {
+        // A record that is there but names no process (or cannot be read): asked the way
+        // `stop_hub` asks, and nobody can be told to be the hub itself.
+        match messaging::hub_liveness(&hub.slug) {
+            messaging::Liveness::Gone => {}
+            messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
+            messaging::Liveness::Alive => {
+                return Err(format!(
+                    "{} is still running; close it from the board, or stop it first \
+                     (`adj hub-stop` from inside it, or the board's stop) and then close it",
+                    hub.name
+                ));
+            }
+        }
     }
     messaging::unregister_hub(&hub.slug)?;
     serve::forget_board(&hub.slug)?;
