@@ -7,11 +7,12 @@ The board terminal (`adj server`, resident boards only) renders a tmux session w
 
 | Package | Version | Files used | Tarball | sha256 of the tarball |
 | --- | --- | --- | --- | --- |
-| `@xterm/xterm` | 5.5.0 | `lib/xterm.js`, `css/xterm.css` | https://registry.npmjs.org/@xterm/xterm/-/xterm-5.5.0.tgz | `bd954fa721872170188cc5d7e83e88db3c83c9a18a4e8d24c2783d26491f59d2` |
-| `@xterm/addon-fit` | 0.10.0 | `lib/addon-fit.js` | https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.10.0.tgz | `917ac44972453d5eed52edc1e50260c76398ce48cf2290c2e60671102bba0b33` |
-| `@xterm/addon-unicode11` | 0.8.0 | `lib/addon-unicode11.js` | https://registry.npmjs.org/@xterm/addon-unicode11/-/addon-unicode11-0.8.0.tgz | `0202c50aaa686eceb13301875788f6465d35bd0d3304bf26a913a0278e434d0f` |
+| `@xterm/xterm` | 6.0.0 | `lib/xterm.js`, `css/xterm.css` | https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz | `908e66e04af6c8dc6b00dd3b54de088e2e81e5ed866284fd6c2fb3c2d1c7a3f6` |
+| `@xterm/addon-fit` | 0.11.0 | `lib/addon-fit.js` | https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz | `26003b4517a132b64e4ff228fd88a5fda3fff5e606c76093f6dcff772e9ecec0` |
+| `@xterm/addon-unicode11` | 0.9.0 | `lib/addon-unicode11.js` | https://registry.npmjs.org/@xterm/addon-unicode11/-/addon-unicode11-0.9.0.tgz | `b665667792f916873fe946ba98cc98a1a742af08e163fb66e1c0809c120ca42e` |
 
-The addon versions are the newest whose `peerDependencies` accept `@xterm/xterm` 5.x.
+Each is the `latest` dist-tag on the npm registry. The addons declare no `peerDependencies`
+at these versions; they are the releases published alongside `@xterm/xterm` 6.0.0.
 
 The files are the UMD builds from the tarballs, byte for byte, except that the final
 `//# sourceMappingURL=...` line is removed (the `.map` files are not vendored). Each UMD build
@@ -23,7 +24,7 @@ respective packages, verbatim. The MIT notice is also emitted at the top of the 
 
 ## Updating
 
-1. Pick the versions (the addons must accept the chosen `@xterm/xterm` in `peerDependencies`):
+1. Pick the versions (the addons must be releases that go with the chosen `@xterm/xterm`):
    `curl -s https://registry.npmjs.org/@xterm/xterm | jq '.["dist-tags"]'`.
 2. Download and check each tarball:
    `curl -sLO https://registry.npmjs.org/@xterm/xterm/-/xterm-<version>.tgz && shasum -a 256 xterm-<version>.tgz`.
