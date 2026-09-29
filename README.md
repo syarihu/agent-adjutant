@@ -423,6 +423,13 @@ learns where a repository is from the hubs that start in it and from `adj config
 none of these has seen is added by running `adj server start` inside it. Without a resident
 server, everything is as described above.
 
+**A session's terminal in the board.** On the resident server's boards, a card, its side sheet
+and a hub's row in the rail have a button that opens the session's tmux window in the page,
+where you can read it and type to it. It is offered only for a session that runs in tmux
+(`terminal.preset: "tmux"`) and is alive. Closing it only detaches: the window and the agent
+in it keep running. The board attaches as a client of its own, so the window's size follows
+tmux's `window-size` option, which is `latest` by default: the client that acted last decides.
+
 To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
 does it:
 
@@ -765,3 +772,6 @@ notifier whose click can be aimed, without it from `osascript` and therefore fro
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+The board terminal bundles xterm.js and two of its addons (MIT); their notice is in
+`src/ui/vendor/xterm/`.

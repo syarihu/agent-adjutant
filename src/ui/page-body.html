@@ -157,6 +157,18 @@
   </footer>
 </div>
 
+<div id="term-overlay" class="adj-terminal-overlay" role="region" aria-label="セッションの端末" hidden>
+  <div class="term-panel">
+    <div class="term-head">
+      <span class="term-title"></span>
+      <span class="term-where"></span>
+      <span class="term-note">閉じてもセッションは止まりません（切り離すだけです）</span>
+      <button type="button" class="btn-m3-tonal" id="term-close" style="padding:4px 12px;font-size:12px;">閉じる</button>
+    </div>
+    <div class="term-host"></div>
+  </div>
+</div>
+
 <dialog id="form">
   <form method="dialog" onsubmit="submitForm(event)">
     <div class="head">

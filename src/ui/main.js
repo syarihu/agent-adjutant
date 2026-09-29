@@ -1,4 +1,6 @@
 document.addEventListener('keydown', e => {
+  // Keys typed in a session terminal belong to the agent, Escape included.
+  if (e.target.closest?.('.adj-terminal')) return;
   if (e.key === 'Escape') {
     // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
     // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.

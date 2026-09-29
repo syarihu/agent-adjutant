@@ -14,6 +14,7 @@ use crate::repo::{self, RepoInfo};
 use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
+mod board_terminal;
 mod gate;
 mod jules;
 mod review_engine;

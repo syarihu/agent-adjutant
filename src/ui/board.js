@@ -705,6 +705,7 @@ function agentCard(task) {
         </div>
         <div class="card-button-row">
           ${task.worktree ? `<button type="button" class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
+          ${readySessionOfTask(task) ? `<button type="button" class="m3-icon-button" title="このセッションの tmux をボードで開く" data-term-session="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">web_asset</span><span>端末</span></button>` : ''}
           ${task.worktree ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
           ${task.status === 'backlog' ? `<button type="button" class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
         </div>
@@ -1190,6 +1191,10 @@ function renderDrawer() {
             <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
             <span>ターミナル前面表示</span>
           </button>
+          ${readySessionOfTask(task) ? `<button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" title="このセッションの tmux をボードで開く" data-term-session="${esc(task.id)}">
+            <span class="material-symbols-outlined" style="font-size:16px;">web_asset</span>
+            <span>ボードで端末を開く</span>
+          </button>` : ''}
           <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" title="${ideTitle()}" data-ide="${esc(task.worktree)}">
             <span class="material-symbols-outlined" style="font-size:16px;">code</span>
             <span>IDE で開く</span>
@@ -1256,6 +1261,8 @@ function renderDrawer() {
         b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
       part.querySelectorAll('[data-ide]').forEach(b =>
         b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+      part.querySelectorAll('[data-term-session]').forEach(b =>
+        b.addEventListener('click', () => openTaskTerminal(b.dataset.termSession)));
       part.querySelectorAll('[data-close]').forEach(b =>
         b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
       part.querySelectorAll('[data-findings]').forEach(b =>
@@ -1359,6 +1366,11 @@ document.addEventListener('click', e => {
   if (di) {
     e.stopPropagation();
     return worktreeAct('ide', di.dataset.ide);
+  }
+  const dt = e.target.closest('[data-term-session]');
+  if (dt) {
+    e.stopPropagation();
+    return openTaskTerminal(dt.dataset.termSession);
   }
   const df = e.target.closest('[data-focus]');
   if (df) {

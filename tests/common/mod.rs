@@ -11,7 +11,7 @@
 
 #![allow(dead_code, unused_imports)]
 
-pub use std::io::{BufRead, Write};
+pub use std::io::{BufRead, Read, Write};
 pub use std::path::{Path, PathBuf};
 pub use std::process::{Command, Stdio};
 
@@ -245,4 +245,162 @@ pub fn ps_started(pid: u32) -> String {
 
 pub fn request(id: u32, method: &str, params: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+}
+
+// ── the resident server and an isolated tmux, shared by the tests that need one ──
+
+/// A resident server running in the foreground, killed when this goes out of scope so that a
+/// failing assertion leaves nothing listening.
+pub struct Resident {
+    pub child: std::process::Child,
+    pub port: u16,
+    pub token: String,
+    /// The line it printed when it came up.
+    pub said: String,
+}
+
+impl Resident {
+    pub fn start(fixture: &Fixture) -> Resident {
+        Resident::start_with(fixture, &[])
+    }
+
+    pub fn start_with(fixture: &Fixture, env: &[(&str, &str)]) -> Resident {
+        let child = fixture
+            .command([
+                "server",
+                "start",
+                "--foreground",
+                "--no-open",
+                "--port",
+                "0",
+            ])
+            .envs(env.iter().copied())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        // The guard first, so that whatever is wrong with what it says does not leave it running.
+        let mut resident = Resident {
+            child,
+            port: 0,
+            token: String::new(),
+            said: String::new(),
+        };
+        let mut said = String::new();
+        std::io::BufReader::new(resident.child.stdout.as_mut().unwrap())
+            .read_line(&mut said)
+            .unwrap();
+        // Not a terminal, so the line names no token: it is what lands in a log.
+        let url = said
+            .split("serving on ")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no URL in {said:?}"))
+            .trim();
+        let host = url
+            .strip_prefix("http://")
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap();
+        resident.port = host.rsplit(':').next().unwrap().parse().unwrap();
+        resident.token = std::fs::read_to_string(fixture.state.join("dashboard-token"))
+            .unwrap()
+            .trim()
+            .to_string();
+        resident.said = said;
+        resident
+    }
+
+    /// A POST the way the page makes one: the token in a header and the server's own origin.
+    pub fn post(&self, path: &str, body: &str) -> (u16, String) {
+        post(self.port, &self.token, path, body)
+    }
+
+    /// A GET with the token in the query, as `(status, body)`.
+    pub fn get(&self, path: &str) -> (u16, String) {
+        get(self.port, &self.token, path)
+    }
+}
+
+impl Drop for Resident {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+pub fn get(port: u16, token: &str, path: &str) -> (u16, String) {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let query = if token.is_empty() {
+        String::new()
+    } else {
+        format!("?token={token}")
+    };
+    write!(
+        stream,
+        "GET {path}{query} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, body.to_string())
+}
+
+pub fn post(port: u16, token: &str, path: &str, body: &str) -> (u16, String) {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+         X-Adjutant-Token: {token}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, body.to_string())
+}
+
+pub struct IsolatedTmux {
+    pub socket: String,
+    pub session: String,
+}
+
+impl IsolatedTmux {
+    pub fn new(name: &str) -> Option<Self> {
+        let out = Command::new("tmux").arg("-V").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let socket = format!("adj-test-{name}-{nanos}");
+        let session = "adjutant-test".to_string();
+        Some(IsolatedTmux { socket, session })
+    }
+
+    pub fn tmux_cmd(&self, args: &[&str]) -> std::process::Output {
+        Command::new("tmux")
+            .arg("-L")
+            .arg(&self.socket)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+}
+
+impl Drop for IsolatedTmux {
+    fn drop(&mut self) {
+        let _ = Command::new("tmux")
+            .arg("-L")
+            .arg(&self.socket)
+            .arg("kill-server")
+            .output();
+    }
 }

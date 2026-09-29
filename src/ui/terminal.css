@@ -1,0 +1,48 @@
+/* ── Session terminal ── */
+.adj-terminal {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #101014;
+  overflow: hidden;
+}
+/* The padding sits on `.xterm` itself: the fit addon subtracts the terminal element's padding
+   but reads its parent's height as is, so padding on the parent would give a row too many. */
+.adj-terminal .xterm { height: 100%; box-sizing: border-box; padding: 6px 8px; }
+/* The same dimmed, blurred backdrop as the dialogs; a click on it does not close the terminal. */
+.adj-terminal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+}
+.term-panel {
+  width: min(1100px, 88vw);
+  height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: #101014;
+  color: #e6e1e9;
+  border-radius: var(--md-shape-corner-xl);
+  box-shadow: var(--md-elevation-4);
+  overflow: hidden;
+}
+.adj-terminal-overlay[hidden] { display: none; }
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #2b2b33;
+  font-size: 12.5px;
+}
+.term-title, .term-where, .term-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-title { font-weight: 700; }
+.term-where { font-family: var(--font-mono); color: #9a94a3; }
+.term-note { margin-left: auto; color: #9a94a3; font-size: 11.5px; }
+#term-close { flex: none; }
+.term-host { flex: 1; min-height: 0; }

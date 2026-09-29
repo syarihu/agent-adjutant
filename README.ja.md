@@ -270,6 +270,10 @@ security add-generic-password -s jules-api -a "$USER" -w
 - **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）で tmux セッションの状態確認や操作を直接行えます。
 - **環境変数**: `$ADJUTANT_TMUX_SESSION`（既定のセッション名 `"adjutant"` を上書き）および `$ADJUTANT_TMUX_SOCKET`（`tmux -L <socket>` でソケットを指定）に対応しています。
 
+### ボードから端末を開く
+
+常駐サーバー（`adj server start`）のボードでは、tmux で動いているセッションの tmux ウィンドウをページ内で開き、読んだり入力したりできます。ボタンはカード、サイドシート、レールの hub の行にあり、`terminal.preset: "tmux"` で動いていて生きているセッションにだけ出ます。閉じても切り離すだけで、ウィンドウもその中のエージェントも止まりません。ボードは専用のクライアントとしてアタッチするため、ウィンドウの大きさは tmux の `window-size` オプションに従います。既定は `latest` で、最後に操作したクライアントの大きさになります。
+
 ## レイヤ構成
 
 ```
@@ -311,3 +315,5 @@ worker はタスク実行中、環境内に特化サブエージェントが定�
 ## ライセンス
 
 MIT — [LICENSE](LICENSE) を参照してください。
+
+ボードの端末には xterm.js とそのアドオン2つ（MIT）を同梱しています。ライセンス表記は `src/ui/vendor/xterm/` にあります。
