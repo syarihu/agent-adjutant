@@ -72,7 +72,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant task fetch-issue --id …` | タスクの GitHub Issue を読み直し、タイトルと本文をレコードの `issueSnapshot` に保存する。`task add` / `task update` は、タスクが着手済み（dispatched か pr）になったとき、または Issue が変わったときに同じ読み取りをする。タイトルは256文字、本文は16 KiB まで。板は表示のたびに GitHub へ問い合わせず、「再取得」を押したときだけ読み直す |
 | `adjutant jules start\|show\|findings\|relay` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する。レビュー指摘を Jules に回す（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
-| `adjutant hub-close --hub KEY` | 親タスクの hub を閉じる（この hub に報告する checkout が残っていないときだけ）。実行記録を消し、ボードの一覧から外す。保存済みのセッション・タスク・gate・受信箱は残る |
+| `adjutant hub-close --hub KEY` | 親タスクの hub を閉じる（この hub に報告する checkout が残っていないときだけ）。実行記録を消し、ボードの一覧から外す。プロセスは止めないので、hub 自身から、または動いていない hub に対して使い、動いている hub を外から閉じようとすると断る。保存済みのセッション・タスク・gate・受信箱は残る |
 
 エージェント側（`adjutant mcp`）：10個のツールと3つのプロンプトを提供します。
 
@@ -105,7 +105,7 @@ adj worker --resume               # worktree の中で実行すると、そこ�
 
 `{sessionId}` を含むランナー（既定のランナーは `--session-id {sessionId}` として含んでいます）で新しく起動するときは、セッション ID を作ってエージェントに渡し、保存します。再開するときは新しく作らず、保存済みの ID を使います。`{sessionId}` を含まないランナーで新しく起動したときは ID を作らず、前の起動が保存した ID を消します。これで2つ前の起動の会話が開かれることはありません。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
 
-親タスクの hub は、hub の実行記録か、その hub のキーを指す checkout（worker の記録か保存済みセッションがそのキーを名指ししている worktree）があるあいだ一覧に出ます。止まっていて checkout が残っていないものや、保存済みのセッションだけが残っているものは、もう一覧に出ません。checkout が残っていない親タスクの hub は `adjutant hub-close --hub KEY`（ボードでは「閉じる」）で閉じられます。動いていれば止めたうえで一覧から外します。保存済みのセッション・タスク・gate・受信箱は残るので、`adj hub --hub KEY --resume` で引き継げます。リポジトリ自身の hub は止めることしかできません。
+親タスクの hub は、hub の実行記録か、その hub のキーを指す checkout（worker の記録か保存済みセッションがそのキーを名指ししている worktree）があるあいだ一覧に出ます。止まっていて checkout が残っていないものや、保存済みのセッションだけが残っているものは、もう一覧に出ません。checkout が残っていない親タスクの hub は `adjutant hub-close --hub KEY`（ボードでは「閉じる」）で閉じられます。ボードの「閉じる」は、動いている hub を止めたうえで一覧から外します。`adjutant hub-close` はプロセスを止めないので、hub 自身から打つか、動いていない hub に対して使います。動いている hub を外から閉じようとすると断ります。保存済みのセッション・タスク・gate・受信箱は残るので、`adj hub --hub KEY --resume` で引き継げます。リポジトリ自身の hub は止めることしかできません。
 
 hub の終了時刻は、hub の下で動く MCP サーバーが記録します。`adj hub` はセッションを記録する起動（`{sessionId}` を含むランナーでの起動と、再開）のときだけ、`exec` するコマンドラインに `ADJUTANT_HUB_SESSION` を載せます。エージェントが起動する `adjutant mcp` がそれを引き継ぎます。`{sessionId}` を含まないランナーで新しく起動した hub にはこの変数が付かないので、MCP サーバーが動いていても終了時刻は記録されません。MCP サーバーは1分ごとと、エージェントがパイプを閉じたときに、セッションが生きていたことを `sessions/<slug>.alive` に書きます。保存したセッションとは別のファイルにしているのは、古い hub の最後の書き込みが新しい hub の保存を上書きしないようにするためです。MCP サーバーはマシン上のすべてのセッションで動きますが、書き込むのはこの変数を持つものだけです。`adj worker` はエージェントを起動する前にこの変数を外します。hub の下に MCP サーバーが無い場合は終了時刻が分からないので、推測せずに新しく起動します。`hubRunner` を独自に設定していて `hubResumeRunner` を設定していない場合も同じです。組み込みの再開コマンドで開くと独自の runner で足した指定が抜けるので、`--resume` を付けたときだけ再開します。
 

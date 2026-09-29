@@ -2074,6 +2074,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forgetting_a_board_removes_only_that_slug() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        std::fs::create_dir_all(boards_dir()).unwrap();
+        for slug in ["acme-widget-a", "acme-widget-b"] {
+            std::fs::write(boards_dir().join(format!("{slug}.json")), "{}").unwrap();
+        }
+        forget_board("acme-widget-a").unwrap();
+        assert!(!boards_dir().join("acme-widget-a.json").exists());
+        assert!(boards_dir().join("acme-widget-b.json").exists());
+        // Nothing to forget is not an error.
+        forget_board("acme-widget-a").unwrap();
+    }
+
+    #[test]
     fn the_page_pieces_join_into_one_document() {
         // A piece left out or put out of order shows here rather than as a blank page.
         assert!(UI_HTML.starts_with("<!DOCTYPE html>"));

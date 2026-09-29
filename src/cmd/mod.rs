@@ -2316,9 +2316,9 @@ fn closable_check(hub: &crate::session::RepoHub) -> Result<(), String> {
 }
 
 /// Close a parent-task hub whose workers are all gone: clear its record and take it off the
-/// board's address book, so it drops out of the list. Like `hub-stop` it ends no process, so
-/// a hub can run it on itself. Its saved session, tasks, gates and inbox stay, and starting
-/// the same key with `--resume` picks them up again.
+/// board's address book, so it drops out of the list. Like `hub-stop` it ends no process: it
+/// is for the hub itself, or a hub that is no longer running, and refuses a running one.
+/// Its saved session, tasks, gates and inbox stay, and starting the same key with `--resume` picks them up again.
 pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
     let info = resolve(repo_arg, hub_arg)?;
     let hub = messaging::all_repo_hubs(&info)
@@ -2340,6 +2340,33 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             children: 0,
         });
     closable_check(&hub)?;
+    // This ends no process, so a hub that is still running would be left running with no
+    // record, and the next `adj hub` would start a second one beside it. Only the hub itself
+    // may clear its own record; from anywhere else it has to be stopped first.
+    let record = messaging::read_json(&messaging::hub_record_path(&hub.slug));
+    let named = record.as_ref().and_then(|r| {
+        let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
+        let started = r
+            .get("psStarted")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        Some((pid, started))
+    });
+    if let Some((pid, started)) = named {
+        match messaging::hub_process_liveness(pid, started.as_deref()) {
+            messaging::Liveness::Gone => {}
+            messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
+            messaging::Liveness::Alive => {
+                if !terminal::is_self_or_descendant_of(pid) {
+                    return Err(format!(
+                        "{} is still running (pid {pid}); close it from the board, or stop it first \
+                         (`adj hub-stop` from inside it, or the board's stop) and then close it",
+                        hub.name
+                    ));
+                }
+            }
+        }
+    }
     messaging::unregister_hub(&hub.slug)?;
     serve::forget_board(&hub.slug)?;
     println!("closed {}", hub.name);

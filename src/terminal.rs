@@ -583,6 +583,22 @@ pub fn own_tty() -> Option<String> {
     None
 }
 
+/// Whether this process is `pid` or runs somewhere below it: how a command run by an agent
+/// tells that it was run by that agent, whatever shells sit between them.
+pub fn is_self_or_descendant_of(pid: u32) -> bool {
+    let mut curr = std::process::id();
+    for _ in 0..32 {
+        if curr == pid {
+            return true;
+        }
+        match parent_of(curr) {
+            Some(parent) if parent > 1 => curr = parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
 fn parent_of(pid: u32) -> Option<u32> {
     let out = Command::new("ps")
         .args(["-o", "ppid=", "-p", &pid.to_string()])

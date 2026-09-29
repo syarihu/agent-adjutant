@@ -88,7 +88,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
-| `adjutant hub-close --hub KEY` | close a parent-task hub none of whose checkouts report to it any more: clear its record and take it off the board's list (its saved session, tasks, gates and inbox stay) |
+| `adjutant hub-close --hub KEY` | close a parent-task hub none of whose checkouts report to it any more: clear its record and take it off the board's list; run by the hub itself or against a hub that is no longer running, it refuses a running hub from outside (its saved session, tasks, gates and inbox stay) |
 
 Agent-side (`adjutant mcp`), the same machinery as ten tools and three prompts:
 
@@ -176,8 +176,9 @@ the agent to check its inbox or outbox for whatever arrived while it was gone.
 A parent-task hub is listed while a hub record or a checkout (a worktree whose worker record or
 saved session names its key) points at it. A stopped one with no such checkout is no longer
 listed, and neither is one known only from its saved session. `adjutant hub-close --hub KEY`, or
-「閉じる」 on the board, closes a parent-task hub that has no checkouts left: the board stops it if it
-is running and drops it from the list. Its saved session, tasks, gates and inbox stay, so
+「閉じる」 on the board, closes a parent-task hub that has no checkouts left and drops it from the
+list. The board's close stops a running hub first; `adjutant hub-close` does not stop one, so it
+is for the hub itself or a hub that is no longer running, and refuses a running hub from outside. Its saved session, tasks, gates and inbox stay, so
 `adj hub --hub KEY --resume` picks them up again. The repository's own hub can only be stopped.
 
 When the hub ended is written by the hub's own MCP server. For a start that records a session

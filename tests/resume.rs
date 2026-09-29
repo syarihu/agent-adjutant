@@ -153,6 +153,90 @@ fn closing_a_parent_hub_clears_its_record_and_board_but_keeps_its_session() {
     assert!(resumed.contains("--resume "), "{resumed}");
 }
 
+fn write_parent_hub_record(fixture: &Fixture, extra: serde_json::Value) -> PathBuf {
+    let record = fixture
+        .state
+        .join("hubs")
+        .join(format!("{FEATURE_SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    let mut body = serde_json::json!({
+        "hubName": FEATURE_HUB,
+        "hub": FEATURE,
+        "cwd": fixture.repo.to_str().unwrap(),
+    });
+    body.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    std::fs::write(&record, body.to_string()).unwrap();
+    record
+}
+
+#[test]
+fn a_parent_hub_with_a_worker_is_not_closed_from_the_command_line() {
+    let fixture = Fixture::new(QUIET);
+    let record = write_parent_hub_record(&fixture, serde_json::json!({}));
+    let worktree = fixture._dir.path().join("widget-wid-957");
+    let out = Command::new("git")
+        .hermetic()
+        .args(["worktree", "add", "-q", "-b", "wid-957"])
+        .arg(&worktree)
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+    std::fs::write(
+        worktree.join(".claude").join("adjutant-session.json"),
+        serde_json::json!({"sessionId": "sid-1", "hub": FEATURE}).to_string(),
+    )
+    .unwrap();
+
+    let out = fixture.cmd(&["hub-close", "--hub", FEATURE]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("still report"), "{said}");
+    assert!(record.exists());
+}
+
+#[test]
+fn a_running_hub_is_not_closed_from_outside_but_a_dead_one_is() {
+    let fixture = Fixture::new(QUIET);
+    let out = Command::new("sh")
+        .args(["-c", "sleep 300 >/dev/null 2>&1 & echo $!"])
+        .output()
+        .unwrap();
+    let sleeper: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+    struct Reap(u32);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = Command::new("kill").arg(self.0.to_string()).status();
+        }
+    }
+    let _reap = Reap(sleeper);
+    let record = write_parent_hub_record(
+        &fixture,
+        serde_json::json!({"pid": sleeper, "psStarted": ps_started(sleeper), "nameInCommand": false}),
+    );
+
+    let out = fixture.cmd(&["hub-close", "--hub", FEATURE]);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("still running"), "{said}");
+    assert!(record.exists());
+
+    // Once the process is gone, the record it left is closed like any other.
+    drop(_reap);
+    for _ in 0..50 {
+        if ps_started(sleeper).is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let said = fixture.ok(&["hub-close", "--hub", FEATURE]);
+    assert!(said.contains("closed"), "{said}");
+    assert!(!record.exists());
+}
+
 #[test]
 fn the_repository_hub_is_not_closed() {
     let fixture = Fixture::new(QUIET);
