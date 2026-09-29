@@ -64,10 +64,13 @@ fn tmux_work_dry_run_generates_tmux_spawn_command() {
         "--dry-run",
     ]);
     assert!(
-        out.contains("tmux has-session -t adjutant-work-test"),
+        out.contains("tmux has-session -t =adjutant-work-test "),
         "{out}"
     );
-    assert!(out.contains("new-window -d -t adjutant-work-test"), "{out}");
+    assert!(
+        out.contains("new-window -d -t =adjutant-work-test:"),
+        "{out}"
+    );
     assert!(out.contains("-n WID-100"), "{out}");
 }
 
@@ -269,4 +272,30 @@ fn tmux_error_handling_for_non_existent_pane() {
     assert!(!close_out.status.success());
     let close_err = String::from_utf8_lossy(&close_out.stderr);
     assert!(close_err.contains("no tmux pane found"), "{close_err}");
+}
+
+/// A hub's window is named after the hub, which starts with the session's own name. A spawn
+/// after it must still land in the session as a new window, not be aimed at that window.
+#[test]
+fn tmux_spawn_after_a_window_named_like_the_session() {
+    let Some(tmux) = IsolatedTmux::new("spawn-prefix") else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let fixture = Fixture::new(&tmux_config(&tmux.socket, &tmux.session));
+
+    let hub_title = format!("{}-hub", tmux.session);
+    fixture.ok(&["tmux", "spawn", "--title", &hub_title, "sleep", "60"]);
+    fixture.ok(&["tmux", "spawn", "--title", "after-the-hub", "sleep", "60"]);
+
+    let out = tmux.tmux_cmd(&[
+        "list-windows",
+        "-t",
+        &format!("={}:", tmux.session),
+        "-F",
+        "#{window_name}",
+    ]);
+    let names = String::from_utf8_lossy(&out.stdout);
+    assert!(names.lines().any(|n| n == hub_title), "{names}");
+    assert!(names.lines().any(|n| n == "after-the-hub"), "{names}");
 }

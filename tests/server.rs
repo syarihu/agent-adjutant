@@ -392,7 +392,7 @@ fn hub_start_runs_adj_hub_in_a_tmux_window() {
         .find(|l| l.contains("new-window"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(window.contains("-L scratch"), "{window}");
-    assert!(window.contains("-t adjutant-test"), "{window}");
+    assert!(window.contains("-t =adjutant-test:"), "{window}");
     assert!(
         window.contains(&format!("-c {}", fixture.repo.display())),
         "{window}"

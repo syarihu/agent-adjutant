@@ -1074,11 +1074,17 @@ pub fn tmux_spawn_script(
 ) -> String {
     let prefix = tmux_cmd_prefix(socket);
     let session_q = sh_quote(session);
+    // Targets name the session exactly (`=`), and the window target ends in `:` so the new
+    // window takes the next free index. A bare `-t adjutant` is looked up as a window first and
+    // matches window names by prefix, so a hub window called `adjutant-…` would be taken as the
+    // target and the new window refused with "index N in use".
+    let exact_q = sh_quote(&format!("={session}"));
+    let next_q = sh_quote(&format!("={session}:"));
     let cwd_q = sh_quote(cwd);
     let title_q = sh_quote(title);
     let cmd_q = sh_quote(command);
     format!(
-        "{prefix} has-session -t {session_q} 2>/dev/null || {prefix} new-session -d -s {session_q} -n main; {prefix} new-window -d -t {session_q} -c {cwd_q} -n {title_q} {cmd_q}"
+        "{prefix} has-session -t {exact_q} 2>/dev/null || {prefix} new-session -d -s {session_q} -n main; {prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} {cmd_q}"
     )
 }
 
@@ -2116,9 +2122,9 @@ mod tests {
     #[test]
     fn tmux_spawn_script_generates_session_and_window() {
         let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help");
-        assert!(script.starts_with("tmux has-session -t adjutant"));
+        assert!(script.starts_with("tmux has-session -t =adjutant "));
         assert!(script.contains("new-session -d -s adjutant -n main"));
-        assert!(script.contains("new-window -d -t adjutant -c /tmp -n task-1 'claude --help'"));
+        assert!(script.contains("new-window -d -t =adjutant: -c /tmp -n task-1 'claude --help'"));
 
         let socket_script =
             tmux_spawn_script(Some("custom-sock"), "sess", "/dir", "title", "echo hi");
