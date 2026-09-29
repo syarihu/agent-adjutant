@@ -49,14 +49,15 @@ pub fn spawn(mut command: Command, cols: u16, rows: u16) -> io::Result<Pty> {
     let (mut master, mut slave) = (-1, -1);
     let mut size = window(cols, rows);
     // SAFETY: both out-parameters are valid for writes, the name and termios are optional, and
-    // the window size is only read.
+    // the window size is only read. The size goes as a raw pointer because its mutability differs
+    // between platforms (`*mut` on macOS, `*const` on Linux).
     let made = unsafe {
         libc::openpty(
             &mut master,
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &mut size,
+            &raw mut size,
         )
     };
     if made != 0 {
