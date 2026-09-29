@@ -267,6 +267,22 @@ async function nudgeHub() {
   }
 }
 
+/* Read a task's issue again. On a click only: the board never asks the tracker on its own. */
+async function fetchIssue(id, e) {
+  const line = `adj task fetch-issue --id ${id}`;
+  const button = e?.currentTarget;
+  if (button) button.disabled = true;
+  try {
+    await api(`/api/tasks/${encodeURIComponent(id)}/issue`, { method: 'POST' });
+    note(line, false, 'Issue を取得しました');
+    await refresh();
+  } catch (err) {
+    note(`${line} → ${err.message}`, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function refreshPrs(e) {
   const line = 'adj task refresh';
   const button = e?.currentTarget;

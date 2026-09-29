@@ -440,6 +440,131 @@ fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> PrState {
     parse_pr_state(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// How long reading one issue may take. A person is waiting on the command or the click, and
+/// an issue is one request, so this is shorter than a whole refresh's allowance.
+const ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run `gh` from `main` and return what it printed, or the reason it failed.
+///
+/// Unlike `ask_pr_state`, both pipes are read while the process runs: an issue body can be
+/// far longer than a pipe holds, and a `gh` blocked on a full pipe would look like a hang and
+/// be killed at the deadline.
+fn gh_output(main: &str, args: &[&str], deadline: std::time::Instant) -> Result<String, String> {
+    use std::io::Read;
+    let mut child = std::process::Command::new("gh")
+        .args(args)
+        .current_dir(main)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run gh: {e}"))?;
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    }
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) => {
+                // Killing closes the pipes, which lets the readers finish.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "gh did not answer within {}s",
+                    ISSUE_TIMEOUT.as_secs()
+                ));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("cannot wait for gh: {e}"));
+            }
+        }
+    };
+    let out = out.join().unwrap_or_default();
+    let err = err.join().unwrap_or_default();
+    if !status.success() {
+        let said = String::from_utf8_lossy(&err).trim().to_string();
+        return Err(if said.is_empty() {
+            format!("gh exited with {status}")
+        } else {
+            said
+        });
+    }
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Read one issue through `gh`, from the main checkout so a URL on another host is still
+/// resolved with this machine's `gh` login.
+fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, String> {
+    // A value that starts with '-' would reach `gh` as a flag.
+    if url.starts_with('-') {
+        return Err(format!("not an issue: {url}"));
+    }
+    let deadline = std::time::Instant::now() + ISSUE_TIMEOUT;
+    let json = gh_output(
+        main,
+        // `--` so the URL is only ever a positional, whatever it starts with.
+        &["issue", "view", "--json", "title,body", "--", url],
+        deadline,
+    )?;
+    task::snapshot_from_gh(&json, url, &stamp())
+}
+
+/// Read the task's issue and keep its title and body on the record.
+///
+/// `gh` runs with no lock held, since it can take seconds; the record is read again under the
+/// lock and written only if it still points at the issue that was read, the way `refresh`
+/// treats a merged PR. On failure the record is left as it was, an earlier snapshot included.
+pub fn fetch_issue(ctx: &Context, id: &str) -> Result<Task, String> {
+    let dir = dir(ctx);
+    let before = task::load(&dir, id)?;
+    let url = task::issue_to_fetch(&before)
+        .ok_or("no GitHub issue to read")?
+        .to_string();
+    let snapshot = read_issue(&ctx.repo.main, &url)?;
+    let _lock = lock_task(ctx, id)?;
+    let mut now = task::load(&dir, id)?;
+    if task::issue_to_fetch(&now) != Some(url.as_str()) {
+        return Err("the task's issue changed while it was being read".to_string());
+    }
+    now.issue_snapshot = Some(snapshot);
+    now.updated_at = stamp();
+    task::save(&dir, &now)?;
+    Ok(now)
+}
+
+/// Read the issue of a task that has just started and has none kept. A failure is reported
+/// on stderr and nothing more: the command that got here did what it was asked, and the
+/// issue can be read again from the board or `adj task fetch-issue`.
+///
+/// `changed` is whether this very command started the task or moved its issue. Without it,
+/// an issue `gh` cannot read would make every later `adj task update --note …` wait on `gh`
+/// and print the same failure again.
+fn snapshot_if_started(ctx: &Context, task: Task, changed: bool) -> Task {
+    if !changed || task::needs_snapshot(&task).is_none() {
+        return task;
+    }
+    match fetch_issue(ctx, &task.id) {
+        Ok(read) => read,
+        Err(why) => {
+            eprintln!("could not read the issue: {why}");
+            task
+        }
+    }
+}
+
 /// One record `refresh` looked at, and what came of it.
 pub struct Checked {
     pub task: Task,
@@ -578,6 +703,9 @@ fn with_defaults(input: &Value, id: &str, stamp: &str) -> Result<Value, String> 
     let mut value = input.clone();
     let fields = value.as_object_mut().ok_or("expected an object")?;
     fields.insert("id".to_string(), json!(id));
+    // Only a fetch writes the snapshot: a caller's copy would be text nobody read from the
+    // issue, shown on the board as if somebody had.
+    fields.remove("issueSnapshot");
     fields.insert("createdAt".to_string(), json!(stamp));
     fields.insert("updatedAt".to_string(), json!(stamp));
     fields.entry("kind").or_insert(json!("start"));
@@ -658,6 +786,7 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
         input["title"] = json!(title);
     }
     let (task, handed) = create(&ctx, &input)?;
+    let task = snapshot_if_started(&ctx, task, true);
     if args.json {
         println!(
             "{}",
@@ -721,7 +850,15 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     if args.no_hand_over {
         fields.insert("handOver".to_string(), json!(false));
     }
+    // Read without the lock and `.ok()`: a failed or raced read can only cost one extra fetch
+    // attempt, since `needs_snapshot` still guards it.
+    let before = task::load(&dir(&ctx), args.id).ok();
     let (task, handed) = update(&ctx, args.id, &input)?;
+    let changed = before.is_none_or(|b| {
+        !matches!(b.status, Status::Dispatched | Status::Pr)
+            || task::issue_to_fetch(&b) != task::issue_to_fetch(&task)
+    });
+    let task = snapshot_if_started(&ctx, task, changed);
     if args.json {
         println!(
             "{}",
@@ -815,6 +952,27 @@ pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), Strin
         "{}",
         serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?
     );
+    Ok(())
+}
+
+/// `adj task fetch-issue`: read the issue again, whatever the record holds.
+pub fn fetch_issue_cmd(
+    repo: Option<&str>,
+    hub: Option<&str>,
+    id: &str,
+    as_json: bool,
+) -> Result<(), String> {
+    let ctx = super::context(repo, hub)?;
+    let task = fetch_issue(&ctx, id)?;
+    if as_json {
+        println!("{}", json!({ "task": task }));
+        return Ok(());
+    }
+    let title = task
+        .issue_snapshot
+        .as_ref()
+        .map_or("", |s| s.title.as_str());
+    println!("{} — {}", task.id, title);
     Ok(())
 }
 
@@ -1002,6 +1160,24 @@ mod tests {
             ask_pr_state(".", "--web", std::time::Instant::now()),
             PrState::Unreadable(why) if why.contains("--web")
         ));
+    }
+
+    /// A value that would reach `gh` as a flag is refused before `gh` is run at all.
+    #[test]
+    fn an_issue_that_looks_like_a_flag_is_not_handed_to_gh() {
+        assert!(matches!(
+            read_issue(".", "--web"),
+            Err(why) if why.contains("--web")
+        ));
+    }
+
+    /// The snapshot is text somebody read from the issue; a caller's JSON does not get to
+    /// claim it.
+    #[test]
+    fn a_snapshot_in_the_input_is_dropped() {
+        let input = json!({ "title": "t", "issueSnapshot": { "url": "u", "title": "x", "fetchedAt": "s" } });
+        let filled = with_defaults(&input, "t", "20260922T000000Z").unwrap();
+        assert!(filled.get("issueSnapshot").is_none());
     }
 
     #[test]

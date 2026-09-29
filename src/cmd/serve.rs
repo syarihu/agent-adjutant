@@ -1227,6 +1227,9 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/relay") => {
             reply(out, relay_findings(server, path, &req.body))
         }
+        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/issue") => {
+            reply(out, fetch_issue(server, path))
+        }
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
@@ -1981,6 +1984,13 @@ fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result<Value, Str
     )
 }
 
+/// The board's 「再取得」: read the task's issue again, on a click and never on a poll.
+fn fetch_issue(server: &Server, path: &str) -> Result<Value, String> {
+    let id = task_id_in(path, "issue").ok_or("no such task")?;
+    let task = super::task::fetch_issue(&server.ctx, id)?;
+    Ok(json!({ "task": task }))
+}
+
 /// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
 /// in its log before it redraws.
 fn refresh_tasks(server: &Server) -> Result<Value, String> {
@@ -2285,6 +2295,7 @@ mod tests {
             note: None,
             instruction: None,
             gate_answered_at: None,
+            issue_snapshot: None,
             created_at: "20260922T000000Z".to_string(),
             updated_at: "20260922T000000Z".to_string(),
         }

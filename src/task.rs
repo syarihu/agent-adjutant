@@ -196,6 +196,111 @@ impl Status {
     }
 }
 
+/// The issue's own text as it was when the task started, kept on the record so the board can
+/// show what was asked without a trip to the tracker on every poll.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueSnapshot {
+    /// The issue this was read from. A record whose URL has since changed is stale by this.
+    pub url: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub body: String,
+    /// The body was longer than `ISSUE_BODY_CAP` and only its start is kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// When it was read, in the stamp format `createdAt` uses.
+    pub fetched_at: String,
+}
+
+/// How much of an issue is kept. The record is rewritten whole on every change and the board
+/// sends every record on each poll, so an issue with a pasted log must not ride along in full.
+pub const ISSUE_TITLE_CAP: usize = 256;
+pub const ISSUE_BODY_CAP: usize = 16 * 1024;
+
+/// Whether `url` is an issue this tool knows how to read: an http(s) URL whose path is
+/// `/<owner>/<repo>/issues/<number>`, on github.com or an enterprise host alike. Other
+/// trackers, and pull request URLs, are left alone rather than guessed at.
+pub fn fetchable_issue(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    // Cut at the first `?` or `#` before looking at the path, so a '/' inside a query or
+    // fragment can never pass for one in the path.
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    let Some((host, path)) = rest.split_once('/') else {
+        return false;
+    };
+    // One trailing slash after the number is the same issue.
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let parts: Vec<&str> = path.split('/').collect();
+    !host.is_empty()
+        && parts.len() == 4
+        && !parts[0].is_empty()
+        && !parts[1].is_empty()
+        && parts[2] == "issues"
+        && !parts[3].is_empty()
+        && parts[3].chars().all(|c| c.is_ascii_digit())
+}
+
+/// The issue to read for this task: the URL it was created with, else the one the worker
+/// recorded, and only if it is one `fetchable_issue` accepts.
+pub fn issue_to_fetch(task: &Task) -> Option<&str> {
+    task.issue_url
+        .as_deref()
+        .or(task.issue.as_deref())
+        .filter(|u| fetchable_issue(u))
+}
+
+/// The issue to read now, if there is one and it has not been read yet: the task is started
+/// and has no snapshot of that URL. A snapshot of another URL is as good as none.
+pub fn needs_snapshot(task: &Task) -> Option<&str> {
+    if !matches!(task.status, Status::Dispatched | Status::Pr) {
+        return None;
+    }
+    let url = issue_to_fetch(task)?;
+    match &task.issue_snapshot {
+        Some(s) if s.url == url => None,
+        _ => Some(url),
+    }
+}
+
+/// `text` cut to at most `cap` bytes, at a character boundary. `true` when something was cut.
+fn cut_at(text: &str, cap: usize) -> (&str, bool) {
+    if text.len() <= cap {
+        return (text, false);
+    }
+    let mut end = cap;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&text[..end], true)
+}
+
+/// Build a snapshot from what `gh issue view --json title,body` printed.
+pub fn snapshot_from_gh(json: &str, url: &str, stamp: &str) -> Result<IssueSnapshot, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("cannot read gh's answer: {e}"))?;
+    let title = value
+        .get("title")
+        .and_then(|v| v.as_str())
+        .ok_or("gh's answer has no title")?;
+    // An issue with no description comes back as null, not as an empty string.
+    let body = value.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    let title: String = title.chars().take(ISSUE_TITLE_CAP).collect();
+    let (body, truncated) = cut_at(body, ISSUE_BODY_CAP);
+    Ok(IssueSnapshot {
+        url: url.to_string(),
+        title,
+        body: body.to_string(),
+        truncated,
+        fetched_at: stamp.to_string(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -273,6 +378,10 @@ pub struct Task {
     /// the board does not have to read the whole archive of answered gates on every poll.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_answered_at: Option<String>,
+    /// The issue's title and body as read when the task started; see `IssueSnapshot`. Written
+    /// only by a fetch, never taken from a caller's JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_snapshot: Option<IssueSnapshot>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -505,6 +614,7 @@ mod tests {
                 note: None,
                 instruction: None,
                 gate_answered_at: None,
+                issue_snapshot: None,
                 created_at: stamp.to_string(),
                 updated_at: stamp.to_string(),
             }
@@ -521,6 +631,135 @@ mod tests {
         );
         task.body = "The retry does not seem to take effect".to_string();
         task
+    }
+
+    fn snap(url: &str) -> IssueSnapshot {
+        IssueSnapshot {
+            url: url.to_string(),
+            title: "T".to_string(),
+            body: "B".to_string(),
+            truncated: false,
+            fetched_at: "20260922T041233Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_snapshot_survives_a_save_and_load_and_an_absent_one_is_not_written() {
+        let dir = std::env::temp_dir().join(format!("adj-snap-{}", std::process::id()));
+        let mut task = sample();
+        task.issue_snapshot = Some(snap("https://github.com/a/b/issues/1"));
+        save(&dir, &task).unwrap();
+        assert_eq!(load(&dir, &task.id).unwrap(), task);
+        let text = std::fs::read_to_string(path_of(&dir, &task.id)).unwrap();
+        assert!(text.contains("\"issueSnapshot\""), "{text}");
+        assert!(text.contains("\"fetchedAt\""), "{text}");
+        assert!(!text.contains("truncated"), "{text}");
+
+        task.issue_snapshot = None;
+        save(&dir, &task).unwrap();
+        let text = std::fs::read_to_string(path_of(&dir, &task.id)).unwrap();
+        assert!(!text.contains("issueSnapshot"), "{text}");
+        assert_eq!(load(&dir, &task.id).unwrap().issue_snapshot, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_github_style_issue_url_is_fetchable() {
+        for ok in [
+            "https://github.com/a/b/issues/12",
+            "https://github.com/a/b/issues/12#issuecomment-1",
+            "https://github.com/a/b/issues/12?x=1",
+            "https://github.com/a/b/issues/12/",
+            "https://github.com/a/b/issues/12/#x",
+            "https://ghe.example.com/a/b/issues/7",
+        ] {
+            assert!(fetchable_issue(ok), "{ok}");
+        }
+        for bad in [
+            "https://github.com/a/b/pull/12",
+            "https://github.com/a/b/issues/",
+            "https://github.com/a/b/issues/x1",
+            "https://github.com/a/b/issues/12x",
+            "https://github.com/a/b/issues/12/anything",
+            "https://github.com/a/b/issues/12//",
+            "https://h/a?x/b/issues/1",
+            "https://h/a#x/b/issues/1",
+            "https://linear.app/team/issue/ABC-1/title",
+            "https://example.atlassian.net/browse/ABC-1",
+            "-x",
+            "file:///a/b/issues/1",
+            "",
+        ] {
+            assert!(!fetchable_issue(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_issue_url_is_read_before_the_issue_the_worker_recorded() {
+        let mut task = sample();
+        task.issue = Some("https://github.com/a/b/issues/2".to_string());
+        assert_eq!(
+            issue_to_fetch(&task),
+            Some("https://github.com/a/b/issues/2")
+        );
+        task.issue_url = Some("https://github.com/a/b/issues/1".to_string());
+        assert_eq!(
+            issue_to_fetch(&task),
+            Some("https://github.com/a/b/issues/1")
+        );
+        task.issue_url = Some("https://linear.app/t/issue/A-1".to_string());
+        assert_eq!(issue_to_fetch(&task), None);
+    }
+
+    #[test]
+    fn a_snapshot_is_wanted_once_the_task_is_started_and_none_of_that_url_is_kept() {
+        let url = "https://github.com/a/b/issues/1";
+        let mut task = sample();
+        task.issue_url = Some(url.to_string());
+        for status in [
+            Status::Backlog,
+            Status::Queued,
+            Status::Done,
+            Status::Cancelled,
+        ] {
+            task.status = status;
+            assert_eq!(needs_snapshot(&task), None, "{}", status.as_str());
+        }
+        for status in [Status::Dispatched, Status::Pr] {
+            task.status = status;
+            assert_eq!(needs_snapshot(&task), Some(url), "{}", status.as_str());
+        }
+        task.issue_snapshot = Some(snap(url));
+        assert_eq!(needs_snapshot(&task), None);
+        task.issue_url = Some("https://github.com/a/b/issues/2".to_string());
+        assert_eq!(
+            needs_snapshot(&task),
+            Some("https://github.com/a/b/issues/2")
+        );
+    }
+
+    #[test]
+    fn a_snapshot_is_cut_to_the_caps_and_a_null_body_is_empty() {
+        let url = "https://github.com/a/b/issues/1";
+        let s = snapshot_from_gh(r#"{"title":"T","body":null}"#, url, "s").unwrap();
+        assert_eq!(
+            (s.title.as_str(), s.body.as_str(), s.truncated),
+            ("T", "", false)
+        );
+
+        let big = "あ".repeat(ISSUE_BODY_CAP);
+        let json = serde_json::json!({"title": "t".repeat(400), "body": big}).to_string();
+        let s = snapshot_from_gh(&json, url, "s").unwrap();
+        assert!(s.truncated);
+        assert!(s.body.len() <= ISSUE_BODY_CAP && s.body.len() > ISSUE_BODY_CAP - 4);
+        assert_eq!(s.title.chars().count(), ISSUE_TITLE_CAP);
+
+        let json = serde_json::json!({"title": "t", "body": "x".repeat(ISSUE_BODY_CAP)});
+        let s = snapshot_from_gh(&json.to_string(), url, "s").unwrap();
+        assert!(!s.truncated);
+
+        assert!(snapshot_from_gh("not json", url, "s").is_err());
+        assert!(snapshot_from_gh(r#"{"body":"x"}"#, url, "s").is_err());
     }
 
     #[test]

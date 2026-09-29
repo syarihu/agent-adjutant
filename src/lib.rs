@@ -833,6 +833,17 @@ enum TaskAction {
         #[arg(long)]
         json: bool,
     },
+    /// Read the task's issue again and keep its title and body on the record
+    FetchIssue {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Move a task on. This is how the hub reports back what it did with one
     Update {
         #[arg(long)]
@@ -1213,6 +1224,12 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
         TaskAction::Refresh { repo, hub, json } => {
             cmd::task_refresh_cmd(repo.as_deref(), hub.as_deref(), *json)
         }
+        TaskAction::FetchIssue {
+            repo,
+            hub,
+            id,
+            json,
+        } => cmd::task_fetch_issue_cmd(repo.as_deref(), hub.as_deref(), id, *json),
         TaskAction::Update {
             repo,
             hub,

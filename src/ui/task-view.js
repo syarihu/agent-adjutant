@@ -177,6 +177,8 @@ const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
 function issueNumberOf(url) {
   try { return new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; }
 }
+// Whether a URL is an issue the server can read (GitHub's shape); the server checks it again.
+const isGithubIssue = u => /^https?:\/\/[^/?#]+\/[^/?#]+\/[^/?#]+\/issues\/\d+\/?(?:[?#]|$)/.test(u || '');
 // The number of a pull request URL, also when it points at a tab of it (`…/pull/82/files`).
 function prNumberOf(url) {
   try { return /\/pull\/(\d+)/.exec(new URL(url).pathname)?.[1] || ''; } catch { return ''; }
@@ -198,7 +200,19 @@ function overviewTab(task, all) {
   if (plan?.problem) h += `<div class="body">${md(plan.problem)}</div><div class="source">出典: ${fromPlan}</div>`;
   else if (task.body) h += `<div class="body">${md(task.body)}</div><div class="source">出典: 渡したときの依頼文（計画に problem がまだ無い）</div>`;
   else h += `<div style="color:var(--muted)">まだ書かれていない${task.issueUrl ? ` — ${source}` : ''}</div>`;
-  h += `</div><div class="panel"><h3>ゴール</h3>`;
+  h += `</div>`;
+  // What the issue itself said when the task started, kept on the record. Rendered by md()
+  // like the request: it is text from a tracker, not markup.
+  const snap = task.issueSnapshot;
+  if (snap) {
+    const snapLink = httpUrl(snap.url);
+    h += `<div class="panel"><h3>Issue の本文</h3><div><b>${esc(snap.title)}</b></div>` +
+      (snap.body ? `<div class="body">${md(snap.body)}</div>` : `<div style="color:var(--muted)">本文なし</div>`) +
+      (snap.truncated ? `<div class="source">先頭のみ保存 — 続きは ${snapLink ? `<a href="${esc(snapLink)}" target="_blank" rel="noopener noreferrer">Issue</a>` : 'Issue'} で</div>` : '') +
+      `<div class="source">出典: Issue #${esc(issueNumberOf(snap.url))} を ${esc(when(snap.fetchedAt))}（${esc(ago(snap.fetchedAt))}）に取得 ` +
+      `<button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">再取得</button></div></div>`;
+  }
+  h += `<div class="panel"><h3>ゴール</h3>`;
   if (plan?.goal) h += `<div class="body">${md(plan.goal)}</div><div class="source">出典: ${fromPlan}</div>`;
   else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
   h += `</div>`;
@@ -246,7 +260,12 @@ function overviewTab(task, all) {
   ];
   if (task.instruction) rows.push(['申し送り', `<span style="white-space:pre-wrap">${esc(task.instruction)}</span>`]);
   const link = u => httpUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(u)}</a>` : esc(u);
-  if (task.issueUrl) rows.push(['Issue', link(task.issueUrl)]);
+  const issueRef = task.issueUrl || task.issue;
+  if (issueRef) {
+    const fetchButton = !task.issueSnapshot && isGithubIssue(issueRef)
+      ? ` <button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">本文を取得</button>` : '';
+    rows.push(['Issue', link(issueRef) + fetchButton]);
+  }
   if (task.pr) rows.push(['PR', link(task.pr)]);
   if (task.executor === 'jules') {
     rows.push(['実装', task.jules?.url ? `Jules ${esc(julesText(task.jules))} — ${link(task.jules.url)}`
@@ -552,6 +571,8 @@ function renderTaskView() {
     b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
   main.querySelectorAll('[data-ide]').forEach(b =>
     b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
+  main.querySelectorAll('[data-fetch-issue]').forEach(b =>
+    b.addEventListener('click', e => fetchIssue(b.dataset.fetchIssue, e)));
   bindDecide(main);
   restoreComment(main, commentVal, isCommentFocused, scroll);
 }

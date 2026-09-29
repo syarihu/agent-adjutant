@@ -84,7 +84,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -497,6 +497,15 @@ board's review column) asks `gh` about the PR of every record that is not finish
 the ones whose PR was merged to `done`. A PR that is open, closed without merging, or that `gh`
 cannot read is left alone and listed instead: a closed PR may have been replaced by another,
 and only a person knows. The hub runs it once when it starts; nothing runs it on a timer.
+
+A record holds the task's own text, not the issue's. So that the board can show what the issue
+said, `adjutant task add` and `task update` read a GitHub issue (`gh issue view`) when they
+start the task — dispatched or in review — or change its issue, and keep its title and body on
+the record as `issueSnapshot`, with the time it was read. The title is cut to 256 characters
+and the body to 16 KiB, and a cut body is marked. Other updates do not read it, and the server
+never polls a tracker: an issue edited afterwards is read again only when someone clicks
+「再取得」 on the task or runs `adjutant task fetch-issue --id <id>`. A `gh` that cannot read
+the issue leaves the record as it was and prints why; other trackers' URLs are left alone.
 
 ### Gates
 

@@ -38,9 +38,10 @@ pub use serve::{
     serve, serve_for_hub, server_start, server_status, server_stop,
 };
 pub use task::{
-    AddArgs, UpdateArgs, add as task_add, list as task_list, next_cmd as task_next,
-    refresh as task_refresh, refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json,
-    show as task_show, update_cmd as task_update,
+    AddArgs, UpdateArgs, add as task_add, fetch_issue_cmd as task_fetch_issue_cmd,
+    list as task_list, next_cmd as task_next, refresh as task_refresh,
+    refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
+    update_cmd as task_update,
 };
 
 /// Everything a command needs to know about where it is. Resolved once, at the top, because
