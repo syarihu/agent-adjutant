@@ -280,8 +280,6 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    ```
    Without this, the card stays "in progress" after the PR is open. Whoever watches the board
    cannot tell whether it is waiting for review or still being worked on.
-   Then `adj phase --set pr-bots`. With the PR recorded, a card still in `pr` waits on a person,
-   and until review bots have had their say there is nothing for a person to do.
 6. **Whether to ask Copilot for a review is decided by the brief's "Copilot review" line.** The hub
    writes it from the config's `copilotReview`:
    - `ask` — open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
@@ -300,7 +298,9 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    'reviewers[]=Copilot'`
 8. Print the PR's URL. If a bot is going to review it (Copilot was requested, or `reviewBots`
    names a bot the repository runs by itself — Copilot listed there counts only when it was
-   requested), go straight on to §6's wait for it. If no bot is going to review it, the PR is
+   requested), run `adj phase --set pr-bots` and go straight on to §6's wait for it: with the PR
+   recorded, a card in `pr` waits on a person, and until review bots have had their say there is
+   nothing for a person to do. If no bot is going to review it, the PR is
    people's to review now: `adj phase --set pr`. **If you stop here instead of waiting, set
    `adj phase --set pr` first** — a card left in `pr-bots` never reaches people on the board.
 9. If the task source has an **In Review** state, move it there. The hub already moved it to In
