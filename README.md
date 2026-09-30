@@ -670,6 +670,24 @@ parent-task key, as `adjutant hub --hub KEY` does, before anything points at it 
 description, hub: {id, slug}}`, or `{alreadyRunning, pid, hub}`. The hub appears in `hubs[]`
 once its `adjutant hub` has written its record.
 
+### The Sessions sidebar
+
+The Sessions view has a right sidebar for the selected session, shown or hidden as a whole.
+For a worker with a task it shows the task (key and issue link, parent, where the card sits on
+the two boards), the latest five entries of what was asked and answered with a link to the
+full history, the phase timeline with times, the done-when and stop-at settings, the PR link
+and its state from the record, the branch, base and worktree with its git state, the children
+of the same parent (a queued child can be started through its hub, which is started first when
+it is stopped), the note, and the cached issue body cut to six lines with its refetch. For a
+hub it shows the inbox, the workers it started, a parent-task hub's children and the command it
+runs; for a session with no task or a worktree with no session, what it is and its git state.
+The task, gates and history of a session under a parent-task hub are read from that hub's own
+board. The git state is read when a session is selected, when its phase or branch changes and
+on the refresh button, never on a timer. From 1400px up the choice to show the sidebar is kept
+per browser; below that it starts hidden and floats over the terminal. `state.hubRunner` is the
+hub's command template as written, with its placeholders in place, for the sidebar to show; it
+is never rendered.
+
 ### Gates
 
 A gate is the other half: something an agent has prepared for a person to look at, and the

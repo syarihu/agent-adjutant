@@ -13,8 +13,9 @@ let selectedTaskId = null;
 
 const PREF_KEY = 'adj-board-split';
 // sessionsRail: null follows the window's width until the person chooses 'open' or 'collapsed';
-// sessionsFolded holds the hub ids folded away, and 'orphans' while that group is open.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsRail:null, sessionsFilter:'all', sessionsFolded:[] },
+// sessionsFolded holds the hub ids folded away, and 'orphans' while that group is open;
+// sessionsSide is the detail sidebar's choice, kept only where the window has room for it.
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsRail:null, sessionsFilter:'all', sessionsFolded:[], sessionsSide:'open' },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -98,14 +99,14 @@ const COLUMNS = [...AGENT_COLUMNS, ...HUMAN_COLUMNS];
 
 /* 要対応 is derived from the gate directory, never stored as a status — so the board reads
    the thing it is describing rather than a second copy of it. */
-const openGate = t => (state.gates || []).find(g => g.task === t.id);
+const openGate = (t, data = state) => (data.gates || []).find(g => g.task === t.id);
 
 const humanLabel = col => (HUMAN_COLUMNS.find(c => c.id === col) || {}).label || col;
 const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label || col;
 
 // A worker that names another task is that task's, whatever worktree a stale record still points
 // at; one that names none is a session waiting to be linked, and the worktree joins it.
-const workerOf = t => t && t.worktree && (state.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
+const workerOf = (t, data = state) => t && t.worktree && (data.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
 const stampSecs = stamp => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
@@ -135,9 +136,9 @@ function gateHumanCol(kind) {
   }
 }
 
-function humanColOf(t) {
+function humanColOf(t, data = state) {
   if (!t) return null;
-  const g = openGate(t);
+  const g = openGate(t, data);
   if (g) return gateHumanCol(g.kind);
   if (t.status === 'done' || t.status === 'cancelled') return null;
 
@@ -150,7 +151,7 @@ function humanColOf(t) {
 
   // Local worker tasks. Only a PR handed to human reviewers (`pr`) waits on a person; one
   // waiting on review bots (`pr-bots`) leaves a person nothing to do.
-  const w = workerOf(t);
+  const w = workerOf(t, data);
   if (t.pr) {
     if (w) {
       if (w.phase === 'pr') return 'prreview';
@@ -161,7 +162,7 @@ function humanColOf(t) {
   return null;
 }
 
-function agentColOf(t) {
+function agentColOf(t, data = state) {
   if (!t) return 'before';
   if (t.status === 'backlog' || t.status === 'queued') return 'before';
   if (t.status === 'done' || t.status === 'cancelled') return 'done';
@@ -172,18 +173,18 @@ function agentColOf(t) {
     if (t.pr || js === 'COMPLETED') return 'pr';
     if (['QUEUED', 'PLANNING', 'AWAITING_PLAN_APPROVAL'].includes(js)) return 'plan';
     if (['IN_PROGRESS', 'AWAITING_USER_FEEDBACK', 'PAUSED', 'FAILED'].includes(js)) return 'implement';
-    const g = openGate(t);
+    const g = openGate(t, data);
     if (g?.kind === 'plan') return 'plan';
     if (g?.kind === 'diff' || g?.kind === 'verify') return 'selfreview';
     return 'plan';
   }
 
   // Local worker mapping
-  const w = workerOf(t);
+  const w = workerOf(t, data);
   if (w && w.phase && AGENT_COL_OF_PHASE[w.phase]) {
     return AGENT_COL_OF_PHASE[w.phase];
   }
-  const g = openGate(t);
+  const g = openGate(t, data);
   if (g?.kind === 'plan') return 'plan';
   if (g?.kind === 'diff' || g?.kind === 'verify') return 'selfreview';
   if (t.status === 'pr' || t.pr) return 'pr';
@@ -210,12 +211,12 @@ function waitTone(mins) {
   return mins >= 480 ? 't2' : mins >= 60 ? 't1' : 't0';
 }
 
-function columnOf(t) {
+function columnOf(t, data = state) {
   // Human-owned moves and the hand-over form key off the status-level columns.
   if (t && (t.status === 'backlog' || t.status === 'queued')) return t.status;
-  const hc = humanColOf(t);
+  const hc = humanColOf(t, data);
   if (hc) return hc;
-  return agentColOf(t);
+  return agentColOf(t, data);
 }
 
 /* The only human-owned moves. Everything else belongs to the hub and its workers. */
@@ -229,8 +230,10 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const ideReady = () => state.ideConfigured !== false;
 const ideTitle = () => ideReady() ? 'IDEでworktreeを開く' : 'エディタが未設定です（押すと設定方法を表示します）';
 
-async function api(path, options = {}) {
-  const res = await fetch(BASE + path, {
+/* `api`, against any board of this server: `base` is that board's root, as `BASE` is this
+   page's own. The token is the same for every board on the machine. */
+async function boardApi(base, path, options = {}) {
+  const res = await fetch(base + path, {
     ...options,
     headers: { 'X-Adjutant-Token': TOKEN, 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
@@ -238,6 +241,8 @@ async function api(path, options = {}) {
   if (!res.ok) throw new Error(data.error || `${res.status}`);
   return data;
 }
+
+const api = (path, options) => boardApi(BASE, path, options);
 
 let lastStateJson = '';
 let lastMinute = null;

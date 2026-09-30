@@ -49,6 +49,7 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/review.js"),
     include_str!("../ui/task-view.js"),
     include_str!("../ui/sessions.js"),
+    include_str!("../ui/sessions-side.js"),
     include_str!("../ui/main.js"),
     include_str!("../ui/page-end.html"),
 );
@@ -1493,6 +1494,12 @@ fn state(server: &Server) -> Value {
         // Whether the board can resume a stopped worker, so the page offers it only where it
         // can work, and says why not where it cannot.
         "sessionResume": super::board_actions::resume_state(&settings),
+        // The command line a hub runs, as written: the Sessions sidebar shows the template
+        // with its placeholders in place, and the page never renders it.
+        "hubRunner": settings
+            .hub_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_HUB_RUNNER),
         "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
@@ -2467,6 +2474,26 @@ mod tests {
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
+    }
+
+    #[test]
+    fn the_sessions_view_has_a_sidebar_for_the_selected_session() {
+        for piece in [
+            "id=\"sess-side\"",
+            "id=\"sess-side-toggle\"",
+            "id=\"sess-side-close\"",
+            "id=\"sess-side-body\"",
+            "function renderSessionSidebar",
+            "function boardApi",
+            "function sideBoard",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        // The sidebar draws with the timeline of `task-view.js`, and `main.js` starts polling
+        // only after both are defined.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("function timelineHtml") < at("function renderSessionSidebar"));
+        assert!(at("function renderSessionSidebar") < at("openPendingSession)"));
     }
 
     #[test]

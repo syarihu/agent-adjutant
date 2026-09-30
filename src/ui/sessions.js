@@ -33,17 +33,8 @@ function boardOfSession(s) {
   return { hubId, hub, slug: hub?.slug || null, base, own: base === BASE };
 }
 
-/* `api`, but against the board the session belongs to. The token is the same for every board
-   on the machine. */
-async function sessionApi(s, path, options = {}) {
-  const res = await fetch(boardOfSession(s).base + path, {
-    ...options,
-    headers: { 'X-Adjutant-Token': TOKEN, 'Content-Type': 'application/json', ...(options.headers || {}) },
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `${res.status}`);
-  return data;
-}
+/* `api`, but against the board the session belongs to. */
+const sessionApi = (s, path, options) => boardApi(boardOfSession(s).base, path, options);
 
 function sessionActivity(s) {
   return state.now != null && s.lastActivityAt != null && state.now - s.lastActivityAt >= IDLE_AFTER_SECS
@@ -164,7 +155,10 @@ const sessView = {
   mounted: null,     // { sessionId, term, ended }
   pending: null,     // a deep link, opened once the first poll says whether a terminal exists
   treeSig: '',
-  taskTitles: {},    // slug -> { [taskId]: title }, for a session of another board
+  boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles and the sidebar
+  sideNarrowOpen: false, // the sidebar below 1400px: floats over the terminal, never saved
+  sideSig: '',
+  git: null,         // { id, at, data, error, loading }: the selected worktree's git state, for the sidebar
   screens: {},       // session id -> { lines, at }: the last lines this page saw of its terminal
   reconnectWhenReady: null, // a session just resumed or started: connect once its window exists
   gateError: null,   // { id, text } shown in the gate banner
@@ -206,6 +200,8 @@ function openSessionsView(id, { from } = {}) {
     if (id) selectSession(id);
     return;
   }
+  // Below 1400px the sidebar floats over the terminal, so it starts out of the way.
+  sessView.sideNarrowOpen = false;
   setView('sessions');
   if (id) selectSession(id);
   // After the selection, which clears a link left over from an earlier switch.
@@ -228,6 +224,7 @@ function selectSession(id) {
   if (changed) {
     sessView.back = null;
     sessView.last = null;
+    sessView.git = null;
     sessView.reconnectWhenReady = null;
     sessView.gateError = null;
     showSessNotice('');
@@ -262,16 +259,9 @@ function taskTitleOf(s) {
   if (own) return own.title || '';
   const b = boardOfSession(s);
   if (b.own || !b.slug) return '';
-  const known = sessView.taskTitles[b.slug];
-  if (known === undefined) {
-    sessView.taskTitles[b.slug] = null;
-    sessionApi(s, '/api/state').then(other => {
-      sessView.taskTitles[b.slug] = Object.fromEntries((other.tasks || []).map(t => [t.id, t.title || '']));
-      if (view === 'sessions') renderSessionContext();
-    }).catch(() => { sessView.taskTitles[b.slug] = {}; });
-    return '';
-  }
-  return known?.[s.task] || '';
+  const known = sessView.boards[b.slug];
+  if (!known) { loadSideBoard(b.slug, b.base, sideSignal(s)); return ''; }
+  return (known.data?.tasks || []).find(t => t.id === s.task)?.title || '';
 }
 
 function renderSessionContext() {
@@ -436,6 +426,7 @@ function renderSessionsView() {
   renderSessionContext();
   renderSessionActions(cur);
   renderSessionGate(cur);
+  renderSessionSidebar();
 }
 
 /* ── Actions on the selected session, and the gate it waits on ── */

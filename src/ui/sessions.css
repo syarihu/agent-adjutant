@@ -1,5 +1,5 @@
 /* ── セッション view: a session tree beside the selected session's terminal ── */
-#sessions-view { display:none; height:100%; position:relative; grid-template-columns:auto minmax(0,1fr); }
+#sessions-view { display:none; height:100%; position:relative; grid-template-columns:auto minmax(0,1fr) auto; }
 .sess-rail {
   grid-column:1; width:300px; min-height:0; display:flex; flex-direction:column;
   background:var(--md-sys-color-surface-container-low);
@@ -142,6 +142,40 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .cleanup-force p { margin:8px 0 0; }
 .cleanup-force input { width:100%; box-sizing:border-box; padding:8px 10px; font:13px var(--font-mono); }
 
+/* The detail sidebar: a column of its own where there is room, floating over the terminal where
+   there is not (below). Its sections are always open. */
+.sess-side {
+  grid-column:3; width:340px; min-height:0; display:flex; flex-direction:column;
+  background:var(--md-sys-color-surface-container-low);
+  border-left:1px solid var(--md-sys-color-outline-variant);
+}
+.sess-side[hidden] { display:none; }
+.sess-side-head { flex:none; display:flex; align-items:center; justify-content:space-between; padding:8px 10px 8px 14px; border-bottom:1px solid var(--md-sys-color-outline-variant); }
+.sess-side-title { font-weight:700; font-size:13px; }
+.sess-side-body { flex:1; min-height:0; overflow-y:auto; padding:4px 14px 16px; font-size:12.5px; }
+.sess-side-sec { padding:12px 0; border-bottom:1px solid var(--md-sys-color-outline-variant); }
+.sess-side-sec:last-child { border-bottom:0; }
+.sess-side-sec h3 { margin:0 0 8px; font-size:12px; font-weight:800; letter-spacing:.04em; color:var(--md-sys-color-primary); }
+.sess-side .kv { gap:4px 12px; font-size:12.5px; }
+.sess-side .source { margin-top:4px; }
+.sess-side .timeline li { grid-template-columns:84px 1fr; gap:10px; padding:6px 0; }
+.sess-side a { color:var(--md-sys-color-primary); overflow-wrap:anywhere; }
+.sess-side-btn { padding:2px 8px; font-size:12px; }
+.sess-side-actions { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin-top:6px; }
+.sess-side-facts { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:2px; }
+.sess-side-facts li.warn { color:var(--md-sys-color-error); }
+.sess-side-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.sess-side-list li { display:flex; flex-direction:column; align-items:flex-start; gap:2px; overflow-wrap:anywhere; }
+.sess-side-child { display:flex; flex-direction:column; gap:2px; }
+.sess-side-child .who, .sess-side-list .who { color:var(--md-sys-color-on-surface-variant); font-size:12px; }
+.sess-side-pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.sess-side-issue {
+  margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere;
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; line-clamp:6; overflow:hidden;
+}
+#handover-hub-note { margin:0; font-size:12px; color:var(--md-sys-color-outline); }
+#handover-hub-note[hidden] { display:none; }
+
 /* Icons only: the row keeps its state icon, the rest is in its tooltip. */
 .sess-rail.collapsed { width:64px; }
 .sess-rail.collapsed .sess-filters,
@@ -166,6 +200,14 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
     box-shadow:var(--md-elevation-4);
   }
   .sess-strip-note { margin-left:0; }
+}
+
+/* Below 1400px the sidebar floats over the terminal rather than taking its width. */
+@media (max-width: 1399px) {
+  .sess-side {
+    grid-column:auto; position:absolute; inset:0 0 0 auto; z-index:31;
+    width:min(340px, calc(100% - 32px)); box-shadow:var(--md-elevation-4);
+  }
 }
 
 /* On a narrow window the main rail is icons only too, so the terminal keeps its width. */

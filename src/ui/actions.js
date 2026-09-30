@@ -23,8 +23,8 @@ async function move(id, to, before) {
    no gap, that one and the ones after it move down first, so no two queued tasks share an
    order. They move from the last one up, each into an order nobody holds, so a request that
    fails part way leaves the queue in the same sequence with no order shared. Null then. */
-async function queueOrder(id, before) {
-  const queue = (state.tasks || []).filter(t => t.status === 'queued' && t.id !== id)
+async function queueOrder(id, before, dest = null) {
+  const queue = (dest?.tasks || state.tasks || []).filter(t => t.status === 'queued' && t.id !== id)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   const at = before ? queue.findIndex(t => t.id === before) : -1;
   if (at < 0) return (queue.length ? (queue[queue.length - 1].order || 0) : 0) + 1;
@@ -40,7 +40,7 @@ async function queueOrder(id, before) {
   for (const [tid, order] of shifts.reverse()) {
     const line = `adj task update --id ${tid} --order ${order}`;
     try {
-      await api(`/api/tasks/${encodeURIComponent(tid)}`, {
+      await boardApi(dest?.base || BASE, `/api/tasks/${encodeURIComponent(tid)}`, {
         method:'POST', body: JSON.stringify({ order }),
       });
       note(line, false, '間に入れる場所を空けるため後ろへずらしました');
@@ -54,6 +54,9 @@ async function queueOrder(id, before) {
 
 let handoverTargetTaskId = null;
 let handoverTargetBefore = null;
+/* Set when the task is on another board (the Sessions sidebar hands over a child of a
+   parent-task hub): { tasks, base, hubId, startHub }. Null for a task of this page's board. */
+let handoverTarget = null;
 
 /* Opened by an IDE button while no editor is configured: what to write, and where. */
 function openIdeDialog() {
@@ -217,11 +220,14 @@ async function hubClose(id) {
   }
 }
 
-function openHandoverDialog(id, before = null) {
-  const task = (state.tasks || []).find(t => t.id === id);
+function openHandoverDialog(id, before = null, target = null) {
+  const task = (target?.tasks || state.tasks || []).find(t => t.id === id);
   if (!task) return;
   handoverTargetTaskId = id;
   handoverTargetBefore = before;
+  handoverTarget = target;
+  const hubNote = document.getElementById('handover-hub-note');
+  if (hubNote) hubNote.hidden = !target?.startHub;
   const dialog = document.getElementById('handover-dialog');
   const titleEl = document.getElementById('handover-task-title');
   const textarea = document.getElementById('handover-instruction');
@@ -248,6 +254,7 @@ function closeHandoverDialog() {
   if (dialog && dialog.open) dialog.close();
   handoverTargetTaskId = null;
   handoverTargetBefore = null;
+  handoverTarget = null;
 }
 
 async function submitHandover(e) {
@@ -257,17 +264,30 @@ async function submitHandover(e) {
   const instruction = textarea ? textarea.value.trim() : '';
   const id = handoverTargetTaskId;
   const before = handoverTargetBefore;
+  const target = handoverTarget;
   closeHandoverDialog();
+  // A hub that is stopped is started first, so what is handed over does not wait for someone
+  // to notice. The route is this page's own: it reaches the hubs of the whole repository.
+  if (target?.startHub) {
+    const line = `adj hub --tab --hub=${target.hubId}`;
+    try {
+      await api(`/api/hubs/${encodeURIComponent(target.hubId)}/start`, { method:'POST', body:'{}' });
+      note(line, false, 'hub を tmux で起動しました');
+    } catch (err) {
+      note(`${line} → ${err.message}`, true);
+      return;
+    }
+  }
   // Dropped onto a card: the place is made in the queue just before it is handed over.
-  const order = await queueOrder(id, before);
+  const order = await queueOrder(id, before, target);
   if (order == null) return;
-  hand(id, instruction, order);
+  hand(id, instruction, order, target);
 }
 
-async function hand(id, instruction = null, order = null) {
+async function hand(id, instruction = null, order = null, target = null) {
   // Handed over without a place in mind, the task joins the end of the queue. Its own order
   // dates from when it was created, which would put it ahead of tasks handed over before it.
-  if (order == null) order = await queueOrder(id, null);
+  if (order == null) order = await queueOrder(id, null, target);
   const body = { status:'queued' };
   // A string came from a field the person saw, so an empty one clears the instruction kept on
   // the task. Null is a hand-over with no field on screen, which leaves it as it was.
@@ -279,16 +299,17 @@ async function hand(id, instruction = null, order = null) {
     : body.instruction === '' ? `adj task update --id ${id} --status queued --instruction ''`
     : `adj task update --id ${id} --status queued`;
   await update(id, body, cmd,
-    'レコードを queued にして、受信箱に kind:request を配置し hubWake を実行します');
+    'レコードを queued にして、受信箱に kind:request を配置し hubWake を実行します', target);
 }
 
-async function update(id, body, line, why) {
+async function update(id, body, line, why, target = null) {
   try {
-    const data = await api(`/api/tasks/${encodeURIComponent(id)}`, {
+    const data = await boardApi(target?.base || BASE, `/api/tasks/${encodeURIComponent(id)}`, {
       method:'POST', body: JSON.stringify(body),
     });
     note(line, false, why + handedNote(data.handed));
     await refresh();
+    if (target) refetchSideBoard(target.base);
   } catch (e) {
     note(`${line} → ${e.message}`, true);
   }
@@ -306,14 +327,15 @@ async function nudgeHub() {
 }
 
 /* Read a task's issue again. On a click only: the board never asks the tracker on its own. */
-async function fetchIssue(id, e) {
+async function fetchIssue(id, e, base = BASE) {
   const line = `adj task fetch-issue --id ${id}`;
   const button = e?.currentTarget;
   if (button) button.disabled = true;
   try {
-    await api(`/api/tasks/${encodeURIComponent(id)}/issue`, { method: 'POST' });
+    await boardApi(base, `/api/tasks/${encodeURIComponent(id)}/issue`, { method: 'POST' });
     note(line, false, 'Issue を取得しました');
     await refresh();
+    if (base !== BASE) refetchSideBoard(base);
   } catch (err) {
     note(`${line} → ${err.message}`, true);
   } finally {

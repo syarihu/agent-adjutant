@@ -46,7 +46,10 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
     // The page itself is the board's, and its calls are relative to where it was opened.
     let (status, page) = resident.get(&format!("/b/{SLUG}/"));
     assert_eq!(status, 200);
-    assert!(page.contains("BASE + path"), "the page does not use BASE");
+    assert!(
+        page.contains("boardApi(BASE, path"),
+        "the page does not use BASE"
+    );
 
     let (status, list) = resident.get("/api/boards");
     assert_eq!(status, 200);
@@ -1073,6 +1076,68 @@ fn children_of(state: &serde_json::Value, hub: &str) -> u64 {
         .unwrap_or_else(|| panic!("no hub {hub} in {state}"))["children"]
         .as_u64()
         .unwrap()
+}
+
+#[test]
+fn the_state_names_the_command_a_hub_runs() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+
+    // Unset, it is the built-in line, with its placeholders still in it.
+    let runner = state_of(&resident)["hubRunner"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        runner.contains("{name}") && runner.contains("{sessionId}"),
+        "{runner}"
+    );
+    drop(resident);
+
+    // Set, it is what was written, and the `{name}` is left for the page to fill in.
+    write_tmux_config_with(&fixture, |c| {
+        c["hubRunner"] = serde_json::json!("my-agent {name}");
+    });
+    let resident = Resident::start(&fixture);
+    assert_eq!(state_of(&resident)["hubRunner"], "my-agent {name}");
+}
+
+#[test]
+fn a_parent_hubs_board_gives_the_sidebar_its_tasks_history_and_issue() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let (status, body) = resident.post(
+        &format!("/b/{FEATURE_SLUG}/api/tasks"),
+        &serde_json::json!({"title": "A child of the feature"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The task is on that hub's board and not on the repository's.
+    let listed = |path: &str| -> Vec<String> {
+        let (status, body) = resident.get(path);
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(listed(&format!("/b/{FEATURE_SLUG}/api/state")).contains(&id));
+    assert!(!listed(&format!("/b/{SLUG}/api/state")).contains(&id));
+
+    // Its history is read from the same board, which is where the page asks for it.
+    let (status, body) = resident.get(&format!("/b/{FEATURE_SLUG}/api/tasks/{id}/history"));
+    assert_eq!(status, 200, "{body}");
+    let history: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(history["answered"].is_array(), "{history}");
+    assert!(history["records"].is_array(), "{history}");
 }
 
 #[test]

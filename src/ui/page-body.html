@@ -174,6 +174,7 @@
             <button type="button" class="tool-btn" id="sess-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-menu" title="そのほかの操作" aria-label="そのほかの操作" hidden><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
             <div class="sess-menu" id="sess-menu" role="menu" hidden></div>
           </div>
+          <button type="button" class="tool-btn" id="sess-side-toggle" aria-controls="sess-side" aria-expanded="false" aria-label="詳細を表示" title="詳細を表示"><span class="material-symbols-outlined" aria-hidden="true">right_panel_open</span></button>
         </div>
         <div class="sess-notice" id="sess-notice" hidden></div>
         <section class="sess-gate" id="sess-gate" aria-label="確認待ちの gate" hidden></section>
@@ -188,6 +189,13 @@
           <span class="sess-strip-note">切り替えても離れてもセッションは止まりません（切り離すだけです）</span>
         </div>
       </section>
+      <aside class="sess-side" id="sess-side" aria-label="選んだセッションの詳細" hidden>
+        <div class="sess-side-head">
+          <span class="sess-side-title">詳細</span>
+          <button type="button" class="tool-btn" id="sess-side-close" aria-label="詳細を閉じる" title="詳細を閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+        </div>
+        <div class="sess-side-body" id="sess-side-body"></div>
+      </aside>
     </div>
   </main>
 
@@ -299,6 +307,7 @@
     </div>
     <div class="body">
       <div id="handover-task-title" style="font-size:13.5px;font-weight:600;color:var(--md-sys-color-on-surface);background:var(--md-sys-color-surface-container);padding:10px 14px;border-radius:var(--md-shape-corner-sm);line-height:1.4;"></div>
+      <p id="handover-hub-note" hidden>hub が止まっているため、先に起動します</p>
       <label class="field">
         <span>エージェントへの申し送り（指示）</span>
         <textarea id="handover-instruction" placeholder="着手にあたってエージェントに伝えたい前提条件や追加指示があれば入力（空欄でも渡せます）..." rows="4"></textarea>
