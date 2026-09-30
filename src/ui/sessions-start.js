@@ -473,10 +473,15 @@ const linkDlg = { s: null, data: {}, errors: {}, busy: false };
    the resident server there is only this page's own. */
 function linkBoards() {
   const seen = new Map();
+  // Without the resident server every hub falls back to BASE, and the first of them is the
+  // repository hub even on a page served for a parent-task hub.
+  const pageHub = (state.hubs || []).find(h => h.name === state.hubName);
   for (const h of state.hubs || []) {
     if (h.parent && !h.key) continue;
     const base = state.resident && h.slug ? `/b/${h.slug}` : BASE;
-    if (!seen.has(base)) seen.set(base, { base, hub: h, own: base === BASE });
+    if (!seen.has(base)) {
+      seen.set(base, { base, hub: base === BASE ? pageHub || h : h, own: base === BASE });
+    }
   }
   return [...seen.values()];
 }
