@@ -427,28 +427,7 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
     if open.iter().all(|g| !g.wait || g.answered_by_hub()) {
         return Vec::new();
     }
-    // A gate already answered on the board still shows the worker got as far as opening it.
-    // Only files written since the earliest waiting gate was opened can be signals; the
-    // archive only grows, so it is not parsed whole on every poll. A little slack for
-    // coarse file times, and mtime only prunes: `resumed_at` and the filter below decide.
-    let since = open
-        .iter()
-        .filter(|g| g.wait && !g.answered_by_hub())
-        .filter_map(|g| {
-            std::fs::metadata(gate::path_of(&dir(ctx), &g.id))
-                .and_then(|m| m.modified())
-                .ok()
-        })
-        .min()
-        .map(|t| t - std::time::Duration::from_secs(2))
-        .unwrap_or(std::time::UNIX_EPOCH);
-    let signals: Vec<Gate> = open
-        .iter()
-        .cloned()
-        .chain(gate::list_modified_since(&records_dir(ctx), since))
-        .chain(gate::list_modified_since(&answered_dir(ctx), since))
-        .filter(|g| !g.answered_by_hub())
-        .collect();
+    let signals = gate::resume_signals(&open, &dir(ctx), &records_dir(ctx), &answered_dir(ctx));
     let mut closed = Vec::new();
     for g in &open {
         if !g.wait || g.answered_by_hub() {

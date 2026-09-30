@@ -494,6 +494,17 @@ pub struct GitState {
 
 const UNPUSHED_LISTED: usize = 20;
 
+/// Pathspecs that leave out what adjutant itself writes into a worktree: the worker's record,
+/// outbox, saved session and starting marker, and the brief. They are bookkeeping, not work,
+/// and in a repository that does not ignore `.claude/` they would make every worker's
+/// worktree look dirty.
+const WORKTREE_ONLY: &[&str] = &[
+    "--",
+    ".",
+    ":(exclude).claude/adjutant-*",
+    ":(exclude).claude/task-brief.md",
+];
+
 struct GitOut {
     code: Option<i32>,
     stdout: String,
@@ -539,7 +550,10 @@ fn git_until(args: &[&str], cwd: &Path, deadline: std::time::Instant) -> Result<
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = reader.join();
+                // Not joined: a grandchild that inherited the pipe keeps it open past the
+                // kill, and waiting for its end would hold the deadline hostage. The thread
+                // ends with the pipe.
+                drop(reader);
                 return Err("git did not answer in time".to_string());
             }
             Err(e) => return Err(format!("cannot wait for git: {e}")),
@@ -573,7 +587,7 @@ pub fn worktree_git_state(
     let branch = line(git(&["symbolic-ref", "-q", "--short", "HEAD"])?);
     let head = line(git(&["rev-parse", "--short", "HEAD"])?);
 
-    let status = git(&["status", "--porcelain=v1", "-z"])?;
+    let status = git(&[&["status", "--porcelain=v1", "-z"], WORKTREE_ONLY].concat())?;
     if !status.ok() {
         return Err(format!("{} is not a git worktree", worktree.display()));
     }
@@ -591,7 +605,7 @@ pub fn worktree_git_state(
         }
     }
     if head.is_some() {
-        let numstat = git(&["diff", "--numstat", "HEAD"])?;
+        let numstat = git(&[&["diff", "--numstat", "HEAD"], WORKTREE_ONLY].concat())?;
         for row in numstat.stdout.lines() {
             let mut cols = row.split('\t');
             // `-` stands in for both counts of a binary file.
@@ -600,23 +614,41 @@ pub fn worktree_git_state(
         }
     }
 
-    let upstream = head
-        .as_ref()
-        .and_then(|_| line(git(&["rev-parse", "--abbrev-ref", "@{u}"]).ok()?))
-        .filter(|u| u != "@{u}");
+    // Only a branch that has commits can have an upstream. `config` exits 1 for a key that is
+    // not there, which is the one answer that means "none"; any other failure, and a git that
+    // did not answer in time, is an error rather than a branch with nothing to push.
+    let mut upstream = None;
+    let mut tracks_own_name = false;
+    if let (Some(_), Some(name)) = (&head, &branch) {
+        let merge = git(&["config", "--get", &format!("branch.{name}.merge")])?;
+        match merge.code {
+            Some(0) => {
+                // Absent when the remote-tracking branch it names is gone, which is a branch
+                // whose upstream was deleted, not one that is unreadable.
+                upstream = line(git(&["rev-parse", "--abbrev-ref", "@{u}"])?);
+                tracks_own_name = merge.stdout.trim().strip_prefix("refs/heads/") == Some(name);
+            }
+            Some(1) => {}
+            _ => return Err("git could not read the branch's upstream".to_string()),
+        }
+    }
+    // Counted against the upstream only when it is the branch's own counterpart. A worktree
+    // made with `worktree add -b x origin/main` has `origin/main` as its upstream, and against
+    // that every commit not yet in main would count, and none would once it is merged.
+    let against_upstream = upstream.is_some() && tracks_own_name;
     let mut unpushed = Unpushed {
         count: 0,
         commits: Vec::new(),
-        against: if upstream.is_some() {
+        against: if against_upstream {
             "upstream"
         } else {
             "remotes"
         },
     };
     if head.is_some() {
-        let range: &[&str] = match upstream {
-            Some(_) => &["@{u}..HEAD"],
-            None => &["HEAD", "--not", "--remotes"],
+        let range: &[&str] = match against_upstream {
+            true => &["@{u}..HEAD"],
+            false => &["HEAD", "--not", "--remotes"],
         };
         let mut count = vec!["rev-list", "--count"];
         count.extend(range);
@@ -665,55 +697,73 @@ fn merged_into(
         .map(str::trim)
         .filter(|b| !b.is_empty())
         .map(str::to_string);
-    let name = match named {
-        Some(name) => Some(name),
+    // Without a base of its own, the remote's default; and where a clone never set
+    // `origin/HEAD`, the two names nearly every repository's default has.
+    let mut candidates = Vec::new();
+    match &named {
+        Some(name) => candidates.push(name.clone()),
         None => {
             let out = git(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"])?;
-            Some(out.stdout.trim().to_string()).filter(|n| out.ok() && !n.is_empty())
+            if out.ok() && !out.stdout.trim().is_empty() {
+                candidates.push(out.stdout.trim().to_string());
+            }
+            candidates.extend(["main".to_string(), "master".to_string()]);
         }
-    };
-    let Some(name) = name else {
-        return Ok(told(None, None, "no base branch is known"));
-    };
-    let base = name.strip_prefix("origin/").unwrap_or(&name).to_string();
-    if !has_head {
-        return Ok(told(Some(base), None, "no commit yet"));
     }
-    // The remote-tracking branch first: a local one that was never updated says "not merged"
-    // about work the remote already has.
-    for (full, shown) in [
-        (
-            format!("refs/remotes/origin/{base}"),
-            format!("origin/{base}"),
-        ),
-        (format!("refs/heads/{base}"), base.clone()),
-    ] {
-        let probe = format!("{full}^{{commit}}");
-        if !git(&["rev-parse", "--verify", "-q", &probe])?.ok() {
-            continue;
-        }
-        let out = git(&["merge-base", "--is-ancestor", "HEAD", &full])?;
-        return Ok(match out.code {
-            Some(0) => MergedInto {
-                base: Some(base),
-                reference: Some(shown),
-                merged: Some(true),
-                reason: None,
-            },
-            Some(1) => MergedInto {
-                base: Some(base),
-                reference: Some(shown),
-                merged: Some(false),
-                reason: None,
-            },
-            _ => told(Some(base), Some(shown), "git could not compare them"),
+    let candidates: Vec<String> = candidates
+        .into_iter()
+        .map(|c| c.strip_prefix("origin/").unwrap_or(&c).to_string())
+        .fold(Vec::new(), |mut all, c| {
+            if !all.contains(&c) {
+                all.push(c);
+            }
+            all
         });
+    if !has_head {
+        return Ok(told(
+            candidates.first().cloned().filter(|_| named.is_some()),
+            None,
+            "no commit yet",
+        ));
     }
-    Ok(told(
-        Some(base),
-        None,
-        "the base branch is not in this repository",
-    ))
+    for base in &candidates {
+        // The remote-tracking branch first: a local one that was never updated says "not
+        // merged" about work the remote already has.
+        for (full, shown) in [
+            (
+                format!("refs/remotes/origin/{base}"),
+                format!("origin/{base}"),
+            ),
+            (format!("refs/heads/{base}"), base.clone()),
+        ] {
+            let probe = format!("{full}^{{commit}}");
+            if !git(&["rev-parse", "--verify", "-q", &probe])?.ok() {
+                continue;
+            }
+            let out = git(&["merge-base", "--is-ancestor", "HEAD", &full])?;
+            let merged = match out.code {
+                Some(0) => Some(true),
+                Some(1) => Some(false),
+                _ => None,
+            };
+            return Ok(MergedInto {
+                base: Some(base.clone()),
+                reference: Some(shown),
+                merged,
+                reason: merged
+                    .is_none()
+                    .then(|| "git could not compare them".to_string()),
+            });
+        }
+    }
+    Ok(match named {
+        Some(_) => told(
+            candidates.first().cloned(),
+            None,
+            "the base branch is not in this repository",
+        ),
+        None => told(None, None, "no base branch is known"),
+    })
 }
 
 #[cfg(test)]
@@ -768,6 +818,16 @@ mod tests {
         commit_file(dir, "gone.txt", "x\ny\n");
         std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\nfour\n").unwrap();
         std::fs::write(dir.join("new.txt"), "untracked\n").unwrap();
+        // What adjutant writes into a worktree is not work, even where `.claude/` is not
+        // ignored; anything else in there is.
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        for name in [
+            "adjutant-worker.json",
+            "adjutant-outbox.md",
+            "task-brief.md",
+        ] {
+            std::fs::write(dir.join(".claude").join(name), "x\n").unwrap();
+        }
         std::fs::write(dir.join("blob.bin"), [0u8, 159, 146, 150, 0]).unwrap();
         run_git(dir, &["add", "blob.bin"]);
         std::fs::remove_file(dir.join("gone.txt")).unwrap();
@@ -777,6 +837,8 @@ mod tests {
         // a.txt edited, blob.bin staged, gone.txt deleted; new.txt is not tracked.
         assert_eq!(state.uncommitted.files, 3);
         assert_eq!(state.uncommitted.untracked, 1);
+        std::fs::write(dir.join(".claude").join("settings.json"), "{}\n").unwrap();
+        assert_eq!(state_of(dir, None).uncommitted.untracked, 2);
         // a.txt: one line changed and one added; gone.txt: two lines; the binary counts none.
         assert_eq!(state.uncommitted.insertions, 2);
         assert_eq!(state.uncommitted.deletions, 3);
@@ -796,9 +858,18 @@ mod tests {
         assert_eq!(state.unpushed.against, "remotes");
         assert_eq!(state.unpushed.count, 2);
         assert_eq!(state.unpushed.commits[0].subject, "add b.txt");
-        // No remote at all: nothing to say the base is.
-        assert_eq!(state.merged.merged, None);
-        assert!(state.merged.reason.is_some());
+        // No `origin/HEAD` and no remote: the local `main` stands in for the base.
+        assert_eq!(state.merged.reference.as_deref(), Some("main"));
+        assert_eq!(state.merged.merged, Some(true));
+
+        run_git(dir, &["checkout", "-q", "-b", "feature"]);
+        commit_file(dir, "c.txt", "3\n");
+        assert_eq!(state_of(dir, None).merged.merged, Some(false));
+        run_git(dir, &["branch", "-m", "main", "trunk"]);
+        let unknown = state_of(dir, None);
+        assert_eq!(unknown.merged.merged, None);
+        assert_eq!(unknown.merged.base, None);
+        assert!(unknown.merged.reason.is_some());
     }
 
     #[test]
@@ -849,6 +920,15 @@ mod tests {
         let landed = state_of(&work, Some("main"));
         assert_eq!(landed.merged.merged, Some(true));
         assert_eq!(landed.merged.reference.as_deref(), Some("origin/main"));
+
+        // A worktree started from `origin/main` has it as its upstream, but what it has not
+        // pushed is measured against the remotes, not against main.
+        run_git(&work, &["checkout", "-q", "-b", "task", "origin/main"]);
+        commit_file(&work, "d.txt", "4\n");
+        let task = state_of(&work, None);
+        assert_eq!(task.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(task.unpushed.against, "remotes");
+        assert_eq!(task.unpushed.count, 1);
 
         // A base that is nowhere in the repository is said, not guessed.
         let unknown = state_of(&work, Some("release"));

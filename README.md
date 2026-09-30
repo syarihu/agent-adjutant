@@ -579,10 +579,15 @@ number waiting in all.
 
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
-`deletions` against HEAD), `upstream`, `unpushed` (`count`, the newest 20 `commits`, and what
-they were counted `against`: the upstream, or every remote when the branch has none) and
-`merged` (`base`, `ref`, `merged`, and a `reason` when it could not be told). The base is the
-task's own when it has one, otherwise the remote's default branch. Nothing is fetched, so
+`deletions` against HEAD; the files adjutant itself writes under `.claude/` — `adjutant-*` and
+`task-brief.md` — are not counted), `upstream` (as configured), `unpushed` (`count`, the newest
+20 `commits`, and what they were counted `against`) and `merged` (`base`, `ref`, `merged`, and
+a `reason` when it could not be told). Unpushed commits are counted against the upstream only
+when it is the branch's own counterpart (same branch name); otherwise, and when there is no
+upstream, against every remote (`HEAD --not --remotes`). A worktree made from `origin/main`
+has `origin/main` as its upstream, and counting against that would say nothing once its work
+is merged. The base is the task's own when it has one, otherwise the remote's default branch
+(`origin/HEAD`, then `main`, then `master`, remote-tracking before local). Nothing is fetched, so
 `unpushed` and `merged` are as of the last fetch; a squash or rebase merge is not seen as
 merged, because the commits it left in the base are not the ones in the worktree. The whole
 check has a 10-second deadline, and a worktree that is gone is refused. An unknown session id

@@ -1700,8 +1700,8 @@ fn the_git_route_reports_a_dirty_worktree_and_refuses_a_session_it_does_not_know
     let git: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(git["branch"], "dirty", "{body}");
     assert_eq!(git["uncommitted"]["files"], 1, "{body}");
-    // scratch.txt, and the `.claude` directory the worker's own records sit in.
-    assert_eq!(git["uncommitted"]["untracked"], 2, "{body}");
+    // The worker's own records in `.claude` are not work.
+    assert_eq!(git["uncommitted"]["untracked"], 1, "{body}");
     assert_eq!(git["uncommitted"]["insertions"], 2, "{body}");
     assert_eq!(git["uncommitted"]["deletions"], 1, "{body}");
     // No remote here, so both commits are ones nobody else has.
@@ -1711,4 +1711,47 @@ fn the_git_route_reports_a_dirty_worktree_and_refuses_a_session_it_does_not_know
     let (status, body) = resident.get(&sessions_url("/worker-nobody/git"));
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("no such session"), "{body}");
+}
+
+#[test]
+fn a_record_written_after_a_gate_shows_its_worker_moved_on_from_a_parent_hubs_board() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let recorder = session_worktree(&fixture, "recorder", Some(FEATURE), None, 1);
+    let answered = session_worktree(&fixture, "answered", Some(FEATURE), None, 1);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-rec", "question", &recorder);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-ans", "question", &answered);
+    let later = |dir: &str, id: &str, wait: bool, worktree: &Path| {
+        let dir = fixture.state.join("gates").join(FEATURE_SLUG).join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{id}.json")),
+            serde_json::json!({
+                "id": id,
+                "kind": "verify",
+                "worktree": worktree.to_str().unwrap(),
+                "title": "later",
+                "wait": wait,
+                "openedAt": "20260922T042000Z",
+            })
+            .to_string(),
+        )
+        .unwrap();
+    };
+    // A record the worker wrote without stopping, and a later gate that was answered since.
+    later("records", "r-1", false, &recorder);
+    later("answered", "g-next", true, &answered);
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    assert!(
+        session_of(&state, "worker-recorder")
+            .get("waiting")
+            .is_none()
+    );
+    assert!(
+        session_of(&state, "worker-answered")
+            .get("waiting")
+            .is_none()
+    );
 }

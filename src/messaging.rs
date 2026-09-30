@@ -1102,9 +1102,11 @@ pub fn register_worker(
         "startedAt": utc_stamp(now_secs()),
         "psStarted": ps_started(std::process::id()),
     });
-    // A worker started again in the same worktree keeps the timeline of the run before it,
-    // though not its current phase: that belongs to the run that said it.
+    // A worker started again in the same worktree for the same task keeps the timeline of the
+    // run before it, though not its current phase: that belongs to the run that said it. A
+    // worktree reused for another task starts a timeline of its own.
     let carried = read_json(&path)
+        .filter(|old| old.get("task").and_then(Value::as_str).map(str::to_string) == said(task))
         .and_then(|old| old.as_object().map(recorded_phases))
         .unwrap_or_default();
     if !carried.is_empty()
@@ -3649,6 +3651,16 @@ mod tests {
         let status = worker_status(worktree);
         assert_eq!(status.phase, None);
         assert_eq!(names(&status), ["plan", "plan", "verify"]);
+
+        // The same worktree taken for another task does not inherit the first one's timeline.
+        register_worker(worktree, "WID-957", None, Some("task-2"), None).unwrap();
+        assert!(worker_status(worktree).phases.is_empty());
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        assert!(worker_status(worktree).phases.is_empty());
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        set_worker_phase(worktree, "plan").unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        assert_eq!(names(&worker_status(worktree)), ["plan"]);
 
         // A record from before the history was kept starts it from the phase it has.
         let path = worker_record_path(worktree);

@@ -1550,29 +1550,53 @@ fn session_waiting(
     })
 }
 
+/// One hub's open gates, and what could show their workers moved on, read once per poll.
+struct HubGates {
+    open: Vec<gate::Gate>,
+    signals: Vec<gate::Gate>,
+}
+
+impl HubGates {
+    fn read(state_dir: &Path, slug: &str) -> Self {
+        let dir = gate::dir(state_dir, slug);
+        let open = gate::list(&dir);
+        // Left unread when nothing waits on a worker: the archives only grow.
+        let signals = if open.iter().any(|g| g.wait && !g.answered_by_hub()) {
+            gate::resume_signals(
+                &open,
+                &dir,
+                &gate::records_dir(state_dir, slug),
+                &gate::answered_dir(state_dir, slug),
+            )
+        } else {
+            Vec::new()
+        };
+        HubGates { open, signals }
+    }
+}
+
 /// The gate a worker is waiting to have answered: the oldest still open in its hub's gate
 /// directory that it opened from `worktree` and has not moved on from. "Moved on" is judged as
-/// `close_resumed` judges it, but only reads: a hub's directory is closed by that hub's board.
+/// `close_resumed` judges it, from the same signals, but only reads: a hub's directory is
+/// closed by that hub's board.
 fn waiting_worker(
     hub: &session::RepoHub,
-    gates: &[gate::Gate],
+    gates: &HubGates,
     worktree: &str,
     started: Option<&str>,
     phase_at: Option<i64>,
 ) -> Option<session::SessionWaiting> {
     let phase_at = phase_at.map(messaging::utc_stamp);
-    let mine: Vec<&gate::Gate> = gates
+    let open: Vec<&gate::Gate> = gates
+        .open
         .iter()
         .filter(|g| g.worktree == worktree && g.wait && !g.answered_by_hub())
-        .collect();
-    let open: Vec<&gate::Gate> = mine
-        .iter()
-        .copied()
         .filter(|g| {
-            let later = mine
+            let later = gates
+                .signals
                 .iter()
-                .filter(|other| other.id != g.id && other.opened_at > g.opened_at)
-                .map(|other| other.opened_at.as_str())
+                .filter(|s| s.worktree == g.worktree && s.id != g.id && s.opened_at > g.opened_at)
+                .map(|s| s.opened_at.as_str())
                 .min();
             gate::resumed_at(g, started, phase_at.as_deref(), later).is_none()
         })
@@ -1618,9 +1642,9 @@ fn sessions_of(
     // its gate on the repository board too. Read-only — closing a resumed gate stays with the
     // board that owns the hub's directory.
     let state_dir = messaging::state_dir();
-    let gates: HashMap<String, Vec<gate::Gate>> = hubs
+    let gates: HashMap<String, HubGates> = hubs
         .iter()
-        .map(|h| (h.slug.clone(), gate::list(&gate::dir(&state_dir, &h.slug))))
+        .map(|h| (h.slug.clone(), HubGates::read(&state_dir, &h.slug)))
         .collect();
     let worker_waiting =
         |hub_id: &str, worktree: &str, started: Option<&str>, phase_at: Option<i64>| {
@@ -1672,7 +1696,7 @@ fn sessions_of(
             phases: Vec::new(),
             last_activity_at,
             attached,
-            waiting: waiting_hub(h, gates.get(&h.slug).map_or(&[][..], Vec::as_slice)),
+            waiting: gates.get(&h.slug).and_then(|g| waiting_hub(h, &g.open)),
         });
     }
 
