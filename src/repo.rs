@@ -527,6 +527,10 @@ impl GitOut {
 /// behind the back of a worker that is running git in the same worktree. Output is drained on
 /// threads, because a listing longer than a pipe holds would otherwise stall the child until
 /// the deadline.
+///
+/// It reads the index and refs of a worktree that is not ours, so beyond the variables that
+/// choose the repository it also drops the ones that would swap in another index, object store
+/// or ref namespace from whatever environment the server was started in.
 fn git_until(args: &[&str], cwd: &Path, deadline: std::time::Instant) -> Result<GitOut, String> {
     use std::io::Read;
     let mut cmd = Command::new("git");
@@ -536,7 +540,12 @@ fn git_until(args: &[&str], cwd: &Path, deadline: std::time::Instant) -> Result<
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-    for name in REPOSITORY_LOCATION_ENV {
+    for name in REPOSITORY_LOCATION_ENV.into_iter().chain([
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ]) {
         cmd.env_remove(name);
     }
     let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e}"))?;
@@ -589,8 +598,20 @@ pub fn worktree_git_state(
     let line =
         |out: GitOut| Some(out.stdout.trim().to_string()).filter(|l| out.ok() && !l.is_empty());
 
-    let branch = line(git(&["symbolic-ref", "-q", "--short", "HEAD"])?);
-    let head = line(git(&["rev-parse", "--short", "HEAD"])?);
+    // Exit 1 is the answer "no": a detached HEAD has no branch, an unborn one no commit.
+    // Any other failure is git not answering, and is not read as either.
+    let branch = git(&["symbolic-ref", "-q", "--short", "HEAD"])?;
+    let branch = match branch.code {
+        Some(0) => line(branch),
+        Some(1) => None,
+        _ => return Err("git could not read the branch".to_string()),
+    };
+    let head = git(&["rev-parse", "-q", "--verify", "--short", "HEAD"])?;
+    let head = match head.code {
+        Some(0) => line(head),
+        Some(1) if head.stdout.trim().is_empty() => None,
+        _ => return Err("git could not read HEAD".to_string()),
+    };
 
     let status = git(&[
         NO_FSMONITOR,
@@ -616,6 +637,9 @@ pub fn worktree_git_state(
     }
     if head.is_some() {
         let numstat = git(&[NO_FSMONITOR, &["diff", "--numstat", "HEAD"], WORKTREE_ONLY].concat())?;
+        if !numstat.ok() {
+            return Err("git could not count the changed lines".to_string());
+        }
         for row in numstat.stdout.lines() {
             let mut cols = row.split('\t');
             // `-` stands in for both counts of a binary file.
@@ -662,12 +686,21 @@ pub fn worktree_git_state(
         };
         let mut count = vec!["rev-list", "--count"];
         count.extend(range);
-        unpushed.count = line(git(&count)?).and_then(|n| n.parse().ok()).unwrap_or(0);
+        let counted = git(&count)?;
+        unpushed.count = counted
+            .ok()
+            .then(|| counted.stdout.trim().parse().ok())
+            .flatten()
+            .ok_or("git could not count the unpushed commits")?;
         if unpushed.count > 0 {
             let limit = format!("-n{UNPUSHED_LISTED}");
             let mut log = vec!["log", "--format=%h%x09%s", &limit];
             log.extend(range);
-            unpushed.commits = git(&log)?
+            let listed = git(&log)?;
+            if !listed.ok() {
+                return Err("git could not list the unpushed commits".to_string());
+            }
+            unpushed.commits = listed
                 .stdout
                 .lines()
                 .filter_map(|row| row.split_once('\t'))
@@ -815,6 +848,24 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let gone = here.path().join("nowhere");
         assert_eq!(worktree_git_state(&gone, None, deadline), Ok(None));
+    }
+
+    #[test]
+    fn an_unborn_head_and_a_detached_one_are_answers_not_errors() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let _ = &sandbox;
+        let here = tempfile::tempdir().unwrap();
+        let dir = here.path();
+        crate::testing::init_repo(dir, "main");
+        let fresh = state_of(dir, None);
+        assert_eq!(fresh.head, None);
+        assert_eq!(fresh.unpushed.count, 0);
+
+        commit_file(dir, "a.txt", "1\n");
+        run_git(dir, &["checkout", "-q", "--detach"]);
+        let detached = state_of(dir, None);
+        assert_eq!(detached.branch, None);
+        assert!(detached.head.is_some());
     }
 
     #[test]
