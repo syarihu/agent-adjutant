@@ -940,13 +940,15 @@ pub struct WorkerStatus {
 }
 
 /// The steps a worker says it is in. A fixed list so the board can show them in order and a
-/// typo is refused rather than shown as a phase of its own.
-pub const PHASES: [&str; 7] = [
+/// typo is refused rather than shown as a phase of its own. `pr-bots` is a PR waiting on review
+/// bots, which nobody has to act on; `pr` is one handed to human reviewers.
+pub const PHASES: [&str; 8] = [
     "plan",
     "implement",
     "self-review",
     "verify",
     "pr",
+    "pr-bots",
     "review",
     "report",
 ];

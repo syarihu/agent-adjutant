@@ -699,6 +699,11 @@ fn a_worker_says_which_phase_it_is_in_and_a_typo_is_refused() {
         fixture.ok(&["phase", "--worktree", &worktree]).trim(),
         "self-review"
     );
+    fixture.ok(&["phase", "--set", "pr-bots", "--worktree", &worktree]);
+    assert_eq!(
+        fixture.ok(&["phase", "--worktree", &worktree]).trim(),
+        "pr-bots"
+    );
     assert!(
         !fixture
             .cmd(&["phase", "--set", "reviewing", "--worktree", &worktree])

@@ -1,6 +1,6 @@
 /* What `adj phase --set` writes, in the words a card shows. */
 const PHASE_LABEL = { plan:'計画', implement:'実装', 'self-review':'セルフレビュー', verify:'動作確認',
-                      pr:'PR', review:'レビュー対応', report:'報告' };
+                      pr:'PR', 'pr-bots':'bot待ち', review:'レビュー対応', report:'報告' };
 const minutesLabel = mins => mins < 1 ? '1分未満' : mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.floor(mins / 60)}時間` : `${Math.floor(mins / 1440)}日`;
 
 /* Minutes since the worker entered its phase, by the server's clock so a laptop that slept
@@ -35,14 +35,16 @@ function stuckOf(task) {
     return limit > 0 && mins >= limit ? `計画が ${minutesLabel(mins)} 止まっています` : null;
   }
   if (!task.worktree) return null;
+  // Once its PR is open the card waits on reviewers or bots, and a worker whose tab was
+  // closed then has simply finished — flagging those would bury the ones that are stuck.
+  if (task.status === 'pr') return null;
   const w = workerOf(task);
   // The worker is gone and nothing will move this card: the one thing a person must hear.
   // Not in the first two minutes, while a worker that was just dispatched is still opening.
   if (!w || !w.present) return Date.now() - updatedMs(task) < 120000 ? null : 'worker 停止';
   // Time only counts while the ball is the worker's. A card waiting on a person's answer to a
-  // gate, or on reviewers once its PR is open, is not the worker being stuck — flagging those
-  // would bury the ones that are.
-  if (openGate(task) || task.status === 'pr') return null;
+  // gate is not the worker being stuck.
+  if (openGate(task)) return null;
   const mins = workerMinutes(task, w);
   const limit = state.stuckAfterMinutes;
   if (mins != null && limit > 0 && mins >= limit) return `${minutesLabel(mins)} 同じ工程`;
@@ -615,12 +617,15 @@ function agentCard(task) {
   } else if (worker && worker.phase) {
     const mins = phaseMinutes(worker);
     const stopped = !worker.present;
+    // A worker gone once its PR is open has finished rather than stopped (see stuckOf).
+    const alarm = stopped && !hcol && task.status !== 'pr';
     h += `
       <div class="card-worker-status">
         ${hcol ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-warning);">pause_circle</span>'
-               : stopped ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">pause</span>'
+               : alarm ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">pause</span>'
+               : stopped ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">pause</span>'
                : '<span class="pulse-dot"></span>'}
-        <span style="font-weight:700;${stopped && !hcol ? 'color:var(--md-sys-color-error);' : ''}">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${stopped && !hcol ? ' (停止)' : ''}</span>
+        <span style="font-weight:700;${alarm ? 'color:var(--md-sys-color-error);' : ''}">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${alarm ? ' (停止)' : ''}</span>
         ${mins != null ? `<span class="ago" style="margin-left:auto;color:var(--md-sys-color-outline);font-size:11px;">${minutesLabel(mins)}</span>` : ''}
       </div>
     `;
