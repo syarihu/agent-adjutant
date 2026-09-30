@@ -1494,8 +1494,8 @@ fn state(server: &Server) -> Value {
         // Whether the board can resume a stopped worker, so the page offers it only where it
         // can work, and says why not where it cannot.
         "sessionResume": super::board_actions::resume_state(&settings),
-        // The command line a hub runs, as written: the Sessions sidebar shows the template
-        // with its placeholders in place, and the page never renders it.
+        // The command line a hub runs, as configured: the server sends the template with its
+        // placeholders in place, and the Sessions sidebar fills in only `{name}` to show it.
         "hubRunner": settings
             .hub_runner
             .as_deref()

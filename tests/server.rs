@@ -1103,7 +1103,7 @@ fn the_state_names_the_command_a_hub_runs() {
 }
 
 #[test]
-fn a_parent_hubs_board_gives_the_sidebar_its_tasks_history_and_issue() {
+fn a_parent_hubs_board_gives_the_sidebar_its_tasks_and_history() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);
     let resident = Resident::start(&fixture);

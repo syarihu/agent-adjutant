@@ -685,8 +685,9 @@ The task, gates and history of a session under a parent-task hub are read from t
 board. The git state is read when a session is selected, when its phase or branch changes and
 on the refresh button, never on a timer. From 1400px up the choice to show the sidebar is kept
 per browser; below that it starts hidden and floats over the terminal. `state.hubRunner` is the
-hub's command template as written, with its placeholders in place, for the sidebar to show; it
-is never rendered.
+hub's command template as configured, sent with its placeholders in place; the sidebar fills in
+only `{name}` and shows the rest as they are. It is shown on the board as configured, so keep
+secrets out of it.
 
 ### Gates
 

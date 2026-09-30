@@ -48,7 +48,7 @@ function loadSideBoard(slug, base, key, force = false) {
   }).then(() => {
     if (view !== 'sessions') return;
     renderSessionContext();
-    renderSessionSidebar(true);
+    renderSessionSidebar();
   });
 }
 
@@ -102,7 +102,7 @@ function ensureGit(s, force = false) {
     if (sessView.git !== mine) return;
     Object.assign(mine, { error: e.message, loading: false });
   }).then(() => {
-    if (sessView.git === mine) renderSessionSidebar(true);
+    if (sessView.git === mine) renderSessionSidebar();
   });
 }
 
@@ -202,7 +202,7 @@ function sideChildButton(t, b) {
   if (t.status === 'backlog') return sideBtn('child-hand', '着手を依頼…', ` data-id="${esc(t.id)}"${off}`);
   if (t.status === 'queued') {
     if (stopped) return sideBtn('child-start-hub', 'hub を起動', ` data-id="${esc(t.id)}"${off}`);
-    return sideBtn('child-nudge', '空きがあれば着手', ` data-id="${esc(t.id)}" title="worker の枠が空いていれば、待ちの先頭を着手させます"`);
+    return sideBtn('child-nudge', '待ちの先頭を着手', ` data-id="${esc(t.id)}" title="hub に、worker の枠が空いていれば待ちの先頭のタスクを着手するよう頼みます（この子とは限りません）"`);
   }
   return '';
 }
@@ -336,7 +336,10 @@ function sideBareHtml(s, st, b, missing) {
 
 /* ── Drawing ── */
 
-function renderSessionSidebar(force = false) {
+/* Redrawn only when the markup differs, so a load that changed nothing (the timer's) leaves
+   a text selection or a click in progress alone; the signature is the markup itself, so every
+   input of it counts. */
+function renderSessionSidebar() {
   if (view !== 'sessions') return;
   const side = sessEl('sess-side');
   const body = sessEl('sess-side-body');
@@ -379,7 +382,7 @@ function renderSessionSidebar(force = false) {
     }
   }
   const sig = JSON.stringify([id, html]);
-  if (!force && sig === sessView.sideSig) return;
+  if (sig === sessView.sideSig) return;
   sessView.sideSig = sig;
   const top = body.scrollTop;
   body.innerHTML = html;
@@ -417,7 +420,7 @@ function sideChildAction(act, id, s) {
   if (act === 'child-hand') {
     const h = hubSide.hub;
     return openHandoverDialog(id, null, {
-      tasks: hubSide.data.tasks, base: hubSide.base, hubId: hubSide.hubId, startHub: !!h && !h.state?.present,
+      tasks: hubSide.data.tasks, base: hubSide.base, hubId: hubSide.hubId, hubSlug: hubSide.slug, startHub: !!h && !h.state?.present,
     });
   }
   if (act === 'child-start-hub') {
@@ -430,7 +433,7 @@ function sideChildAction(act, id, s) {
   }
   if (act === 'child-nudge') {
     const line = "adj send --kind next --from dashboard --subject 'start the next queued task if a worker slot is free'";
-    return sessAct('side-nudge', '空きがあれば着手', async () => {
+    return sessAct('side-nudge', '待ちの先頭を着手', async () => {
       const data = await boardApi(hubSide.base, '/api/hub/next', { method: 'POST' });
       note(line, false, '枠が空いていれば待ちの先頭を着手' + handedNote(data.handed));
       await refresh();
@@ -458,7 +461,7 @@ sessEl('sess-side').addEventListener('click', e => {
   const act = btn.dataset.sideAct;
   if (act === 'git-refresh') {
     ensureGit(s, true);
-    return renderSessionSidebar(true);
+    return renderSessionSidebar();
   }
   if (act.startsWith('child-')) return sideChildAction(act, btn.dataset.id, s);
   const { b, task } = sideTaskOf(s);

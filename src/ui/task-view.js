@@ -65,7 +65,7 @@ function historyOf(task, base = BASE, data = state) {
 function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
   if (view === 'board' && selectedTaskId === id) renderDrawer();
-  if (view === 'sessions') renderSessionSidebar(true);
+  if (view === 'sessions') renderSessionSidebar();
 }
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live

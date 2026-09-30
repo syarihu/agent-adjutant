@@ -55,7 +55,7 @@ async function queueOrder(id, before, dest = null) {
 let handoverTargetTaskId = null;
 let handoverTargetBefore = null;
 /* Set when the task is on another board (the Sessions sidebar hands over a child of a
-   parent-task hub): { tasks, base, hubId, startHub }. Null for a task of this page's board. */
+   parent-task hub): { tasks, base, hubId, hubSlug, startHub }. Null for a task of this page's board. */
 let handoverTarget = null;
 
 /* Opened by an IDE button while no editor is configured: what to write, and where. */
@@ -227,7 +227,10 @@ function openHandoverDialog(id, before = null, target = null) {
   handoverTargetBefore = before;
   handoverTarget = target;
   const hubNote = document.getElementById('handover-hub-note');
-  if (hubNote) hubNote.hidden = !target?.startHub;
+  if (hubNote) {
+    hubNote.textContent = 'hub が止まっているため、先に起動します';
+    hubNote.hidden = !target?.startHub;
+  }
   const dialog = document.getElementById('handover-dialog');
   const titleEl = document.getElementById('handover-task-title');
   const textarea = document.getElementById('handover-instruction');
@@ -265,9 +268,9 @@ async function submitHandover(e) {
   const id = handoverTargetTaskId;
   const before = handoverTargetBefore;
   const target = handoverTarget;
-  closeHandoverDialog();
   // A hub that is stopped is started first, so what is handed over does not wait for someone
   // to notice. The route is this page's own: it reaches the hubs of the whole repository.
+  // The dialog stays open until that has worked, so a refusal does not cost the typed text.
   if (target?.startHub) {
     const line = `adj hub --tab --hub=${target.hubId}`;
     try {
@@ -275,13 +278,22 @@ async function submitHandover(e) {
       note(line, false, 'hub を tmux で起動しました');
     } catch (err) {
       note(`${line} → ${err.message}`, true);
+      const hubNote = document.getElementById('handover-hub-note');
+      if (hubNote) {
+        hubNote.textContent = `hub を起動できませんでした: ${err.message}`;
+        hubNote.hidden = false;
+      }
       return;
     }
   }
+  closeHandoverDialog();
+  // The queue as the target board has it now, not as it was when the dialog opened.
+  const fresh = target && (target.base === BASE ? state.tasks : sessView.boards[target.hubSlug]?.data?.tasks);
+  const live = target && fresh ? { ...target, tasks: fresh } : target;
   // Dropped onto a card: the place is made in the queue just before it is handed over.
-  const order = await queueOrder(id, before, target);
+  const order = await queueOrder(id, before, live);
   if (order == null) return;
-  hand(id, instruction, order, target);
+  hand(id, instruction, order, live);
 }
 
 async function hand(id, instruction = null, order = null, target = null) {
