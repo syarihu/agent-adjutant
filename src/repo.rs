@@ -439,8 +439,9 @@ fn normalise(path: &Path) -> String {
 pub struct Uncommitted {
     /// Tracked files that differ from HEAD, staged or not.
     pub files: usize,
-    /// Files git does not track and does not ignore, counted apart: a build directory nobody
-    /// ignored is not work at risk in the way an edit is.
+    /// Entries git does not track and does not ignore, counted apart: a build directory nobody
+    /// ignored is not work at risk in the way an edit is. An entry, not a file: a wholly new
+    /// directory counts once, and the lines of untracked files are not in `insertions`.
     pub untracked: usize,
     pub insertions: usize,
     pub deletions: usize,
@@ -493,6 +494,10 @@ pub struct GitState {
 }
 
 const UNPUSHED_LISTED: usize = 20;
+
+/// Keeps a look from starting a file-system monitor daemon or running its hook in a worktree
+/// that is not ours.
+const NO_FSMONITOR: &[&str] = &["-c", "core.fsmonitor=false"];
 
 /// Pathspecs that leave out what adjutant itself writes into a worktree: the worker's record,
 /// outbox, saved session and starting marker, and the brief. They are bookkeeping, not work,
@@ -587,7 +592,12 @@ pub fn worktree_git_state(
     let branch = line(git(&["symbolic-ref", "-q", "--short", "HEAD"])?);
     let head = line(git(&["rev-parse", "--short", "HEAD"])?);
 
-    let status = git(&[&["status", "--porcelain=v1", "-z"], WORKTREE_ONLY].concat())?;
+    let status = git(&[
+        NO_FSMONITOR,
+        &["status", "--porcelain=v1", "-z"],
+        WORKTREE_ONLY,
+    ]
+    .concat())?;
     if !status.ok() {
         return Err(format!("{} is not a git worktree", worktree.display()));
     }
@@ -605,7 +615,7 @@ pub fn worktree_git_state(
         }
     }
     if head.is_some() {
-        let numstat = git(&[&["diff", "--numstat", "HEAD"], WORKTREE_ONLY].concat())?;
+        let numstat = git(&[NO_FSMONITOR, &["diff", "--numstat", "HEAD"], WORKTREE_ONLY].concat())?;
         for row in numstat.stdout.lines() {
             let mut cols = row.split('\t');
             // `-` stands in for both counts of a binary file.

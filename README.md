@@ -570,8 +570,10 @@ the gate directories.
   out, though only the board that owns the directory closes it. A hub's is the gates it opened
   for a person.
 - `phases`: every phase the worker said, oldest first, as `[phase, epoch seconds]`. Kept in the
-  worker's record (the latest 64) and carried over when the worker is started again in the same
-  worktree; `phase` and `phaseAt` remain the current one.
+  worker's record (the latest 64), and kept when the worker is started again for the same task
+  while its record is still there; a record removed by stop or cleanup starts fresh. An older
+  record without `phases` reads as its current phase only. `phase` and `phaseAt` remain the
+  current one.
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
 `name`, `subject`, `kind`, `from`, `worktree` and `at` (a UTC stamp). `inboxCount` stays the
@@ -579,7 +581,8 @@ number waiting in all.
 
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
-`deletions` against HEAD; the files adjutant itself writes under `.claude/` — `adjutant-*` and
+`deletions` against HEAD; `untracked` counts entries, so a wholly new directory counts once, and
+the lines of untracked files are not in `insertions`; the files adjutant itself writes under `.claude/` — `adjutant-*` and
 `task-brief.md` — are not counted), `upstream` (as configured), `unpushed` (`count`, the newest
 20 `commits`, and what they were counted `against`) and `merged` (`base`, `ref`, `merged`, and
 a `reason` when it could not be told). Unpushed commits are counted against the upstream only
