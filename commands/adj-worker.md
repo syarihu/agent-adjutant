@@ -63,6 +63,8 @@ in this procedure says what to tell them, not the words to use.
   is your Task record (the brief may say `-`, if you were started with no task) and the hub it names is
   your hub. Read this procedure again from the section that matches where the work stands, and set
   `adj phase` accordingly; the gates, the card and the PR steps apply from here.
+  If it says the hub files an issue, `[issue {id}] {url}` follows (keep the URL for the PR body and
+  carry on) or `[issue {id}] not filed: {reason}` (carry on without an issue).
 - **Call `adjutant_config`** (`adjutant config` prints the same). It is the authority for every
   setting this procedure refers to, with the `defaults` merge, the flat-form expansion and the
   defaults already applied (do not read `~/.config/adjutant/config.json` again yourself).

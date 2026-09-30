@@ -72,12 +72,59 @@ pub(super) fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, S
     }
 }
 
-/// The name a session's worktree is given when the person did not choose one: the instruction's
-/// own words, or a fixed one when there are none git and the filesystem would take.
-fn derived_name(instruction: &str) -> String {
-    Some(task::slug(instruction))
+/// The name a session's worktree is given when the person did not choose one: up to the first
+/// four ASCII words of the instruction, else a dated one. The board proposes the same name
+/// before the request is sent (`proposeName` in the page), so the two rules are kept alike.
+fn derived_name(instruction: &str, epoch_secs: i64) -> String {
+    let words: Vec<String> = instruction
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .take(4)
+        .map(str::to_ascii_lowercase)
+        .collect();
+    // Cut as `task::slug` cuts a filename, so one long word cannot make a name a filesystem refuses.
+    let mut name = words.join("-");
+    name.truncate(32);
+    Some(name.trim_matches('-').to_string())
         .filter(|name| !name.is_empty() && super::task::check_worktree_name(name).is_ok())
-        .unwrap_or_else(|| "session".to_string())
+        .unwrap_or_else(|| dated_name(epoch_secs))
+}
+
+/// `session-YYYYMMDD-HHMM`, in UTC like every stamp the server writes.
+fn dated_name(epoch_secs: i64) -> String {
+    let stamp = messaging::utc_stamp(epoch_secs);
+    format!("session-{}-{}", &stamp[..8], &stamp[9..13])
+}
+
+/// Start the hub of `ctx` when the message just left for it found nobody there and the server
+/// can start one. Only once the message is in the inbox: a hub started first would find
+/// nothing to do and wait, and one that failed to start would leave the person unsure whether
+/// the message was sent.
+fn start_if_stopped(
+    server: &Server,
+    ctx: &Context,
+    delivered: &super::Delivered,
+) -> (bool, Option<String>) {
+    if delivered.delivery.present
+        || !server.resident
+        || !super::hub_startable(&ctx.settings.terminal)
+    {
+        return (false, None);
+    }
+    match super::start_hub(ctx, HubStart::Auto) {
+        Ok(TabOutcome::Opened(_)) => (true, None),
+        Ok(TabOutcome::AlreadyRunning(_)) => (false, None),
+        Err(e) => (false, Some(e)),
+    }
+}
+
+/// The inbox file name of a delivered message, which is what `hubs[].inbox[].name` calls it.
+fn inbox_name(delivered: &super::Delivered) -> Option<String> {
+    delivered
+        .delivery
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
 }
 
 /// Ask a hub to start a session with no task.
@@ -89,7 +136,8 @@ fn derived_name(instruction: &str) -> String {
 pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, String> {
     let input = input_of(body)?;
     let settings = settings_now(server);
-    let instruction = text(&input, "instruction")?.ok_or("an instruction is required")?;
+    // Optional: the worker greets the person and waits when there is none.
+    let instruction = text(&input, "instruction")?.unwrap_or("");
     let configured = runner::agent_from_runner(
         settings
             .agent_runner
@@ -107,7 +155,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
             super::task::check_worktree_name(name)?;
             name.to_string()
         }
-        None => derived_name(instruction),
+        None => derived_name(instruction, messaging::now_secs()),
     };
     // Unlike a task, a session request has no record to wait in for a free slot, so a full
     // machine is refused here rather than left for the hub to turn away. The check is advisory:
@@ -125,7 +173,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
             ));
         }
     }
-    let (_, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
+    let (hub, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
     let request = SessionRequest {
         agent: agent.to_string(),
         worktree_name: name.clone(),
@@ -140,24 +188,13 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
         body: request.render_request(),
     };
     let delivered = super::deliver_to_hub(&ctx, &message)?;
-    // Only once the message is in the inbox: a hub started first would find nothing to do and
-    // wait, and one that failed to start would leave the person unsure whether it was sent.
-    let mut started = false;
-    let mut start_error = None;
-    if !delivered.delivery.present
-        && server.resident
-        && super::hub_startable(&ctx.settings.terminal)
-    {
-        match super::start_hub(&ctx, HubStart::Auto) {
-            Ok(TabOutcome::Opened(_)) => started = true,
-            Ok(TabOutcome::AlreadyRunning(_)) => {}
-            Err(e) => start_error = Some(e),
-        }
-    }
+    let (started, start_error) = start_if_stopped(server, &ctx, &delivered);
     let mut reply = json!({
         "handed": { "present": delivered.delivery.present, "woken": delivered.woken },
         "hubStarted": started,
         "worktreeName": name,
+        "hub": hub.id,
+        "message": inbox_name(&delivered),
     });
     if let Some(e) = start_error {
         reply["hubStartError"] = json!(e);
@@ -210,6 +247,13 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         (Some(task_id), None) => {
             if !task::is_plain_id(task_id) {
                 return Err(format!("no such task: {task_id}"));
+            }
+            // An existing task already has its issue or its reason not to; only a task made by
+            // this link can ask the hub to file one.
+            if text(&input, "kind")? == Some("file-and-start") {
+                return Err(
+                    "file-and-start needs a newTask: an existing task is not filed".to_string(),
+                );
             }
             if held.is_some_and(|held| held != task_id) {
                 return Err(format!(
@@ -280,6 +324,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         (None, None) => return Err("a task or a newTask is required".to_string()),
     };
 
+    let made_here = matches!(undo, Undo::Remove);
     if let Err(e) =
         messaging::relink_worker(Path::new(worktree), hub.key.as_deref(), &linked.id, phase)
     {
@@ -294,9 +339,22 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         }
         return Err(e);
     }
+    // Only a task this link made: an existing one may carry `file-and-start` from its own request,
+    // which was already handed to a hub.
+    let files_issue = made_here && linked.kind == task::Kind::FileAndStart;
+    let filing = if files_issue {
+        "The hub files the issue for this task; its URL reaches you as `[issue <id>] <url>` \
+         and is recorded on the task.\n\n"
+    } else if made_here && linked.kind == task::Kind::Start && linked.issue_url.is_none() {
+        // `start` reads as "an issue that already exists" in the request below.
+        "This task has no issue and none will be filed for it; the Kind line below does not \
+         mean one exists.\n\n"
+    } else {
+        ""
+    };
     let body = format!(
         "From now on your Task record is {} and your hub is {}. Fetch adj-worker \
-         (`adj skill adj-worker`) and follow it from where the work stands.\n\n{}",
+         (`adj skill adj-worker`) and follow it from where the work stands.\n\n{filing}{}",
         linked.id,
         ctx.repo.hub_name,
         task::render_request(&linked)
@@ -315,10 +373,51 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
             linked.id
         )
     })?;
-    Ok(json!({
+    let mut reply = json!({
         "task": linked,
         "session": { "id": session.id, "task": linked.id, "hub": hub.id },
-    }))
+    });
+    if files_issue {
+        // The link stands whatever happens here: the worker already has its task, and a hub that
+        // could not be told is something to say, not to undo.
+        let message = Message {
+            from: "dashboard".to_string(),
+            worktree: None,
+            kind: "file-issue".to_string(),
+            subject: format!("[file {}] {}", linked.id, linked.title),
+            body: format!(
+                "{}\n## Worker running in {worktree}\n",
+                task::render_request(&linked)
+            ),
+        };
+        match super::deliver_to_hub(&ctx, &message) {
+            Ok(delivered) => {
+                reply["fileIssue"] = json!({
+                    "handed": { "present": delivered.delivery.present, "woken": delivered.woken },
+                    "message": inbox_name(&delivered),
+                });
+                let (started, error) = start_if_stopped(server, &ctx, &delivered);
+                reply["hubStarted"] = json!(started);
+                if let Some(e) = error {
+                    reply["hubStartError"] = json!(e);
+                }
+            }
+            Err(e) => {
+                reply["fileIssueError"] = json!(e);
+                // The worker was told the hub would file it: say it will not, in the words it
+                // already handles, so it does not wait for a URL.
+                let _ = super::deliver_to_worker(
+                    &ctx,
+                    Path::new(worktree),
+                    "dashboard",
+                    &format!("[issue {}] not filed: the hub could not be told", linked.id),
+                    "Nothing will file an issue for this task automatically. Carry on without one.",
+                    None,
+                );
+            }
+        }
+    }
+    Ok(reply)
 }
 
 /// How to take back the task write when the worker's record cannot be written.
@@ -334,13 +433,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_name_is_derived_from_the_instruction_or_falls_back_to_session() {
+    fn a_name_is_the_first_four_words_of_the_instruction_or_a_dated_one() {
+        let at = 1_790_000_000;
         assert_eq!(
-            derived_name("Look at the flaky upload test"),
-            "look-at-the-flaky-upload-test"
+            derived_name("Look at the flaky upload test", at),
+            "look-at-the-flaky"
         );
+        assert_eq!(derived_name("  Retry, the upload!", at), "retry-the-upload");
         // Nothing ASCII to make a name of.
-        assert_eq!(derived_name("アップロードの再試行を調べる"), "session");
-        assert_eq!(derived_name("   "), "session");
+        assert_eq!(
+            derived_name("アップロードの再試行を調べる", at),
+            "session-20260921-1413"
+        );
+        assert_eq!(derived_name("   ", at), "session-20260921-1413");
+        // Cut at 32 characters, with no separator left dangling.
+        let long = derived_name(&format!("{} tail", "a".repeat(40)), at);
+        assert_eq!(long, "a".repeat(32));
+        assert_eq!(
+            derived_name("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbb", at),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
     }
 }

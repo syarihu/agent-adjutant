@@ -327,10 +327,14 @@ function sideBareHtml(s, st, b, missing) {
   if (missing) what = 'タスク ID はこのボードに見つかりません';
   else if (st === 'none') what = 'セッションのない worktree';
   else what = 'タスクのないセッション';
-  let html = sideSection('このセッション', sideNote(what) + (missing || st === 'none' ? '' :
+  const linkable = !missing && st !== 'none';
+  // Linking writes the task and tells the worker, which a session that is not running cannot read.
+  const off = s.present ? '' : ' disabled title="セッションが動いていないため、タスクにも既存のタスクへの紐づけもできません"';
+  let html = sideSection('このセッション', sideNote(what) + (!linkable ? '' :
     sideNote(b.hub?.parent
       ? `タスクにすると親タスク ${hubShortName(b.hub)} の子として、その hub のボードに作られます`
-      : 'タスクにするとリポジトリのボードに作られます')));
+      : 'タスクにするとリポジトリのボードに作られます') +
+    `<div class="sess-side-actions">${sideBtn('link-new', 'タスクにする…', off)}${sideBtn('link-existing', '既存のタスクに紐づける…', off)}</div>`));
   return html + sideBranchHtml(s);
 }
 
@@ -467,6 +471,7 @@ sessEl('sess-side').addEventListener('click', e => {
     return renderSessionSidebar();
   }
   if (act.startsWith('child-')) return sideChildAction(act, btn.dataset.id, s);
+  if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
   const { b, task } = sideTaskOf(s);
   if (!task) return;
   if (act === 'card') return openSideTask(b, task);

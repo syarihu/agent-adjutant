@@ -10,9 +10,10 @@ const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
 const STATE_ORDER = { waiting: 0, stopped: 1, idle: 2, working: 3, ended: 4, none: 5 };
 const STATE_LABEL = {
   waiting: '確認待ち', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
+  pending: '起動を依頼中…',
 };
 const STATE_ICON = {
-  waiting: 'help', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline',
+  waiting: 'help', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top',
 };
 const STATE_PILL = {
   waiting: 'pill-warn', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral',
@@ -86,7 +87,7 @@ function lastOutputText(s) {
 /* The tree: each hub with its workers, sorted by state within a hub. Hubs stay in the order
    the server gives (the repository's first) — sorting them by state would move them under the
    pointer. Workers whose hub is not listed go in a group of their own at the end. */
-function sessionTree(filter) {
+function sessionTree(filter, pendingHubs = new Set()) {
   const sessions = state.sessions || [];
   const groups = [];
   const byId = new Map();
@@ -125,7 +126,7 @@ function sessionTree(filter) {
       || (a.s.id < b.s.id ? -1 : a.s.id > b.s.id ? 1 : 0));
   }
   const shown = groups.filter(g =>
-    (g.hub && !g.hub.parent) || g.rows.length || matchesFilter(g.own, g.state, filter));
+    (g.hub && !g.hub.parent) || g.rows.length || pendingHubs.has(g.id) || matchesFilter(g.own, g.state, filter));
   return { groups: shown, orphans };
 }
 
@@ -155,6 +156,8 @@ const sessView = {
   mounted: null,     // { sessionId, term, ended }
   pending: null,     // a deep link, opened once the first poll says whether a terminal exists
   treeSig: '',
+  starts: [],        // sessions this page asked a hub for and has not seen start (sessions-start.js)
+  dismissed: [],     // pending rows closed on this page, by key
   boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles and the sidebar
   sideNarrowOpen: false, // the sidebar below 1400px: floats over the terminal, never saved
   sideSig: '',
@@ -355,7 +358,11 @@ function sessionRowHtml(s, st, { key = sessionKey(s), tip = '', cls = '' } = {})
 function renderSessionTree() {
   const collapsed = railCollapsed();
   const filter = prefs.sessionsFilter;
-  const { groups, orphans } = sessionTree(filter);
+  // Rows for sessions asked for and not started yet (sessions-start.js), by hub.
+  const pend = sessionPendingRows();
+  const pendByHub = new Map();
+  for (const p of pend) pendByHub.set(p.hubId, [...(pendByHub.get(p.hubId) || []), p]);
+  const { groups, orphans } = sessionTree(filter, new Set(pendByHub.keys()));
   const folded = new Set(prefs.sessionsFolded || []);
   const rowSig = (s, st) => [s.id, st, s.title || '', sessionKey(s), s.present ? lastOutputText(s) : ''];
   const sig = JSON.stringify([
@@ -363,19 +370,23 @@ function renderSessionTree() {
     groups.map(g => [g.id, g.label, g.state, g.hubSession ? rowSig(g.hubSession, g.state) : null,
       g.rows.map(r => rowSig(r.s, r.state))]),
     orphans.map(s => [s.id, sessionKey(s)]),
+    // Part of the signature: without it a row that appears or changes its words while nothing
+    // else does would stay hidden behind the redraw skip below.
+    pend.map(p => [p.key, p.hubId, p.name, p.kind, p.text, p.canStart, p.busy]),
   ]);
   if (sig === sessView.treeSig) return;
   sessView.treeSig = sig;
   const scroll = document.querySelector('.sess-scroll');
   const top = scroll.scrollTop;
   sessEl('sess-tree').innerHTML = groups.map(g => {
-    const closed = !collapsed && folded.has(g.id);
+    // A group with a session being started stays open: its row is what says the request is there.
+    const closed = !collapsed && folded.has(g.id) && !pendByHub.has(g.id);
     const head = g.hubSession
       ? sessionRowHtml(g.hubSession, g.state, { key: g.short, tip: g.label, cls: 'hub' })
       : `<div class="sess-row hub ${g.state}" title="${esc(g.label)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span><span class="sess-row-text"><span class="sess-row-key">${esc(g.short)}</span><span class="sess-row-sub">${esc(STATE_LABEL[g.state])}</span></span></div>`;
     return `<div class="sess-group">
       <div class="sess-hubrow"><button type="button" class="sess-fold" data-fold="${esc(g.id)}" aria-expanded="${!closed}" aria-label="${esc(g.short)} を${closed ? '開く' : '畳む'}"><span class="material-symbols-outlined" aria-hidden="true">${closed ? 'chevron_right' : 'expand_more'}</span></button>${head}</div>
-      <div class="sess-children"${closed ? ' hidden' : ''}>${g.rows.map(r => sessionRowHtml(r.s, r.state)).join('')}</div>
+      <div class="sess-children"${closed ? ' hidden' : ''}>${(pendByHub.get(g.id) || []).map(pendingRowHtml).join('')}${g.rows.map(r => sessionRowHtml(r.s, r.state)).join('')}</div>
     </div>`;
   }).join('') || '<div class="sess-empty">条件に合うセッションはありません</div>';
   const details = sessEl('sess-orphans');

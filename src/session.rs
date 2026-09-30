@@ -200,7 +200,12 @@ impl SessionRequest {
             "## Session       no task\n## Agent         {}\n## Worktree name {}\n## Instruction\n{}\n",
             self.agent,
             self.worktree_name,
-            self.instruction.trim_end_matches('\n')
+            // `-` for none, as the other lines of a request say it: the hub starts the worker
+            // with nothing to do and the worker waits for the person.
+            match self.instruction.trim_end_matches('\n') {
+                "" => "-",
+                text => text,
+            }
         )
     }
 }
@@ -288,5 +293,10 @@ mod tests {
             "## Session       no task\n## Agent         claude\n## Worktree name try-retry\n\
              ## Instruction\n## not a header\n  keep 'quotes' and $vars\n"
         );
+        let none = SessionRequest {
+            instruction: String::new(),
+            ..request
+        };
+        assert!(none.render_request().ends_with("## Instruction\n-\n"));
     }
 }

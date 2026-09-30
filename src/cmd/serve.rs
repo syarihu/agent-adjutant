@@ -50,6 +50,7 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/task-view.js"),
     include_str!("../ui/sessions.js"),
     include_str!("../ui/sessions-side.js"),
+    include_str!("../ui/sessions-start.js"),
     include_str!("../ui/main.js"),
     include_str!("../ui/page-end.html"),
 );
@@ -1500,6 +1501,12 @@ fn state(server: &Server) -> Value {
             .hub_runner
             .as_deref()
             .unwrap_or(runner::DEFAULT_HUB_RUNNER),
+        // The agent a session started from the board runs, which is the only one its dialog offers.
+        "sessionStart": {
+            "agent": runner::agent_from_runner(
+                settings.agent_runner.as_deref().unwrap_or(runner::DEFAULT_AGENT_RUNNER),
+            ),
+        },
         "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
@@ -2494,6 +2501,29 @@ mod tests {
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
         assert!(at("function timelineHtml") < at("function renderSessionSidebar"));
         assert!(at("function renderSessionSidebar") < at("openPendingSession)"));
+    }
+
+    #[test]
+    fn the_sessions_view_can_start_and_link_sessions() {
+        for piece in [
+            "id=\"sess-add\"",
+            "aria-haspopup=\"menu\"",
+            "id=\"sess-add-menu\"",
+            "id=\"hubkey-dialog\"",
+            "id=\"start-dialog\"",
+            "id=\"link-dialog\"",
+            "function proposeName",
+            "function worktreeNameProblem",
+            "function sessionPendingRows",
+            "function openLinkDialog",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        // The script that draws the tree calls into the one that knows the pending rows, which
+        // is defined after it and before `main.js` starts polling.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("function renderSessionSidebar") < at("function sessionPendingRows"));
+        assert!(at("function sessionPendingRows") < at("openPendingSession)"));
     }
 
     #[test]

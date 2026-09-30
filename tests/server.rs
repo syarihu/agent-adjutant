@@ -267,6 +267,7 @@ impl FakeTmux {
              echo \"$@\" >> \"$FAKE_TMUX_LOG\"\n\
              case \"$*\" in\n\
              -V) echo \"tmux 3.4\" ;;\n\
+             *new-window*) [ -f \"$FAKE_TMUX_LOG.failnew\" ] && { echo \"no space for a new window\" >&2; exit 1; } ;;\n\
              *display-message*) cat \"$FAKE_TMUX_HOME\" ;;\n\
              *list-panes*) cat \"$FAKE_TMUX_PANES\" ;;\n\
              *list-clients*) cat \"$FAKE_TMUX_CLIENTS\" ;;\n\
@@ -1173,9 +1174,60 @@ fn a_session_request_lands_in_the_chosen_hubs_inbox_with_its_instruction() {
     );
     assert_eq!(status, 200, "{body}");
     assert!(
-        body.contains("\"worktreeName\":\"look-at-the-flaky-upload-test\""),
+        body.contains("\"worktreeName\":\"look-at-the-flaky\""),
         "{body}"
     );
+
+    // The reply says which hub took it and under what file name the hub will find it.
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hub"], "hub", "{body}");
+    let inbox = state_of(&resident)["hubs"][0]["inbox"].clone();
+    let names: Vec<&str> = inbox
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&answer["message"].as_str().unwrap()),
+        "{names:?} {body}"
+    );
+}
+
+#[test]
+fn a_session_request_with_no_instruction_gets_a_dated_name_and_says_so() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&sessions_url(""), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let name = answer["worktreeName"].as_str().unwrap();
+    let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+    let rest = name.strip_prefix("session-").expect(name);
+    let (day, time) = rest.split_once('-').expect(name);
+    assert!(digits(day, 8) && digits(time, 4), "{name}");
+
+    let pending = fixture.json(&["pending", "--json"]);
+    let read = fixture.ok(&[
+        "pending",
+        "--read",
+        pending["messages"][0]["name"].as_str().unwrap(),
+    ]);
+    assert!(read.contains("## Instruction\n-\n"), "{read}");
+}
+
+#[test]
+fn a_session_started_from_the_board_names_the_agent_its_runner_is_set_to() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    assert_eq!(state_of(&resident)["sessionStart"]["agent"], "claude");
+    drop(resident);
+
+    write_tmux_config_with(&fixture, |c| {
+        c["agentRunner"] = serde_json::json!("codex exec {prompt}");
+    });
+    let resident = Resident::start(&fixture);
+    assert_eq!(state_of(&resident)["sessionStart"]["agent"], "codex");
 }
 
 #[test]
@@ -1188,6 +1240,8 @@ fn a_session_request_for_a_parent_hub_goes_to_that_hubs_inbox() {
         &serde_json::json!({"instruction": "Sketch it", "hub": "hub-wid-957"}).to_string(),
     );
     assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hub"], "hub-wid-957", "{body}");
     let parent = fixture.json(&["pending", "--json", "--hub", FEATURE]);
     assert_eq!(parent["count"], 1, "{parent}");
     assert_eq!(parent["messages"][0]["kind"], "session");
@@ -1195,7 +1249,7 @@ fn a_session_request_for_a_parent_hub_goes_to_that_hubs_inbox() {
 }
 
 #[test]
-fn a_session_request_with_a_bad_name_no_instruction_or_another_agent_is_refused() {
+fn a_session_request_with_a_bad_name_another_agent_or_a_non_text_instruction_is_refused() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);
     for (input, wanted) in [
@@ -1207,7 +1261,6 @@ fn a_session_request_with_a_bad_name_no_instruction_or_another_agent_is_refused(
             serde_json::json!({"instruction": "x", "worktreeName": "-flag"}),
             "branch",
         ),
-        (serde_json::json!({"worktreeName": "ok"}), "instruction"),
         (serde_json::json!({"instruction": 5}), "instruction"),
         (
             serde_json::json!({"instruction": "x", "agent": ["claude"]}),
@@ -1217,7 +1270,6 @@ fn a_session_request_with_a_bad_name_no_instruction_or_another_agent_is_refused(
             serde_json::json!({"instruction": "x", "worktreeName": 7}),
             "worktreeName",
         ),
-        (serde_json::json!({"instruction": "   "}), "instruction"),
         (
             serde_json::json!({"instruction": "x", "agent": "codex"}),
             "only claude",
@@ -1373,6 +1425,238 @@ fn linking_a_new_task_on_a_parent_hubs_board_moves_the_worker_to_that_hub() {
         .find(|s| s["id"] == "worker-try-retry")
         .unwrap();
     assert_eq!(session["hub"], "hub-wid-957", "{session}");
+}
+
+/// The messages of `kind` waiting for the hub at `hub_args` (`[]` for the repository's).
+fn messages_of_kind(fixture: &Fixture, hub: &[&str], kind: &str) -> Vec<serde_json::Value> {
+    let mut args = vec!["pending", "--json"];
+    args.extend_from_slice(hub);
+    fixture.json(&args)["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == kind)
+        .cloned()
+        .collect()
+}
+
+/// Makes the fake tmux refuse to open a window, which is how a hub fails to start.
+fn tmux_refuses_windows(tmux: &FakeTmux) {
+    std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
+}
+
+#[test]
+fn a_session_request_starts_a_stopped_hub_after_the_message_is_in_its_inbox() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let (status, body) = resident.post(
+        &sessions_url(""),
+        &serde_json::json!({"instruction": "Look around"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hubStarted"], true, "{body}");
+    assert!(answer.get("hubStartError").is_none(), "{body}");
+    assert!(tmux.logged().contains("new-window"), "{}", tmux.logged());
+    assert_eq!(messages_of_kind(&fixture, &[], "session").len(), 1);
+}
+
+#[test]
+fn a_hub_that_cannot_start_leaves_the_session_request_queued_and_says_why() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    tmux_refuses_windows(&tmux);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let (status, body) = resident.post(
+        &sessions_url(""),
+        &serde_json::json!({"instruction": "Look around"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hubStarted"], false, "{body}");
+    assert!(
+        answer["hubStartError"]
+            .as_str()
+            .is_some_and(|e| !e.is_empty()),
+        "{body}"
+    );
+    assert!(answer["message"].is_string(), "{body}");
+    assert_eq!(messages_of_kind(&fixture, &[], "session").len(), 1);
+}
+
+#[test]
+fn a_file_issue_request_starts_a_stopped_target_hub_and_reports_when_it_cannot() {
+    for refuse in [false, true] {
+        let fixture = Fixture::new(QUIET);
+        write_tmux_config(&fixture);
+        listed_parent_hub(&fixture);
+        let tmux = FakeTmux::new(&fixture);
+        if refuse {
+            tmux_refuses_windows(&tmux);
+        }
+        let running = Sleeper::start();
+        let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+        let resident = resident_with_tmux(&fixture, &tmux, None);
+        let (status, body) = resident.post(
+            &sessions_url("/worker-try-retry/link"),
+            &serde_json::json!({
+                "newTask": {"title": "Needs an issue", "kind": "file-and-start"},
+                "hub": "hub-wid-957",
+            })
+            .to_string(),
+        );
+        assert_eq!(status, 200, "{body}");
+        let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // The link stands either way; only what the hub was told differs.
+        assert_eq!(worker_record(&worktree)["hub"], FEATURE);
+        assert_eq!(
+            messages_of_kind(&fixture, &["--hub", FEATURE], "file-issue").len(),
+            1
+        );
+        assert_eq!(answer["fileIssue"]["handed"]["present"], false, "{body}");
+        if refuse {
+            assert_eq!(answer["hubStarted"], false, "{body}");
+            assert!(answer["hubStartError"].is_string(), "{body}");
+        } else {
+            assert_eq!(answer["hubStarted"], true, "{body}");
+            assert!(answer.get("hubStartError").is_none(), "{body}");
+        }
+    }
+}
+
+#[test]
+fn linking_a_new_task_that_needs_an_issue_asks_the_hub_to_file_it() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let plain = session_worktree(&fixture, "plain", None, None, running.0);
+    let resident = Resident::start(&fixture);
+
+    // Without the ask, the hub hears nothing.
+    let (status, body) = resident.post(
+        &sessions_url("/worker-plain/link"),
+        &serde_json::json!({"newTask": {"title": "No issue"}, "hub": "hub-wid-957"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(messages_of_kind(&fixture, &["--hub", FEATURE], "file-issue").is_empty());
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&body)
+            .unwrap()
+            .get("fileIssue")
+            .is_none()
+    );
+    let outbox = std::fs::read_to_string(plain.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("none will be filed"), "{outbox}");
+
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({
+            "newTask": {"title": "Needs an issue", "kind": "file-and-start"},
+            "hub": "hub-wid-957",
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let id = answer["task"]["id"].as_str().unwrap();
+    assert_eq!(answer["fileIssue"]["handed"]["present"], false, "{body}");
+    assert!(answer.get("fileIssueError").is_none(), "{body}");
+
+    let found = messages_of_kind(&fixture, &["--hub", FEATURE], "file-issue");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["from"], "dashboard");
+    assert_eq!(found[0]["subject"], format!("[file {id}] Needs an issue"));
+    let read = fixture.ok(&[
+        "pending",
+        "--hub",
+        FEATURE,
+        "--read",
+        found[0]["name"].as_str().unwrap(),
+    ]);
+    assert!(read.contains(id), "{read}");
+    assert!(read.contains("file and start"), "{read}");
+    assert!(
+        read.contains(&format!("## Worker running in {}", worktree.display())),
+        "{read}"
+    );
+    // Nothing went to the repository's hub.
+    assert!(messages_of_kind(&fixture, &[], "file-issue").is_empty());
+
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("files the issue"), "{outbox}");
+}
+
+#[test]
+fn a_hub_that_cannot_be_told_to_file_an_issue_leaves_the_link_and_tells_the_worker() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    // A file where the hub's inbox directory would be: nothing can be delivered there.
+    let inbox = fixture.state.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::write(inbox.join(FEATURE_SLUG), "").unwrap();
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({
+            "newTask": {"title": "Needs an issue", "kind": "file-and-start"},
+            "hub": "hub-wid-957",
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(answer["fileIssueError"].is_string(), "{body}");
+    assert!(answer.get("fileIssue").is_none(), "{body}");
+    assert_eq!(worker_record(&worktree)["hub"], FEATURE);
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("not filed"), "{outbox}");
+}
+
+#[test]
+fn linking_an_existing_file_and_start_task_files_nothing_again() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let resident = Resident::start(&fixture);
+    let task = made_task(
+        &resident,
+        serde_json::json!({"title": "Filed already", "kind": "file-and-start", "status": "backlog"}),
+    );
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({"task": task["id"]}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(answer.get("fileIssue").is_none(), "{body}");
+    assert!(messages_of_kind(&fixture, &[], "file-issue").is_empty());
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(!outbox.contains("files the issue"), "{outbox}");
+}
+
+#[test]
+fn linking_an_existing_task_is_refused_when_asked_to_file_an_issue_for_it() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let resident = Resident::start(&fixture);
+    let task = made_task(&resident, serde_json::json!({"title": "Already there"}));
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({"task": task["id"], "kind": "file-and-start"}).to_string(),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("file-and-start"), "{body}");
+    assert!(worker_record(&worktree).get("task").is_none());
 }
 
 #[test]

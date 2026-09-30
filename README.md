@@ -543,28 +543,40 @@ the issue leaves the record as it was and prints why; other trackers' URLs are l
 
 ### Sessions without a task
 
-A worker normally starts from a task, and the board joins a task to its worker by worktree,
-so a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
-`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Only
-`instruction` is required. The hub defaults to this board's own; the name is checked as a
-task's is, and taken from the instruction when it is left out; `agent`, when given, has to be
-the one `agentRunner` starts. The request is a `session` message in that hub's inbox, and the
-hub starts its tab if it is not running and the resident server can. Nothing is queued for a
-free worker slot, so the request is refused when none is free. The hub creates the worktree
-under the first free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with
-the instruction in its brief; no task record is made.
+A worker normally starts from a task, and the board joins a task to its worker by worktree, so
+a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
+`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Every field is
+optional. The hub defaults to this board's own; the name is checked as a task's is, and left
+out it is the first four ASCII words of the instruction, lowercased and joined with `-`, or
+`session-YYYYMMDD-HHMM` (UTC; the Sessions view proposes the same in local time) when there are
+none; with no instruction the worker greets the person in its tab and waits (`## Instruction`
+reads `-` in the message); `agent`, when given, has to be the one `agentRunner` starts
+(`state.sessionStart.agent`). The reply adds `hub` (the `hubs[].id` that took it) and `message`
+(the inbox file name, as in `hubs[].inbox[].name`) to `{handed, hubStarted, worktreeName,
+hubStartError?}`. The request is a `session` message in that hub's inbox, and the hub starts
+its tab if it is not running and the resident server can. Nothing is queued for a free worker
+slot, so the request is refused when none is free. The hub creates the worktree under the first
+free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with the instruction in
+its brief; no task record is made.
 
 `POST /api/sessions/<id>/link` gives that session a task afterwards: `{"task": "<id>"}` for an
 existing one or `{"newTask": {…}}` with the fields `POST /api/tasks` takes, and an optional
-`hub`. The hub the session belongs to follows the task: the one whose task directory holds it,
-so a task on a parent-task hub's board moves the worker to that hub, a repository-board task
-moves it back to the repository's, and a new task made under a parent-task hub is a child of
-that parent. The task becomes `dispatched` (or stays `pr`) with the worktree, the worker's
-record gets the task and, if it has none, the `implement` phase, and the worker is told in its
-outbox (`[linked <id>]`) and woken, as for a question. An optional `phase` (one of the eight
-`adjutant phase` takes) sets the phase instead, and is entered even when the record already has
-one; a value outside the list is refused before anything is written. A session that has not started, one that has ended (no worker running), one that already has a different
-task, a finished task, a Jules task and one another running worker holds are refused.
+`hub`. `newTask.kind: "file-and-start"` also asks the hub to file an issue for the new task: a
+`file-issue` message goes to the hub the task landed on, and the reply adds `fileIssue`
+(`{handed, message}`, as for a session request) and `hubStarted` / `hubStartError` for a
+stopped hub the resident server tried to start, or `fileIssueError` when the hub could not be
+told, which does not undo the link and tells the worker `[issue <id>] not filed`.
+`file-and-start` with an existing `task` is refused. The hub the session belongs to follows the
+task: the one whose task directory holds it, so a task on a parent-task hub's board moves the
+worker to that hub, a repository-board task moves it back to the repository's, and a new task
+made under a parent-task hub is a child of that parent. The task becomes `dispatched` (or stays
+`pr`) with the worktree, the worker's record gets the task and, if it has none, the `implement`
+phase, and the worker is told in its outbox (`[linked <id>]`) and woken, as for a question. An
+optional `phase` (one of the eight `adjutant phase` takes) sets the phase instead, and is
+entered even when the record already has one; a value outside the list is refused before
+anything is written. A session that has not started, one that has ended (no worker running),
+one that already has a different task, a finished task, a Jules task and one another running
+worker holds are refused.
 
 ### Telling sessions apart
 
@@ -689,6 +701,27 @@ per browser; below that it starts hidden and floats over the terminal. `state.hu
 hub's command template as configured, sent with its placeholders in place; the sidebar fills in
 only `{name}` and shows the rest as they are. It is shown on the board as configured, so keep
 secrets out of it.
+
+### Starting and linking from the Sessions view
+
+The `+` at the top of the session tree stays in the 64px rail and opens a menu: start the
+repository's hub (off while it runs), start a parent task's hub by key, and start a session
+with no task. The start dialog picks the hub (a stopped one is started after the request is
+sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
+from it (a dated one is in local time, where the server's own fallback is UTC) until the name
+field is edited. A name git refuses is marked and cannot be sent; a name already in use is only
+noted, since the hub picks the final one. Only the agent `agentRunner` starts can be chosen,
+and the button is off while no worker slot is free. A refused request keeps the dialog and its
+text open with the reason. Until the hub has started the session the tree shows a row for it
+under its hub, derived from the hub's inbox so it survives a reload: waiting, hub stopped (with
+a start button, or why it could not start), or, when the hub took the request and started
+nothing for about 15 seconds, could not start.
+
+On a session with no task the sidebar offers 「タスクにする…」 (title, body, done-when,
+whether to have an issue filed, the current phase) and 「既存のタスクに紐づける…」 (a task
+from any hub's board that is unfinished, not Jules', not a postscript and has no running
+worker, and the phase). The dialog says beforehand when linking moves the session to another
+hub, and when that hub is stopped.
 
 ### Gates
 

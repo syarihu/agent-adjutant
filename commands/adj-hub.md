@@ -228,6 +228,7 @@ heavy collection to a sub-agent.
    | `report` | a worker | Run "When a request arrives" from Step 0 |
    | `request` | a person (the dashboard) | Run "When a request arrives" **from Step 2** (→ "A request from the dashboard") |
    | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
+   | `file-issue` | a person (the dashboard, linking a running session to a new task) | "A linked task that needs an issue" |
    | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
    | `question` | the hub itself (its copy of a report it asked back about and is waiting on) | If the matching `answer` has come, resume. If not, leave it without ack |
    | `needs-user` | the hub itself (waiting on the user's judgement) | Show its content and ask when a person is at this tab |
@@ -1971,7 +1972,8 @@ worker's `report`; only the two ends differ.**
 
 A person asked the board for a session with **no task**: a worker to talk to in its own tab, with
 nothing filed and no card yet. The body's `##` lines are the answers (`## Agent`, `## Worktree name`)
-and `## Instruction` is what the person wants done, verbatim to the end of the body.
+and `## Instruction` is what the person wants done, verbatim to the end of the body. **A `-` there
+means no instruction**: the person wants a session to talk to and has nothing to say yet.
 
 **No task record is made.** Do not run Steps 2 to 5 of "When a request arrives", and do not
 `adj task add` for it. If the person later links the session to a task on the board, the record is
@@ -1992,7 +1994,9 @@ made or picked there and the session is told; that is not the hub's step.
    the instruction may not.
 2. **Write the brief** to `{worktree}/.claude/task-brief.md` after `mkdir -p {worktree}/.claude`, with
    a file-writing tool, from Appendix — The session's brief. **The instruction goes into the file, never
-   onto a command line** ("Keep task text off the shell").
+   onto a command line** ("Keep task text off the shell"). For an instruction of `-`, write this in
+   its place: `No instruction yet. Greet the person in this tab, say you are ready, and wait for what
+   they want.`
 3. **Start the worker:**
 
    ```bash
@@ -2010,6 +2014,28 @@ made or picked there and the session is told; that is not the hub's step.
      hears of it, because the requester is a browser and nothing else will tell them.
 4. **Ack the inbox message** (`adjutant_pending` `action: ack`) once the worker is started or the
    failure is said. Tell the person in one line which worktree and tab it is, then go back to waiting.
+
+### A linked task that needs an issue (`kind: file-issue`)
+
+A person linked a session that is already running to a **new task** and asked for an issue to be
+filed for it. The task record exists and the worker is running, so this is only the filing: do not
+create a worktree, write a brief or start a worker. `subject` is `[file {task id}] {title}`, the
+body is the task's request lines, and `## Worker running in {worktree}` names the worker's worktree.
+
+1. **Read `adj task show --id {task id}` once.** If it is finished, cancelled or not found, ack and
+   say so in one line. If it already has an `issue`, skip to 4 with that URL.
+2. **Run only Step 2 (look for duplicates) and Step 3 (file) of "When a request arrives"**, with the
+   title and body of the record and the worker's worktree as where it came from. There is nobody to
+   ask back: if a similar issue turns up and a person is at this tab, ask as Step 2 says; if nobody
+   is, do not file — go to 5 with the similar issue's number as the reason.
+3. **Record it:** `adj task update --id {task id} --issue {url}`.
+4. **Tell the worker** with `adjutant_tell` to the worktree from `## Worker running in`, with subject
+   `[issue {task id}] {url}` and the URL in the body. The worker's `[linked]` message said the URL
+   would arrive this way, and the board shows it on the card from the record.
+5. **When it could not be filed**, write the reason to the record's note through a file
+   ("Keep task text off the shell"), run `adj notify` (the requester is a browser and nothing else
+   tells them), and tell the worker with `[issue {task id}] not filed: {reason}`.
+6. **Ack the inbox message.**
 
 ### The answer to a gate the hub opened (`kind: gate`)
 
