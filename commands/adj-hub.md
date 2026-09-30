@@ -957,9 +957,11 @@ independently:
    Then confirm that `git worktree list` has **that path together with that branch**.
    **If the path is not in `git worktree list` at all, it was already removed** before this request
    was read — from the board, or by someone else. There is nothing to remove: do not run `git worktree
-   remove`, and do not delete a branch. If the header's branch still exists locally (`git rev-parse -q
-   --verify refs/heads/<branch>`) and `git log <branch> --not --remotes --oneline` prints anything,
-   do not mark the task done; tell the person the branch holds unpushed commits. Otherwise (the branch
+   remove`, and do not delete a branch. The branch comes from the request's body, which the worker
+   typed, so put it in single quotes as one argument and never inside `$(…)` or double quotes (a
+   name with a `'` in it is not used; ask back instead). If it still exists locally (`git rev-parse
+   -q --verify 'refs/heads/<branch>'`) and `git log 'refs/heads/<branch>' --not --remotes --oneline`
+   prints anything, do not mark the task done; tell the person the branch holds unpushed commits. Otherwise (the branch
    is gone, as the board leaves it, or it has nothing unpushed) set any still `dispatched` or `pr`
    task from `adj task list --worktree <path> --json` to `done`, ack (7), and stop.
 2. **Safety checks.** Look **only at uncommitted changes and unpushed commits**. That row of `proctor
