@@ -299,6 +299,9 @@ async function submitHandoverNow() {
       }
       return;
     }
+    // Cancelled, or reopened for another task, while the hub was starting: the hub stays up,
+    // but nothing is handed over, and the dialog now on screen is not ours to close.
+    if (handoverTarget !== target) return;
   }
   closeHandoverDialog();
   // The queue as the target board has it now, not as it was when the dialog opened.
