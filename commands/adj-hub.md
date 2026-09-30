@@ -955,11 +955,13 @@ independently:
    succeeds for a path that does not exist, so only this match stops a wrong address).
    A request with **no** header (sent from outside git, an old format) is asked back about too.
    Then confirm that `git worktree list` has **that path together with that branch**.
-   **If the path is not in `git worktree list` at all, the board removed it** (a person cleaned it up
-   from the board) before this request was read. Nothing is left to check or remove: look up its task
-   (`adj task list --worktree <path> --json`), set any still `dispatched` or `pr` to `done`, ack (7), and
-   stop. Do not run `git worktree remove`, and do not delete a branch on the strength of a path that is
-   gone.
+   **If the path is not in `git worktree list` at all, it was already removed** before this request
+   was read — from the board, or by someone else. There is nothing to remove: do not run `git worktree
+   remove`, and do not delete a branch. If the header's branch still exists locally (`git rev-parse -q
+   --verify refs/heads/<branch>`) and `git log <branch> --not --remotes --oneline` prints anything,
+   do not mark the task done; tell the person the branch holds unpushed commits. Otherwise (the branch
+   is gone, as the board leaves it, or it has nothing unpushed) set any still `dispatched` or `pr`
+   task from `adj task list --worktree <path> --json` to `done`, ack (7), and stop.
 2. **Safety checks.** Look **only at uncommitted changes and unpushed commits**. That row of `proctor
    worktree ls --json` has `diff` all 0 (and `diffKnown: true`) and `isLocked: false`. **Do not look
    at `isRemovable` or `sessions`** — those include "nobody is working there", and the worker that
