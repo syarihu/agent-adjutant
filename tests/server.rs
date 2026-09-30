@@ -247,6 +247,7 @@ struct FakeTmux {
     bin: PathBuf,
     log: PathBuf,
     panes: PathBuf,
+    clients: PathBuf,
 }
 
 impl FakeTmux {
@@ -261,6 +262,7 @@ impl FakeTmux {
              echo \"$@\" >> \"$FAKE_TMUX_LOG\"\n\
              case \"$*\" in\n\
              *list-panes*) cat \"$FAKE_TMUX_PANES\" ;;\n\
+             *list-clients*) cat \"$FAKE_TMUX_CLIENTS\" ;;\n\
              *kill-pane*) [ -n \"$FAKE_TMUX_KILL\" ] && kill \"$FAKE_TMUX_KILL\" ;;\n\
              esac\n\
              exit 0\n",
@@ -270,10 +272,13 @@ impl FakeTmux {
         std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
         let panes = root.join("panes.txt");
         std::fs::write(&panes, "").unwrap();
+        let clients = root.join("clients.txt");
+        std::fs::write(&clients, "").unwrap();
         FakeTmux {
             bin,
             log: root.join("tmux.log"),
             panes,
+            clients,
         }
     }
 
@@ -307,6 +312,7 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
     let path = tmux.path();
     let log = tmux.log.to_string_lossy().to_string();
     let panes = tmux.panes.to_string_lossy().to_string();
+    let clients = tmux.clients.to_string_lossy().to_string();
     let kill = kill.map(|pid| pid.to_string()).unwrap_or_default();
     Resident::start_with(
         fixture,
@@ -314,6 +320,7 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
             ("PATH", &path),
             ("FAKE_TMUX_LOG", &log),
             ("FAKE_TMUX_PANES", &panes),
+            ("FAKE_TMUX_CLIENTS", &clients),
             ("FAKE_TMUX_KILL", &kill),
         ],
     )
@@ -1460,4 +1467,248 @@ fn a_link_is_refused_for_a_hub_a_session_not_started_a_finished_task_or_one_held
         .unwrap();
     assert_eq!(free_now["status"], "backlog");
     assert!(free_now["worktree"].is_null(), "{free_now}");
+}
+
+// ── what the board tells sessions apart by ───────────────────────────
+
+fn session_of<'a>(state: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    state["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id)
+        .unwrap_or_else(|| panic!("no session {id} in {state}"))
+}
+
+/// Say in a worker's record where it runs, as `adj work` does when it starts one.
+fn place_worker(worktree: &Path, window: &str) {
+    let path = worktree.join(".claude").join("adjutant-worker.json");
+    let mut record = worker_record(worktree);
+    record["terminal"] =
+        serde_json::json!({"backend": "tmux", "socket": "scratch", "window": window});
+    std::fs::write(path, record.to_string()).unwrap();
+}
+
+#[test]
+fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let one = session_worktree(&fixture, "one", None, None, running.0);
+    let two = session_worktree(&fixture, "two", None, None, running.0);
+    let elsewhere = session_worktree(&fixture, "elsewhere", None, None, running.0);
+    place_worker(&one, "@5");
+    place_worker(&two, "@6");
+    place_worker(&elsewhere, "@9");
+    std::fs::write(
+        &tmux.panes,
+        "%5\t1\t/dev/ttys005\t@5\tadjutant-test\t1\tone\t1790000000\n\
+         %5\t1\t/dev/ttys005\t@5\tadjboard-1-1\t1\tone\t1790000000\n\
+         %6\t2\t/dev/ttys006\t@6\tadjutant-test\t2\ttwo\t1790000100\n",
+    )
+    .unwrap();
+    // The board's own session, a client looking at @5, and iTerm2's control client, which
+    // has every window of its session open.
+    std::fs::write(
+        &tmux.clients,
+        "adjboard-1-1\t0\t@5\nadjutant-test\t0\t@5\nadjutant-test\t1\t@6\n",
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let state = state_of(&resident);
+    let one = session_of(&state, "worker-one");
+    assert_eq!(one["lastActivityAt"], 1_790_000_000, "{one}");
+    assert_eq!(one["attached"], 2, "{one}");
+    let two = session_of(&state, "worker-two");
+    assert_eq!(two["lastActivityAt"], 1_790_000_100, "{two}");
+    assert_eq!(two["attached"], 1, "{two}");
+    // A window tmux does not list says nothing rather than zero.
+    let gone = session_of(&state, "worker-elsewhere");
+    assert!(gone.get("lastActivityAt").is_none(), "{gone}");
+    assert!(gone.get("attached").is_none(), "{gone}");
+
+    // A tmux with nothing to say about clients leaves the rest of the poll as it was.
+    std::fs::write(&tmux.clients, "").unwrap();
+    let quiet = state_of(&resident);
+    assert_eq!(session_of(&quiet, "worker-one")["attached"], 0);
+    assert_eq!(
+        session_of(&quiet, "worker-one")["lastActivityAt"],
+        1_790_000_000
+    );
+}
+
+fn write_gate_file(fixture: &Fixture, slug: &str, id: &str, kind: &str, worktree: &Path) {
+    let dir = fixture.state.join("gates").join(slug);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{id}.json")),
+        serde_json::json!({
+            "id": id,
+            "kind": kind,
+            "worktree": worktree.to_str().unwrap(),
+            "title": "どちらにするか",
+            "openedAt": "20260922T041233Z",
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_session_shows_the_gate_it_waits_on_even_from_a_parent_hubs_directory() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let parent = session_worktree(&fixture, "under-parent", Some(FEATURE), None, 1);
+    let moved = session_worktree(&fixture, "moved-on", Some(FEATURE), None, 1);
+    let own = session_worktree(&fixture, "own-hub", None, None, 1);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-parent", "question", &parent);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-moved", "question", &moved);
+    write_gate_file(&fixture, SLUG, "g-own", "question", &own);
+    write_gate_file(&fixture, SLUG, "g-dispatch", "dispatch", &fixture.repo);
+    // This one's worker went on to another phase after opening the gate.
+    let mut record = worker_record(&moved);
+    record["phaseAt"] = serde_json::json!(LATER_SECS);
+    std::fs::write(
+        moved.join(".claude").join("adjutant-worker.json"),
+        record.to_string(),
+    )
+    .unwrap();
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let waiting = &session_of(&state, "worker-under-parent")["waiting"];
+    assert_eq!(waiting["id"], "g-parent", "{waiting}");
+    assert_eq!(waiting["kind"], "question");
+    assert_eq!(waiting["hub"], format!("hub-{FEATURE}"));
+    assert_eq!(waiting["slug"], FEATURE_SLUG);
+    assert_eq!(waiting["openedAt"], "20260922T041233Z");
+    assert_eq!(waiting["count"], 1);
+    assert_eq!(
+        session_of(&state, "worker-own-hub")["waiting"]["hub"],
+        "hub"
+    );
+    assert!(
+        session_of(&state, "worker-moved-on")
+            .get("waiting")
+            .is_none()
+    );
+    // Read only: the parent hub's own board is the one that closes its gate.
+    assert!(
+        fixture
+            .state
+            .join("gates")
+            .join(FEATURE_SLUG)
+            .join("g-moved.json")
+            .exists()
+    );
+    // What the repository hub opened for a person is what the hub is waiting on.
+    assert_eq!(session_of(&state, "hub")["waiting"]["id"], "g-dispatch");
+}
+
+#[test]
+fn a_hub_lists_its_inbox_newest_first_with_a_cap_and_the_full_count() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let inbox = fixture.state.join("inbox").join(SLUG);
+    std::fs::create_dir_all(&inbox).unwrap();
+    for i in 0..23 {
+        let at = format!("20260922T04{i:02}00Z");
+        std::fs::write(
+            inbox.join(format!("{at}-report.md")),
+            format!("---\nfrom: w{i}\nkind: report\nsubject: s{i}\nat: {at}\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    let state = state_of(&resident);
+    let hub = &state["hubs"][0];
+    assert_eq!(hub["inboxCount"], 23);
+    let items = hub["inbox"].as_array().unwrap();
+    assert_eq!(items.len(), 20);
+    assert_eq!(items[0]["subject"], "s22");
+    assert_eq!(items[0]["from"], "w22");
+    assert_eq!(items[0]["kind"], "report");
+    assert_eq!(items[0]["at"], "20260922T042200Z");
+    assert_eq!(items[19]["subject"], "s3");
+}
+
+#[test]
+fn a_session_keeps_every_phase_its_worker_said() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let worktree = fixture.repo.clone();
+    write_worker(&worktree, "20260922T040000Z", None);
+    // Written the way a worker running a version before the history was kept left it.
+    let mut record = worker_record(&worktree);
+    record["phaseAt"] = serde_json::json!(1_790_000_000);
+    std::fs::write(
+        worktree.join(".claude").join("adjutant-worker.json"),
+        record.to_string(),
+    )
+    .unwrap();
+    for phase in ["verify", "pr"] {
+        let out = fixture
+            .command(["phase", "--set", phase])
+            .current_dir(&worktree)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let state = state_of(&resident);
+    let phases = session_of(&state, "worker-main")["phases"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let names: Vec<&str> = phases.iter().map(|p| p[0].as_str().unwrap()).collect();
+    assert_eq!(names, ["implement", "verify", "pr"], "{phases:?}");
+    assert_eq!(phases[0][1], 1_790_000_000);
+    assert_eq!(session_of(&state, "worker-main")["phase"], "pr");
+}
+
+#[test]
+fn the_git_route_reports_a_dirty_worktree_and_refuses_a_session_it_does_not_know() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = session_worktree(&fixture, "dirty", None, None, 1);
+    std::fs::write(worktree.join("scratch.txt"), "untracked\n").unwrap();
+    std::fs::write(worktree.join("kept.txt"), "one\ntwo\n").unwrap();
+    for args in [
+        vec!["add", "kept.txt"],
+        vec!["commit", "-q", "-m", "keep two lines"],
+    ] {
+        let out = Command::new("git")
+            .hermetic()
+            .args(&args)
+            .current_dir(&worktree)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    std::fs::write(worktree.join("kept.txt"), "one\nTWO\nthree\n").unwrap();
+    let resident = Resident::start(&fixture);
+
+    let (status, body) = resident.get(&sessions_url("/worker-dirty/git"));
+    assert_eq!(status, 200, "{body}");
+    let git: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(git["branch"], "dirty", "{body}");
+    assert_eq!(git["uncommitted"]["files"], 1, "{body}");
+    // scratch.txt, and the `.claude` directory the worker's own records sit in.
+    assert_eq!(git["uncommitted"]["untracked"], 2, "{body}");
+    assert_eq!(git["uncommitted"]["insertions"], 2, "{body}");
+    assert_eq!(git["uncommitted"]["deletions"], 1, "{body}");
+    // No remote here, so both commits are ones nobody else has.
+    assert_eq!(git["unpushed"]["count"], 2, "{body}");
+    assert_eq!(git["unpushed"]["commits"][0]["subject"], "keep two lines");
+
+    let (status, body) = resident.get(&sessions_url("/worker-nobody/git"));
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no such session"), "{body}");
 }

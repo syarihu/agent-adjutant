@@ -80,6 +80,54 @@ pub struct Session {
     /// Epoch timestamp when the phase was entered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_at: Option<i64>,
+    /// Every phase the worker has entered, oldest first, as `[phase, epoch seconds]`: what
+    /// `phase` and `phaseAt` were before they were overwritten. Capped by the record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub phases: Vec<(String, i64)>,
+    /// Epoch seconds of the last activity in the session's tmux window (`#{window_activity}`).
+    /// Absent when the session is not in tmux or the window is not found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<i64>,
+    /// How many clients are attached to the session's window, not counting the board's own
+    /// `adjboard-*` sessions. Absent when the window is not found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached: Option<u32>,
+    /// The open gate this session is waiting on, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<SessionWaiting>,
+}
+
+/// The oldest open gate a session waits on: the one a worker opened and is waiting to have
+/// answered, or, for a hub, the one it opened for a person.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionWaiting {
+    pub id: String,
+    pub kind: String,
+    /// The `hubs[].id` whose gate directory holds it.
+    pub hub: String,
+    pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// UTC timestamp string when the gate was opened.
+    pub opened_at: String,
+    /// How many gates the session waits on in all, this one included.
+    pub count: usize,
+}
+
+/// One message waiting in a hub's inbox, as hubs[].inbox lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxItem {
+    pub name: String,
+    pub subject: String,
+    pub kind: String,
+    pub from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    /// UTC timestamp string from the message header, or its file name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
 }
 
 /// A hub of the repository, as reported in hubs[].
@@ -98,6 +146,9 @@ pub struct RepoHub {
     pub slug: String,
     pub state: RepoHubState,
     pub inbox_count: usize,
+    /// The newest messages waiting, newest first and capped: `inbox_count` is the full number.
+    #[serde(default)]
+    pub inbox: Vec<InboxItem>,
     /// How many checkouts have a worker that reports to this hub, running or ended.
     #[serde(default)]
     pub children: usize,
@@ -141,6 +192,64 @@ impl SessionRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_says_what_it_knows_in_camel_case_and_leaves_out_what_it_does_not() {
+        let mut session = Session {
+            id: "worker-a".to_string(),
+            kind: "worker".to_string(),
+            agent: "claude".to_string(),
+            terminal: SessionTerminal {
+                backend: "tmux".to_string(),
+                socket: None,
+                session: None,
+                window: None,
+                pane: None,
+            },
+            hub: None,
+            key: None,
+            worktree: "/w".to_string(),
+            branch: None,
+            task: None,
+            title: None,
+            conversation: None,
+            present: true,
+            stale: false,
+            pid: None,
+            started_at: None,
+            phase: None,
+            phase_at: None,
+            phases: Vec::new(),
+            last_activity_at: None,
+            attached: None,
+            waiting: None,
+        };
+        let bare = serde_json::to_value(&session).unwrap();
+        for key in ["phases", "lastActivityAt", "attached", "waiting"] {
+            assert!(bare.get(key).is_none(), "{key} should be left out");
+        }
+        session.phases = vec![("plan".to_string(), 123), ("verify".to_string(), 456)];
+        session.last_activity_at = Some(99);
+        session.attached = Some(0);
+        session.waiting = Some(SessionWaiting {
+            id: "g1".to_string(),
+            kind: "plan".to_string(),
+            hub: "hub".to_string(),
+            slug: "o-r".to_string(),
+            title: None,
+            opened_at: "20260101T000000Z".to_string(),
+            count: 2,
+        });
+        let full = serde_json::to_value(&session).unwrap();
+        assert_eq!(
+            full["phases"],
+            serde_json::json!([["plan", 123], ["verify", 456]])
+        );
+        assert_eq!(full["lastActivityAt"], 99);
+        assert_eq!(full["attached"], 0);
+        assert_eq!(full["waiting"]["openedAt"], "20260101T000000Z");
+        assert!(full["waiting"].get("title").is_none());
+    }
 
     #[test]
     fn a_session_request_renders_its_fields_and_the_instruction_verbatim() {

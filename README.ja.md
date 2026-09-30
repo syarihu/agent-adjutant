@@ -290,6 +290,19 @@ worker は普通タスクから始まり、ボードはタスクと worker を w
 
 `POST /api/sessions/<id>/link` は、そのセッションに後からタスクを持たせます。既存のタスクは `{"task": "<id>"}`、新しいタスクは `{"newTask": {…}}`（`POST /api/tasks` と同じ項目）で、`hub` も任意で渡せます。セッションの所属先の hub はタスクに従います。そのタスクのディレクトリを持つ hub が所属先になるので、親タスクの hub のボードにあるタスクなら worker はその hub へ移り、リポジトリのボードのタスクならリポジトリ自身の hub へ戻ります。親タスクの hub の下で作った新しいタスクは、その親の子になります。タスクは worktree を持って `dispatched`（`pr` ならそのまま）になり、worker のレコードにはタスクと、フェーズが無ければ `implement` が入り、worker には outbox に `[linked <id>]` で知らせ、質問のときと同じく起こします。まだ起動していないセッション、終了したセッション（動いている worker が無い）、すでに別のタスクを持つセッション、完了済みのタスク、Jules のタスク、別の動いている worker が持っているタスクは断ります。
 
+### セッションを見分ける情報
+
+`GET /api/state` の `sessions[]` には、種類だけでなく、開かずに見分けるための情報が入ります。どれも2秒ごとのポーリングで、すでに手元にあるものから読みます。tmux のソケットごとに `tmux list-panes` と `tmux list-clients` を1回ずつと、ゲートのディレクトリだけです。
+
+- `lastActivityAt`: セッションのウィンドウの tmux の `window_activity`（エポック秒）。tmux で動いていない、またはウィンドウが一覧に無いときは出しません。
+- `attached`: そのウィンドウにアタッチしているクライアントの数。ボード自身のブラウザ端末（`adjboard-*`）は数えません。コントロールモードのクライアント（iTerm2 の `-CC`）はそのセッションの全ウィンドウに、通常のクライアントは表示中のウィンドウに数えます。誰もいなければ `0`、ウィンドウが一覧に無いときは出しません。
+- `waiting`: セッションが待っている、いちばん古い未回答のゲート。`{id, kind, hub, slug, title, openedAt, count}` で、`hub` は `hubs[].id`、`count` は待っているゲートの総数です。worker の分は所属する hub のゲートのディレクトリから読むので、リポジトリのボードでも親タスクの hub の下の worker のゲートが出ます。worker が先へ進んだゲートは除きますが、閉じるのはそのディレクトリを持つボードだけです。hub の分は、hub が人に答えてもらうために開いたゲートです。
+- `phases`: worker が宣言したフェーズを古い順に `[phase, エポック秒]` で並べたもの。worker のレコードに直近64件を保存し、同じ worktree で worker を起動し直しても引き継ぎます。`phase` と `phaseAt` は今のフェーズのままです。
+
+`hubs[].inbox` は、その hub の受信箱で待っているメッセージを新しい順に最大20件、`name`、`subject`、`kind`、`from`、`worktree`、`at`（UTC のスタンプ）つきで並べます。`inboxCount` は待っている総数のままです。
+
+`GET /api/sessions/<id>/git` は、ポーリングではなく尋ねられたときだけ、そのセッションの worktree を調べます。`branch`（detached なら null）、`head`、`uncommitted`（HEAD との差の `files`、`untracked`、`insertions`、`deletions`）、`upstream`、`unpushed`（`count`、新しい順に20件の `commits`、何と比べたかを示す `against`。upstream か、ブランチに無いときは全リモート）、`merged`（`base`、`ref`、`merged`、判定できないときは `reason`）を返します。base はタスクに指定があればそれ、無ければリモートの既定ブランチです。fetch はしないので、`unpushed` と `merged` は最後に fetch した時点のものです。squash や rebase でマージした場合、base に残るコミットが worktree のものと別なので、マージ済みとは判定されません。全体で10秒の期限があり、worktree が無ければ断ります。未知のセッション id は `link` と同じく 400 です。
+
 ## レイヤ構成
 
 ```

@@ -55,6 +55,21 @@ pub struct TmuxPane {
     pub session_name: String,
     pub window_index: u32,
     pub window_name: String,
+    /// `#{window_activity}`: epoch seconds of the window's last activity. None on a line that
+    /// has no such field (an older listing) or one that is not a number.
+    #[serde(default)]
+    pub window_activity: Option<i64>,
+}
+
+/// A client attached to a tmux server, as `list-clients` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxClient {
+    pub session: String,
+    /// A control-mode client (iTerm2's `-CC`), which shows every window of its session rather
+    /// than one.
+    pub control: bool,
+    /// The window the client is looking at.
+    pub window_id: String,
 }
 
 /// How long a command line may be before it is staged in a file instead of typed.
@@ -1059,6 +1074,7 @@ pub fn parse_tmux_panes(output: &str) -> Vec<TmuxPane> {
                 session_name: parts[4].to_string(),
                 window_index: parts[5].parse().ok()?,
                 window_name: parts[6].to_string(),
+                window_activity: parts.get(7).and_then(|a| a.trim().parse().ok()),
             })
         })
         .collect()
@@ -1115,7 +1131,7 @@ pub fn list_tmux_panes_with(
 ) -> Result<Vec<TmuxPane>, String> {
     let prefix = tmux_cmd_prefix(socket);
     let cmd = format!(
-        "{prefix} list-panes -a -F '#{{pane_id}}\t#{{pane_pid}}\t#{{pane_tty}}\t#{{window_id}}\t#{{session_name}}\t#{{window_index}}\t#{{window_name}}'"
+        "{prefix} list-panes -a -F '#{{pane_id}}\t#{{pane_pid}}\t#{{pane_tty}}\t#{{window_id}}\t#{{session_name}}\t#{{window_index}}\t#{{window_name}}\t#{{window_activity}}'"
     );
     match run(&cmd) {
         Ok(out) => Ok(parse_tmux_panes(&out)),
@@ -1136,6 +1152,85 @@ pub fn list_tmux_panes_with(
 
 pub fn list_tmux_panes(socket: Option<&str>) -> Result<Vec<TmuxPane>, String> {
     list_tmux_panes_with(run_shell, socket)
+}
+
+pub fn parse_tmux_clients(output: &str) -> Vec<TmuxClient> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.trim_end().split('\t').collect();
+            if parts.len() < 3 {
+                return None;
+            }
+            Some(TmuxClient {
+                session: parts[0].to_string(),
+                control: parts[1] == "1",
+                window_id: parts[2].to_string(),
+            })
+        })
+        .collect()
+}
+
+/// The clients attached to the server. A separate command from the pane listing, so a tmux
+/// that does not know `list-clients` cannot take the panes down with it; every failure reads
+/// as nobody attached.
+pub fn list_tmux_clients_with(
+    run: impl Fn(&str) -> Result<String, String>,
+    socket: Option<&str>,
+) -> Vec<TmuxClient> {
+    let prefix = tmux_cmd_prefix(socket);
+    let cmd = format!(
+        "{prefix} list-clients -F '#{{client_session}}\t#{{client_control_mode}}\t#{{window_id}}'"
+    );
+    run(&cmd)
+        .map(|out| parse_tmux_clients(&out))
+        .unwrap_or_default()
+}
+
+pub fn list_tmux_clients(socket: Option<&str>) -> Vec<TmuxClient> {
+    list_tmux_clients_with(run_shell, socket)
+}
+
+/// How many clients are attached to each window, by window id, for the windows in `panes`.
+///
+/// The board's own `adjboard-*` sessions are left out: they are a browser looking at the
+/// window, not a person at it. `list-panes -a` lists a grouped window once per session of the
+/// group, so those sessions' lines are ignored when working out which windows a control-mode
+/// client sees.
+pub fn attached_counts(
+    panes: &[TmuxPane],
+    clients: &[TmuxClient],
+) -> std::collections::HashMap<String, u32> {
+    let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut windows_of: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for pane in panes {
+        counts.entry(pane.window_id.clone()).or_insert(0);
+        if pane.session_name.starts_with(BOARD_SESSION_PREFIX) {
+            continue;
+        }
+        let windows = windows_of.entry(pane.session_name.as_str()).or_default();
+        if !windows.contains(&pane.window_id.as_str()) {
+            windows.push(pane.window_id.as_str());
+        }
+    }
+    for client in clients {
+        if client.session.starts_with(BOARD_SESSION_PREFIX) {
+            continue;
+        }
+        if client.control {
+            for window in windows_of
+                .get(client.session.as_str())
+                .into_iter()
+                .flatten()
+            {
+                *counts.entry((*window).to_string()).or_insert(0) += 1;
+            }
+        } else {
+            *counts.entry(client.window_id.clone()).or_insert(0) += 1;
+        }
+    }
+    counts
 }
 
 pub fn find_tmux_pane(
@@ -2757,6 +2852,83 @@ mod tests {
         let entered = script.find("write text \"\"\n").unwrap();
         assert!(typed < paused && paused < entered, "{script}");
         assert_eq!(script.matches("write text").count(), 2, "{script}");
+    }
+
+    #[test]
+    fn a_pane_line_reads_with_or_without_the_activity_column() {
+        let panes = parse_tmux_panes(
+            "%0\t1\t/dev/ttys001\t@0\ts\t0\tw\t1700000000\n%1\t2\t/dev/ttys002\t@1\ts\t1\tv\n",
+        );
+        assert_eq!(panes.len(), 2);
+        assert_eq!(panes[0].window_activity, Some(1_700_000_000));
+        assert_eq!(panes[1].window_activity, None);
+    }
+
+    fn pane_of(session: &str, window: &str) -> TmuxPane {
+        TmuxPane {
+            pane_id: format!("%{window}"),
+            pane_pid: 1,
+            pane_tty: String::new(),
+            window_id: window.to_string(),
+            session_name: session.to_string(),
+            window_index: 0,
+            window_name: "w".to_string(),
+            window_activity: None,
+        }
+    }
+
+    fn client_of(session: &str, control: bool, window: &str) -> TmuxClient {
+        TmuxClient {
+            session: session.to_string(),
+            control,
+            window_id: window.to_string(),
+        }
+    }
+
+    #[test]
+    fn tmux_clients_are_read_from_their_three_fields() {
+        let clients = parse_tmux_clients("main\t0\t@1\nmain\t1\t@2\nshort\t0\n");
+        assert_eq!(
+            clients,
+            vec![
+                client_of("main", false, "@1"),
+                client_of("main", true, "@2")
+            ]
+        );
+    }
+
+    #[test]
+    fn attached_counts_leave_out_the_board_and_follow_the_kind_of_client() {
+        let panes = [
+            pane_of("main", "@1"),
+            pane_of("main", "@2"),
+            pane_of("main", "@2"),
+            pane_of("adjboard-7-1", "@1"),
+            pane_of("other", "@3"),
+        ];
+        let clients = [
+            client_of("adjboard-7-1", false, "@1"),
+            client_of("main", false, "@1"),
+            client_of("other", true, "@3"),
+            client_of("main", true, "@2"),
+        ];
+        let counts = attached_counts(&panes, &clients);
+        // A normal client is on its current window only; a control client on all of its
+        // session's windows, once each however many panes they have; the board on none.
+        assert_eq!(counts.get("@1"), Some(&2));
+        assert_eq!(counts.get("@2"), Some(&1));
+        assert_eq!(counts.get("@3"), Some(&1));
+        let idle = attached_counts(&panes, &[]);
+        assert_eq!(idle.get("@1"), Some(&0));
+        assert_eq!(idle.get("@9"), None);
+    }
+
+    #[test]
+    fn listing_clients_of_no_server_is_nobody() {
+        let none = list_tmux_clients_with(|_| Err("no server running on /tmp/x".to_string()), None);
+        assert!(none.is_empty());
+        let one = list_tmux_clients_with(|_| Ok("s\t0\t@1\n".to_string()), None);
+        assert_eq!(one.len(), 1);
     }
 
     #[test]

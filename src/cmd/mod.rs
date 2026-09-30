@@ -2390,6 +2390,7 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
                 started_at: None,
             },
             inbox_count: 0,
+            inbox: Vec::new(),
             children: 0,
         });
     closable_check(&info, &hub)?;

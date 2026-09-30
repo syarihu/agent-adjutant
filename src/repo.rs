@@ -431,9 +431,430 @@ fn normalise(path: &Path) -> String {
     buf.to_string_lossy().to_string()
 }
 
+// ── what a worktree has not yet let go of ────────────────────────────
+
+/// Files and lines in a worktree that no commit has yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Uncommitted {
+    /// Tracked files that differ from HEAD, staged or not.
+    pub files: usize,
+    /// Files git does not track and does not ignore, counted apart: a build directory nobody
+    /// ignored is not work at risk in the way an edit is.
+    pub untracked: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UnpushedCommit {
+    pub sha: String,
+    pub subject: String,
+}
+
+/// Commits that exist only here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Unpushed {
+    pub count: usize,
+    /// The newest of them, up to `UNPUSHED_LISTED`.
+    pub commits: Vec<UnpushedCommit>,
+    /// What they were counted against: "upstream" (`@{u}..HEAD`) or, for a branch with none,
+    /// "remotes" (every commit no remote-tracking ref has).
+    pub against: &'static str,
+}
+
+/// Whether HEAD is already in the base branch.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergedInto {
+    pub base: Option<String>,
+    /// The ref HEAD was compared with (`origin/main`, or a local branch).
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+    /// `None` when it could not be told; `reason` says why.
+    pub merged: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// What a worktree holds that would be lost, or has to be published, if it were removed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitState {
+    /// `None` when HEAD is detached.
+    pub branch: Option<String>,
+    /// The short id of HEAD; `None` before the first commit.
+    pub head: Option<String>,
+    pub uncommitted: Uncommitted,
+    pub upstream: Option<String>,
+    pub unpushed: Unpushed,
+    pub merged: MergedInto,
+}
+
+const UNPUSHED_LISTED: usize = 20;
+
+struct GitOut {
+    code: Option<i32>,
+    stdout: String,
+}
+
+impl GitOut {
+    fn ok(&self) -> bool {
+        self.code == Some(0)
+    }
+}
+
+/// Git in `cwd`, killed when `deadline` passes.
+///
+/// Read-only by construction: `GIT_OPTIONAL_LOCKS=0` keeps `status` from refreshing the index
+/// behind the back of a worker that is running git in the same worktree. Output is drained on
+/// threads, because a listing longer than a pipe holds would otherwise stall the child until
+/// the deadline.
+fn git_until(args: &[&str], cwd: &Path, deadline: std::time::Instant) -> Result<GitOut, String> {
+    use std::io::Read;
+    let mut cmd = Command::new("git");
+    cmd.args(args)
+        .current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    for name in REPOSITORY_LOCATION_ENV {
+        cmd.env_remove(name);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e}"))?;
+    let mut pipe = child.stdout.take().ok_or("cannot read git's output")?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        bytes
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err("git did not answer in time".to_string());
+            }
+            Err(e) => return Err(format!("cannot wait for git: {e}")),
+        }
+    };
+    let bytes = reader.join().unwrap_or_default();
+    Ok(GitOut {
+        code: status.code(),
+        stdout: String::from_utf8_lossy(&bytes).to_string(),
+    })
+}
+
+/// What `worktree` holds that no remote has, for a person deciding whether it can go.
+///
+/// `Ok(None)` when the directory is gone. `base` is the branch the work is meant to land on
+/// (a task's), and without one the remote's default. Nothing is fetched: "merged" and "pushed"
+/// are as of the last fetch, and a squash or rebase merge is not seen as one, because the
+/// commits it left in the base are not the ones here.
+pub fn worktree_git_state(
+    worktree: &Path,
+    base: Option<&str>,
+    deadline: std::time::Instant,
+) -> Result<Option<GitState>, String> {
+    if !worktree.is_dir() {
+        return Ok(None);
+    }
+    let git = |args: &[&str]| git_until(args, worktree, deadline);
+    let line =
+        |out: GitOut| Some(out.stdout.trim().to_string()).filter(|l| out.ok() && !l.is_empty());
+
+    let branch = line(git(&["symbolic-ref", "-q", "--short", "HEAD"])?);
+    let head = line(git(&["rev-parse", "--short", "HEAD"])?);
+
+    let status = git(&["status", "--porcelain=v1", "-z"])?;
+    if !status.ok() {
+        return Err(format!("{} is not a git worktree", worktree.display()));
+    }
+    let mut uncommitted = Uncommitted::default();
+    let mut fields = status.stdout.split('\0').filter(|f| !f.is_empty());
+    while let Some(field) = fields.next() {
+        if field.starts_with("??") {
+            uncommitted.untracked += 1;
+            continue;
+        }
+        uncommitted.files += 1;
+        // A rename or copy is followed by the path it came from, a field of its own.
+        if field.starts_with(['R', 'C']) || field.get(1..2).is_some_and(|y| y == "R" || y == "C") {
+            fields.next();
+        }
+    }
+    if head.is_some() {
+        let numstat = git(&["diff", "--numstat", "HEAD"])?;
+        for row in numstat.stdout.lines() {
+            let mut cols = row.split('\t');
+            // `-` stands in for both counts of a binary file.
+            uncommitted.insertions += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            uncommitted.deletions += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+        }
+    }
+
+    let upstream = head
+        .as_ref()
+        .and_then(|_| line(git(&["rev-parse", "--abbrev-ref", "@{u}"]).ok()?))
+        .filter(|u| u != "@{u}");
+    let mut unpushed = Unpushed {
+        count: 0,
+        commits: Vec::new(),
+        against: if upstream.is_some() {
+            "upstream"
+        } else {
+            "remotes"
+        },
+    };
+    if head.is_some() {
+        let range: &[&str] = match upstream {
+            Some(_) => &["@{u}..HEAD"],
+            None => &["HEAD", "--not", "--remotes"],
+        };
+        let mut count = vec!["rev-list", "--count"];
+        count.extend(range);
+        unpushed.count = line(git(&count)?).and_then(|n| n.parse().ok()).unwrap_or(0);
+        if unpushed.count > 0 {
+            let limit = format!("-n{UNPUSHED_LISTED}");
+            let mut log = vec!["log", "--format=%h%x09%s", &limit];
+            log.extend(range);
+            unpushed.commits = git(&log)?
+                .stdout
+                .lines()
+                .filter_map(|row| row.split_once('\t'))
+                .map(|(sha, subject)| UnpushedCommit {
+                    sha: sha.to_string(),
+                    subject: subject.to_string(),
+                })
+                .collect();
+        }
+    }
+
+    let merged = merged_into(worktree, head.is_some(), base, deadline)?;
+    Ok(Some(GitState {
+        branch,
+        head,
+        uncommitted,
+        upstream,
+        unpushed,
+        merged,
+    }))
+}
+
+fn merged_into(
+    worktree: &Path,
+    has_head: bool,
+    base: Option<&str>,
+    deadline: std::time::Instant,
+) -> Result<MergedInto, String> {
+    let git = |args: &[&str]| git_until(args, worktree, deadline);
+    let told = |base: Option<String>, reference: Option<String>, reason: &str| MergedInto {
+        base,
+        reference,
+        merged: None,
+        reason: Some(reason.to_string()),
+    };
+    let named = base
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .map(str::to_string);
+    let name = match named {
+        Some(name) => Some(name),
+        None => {
+            let out = git(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"])?;
+            Some(out.stdout.trim().to_string()).filter(|n| out.ok() && !n.is_empty())
+        }
+    };
+    let Some(name) = name else {
+        return Ok(told(None, None, "no base branch is known"));
+    };
+    let base = name.strip_prefix("origin/").unwrap_or(&name).to_string();
+    if !has_head {
+        return Ok(told(Some(base), None, "no commit yet"));
+    }
+    // The remote-tracking branch first: a local one that was never updated says "not merged"
+    // about work the remote already has.
+    for (full, shown) in [
+        (
+            format!("refs/remotes/origin/{base}"),
+            format!("origin/{base}"),
+        ),
+        (format!("refs/heads/{base}"), base.clone()),
+    ] {
+        let probe = format!("{full}^{{commit}}");
+        if !git(&["rev-parse", "--verify", "-q", &probe])?.ok() {
+            continue;
+        }
+        let out = git(&["merge-base", "--is-ancestor", "HEAD", &full])?;
+        return Ok(match out.code {
+            Some(0) => MergedInto {
+                base: Some(base),
+                reference: Some(shown),
+                merged: Some(true),
+                reason: None,
+            },
+            Some(1) => MergedInto {
+                base: Some(base),
+                reference: Some(shown),
+                merged: Some(false),
+                reason: None,
+            },
+            _ => told(Some(base), Some(shown), "git could not compare them"),
+        });
+    }
+    Ok(told(
+        Some(base),
+        None,
+        "the base branch is not in this repository",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let mut full = vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ];
+        full.extend(args);
+        let out = git(&full, Some(dir)).unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn commit_file(dir: &Path, name: &str, text: &str) {
+        std::fs::write(dir.join(name), text).unwrap();
+        run_git(dir, &["add", name]);
+        run_git(dir, &["commit", "-q", "-m", &format!("add {name}")]);
+    }
+
+    fn state_of(dir: &Path, base: Option<&str>) -> GitState {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        worktree_git_state(dir, base, deadline).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_worktree_that_is_gone_has_no_git_state() {
+        let here = tempfile::tempdir().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let gone = here.path().join("nowhere");
+        assert_eq!(worktree_git_state(&gone, None, deadline), Ok(None));
+    }
+
+    #[test]
+    fn uncommitted_work_is_counted_by_file_line_and_untracked() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let _ = &sandbox;
+        let here = tempfile::tempdir().unwrap();
+        let dir = here.path();
+        crate::testing::init_repo(dir, "main");
+        commit_file(dir, "a.txt", "one\ntwo\nthree\n");
+        commit_file(dir, "gone.txt", "x\ny\n");
+        std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\nfour\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "untracked\n").unwrap();
+        std::fs::write(dir.join("blob.bin"), [0u8, 159, 146, 150, 0]).unwrap();
+        run_git(dir, &["add", "blob.bin"]);
+        std::fs::remove_file(dir.join("gone.txt")).unwrap();
+
+        let state = state_of(dir, None);
+        assert_eq!(state.branch.as_deref(), Some("main"));
+        // a.txt edited, blob.bin staged, gone.txt deleted; new.txt is not tracked.
+        assert_eq!(state.uncommitted.files, 3);
+        assert_eq!(state.uncommitted.untracked, 1);
+        // a.txt: one line changed and one added; gone.txt: two lines; the binary counts none.
+        assert_eq!(state.uncommitted.insertions, 2);
+        assert_eq!(state.uncommitted.deletions, 3);
+    }
+
+    #[test]
+    fn with_no_upstream_commits_no_remote_has_are_unpushed() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let _ = &sandbox;
+        let here = tempfile::tempdir().unwrap();
+        let dir = here.path();
+        crate::testing::init_repo(dir, "main");
+        commit_file(dir, "a.txt", "1\n");
+        commit_file(dir, "b.txt", "2\n");
+        let state = state_of(dir, None);
+        assert_eq!(state.upstream, None);
+        assert_eq!(state.unpushed.against, "remotes");
+        assert_eq!(state.unpushed.count, 2);
+        assert_eq!(state.unpushed.commits[0].subject, "add b.txt");
+        // No remote at all: nothing to say the base is.
+        assert_eq!(state.merged.merged, None);
+        assert!(state.merged.reason.is_some());
+    }
+
+    #[test]
+    fn commits_ahead_of_the_upstream_are_counted_and_merging_follows_the_base() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let _ = &sandbox;
+        let root = tempfile::tempdir().unwrap();
+        let origin = root.path().join("origin.git");
+        let work = root.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        run_git(
+            root.path(),
+            &["init", "-q", "--bare", "-b", "main", "origin.git"],
+        );
+        crate::testing::init_repo(&work, "main");
+        run_git(
+            &work,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        commit_file(&work, "a.txt", "1\n");
+        run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+        run_git(&work, &["remote", "set-head", "origin", "main"]);
+
+        run_git(&work, &["checkout", "-q", "-b", "feature"]);
+        commit_file(&work, "b.txt", "2\n");
+        run_git(&work, &["push", "-q", "-u", "origin", "feature"]);
+        commit_file(&work, "c.txt", "3\n");
+
+        let state = state_of(&work, None);
+        assert_eq!(state.branch.as_deref(), Some("feature"));
+        assert_eq!(state.upstream.as_deref(), Some("origin/feature"));
+        assert_eq!(state.unpushed.against, "upstream");
+        assert_eq!(state.unpushed.count, 1);
+        assert_eq!(state.unpushed.commits.len(), 1);
+        // The default branch comes from origin/HEAD, and the feature is not in it.
+        assert_eq!(state.merged.base.as_deref(), Some("main"));
+        assert_eq!(state.merged.reference.as_deref(), Some("origin/main"));
+        assert_eq!(state.merged.merged, Some(false));
+
+        // `origin/main` names the same base as `main`.
+        assert_eq!(
+            state_of(&work, Some("origin/main")).merged.base.as_deref(),
+            Some("main")
+        );
+
+        run_git(&work, &["push", "-q", "origin", "feature:main"]);
+        run_git(&work, &["fetch", "-q", "origin"]);
+        let landed = state_of(&work, Some("main"));
+        assert_eq!(landed.merged.merged, Some(true));
+        assert_eq!(landed.merged.reference.as_deref(), Some("origin/main"));
+
+        // A base that is nowhere in the repository is said, not guessed.
+        let unknown = state_of(&work, Some("release"));
+        assert_eq!(unknown.merged.merged, None);
+        assert!(unknown.merged.reason.is_some());
+    }
 
     #[test]
     fn a_hub_key_is_read_back_from_its_slug_only_when_it_hashes_back() {

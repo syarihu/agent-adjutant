@@ -564,6 +564,9 @@ pub fn worker_task(worktree: &Path) -> Option<String> {
     }
 }
 
+/// How many waiting messages `hubs[].inbox` lists, newest first. The count is the whole inbox.
+const INBOX_LISTED: usize = 20;
+
 /// All hubs belonging to `repo`, repository hub first, followed by any parent-task hubs.
 ///
 /// A parent-task hub is listed while something points at it: a hub record, or a checkout
@@ -571,7 +574,7 @@ pub fn worker_task(worktree: &Path) -> Option<String> {
 /// one hub). A saved hub session alone does not list it, so a stopped hub whose last
 /// checkout is gone leaves the list; its session stays for `--resume`.
 pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHub> {
-    use crate::session::{RepoHub, RepoHubState};
+    use crate::session::{InboxItem, RepoHub, RepoHubState};
     use std::collections::HashMap;
 
     let (default_slug, default_hub_name) = match &repo.hub {
@@ -690,7 +693,22 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                     .or_else(|| crate::repo::hub_key_from_slug(&repo.nwo, &slug));
             }
             let status = hub_status(&slug, &hub_name);
-            let inbox_count = list(&slug).len();
+            let entries = list(&slug);
+            let inbox_count = entries.len();
+            // `list` is oldest first, so the newest are at the end.
+            let inbox = entries
+                .into_iter()
+                .rev()
+                .take(INBOX_LISTED)
+                .map(|entry| InboxItem {
+                    name: entry.name,
+                    subject: entry.subject,
+                    kind: entry.kind,
+                    from: entry.from,
+                    worktree: entry.worktree,
+                    at: entry.at,
+                })
+                .collect();
             let id = match &key {
                 Some(k) => format!("hub-{}", k.trim()),
                 None if slug == default_slug => "hub".to_string(),
@@ -710,6 +728,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                     started_at: status.started_at,
                 },
                 inbox_count,
+                inbox,
                 children,
             }
         })
@@ -937,6 +956,40 @@ pub struct WorkerStatus {
     /// What the worker last said it was doing (`adj phase --set`), and since when.
     pub phase: Option<String>,
     pub phase_at: Option<i64>,
+    /// Every phase entered, oldest first, as `(phase, epoch seconds)`.
+    pub phases: Vec<(String, i64)>,
+}
+
+/// How many entries a record's `phases` keeps. A worker that says a phase on every step of a
+/// long task would otherwise grow a file the board reads every two seconds.
+const PHASES_KEPT: usize = 64;
+
+/// The history a record has: its `phases`, or the one entry its `phase` and `phaseAt` make
+/// for a record written before it kept a history.
+fn recorded_phases(fields: &serde_json::Map<String, Value>) -> Vec<Value> {
+    if let Some(phases) = fields.get("phases").and_then(Value::as_array) {
+        return phases.clone();
+    }
+    match (
+        fields.get("phase").and_then(Value::as_str),
+        fields.get("phaseAt").and_then(Value::as_i64),
+    ) {
+        (Some(phase), Some(at)) => vec![json!([phase, at])],
+        _ => Vec::new(),
+    }
+}
+
+/// Enter `phase` at `at` in the record's fields: the current phase, and one more entry in the
+/// history — even for a phase already said, because the time it was said again is a fact too.
+fn append_phase(fields: &mut serde_json::Map<String, Value>, phase: &str, at: i64) {
+    let mut phases = recorded_phases(fields);
+    phases.push(json!([phase, at]));
+    if phases.len() > PHASES_KEPT {
+        phases.drain(..phases.len() - PHASES_KEPT);
+    }
+    fields.insert("phase".to_string(), json!(phase));
+    fields.insert("phaseAt".to_string(), json!(at));
+    fields.insert("phases".to_string(), Value::Array(phases));
 }
 
 /// The steps a worker says it is in. A fixed list so the board can show them in order and a
@@ -975,8 +1028,7 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
     let fields = record
         .as_object_mut()
         .ok_or_else(|| format!("cannot read the worker record at {}", path.display()))?;
-    fields.insert("phase".to_string(), json!(phase));
-    fields.insert("phaseAt".to_string(), json!(now_secs()));
+    append_phase(fields, phase, now_secs());
     write_json(&path, &record)
 }
 
@@ -1004,8 +1056,7 @@ pub fn relink_worker(worktree: &Path, hub: Option<&str>, task: &str) -> Result<(
         None => fields.remove("hub"),
     };
     if fields.get("phase").and_then(Value::as_str).is_none() {
-        fields.insert("phase".to_string(), json!("implement"));
-        fields.insert("phaseAt".to_string(), json!(now_secs()));
+        append_phase(fields, "implement", now_secs());
     }
     // The saved session first and the record last: the record is what the board and the
     // worker read, so a failure in the second write must not leave it naming a task the
@@ -1051,6 +1102,16 @@ pub fn register_worker(
         "startedAt": utc_stamp(now_secs()),
         "psStarted": ps_started(std::process::id()),
     });
+    // A worker started again in the same worktree keeps the timeline of the run before it,
+    // though not its current phase: that belongs to the run that said it.
+    let carried = read_json(&path)
+        .and_then(|old| old.as_object().map(recorded_phases))
+        .unwrap_or_default();
+    if !carried.is_empty()
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("phases".to_string(), Value::Array(carried));
+    }
     if let Some(hub) = said(hub)
         && let Some(fields) = record.as_object_mut()
     {
@@ -1207,6 +1268,7 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         stale: false,
         phase: None,
         phase_at: None,
+        phases: Vec::new(),
     };
     let Some(record) = read_json(&worker_record_path(worktree)) else {
         return status;
@@ -1226,6 +1288,15 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         .and_then(Value::as_str)
         .map(str::to_string);
     status.phase_at = record.get("phaseAt").and_then(Value::as_i64);
+    if let Some(fields) = record.as_object() {
+        status.phases = recorded_phases(fields)
+            .iter()
+            .filter_map(|entry| {
+                let pair = entry.as_array()?;
+                Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_i64()?))
+            })
+            .collect();
+    }
     // A worker's command line carries nothing distinctive — it is whatever agent the config
     // names — so the start time is the only anchor available here, and with none the
     // question narrows to whether that pid is there at all.
@@ -1781,6 +1852,20 @@ pub struct Entry {
     /// them.
     pub worktree: Option<String>,
     pub kind: String,
+    /// When it was sent: the `at` header, or the stamp its file name starts with for a
+    /// message that has none. `None` when neither reads as a stamp.
+    pub at: Option<String>,
+}
+
+/// The leading `YYYYMMDDTHHMMSSZ` of an inbox file name.
+fn stamp_of_name(name: &str) -> Option<String> {
+    let stamp = name.get(..16)?;
+    let shaped = stamp.bytes().enumerate().all(|(i, b)| match i {
+        8 => b == b'T',
+        15 => b == b'Z',
+        _ => b.is_ascii_digit(),
+    });
+    shaped.then(|| stamp.to_string())
 }
 
 pub fn list(slug: &str) -> Vec<Entry> {
@@ -1808,6 +1893,9 @@ pub fn list(slug: &str) -> Vec<Entry> {
                 from: header("from"),
                 worktree: header_value(&text, "worktree").filter(|path| !path.is_empty()),
                 kind: header("kind"),
+                at: header_value(&text, "at")
+                    .filter(|at| !at.is_empty())
+                    .or_else(|| stamp_of_name(&name)),
                 name,
             }
         })
@@ -3539,6 +3627,79 @@ mod tests {
         let started = std::time::Instant::now();
         with_dispatch_lock(dir.path(), || ()).unwrap();
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn every_phase_said_is_kept_in_order_and_carried_to_a_restarted_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        set_worker_phase(worktree, "plan").unwrap();
+        set_worker_phase(worktree, "plan").unwrap();
+        set_worker_phase(worktree, "verify").unwrap();
+        fn names(status: &WorkerStatus) -> Vec<&str> {
+            status.phases.iter().map(|(p, _)| p.as_str()).collect()
+        }
+        let status = worker_status(worktree);
+        assert_eq!(names(&status), ["plan", "plan", "verify"]);
+        assert_eq!(status.phases[2].1, status.phase_at.unwrap());
+
+        // Restarted: the current phase is gone, the timeline is not.
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        let status = worker_status(worktree);
+        assert_eq!(status.phase, None);
+        assert_eq!(names(&status), ["plan", "plan", "verify"]);
+
+        // A record from before the history was kept starts it from the phase it has.
+        let path = worker_record_path(worktree);
+        let mut record = read_json(&path).unwrap();
+        let fields = record.as_object_mut().unwrap();
+        fields.remove("phases");
+        fields.insert("phase".into(), json!("pr"));
+        fields.insert("phaseAt".into(), json!(1_700_000_000));
+        write_json(&path, &record).unwrap();
+        assert_eq!(
+            worker_status(worktree).phases,
+            [("pr".to_string(), 1_700_000_000)]
+        );
+        set_worker_phase(worktree, "review").unwrap();
+        assert_eq!(names(&worker_status(worktree)), ["pr", "review"]);
+    }
+
+    #[test]
+    fn the_phase_history_drops_its_oldest_entries_past_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        for i in 0..PHASES_KEPT + 6 {
+            set_worker_phase(worktree, PHASES[i % 2]).unwrap();
+        }
+        let phases = worker_status(worktree).phases;
+        assert_eq!(phases.len(), PHASES_KEPT);
+        assert_eq!(phases.last().unwrap().0, PHASES[(PHASES_KEPT + 5) % 2]);
+    }
+
+    #[test]
+    fn an_inbox_lists_the_newest_first_with_when_each_was_sent() {
+        let _sandbox = Sandbox::empty();
+        let slug = "acme-widget";
+        let dir = inbox_dir(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+        write(
+            "20260101T000001Z-report.md",
+            "---\nfrom: a\nkind: report\nsubject: first\nat: 20260101T000001Z\n---\n\nb\n",
+        );
+        // No `at` header: the file name says when.
+        write(
+            "20260101T000002Z-question.md",
+            "---\nfrom: b\nkind: question\nsubject: second\n---\n\nb\n",
+        );
+        write("odd-name.md", "---\nfrom: c\nsubject: third\n---\n\nb\n");
+        let entries = list(slug);
+        assert_eq!(entries[0].at.as_deref(), Some("20260101T000001Z"));
+        assert_eq!(entries[1].at.as_deref(), Some("20260101T000002Z"));
+        assert_eq!(entries[2].at, None);
     }
 
     #[test]

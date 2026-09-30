@@ -457,6 +457,10 @@ mod tests {
             started_at: None,
             phase: None,
             phase_at: None,
+            phases: Vec::new(),
+            last_activity_at: None,
+            attached: None,
+            waiting: None,
         }
     }
 

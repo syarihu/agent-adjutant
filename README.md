@@ -550,6 +550,44 @@ record gets the task and, if it has none, the `implement` phase, and the worker 
 outbox (`[linked <id>]`) and woken, as for a question. A session that has not started, one that has ended (no worker running), one that already has a different
 task, a finished task, a Jules task and one another running worker holds are refused.
 
+### Telling sessions apart
+
+`GET /api/state` says more about each `sessions[]` entry than what it is, so that two sessions
+can be told apart without opening either. All of it is read on the same two-second poll from
+what is already at hand: one `tmux list-panes` and one `tmux list-clients` per tmux socket, and
+the gate directories.
+
+- `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
+  out when the session is not in tmux or its window is not listed.
+- `attached`: how many clients are attached to that window, not counting the board's own
+  browser terminals (`adjboard-*`). A control-mode client (iTerm2's `-CC`) counts on every
+  window of its session, a plain one on the window it is looking at. `0` when nobody is; left
+  out when the window is not listed.
+- `waiting`: the oldest open gate the session waits on, `{id, kind, hub, slug, title,
+  openedAt, count}` with `hub` a `hubs[].id` and `count` how many it waits on in all. A worker's
+  is read from the gate directory of the hub it reports to, so the repository's board also
+  shows the gates of workers under a parent-task hub; a gate whose worker has moved on is left
+  out, though only the board that owns the directory closes it. A hub's is the gates it opened
+  for a person.
+- `phases`: every phase the worker said, oldest first, as `[phase, epoch seconds]`. Kept in the
+  worker's record (the latest 64) and carried over when the worker is started again in the same
+  worktree; `phase` and `phaseAt` remain the current one.
+
+`hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
+`name`, `subject`, `kind`, `from`, `worktree` and `at` (a UTC stamp). `inboxCount` stays the
+number waiting in all.
+
+`GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
+`branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
+`deletions` against HEAD), `upstream`, `unpushed` (`count`, the newest 20 `commits`, and what
+they were counted `against`: the upstream, or every remote when the branch has none) and
+`merged` (`base`, `ref`, `merged`, and a `reason` when it could not be told). The base is the
+task's own when it has one, otherwise the remote's default branch. Nothing is fetched, so
+`unpushed` and `merged` are as of the last fetch; a squash or rebase merge is not seen as
+merged, because the commits it left in the base are not the ones in the worktree. The whole
+check has a 10-second deadline, and a worktree that is gone is refused. An unknown session id
+is a 400, as for `link`.
+
 ### Gates
 
 A gate is the other half: something an agent has prepared for a person to look at, and the
