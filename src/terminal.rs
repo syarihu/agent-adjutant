@@ -1194,9 +1194,10 @@ pub fn list_tmux_clients(socket: Option<&str>) -> Vec<TmuxClient> {
 /// How many clients are attached to each window, by window id, for the windows in `panes`.
 ///
 /// The board's own `adjboard-*` sessions are left out: they are a browser looking at the
-/// window, not a person at it. `list-panes -a` lists a grouped window once per session of the
-/// group, so those sessions' lines are ignored when working out which windows a control-mode
-/// client sees.
+/// window, not a person at it. The `adjterm-*` sessions made to open a session in a person's
+/// terminal are counted, because a person is at those. `list-panes -a` lists a grouped window
+/// once per session of the group, so the `adjboard-*` lines are ignored when working out which
+/// windows a control-mode client sees.
 pub fn attached_counts(
     panes: &[TmuxPane],
     clients: &[TmuxClient],
@@ -1894,6 +1895,16 @@ pub fn tmux_set_title_script(socket: Option<&str>, title: &str) -> String {
 /// process that made it and a counter. A leftover one is recognised by it.
 pub const BOARD_SESSION_PREFIX: &str = "adjboard-";
 
+/// What every session made to open a session in the person's own terminal is called, followed
+/// as above by a pid and a counter. Not `adjboard-`: those are left out of the attached counts
+/// because they are a browser looking at a window, and this one is a person at it.
+pub const OPEN_SESSION_PREFIX: &str = "adjterm-";
+
+/// Whether a session name is one this tool made for looking at a window.
+fn is_own_session(name: &str) -> bool {
+    name.starts_with(BOARD_SESSION_PREFIX) || name.starts_with(OPEN_SESSION_PREFIX)
+}
+
 /// `-S <path>` for a socket that is a path, `-L <name>` for one that is a name, and nothing
 /// for the default server: the arguments `tmux_cmd_prefix` spells as a shell prefix.
 pub fn tmux_socket_args(socket: Option<&str>) -> Vec<String> {
@@ -2019,15 +2030,78 @@ pub fn board_attach_args(
     args
 }
 
-/// Remove board sessions nobody is attached to, left behind by a process that did not get to
-/// clean up. Only those that are in a group with something else (they hold no windows of their
-/// own) and that are not new: one made a moment ago by another connection is not attached
-/// *yet*.
+/// Remove the sessions made for the board terminal and for opening a session in a terminal
+/// that nobody is attached to, left behind by a process that did not get to clean up. Only
+/// those that are in a group with something else (they hold no windows of their own) and that
+/// are not new: one made a moment ago by another connection is not attached *yet*.
 pub fn board_sweep_script(socket: Option<&str>) -> String {
     let prefix = tmux_cmd_prefix(socket);
     format!(
-        "now=$(date +%s); {prefix} list-sessions -F '#{{session_attached}} #{{session_group_size}} #{{session_created}} #{{session_name}}' 2>/dev/null | while read attached size created name; do case \"$name\" in {BOARD_SESSION_PREFIX}*) if [ \"$attached\" = 0 ] && [ \"$size\" -gt 1 ] && [ $((now - created)) -gt 30 ]; then {prefix} kill-session -t \"=$name\"; fi;; esac; done; true"
+        "now=$(date +%s); {prefix} list-sessions -F '#{{session_attached}} #{{session_group_size}} #{{session_created}} #{{session_name}}' 2>/dev/null | while read attached size created name; do case \"$name\" in {BOARD_SESSION_PREFIX}*|{OPEN_SESSION_PREFIX}*) if [ \"$attached\" = 0 ] && [ \"$size\" -gt 1 ] && [ $((now - created)) -gt 30 ]; then {prefix} kill-session -t \"=$name\"; fi;; esac; done; true"
     )
+}
+
+/// The command a terminal window runs to show the session `name`: `tmux attach` on it, in
+/// control mode (`-CC`) for iTerm2, which draws tmux's windows as its own.
+///
+/// With `keep_last` (tmux 3.4 and later) the session goes when its last client leaves, so
+/// closing the window leaves nothing behind. Earlier tmux has no such option, and the session
+/// is left for the next sweep; `destroy-unattached on` is not a substitute, as it would end the
+/// session before anything attached.
+pub fn native_attach_line(
+    socket: Option<&str>,
+    name: &str,
+    control: bool,
+    keep_last: bool,
+) -> String {
+    let mut args = vec!["tmux".to_string(), "-u".to_string()];
+    if control {
+        args.push("-CC".to_string());
+    }
+    args.extend(tmux_socket_args(socket));
+    args.extend(["attach-session", "-t"].map(str::to_string));
+    args.push(format!("={name}"));
+    if keep_last {
+        args.extend([";", "set-option", "-t"].map(str::to_string));
+        args.push(format!("={name}:"));
+        args.extend(["destroy-unattached", "keep-last"].map(str::to_string));
+    }
+    crate::template::sh_join(&args)
+}
+
+/// A new iTerm2 window running `line`. A window of its own rather than a tab of the current
+/// one: the person may be in another application, or have no window open at all.
+fn iterm_attach_script(line: &str) -> String {
+    format!(
+        "tell application \"iTerm2\"\n  \
+           activate\n  \
+           set newWindow to (create window with default profile)\n  \
+           tell current session of newWindow\n    \
+             write text \"{}\"\n  \
+           end tell\n\
+         end tell",
+        applescript_literal(line)
+    )
+}
+
+/// Run `line` in a new iTerm2 window.
+pub fn iterm_attach(line: &str) -> Result<String, String> {
+    osascript(&iterm_attach_script(line))
+}
+
+/// Whether iTerm2 is installed, by looking for the application. A path test and not a launch
+/// services query, because the board asks on every poll.
+pub fn iterm_available() -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty());
+    std::path::Path::new("/Applications/iTerm.app").is_dir()
+        || home.is_some_and(|h| {
+            std::path::Path::new(&h)
+                .join("Applications/iTerm.app")
+                .is_dir()
+        })
 }
 
 /// What `board_release_script` prints when it left the session alone.
@@ -2116,7 +2190,7 @@ pub fn location_with(
             );
             // Started from inside a board connection's own session: the session the person
             // knows is the one it is grouped with, and the one that outlives the connection.
-            let session = match name.starts_with(BOARD_SESSION_PREFIX) && !group.is_empty() {
+            let session = match is_own_session(name) && !group.is_empty() {
                 true => group,
                 false => name,
             };
@@ -3334,13 +3408,55 @@ mod tests {
     }
 
     #[test]
+    fn the_attach_line_is_control_mode_only_for_iterm_and_keeps_the_last_only_where_tmux_can() {
+        assert_eq!(
+            native_attach_line(Some("adj-test"), "adjterm-1-2", true, true),
+            "tmux -u -CC -L adj-test attach-session -t =adjterm-1-2 ';' set-option -t =adjterm-1-2: destroy-unattached keep-last"
+        );
+        assert_eq!(
+            native_attach_line(Some("/tmp/t/sock"), "adjterm-1-2", false, false),
+            "tmux -u -S /tmp/t/sock attach-session -t =adjterm-1-2"
+        );
+        assert_eq!(
+            native_attach_line(None, "adjterm-1-2", false, true),
+            "tmux -u attach-session -t =adjterm-1-2 ';' set-option -t =adjterm-1-2: destroy-unattached keep-last"
+        );
+    }
+
+    #[test]
+    fn the_iterm_script_opens_a_window_and_carries_the_line_escaped() {
+        let script = iterm_attach_script("tmux -u -CC attach-session -t \"=x\"");
+        assert!(
+            script.contains("create window with default profile"),
+            "{script}"
+        );
+        assert!(script.contains("activate"), "{script}");
+        assert!(
+            script.contains("write text \"tmux -u -CC attach-session -t \\\"=x\\\"\""),
+            "{script}"
+        );
+        assert!(!script.contains("create tab"), "{script}");
+    }
+
+    #[test]
+    fn a_session_made_to_open_a_terminal_counts_as_a_person_and_is_grouped_back() {
+        let panes = [pane_of("main", "@1"), pane_of("adjterm-7-1", "@1")];
+        let clients = [client_of("adjterm-7-1", false, "@1")];
+        assert_eq!(attached_counts(&panes, &clients).get("@1"), Some(&1));
+        let control = [client_of("adjterm-7-1", true, "@1")];
+        assert_eq!(attached_counts(&panes, &control).get("@1"), Some(&1));
+        assert!(is_own_session("adjterm-7-1") && is_own_session("adjboard-7-1"));
+        assert!(!is_own_session("main"));
+    }
+
+    #[test]
     fn the_sweep_only_takes_old_unattached_board_sessions_that_share_their_windows() {
         let script = board_sweep_script(Some("/tmp/t/sock"));
         assert!(
             script.contains("tmux -S /tmp/t/sock list-sessions"),
             "{script}"
         );
-        assert!(script.contains("adjboard-*"), "{script}");
+        assert!(script.contains("adjboard-*|adjterm-*"), "{script}");
         assert!(script.contains("\"$attached\" = 0"), "{script}");
         assert!(script.contains("\"$size\" -gt 1"), "{script}");
         assert!(script.contains("-gt 30"), "{script}");

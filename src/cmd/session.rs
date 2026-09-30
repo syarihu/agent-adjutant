@@ -10,6 +10,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use super::same_path;
 use super::serve::{Server, board_sessions, settings_now};
 use super::{Context, HubStart, TabOutcome};
 use crate::messaging::{self, Message};
@@ -50,7 +51,7 @@ fn hub_context(
     Ok((hub, ctx))
 }
 
-fn input_of(body: &[u8]) -> Result<Value, String> {
+pub(super) fn input_of(body: &[u8]) -> Result<Value, String> {
     let input: Value = match body.is_empty() {
         true => json!({}),
         false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
@@ -63,7 +64,7 @@ fn input_of(body: &[u8]) -> Result<Value, String> {
 
 /// A string field, trimmed; blank and `null` are absent. Anything that is not a string is
 /// refused rather than read as absent, as `text_field` does for a task update.
-fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
+pub(super) fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
     match input.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(v)) => Ok(Some(v.trim()).filter(|s| !s.is_empty())),
@@ -164,12 +165,6 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
     Ok(reply)
 }
 
-/// Whether two paths name one directory, for a task's stored worktree against the one git lists.
-fn same_path(a: &str, b: &str) -> bool {
-    let resolved = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
-    resolved(a) == resolved(b)
-}
-
 /// Join the session `id` to a task, and to the hub that task belongs to.
 ///
 /// The task is either an existing one (`task`) or a new one (`newTask`, the fields
@@ -194,6 +189,15 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
     // that never reads the notice.
     if !messaging::worker_status(Path::new(worktree)).present {
         return Err("the session has ended; resume it first".to_string());
+    }
+    // Checked before anything is written: a task made or changed for a phase the record would
+    // then refuse is the half-linked state the undo below exists for.
+    let phase = text(&input, "phase")?;
+    if let Some(phase) = phase.filter(|p| !messaging::PHASES.contains(p)) {
+        return Err(format!(
+            "no such phase: {phase} (one of {})",
+            messaging::PHASES.join(", ")
+        ));
     }
     let (hub, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
     let dir = super::task::dir(&ctx);
@@ -276,7 +280,9 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         (None, None) => return Err("a task or a newTask is required".to_string()),
     };
 
-    if let Err(e) = messaging::relink_worker(Path::new(worktree), hub.key.as_deref(), &linked.id) {
+    if let Err(e) =
+        messaging::relink_worker(Path::new(worktree), hub.key.as_deref(), &linked.id, phase)
+    {
         match undo {
             Undo::Remove => {
                 let _ = std::fs::remove_file(task::path_of(&dir, &linked.id));

@@ -1234,8 +1234,8 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/findings") => {
             reply(out, review_findings(server, path))
         }
-        ("GET", path) if git_route(path).is_some() => {
-            let result = git_route(path)
+        ("GET", path) if session_route_for(path, "git").is_some() => {
+            let result = session_route_for(path, "git")
                 .unwrap_or_else(|| Err("no such route".to_string()))
                 .and_then(|id| session_git(server, &id));
             reply(out, result)
@@ -1252,12 +1252,32 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         }
         ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
         ("POST", "/api/sessions") => reply(out, super::session::start_request(server, &req.body)),
-        ("POST", path) if link_route(path).is_some() => {
-            let result = link_route(path)
+        ("POST", path) if session_route_for(path, "link").is_some() => {
+            let result = session_route_for(path, "link")
                 .unwrap_or_else(|| Err("no such route".to_string()))
                 .and_then(|id| super::session::link(server, &id, &req.body));
             reply(out, result)
         }
+        // Only on the resident's boards, like the hub actions below: reopening a session,
+        // opening a terminal and removing a worktree reach outside the repository's own
+        // records, and a board a hub serves lives and dies with that hub.
+        ("POST", path)
+            if server.resident
+                && session_route(path)
+                    .is_some_and(|(_, action)| matches!(action, "resume" | "open" | "cleanup")) =>
+        {
+            let (id, action) = session_route(path).unwrap_or((Err("no such route".into()), ""));
+            let result = id.and_then(|id| match action {
+                "resume" => super::board_actions::resume(server, &id, &req.body),
+                "open" => super::board_actions::open(server, &id),
+                _ => super::board_actions::cleanup(server, &id, &req.body),
+            });
+            reply(out, result)
+        }
+        ("POST", "/api/hubs") if server.resident => reply(
+            out,
+            super::board_actions::start_parent_hub(server, &req.body),
+        ),
         // Only on the resident's boards: starting and stopping a hub reaches outside the
         // repository's own records, and a board a hub serves lives and dies with that hub.
         ("POST", path) if server.resident && hub_route(path).is_some() => {
@@ -1465,6 +1485,9 @@ fn state(server: &Server) -> Value {
         // server, on a machine that has tmux. Which sessions is for the page to read from
         // `sessions[].terminal` and `present`.
         "boardTerminal": { "available": server.resident && server.tmux.is_some() },
+        // Whether the board can open a session in the person's own terminal, and through what:
+        // `terminal.attach` when it is set, iTerm2 where that is installed.
+        "sessionOpen": super::board_actions::open_state(server, &settings),
         "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
@@ -2034,31 +2057,46 @@ fn terminal_route(path: &str) -> Option<Result<String, String>> {
     (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
 }
 
-/// `/api/sessions/<id>/link` as the session id, percent-decoded as `terminal_route` does.
-fn link_route(path: &str) -> Option<Result<String, String>> {
-    let raw = path.strip_prefix("/api/sessions/")?.strip_suffix("/link")?;
-    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
+/// `/api/sessions/<id>/<action>` as the session id, percent-decoded as `terminal_route` does,
+/// and the action, for the five there are besides the terminal (which is a WebSocket and
+/// answered before routing). Which of them a board serves is for `route` to say.
+fn session_route(path: &str) -> Option<(Result<String, String>, &str)> {
+    let (raw, action) = path.strip_prefix("/api/sessions/")?.split_once('/')?;
+    (!raw.is_empty()
+        && !raw.contains('/')
+        && matches!(action, "link" | "git" | "resume" | "open" | "cleanup"))
+    .then(|| (decode_segment(raw), action))
 }
 
-/// `/api/sessions/<id>/git` as the session id, percent-decoded as `link_route` does.
-fn git_route(path: &str) -> Option<Result<String, String>> {
-    let raw = path.strip_prefix("/api/sessions/")?.strip_suffix("/git")?;
-    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
+/// The session id in `path` when it is the route of `action` and no other.
+fn session_route_for(path: &str, action: &str) -> Option<Result<String, String>> {
+    session_route(path)
+        .filter(|(_, found)| *found == action)
+        .map(|(id, _)| id)
 }
 
 /// How long the git check of one session may take in all. A worktree on a slow disk or a
 /// network mount must not hold a connection thread indefinitely.
 const GIT_CHECK_SECS: u64 = 10;
 
-/// What one session's worktree holds that no remote has, asked when a person looks rather than
-/// on every poll. The path comes from the board's own record of the session, never from the
-/// request.
-fn session_git(server: &Server, id: &str) -> Result<Value, String> {
-    let settings = settings_now(server);
-    let session = board_sessions(server, &settings)
+/// The session `id` of this board, from the board's own records.
+pub(super) fn find_session(
+    server: &Server,
+    settings: &crate::config::Settings,
+    id: &str,
+) -> Result<session::Session, String> {
+    board_sessions(server, settings)
         .into_iter()
         .find(|s| s.id == id)
-        .ok_or_else(|| format!("no such session: {id}"))?;
+        .ok_or_else(|| format!("no such session: {id}"))
+}
+
+/// What one session's worktree holds that no remote has, `None` when the directory is gone.
+/// The path comes from the board's own record of the session, never from the request.
+pub(super) fn git_state_of(
+    server: &Server,
+    session: &session::Session,
+) -> Result<Option<crate::repo::GitState>, String> {
     // The task's own base, when it has one: work meant for a release branch is not merged
     // because it is in the default branch.
     let base = session.task.as_deref().and_then(|task_id| {
@@ -2069,8 +2107,15 @@ fn session_git(server: &Server, id: &str) -> Result<Value, String> {
             .base
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_CHECK_SECS);
-    match crate::repo::worktree_git_state(Path::new(&session.worktree), base.as_deref(), deadline)?
-    {
+    crate::repo::worktree_git_state(Path::new(&session.worktree), base.as_deref(), deadline)
+}
+
+/// What one session's worktree holds that no remote has, asked when a person looks rather than
+/// on every poll.
+fn session_git(server: &Server, id: &str) -> Result<Value, String> {
+    let settings = settings_now(server);
+    let session = find_session(server, &settings, id)?;
+    match git_state_of(server, &session)? {
         Some(state) => {
             serde_json::to_value(state).map_err(|e| format!("cannot describe the worktree: {e}"))
         }
@@ -2126,6 +2171,16 @@ fn decode_segment(raw: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|_| format!("the id is not valid UTF-8: {raw}"))
 }
 
+/// How a hub is to be started, from the `start` a request names: `auto` when it names none.
+pub(super) fn hub_start_of(input: &Value) -> Result<super::HubStart, String> {
+    match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
+        "auto" => Ok(super::HubStart::Auto),
+        "resume" => Ok(super::HubStart::Resume),
+        "new" => Ok(super::HubStart::New),
+        other => Err(format!("no such start: {other}")),
+    }
+}
+
 /// Start, stop or close one of the repository's hubs from the board. `id` is the `hubs[].id` the
 /// page was given, so the page can only name a hub this repository was found to have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
@@ -2144,12 +2199,7 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
     let settings = settings_now(server);
     match action {
         "start" => {
-            let start = match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
-                "auto" => super::HubStart::Auto,
-                "resume" => super::HubStart::Resume,
-                "new" => super::HubStart::New,
-                other => return Err(format!("no such start: {other}")),
-            };
+            let start = hub_start_of(&input)?;
             if hub.parent && hub.key.is_none() {
                 return Err(
                     "the key of this hub is not known; start it with adj hub --hub <key>"
@@ -2907,50 +2957,41 @@ mod tests {
     }
 
     #[test]
-    fn a_link_route_names_a_session_id() {
-        fn id(path: &str) -> Option<String> {
-            link_route(path).map(|id| id.unwrap())
+    fn a_session_route_names_a_session_id_and_an_action() {
+        fn id(path: &str, action: &str) -> Option<String> {
+            session_route_for(path, action).map(|id| id.unwrap())
         }
-        assert_eq!(id("/api/sessions/worker-x/link"), Some("worker-x".into()));
-        // As `encodeURIComponent` sends an id with a slash or a space in it.
-        assert_eq!(
-            id("/api/sessions/worker-a%2Fb%20c/link"),
-            Some("worker-a/b c".into())
-        );
-        assert!(link_route("/api/sessions/%FF/link").is_some_and(|id| id.is_err()));
-        for other in [
-            "/api/sessions",
-            "/api/sessions//link",
-            "/api/sessions/a/b/link",
-            "/api/sessions/worker-x/terminal",
-            "/api/sessions/worker-x/link/x",
-            "/api/tasks/x/link",
-        ] {
-            assert!(link_route(other).is_none(), "{other}");
+        for action in ["link", "git", "resume", "open", "cleanup"] {
+            assert_eq!(
+                id(&format!("/api/sessions/worker-x/{action}"), action),
+                Some("worker-x".into()),
+                "{action}"
+            );
+            // As `encodeURIComponent` sends an id with a slash or a space in it.
+            assert_eq!(
+                id(&format!("/api/sessions/worker-a%2Fb%20c/{action}"), action),
+                Some("worker-a/b c".into()),
+                "{action}"
+            );
+            assert!(
+                session_route_for(&format!("/api/sessions/%FF/{action}"), action)
+                    .is_some_and(|id| id.is_err()),
+                "{action}"
+            );
+            for other in [
+                "/api/sessions".to_string(),
+                format!("/api/sessions//{action}"),
+                format!("/api/sessions/a/b/{action}"),
+                format!("/api/sessions/worker-x/{action}/x"),
+                format!("/api/tasks/x/{action}"),
+            ] {
+                assert!(session_route(&other).is_none(), "{other}");
+            }
         }
-    }
-
-    #[test]
-    fn a_git_route_names_a_session_id() {
-        fn id(path: &str) -> Option<String> {
-            git_route(path).map(|id| id.unwrap())
-        }
-        assert_eq!(id("/api/sessions/worker-x/git"), Some("worker-x".into()));
-        assert_eq!(
-            id("/api/sessions/worker-a%2Fb%20c/git"),
-            Some("worker-a/b c".into())
-        );
-        assert!(git_route("/api/sessions/%FF/git").is_some_and(|id| id.is_err()));
-        for other in [
-            "/api/sessions",
-            "/api/sessions//git",
-            "/api/sessions/a/b/git",
-            "/api/sessions/worker-x/link",
-            "/api/sessions/worker-x/git/x",
-            "/api/tasks/x/git",
-        ] {
-            assert!(git_route(other).is_none(), "{other}");
-        }
+        // An action is not another's route, and the terminal is not one of these.
+        assert!(session_route_for("/api/sessions/worker-x/git", "link").is_none());
+        assert!(session_route("/api/sessions/worker-x/terminal").is_none());
+        assert!(session_route("/api/sessions/worker-x/remove").is_none());
     }
 
     #[test]

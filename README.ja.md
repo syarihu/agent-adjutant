@@ -162,6 +162,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 | --- | --- | --- |
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
+| `terminal.attach` | `{socket}` `{session}` `{window}` | iTerm2 で `tmux -CC attach`（iTerm2 のある Mac のみ。ボードからセッションを開く用で、それ以外ではボードがこのキーを名指しして断る） |
 | `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2（`false` でタブを一切閉じない。その場合 `adjutant close` は何もせず exit 1） |
 | `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
@@ -288,20 +289,32 @@ worker の端末で答えたゲートは、worker が `adj gate close --terminal
 
 worker は普通タスクから始まり、ボードはタスクと worker を worktree で結ぶので、タスクのない worker にはカードがありません。`POST /api/sessions` は、それでも hub に worker を立ててもらうための API です。`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}` を送り、必須なのは `instruction` だけです。`hub` を省くとこのボードの hub になります。名前はタスクと同じ規則で検査し、省くと指示文から作ります。`agent` を渡す場合は `agentRunner` が起動するものと同じでなければなりません。依頼はその hub の受信箱に `session` メッセージとして入り、hub が動いておらず常駐サーバーが起動できるときは、hub のタブも開きます。空きを待つレコードが無いので、worker の空きが無いときは依頼を断ります。hub は空いている最初の `name`、`name-2`… で worktree を作り（`worktree-path --unique`）、指示文を brief に入れて worker を起動します。タスクのレコードは作りません。
 
-`POST /api/sessions/<id>/link` は、そのセッションに後からタスクを持たせます。既存のタスクは `{"task": "<id>"}`、新しいタスクは `{"newTask": {…}}`（`POST /api/tasks` と同じ項目）で、`hub` も任意で渡せます。セッションの所属先の hub はタスクに従います。そのタスクのディレクトリを持つ hub が所属先になるので、親タスクの hub のボードにあるタスクなら worker はその hub へ移り、リポジトリのボードのタスクならリポジトリ自身の hub へ戻ります。親タスクの hub の下で作った新しいタスクは、その親の子になります。タスクは worktree を持って `dispatched`（`pr` ならそのまま）になり、worker のレコードにはタスクと、フェーズが無ければ `implement` が入り、worker には outbox に `[linked <id>]` で知らせ、質問のときと同じく起こします。まだ起動していないセッション、終了したセッション（動いている worker が無い）、すでに別のタスクを持つセッション、完了済みのタスク、Jules のタスク、別の動いている worker が持っているタスクは断ります。
+`POST /api/sessions/<id>/link` は、そのセッションに後からタスクを持たせます。既存のタスクは `{"task": "<id>"}`、新しいタスクは `{"newTask": {…}}`（`POST /api/tasks` と同じ項目）で、`hub` も任意で渡せます。セッションの所属先の hub はタスクに従います。そのタスクのディレクトリを持つ hub が所属先になるので、親タスクの hub のボードにあるタスクなら worker はその hub へ移り、リポジトリのボードのタスクならリポジトリ自身の hub へ戻ります。親タスクの hub の下で作った新しいタスクは、その親の子になります。タスクは worktree を持って `dispatched`（`pr` ならそのまま）になり、worker のレコードにはタスクと、フェーズが無ければ `implement` が入り、worker には outbox に `[linked <id>]` で知らせ、質問のときと同じく起こします。任意の `phase`（`adjutant phase` が受け取る8つのうちの1つ）を渡すと、レコードにフェーズが既にあっても、そのフェーズを入れます。一覧に無い値は、何も書く前に断ります。まだ起動していないセッション、終了したセッション（動いている worker が無い）、すでに別のタスクを持つセッション、完了済みのタスク、Jules のタスク、別の動いている worker が持っているタスクは断ります。
 
 ### セッションを見分ける情報
 
 `GET /api/state` の `sessions[]` には、種類だけでなく、開かずに見分けるための情報が入ります。どれも2秒ごとのポーリングで、すでに手元にあるものから読みます。tmux のソケットごとに `tmux list-panes` と `tmux list-clients` を1回ずつと、ゲートのディレクトリだけです。
 
 - `lastActivityAt`: セッションのウィンドウの tmux の `window_activity`（エポック秒）。tmux で動いていない、またはウィンドウが一覧に無いときは出しません。
-- `attached`: そのウィンドウにアタッチしているクライアントの数。ボード自身のブラウザ端末（`adjboard-*`）は数えません。コントロールモードのクライアント（iTerm2 の `-CC`）はそのセッションの全ウィンドウに、通常のクライアントは表示中のウィンドウに数えます。誰もいなければ `0`、ウィンドウが一覧に無いときは出しません。
+- `attached`: そのウィンドウにアタッチしているクライアントの数。ボード自身のブラウザ端末（`adjboard-*`）は数えません（ボードが人のために開いた端末 `adjterm-*` は人なので数えます）。コントロールモードのクライアント（iTerm2 の `-CC`）はそのセッションの全ウィンドウに、通常のクライアントは表示中のウィンドウに数えます。誰もいなければ `0`、ウィンドウが一覧に無いときは出しません。
 - `waiting`: セッションが待っている、いちばん古い未回答のゲート。`{id, kind, hub, slug, title, openedAt, count}` で、`hub` は `hubs[].id`、`count` は待っているゲートの総数です。worker の分は所属する hub のゲートのディレクトリから読むので、リポジトリのボードでも親タスクの hub の下の worker のゲートが出ます。worker が先へ進んだゲートは除きますが、閉じるのはそのディレクトリを持つボードだけです。hub の分は、hub が人に答えてもらうために開いたゲートです。
 - `phases`: worker が宣言したフェーズを古い順に `[phase, エポック秒]` で並べたもの。worker のレコードに直近64件を保存し、同じタスクのために worker を起動し直したとき、レコードが残っていれば引き継ぎます。stop や後片付けでレコードが消えていれば最初からです。`phases` の無い古いレコードは、今のフェーズだけとして読みます。`phase` と `phaseAt` は今のフェーズのままです。
 
 `hubs[].inbox` は、その hub の受信箱で待っているメッセージを新しい順に最大20件、`name`、`subject`、`kind`、`from`、`worktree`、`at`（UTC のスタンプ）つきで並べます。`inboxCount` は待っている総数のままです。
 
 `GET /api/sessions/<id>/git` は、ポーリングではなく尋ねられたときだけ、そのセッションの worktree を調べます。`branch`（detached なら null）、`head`、`uncommitted`（HEAD との差の `files`、`untracked`、`insertions`、`deletions`。`untracked` はファイル数ではなくエントリ数で、まるごと新しいディレクトリは1件と数え、未追跡ファイルの行数は `insertions` に入りません。`.claude/` の下に adjutant 自身が書くファイル（`adjutant-*` と `task-brief.md`）は数えません）、`upstream`（設定のとおり）、`unpushed`（`count`、新しい順に20件の `commits`、何と比べたかを示す `against`）、`merged`（`base`、`ref`、`merged`、判定できないときは `reason`）を返します。未 push のコミットは、upstream がそのブランチ自身の対応先（同じブランチ名）のときだけ upstream と比べ、そうでないとき、また upstream が無いときは全リモート（`HEAD --not --remotes`）と比べます。`origin/main` から作った worktree は upstream が `origin/main` になり、それと比べると、マージ後は何も数えられなくなるためです。base はタスクに指定があればそれ、無ければリモートの既定ブランチ（`origin/HEAD`、次に `main`、`master`。リモート追跡ブランチを先に、ローカルを後に）です。fetch はしないので、`unpushed` と `merged` は最後に fetch した時点のものです。squash や rebase でマージした場合、base に残るコミットが worktree のものと別なので、マージ済みとは判定されません。全体で10秒の期限があり、worktree が無ければ断ります。未知のセッション id は `link` と同じく 400 です。
+
+### セッションへの操作
+
+セッションや hub に対する操作が、ほかに4つあります。どれも常駐サーバーだけが受け付けます。hub が出すボードは、リポジトリ自身のレコードの外に手を伸ばすこれらのルートに 404 を返します。断るときは、ほかの操作と同じく 400 と `{"error": …}` です。
+
+`POST /api/sessions/<id>/resume` は、動いていない worker を `adjutant work --resume` と同じように開き直します。worktree で `adjutant worker --resume` を走らせるタブを開きます。対象は、保存された会話があり、動いても起動中でもない worker だけで、hub を起動するときと同じく `terminal.preset: "tmux"` で `terminal.spawn` を自分で書いていないときに限ります。組み込みの再開コマンドが開き直せるのは Claude の会話だけなので、Claude 以外のエージェントは `agentResumeRunner`（`{sessionId}` を含むもの）が無ければ断ります。worker には hub を渡しません。最後に紐付いた hub へ戻ります（保存されたセッションがそれを覚えています）。`maxWorkers` の数に入り、満杯ならその理由で断ります。返り値は `{resumed, description, hub, hubRunning}` で、`hub` は `hubs[].id` です。
+
+`POST /api/sessions/<id>/open` は、tmux で動いているセッションを、その人自身の端末で開きます。元のセッションと同じ tmux グループに専用のセッション（`adjterm-<pid>-<n>`）を作ってそのウィンドウを表示させるので、ほかのクライアントの表示中のウィンドウは動きません。それを `terminal.attach` に渡します。`{socket}` は tmux のソケット引数（`-L name`、`-S path`、または空）、`{session}` と `{window}` はクォート済みです。コマンドはすぐ返る必要があります。前面に居座るコマンドは、端末を閉じるまでリクエストを待たせます。`terminal.attach` が無いときの既定は、iTerm2 がある Mac で、新しい iTerm2 ウィンドウに `tmux -CC attach` を走らせることです。コントロールモード（`-CC`）を使うのはそのときだけです。それ以外の環境では、ボードがキー名を挙げて断ります。既定の開き方で tmux 3.4 以降なら、最後のクライアントが抜けるとセッションも消えます。`terminal.attach` を自分で書いた場合や、それより古い tmux では、切り離してもセッションは消えず、開くたび・ボード端末を開くたびに走る次の掃除が消します。掃除の対象は、誰もアタッチしておらず作って30秒以上経ったセッションだけなので、30秒以内に接続しなかったアタッチは掃除で消されることがあります。コマンドが失敗したら、そのために作ったセッションは削除します。事前に分かるよう、`state.sessionOpen` が `{available, terminal}` を返します。`terminal` は `"terminal.attach"`、`"iTerm2"`、null のどれかです。返り値は `{opened, description, session, window}` です。
+
+`POST /api/sessions/<id>/cleanup` は、worker の worktree とそのローカルブランチを削除します。動いていれば先に閉じます。`GET /api/sessions/<id>/git` と同じ調べ方で、ボード自身が確かめるので、hub が動いていなくても使えます。未コミットの変更、未追跡のファイル、どのリモートにも無いコミットがある worktree と、調査が失敗または時間切れになった worktree は削除しません。セッションを閉じた後にもう一度調べます（その間に worker がコミットしたかもしれないためです）。無視されているファイル（ビルド成果物、ローカルの環境ファイル）は理由に入らず、worktree と一緒に消えます。その場合の返り値は 200 の `{removed: false, reasons: [{kind, detail}], git}` で、`kind` は `uncommitted`、`untracked`、`unpushed`、`git` のどれかです。エラーではなく 200 なのは、ページがエラーの本文しか拾わず、人が判断に使うのは理由の一覧だからです。それでも削除するときは `{"force": true, "confirm": "<worktree のディレクトリ名>"}` を送ります。名前を打ち返さない `force` は 400 です。何を送っても断るものもあります。メインのチェックアウト、hub、起動中のセッション、worker を止められなかったセッション、キューに入ったタスクが待っている worktree、Jules の計画を書いている最中の worktree です。リモートのブランチには触りません。worktree を消したあとは、ローカルブランチを削除し（hub はマージ済みか空のブランチしか消しませんが、ボードは消します。失敗は報告するだけで、何も戻しません）、hub が片付けるときと同じくリポジトリの `onWorktreeRemove` をメインのチェックアウトで `{worktree}` と `{name}` を埋めて実行して結果を並べ、その worktree の `dispatched` / `pr` のタスクを `done` にします。worker のレコードは worktree の中にあるので、セッションも一緒にボードから消えます。返り値は `{removed, forced, closed, branch: {name, deleted, error?}, tasks, hooks}` です。hub 側の後片付けは変わりません。ボードが消した worktree の依頼を hub があとで受けたときは、何も削除しません。
+
+`POST /api/hubs` に `{"key": "WID-957", "start": "auto"|"resume"|"new"}` を送ると、親タスクのキーの hub を `adjutant hub --hub KEY` と同じように起動します。まだ何もそのキーを指していなくても使えます（`/api/hubs/<id>/start` はボードが一覧に持っている hub にしか使えません）。返り値は `{started, description, hub: {id, slug}}`、すでに動いていれば `{alreadyRunning, pid, hub}` です。hub が `hubs[]` に現れるのは、`adjutant hub` が自分のレコードを書いてからです。
 
 ## レイヤ構成
 

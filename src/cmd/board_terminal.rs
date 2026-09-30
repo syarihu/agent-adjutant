@@ -26,6 +26,27 @@ const CLOSE_NO_SESSION: u16 = 4404;
 #[cfg(any(unix, test))]
 const CLOSE_TMUX_FAILED: u16 = 4500;
 
+/// A tmux window id: `@` and digits, the only thing a record's `window` is allowed to be.
+pub(super) fn is_window_id(window: &str) -> bool {
+    window
+        .strip_prefix('@')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The socket and window of the session `id` on this board, if it is one a terminal can be
+/// opened on: it runs in tmux, was recorded with a window, and is running. Shared with the
+/// board's action that opens the session in the person's own terminal.
+pub(super) fn target_of(
+    sessions: &[crate::session::Session],
+    id: &str,
+) -> Option<(Option<String>, String)> {
+    let session = sessions.iter().find(|s| s.id == id)?;
+    let terminal = &session.terminal;
+    let window = terminal.window.as_deref().filter(|w| is_window_id(w))?;
+    (terminal.backend == "tmux" && session.present)
+        .then(|| (terminal.socket.clone(), window.to_string()))
+}
+
 #[cfg(unix)]
 pub(super) use imp::serve;
 
@@ -45,7 +66,6 @@ mod imp {
     use super::*;
     use crate::cmd::serve::{board_sessions, settings_now};
     use crate::pty;
-    use crate::session::Session;
     use crate::terminal;
     use crate::ws;
     use std::io::Read;
@@ -157,13 +177,6 @@ mod imp {
         ))
     }
 
-    /// A tmux window id: `@` and digits, the only thing a record's `window` is allowed to be.
-    pub(super) fn is_window_id(window: &str) -> bool {
-        window
-            .strip_prefix('@')
-            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-    }
-
     /// The tmux session a board connection was resolved to, and what it runs in.
     ///
     /// The fields drop in order, so the client is taken down before the session made for it is
@@ -255,16 +268,6 @@ mod imp {
             _release: release,
             window,
         })
-    }
-
-    /// The socket and window of the session `id` on this board, if it is one a terminal can
-    /// be opened on: it runs in tmux, was recorded with a window, and is running.
-    pub(super) fn target_of(sessions: &[Session], id: &str) -> Option<(Option<String>, String)> {
-        let session = sessions.iter().find(|s| s.id == id)?;
-        let terminal = &session.terminal;
-        let window = terminal.window.as_deref().filter(|w| is_window_id(w))?;
-        (terminal.backend == "tmux" && session.present)
-            .then(|| (terminal.socket.clone(), window.to_string()))
     }
 
     /// Give the session back once its client is gone, unless it is all that is left of the

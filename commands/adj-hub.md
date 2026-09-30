@@ -909,7 +909,10 @@ never offered for cleanup. Go by the marker, not by comparing paths with `adjuta
 checkout.
 
 The hub does not stand in a worktree, so the "cannot remove the ground you stand on" problem does not
-arise. **Cleanup is the hub's job**, and this is the only route by which anything is removed.
+arise. **Cleanup is the hub's job.** The board (`POST /api/sessions/<id>/cleanup`) may also remove a
+worktree: it refuses on uncommitted, untracked or unpushed work unless a person forces it, and it
+deletes the local branch (the hub deletes one only when it is merged or empty), so a worktree and
+branch the procedure below names can already be gone.
 
 **Leave out any worktree a Jules plan is being written or read in** (`adj task list --worktree <path>
 --json` has a record whose `executor` is `jules`, `status` is `dispatched` and `julesSession` is
@@ -952,6 +955,11 @@ independently:
    succeeds for a path that does not exist, so only this match stops a wrong address).
    A request with **no** header (sent from outside git, an old format) is asked back about too.
    Then confirm that `git worktree list` has **that path together with that branch**.
+   **If the path is not in `git worktree list` at all, the board removed it** (a person cleaned it up
+   from the board) before this request was read. Nothing is left to check or remove: look up its task
+   (`adj task list --worktree <path> --json`), set any still `dispatched` or `pr` to `done`, ack (7), and
+   stop. Do not run `git worktree remove`, and do not delete a branch on the strength of a path that is
+   gone.
 2. **Safety checks.** Look **only at uncommitted changes and unpushed commits**. That row of `proctor
    worktree ls --json` has `diff` all 0 (and `diffKnown: true`) and `isLocked: false`. **Do not look
    at `isRemovable` or `sessions`** — those include "nobody is working there", and the worker that
@@ -2507,7 +2515,7 @@ Collect the data for the task hub's dashboard. **Read only. Change nothing.**
 Do not:
 - Create or remove worktrees, assign issues, update board status, post comments on or transition Jira
   issues, or write anything else
-- Step 1 of the Dashboard (asking about cleanup). Cleanup is the hub's job
+- Step 1 of the Dashboard (asking about cleanup). Cleanup is the hub's (or the board's) job
 - Ask the user anything. A sub-agent cannot. Put what needs judgement in the report
 
 Put both of these in the report:

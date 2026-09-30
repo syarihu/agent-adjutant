@@ -1038,11 +1038,18 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
 /// are what say it is still the same worker, and only the answers to "which task" and "which
 /// hub" change. `hub` is `None` for the repository's own hub, which a record says by having
 /// no key. A worker linked to a task is at work on it, so a record with no phase yet gets
-/// `implement` — the card needs one to show, and nothing else has said otherwise.
+/// `implement` — the card needs one to show, and nothing else has said otherwise. A `phase`
+/// the caller names is entered whatever the record says: the person linking a session knows
+/// where it stands, and an earlier phase must not decide for them.
 ///
 /// The saved session is rewritten too, because `all_repo_hubs` counts a hub's children from
 /// both, and one that kept naming the old hub would keep it from closing.
-pub fn relink_worker(worktree: &Path, hub: Option<&str>, task: &str) -> Result<(), String> {
+pub fn relink_worker(
+    worktree: &Path,
+    hub: Option<&str>,
+    task: &str,
+    phase: Option<&str>,
+) -> Result<(), String> {
     let path = worker_record_path(worktree);
     let Some(mut record) = read_json(&path) else {
         return Err(format!("no worker is registered in {}", worktree.display()));
@@ -1055,8 +1062,12 @@ pub fn relink_worker(worktree: &Path, hub: Option<&str>, task: &str) -> Result<(
         Some(hub) => fields.insert("hub".to_string(), json!(hub)),
         None => fields.remove("hub"),
     };
-    if fields.get("phase").and_then(Value::as_str).is_none() {
-        append_phase(fields, "implement", now_secs());
+    match phase {
+        Some(phase) => append_phase(fields, phase, now_secs()),
+        None if fields.get("phase").and_then(Value::as_str).is_none() => {
+            append_phase(fields, "implement", now_secs());
+        }
+        None => {}
     }
     // The saved session first and the record last: the record is what the board and the
     // worker read, so a failure in the second write must not leave it naming a task the
@@ -1195,6 +1206,74 @@ pub fn is_starting(worktree: &Path, now: i64) -> bool {
         // Bounded below as well: a clock set back after the dispatch would otherwise hold
         // the slot for as long as it was moved.
         .is_some_and(|at| (0..STARTING_GRACE_SECS).contains(&(now - at)))
+}
+
+/// How long a "being removed" marker is believed when the process that wrote it cannot be
+/// shown to be running. One that can be is believed for as long as it runs.
+const REMOVING_SECS: i64 = 300;
+
+/// Where the marker saying `worktree` is being removed is kept: in the main checkout, outside
+/// the worktree that is about to go.
+///
+/// The worktree is resolved through its parent directory, so the answer is the same while the
+/// directory exists and after it is gone; resolving the path itself would give a symlinked
+/// `/tmp` or `/var` one spelling before and another after.
+fn removing_marker_path(main: &Path, worktree: &Path) -> PathBuf {
+    let resolved = match (worktree.parent(), worktree.file_name()) {
+        (Some(parent), Some(leaf)) => parent
+            .canonicalize()
+            .map(|parent| parent.join(leaf))
+            .unwrap_or_else(|_| worktree.to_path_buf()),
+        _ => worktree.to_path_buf(),
+    };
+    let name: String = resolved
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    main.join(".claude")
+        .join("adjutant-removing")
+        .join(format!("{name}.json"))
+}
+
+/// The marker saying a worktree is being removed, removed again when this goes out of scope,
+/// whichever way that happens.
+pub struct RemovingMark(PathBuf);
+
+impl Drop for RemovingMark {
+    fn drop(&mut self) {
+        let _ = remove_if_present(&self.0);
+    }
+}
+
+/// Say that `worktree` is being removed, so that nothing starts a worker in it meanwhile.
+/// Written under the dispatch lock, with the process and the time.
+pub fn mark_worktree_removing(main: &Path, worktree: &Path) -> Result<RemovingMark, String> {
+    let path = removing_marker_path(main, worktree);
+    let pid = std::process::id();
+    write_json(
+        &path,
+        &json!({ "pid": pid, "psStarted": ps_started(pid), "at": now_secs() }),
+    )?;
+    Ok(RemovingMark(path))
+}
+
+/// Whether a removal of `worktree` is under way: the process that wrote the marker is still
+/// running, or the marker is recent enough that it may be.
+pub fn is_being_removed(main: &Path, worktree: &Path) -> bool {
+    let Some(marker) = read_json(&removing_marker_path(main, worktree)) else {
+        return false;
+    };
+    let alive = marker
+        .get("pid")
+        .and_then(Value::as_u64)
+        .zip(marker.get("psStarted").and_then(Value::as_str))
+        .is_some_and(|(pid, started)| process_matches(pid as u32, None, Some(started)));
+    let recent = marker
+        .get("at")
+        .and_then(Value::as_i64)
+        .is_some_and(|at| (0..REMOVING_SECS).contains(&(now_secs() - at)));
+    alive || recent
 }
 
 /// How long a dispatch waits for another to finish counting before it gives up.
@@ -2820,7 +2899,7 @@ mod tests {
         let before = read_json(&worker_record_path(worktree)).unwrap();
         save_worker_session(worktree, "try-retry", None, None, "sid-1").unwrap();
 
-        relink_worker(worktree, Some("WID-957"), "task-1").unwrap();
+        relink_worker(worktree, Some("WID-957"), "task-1", None).unwrap();
         let after = read_json(&worker_record_path(worktree)).unwrap();
         for key in ["pid", "psStarted", "startedAt", "title"] {
             assert_eq!(after[key], before[key], "{key}");
@@ -2836,12 +2915,21 @@ mod tests {
 
         // Back to the repository's own hub: no key at all, and a phase already there stays.
         set_worker_phase(worktree, "verify").unwrap();
-        relink_worker(worktree, None, "task-2").unwrap();
+        relink_worker(worktree, None, "task-2", None).unwrap();
         let after = read_json(&worker_record_path(worktree)).unwrap();
         assert!(after.get("hub").is_none());
         assert_eq!(after["phase"], "verify");
         assert_eq!(after["task"], "task-2");
         assert_eq!(worker_session(worktree).unwrap().hub, None);
+
+        // A phase named by the caller is entered even when the record already has one.
+        relink_worker(worktree, None, "task-2", Some("plan")).unwrap();
+        let after = read_json(&worker_record_path(worktree)).unwrap();
+        assert_eq!(after["phase"], "plan");
+        assert_eq!(
+            after["phases"].as_array().unwrap().last().unwrap()[0],
+            "plan"
+        );
     }
 
     /// Which hub an invocation is addressing, and the order the three answers are asked in.
@@ -4210,5 +4298,27 @@ mod tests {
                 .get("terminal")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_removing_mark_is_found_by_the_spelling_it_was_made_with_and_after_the_directory_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(real.join("wt")).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let mark = mark_worktree_removing(&main, &real.join("wt")).unwrap();
+        // Another spelling of the same directory finds it, while it is there and once it is not.
+        assert!(is_being_removed(&main, &link.join("wt")));
+        std::fs::remove_dir(real.join("wt")).unwrap();
+        assert!(is_being_removed(&main, &link.join("wt")));
+        assert!(is_being_removed(&main, &real.join("wt")));
+
+        drop(mark);
+        assert!(!is_being_removed(&main, &link.join("wt")));
+        assert!(!is_being_removed(&main, &real.join("wt")));
     }
 }

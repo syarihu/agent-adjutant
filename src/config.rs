@@ -216,6 +216,7 @@ fn check_shapes(place: &str, map: &Map<String, Value>, warnings: &mut Vec<String
         ("socket", &["a string"][..]),
         ("spawn", &["a string"][..]),
         ("focus", &["a string"][..]),
+        ("attach", &["a string"][..]),
         // `false` as well as a string, unlike its neighbours: `close` is the one of these
         // that destroys something, so "do not do this at all" has to be sayable.
         ("close", &["a string", "false"][..]),
@@ -529,6 +530,12 @@ pub struct TerminalSettings {
     pub spawn: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus: Option<String>,
+    /// How the board opens a tmux session in the person's own terminal. Its own template
+    /// because `spawn` opens a tmux *window*, and attaching from inside tmux would nest one in
+    /// the other. Unset, the board uses iTerm2 where it is installed and otherwise says the
+    /// key is missing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attach: Option<String>,
     /// Close a worker's tab once its task is over. Separate from `focus` because raising a
     /// tab and disposing of one are different verbs in every terminal, and a machine that
     /// can do one cannot be assumed to do the other with the same command line.
@@ -863,6 +870,7 @@ fn resolve_settings(
             socket,
             spawn: str_field(&terminal, "spawn"),
             focus: str_field(&terminal, "focus"),
+            attach: str_field(&terminal, "attach"),
             close: Hook::read(terminal.get("close").cloned()),
             title: Hook::read(terminal.get("title").cloned()),
         },
@@ -2183,5 +2191,25 @@ mod tests {
         assert!(settings.terminal.is_tmux());
         assert_eq!(settings.terminal.tmux_socket(), Some("shared-socket"));
         assert_eq!(settings.terminal.tmux_session(), "adjutant");
+    }
+
+    #[test]
+    fn terminal_attach_is_read_and_a_non_string_is_warned_about() {
+        let (_, settings, warnings) = resolve(
+            a_repo(json!({"terminal": {"attach": "open-term {session}"}})),
+            "acme/app",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            settings.terminal.attach.as_deref(),
+            Some("open-term {session}")
+        );
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"terminal": {"attach": 3}})), "acme/app");
+        assert_eq!(settings.terminal.attach, None);
+        assert!(
+            warnings.iter().any(|w| w.contains("terminal.attach")),
+            "{warnings:?}"
+        );
     }
 }

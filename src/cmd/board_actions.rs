@@ -1,0 +1,666 @@
+//! What a person does with a session from the board besides looking at it: reopen one that
+//! ended, open one in their own terminal, remove the worktree of one that is finished, and start
+//! a parent-task hub for a key nobody has started one for.
+//!
+//! Only the resident server serves these (see `route`): each reaches outside the repository's
+//! own records, and a board a hub serves lives and dies with that hub. The HTTP layer only
+//! routes. The session a request names is looked up in the board's own records, and the
+//! worktree, socket and window come from there and never from the request.
+
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use serde_json::{Value, json};
+
+use super::board_terminal::target_of;
+use super::serve::{Server, find_session, git_state_of, hub_start_of, settings_now};
+use super::session::{input_of, text};
+use super::{Context, Resumed, TabOutcome, same_path};
+use crate::messaging;
+use crate::repo::GitState;
+use crate::runner;
+use crate::task::{self, Executor, Status};
+use crate::template::{Sub, render, sh_join, sh_quote};
+use crate::terminal;
+
+/// The context of the repository's own hub, as `adj work --resume` builds one, but from what the
+/// server holds: the server's directory is nowhere near the repository, so nothing here may
+/// resolve anything from it.
+fn own_hub_context(server: &Server, settings: crate::config::Settings) -> Result<Context, String> {
+    Ok(Context {
+        repo: server.ctx.repo.clone().addressed(None)?,
+        resolved: server.ctx.resolved.clone(),
+        settings,
+    })
+}
+
+// ── resume ───────────────────────────────────────────────────────────
+
+/// Reopen the worker session `id` in a new tab, as `adj work --resume` does.
+///
+/// The worker goes back under the hub that dispatched it without being told which: the saved
+/// session remembers it (rewritten on every link), and `adj worker --resume` reads it there.
+/// Forwarding this server's own hub would re-file the worker under whichever hub the board
+/// happens to be for.
+pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
+    input_of(body)?;
+    let settings = settings_now(server);
+    let session = find_session(server, &settings, id)?;
+    if session.kind != "worker" {
+        return Err("only a worker session can be resumed".to_string());
+    }
+    if session.present {
+        return Err("the session is running".to_string());
+    }
+    let worktree = Path::new(&session.worktree);
+    if messaging::is_starting(worktree, messaging::now_secs()) {
+        return Err("the session is starting".to_string());
+    }
+    if !super::hub_startable(&settings.terminal) {
+        return Err(
+            "resuming a session from the board needs terminal.preset \"tmux\" and no terminal.spawn"
+                .to_string(),
+        );
+    }
+    // Only the built-in resume line knows how to reopen a Claude conversation. Another agent
+    // given it would start something unrelated in the worktree and look like a resumed worker.
+    let agent = runner::agent_from_runner(
+        settings
+            .agent_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
+    );
+    if settings.agent_resume_runner.is_none() && agent != "claude" {
+        return Err(format!(
+            "{agent} has no agentResumeRunner, so it cannot be resumed"
+        ));
+    }
+    let ctx = own_hub_context(server, settings)?;
+    let repo = ctx.repo.nwo.clone();
+    let done =
+        match super::resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false)? {
+            Resumed::Opened(done) => done,
+            Resumed::Full(refusal) => return Err(refusal),
+        };
+    let hub_running = messaging::all_repo_hubs(&server.ctx.repo)
+        .iter()
+        .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
+    Ok(json!({
+        "resumed": true,
+        "description": done.description,
+        "hub": session.hub,
+        "hubRunning": hub_running,
+    }))
+}
+
+// ── open ─────────────────────────────────────────────────────────────
+
+const NOT_SET: &str = "terminal.attach is not set: put the command that opens your terminal in the config's terminal.attach";
+
+/// Numbers the sessions this process makes to open a terminal on, so that two requests never
+/// share a name.
+static NEXT: AtomicUsize = AtomicUsize::new(1);
+
+/// What `state` says about opening a session in the person's own terminal: whether the board
+/// can, and through what. Known in advance so the page does not offer a button that can only
+/// be refused.
+pub(super) fn open_state(server: &Server, settings: &crate::config::Settings) -> Value {
+    let attach = settings.terminal.attach.is_some();
+    let iterm = terminal::iterm_available();
+    json!({
+        "available": server.resident && server.tmux.is_some() && (attach || iterm),
+        "terminal": match (attach, iterm) {
+            (true, _) => json!("terminal.attach"),
+            (false, true) => json!("iTerm2"),
+            (false, false) => Value::Null,
+        },
+    })
+}
+
+/// Open the session `id` in the person's terminal.
+///
+/// Through a session of its own in the group of the original, as the board terminal does
+/// (`terminal::board_attach_prepare_script`): a plain attach to the shared session would move
+/// every other client's current window to this one.
+pub(super) fn open(server: &Server, id: &str) -> Result<Value, String> {
+    let version = server.tmux.ok_or("tmux 3.1 or later is not available")?;
+    let settings = settings_now(server);
+    let sessions = super::serve::board_sessions(server, &settings);
+    if !sessions.iter().any(|s| s.id == id) {
+        return Err(format!("no such session: {id}"));
+    }
+    let (socket, window) =
+        target_of(&sessions, id).ok_or("the session is not running in a tmux window")?;
+    let socket = socket.as_deref();
+    let attach = settings.terminal.attach.as_deref();
+    if attach.is_none() && !terminal::iterm_available() {
+        return Err(NOT_SET.to_string());
+    }
+
+    // Before anything is made: a window that is gone must not start a server or leave a
+    // session behind.
+    let home =
+        terminal::run_shell(&terminal::tmux_window_home_script(socket, &window)).map_err(|e| {
+            let lower = e.to_ascii_lowercase();
+            match lower.contains("can't find")
+                || lower.contains("no server running")
+                || lower.contains("error connecting")
+            {
+                true => "the tmux window is gone".to_string(),
+                false => e,
+            }
+        })?;
+    let group = terminal::parse_window_home(&home).ok_or("the tmux window is gone")?;
+
+    let _ = terminal::run_shell(&terminal::board_sweep_script(socket));
+    let name = format!(
+        "{}{}-{}",
+        terminal::OPEN_SESSION_PREFIX,
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    );
+    terminal::run_shell(&terminal::board_attach_prepare_script(
+        socket, &group, &name, &window,
+    ))?;
+
+    let opened = match attach {
+        Some(template) => {
+            let command = render(
+                template,
+                &[
+                    (
+                        "socket",
+                        Sub::Raw(&sh_join(&terminal::tmux_socket_args(socket))),
+                    ),
+                    ("session", Sub::Quoted(&name)),
+                    ("window", Sub::Quoted(&window)),
+                ],
+            );
+            terminal::run_shell(&command)
+                .map(|_| "terminal.attach".to_string())
+                .map_err(|e| format!("terminal.attach failed: {e}"))
+        }
+        None => {
+            // `-CC` is iTerm2's own way of drawing tmux's windows; any other terminal gets a
+            // plain attach through its template.
+            let line = terminal::native_attach_line(socket, &name, true, version >= (3, 4));
+            terminal::iterm_attach(&line)
+                .map(|_| "iTerm2".to_string())
+                .map_err(|e| format!("iTerm2 could not open the session: {e}"))
+        }
+    };
+    match opened {
+        Ok(terminal) => Ok(json!({
+            "opened": true,
+            "description": format!("opened {id} in {terminal}"),
+            "session": name,
+            "window": window,
+        })),
+        Err(e) => {
+            // Nothing attached to it, so nothing else is holding the group's windows.
+            let _ = terminal::run_shell(&format!(
+                "{} kill-session -t {}",
+                terminal::tmux_cmd_prefix(socket),
+                sh_quote(&format!("={name}"))
+            ));
+            Err(e)
+        }
+    }
+}
+
+// ── cleanup ──────────────────────────────────────────────────────────
+
+/// Remove the worktree of the worker session `id` and its local branch, closing the session
+/// first if it runs.
+///
+/// The hub's procedure says it is the only route by which anything is removed; from here the
+/// board is a second one, and makes the same checks itself rather than asking the hub, which
+/// may not be running. Refusals that cannot be forced (the ground under a worker still to
+/// come) are errors. What would be lost is a `removed: false` with the reasons, answered 200
+/// like `closed: false` is: the page keeps only `error` from a non-2xx answer, and the reasons
+/// are what the person needs to decide whether to force.
+pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
+    let input = input_of(body)?;
+    let force = match input.get("force") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(force)) => *force,
+        Some(other) => return Err(format!("force has to be true or false, not {other}")),
+    };
+    let confirm = text(&input, "confirm")?;
+    let settings = settings_now(server);
+    let session = find_session(server, &settings, id)?;
+    let repo = &server.ctx.repo;
+    if session.kind != "worker" {
+        return Err("only a worker session has a worktree to remove".to_string());
+    }
+    let worktree = session.worktree.as_str();
+    if same_path(worktree, &repo.main) {
+        return Err("the main checkout is not a worktree to remove".to_string());
+    }
+    let listed = crate::repo::linked_worktrees(&repo.main)?;
+    if !listed.iter().any(|w| same_path(w, worktree)) {
+        return Err(format!("not a worktree of this repository: {worktree}"));
+    }
+    let name = Path::new(worktree)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if force && confirm != Some(name.as_str()) {
+        return Err(format!("confirm has to be the worktree's name: {name}"));
+    }
+
+    // The tasks that name this worktree, in whichever hub they were made.
+    let hubs = messaging::all_repo_hubs(repo);
+    let state_dir = messaging::state_dir();
+    let mut tasks: Vec<(String, task::Task)> = Vec::new();
+    for hub in &hubs {
+        for t in task::list(&task::dir(&state_dir, &hub.slug)) {
+            if t.worktree
+                .as_deref()
+                .is_some_and(|w| same_path(w, worktree))
+            {
+                tasks.push((hub.slug.clone(), t));
+            }
+        }
+    }
+    if tasks.iter().any(|(_, t)| t.status == Status::Queued) {
+        return Err("a queued task is waiting in it".to_string());
+    }
+    // A Jules plan is written in a detached worktree with no commits, which looks finished.
+    if tasks.iter().any(|(_, t)| {
+        t.executor == Executor::Jules && t.status == Status::Dispatched && t.jules_session.is_none()
+    }) {
+        return Err("a Jules plan is being written in it".to_string());
+    }
+    if messaging::is_starting(Path::new(worktree), messaging::now_secs()) {
+        return Err("the session is starting".to_string());
+    }
+
+    let state = git_state_of(server, &session);
+    let reasons = loss_reasons(&state);
+    if !reasons.is_empty() && !force {
+        return Ok(json!({
+            "removed": false,
+            "reasons": reasons,
+            "git": state.as_ref().ok().and_then(|s| s.as_ref()),
+        }));
+    }
+    let state = state.ok().flatten();
+
+    let main = Path::new(&repo.main);
+    let was_running = messaging::worker_status(Path::new(worktree)).present;
+    // `close` answers `true` for a worker that is not there, so a stopped session is not
+    // refused; `false` is a worker that may still be running, or a record that cannot be
+    // read, and removing under either is what this must not do. Outside the dispatch lock,
+    // which others give up waiting for after ten seconds.
+    //
+    // Only when something may be running: closing a worker that is gone clears its record, and
+    // a removal that then fails would have taken the session's phase history for nothing.
+    let may_run = match messaging::read_worker(Path::new(worktree)) {
+        messaging::WorkerRecord::Absent => false,
+        messaging::WorkerRecord::Unreadable => true,
+        messaging::WorkerRecord::Named(worker) => {
+            messaging::worker_liveness(&worker) != messaging::Liveness::Gone
+        }
+    };
+    if may_run && !super::close(Some(&repo.nwo), worktree, true, false)? {
+        return Err("the session could not be closed; nothing was removed".to_string());
+    }
+    // Looked at again now that nothing is running: a worker that committed between the first
+    // look and its tab closing has made work the first look did not see, and `branch -D`
+    // below would drop it.
+    if !force {
+        let again = git_state_of(server, &session);
+        let reasons = loss_reasons(&again);
+        if !reasons.is_empty() {
+            return Ok(json!({
+                "removed": false,
+                "closed": was_running,
+                "reasons": reasons,
+                "git": again.ok().flatten(),
+            }));
+        }
+    }
+    // The lock covers only the last look at the worker slots and the marker that says the
+    // worktree is going, which `claim_worker_slot` refuses on under the same lock: a worker
+    // that starts here from now on is turned away. The removal itself, which can take long on
+    // a big worktree, runs after the lock is released, so that a dispatch elsewhere is not
+    // made to wait for it.
+    let removing = messaging::with_dispatch_lock(main, || -> Result<_, String> {
+        if messaging::holds_worker_slot(Path::new(worktree), messaging::now_secs()) {
+            return Err("a session started in it meanwhile; nothing was removed".to_string());
+        }
+        messaging::mark_worktree_removing(main, Path::new(worktree))
+    })??;
+    let removed = remove_worktree(&repo.main, worktree, force);
+    // Released only now, whatever the removal came to.
+    drop(removing);
+    removed?;
+
+    // The worker's record, its saved session and its outbox live inside the worktree, so the
+    // session is off the board with it; nothing of it is kept in the state directory.
+    let branch_name = state
+        .as_ref()
+        .and_then(|s| s.branch.clone())
+        .or(session.branch.clone());
+    let branch = match &branch_name {
+        Some(branch) => match delete_branch(&repo.main, branch) {
+            Ok(()) => json!({ "name": branch, "deleted": true }),
+            Err(e) => json!({ "name": branch, "deleted": false, "error": e }),
+        },
+        None => json!({ "name": Value::Null, "deleted": false }),
+    };
+
+    let hooks = run_remove_hooks(server, worktree, &name);
+
+    // After the removal, as the hub does: a card left in progress for a worktree that is gone
+    // would stay on the board for good.
+    let mut done = Vec::new();
+    let mut task_errors = Vec::new();
+    for (slug, t) in tasks
+        .iter()
+        .filter(|(_, t)| matches!(t.status, Status::Dispatched | Status::Pr))
+    {
+        let Some(hub) = hubs.iter().find(|h| &h.slug == slug) else {
+            continue;
+        };
+        let mut addressed = repo.clone();
+        addressed.slug = hub.slug.clone();
+        addressed.hub_name = hub.name.clone();
+        let ctx = Context {
+            repo: addressed,
+            resolved: server.ctx.resolved.clone(),
+            settings: settings.clone(),
+        };
+        match super::task::update(&ctx, &t.id, &json!({ "status": "done", "handOver": false })) {
+            Ok(_) => done.push(t.id.clone()),
+            Err(e) => task_errors.push(json!({ "id": t.id, "error": e })),
+        }
+    }
+    let mut reply = json!({
+        "removed": true,
+        "forced": force,
+        "closed": was_running,
+        "branch": branch,
+        "tasks": done,
+        "hooks": hooks,
+    });
+    if !task_errors.is_empty() {
+        reply["taskErrors"] = json!(task_errors);
+    }
+    Ok(reply)
+}
+
+/// What removing the worktree would lose, as `{kind, detail}` for the page to list. A git that
+/// could not answer is a reason of its own: not knowing is not the same as nothing to lose.
+fn loss_reasons(state: &Result<Option<GitState>, String>) -> Vec<Value> {
+    let state = match state {
+        Err(e) => return vec![json!({ "kind": "git", "detail": e })],
+        // The directory is gone: there is nothing left to lose.
+        Ok(None) => return Vec::new(),
+        Ok(Some(state)) => state,
+    };
+    let mut reasons = Vec::new();
+    let uncommitted = &state.uncommitted;
+    if uncommitted.files > 0 {
+        reasons.push(json!({
+            "kind": "uncommitted",
+            "detail": format!(
+                "{} changed file(s), +{} -{} lines",
+                uncommitted.files, uncommitted.insertions, uncommitted.deletions
+            ),
+        }));
+    }
+    if uncommitted.untracked > 0 {
+        reasons.push(json!({
+            "kind": "untracked",
+            "detail": format!("{} untracked path(s)", uncommitted.untracked),
+        }));
+    }
+    if state.unpushed.count > 0 {
+        reasons.push(json!({
+            "kind": "unpushed",
+            "detail": format!("{} commit(s) no remote has", state.unpushed.count),
+        }));
+    }
+    reasons
+}
+
+/// `git worktree remove`, forced only when the person forced it.
+///
+/// Adjutant's own files in the worktree (the worker's record, its saved session, the brief) are
+/// untracked in a repository that does not ignore `.claude`, and git refuses to remove a
+/// worktree with untracked files. Only when git says no are the ones no commit tracks moved out
+/// of the way for a second try, and they are put back if that fails too: until the worktree is
+/// gone they are what lets the session be seen and resumed. A directory that is already gone
+/// is removed by name, which drops git's record of that one worktree and no other.
+fn remove_worktree(main: &str, worktree: &str, force: bool) -> Result<(), String> {
+    let mut args = vec!["-C", main, "worktree", "remove"];
+    if force || !Path::new(worktree).is_dir() {
+        args.push("--force");
+    }
+    args.push(worktree);
+    let first = match git_ok(&args) {
+        Ok(()) => return Ok(()),
+        Err(e) if force => return Err(e),
+        Err(e) => e,
+    };
+    // git's own message is the one that says why, so it is what is returned.
+    let aside = set_aside_own_files(worktree)
+        .map_err(|e| format!("{first} (and adjutant's files could not be moved aside: {e})"))?;
+    match git_ok(&args) {
+        Ok(()) => {
+            aside.discard();
+            Ok(())
+        }
+        Err(e) => match aside.restore() {
+            Ok(()) => Err(e),
+            Err(kept) => Err(format!("{e} ({kept})")),
+        },
+    }
+}
+
+/// Files moved out of a worktree: where each was, and the copy kept outside it.
+struct Aside {
+    files: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+}
+
+impl Aside {
+    /// Put back every file whose place is empty. The directory holding the copies goes only
+    /// when all of them are back; otherwise it stays and the error says where.
+    fn restore(self) -> Result<(), String> {
+        let mut failed = false;
+        for (original, kept) in &self.files {
+            // A file that is there is the worker's own, possibly newer: never overwritten.
+            if !original.exists() && move_file(kept, original).is_err() {
+                failed = true;
+            }
+        }
+        match (failed, self.dir()) {
+            (false, dir) => {
+                if let Some(dir) = dir {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+                Ok(())
+            }
+            (true, dir) => Err(format!(
+                "adjutant's files could not all be put back; they are kept in {}",
+                dir.map(|d| d.display().to_string()).unwrap_or_default()
+            )),
+        }
+    }
+
+    fn discard(self) {
+        if let Some(dir) = self.dir() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    fn dir(&self) -> Option<&Path> {
+        self.files.first().and_then(|(_, kept)| kept.parent())
+    }
+}
+
+/// Rename, or copy and remove where the two places are on different file systems. A copy that
+/// fails part way is removed, so that it cannot later stand in for the original.
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    if let Err(e) = std::fs::copy(from, to) {
+        let _ = std::fs::remove_file(to);
+        return Err(e);
+    }
+    // A copy that stays beside a source that could not be removed would be a file the list of
+    // what was moved does not know.
+    std::fs::remove_file(from).inspect_err(|_| {
+        let _ = std::fs::remove_file(to);
+    })
+}
+
+/// Move `.claude/adjutant-*` and `.claude/task-brief.md` out of `worktree` unless git tracks
+/// them, into a directory of the state directory made when the first one is moved.
+fn set_aside_own_files(worktree: &str) -> Result<Aside, String> {
+    let listed = crate::repo::git(&["-C", worktree, "ls-files", "-z", "--", ".claude"], None)?;
+    if !listed.status.success() {
+        return Err(format!(
+            "cannot list the tracked files: {}",
+            String::from_utf8_lossy(&listed.stderr).trim()
+        ));
+    }
+    let tracked = String::from_utf8_lossy(&listed.stdout).to_string();
+    let tracked: Vec<&str> = tracked.split('\0').collect();
+    let mut aside = Aside { files: Vec::new() };
+    let Ok(entries) = std::fs::read_dir(Path::new(worktree).join(".claude")) else {
+        return Ok(aside);
+    };
+    // Read to the end before anything is moved, so that the listing is not of a directory
+    // that is changing under it.
+    let entries: Vec<_> = entries.flatten().collect();
+    let dir = messaging::state_dir().join(format!(
+        "cleanup-{}-{}-{}",
+        std::process::id(),
+        messaging::now_secs(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    let mut made = false;
+    for entry in entries {
+        let file = entry.file_name().to_string_lossy().to_string();
+        let ours = file.starts_with("adjutant-") || file == "task-brief.md";
+        if !ours || tracked.contains(&format!(".claude/{file}").as_str()) {
+            continue;
+        }
+        // `create_dir` for the first: a directory already there is not ours and is not written
+        // into.
+        let step = (if made {
+            Ok(())
+        } else {
+            std::fs::create_dir_all(dir.parent().unwrap_or(&dir))
+                .and_then(|_| std::fs::create_dir(&dir))
+                .inspect(|_| made = true)
+        })
+        .and_then(|_| move_file(&entry.path(), &dir.join(&file)));
+        match step {
+            Ok(()) => aside.files.push((entry.path(), dir.join(&file))),
+            Err(e) => {
+                let why = format!("{}: {e}", entry.path().display());
+                // The directory may have been made for a file that never got into it.
+                if made && aside.files.is_empty() {
+                    let _ = std::fs::remove_dir(&dir);
+                }
+                return match aside.restore() {
+                    Ok(()) => Err(why),
+                    Err(kept) => Err(format!("{why}; {kept}")),
+                };
+            }
+        }
+    }
+    Ok(aside)
+}
+
+fn git_ok(args: &[&str]) -> Result<(), String> {
+    let out = crate::repo::git(args, None)?;
+    match out.status.success() {
+        true => Ok(()),
+        false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+    }
+}
+
+/// The local branch only. A remote ref is never touched from here: the branch may be the
+/// head of a PR that is still open.
+fn delete_branch(main: &str, branch: &str) -> Result<(), String> {
+    git_ok(&["-C", main, "branch", "-D", "--", branch])
+}
+
+/// The repository's `onWorktreeRemove` commands, run in the main checkout after the removal
+/// with `{worktree}` and `{name}` filled in, as the hub does. Read from the config now, not
+/// from the settings the server started with. A hook that fails is reported and does not
+/// undo anything.
+fn run_remove_hooks(server: &Server, worktree: &str, name: &str) -> Vec<Value> {
+    let hooks = crate::config::resolve_config(&server.ctx.repo.nwo)
+        .ok()
+        .and_then(|resolved| resolved.config)
+        .and_then(|config| config.get("onWorktreeRemove").cloned())
+        .and_then(|hooks| hooks.as_array().cloned())
+        .unwrap_or_default();
+    hooks
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|template| {
+            let command = render(
+                template,
+                &[
+                    ("worktree", Sub::Quoted(worktree)),
+                    ("name", Sub::Quoted(name)),
+                ],
+            );
+            let ran = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .current_dir(&server.ctx.repo.main)
+                .output();
+            match ran {
+                Ok(out) if out.status.success() => json!({ "command": command, "ok": true }),
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let error = match stderr.is_empty() {
+                        true => format!("exited with {}", out.status),
+                        false => stderr,
+                    };
+                    json!({ "command": command, "ok": false, "error": error })
+                }
+                Err(e) => json!({ "command": command, "ok": false, "error": e.to_string() }),
+            }
+        })
+        .collect()
+}
+
+// ── start a parent-task hub ──────────────────────────────────────────
+
+/// Start the hub for the parent-task `key`, as `adj hub --hub KEY` does. The other way to
+/// start a parent-task hub is by the id in `hubs[]`, which only exists once something points
+/// at it.
+pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, String> {
+    let input = input_of(body)?;
+    let key = text(&input, "key")?.ok_or("a key is required")?;
+    let start = hub_start_of(&input)?;
+    let settings = settings_now(server);
+    let ctx = Context {
+        repo: server.ctx.repo.clone().addressed(Some(key))?,
+        resolved: server.ctx.resolved.clone(),
+        settings,
+    };
+    let hub = json!({ "id": format!("hub-{key}"), "slug": ctx.repo.slug });
+    match super::start_hub(&ctx, start)? {
+        TabOutcome::Opened(done) => Ok(json!({
+            "started": true,
+            "description": done.description,
+            "hub": hub,
+        })),
+        TabOutcome::AlreadyRunning(status) => Ok(json!({
+            "alreadyRunning": true,
+            "pid": status.pid,
+            "hub": hub,
+        })),
+    }
+}

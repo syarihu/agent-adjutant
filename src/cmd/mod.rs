@@ -14,6 +14,7 @@ use crate::repo::{self, RepoInfo};
 use crate::runner;
 use crate::terminal::{self, SpawnRequest};
 
+mod board_actions;
 mod board_terminal;
 mod gate;
 mod jules;
@@ -638,6 +639,12 @@ fn forwarded_env() -> Vec<String> {
     parts
 }
 
+/// Whether two paths name one directory, for a task's stored worktree against the one git lists.
+pub(super) fn same_path(a: &str, b: &str) -> bool {
+    let resolved = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
+    resolved(a) == resolved(b)
+}
+
 /// What `adj work` exits with when `maxWorkers` is reached. Its own code rather than the
 /// usual 1, because the caller is usually a hub, and "full, try later" is the one refusal it
 /// should answer by leaving the task queued instead of reporting a failure.
@@ -654,27 +661,39 @@ fn claim_worker_slot(
     worktree: &std::path::Path,
     dry_run: bool,
 ) -> Result<Option<String>, String> {
-    let Some(max) = ctx.settings.max_workers else {
-        if !dry_run {
-            messaging::mark_worker_starting(worktree)?;
-        }
-        return Ok(None);
-    };
     let main = std::path::Path::new(&ctx.repo.main);
+    // Always under the lock, limit or not: the check that nobody else is starting a worker
+    // here and the mark that says so is taken are one step, or two requests at once both pass
+    // the check, and a cleanup's last look at the slots means nothing.
     messaging::with_dispatch_lock(main, || {
-        // The main checkout too. It is where the hub sits and a worker is not meant to go,
-        // but nothing stops `adj work` being pointed at it, and a worker running there
-        // uncounted is one past the limit.
-        let mut candidates = repo::linked_worktrees(&ctx.repo.main)?;
-        candidates.push(ctx.repo.main.clone());
-        let busy = messaging::busy_worktrees(&candidates, Some(worktree));
-        if busy.len() >= max as usize {
-            return Ok(Some(format!(
-                "worker limit reached: {} of maxWorkers {max} are running ({}). \
-                 Nothing was started; leave the task queued and dispatch it when one finishes",
-                busy.len(),
-                busy.join(", ")
-            )));
+        if messaging::is_being_removed(main, worktree) {
+            return Err(format!(
+                "{} is being removed; nothing was started",
+                worktree.display()
+            ));
+        }
+        // Not on a dry run, which marks nothing and so races with nothing.
+        if !dry_run && messaging::is_starting(worktree, messaging::now_secs()) {
+            return Err(format!(
+                "a worker is already starting in {}; nothing was started",
+                worktree.display()
+            ));
+        }
+        if let Some(max) = ctx.settings.max_workers {
+            // The main checkout too. It is where the hub sits and a worker is not meant to go,
+            // but nothing stops `adj work` being pointed at it, and a worker running there
+            // uncounted is one past the limit.
+            let mut candidates = repo::linked_worktrees(&ctx.repo.main)?;
+            candidates.push(ctx.repo.main.clone());
+            let busy = messaging::busy_worktrees(&candidates, Some(worktree));
+            if busy.len() >= max as usize {
+                return Ok(Some(format!(
+                    "worker limit reached: {} of maxWorkers {max} are running ({}). \
+                     Nothing was started; leave the task queued and dispatch it when one finishes",
+                    busy.len(),
+                    busy.join(", ")
+                )));
+            }
         }
         if !dry_run {
             messaging::mark_worker_starting(worktree)?;
@@ -684,20 +703,26 @@ fn claim_worker_slot(
 }
 
 /// Open the tab, and give the slot back if it never opened.
+fn open_worker_tab(
+    ctx: &Context,
+    worktree: &str,
+    request: &SpawnRequest<'_>,
+    dry_run: bool,
+) -> Result<terminal::Performed, String> {
+    terminal::spawn(&ctx.settings.terminal, request, dry_run).inspect_err(|_| {
+        let _ = messaging::unmark_worker_starting(std::path::Path::new(worktree));
+    })
+}
+
+/// `open_worker_tab`, said aloud: what the command line prints.
 fn spawn_worker(
     ctx: &Context,
     worktree: &str,
     request: &SpawnRequest<'_>,
     dry_run: bool,
 ) -> Result<i32, String> {
-    let done = terminal::spawn(&ctx.settings.terminal, request, dry_run).inspect_err(|_| {
-        let _ = messaging::unmark_worker_starting(std::path::Path::new(worktree));
-    })?;
-    if dry_run {
-        println!("{}", done.script);
-    } else {
-        println!("{}", done.description);
-    }
+    let done = open_worker_tab(ctx, worktree, request, dry_run)?;
+    print_performed(&done, dry_run);
     Ok(0)
 }
 
@@ -815,6 +840,42 @@ fn work_resumed(
     dry_run: bool,
 ) -> Result<i32, String> {
     let ctx = context_without_hub(repo_arg)?;
+    match resume_worker(&ctx, repo_arg, hub_arg, worktree, title, prompt, dry_run)? {
+        Resumed::Full(refusal) => {
+            eprintln!("adjutant: {refusal}");
+            Ok(WORKER_LIMIT_EXIT)
+        }
+        Resumed::Opened(done) => {
+            print_performed(&done, dry_run);
+            Ok(0)
+        }
+    }
+}
+
+/// What reopening a worker came to.
+pub(super) enum Resumed {
+    /// The tab was opened (or, on a dry run, would be).
+    Opened(terminal::Performed),
+    /// `maxWorkers` is reached; the refusal says so. Kept apart from `Err` because the command
+    /// line gives it its own exit code.
+    Full(String),
+}
+
+/// Reopen the worker session saved in `worktree` in a new tab, without saying anything: the
+/// command line prints what came of it and the board puts it in a reply.
+///
+/// `ctx` is the caller's to build. It has to address no hub of its own (see `work_resumed`),
+/// and this does not look at the process's directory: the resident server runs nowhere near
+/// the repository.
+pub(super) fn resume_worker(
+    ctx: &Context,
+    repo_arg: Option<&str>,
+    hub_arg: Option<&str>,
+    worktree: &str,
+    title: &str,
+    prompt: Option<&str>,
+    dry_run: bool,
+) -> Result<Resumed, String> {
     let worktree = worker_worktree(Some(worktree))?;
     // Refused here rather than in the tab, so the caller — often a hub — hears about it.
     let saved = saved_worker_session(&worktree)?;
@@ -823,9 +884,8 @@ fn work_resumed(
         "agentResumeRunner",
     )?;
     // A reopened worker is as much a process as a fresh one.
-    if let Some(refusal) = claim_worker_slot(&ctx, &worktree, dry_run)? {
-        eprintln!("adjutant: {refusal}");
-        return Ok(WORKER_LIMIT_EXIT);
+    if let Some(refusal) = claim_worker_slot(ctx, &worktree, dry_run)? {
+        return Ok(Resumed::Full(refusal));
     }
     let worktree = worktree.to_string_lossy().to_string();
     let title = match title {
@@ -854,8 +914,8 @@ fn work_resumed(
         parts.push(format!("--hub={hub}"));
     }
     let name_it = title_command(&ctx.settings, title);
-    spawn_worker(
-        &ctx,
+    open_worker_tab(
+        ctx,
         &worktree,
         &SpawnRequest {
             cwd: &worktree,
@@ -865,6 +925,7 @@ fn work_resumed(
         },
         dry_run,
     )
+    .map(Resumed::Opened)
 }
 
 pub fn focus(
