@@ -87,12 +87,20 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
     ws.onmessage = e => {
       const first = !ready;
       ready = true;
-      // Once xterm has drawn the first frame (`write` only queues it), and kept from the
-      // socket: a page that fails to draw its sidebar must not lose the output or end the
-      // handler.
+      // Once xterm has drawn the first frame: `write` calls back when the data is parsed and
+      // `onRender` fires inside xterm's animation frame, before the browser paints, so the
+      // page waits one more turn. Kept from the socket: a page that fails to draw its sidebar
+      // must not lose the output or end the handler. A frame that draws nothing leaves the
+      // page to its own fallback.
       const done = () => {
         if (!first || disposed) return;
-        try { onReady?.(); } catch (err) { console.error(err); }
+        const drawn = term.onRender(() => {
+          drawn.dispose();
+          setTimeout(() => {
+            if (disposed) return;
+            try { onReady?.(); } catch (err) { console.error(err); }
+          }, 0);
+        });
       };
       if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data), done);
       else done();
