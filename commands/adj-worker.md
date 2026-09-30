@@ -17,8 +17,12 @@ in this procedure says what to tell them, not the words to use.
 - **Run `adj phase --set <phase>` once each time you enter a section.** It shows on the board's card
   where the task is now and how long it has been there (too long and the card turns red as stuck).
   Forgetting it does not stop the work, but the card looks stuck in the previous section. The value
-  is one of `plan` / `implement` / `self-review` / `verify` / `pr` / `review` / `report`; each
-  section says which one to set at its start.
+  is one of `plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` /
+  `report`; each section says which one to set at its start. `pr-bots` and `pr` both mean the PR
+  is open, and differ in who it waits on: `pr-bots` is review bots, which a person has nothing to
+  do for, so the card stays on the agents' side; `pr` is human reviewers, and the card waits on a
+  person. `pr-bots` is only for while you are waiting for the bots: never end with the card left
+  in it.
 - The current cwd is that worktree. Plain `git` and relative paths are fine. `git -C <absolute
   path>` is not needed.
 - **Do not use `EnterWorktree`.** You are already inside.
@@ -276,6 +280,8 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    ```
    Without this, the card stays "in progress" after the PR is open. Whoever watches the board
    cannot tell whether it is waiting for review or still being worked on.
+   Then `adj phase --set pr-bots`. With the PR recorded, a card still in `pr` waits on a person,
+   and until review bots have had their say there is nothing for a person to do.
 6. **Whether to ask Copilot for a review is decided by the brief's "Copilot review" line.** The hub
    writes it from the config's `copilotReview`:
    - `ask` — open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
@@ -292,7 +298,11 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
 7. To request it, `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`.
    Fallback: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f
    'reviewers[]=Copilot'`
-8. Print the PR's URL.
+8. Print the PR's URL. If a bot is going to review it (Copilot was requested, or `reviewBots`
+   names a bot the repository runs by itself — Copilot listed there counts only when it was
+   requested), go straight on to §6's wait for it. If no bot is going to review it, the PR is
+   people's to review now: `adj phase --set pr`. **If you stop here instead of waiting, set
+   `adj phase --set pr` first** — a card left in `pr-bots` never reaches people on the board.
 9. If the task source has an **In Review** state, move it there. The hub already moved it to In
    Progress when it started. For `github-project`, pass that source's
    `projectFields.inReviewOptionId` to `gh project item-edit`. **Do nothing on a board without
@@ -304,15 +314,16 @@ with §9.
 
 ## 6. Handle review comments
 
-`adj phase --set review`
+`adj phase --set review` — except while waiting for a bot's review below, which stays `pr-bots`.
 
 Both human reviews and bot reviews are handled here. For triage and fixing, Copilot is just one
 more reviewer; the only difference is how replies are handled (step 6).
 
-### If you asked a bot for a review, wait for it
+### If a bot is going to review, wait for it
 
-If you asked Copilot for a review when opening the PR (or the repository asks automatically), it
-takes a few minutes, so poll rather than have the user come back later:
+If a bot is going to review the PR (as in §5 step 8: you asked Copilot for a review, or
+`reviewBots` names a bot the repository runs by itself), it takes a few minutes, so poll rather
+than have the user come back later:
 
 ```bash
 gh pr view <n> -R <codeRepo> --json reviews \
@@ -321,7 +332,10 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 Match against the logins in `reviewBots`. Unlike `gh api .../reviews`, this `.author.login` **has
 no `[bot]` suffix**, so do not compare for an exact match. Every 60 seconds; give up after 10
-minutes and tell the user. If you did not ask for a review, skip this wait.
+minutes and tell the user. After a push (step 5), wait for the count to go past what it was
+before the push, not merely for one review to exist. Skip this wait only when no bot is going to
+review. Keep the phase at `pr-bots` while you wait, and set `adj phase --set review` once the
+review is in (or you gave up) and you start working through the comments.
 
 ### Working through the comments
 
@@ -346,8 +360,10 @@ minutes and tell the user. If you did not ask for a review, skip this wait.
    confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
 4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
    agent, send it back to that id. Do not start a new agent.
-5. Run `verify`, commit, push. Once pushed, run `adj phase --set pr` so the board shows the ball
-   has returned to reviewers.
+5. Run `verify`, commit, push. Once pushed, if a bot is going to review the new push (you asked
+   it again, or a bot in `reviewBots` reviews every push by itself), run `adj phase --set pr-bots`
+   and wait for it as above; otherwise run `adj phase --set pr` so the board shows the ball has
+   returned to reviewers.
 6. Replies, and only to humans:
    - **Do not reply to bot comments.** The only reader of a thread from Copilot or any other review
      bot is a bot, so a reply helps nobody. If it is valid, just fix it; if not, just leave it; tell
@@ -358,6 +374,10 @@ minutes and tell the user. If you did not ask for a review, skip this wait.
 7. Loop back to step 2 until nothing is unresolved (run `adj phase --set review` again when a new
    round starts), then offer to mark the PR ready for review (`gh pr ready <n>`). Keep the phase
    as `pr` (`adj phase --set pr`) while waiting for the next review round.
+   **Do not end a turn in `pr-bots`.** It says you are the one waiting for the bots, so the card
+   stays on the agents' side and is never flagged, even once your tab is closed. Left behind,
+   a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
+   bots, set `pr`.
 
 ## 7. When you find a bug outside the task
 

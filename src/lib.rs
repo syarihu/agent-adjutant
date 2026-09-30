@@ -336,7 +336,7 @@ enum Commands {
     },
     /// Say which step the worker in this worktree is in, or show it
     Phase {
-        /// plan | implement | self-review | verify | pr | review | report
+        /// plan | implement | self-review | verify | pr | pr-bots | review | report
         #[arg(long, value_name = "PHASE")]
         set: Option<String>,
         /// Default: the worktree this is run from

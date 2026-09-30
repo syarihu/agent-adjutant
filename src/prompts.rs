@@ -2868,19 +2868,34 @@ mod tests {
         assert!(!slot.contains("adj task list --status queued"), "{slot}");
     }
 
-    /// The review step returns the phase to `pr` once fixes are pushed so the board shows the
-    /// ball is back in the reviewers' court.
+    /// A PR waiting on review bots is `pr-bots`, which the board keeps on the agents' side, and
+    /// only a PR handed to human reviewers is `pr`, which waits on a person.
     #[test]
-    fn review_step_returns_phase_to_pr_once_pushed() {
-        let worker = section(find("adj-worker").unwrap().raw_content, "## 6. ");
-        let flowed = flow(&worker);
+    fn a_pr_waits_on_bots_as_pr_bots_and_on_people_as_pr() {
+        let raw = find("adj-worker").unwrap().raw_content;
+        let opening = flow(&section(raw, "## 5. "));
         assert!(
-            flowed.contains("adj phase --set pr"),
-            "the review step never sets the phase back to pr: {worker}"
+            opening.contains("adj phase --set pr-bots"),
+            "opening the PR never moves the phase to pr-bots: {opening}"
         );
         assert!(
-            flowed.contains("ball has returned to reviewers"),
-            "the review step does not say why the phase is set back to pr: {worker}"
+            opening.contains("If no bot is going to review it, the PR is people's to review now: `adj phase --set pr`"),
+            "a PR no bot reviews is never handed to people: {opening}"
+        );
+        let review = flow(&section(raw, "## 6. "));
+        assert!(
+            review.contains("`pr-bots` while you wait"),
+            "the wait for a bot's review is not pr-bots: {review}"
+        );
+        assert!(
+            review.contains(
+                "adj phase --set pr` so the board shows the ball has returned to reviewers"
+            ),
+            "the review step never hands the PR back to reviewers as pr: {review}"
+        );
+        assert!(
+            review.contains("Do not end a turn in `pr-bots`"),
+            "nothing stops a worker leaving the card in pr-bots: {review}"
         );
     }
 }

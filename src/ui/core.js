@@ -78,6 +78,7 @@ const AGENT_COL_OF_PHASE = {
   'self-review':'selfreview',
   verify:'selfreview',
   pr:'pr',
+  'pr-bots':'pr',
   review:'pr',
   report:'pr',
 };
@@ -145,7 +146,8 @@ function humanColOf(t) {
     }
   }
 
-  // Local worker tasks
+  // Local worker tasks. Only a PR handed to human reviewers (`pr`) waits on a person; one
+  // waiting on review bots (`pr-bots`) leaves a person nothing to do.
   const w = workerOf(t);
   if (t.pr) {
     if (w) {

@@ -76,7 +76,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant outbox [--clear]` | what the hub has left for the worker here |
 | `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
 | `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
-| `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `review` / `report`), or show it |
+| `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
 | `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate-limit cache and whether `codex` is on `PATH` — and the line to tell the user |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
@@ -299,7 +299,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `hubServe` | — (`true` / `false`) | `true` |
 | | | *`false` leaves the board to `adj serve`, started by hand* |
 | `stuckAfterMinutes` | — (a number, `0` to turn it off) | `120` |
-| | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless* |
+| | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless, unless its PR is open* |
 | `julesKey` | — (a command that prints the Jules API key) | the macOS keychain item `jules-api` |
 | | | *`false` turns handing tasks to Jules off* |
 | `maxWorkers` | — (a whole number, 1 or more) | no limit |
@@ -498,7 +498,10 @@ close the tab. They run `terminal.focus`, `ide` and `terminal.close`, the same t
 commands use, and only on a worktree of this checkout. A card goes red when its worker has
 stopped, or has sat in one step for `stuckAfterMinutes` — a badge rather than a column, so the
 card keeps the column that says how far it got. Time counts only while the ball is the
-worker's: a card waiting on a gate or on its pull request's reviewers is not flagged for it.
+worker's: a card waiting on a gate or on its pull request's reviewers is not flagged for it,
+and once the pull request is open a closed worker tab is not flagged either. A pull request
+waiting on review bots (`pr-bots`) stays in the agents' column with no waiting badge; only one
+handed to human reviewers (`pr`) waits on a person.
 Done cards fold away after a day; the records stay.
 
 Every worker has a record, whichever way its task came in. A task the hub starts from a
