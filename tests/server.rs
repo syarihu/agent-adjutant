@@ -1909,6 +1909,20 @@ fn the_state_says_whether_a_session_can_be_resumed_from_the_board() {
             .contains("agentResumeRunner"),
         "{other}"
     );
+
+    // A resume runner that cannot be told the conversation would only fail when pressed.
+    write_tmux_config_with(&fixture, |config| {
+        config["agentResumeRunner"] = serde_json::json!("claude --continue");
+    });
+    let blind = state_of(&resident);
+    assert_eq!(blind["sessionResume"]["available"], false, "{blind}");
+    assert!(
+        blind["sessionResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("agentResumeRunner has no {sessionId}"),
+        "{blind}"
+    );
 }
 
 #[test]

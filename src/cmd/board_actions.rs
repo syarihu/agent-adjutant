@@ -58,6 +58,13 @@ pub(super) fn resume_refusal(settings: &crate::config::Settings) -> Option<Strin
             "{agent} has no agentResumeRunner, so it cannot be resumed"
         ));
     }
+    // The same refusal the resume itself would end in, so the page never offers a button that
+    // can only fail.
+    if let Err(refusal) =
+        super::resume_template(settings.agent_resume_runner.as_deref(), "agentResumeRunner")
+    {
+        return Some(refusal);
+    }
     None
 }
 
