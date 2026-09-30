@@ -101,7 +101,10 @@ async function worktreeAct(action, worktree, confirmed = false) {
               : 'エディタで開きました';
     note(line, false, why);
     await refresh();
-  } catch (e) { note(`${line} → ${e.message}`, true); }
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+    if (view === 'sessions') showSessNotice(`${line}: ${e.message}`, true);
+  }
 }
 
 const DONE_WHEN = { 'report-only':'調査のみ', verify:'動作確認まで', pr:'PR作成まで', review:'レビュー対応まで' };

@@ -113,6 +113,22 @@ pub struct SessionWaiting {
     pub opened_at: String,
     /// How many gates the session waits on in all, this one included.
     pub count: usize,
+    /// The decisions the gate offers, so a banner can draw the buttons without the gate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<WaitingChoice>,
+    /// What the person has to decide, cut short: the banner is not the gate's review page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+}
+
+/// One choice of a gate, as much of it as fits on a button.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitingChoice {
+    pub id: String,
+    pub label: String,
 }
 
 /// One message waiting in a hub's inbox, as hubs[].inbox lists it.
@@ -239,6 +255,12 @@ mod tests {
             title: None,
             opened_at: "20260101T000000Z".to_string(),
             count: 2,
+            options: vec!["answer".to_string()],
+            choices: vec![WaitingChoice {
+                id: "a".to_string(),
+                label: "A".to_string(),
+            }],
+            focus: None,
         });
         let full = serde_json::to_value(&session).unwrap();
         assert_eq!(
@@ -249,6 +271,9 @@ mod tests {
         assert_eq!(full["attached"], 0);
         assert_eq!(full["waiting"]["openedAt"], "20260101T000000Z");
         assert!(full["waiting"].get("title").is_none());
+        assert!(full["waiting"].get("focus").is_none());
+        assert_eq!(full["waiting"]["options"], serde_json::json!(["answer"]));
+        assert_eq!(full["waiting"]["choices"][0]["label"], "A");
     }
 
     #[test]

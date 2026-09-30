@@ -103,6 +103,18 @@ function mountSessionTerminal(container, { sessionId, onEnd } = {}) {
   return {
     focus() { term?.focus(); },
     fit: scheduleFit,
+    // The last lines on screen, for a panel to show once the pane behind them is gone. Read
+    // before `dispose`, which takes the buffer with it.
+    snapshot() {
+      if (!term) return [];
+      const buffer = term.buffer.active;
+      const lines = [];
+      for (let i = buffer.length - 1; i >= 0 && lines.length < 40; i--) {
+        const text = buffer.getLine(i)?.translateToString(true) ?? '';
+        if (text.trim()) lines.unshift(text);
+      }
+      return lines;
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

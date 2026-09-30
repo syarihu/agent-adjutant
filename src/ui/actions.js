@@ -198,6 +198,7 @@ async function hubStop(id) {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
+    if (view === 'sessions') showSessNotice(`hub を止められませんでした: ${e.message}`, true);
   }
 }
 
@@ -212,6 +213,7 @@ async function hubClose(id) {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
+    if (view === 'sessions') showSessNotice(`hub を閉じられませんでした: ${e.message}`, true);
   }
 }
 

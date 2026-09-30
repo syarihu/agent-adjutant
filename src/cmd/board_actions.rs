@@ -36,6 +36,37 @@ fn own_hub_context(server: &Server, settings: crate::config::Settings) -> Result
 
 // ── resume ───────────────────────────────────────────────────────────
 
+/// Why no session can be resumed from the board with these settings, or `None` when one can.
+/// The board-wide half of `resume`'s refusals, known without looking at a session.
+pub(super) fn resume_refusal(settings: &crate::config::Settings) -> Option<String> {
+    if !super::hub_startable(&settings.terminal) {
+        return Some(
+            "resuming a session from the board needs terminal.preset \"tmux\" and no terminal.spawn"
+                .to_string(),
+        );
+    }
+    // Only the built-in resume line knows how to reopen a Claude conversation. Another agent
+    // given it would start something unrelated in the worktree and look like a resumed worker.
+    let agent = runner::agent_from_runner(
+        settings
+            .agent_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
+    );
+    if settings.agent_resume_runner.is_none() && agent != "claude" {
+        return Some(format!(
+            "{agent} has no agentResumeRunner, so it cannot be resumed"
+        ));
+    }
+    None
+}
+
+/// What `state` says about resuming: `available`, and the reason when it is not.
+pub(super) fn resume_state(settings: &crate::config::Settings) -> Value {
+    let refusal = resume_refusal(settings);
+    json!({ "available": refusal.is_none(), "reason": refusal })
+}
+
 /// Reopen the worker session `id` in a new tab, as `adj work --resume` does.
 ///
 /// The worker goes back under the hub that dispatched it without being told which: the saved
@@ -56,24 +87,8 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
     if messaging::is_starting(worktree, messaging::now_secs()) {
         return Err("the session is starting".to_string());
     }
-    if !super::hub_startable(&settings.terminal) {
-        return Err(
-            "resuming a session from the board needs terminal.preset \"tmux\" and no terminal.spawn"
-                .to_string(),
-        );
-    }
-    // Only the built-in resume line knows how to reopen a Claude conversation. Another agent
-    // given it would start something unrelated in the worktree and look like a resumed worker.
-    let agent = runner::agent_from_runner(
-        settings
-            .agent_runner
-            .as_deref()
-            .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
-    );
-    if settings.agent_resume_runner.is_none() && agent != "claude" {
-        return Err(format!(
-            "{agent} has no agentResumeRunner, so it cannot be resumed"
-        ));
+    if let Some(refusal) = resume_refusal(&settings) {
+        return Err(refusal);
     }
     let ctx = own_hub_context(server, settings)?;
     let repo = ctx.repo.nwo.clone();

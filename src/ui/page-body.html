@@ -169,9 +169,19 @@
           <span class="sess-meta" id="sess-hub"></span>
           <span class="sess-meta" id="sess-last"></span>
           <button type="button" class="btn-m3-tonal sess-reconnect" id="sess-reconnect" hidden>再接続</button>
+          <div class="sess-actions" id="sess-actions"></div>
+          <div class="sess-menu-wrap">
+            <button type="button" class="tool-btn" id="sess-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-menu" title="そのほかの操作" hidden><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
+            <div class="sess-menu" id="sess-menu" role="menu" hidden></div>
+          </div>
         </div>
-        <div class="sess-term-host" id="sess-term-host" hidden></div>
-        <div class="sess-placeholder" id="sess-placeholder"></div>
+        <div class="sess-notice" id="sess-notice" hidden></div>
+        <section class="sess-gate" id="sess-gate" aria-label="確認待ちの gate" hidden></section>
+        <div class="sess-stage">
+          <div class="sess-term-host" id="sess-term-host" hidden></div>
+          <div class="sess-placeholder" id="sess-placeholder"></div>
+          <div class="sess-over" id="sess-over" hidden></div>
+        </div>
         <div class="sess-strip">
           <span id="sess-strip-where"></span>
           <span id="sess-strip-attach"></span>
@@ -393,6 +403,42 @@
       <button type="submit" value="close" class="btn-m3-danger">
         <span class="material-symbols-outlined" style="font-size:16px;">close</span>
         <span>タブを閉じる</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="cleanup-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-error);">delete_sweep</span>
+        <span>worktree を片付ける</span>
+      </div>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル">
+        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body close-help">
+      <div class="target">
+        <div id="cleanup-name" class="name"></div>
+        <code id="cleanup-path" class="path"></code>
+      </div>
+      <p>worktree とローカルのブランチを削除します。リモートのブランチには触りません。未コミットの変更・追跡されていないファイル・push されていないコミットがあるときは、失われるので削除を断ります。</p>
+      <ul id="cleanup-facts" class="cleanup-facts"></ul>
+      <p id="cleanup-error" class="cleanup-error" role="alert" hidden></p>
+      <details id="cleanup-force" class="cleanup-force">
+        <summary>それでも削除する</summary>
+        <p>失われる作業ごと削除します。確認のため、worktree の名前（<b id="cleanup-force-name"></b>）を入力してください。</p>
+        <input id="cleanup-confirm" type="text" autocomplete="off" spellcheck="false">
+        <div><button type="button" class="btn-m3-danger" id="cleanup-force-run" disabled>強制して削除</button></div>
+      </details>
+    </div>
+    <div class="foot">
+      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
+      <button type="button" class="btn-m3-danger" id="cleanup-run">
+        <span class="material-symbols-outlined" style="font-size:16px;">delete_sweep</span>
+        <span>片付ける</span>
       </button>
     </div>
   </form>

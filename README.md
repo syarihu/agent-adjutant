@@ -451,6 +451,16 @@ detaches: the window and the agent in it keep running. The board attaches as a c
 so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
 that acted last decides.
 
+The bar above the terminal carries the actions for the selected session: resume a stopped
+worker, close a running one, start or stop a hub, open the session in your own terminal, and,
+under the menu, open the worktree in your IDE, copy its path and clean it up. Cleaning up removes
+the worktree and its local branch (never the remote one) and refuses when work would be lost
+(uncommitted or untracked files, commits no remote has); forcing it means typing the worktree's
+name back. A session that waits on a gate shows a banner with the gate's question and, for a plan,
+a question, a result or a dispatch, the buttons to answer it there; the answer goes to the board
+of the hub that opened the gate. A session that is not running shows a panel over the terminal
+with what the page last saw of it and a button to resume it, or to start the hub.
+
 To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
 does it:
 

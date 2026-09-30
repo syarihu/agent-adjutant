@@ -1551,20 +1551,31 @@ fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
 }
 
 fn write_gate_file(fixture: &Fixture, slug: &str, id: &str, kind: &str, worktree: &Path) {
+    write_gate_file_with(fixture, slug, id, kind, worktree, serde_json::json!({}));
+}
+
+/// A gate file with more fields than the bare ones, merged in from `extra`.
+fn write_gate_file_with(
+    fixture: &Fixture,
+    slug: &str,
+    id: &str,
+    kind: &str,
+    worktree: &Path,
+    extra: serde_json::Value,
+) {
     let dir = fixture.state.join("gates").join(slug);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join(format!("{id}.json")),
-        serde_json::json!({
-            "id": id,
-            "kind": kind,
-            "worktree": worktree.to_str().unwrap(),
-            "title": "どちらにするか",
-            "openedAt": "20260922T041233Z",
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let mut gate = serde_json::json!({
+        "id": id,
+        "kind": kind,
+        "worktree": worktree.to_str().unwrap(),
+        "title": "どちらにするか",
+        "openedAt": "20260922T041233Z",
+    });
+    for (key, value) in extra.as_object().unwrap() {
+        gate[key] = value.clone();
+    }
+    std::fs::write(dir.join(format!("{id}.json")), gate.to_string()).unwrap();
 }
 
 #[test]
@@ -1578,6 +1589,21 @@ fn a_session_shows_the_gate_it_waits_on_even_from_a_parent_hubs_directory() {
     write_gate_file(&fixture, FEATURE_SLUG, "g-moved", "question", &moved);
     write_gate_file(&fixture, SLUG, "g-own", "question", &own);
     write_gate_file(&fixture, SLUG, "g-dispatch", "dispatch", &fixture.repo);
+    let choosing = session_worktree(&fixture, "choosing", Some(FEATURE), None, 1);
+    write_gate_file_with(
+        &fixture,
+        FEATURE_SLUG,
+        "g-choose",
+        "plan",
+        &choosing,
+        serde_json::json!({
+            "focus": "あ".repeat(500),
+            "choices": [
+                {"id": "a", "label": "A 案", "recommended": true},
+                {"id": "b", "label": "B 案"},
+            ],
+        }),
+    );
     // This one's worker went on to another phase after opening the gate.
     let mut record = worker_record(&moved);
     record["phaseAt"] = serde_json::json!(LATER_SECS);
@@ -1596,6 +1622,15 @@ fn a_session_shows_the_gate_it_waits_on_even_from_a_parent_hubs_directory() {
     assert_eq!(waiting["slug"], FEATURE_SLUG);
     assert_eq!(waiting["openedAt"], "20260922T041233Z");
     assert_eq!(waiting["count"], 1);
+    // A gate that names no options gets its kind's own, so the page needs no table of them.
+    assert_eq!(waiting["options"], serde_json::json!(["answer"]));
+    assert!(waiting.get("choices").is_none() && waiting.get("focus").is_none());
+    let choosing = &session_of(&state, "worker-choosing")["waiting"];
+    assert_eq!(choosing["choices"][1]["label"], "B 案", "{choosing}");
+    assert_eq!(choosing["options"][0], "approve");
+    let focus = choosing["focus"].as_str().unwrap();
+    assert_eq!(focus.chars().count(), 401, "{focus}");
+    assert!(focus.ends_with('…'));
     assert_eq!(
         session_of(&state, "worker-own-hub")["waiting"]["hub"],
         "hub"
@@ -1841,6 +1876,79 @@ fn resuming_is_refused_without_the_tmux_preset_for_a_running_session_a_hub_or_no
     let (status, body) = resident.post(&sessions_url("/worker-ended/resume"), "{}");
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("no saved worker session"), "{body}");
+}
+
+#[test]
+fn the_state_says_whether_a_session_can_be_resumed_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let refused = state_of(&resident);
+    assert_eq!(refused["sessionResume"]["available"], false, "{refused}");
+    assert!(
+        refused["sessionResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("tmux"),
+        "{refused}"
+    );
+
+    write_tmux_config(&fixture);
+    let ready = state_of(&resident);
+    assert_eq!(ready["sessionResume"]["available"], true, "{ready}");
+    assert!(ready["sessionResume"]["reason"].is_null(), "{ready}");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["agentRunner"] = serde_json::json!("gemini {prompt}");
+    });
+    let other = state_of(&resident);
+    assert_eq!(other["sessionResume"]["available"], false, "{other}");
+    assert!(
+        other["sessionResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("agentResumeRunner"),
+        "{other}"
+    );
+}
+
+#[test]
+fn a_gate_a_parent_hub_worker_waits_on_is_answered_through_that_hubs_board() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let worktree = session_worktree(&fixture, "under-parent", Some(FEATURE), None, 1);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-q", "question", &worktree);
+    let resident = Resident::start(&fixture);
+    let before = state_of(&resident);
+    assert_eq!(
+        session_of(&before, "worker-under-parent")["waiting"]["slug"],
+        FEATURE_SLUG
+    );
+
+    // The board the page is on has no such gate, which is why the page posts by `waiting.slug`.
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/gates/g-q"),
+        r#"{"decision":"answer","comment":"A で"}"#,
+    );
+    assert_eq!(status, 400, "{body}");
+    let gates = fixture.state.join("gates").join(FEATURE_SLUG);
+    assert!(gates.join("g-q.json").exists());
+
+    let (status, body) = resident.post(
+        &format!("/b/{FEATURE_SLUG}/api/gates/g-q"),
+        r#"{"decision":"answer","comment":"A で"}"#,
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(!gates.join("g-q.json").exists());
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("A で"), "{outbox}");
+    let after = state_of(&resident);
+    assert!(
+        session_of(&after, "worker-under-parent")
+            .get("waiting")
+            .is_none(),
+        "{after}"
+    );
 }
 
 #[test]

@@ -47,6 +47,7 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .sess-key { font-weight:800; font-family:var(--font-mono); }
 .sess-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sess-meta { color:var(--md-sys-color-on-surface-variant); font-size:11.5px; }
+.sess-stage { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
 .sess-term-host { flex:1; min-height:0; }
 .sess-term-host[hidden] { display:none; }
 .sess-placeholder {
@@ -54,12 +55,92 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
   padding:24px; white-space:pre-line; color:var(--md-sys-color-on-surface-variant); font-size:13px;
 }
 .sess-placeholder[hidden] { display:none; }
+.sess-ph-body { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; }
 .sess-strip {
   flex:none; display:flex; flex-wrap:wrap; gap:4px 16px; padding:5px 14px; font-size:11px;
   color:var(--md-sys-color-on-surface-variant); border-top:1px solid var(--md-sys-color-outline-variant);
 }
 #sess-strip-where { font-family:var(--font-mono); }
 .sess-strip-note { margin-left:auto; }
+
+/* The actions sit in the context bar and wrap onto a second line when it is narrow. */
+.sess-actions { display:flex; flex-wrap:wrap; gap:6px; margin-left:auto; }
+.sess-actions button, .sess-gate button, .sess-over button, .sess-menu button { font-size:12px; }
+.sess-act { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; }
+.sess-act .material-symbols-outlined { font-size:16px; }
+.sess-act:disabled { opacity:.5; cursor:not-allowed; }
+.sess-menu-wrap { position:relative; }
+.sess-menu {
+  position:absolute; top:100%; right:0; z-index:20; min-width:200px; padding:6px;
+  display:flex; flex-direction:column; gap:2px; margin-top:4px;
+  background:var(--md-sys-color-surface-container-high); border-radius:var(--md-shape-corner-sm);
+  box-shadow:var(--md-elevation-3);
+}
+.sess-menu[hidden] { display:none; }
+.sess-menu button {
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left; border:0; cursor:pointer;
+  padding:8px 10px; border-radius:var(--md-shape-corner-xs); background:transparent;
+  color:var(--md-sys-color-on-surface); font:inherit; font-size:12.5px;
+}
+.sess-menu button:hover:not(:disabled) { background:var(--md-sys-color-surface-container-highest); }
+.sess-menu button:disabled { opacity:.5; cursor:not-allowed; }
+.sess-menu .material-symbols-outlined { font-size:18px; }
+
+/* In the flow of the page, never over the terminal: the terminal refits to what is left. */
+.sess-notice {
+  flex:none; display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:12px;
+  background:var(--md-sys-color-surface-container); color:var(--md-sys-color-on-surface);
+  border-bottom:1px solid var(--md-sys-color-outline-variant);
+}
+.sess-notice.err { background:var(--md-sys-color-error-container); color:var(--md-sys-color-on-error-container); }
+.sess-notice[hidden] { display:none; }
+.sess-notice-text { flex:1; min-width:0; overflow-wrap:anywhere; }
+
+.sess-gate {
+  flex:none; max-height:45vh; overflow-y:auto; padding:10px 14px; font-size:12.5px;
+  display:flex; flex-direction:column; gap:8px;
+  background:var(--md-sys-color-warning-container); color:var(--md-sys-color-on-warning-container);
+  border-bottom:1px solid var(--md-sys-color-outline-variant);
+}
+.sess-gate[hidden] { display:none; }
+.sess-gate-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.sess-gate-kind { font-weight:800; }
+.sess-gate-title { font-weight:600; min-width:0; overflow-wrap:anywhere; }
+.sess-gate-meta { font-size:11.5px; opacity:.85; }
+.sess-gate-fold { margin-left:auto; }
+.sess-gate-focus { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; }
+.sess-gate-comment { width:100%; min-height:56px; resize:vertical; font:inherit; box-sizing:border-box; }
+.sess-gate-buttons { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.sess-gate-foot { font-size:11.5px; opacity:.85; }
+.sess-gate-error { color:var(--md-sys-color-error); font-weight:600; margin:0; }
+.sess-gate.folded { padding:6px 14px; }
+
+/* Anchored to the lower edge, so the last lines of a terminal that ended stay readable above. */
+.sess-over {
+  position:absolute; left:12px; right:12px; bottom:12px; max-height:45%; overflow-y:auto;
+  display:flex; flex-direction:column; gap:8px; padding:12px 14px; font-size:12.5px;
+  background:var(--md-sys-color-surface-container-high); color:var(--md-sys-color-on-surface);
+  border-radius:var(--md-shape-corner-md); box-shadow:var(--md-elevation-3);
+}
+.sess-over[hidden] { display:none; }
+.sess-over-head { font-weight:700; }
+.sess-over-buttons { display:flex; flex-wrap:wrap; gap:6px; }
+.sess-last-out {
+  margin:0; padding:8px 10px; max-height:14em; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere;
+  font:11.5px/1.5 var(--font-mono); text-align:left;
+  background:var(--md-sys-color-surface-container); border-radius:var(--md-shape-corner-sm);
+}
+.sess-placeholder .sess-over { position:static; max-width:640px; width:100%; text-align:left; white-space:normal; }
+
+.cleanup-facts { margin:0; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
+.cleanup-facts li.warn { color:var(--md-sys-color-error); }
+.cleanup-error { margin:0; color:var(--md-sys-color-error); font-weight:600; }
+.cleanup-error[hidden] { display:none; }
+.cleanup-force { display:flex; flex-direction:column; gap:8px; }
+.cleanup-force[hidden] { display:none; }
+.cleanup-force summary { cursor:pointer; font-weight:600; }
+.cleanup-force p { margin:8px 0 0; }
+.cleanup-force input { width:100%; box-sizing:border-box; padding:8px 10px; font:13px var(--font-mono); }
 
 /* Icons only: the row keeps its state icon, the rest is in its tooltip. */
 .sess-rail.collapsed { width:64px; }

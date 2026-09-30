@@ -1490,6 +1490,9 @@ fn state(server: &Server) -> Value {
         // Whether the board can open a session in the person's own terminal, and through what:
         // `terminal.attach` when it is set, iTerm2 where that is installed.
         "sessionOpen": super::board_actions::open_state(server, &settings),
+        // Whether the board can resume a stopped worker, so the page offers it only where it
+        // can work, and says why not where it cannot.
+        "sessionResume": super::board_actions::resume_state(&settings),
         "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
@@ -1572,7 +1575,36 @@ fn session_waiting(
         title: Some(first.title.clone()).filter(|t| !t.is_empty()),
         opened_at: first.opened_at.clone(),
         count: open.len(),
+        options: if first.options.is_empty() {
+            first.kind.default_options()
+        } else {
+            first.options.clone()
+        },
+        choices: first
+            .choices
+            .iter()
+            .map(|c| session::WaitingChoice {
+                id: c.id.clone(),
+                label: c.label.clone(),
+            })
+            .collect(),
+        focus: first
+            .focus
+            .as_deref()
+            .map(|f| cut_chars(f, WAITING_FOCUS_CHARS))
+            .filter(|f| !f.is_empty()),
     })
+}
+
+/// How much of a gate's focus the Sessions banner carries.
+const WAITING_FOCUS_CHARS: usize = 400;
+
+/// `text` cut to at most `max` characters, on a character boundary, with an ellipsis when cut.
+fn cut_chars(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", text[..end].trim_end()),
+        None => text.to_string(),
+    }
 }
 
 /// One hub's open gates, and what could show their workers moved on, read once per poll.
@@ -2418,6 +2450,29 @@ mod tests {
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
         assert!(at("function mountSessionTerminal") < at("function sessionState"));
         assert!(at("function sessionState") < at("openPendingSession)"));
+    }
+
+    #[test]
+    fn the_sessions_view_has_actions_and_a_gate_banner() {
+        for piece in [
+            "id=\"sess-actions\"",
+            "id=\"sess-menu\"",
+            "id=\"sess-gate\"",
+            "id=\"sess-notice\"",
+            "id=\"sess-over\"",
+            "id=\"cleanup-dialog\"",
+            "function answerSessionGate",
+            "function renderSessionActions",
+            "function renderSessionGate",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+    }
+
+    #[test]
+    fn a_long_focus_is_cut_on_a_character_boundary() {
+        assert_eq!(cut_chars("短い", 400), "短い");
+        assert_eq!(cut_chars("あいうえお", 3), "あいう…");
     }
 
     fn request(method: &str, path: &str, headers: &[(&str, &str)]) -> Request {
