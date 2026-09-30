@@ -1317,7 +1317,7 @@ fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result
 fn session_terminal(
     record: Option<&Value>,
     terminal_settings: &crate::config::TerminalSettings,
-    tmux_panes: &[crate::terminal::TmuxPane],
+    views: &mut HashMap<Option<String>, TmuxView>,
     pid: Option<u32>,
 ) -> session::SessionTerminal {
     if let Some(recorded) = record
@@ -1327,9 +1327,12 @@ fn session_terminal(
         return recorded;
     }
     let tmux = terminal_settings.spawn.is_none() && terminal_settings.is_tmux();
-    let pane = pid
-        .filter(|_| tmux)
-        .and_then(|p| crate::terminal::find_matching_pane(tmux_panes, Some(p), None));
+    // Asked of tmux only here: a session whose record says where it runs needs no look at the
+    // settings' own server.
+    let pane = pid.filter(|_| tmux).and_then(|p| {
+        let view = tmux_view(views, socket_key(terminal_settings.tmux_socket()));
+        crate::terminal::find_matching_pane(&view.panes, Some(p), None)
+    });
     session::SessionTerminal {
         backend: crate::terminal::backend_name(terminal_settings).to_string(),
         socket: terminal_settings
@@ -1454,7 +1457,9 @@ fn state(server: &Server) -> Value {
 
     let hubs = messaging::all_repo_hubs(repo);
 
-    let sessions = sessions_of(server, &settings, &hubs, &linked_paths, workers_data);
+    let sessions = sessions_of(server, &settings, &hubs, &linked_paths, None, |index, _| {
+        workers_data[index].clone()
+    });
 
     let pending: Vec<Value> = messaging::list(&repo.slug)
         .iter()
@@ -1552,6 +1557,13 @@ impl TmuxView {
     }
 }
 
+/// What the tmux server on `socket` says, asked the first time it is needed and kept after.
+fn tmux_view(views: &mut HashMap<Option<String>, TmuxView>, socket: Option<String>) -> &TmuxView {
+    views
+        .entry(socket.clone())
+        .or_insert_with(|| TmuxView::look(socket.as_deref()))
+}
+
 /// When a session's tmux window last had activity and how many clients are on it, from the
 /// server its own record names — which is not always the settings' one. Both `None` for a
 /// session that is not in tmux or whose window is not there.
@@ -1566,10 +1578,7 @@ fn tmux_activity(
     else {
         return (None, None);
     };
-    let socket = socket_key(terminal.socket.as_deref());
-    let view = views
-        .entry(socket.clone())
-        .or_insert_with(|| TmuxView::look(socket.as_deref()));
+    let view = tmux_view(views, socket_key(terminal.socket.as_deref()));
     let Some(pane) = view.panes.iter().find(|p| p.window_id == window) else {
         return (None, None);
     };
@@ -1646,6 +1655,21 @@ impl HubGates {
     }
 }
 
+/// The gates of the hubs a poll reaches, each hub's read the first time one of its sessions
+/// asks.
+struct GateCache {
+    state_dir: PathBuf,
+    read: HashMap<String, HubGates>,
+}
+
+impl GateCache {
+    fn of(&mut self, slug: &str) -> &HubGates {
+        self.read
+            .entry(slug.to_string())
+            .or_insert_with(|| HubGates::read(&self.state_dir, slug))
+    }
+}
+
 /// The gate a worker is waiting to have answered: the oldest still open in its hub's gate
 /// directory that it opened from `worktree` and has not moved on from. "Moved on" is judged as
 /// `close_resumed` judges it, from the same signals, but only reads: a hub's directory is
@@ -1684,44 +1708,41 @@ fn waiting_hub(hub: &session::RepoHub, gates: &[gate::Gate]) -> Option<session::
     session_waiting(hub, &open)
 }
 
-/// The sessions this board lists, hubs first and then the workers of `linked_paths` (with what
-/// was already asked of each), as the page reads them and as a board terminal resolves an id.
+/// The sessions this board lists, hubs first and then the workers of `linked_paths`, as the
+/// page reads them and as a board terminal resolves an id. `worker_data` is asked for a
+/// worker's status and branch by its place in `linked_paths`.
+///
+/// With `only`, the one session of that id: the others are skipped before anything is read or
+/// run for them, so that the one and the whole list are the same code and cannot drift.
 fn sessions_of(
     server: &Server,
     settings: &crate::config::Settings,
     hubs: &[session::RepoHub],
     linked_paths: &[String],
-    workers_data: Vec<(messaging::WorkerStatus, Option<String>)>,
+    only: Option<&str>,
+    mut worker_data: impl FnMut(usize, &str) -> (messaging::WorkerStatus, Option<String>),
 ) -> Vec<session::Session> {
     let repo = &server.ctx.repo;
     let terminal_settings = &settings.terminal;
-    // What tmux says, asked once per socket per poll: the settings' own socket now, and any
-    // other a session's record names when the first session on it is reached.
-    let settings_socket = socket_key(terminal_settings.tmux_socket());
+    let skipped = |id: &str| only.is_some_and(|wanted| wanted != id);
+    // What tmux says, asked once per socket per poll and only for a socket a listed session
+    // needs: its record's own, or the settings' when the record says none.
     let mut views: HashMap<Option<String>, TmuxView> = HashMap::new();
-    if terminal_settings.spawn.is_none() && terminal_settings.is_tmux() {
-        views.insert(
-            settings_socket.clone(),
-            TmuxView::look(settings_socket.as_deref()),
-        );
-    }
-    let tmux_panes = views
-        .get(&settings_socket)
-        .map(|view| view.panes.clone())
-        .unwrap_or_default();
-    // Read once per poll: the gates of every hub, so a worker under a parent-task hub shows
-    // its gate on the repository board too. Read-only — closing a resumed gate stays with the
-    // board that owns the hub's directory.
-    let state_dir = messaging::state_dir();
-    let gates: HashMap<String, HubGates> = hubs
-        .iter()
-        .map(|h| (h.slug.clone(), HubGates::read(&state_dir, &h.slug)))
-        .collect();
-    let worker_waiting =
-        |hub_id: &str, worktree: &str, started: Option<&str>, phase_at: Option<i64>| {
-            let hub = hubs.iter().find(|h| h.id == hub_id)?;
-            waiting_worker(hub, gates.get(&hub.slug)?, worktree, started, phase_at)
-        };
+    // Read once per poll, for the hubs of the sessions listed, so a worker under a parent-task
+    // hub shows its gate on the repository board too. Read-only — closing a resumed gate stays
+    // with the board that owns the hub's directory.
+    let mut gates = GateCache {
+        state_dir: messaging::state_dir(),
+        read: HashMap::new(),
+    };
+    let worker_waiting = |gates: &mut GateCache,
+                          hub_id: &str,
+                          worktree: &str,
+                          started: Option<&str>,
+                          phase_at: Option<i64>| {
+        let hub = hubs.iter().find(|h| h.id == hub_id)?;
+        waiting_worker(hub, gates.of(&hub.slug), worktree, started, phase_at)
+    };
 
     let hub_agent = runner::agent_from_runner(
         settings
@@ -1736,14 +1757,19 @@ fn sessions_of(
             .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
     );
 
-    let main_branch = branch_of(&repo.main);
+    let main_branch_cell = std::cell::OnceCell::new();
+    let main_branch = || {
+        main_branch_cell
+            .get_or_init(|| branch_of(&repo.main))
+            .clone()
+    };
     let mut sessions: Vec<session::Session> = Vec::new();
 
     // 1. Hub sessions from hubs
-    for h in hubs {
+    for h in hubs.iter().filter(|h| !skipped(&h.id)) {
         let record = messaging::read_json(&messaging::hub_record_path(&h.slug));
         let terminal =
-            session_terminal(record.as_ref(), terminal_settings, &tmux_panes, h.state.pid);
+            session_terminal(record.as_ref(), terminal_settings, &mut views, h.state.pid);
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
 
         sessions.push(session::Session {
@@ -1755,7 +1781,7 @@ fn sessions_of(
             hub: None,
             key: h.key.clone(),
             worktree: repo.main.clone(),
-            branch: main_branch.clone(),
+            branch: main_branch(),
             task: None,
             title: Some(h.name.clone()),
             present: h.state.present,
@@ -1767,7 +1793,7 @@ fn sessions_of(
             phases: Vec::new(),
             last_activity_at,
             attached,
-            waiting: gates.get(&h.slug).and_then(|g| waiting_hub(h, &g.open)),
+            waiting: waiting_hub(h, &gates.of(&h.slug).open),
         });
     }
 
@@ -1778,7 +1804,11 @@ fn sessions_of(
         .is_some()
         || messaging::worker_session(Path::new(&repo.main)).is_some();
     let worker_ids = worker_session_ids(linked_paths, main_listed);
-    for ((path, id), (status, branch)) in linked_paths.iter().zip(worker_ids).zip(workers_data) {
+    for (index, (path, id)) in linked_paths.iter().zip(worker_ids).enumerate() {
+        if skipped(&id) {
+            continue;
+        }
+        let (status, branch) = worker_data(index, path);
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
@@ -1793,11 +1823,17 @@ fn sessions_of(
         let terminal = session_terminal(
             record_json.as_ref(),
             terminal_settings,
-            &tmux_panes,
+            &mut views,
             status.pid,
         );
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
-        let waiting = worker_waiting(&parent_hub, path, started_at.as_deref(), status.phase_at);
+        let waiting = worker_waiting(
+            &mut gates,
+            &parent_hub,
+            path,
+            started_at.as_deref(),
+            status.phase_at,
+        );
 
         let saved_title = saved_session.and_then(|s| s.title);
         let task_id = messaging::worker_task(wt_path);
@@ -1831,6 +1867,9 @@ fn sessions_of(
 
     // Also check worker in main checkout if one exists
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
+    if skipped("worker-main") {
+        return sessions;
+    }
     if let Some(record_json) = messaging::read_json(&main_record_path) {
         let status = messaging::worker_status(Path::new(&repo.main));
         let parent_hub = parent_hub_id(
@@ -1846,11 +1885,12 @@ fn sessions_of(
         let terminal = session_terminal(
             Some(&record_json),
             terminal_settings,
-            &tmux_panes,
+            &mut views,
             status.pid,
         );
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
         let waiting = worker_waiting(
+            &mut gates,
             &parent_hub,
             &repo.main,
             started_at.as_deref(),
@@ -1871,7 +1911,7 @@ fn sessions_of(
             hub: Some(parent_hub),
             key: None,
             worktree: repo.main.clone(),
-            branch: main_branch.clone(),
+            branch: main_branch(),
             task: task_id,
             title: status.title,
             present: status.present,
@@ -1887,9 +1927,9 @@ fn sessions_of(
         });
     } else if let Some(saved) = messaging::worker_session(Path::new(&repo.main)) {
         let parent_hub = parent_hub_id(repo, hubs, saved.hub.as_deref());
-        let terminal = session_terminal(None, terminal_settings, &tmux_panes, None);
+        let terminal = session_terminal(None, terminal_settings, &mut views, None);
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
-        let waiting = worker_waiting(&parent_hub, &repo.main, None, None);
+        let waiting = worker_waiting(&mut gates, &parent_hub, &repo.main, None, None);
 
         sessions.push(session::Session {
             id: "worker-main".to_string(),
@@ -1900,7 +1940,7 @@ fn sessions_of(
             hub: Some(parent_hub),
             key: None,
             worktree: repo.main.clone(),
-            branch: main_branch,
+            branch: main_branch(),
             task: saved.task,
             title: saved.title,
             present: false,
@@ -1918,20 +1958,31 @@ fn sessions_of(
     sessions
 }
 
-/// The sessions of this board, asked for on their own: what the board terminal resolves a
-/// session id against, so that the page never names a socket or a window.
-pub(super) fn board_sessions(
+/// The session `id` of this board, resolved without listing the others: no `ps` or `git` for
+/// another worktree, no gates of another hub. Equal to its entry in the list `state` carries.
+pub(super) fn board_session(
     server: &Server,
     settings: &crate::config::Settings,
-) -> Vec<session::Session> {
+    id: &str,
+) -> Option<session::Session> {
     let repo = &server.ctx.repo;
-    let hubs = messaging::all_repo_hubs(repo);
     let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
-    let workers_data = linked_paths
-        .iter()
-        .map(|path| (messaging::worker_status(Path::new(path)), branch_of(path)))
-        .collect();
-    sessions_of(server, settings, &hubs, &linked_paths, workers_data)
+    let hubs = messaging::all_repo_hubs_among(repo, &linked_paths);
+    sessions_of(
+        server,
+        settings,
+        &hubs,
+        &linked_paths,
+        Some(id),
+        worker_looked_at,
+    )
+    .into_iter()
+    .next()
+}
+
+/// A worker's status and branch, asked of the worktree itself.
+fn worker_looked_at(_index: usize, path: &str) -> (messaging::WorkerStatus, Option<String>) {
+    (messaging::worker_status(Path::new(path)), branch_of(path))
 }
 
 /// The tasks as the board reads them, each live one with what its worker recorded without
@@ -2133,10 +2184,23 @@ pub(super) fn find_session(
     settings: &crate::config::Settings,
     id: &str,
 ) -> Result<session::Session, String> {
-    board_sessions(server, settings)
-        .into_iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| format!("no such session: {id}"))
+    board_session(server, settings, id).ok_or_else(|| format!("no such session: {id}"))
+}
+
+/// The slug of the hub the worker in `worktree` reports to, from its own record: the same one
+/// `parent_hub_id` and the hub listing arrive at, without listing the hubs.
+fn worker_hub_slug(repo: &crate::repo::RepoInfo, worktree: &Path) -> String {
+    match messaging::worker_hub_key(worktree) {
+        Some(key) => crate::repo::slug_for(&repo.nwo, Some(&key)),
+        None => match &repo.hub {
+            Some(_) => repo
+                .clone()
+                .addressed(None)
+                .map(|default| default.slug)
+                .unwrap_or_else(|_| repo.slug.clone()),
+            None => repo.slug.clone(),
+        },
+    }
 }
 
 /// What one session's worktree holds that no remote has, `None` when the directory is gone.
@@ -2148,9 +2212,8 @@ pub(super) fn git_state_of(
     // The task's own base, when it has one: work meant for a release branch is not merged
     // because it is in the default branch.
     let base = session.task.as_deref().and_then(|task_id| {
-        let hubs = messaging::all_repo_hubs(&server.ctx.repo);
-        let hub = hubs.iter().find(|h| Some(&h.id) == session.hub.as_ref())?;
-        task::load(&task::dir(&messaging::state_dir(), &hub.slug), task_id)
+        let slug = worker_hub_slug(&server.ctx.repo, Path::new(&session.worktree));
+        task::load(&task::dir(&messaging::state_dir(), &slug), task_id)
             .ok()?
             .base
     });
@@ -2481,6 +2544,21 @@ mod tests {
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
+    }
+
+    #[test]
+    fn the_sessions_view_patches_its_tree_and_lets_the_terminal_go_first() {
+        for piece in [
+            "function patchSessionTree",
+            "data-gid=",
+            "function holdSideForSelection",
+            "function releaseSide",
+            "onReady: () => releaseSide(id)",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        // A row's own words are what a redraw follows, not the selected session's task.
+        assert!(!UI_HTML.contains("JSON.stringify([s.task, s.phase"));
     }
 
     #[test]
@@ -3156,5 +3234,132 @@ mod tests {
     #[test]
     fn the_page_does_not_carry_the_terminal_library() {
         assert!(!UI_HTML.contains("Permission is hereby granted"));
+    }
+
+    /// One session asked for on its own is the entry the whole list holds for it, for every
+    /// shape of id: the two can only differ if a field is gathered in one path and not the other.
+    #[test]
+    fn one_session_is_the_entry_the_whole_list_holds() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let main = root.join("repo");
+        std::fs::create_dir_all(&main).unwrap();
+        crate::testing::init_repo(&main, "main");
+        let git = |args: &[&str]| {
+            let mut full = vec!["-c", "user.name=t", "-c", "user.email=t@example.com"];
+            full.extend_from_slice(args);
+            let out = crate::repo::git(&full, Some(&main)).unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["commit", "--allow-empty", "-q", "-m", "first"]);
+        // Two worktrees called `foo` and one called `main` are the ids that carry a digest.
+        let worktrees = ["a/foo", "b/foo", "bar", "c/main"];
+        for (n, rel) in worktrees.iter().enumerate() {
+            let path = root.join(rel);
+            git(&[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &format!("b{n}"),
+                path.to_str().unwrap(),
+            ]);
+        }
+        let record = |worktree: &Path, body: Value| {
+            let path = messaging::worker_record_path(worktree);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body.to_string()).unwrap();
+        };
+        let me = std::process::id();
+        // A recorded tmux window on a socket no server answers on: read through the lazy view,
+        // which finds no window there.
+        record(
+            &root.join("bar"),
+            json!({"pid": me, "title": "bar work", "task": "WID-2", "hub": "WID-1",
+                   "startedAt": "2026-01-01T00:00:00Z",
+                   "terminal": {"backend": "tmux", "socket": "adj-unit-none", "session": "s",
+                                "window": "@1", "pane": "%1"}}),
+        );
+        record(
+            &root.join("a/foo"),
+            json!({"pid": 4294967295u64, "task": "WID-3"}),
+        );
+        record(
+            &main,
+            json!({"pid": me, "task": "WID-4", "title": "on main"}),
+        );
+        // A hub record for the parent-task hub, and a gate it has open for `bar`.
+        let hub_slug = crate::repo::slug_for("acme/widget", Some("WID-1"));
+        let hub_record = messaging::hub_record_path(&hub_slug);
+        std::fs::create_dir_all(hub_record.parent().unwrap()).unwrap();
+        std::fs::write(
+            &hub_record,
+            json!({"pid": me, "cwd": main, "hub": "WID-1", "startedAt": "2026-01-01T00:00:00Z"})
+                .to_string(),
+        )
+        .unwrap();
+        let gates = messaging::state_dir().join("gates").join(&hub_slug);
+        std::fs::create_dir_all(&gates).unwrap();
+        std::fs::write(
+            gates.join("g1.json"),
+            json!({"id": "g1", "kind": "question", "worktree": root.join("bar"),
+                   "title": "which", "openedAt": "20991231T000000Z", "wait": true})
+            .to_string(),
+        )
+        .unwrap();
+
+        let repo = crate::repo::RepoInfo {
+            main: main.to_string_lossy().to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        let server = Server {
+            ctx: super::super::context_of(repo).unwrap(),
+            token: String::new(),
+            port: 0,
+            resident: false,
+            jules: Arc::default(),
+            tmux: None,
+            terminals: Arc::default(),
+        };
+        let settings = settings_now(&server);
+
+        // What the page is sent, which is the whole list.
+        let listed = state(&server)["sessions"].as_array().unwrap().clone();
+        let ids: Vec<&str> = listed.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        let digest = |rel: &str| crate::repo::short_digest(root.join(rel).to_str().unwrap());
+        for expected in [
+            "hub".to_string(),
+            "hub-WID-1".to_string(),
+            "worker-bar".to_string(),
+            "worker-main".to_string(),
+            format!("worker-foo-{}", digest("a/foo")),
+            format!("worker-foo-{}", digest("b/foo")),
+            format!("worker-main-{}", digest("c/main")),
+        ] {
+            assert!(
+                ids.contains(&expected.as_str()),
+                "{expected} not in {ids:?}"
+            );
+        }
+        for session in &listed {
+            let id = session["id"].as_str().unwrap();
+            let one = board_session(&server, &settings, id).unwrap();
+            assert_eq!(&serde_json::to_value(&one).unwrap(), session, "{id}");
+        }
+        let waiting = |id: &str| listed.iter().find(|s| s["id"] == id).unwrap()["waiting"].clone();
+        assert_eq!(waiting("worker-bar")["id"], "g1", "{listed:?}");
+        assert_eq!(waiting("hub-WID-1"), Value::Null);
+        assert_eq!(board_session(&server, &settings, "worker-nope"), None);
+        assert_eq!(board_session(&server, &settings, "hub-nope"), None);
     }
 }

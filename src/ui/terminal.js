@@ -33,7 +33,9 @@ function terminalEndText(code, reason) {
   return TERMINAL_ENDS[code] || `接続が閉じました（${code}）`;
 }
 
-function mountSessionTerminal(container, { sessionId, onEnd } = {}) {
+/* `onReady` is called once, when the first output has arrived: the point from which the
+   terminal is on screen and whatever else the page reads can go ahead. */
+function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
   container.classList.add('adj-terminal');
   let term = null;
   let fit = null;
@@ -41,6 +43,7 @@ function mountSessionTerminal(container, { sessionId, onEnd } = {}) {
   let observer = null;
   let frame = 0;
   let disposed = false;
+  let ready = false;
   const encoder = new TextEncoder();
 
   const scheduleFit = () => {
@@ -81,7 +84,19 @@ function mountSessionTerminal(container, { sessionId, onEnd } = {}) {
     const open = () => ws && ws.readyState === WebSocket.OPEN;
     // A resize while connecting was not sent; the size now is what the PTY should have.
     ws.onopen = () => ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
+    ws.onmessage = e => {
+      const first = !ready;
+      ready = true;
+      // Once xterm has drawn the first frame (`write` only queues it), and kept from the
+      // socket: a page that fails to draw its sidebar must not lose the output or end the
+      // handler.
+      const done = () => {
+        if (!first || disposed) return;
+        try { onReady?.(); } catch (err) { console.error(err); }
+      };
+      if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data), done);
+      else done();
+    };
     ws.onclose = e => {
       if (disposed) return;
       line(terminalEndText(e.code, e.reason));

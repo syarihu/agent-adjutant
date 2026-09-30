@@ -11,7 +11,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::same_path;
-use super::serve::{Server, board_sessions, settings_now};
+use super::serve::{Server, find_session, settings_now};
 use super::{Context, HubStart, TabOutcome};
 use crate::messaging::{self, Message};
 use crate::runner;
@@ -215,10 +215,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
 pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
     let input = input_of(body)?;
     let settings = settings_now(server);
-    let session = board_sessions(server, &settings)
-        .into_iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| format!("no such session: {id}"))?;
+    let session = find_session(server, &settings, id)?;
     if session.kind != "worker" {
         return Err("only a worker session can be linked to a task".to_string());
     }

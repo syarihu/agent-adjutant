@@ -33,14 +33,10 @@ pub(super) fn is_window_id(window: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The socket and window of the session `id` on this board, if it is one a terminal can be
-/// opened on: it runs in tmux, was recorded with a window, and is running. Shared with the
-/// board's action that opens the session in the person's own terminal.
-pub(super) fn target_of(
-    sessions: &[crate::session::Session],
-    id: &str,
-) -> Option<(Option<String>, String)> {
-    let session = sessions.iter().find(|s| s.id == id)?;
+/// The socket and window of `session`, if it is one a terminal can be opened on: it runs in
+/// tmux, was recorded with a window, and is running. Shared with the board's action that opens
+/// the session in the person's own terminal.
+pub(super) fn target_of(session: &crate::session::Session) -> Option<(Option<String>, String)> {
     let terminal = &session.terminal;
     let window = terminal.window.as_deref().filter(|w| is_window_id(w))?;
     (terminal.backend == "tmux" && session.present)
@@ -64,7 +60,7 @@ pub(super) fn serve(
 #[cfg(unix)]
 mod imp {
     use super::*;
-    use crate::cmd::serve::{board_sessions, settings_now};
+    use crate::cmd::serve::{board_session, settings_now};
     use crate::pty;
     use crate::terminal;
     use crate::ws;
@@ -208,11 +204,12 @@ mod imp {
             "tmux 3.1 or later is not available".to_string(),
         ))?;
         let settings = settings_now(server);
-        let sessions = board_sessions(server, &settings);
-        let (socket, window) = target_of(&sessions, id).ok_or((
-            CLOSE_NO_SESSION,
-            "no such tmux session on this board".to_string(),
-        ))?;
+        let (socket, window) = board_session(server, &settings, id)
+            .and_then(|session| target_of(&session))
+            .ok_or((
+                CLOSE_NO_SESSION,
+                "no such tmux session on this board".to_string(),
+            ))?;
         let socket = socket.as_deref();
 
         // Before anything is made: a window that is gone must not start a server or leave a
@@ -477,11 +474,11 @@ mod tests {
             session("worker-e", "tmux", Some("@3"), false),
         ];
         assert_eq!(
-            target_of(&sessions, "worker-a"),
+            target_of(&sessions[0]),
             Some((Some("adj-test".to_string()), "@3".to_string()))
         );
-        for id in ["worker-b", "worker-c", "worker-d", "worker-e", "worker-x"] {
-            assert_eq!(target_of(&sessions, id), None, "{id}");
+        for other in &sessions[1..] {
+            assert_eq!(target_of(other), None, "{}", other.id);
         }
     }
 

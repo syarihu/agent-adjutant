@@ -574,6 +574,16 @@ const INBOX_LISTED: usize = 20;
 /// one hub). A saved hub session alone does not list it, so a stopped hub whose last
 /// checkout is gone leaves the list; its session stays for `--resume`.
 pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHub> {
+    let worktrees = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
+    all_repo_hubs_among(repo, &worktrees)
+}
+
+/// `all_repo_hubs` for a caller that has already listed the linked worktrees of `repo`, so that
+/// git is not asked for them a second time.
+pub fn all_repo_hubs_among(
+    repo: &crate::repo::RepoInfo,
+    worktrees: &[String],
+) -> Vec<crate::session::RepoHub> {
     use crate::session::{InboxItem, RepoHub, RepoHubState};
     use std::collections::HashMap;
 
@@ -645,9 +655,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
     // that the saved session's, which is what keeps counting after the worker has ended.
     let mut children: HashMap<String, usize> = HashMap::new();
     let mut checkouts = vec![repo.main.clone()];
-    if let Ok(worktrees) = crate::repo::linked_worktrees(&repo.main) {
-        checkouts.extend(worktrees);
-    }
+    checkouts.extend(worktrees.iter().cloned());
     for wt in checkouts {
         let Some(hub_key) = worker_hub_key(Path::new(&wt)) else {
             continue;

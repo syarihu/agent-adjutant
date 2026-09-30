@@ -28,10 +28,48 @@ narrowSide.addEventListener('change', () => {
 
 /* ── The board a session's task is on ── */
 
-/* What changes the sidebar's answer: a board is read again when this does, and otherwise only
-   by the timer below. */
-const sideSignal = s => JSON.stringify([s.task, s.phase, s.phaseAt, s.waiting?.id, s.present,
-  (state.hubs || []).find(h => h.id === hubOfSession(s))?.inboxCount]);
+/* What changes a board's answer: it is read again when this does, and otherwise only by the
+   timer below. Of the hub's own signals and those of all its workers, not of the selected
+   session and its task alone, so that moving between the workers of one hub reads nothing. */
+const sideSignal = s => {
+  const hubId = hubOfSession(s);
+  const hub = (state.hubs || []).find(h => h.id === hubId);
+  const sessions = state.sessions || [];
+  return JSON.stringify([hub?.inboxCount, hub?.state?.present,
+    sessions.find(w => w.kind === 'hub' && w.id === hubId)?.waiting?.id,
+    sessions.filter(w => w.kind === 'worker' && w.hub === hubId)
+      .map(w => [w.id, w.task, w.phase, w.phaseAt, w.waiting?.id, w.present])]);
+};
+
+/* ── The terminal goes first ── */
+
+/* The git state and the other board are read once the terminal of a newly selected session has
+   shown its first output, or after this long: both run concurrently with the terminal's
+   connection and slow it. Without a terminal to wait for, nothing is held. */
+const SIDE_HOLD_MS = 1000;
+
+const sideHeld = id => sessView.sideHold?.id === id && !sessView.sideHold.released;
+
+function holdSideForSelection(cur) {
+  const id = sessView.selectedId;
+  let hold = sessView.sideHold;
+  if (!id) { clearTimeout(hold?.timer); sessView.sideHold = null; return; }
+  if (hold?.id !== id) {
+    clearTimeout(hold?.timer);
+    hold = sessView.sideHold = { id, released: false, timer: setTimeout(() => releaseSide(id), SIDE_HOLD_MS) };
+  }
+  if (!hold.released && cur && !sessView.mounted && !boardTerminalReady(cur)) hold.released = true;
+}
+
+function releaseSide(id) {
+  const hold = sessView.sideHold;
+  if (!hold || hold.id !== id || hold.released) return;
+  hold.released = true;
+  clearTimeout(hold.timer);
+  if (view !== 'sessions') return;
+  renderSessionContext();
+  renderSessionSidebar();
+}
 
 /* Another board's state, kept by slug. A second request made while one is out is dropped
    unless `force`, and an answer is used only if no newer request has been made since. */
@@ -79,7 +117,7 @@ setInterval(() => {
   const s = currentSession();
   if (!s) return;
   const b = boardOfSession(s);
-  if (!b.own && b.slug && sideNeedsBoard(s, b)) loadSideBoard(b.slug, b.base, sideSignal(s));
+  if (!b.own && b.slug && sideNeedsBoard(s, b) && !sideHeld(s.id)) loadSideBoard(b.slug, b.base, sideSignal(s));
 }, 10000);
 
 /* ── The worktree's git state ── */
@@ -114,7 +152,8 @@ function clock(secs) {
 
 function gitFactsHtml(s) {
   const g = sessView.git;
-  if (!g || g.id !== s.id) return '';
+  // Not asked yet because the terminal is going first: said so rather than left blank.
+  if (!g || g.id !== s.id) return sideHeld(s.id) ? '<ul class="sess-side-facts"><li>確認しています…</li></ul>' : '';
   let body;
   if (g.error && !g.data) {
     body = `<li class="warn">${esc(`git の状態を確認できませんでした: ${g.error}`)}</li>`;
@@ -366,9 +405,9 @@ function renderSessionSidebar() {
     html = sideNote('セッションが見つかりません');
   } else {
     // A session that dropped off the list has no worktree record to ask about any more.
-    if (currentSession()) ensureGit(s);
+    if (currentSession() && !sideHeld(s.id)) ensureGit(s);
     const b = sideBoard(s);
-    if (!b.own && b.slug && sideNeedsBoard(s, b)) {
+    if (!b.own && b.slug && sideNeedsBoard(s, b) && !sideHeld(s.id)) {
       // Read again when the session's own signals moved since it was last read.
       const entry = sessView.boards[b.slug];
       if (!entry || (!entry.loading && entry.key !== sideSignal(s))) loadSideBoard(b.slug, b.base, sideSignal(s));

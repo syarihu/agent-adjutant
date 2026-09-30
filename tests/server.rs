@@ -2110,6 +2110,46 @@ fn the_git_route_reports_a_dirty_worktree_and_refuses_a_session_it_does_not_know
 }
 
 #[test]
+fn the_git_route_looks_at_its_own_worktree_and_no_other() {
+    let fixture = Fixture::new(QUIET);
+    let mine = Sleeper::start();
+    session_worktree(&fixture, "spy-target", None, Some("WID-7"), mine.0);
+    session_worktree(&fixture, "spy-other-a", None, None, 1);
+    session_worktree(&fixture, "spy-other-b", None, None, 2);
+    let spy = Spy::new(fixture._dir.path());
+    let resident = Resident::start_with(&fixture, &[("PATH", &spy.path())]);
+    // The first request to a board has the server find its checkout, which lists the
+    // worktrees once; what is counted below is the route itself.
+    resident.get(&sessions_url("/worker-nobody-at-all/nothing"));
+    spy.clear();
+
+    let (status, body) = resident.get(&sessions_url("/worker-spy-target/git"));
+    assert_eq!(status, 200, "{body}");
+
+    let calls = spy.calls();
+    assert!(
+        calls.iter().any(|c| c.contains("spy-target")),
+        "the target was never looked at: {calls:?}"
+    );
+    let branches = calls.iter().filter(|c| c.contains("branch --show-current"));
+    assert_eq!(branches.count(), 1, "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.contains("spy-other")),
+        "another worktree was asked about: {calls:?}"
+    );
+    // Once, for the session and for the hub of its task together.
+    let listings = calls.iter().filter(|c| c.contains("worktree list"));
+    assert_eq!(listings.count(), 1, "{calls:?}");
+    // One `ps`, for the worker the session names: the others' pids are not asked about.
+    let asked: Vec<&String> = calls.iter().filter(|c| c.starts_with("ps ")).collect();
+    assert!(!asked.is_empty(), "{calls:?}");
+    assert!(
+        asked.iter().all(|c| c.ends_with(&format!("-p {}", mine.0))),
+        "{calls:?}"
+    );
+}
+
+#[test]
 fn a_record_written_after_a_gate_shows_its_worker_moved_on_from_a_parent_hubs_board() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);

@@ -147,12 +147,9 @@ pub(super) fn open_state(server: &Server, settings: &crate::config::Settings) ->
 pub(super) fn open(server: &Server, id: &str) -> Result<Value, String> {
     let version = server.tmux.ok_or("tmux 3.1 or later is not available")?;
     let settings = settings_now(server);
-    let sessions = super::serve::board_sessions(server, &settings);
-    if !sessions.iter().any(|s| s.id == id) {
-        return Err(format!("no such session: {id}"));
-    }
+    let session = find_session(server, &settings, id)?;
     let (socket, window) =
-        target_of(&sessions, id).ok_or("the session is not running in a tmux window")?;
+        target_of(&session).ok_or("the session is not running in a tmux window")?;
     let socket = socket.as_deref();
     let attach = settings.terminal.attach.as_deref();
     if attach.is_none() && !terminal::iterm_available() {

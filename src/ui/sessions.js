@@ -155,12 +155,14 @@ const sessView = {
   back: null,        // { view, taskId } to return to, until the first switch to another session
   mounted: null,     // { sessionId, term, ended }
   pending: null,     // a deep link, opened once the first poll says whether a terminal exists
-  treeSig: '',
+  treeStructure: '', // what the tree was last built from (renderSessionTree)
+  treeRows: new Map(), // each row's own signature, by `row:<session id>` and `head:<group id>`
   starts: [],        // sessions this page asked a hub for and has not seen start (sessions-start.js)
   dismissed: [],     // pending rows closed on this page, by key
   boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles and the sidebar
   sideNarrowOpen: false, // the sidebar below 1400px: floats over the terminal, never saved
   sideSig: '',
+  sideHold: null,    // { id, released, timer }: the selected session's sidebar waits for its terminal (sessions-side.js)
   git: null,         // { id, at, data, error, loading }: the selected worktree's git state, for the sidebar
   screens: {},       // session id -> { lines, at }: the last lines this page saw of its terminal
   reconnectWhenReady: null, // a session just resumed or started: connect once its window exists
@@ -263,7 +265,14 @@ function taskTitleOf(s) {
   const b = boardOfSession(s);
   if (b.own || !b.slug) return '';
   const known = sessView.boards[b.slug];
-  if (!known) { loadSideBoard(b.slug, b.base, sideSignal(s)); return ''; }
+  if (!known) {
+    // While the selected session's terminal goes first, a sibling row of its hub waits too:
+    // its board is the one the sidebar is holding back.
+    const sel = currentSession();
+    const held = sideHeld(sessView.selectedId) && (s.id === sel?.id || (sel && hubOfSession(sel) === hubOfSession(s)));
+    if (!held) loadSideBoard(b.slug, b.base, sideSignal(s));
+    return '';
+  }
   return (known.data?.tasks || []).find(t => t.id === s.task)?.title || '';
 }
 
@@ -321,7 +330,10 @@ function mountSelected() {
     sessView.mounted = rec;
     rec.term = mountSessionTerminal(sessEl('sess-term-host'), {
       sessionId: id,
+      onReady: () => releaseSide(id),
       onEnd: code => {
+        // A terminal that never got a frame has nothing more to wait for either.
+        releaseSide(id);
         rec.ended = code;
         keepScreen(rec);
         if (sessView.mounted === rec) renderSessionsView();
@@ -355,6 +367,29 @@ function sessionRowHtml(s, st, { key = sessionKey(s), tip = '', cls = '' } = {})
     <span class="sess-row-text"><span class="sess-row-key">${esc(key)}</span><span class="sess-row-sub">${esc(sub)}</span></span></button>`;
 }
 
+/* A group's head: the hub's own session when it has one, else a row of the group's own. */
+function sessionHeadHtml(g) {
+  if (g.hubSession) return sessionRowHtml(g.hubSession, g.state, { key: g.short, tip: g.label, cls: 'hub' });
+  return `<div class="sess-row hub ${g.state}" data-gid="${esc(g.id)}" title="${esc(g.label)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span><span class="sess-row-text"><span class="sess-row-key">${esc(g.short)}</span><span class="sess-row-sub">${esc(STATE_LABEL[g.state])}</span></span></div>`;
+}
+
+const htmlNode = html => {
+  const t = document.createElement('template');
+  t.innerHTML = html.trim();
+  return t.content.firstElementChild;
+};
+
+/* `old` replaced by the node `html` makes, keeping what a redraw must not take from a row:
+   the selection and the keyboard focus. */
+function swapSessionRow(old, html) {
+  const node = htmlNode(html);
+  const focused = document.activeElement === old;
+  if (old.hasAttribute('aria-current')) node.setAttribute('aria-current', 'true');
+  old.replaceWith(node);
+  if (focused) node.focus({ preventScroll: true });
+  return node;
+}
+
 function renderSessionTree() {
   const collapsed = railCollapsed();
   const filter = prefs.sessionsFilter;
@@ -364,28 +399,39 @@ function renderSessionTree() {
   for (const p of pend) pendByHub.set(p.hubId, [...(pendByHub.get(p.hubId) || []), p]);
   const { groups, orphans } = sessionTree(filter, new Set(pendByHub.keys()));
   const folded = new Set(prefs.sessionsFolded || []);
-  const rowSig = (s, st) => [s.id, st, s.title || '', sessionKey(s), s.present ? lastOutputText(s) : ''];
-  const sig = JSON.stringify([
+  // What each row draws, one signature per row, so that a row is redrawn only when its own
+  // words change and not whenever any other row's do.
+  const rowSig = (s, st, tip = '') => JSON.stringify([s.id, st, s.title || '', sessionKey(s), s.present ? lastOutputText(s) : '', tip]);
+  const rows = new Map();
+  for (const g of groups) {
+    rows.set(`head:${g.id}`, JSON.stringify([g.hubSession ? rowSig(g.hubSession, g.state, g.label) : null, g.id, g.short, g.label, g.state]));
+    for (const r of g.rows) rows.set(`row:${r.s.id}`, rowSig(r.s, r.state));
+  }
+  // What the tree is made of: a change here is rebuilt. The order of a group's rows is left
+  // out, since moving the rows it already has is enough for that.
+  const structure = JSON.stringify([
     collapsed, filter, [...folded],
-    groups.map(g => [g.id, g.label, g.state, g.hubSession ? rowSig(g.hubSession, g.state) : null,
-      g.rows.map(r => rowSig(r.s, r.state))]),
+    groups.map(g => [g.id, g.short, !!g.hubSession, !collapsed && folded.has(g.id) && !pendByHub.has(g.id),
+      g.rows.map(r => r.s.id).sort()]),
     orphans.map(s => [s.id, sessionKey(s)]),
     // Part of the signature: without it a row that appears or changes its words while nothing
     // else does would stay hidden behind the redraw skip below.
     pend.map(p => [p.key, p.hubId, p.name, p.kind, p.text, p.canStart, p.busy]),
   ]);
-  if (sig === sessView.treeSig) return;
-  sessView.treeSig = sig;
+  const tree = sessEl('sess-tree');
+  if (structure === sessView.treeStructure) {
+    patchSessionTree(tree, groups, rows);
+    return;
+  }
+  sessView.treeStructure = structure;
+  sessView.treeRows = rows;
   const scroll = document.querySelector('.sess-scroll');
   const top = scroll.scrollTop;
-  sessEl('sess-tree').innerHTML = groups.map(g => {
+  tree.innerHTML = groups.map(g => {
     // A group with a session being started stays open: its row is what says the request is there.
     const closed = !collapsed && folded.has(g.id) && !pendByHub.has(g.id);
-    const head = g.hubSession
-      ? sessionRowHtml(g.hubSession, g.state, { key: g.short, tip: g.label, cls: 'hub' })
-      : `<div class="sess-row hub ${g.state}" title="${esc(g.label)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span><span class="sess-row-text"><span class="sess-row-key">${esc(g.short)}</span><span class="sess-row-sub">${esc(STATE_LABEL[g.state])}</span></span></div>`;
     return `<div class="sess-group">
-      <div class="sess-hubrow"><button type="button" class="sess-fold" data-fold="${esc(g.id)}" aria-expanded="${!closed}" aria-label="${esc(g.short)} を${closed ? '開く' : '畳む'}"><span class="material-symbols-outlined" aria-hidden="true">${closed ? 'chevron_right' : 'expand_more'}</span></button>${head}</div>
+      <div class="sess-hubrow"><button type="button" class="sess-fold" data-fold="${esc(g.id)}" aria-expanded="${!closed}" aria-label="${esc(g.short)} を${closed ? '開く' : '畳む'}"><span class="material-symbols-outlined" aria-hidden="true">${closed ? 'chevron_right' : 'expand_more'}</span></button>${sessionHeadHtml(g)}</div>
       <div class="sess-children"${closed ? ' hidden' : ''}>${(pendByHub.get(g.id) || []).map(pendingRowHtml).join('')}${g.rows.map(r => sessionRowHtml(r.s, r.state)).join('')}</div>
     </div>`;
   }).join('') || '<div class="sess-empty">条件に合うセッションはありません</div>';
@@ -395,6 +441,42 @@ function renderSessionTree() {
   details.open = folded.has('orphans');
   sessEl('sess-orphans-list').innerHTML = orphans.map(s => sessionRowHtml(s, 'none')).join('');
   scroll.scrollTop = top;
+}
+
+/* The tree as it stands, brought up to `groups` without rebuilding it: only the rows whose own
+   signature changed are redrawn, and the rows of a group that came in another order are
+   moved. What is on screen keeps its scroll position, its focus and its selection. */
+function patchSessionTree(tree, groups, rows) {
+  const before = sessView.treeRows;
+  const changed = key => before.get(key) !== rows.get(key);
+  // Moving a node blurs it, so the focused row is found again afterwards.
+  const focused = document.activeElement;
+  const focusedSid = focused?.closest?.('#sess-tree') ? focused.dataset?.sid : null;
+  groups.forEach((g, i) => {
+    const el = tree.children[i];
+    const head = el.querySelector(':scope > .sess-hubrow > .sess-row');
+    if (changed(`head:${g.id}`)) swapSessionRow(head, sessionHeadHtml(g));
+    const box = el.querySelector(':scope > .sess-children');
+    const byId = new Map();
+    for (const row of box.querySelectorAll(':scope > .sess-row[data-sid]')) byId.set(row.dataset.sid, row);
+    let next = box.querySelector(':scope > .sess-row[data-sid]');
+    for (const r of g.rows) {
+      const old = byId.get(r.s.id);
+      let node = old;
+      if (changed(`row:${r.s.id}`)) {
+        node = swapSessionRow(old, sessionRowHtml(r.s, r.state));
+        if (old === next) next = node;
+      }
+      if (node === next) next = next.nextElementSibling;
+      else box.insertBefore(node, next);
+    }
+  });
+  sessView.treeRows = rows;
+  if (focusedSid != null && document.activeElement !== focused) {
+    const again = focused.isConnected ? focused
+      : [...tree.querySelectorAll('.sess-row[data-sid]')].find(row => row.dataset.sid === focusedSid);
+    again?.focus({ preventScroll: true });
+  }
 }
 
 function applySessionSelection() {
@@ -434,6 +516,7 @@ function renderSessionsView() {
   renderSessionTree();
   applySessionSelection();
   mountSelected();
+  holdSideForSelection(cur);
   renderSessionContext();
   renderSessionActions(cur);
   renderSessionGate(cur);

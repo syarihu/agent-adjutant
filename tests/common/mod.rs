@@ -404,3 +404,64 @@ impl Drop for IsolatedTmux {
             .output();
     }
 }
+
+// ── what a server asked of the tools it runs ──
+
+/// `git`, `ps` and `tmux` wrappers that write down each call and then run the real tool, for a
+/// test that asserts on what the server did *not* ask. Put `path()` in the server's `PATH`.
+pub struct Spy {
+    bin: PathBuf,
+    log: PathBuf,
+}
+
+impl Spy {
+    pub fn new(dir: &Path) -> Spy {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("spybin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let log = dir.join("spy.log");
+        for tool in ["git", "ps", "tmux"] {
+            let found = Command::new("sh")
+                .args(["-c", &format!("command -v {tool}")])
+                .output()
+                .unwrap();
+            let real = String::from_utf8_lossy(&found.stdout).trim().to_string();
+            if real.is_empty() {
+                continue;
+            }
+            let script = bin.join(tool);
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\necho \"{tool} $*\" >> '{}'\nexec '{real}' \"$@\"\n",
+                    log.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        Spy { bin, log }
+    }
+
+    pub fn path(&self) -> String {
+        format!(
+            "{}:{}",
+            self.bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    }
+
+    /// Forget what was asked so far, such as by a server still coming up.
+    pub fn clear(&self) {
+        let _ = std::fs::remove_file(&self.log);
+    }
+
+    /// Each call since the last `clear`, as `tool arguments`.
+    pub fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+}
