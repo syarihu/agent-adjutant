@@ -19,6 +19,7 @@ mod gate;
 mod jules;
 mod review_engine;
 mod serve;
+mod session;
 mod task;
 pub mod tmux;
 
@@ -38,9 +39,10 @@ pub use serve::{
     serve, serve_for_hub, server_start, server_status, server_stop,
 };
 pub use task::{
-    AddArgs, UpdateArgs, add as task_add, list as task_list, next_cmd as task_next,
-    refresh as task_refresh, refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json,
-    show as task_show, update_cmd as task_update,
+    AddArgs, UpdateArgs, add as task_add, fetch_issue_cmd as task_fetch_issue_cmd,
+    list as task_list, next_cmd as task_next, refresh as task_refresh,
+    refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
+    update_cmd as task_update,
 };
 
 /// Everything a command needs to know about where it is. Resolved once, at the top, because
@@ -294,7 +296,9 @@ fn has_bracketed_tag(first_line: &str, tag: &str) -> bool {
 /// Whether a message left for a worker requires waking it.
 ///
 /// A worker tab is woken only when there is something it has to act on: a question asked
-/// back by the hub, or a decision on a gate it opened. Notices (`[ack]`, issue filed, etc.)
+/// back by the hub, a decision on a gate it opened, or a link to a task. The last is woken
+/// because a session that was started with no task is idle at its prompt and would never
+/// look at its outbox on its own. Notices (`[ack]`, issue filed, etc.)
 /// are left in the outbox for the worker to read the next time it checks; waking on a notice
 /// risks typing the wake line into an interactive prompt or question the person is looking at.
 pub fn should_wake_worker(subject: &str) -> bool {
@@ -302,6 +306,7 @@ pub fn should_wake_worker(subject: &str) -> bool {
     has_bracketed_tag(first_line, "[question")
         || first_line.starts_with("[質問")
         || has_bracketed_tag(first_line, "[gate")
+        || has_bracketed_tag(first_line, "[linked")
 }
 
 /// Whether a message delivered to the hub requires waking it.
@@ -334,6 +339,52 @@ pub struct Delivered {
     pub delivery: messaging::Delivery,
     pub woken: bool,
     pub wake_needed: bool,
+    /// Why the wake did not happen, when one was tried: what the receiver's screen was
+    /// showing, or what went wrong. `None` when it was woken or there was nothing to try.
+    pub wake_note: Option<String>,
+}
+
+/// The agent a wake will find on the other end, which decides how its screen is read.
+///
+/// Decided from the receiver's runner alone. `ADJUTANT_AGENT` is the setting of whichever
+/// process is sending, and it says nothing about the session being woken: an agy worker
+/// sending to a Claude hub would read the hub's screen with agy's table. And stricter than
+/// `prompts::resolve_agent`, which falls back to Claude for anything it does not know: a
+/// procedure in the wrong dialect is a wording problem, but a screen read with the wrong
+/// agent's table is never recognised and the wake would never be typed. So only a runner that
+/// is Claude Code or agy is read; any other custom runner is typed into without looking.
+pub(crate) fn wake_agent(runner: Option<&str>) -> crate::prompts::Agent {
+    use crate::prompts::Agent;
+    let Some(runner) = runner else {
+        return Agent::Claude;
+    };
+    // The program the line runs, past `env` and `KEY=VALUE` words: a runner is often written
+    // `env CLAUDE_CONFIG_DIR=… claude --resume {sessionId}`.
+    match crate::runner::agent_from_runner(runner).as_str() {
+        "claude" => Agent::Claude,
+        "agy" => Agent::Agy,
+        _ => Agent::Generic,
+    }
+}
+
+/// A wake note as a sentence for the person at the terminal.
+pub(crate) fn wake_note_sentence(note: &str) -> String {
+    let mut chars = note.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+/// What `terminal::wake` came to, as the pair the callers keep: whether the session was
+/// woken, and, when the screen is what stopped it, the reason. Any other failure is left
+/// unsaid, as it always was.
+fn woken_and_why(tried: Result<terminal::Performed, String>) -> (bool, Option<String>) {
+    match tried {
+        Ok(done) if done.ran => (true, None),
+        Ok(done) if done.screen => (false, Some(done.description)),
+        _ => (false, None),
+    }
 }
 
 /// Leave a message for the hub, poke its tab if needed, and tell the person.
@@ -408,25 +459,24 @@ impl Posted {
             wake_needed,
         } = self;
 
-        let woken = if wake_needed {
+        let (woken, wake_note) = if wake_needed {
             match (
                 delivery.present,
                 messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
             ) {
-                (true, Some(pid)) => terminal::wake(
+                (true, Some(pid)) => woken_and_why(terminal::wake(
                     &ctx.settings.terminal,
                     &ctx.settings.hub_wake,
                     pid,
                     &subject,
                     terminal::HUB_WAKE_LINE,
+                    wake_agent(ctx.settings.hub_runner.as_deref()),
                     false,
-                )
-                .map(|done| done.ran)
-                .unwrap_or(false),
-                _ => false,
+                )),
+                _ => (false, None),
             }
         } else {
-            false
+            (false, None)
         };
 
         if announce
@@ -440,6 +490,7 @@ impl Posted {
             delivery,
             woken,
             wake_needed,
+            wake_note,
         }
     }
 }
@@ -460,6 +511,7 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
         delivery,
         woken,
         wake_needed,
+        wake_note,
     } = deliver_to_hub_with_wake(&ctx, &message, true, args.wake)?;
 
     if args.quiet {
@@ -478,7 +530,10 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
             )
         }
         (true, false, true) => {
-            println!("The hub is running; it will pick this up the next time it checks its inbox.")
+            println!("The hub is running; it will pick this up the next time it checks its inbox.");
+            if let Some(note) = wake_note {
+                println!("{}", wake_note_sentence(&note));
+            }
         }
         (false, _, _) => {
             println!(
@@ -1206,6 +1261,37 @@ pub struct WorktreeArgs<'a> {
     pub user: Option<&'a str>,
     /// The selected task source's `branchPattern`, when it has one.
     pub pattern: Option<&'a str>,
+    /// With `name`: the first of `name`, `name-2`, `name-3`… that nothing holds yet, for a
+    /// caller that picks the name itself and so has no one to tell it is taken.
+    pub unique: bool,
+}
+
+/// Whether a worktree of this name could be created now: its path is free, no local branch
+/// has its name, and git does not list a worktree there (a listed one whose directory is gone
+/// still holds the branch it had checked out).
+fn worktree_name_free(
+    main: &str,
+    layout: &str,
+    pattern: &str,
+    user: &str,
+    name: &str,
+    listed: &[String],
+) -> Result<bool, String> {
+    let branch = repo::branch_fallback(pattern, user, name);
+    let path = repo::worktree_fallback(layout, main, &branch)?;
+    if std::path::Path::new(&path).exists() || listed.contains(&path) {
+        return Ok(false);
+    }
+    let taken = repo::git(
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+        Some(std::path::Path::new(main)),
+    )?;
+    Ok(!taken.status.success())
 }
 
 pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
@@ -1233,14 +1319,29 @@ pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
         // only the last resort.
         None => std::env::var("USER").unwrap_or_else(|_| "worker".to_string()),
     };
-    let branch = repo::branch_fallback(
-        args.pattern.unwrap_or(repo::DEFAULT_BRANCH_PATTERN),
-        &user,
-        name,
-    );
+    let pattern = args.pattern.unwrap_or(repo::DEFAULT_BRANCH_PATTERN);
+    let name = match args.unique {
+        true => {
+            let listed = repo::linked_worktrees(&ctx.repo.main)?;
+            let mut candidates =
+                std::iter::once(name.to_string()).chain((2..1000).map(|n| format!("{name}-{n}")));
+            loop {
+                let Some(candidate) = candidates.next() else {
+                    return Err(format!("no free worktree name starting from {name}"));
+                };
+                if worktree_name_free(&ctx.repo.main, layout, pattern, &user, &candidate, &listed)?
+                {
+                    break candidate;
+                }
+            }
+        }
+        false => name.to_string(),
+    };
+    let branch = repo::branch_fallback(pattern, &user, &name);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
+            "name": name,
             "branch": branch,
             "path": repo::worktree_fallback(layout, &ctx.repo.main, &branch)?,
             // Named for what it is: the checkout to run `git worktree add` *in*. It was
@@ -2001,6 +2102,21 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
+    } else if let Some(saved) = &resumed {
+        // Resumed under another hub than the session remembers: say so there too, or the
+        // worker would count for the old hub once it has ended and its record is gone.
+        let slug_of = |hub: Option<&str>| repo::slug_for(&ctx.repo.nwo, hub);
+        if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
+            && let Err(e) = messaging::save_worker_session(
+                &worktree,
+                &title,
+                ctx.repo.hub.as_deref(),
+                task,
+                &saved.session_id,
+            )
+        {
+            eprintln!("adjutant: {e}; the worker may still be counted for its old hub");
+        }
     }
 
     // A worker is not a hub. A tab opened by a spawn command that passes its environment on
@@ -2069,6 +2185,8 @@ pub struct Told {
     pub present: bool,
     pub woken: bool,
     pub wake_needed: bool,
+    /// As `Delivered::wake_note`.
+    pub wake_note: Option<String>,
 }
 
 /// Append to a worktree's outbox, poke the worker sitting in it if waking is needed,
@@ -2090,22 +2208,21 @@ pub fn deliver_to_worker(
     let path = messaging::tell(worktree, from, subject, body)?;
     let status = messaging::worker_status(worktree);
     let wake_needed = wake.unwrap_or_else(|| should_wake_worker(subject));
-    let woken = if wake_needed {
+    let (woken, wake_note) = if wake_needed {
         match (status.present, status.pid) {
-            (true, Some(pid)) => terminal::wake(
+            (true, Some(pid)) => woken_and_why(terminal::wake(
                 &ctx.settings.terminal,
                 &ctx.settings.worker_wake,
                 pid,
                 subject,
                 terminal::WORKER_WAKE_LINE,
+                wake_agent(ctx.settings.agent_runner.as_deref()),
                 false,
-            )
-            .map(|done| done.ran)
-            .unwrap_or(false),
-            _ => false,
+            )),
+            _ => (false, None),
         }
     } else {
-        false
+        (false, None)
     };
     if wake_needed
         && !woken
@@ -2118,6 +2235,7 @@ pub fn deliver_to_worker(
         present: status.present,
         woken,
         wake_needed,
+        wake_note,
     })
 }
 
@@ -2145,6 +2263,7 @@ pub fn tell(args: &TellArgs<'_>) -> Result<(), String> {
         present,
         woken,
         wake_needed,
+        wake_note,
     } = deliver_to_worker(&ctx, &worktree, &from, args.subject, &body, args.wake)?;
 
     if args.quiet {
@@ -2159,7 +2278,12 @@ pub fn tell(args: &TellArgs<'_>) -> Result<(), String> {
             )
         }
         (true, false, true) => {
-            println!("The worker is running; it will read this the next time it checks its outbox.")
+            println!(
+                "The worker is running; it will read this the next time it checks its outbox."
+            );
+            if let Some(note) = wake_note {
+                println!("{}", wake_note_sentence(&note));
+            }
         }
         (false, _, _) => {
             println!("The worker is not running; it will read this the next time it starts.")
@@ -2221,6 +2345,113 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
     let info = resolve(repo_arg, hub_arg)?;
     messaging::unregister_hub(&info.slug)?;
     println!("unregistered {}", info.hub_name);
+    Ok(())
+}
+
+/// Why `hub` cannot be closed, or `Ok` when it can. Only a parent-task hub none of whose
+/// checkouts report to it any more is closable: the repository hub is always there, and a
+/// hub with workers is still in use. Unread messages, open tasks and gates do not stop it —
+/// they are kept, and starting the same key again finds them.
+fn closable_check(repo: &RepoInfo, hub: &crate::session::RepoHub) -> Result<(), String> {
+    if !hub.parent {
+        return Err("the repository hub can only be stopped, not closed; use hub-stop".to_string());
+    }
+    // The list is lenient about checkouts it cannot read; closing must not be.
+    repo::linked_worktrees(&repo.main)
+        .map_err(|e| format!("cannot tell which checkouts report to {}: {e}", hub.name))?;
+    if hub.children > 0 {
+        return Err(format!(
+            "{} checkout(s) still report to {}; use hub-stop to stop it, or clean them up first",
+            hub.children, hub.name
+        ));
+    }
+    Ok(())
+}
+
+/// Close a parent-task hub whose workers are all gone: clear its record and take it off the
+/// board's address book, so it drops out of the list. Like `hub-stop` it ends no process: it
+/// is for the hub itself, or a hub that is no longer running, and refuses a running one.
+/// Its saved session, tasks, gates and inbox stay, and starting the same key with `--resume` picks them up again.
+pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
+    let info = resolve(repo_arg, hub_arg)?;
+    let hub = messaging::all_repo_hubs(&info)
+        .into_iter()
+        .find(|h| h.slug == info.slug)
+        .unwrap_or_else(|| crate::session::RepoHub {
+            id: format!("hub-{}", info.slug),
+            parent: info.hub.is_some(),
+            key: info.hub.clone(),
+            name: info.hub_name.clone(),
+            slug: info.slug.clone(),
+            state: crate::session::RepoHubState {
+                present: false,
+                stale: false,
+                pid: None,
+                started_at: None,
+            },
+            inbox_count: 0,
+            children: 0,
+        });
+    closable_check(&info, &hub)?;
+    // This ends no process, so a hub that is still running would be left running with no
+    // record, and the next `adj hub` would start a second one beside it. Only the hub itself
+    // may clear its own record; from anywhere else it has to be stopped first.
+    let record = messaging::read_json(&messaging::hub_record_path(&hub.slug));
+    let named = record.as_ref().and_then(|r| {
+        let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
+        let started = r
+            .get("psStarted")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        Some((pid, started))
+    });
+    if let Some((pid, started)) = &named {
+        let pid = *pid;
+        match messaging::hub_process_liveness(pid, started.as_deref()) {
+            messaging::Liveness::Gone => {}
+            messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
+            messaging::Liveness::Alive => {
+                if !messaging::is_self_or_descendant_of(pid) {
+                    return Err(format!(
+                        "{} is still running (pid {pid}); close it from the board, or stop it first \
+                         (`adj hub-stop` from inside it, or the board's stop) and then close it",
+                        hub.name
+                    ));
+                }
+            }
+        }
+    } else if messaging::hub_record_path(&hub.slug).exists() {
+        // A record that is there but names no process (or cannot be read): asked the way
+        // `stop_hub` asks, and nobody can be told to be the hub itself.
+        match messaging::hub_liveness(&hub.slug) {
+            messaging::Liveness::Gone => {}
+            messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
+            messaging::Liveness::Alive => {
+                return Err(format!(
+                    "{} is still running; close it from the board, or stop it first \
+                     (`adj hub-stop` from inside it, or the board's stop) and then close it",
+                    hub.name
+                ));
+            }
+        }
+    }
+    // Under the claim lock and only while the record is still the one that was looked at:
+    // a hub that registered since is not this call's to unregister.
+    let removed = match &named {
+        Some((pid, started)) => messaging::unregister_hub_if(&hub.slug, *pid, started.as_deref())?,
+        None => messaging::unregister_hub_if_unnamed(&hub.slug)?,
+    };
+    if !removed {
+        return Err(format!("{} changed while it was being closed", hub.name));
+    }
+    serve::forget_board(&hub.slug)?;
+    println!("closed {}", hub.name);
+    if hub.inbox_count > 0 {
+        println!(
+            "{} unread message(s) remain for it; starting the same key shows them",
+            hub.inbox_count
+        );
+    }
     Ok(())
 }
 
@@ -2290,6 +2521,56 @@ fn settings_for(repo_arg: Option<&str>) -> Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_claude_and_agy_runners_have_their_screens_read() {
+        use crate::prompts::Agent;
+        // The built-in runner is Claude Code.
+        assert_eq!(wake_agent(None), Agent::Claude);
+        assert_eq!(wake_agent(Some("claude {prompt}")), Agent::Claude);
+        assert_eq!(
+            wake_agent(Some("/opt/bin/claude --resume {sessionId}")),
+            Agent::Claude
+        );
+        assert_eq!(wake_agent(Some("agy")), Agent::Agy);
+        assert_eq!(wake_agent(Some("/usr/local/bin/agy")), Agent::Agy);
+        assert_eq!(
+            wake_agent(Some(
+                "env CLAUDE_CONFIG_DIR=/tmp/c claude --resume {sessionId}"
+            )),
+            Agent::Claude
+        );
+        assert_eq!(
+            wake_agent(Some("AGY_HOME=/tmp/a env agy {prompt}")),
+            Agent::Agy
+        );
+        assert_eq!(
+            wake_agent(Some("env X=1 codex exec {prompt}")),
+            Agent::Generic
+        );
+        // A path or a word among the arguments is not the program.
+        assert_eq!(
+            wake_agent(Some("codex exec --tool /usr/bin/agy {prompt}")),
+            Agent::Generic
+        );
+        assert_eq!(wake_agent(Some("agy {prompt}")), Agent::Agy);
+        assert_eq!(wake_agent(Some("/usr/local/bin/agy {prompt}")), Agent::Agy);
+        // Anything else is somebody else's agent, typed into without looking.
+        assert_eq!(wake_agent(Some("codex exec {prompt}")), Agent::Generic);
+        assert_eq!(wake_agent(Some("my-wrapper {prompt}")), Agent::Generic);
+        assert_eq!(wake_agent(Some("claude-wrapper {prompt}")), Agent::Generic);
+    }
+
+    #[test]
+    fn a_wake_note_reads_as_a_sentence() {
+        assert_eq!(
+            wake_note_sentence(
+                "the wake was not typed into the session (pid 7): its screen shows a question or a menu"
+            ),
+            "The wake was not typed into the session (pid 7): its screen shows a question or a menu."
+        );
+        assert_eq!(wake_note_sentence(""), "");
+    }
 
     /// A hub told where to read and write has to hand both to the tabs it opens. Losing
     /// them does not fail: the worker registers in the default world and reports into an
@@ -2481,6 +2762,9 @@ mod tests {
         ));
         assert!(should_wake_worker("[gate 20260927-123456] approve"));
         assert!(should_wake_worker("[Gate 123] changes"));
+        assert!(should_wake_worker(
+            "[linked 20260922T050000Z-x] this session is now a task's worker"
+        ));
 
         // Plain notices, acknowledgements, words starting with gate/question, and empty subjects do not wake the worker.
         assert!(!should_wake_worker("[ack] received"));

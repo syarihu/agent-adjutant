@@ -36,7 +36,8 @@ pub struct Session {
     /// another worktree has the same name. Across boards it is addressed as
     /// "{board slug}/{id}".
     pub id: String,
-    /// "hub" or "worker" (later "taskless").
+    /// "hub" or "worker". A session with no task is a worker whose `task` is null, not a kind
+    /// of its own: linking it to a task changes that field and nothing else about it.
     pub kind: String,
     /// Agent binary / harness name (e.g. "claude", "agy"), derived from the runner template.
     pub agent: String,
@@ -97,6 +98,9 @@ pub struct RepoHub {
     pub slug: String,
     pub state: RepoHubState,
     pub inbox_count: usize,
+    /// How many checkouts have a worker that reports to this hub, running or ended.
+    #[serde(default)]
+    pub children: usize,
 }
 
 /// The status / state of a hub.
@@ -109,4 +113,46 @@ pub struct RepoHubState {
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
+}
+
+/// What the board asks a hub for when a person starts a session without a task: the session
+/// has no record to carry these, so the message body is all there is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRequest {
+    pub agent: String,
+    pub worktree_name: String,
+    pub instruction: String,
+}
+
+impl SessionRequest {
+    /// The body of the `session` message, in the plain `## ` lines `task::render_request`
+    /// uses so the hub reads both the same way. The instruction comes last and verbatim: it is
+    /// free text, and anything after it would read as part of it.
+    pub fn render_request(&self) -> String {
+        format!(
+            "## Session       no task\n## Agent         {}\n## Worktree name {}\n## Instruction\n{}\n",
+            self.agent,
+            self.worktree_name,
+            self.instruction.trim_end_matches('\n')
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_session_request_renders_its_fields_and_the_instruction_verbatim() {
+        let request = SessionRequest {
+            agent: "claude".to_string(),
+            worktree_name: "try-retry".to_string(),
+            instruction: "## not a header\n  keep 'quotes' and $vars\n".to_string(),
+        };
+        assert_eq!(
+            request.render_request(),
+            "## Session       no task\n## Agent         claude\n## Worktree name try-retry\n\
+             ## Instruction\n## not a header\n  keep 'quotes' and $vars\n"
+        );
+    }
 }

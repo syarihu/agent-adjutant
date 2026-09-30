@@ -48,10 +48,17 @@ in this procedure says what to tell them, not the words to use.
   choice of which review comments to address, and before the final report.
   If the answer returned by `AskUserQuestion` matches or contains the wake line (starts with
   `The hub sent you something`), the person answered on the board; take the answer from
-  `adjutant_outbox` rather than treating the wake line as their choice.
+  `adjutant_outbox` rather than treating the wake line as their choice. This guard is for a
+  wake that does not look at the screen (iTerm2, a `workerWake` template, or a custom runner that
+  is neither claude nor agy): the built-in tmux wake of a claude or agy session types only at an
+  empty prompt, so there the wake line never lands in an answer.
   When you have dealt with them, clear them with `adjutant_outbox` `action: clear` (the file is
   append-only, so anything not cleared is read again every time). If the first line is
   `[question {id}]`, answer it (§7).
+- **A message headed `[linked {id}]` in the outbox (you are woken for it) changes who you report for.** From then on `{id}`
+  is your Task record (the brief may say `-`, if you were started with no task) and the hub it names is
+  your hub. Read this procedure again from the section that matches where the work stands, and set
+  `adj phase` accordingly; the gates, the card and the PR steps apply from here.
 - **Call `adjutant_config`** (`adjutant config` prints the same). It is the authority for every
   setting this procedure refers to, with the `defaults` merge, the flat-form expansion and the
   defaults already applied (do not read `~/.config/adjutant/config.json` again yourself).
@@ -576,9 +583,12 @@ JSON
   next step. Even on `down`, do not ask with `AskUserQuestion` (it is a record because there is
   nothing to ask).
 - **When the gate waits (`wait: true`)**:
-  - **`up` with `wakeLine`** — the gate is open on the board and waking is enabled. **Ask the same thing with `AskUserQuestion` in this tab too** (a single-question prompt with options matching the gate's `choices`, or the default options such as "Approve (Recommended)" / "Request changes" / "Reject" for plan, or "Approve (Recommended)" / "Request changes" for diff / verify). Whichever answer comes first is taken:
+  - **`up` with `wakeLine` and `wakeChecksScreen`** — the gate is on the board and the wake reads this tab's screen before typing, holding it back while a question or a person's own typing is there. Say in one line that it is on the board and waiting for a decision, and **end the turn without `AskUserQuestion`**, so the prompt is empty when an answer on the board wakes you. The next input is one of two:
+    - **The wake line** (equals or starts with `The hub sent you something`): call `adjutant_outbox` (or `adj outbox`), verify that the answer's `## gate` line matches the current gate ID, take the decision/chosen choice/comment from the outbox, and clear the outbox (`adjutant_outbox` `action: clear`). If the outbox message was for something else, handle it and end the turn again while the gate waits.
+    - **The person's own message in this tab** (any message, while the gate waits): **call `adjutant_outbox` first.** An answer given on the board whose wake was held back (the person was typing, or the screen was not recognised) is waiting there. If it holds the answer for this gate (the `## gate` line matches), take the decision from it and clear the outbox. Otherwise, if the message is clearly a decision on this gate, treat it as the terminal answer and close the gate with `adjutant_gate_close` with `terminal: true` and a one-line `comment` saying what the person decided (or `adj gate close --id {gate id} --terminal --comment '…'`), as in "Answered in the terminal" below; if that reports `alreadyAnswered: true`, read `adjutant_outbox` again and take the decision from there. If the message is about something else, answer it and end the turn again while the gate waits; do not close the gate.
+  - **`up` with `wakeLine`, without `wakeChecksScreen`** (iTerm2, a `workerWake` template, or a custom runner that is neither claude nor agy — a wake that types blind) — the gate is open on the board and waking is enabled. **Ask the same thing with `AskUserQuestion` in this tab too** (a single-question prompt with options matching the gate's `choices`, or the default options such as "Approve (Recommended)" / "Request changes" / "Reject" for plan, or "Approve (Recommended)" / "Request changes" for diff / verify). Whichever answer comes first is taken:
     - **Answered on the board**: Answering the gate on the board wakes the worker by typing `wakeLine` (or the default starting with `The hub sent you something...`) followed by Enter into the tab. That wake line lands in `AskUserQuestion` as a free-text response. When the response equals or contains the wake line (or starts with `The hub sent you something`), **do not treat it as the person's choice**. Call `adjutant_outbox` (or `adj outbox` in the worker tab), verify that the answer's `## gate` line matches the current gate ID, take the decision/chosen choice/comment from the outbox, and clear the outbox (`adjutant_outbox` `action: clear`). If the outbox message was for something else (such as a hub notice or question), handle that message and continue waiting for the gate answer.
-    - **Answered in the terminal**: When `AskUserQuestion` returns with an actual choice or comment from the user (not the wake line), **immediately close the gate on the board** with `adjutant_gate_close` (or `adj gate close --id {gate id}`) so the card does not linger on the board waiting. If `adjutant_gate_close` reports `alreadyAnswered: true` (or the gate was already answered on the board), the board answer arrived first: take the decision from the board/outbox instead. Otherwise, proceed with the choice made in the terminal.
+    - **Answered in the terminal**: When `AskUserQuestion` returns with an actual choice or comment from the user (not the wake line), **immediately close the gate on the board** with `adjutant_gate_close` with `terminal: true` and a one-line `comment` saying what the person decided (or `adj gate close --id {gate id} --terminal --comment '…'`) so the card does not linger on the board waiting. If you forget, the board closes it once you move on (the next phase or the next gate) and records it as answered in the terminal without what was decided, so close it yourself. If `adjutant_gate_close` reports `alreadyAnswered: true` (or the gate was already answered on the board), the board answer arrived first: take the decision from the board/outbox instead. Otherwise, proceed with the choice made in the terminal.
   - **`up` without `wakeLine`** (terminal waking disabled) — say in one line that it is on the board and waiting for a decision, and **end the turn**. Do not poll. Do not enter `AskUserQuestion` (because answering on the board cannot wake the tab).
   - **`down`** — the dashboard is not running. **Nobody will see it on the board.** Close the gate with `adjutant_gate_close` (or `adj gate close --id {gate id}`) so it does not linger, and ask with `AskUserQuestion` in this tab as usual. Proceed with the terminal answer.
 
@@ -606,7 +616,7 @@ this shape:
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
   moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
   through §3 again (opening a new gate or record). The record that was sent back stays as it is.
-- **Do not close a gate yourself when answered on the board.** Answering on the board archives it automatically. Close it with `adjutant_gate_close` (or `adj gate close --id {gate id}`) only when the person answered in the terminal tab instead, or when `server` was `down`.
+- **Do not close a gate yourself when answered on the board.** Answering on the board archives it automatically. Close it with `adjutant_gate_close` (or `adj gate close --id {gate id}`) only when the person answered in the terminal tab instead (`terminal: true`), or when `server` was `down` (a plain close).
 
 ### Do not
 

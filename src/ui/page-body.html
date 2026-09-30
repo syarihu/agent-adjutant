@@ -318,7 +318,7 @@
     <div class="head">
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-error);">warning</span>
-        <span>hub を止める</span>
+        <span id="hub-stop-heading">hub を止める</span>
       </div>
       <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル">
         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
@@ -326,13 +326,13 @@
     </div>
     <div class="body close-help">
       <p id="hub-stop-lead"></p>
-      <p>受信箱・タスク・gate の記録は残ります。次に起動すると、hubAutoResumeHours 以内なら同じ会話を再開します。</p>
+      <p id="hub-stop-note">受信箱・タスク・gate の記録は残ります。次に起動すると、hubAutoResumeHours 以内なら同じ会話を再開します。</p>
     </div>
     <div class="foot">
       <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
       <button type="submit" value="stop" class="btn-m3-danger">
         <span class="material-symbols-outlined" style="font-size:16px;">stop_circle</span>
-        <span>hub を止める</span>
+        <span id="hub-stop-confirm">hub を止める</span>
       </button>
     </div>
   </form>

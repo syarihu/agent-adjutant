@@ -2803,6 +2803,38 @@ mod tests {
         }
     }
 
+    /// A wake that reads the screen holds its line back from a question, so a worker that
+    /// asks the same thing in the terminal as well as on the board is a worker whose board
+    /// answer is never delivered. Where the tool says it reads the screen, the worker ends its
+    /// turn at an empty prompt; the copy for agy says the same in its own tool's name.
+    #[test]
+    fn a_worker_whose_wake_reads_the_screen_ends_its_turn_after_opening_a_gate() {
+        let worker = find("adj-worker").unwrap();
+        let after = |text: &str| flow(&between(text, "### After opening", "### When woken"));
+
+        let claude = after(&render_for(worker, "", Agent::Claude));
+        assert!(claude.contains("`wakeChecksScreen`"), "{claude}");
+        assert!(
+            claude.contains("end the turn without `AskUserQuestion`"),
+            "{claude}"
+        );
+        assert!(
+            claude.contains("close the gate with `adjutant_gate_close`"),
+            "the person's own message is not treated as the terminal answer: {claude}"
+        );
+        assert!(
+            claude.contains("`terminal: true`"),
+            "a terminal answer is not closed as one: {claude}"
+        );
+        // The blind wake keeps asking in both places.
+        assert!(claude.contains("without `wakeChecksScreen`"), "{claude}");
+
+        let agy = after(&render_for(worker, "", Agent::Agy));
+        assert!(agy.contains("end the turn without `ask_question`"), "{agy}");
+        assert!(!agy.contains("AskUserQuestion"), "{agy}");
+        assert!(agy.contains("`terminal: true`"), "{agy}");
+    }
+
     /// The hub writes this note when a start fails, and `adj task next` skips a task by it. Two
     /// copies of one string drift apart silently; this pins the procedure's wording, and a test
     /// in `cmd::task` holds `task::COULD_NOT_START` to it (a leaf cannot name the constant).

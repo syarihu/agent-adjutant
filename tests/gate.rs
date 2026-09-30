@@ -540,3 +540,91 @@ fn a_null_opener_is_the_worker() {
     ]);
     assert!(opened["gate"].get("openedBy").is_none(), "{opened}");
 }
+
+fn open_question(fixture: &Fixture) -> String {
+    let file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({
+            "kind": "question",
+            "title": "どちらにするか",
+            "worktree": fixture.repo.to_str().unwrap(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let opened = fixture.json(&["gate", "open", "--file", file.to_str().unwrap(), "--json"]);
+    opened["gate"]["id"].as_str().unwrap().to_string()
+}
+
+fn archived(fixture: &Fixture, id: &str) -> serde_json::Value {
+    let path = fixture
+        .state
+        .join("gates")
+        .join(SLUG)
+        .join("answered")
+        .join(format!("{id}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn a_gate_answered_in_the_terminal_is_recorded_as_such() {
+    let fixture = Fixture::new(QUIET);
+    let id = open_question(&fixture);
+
+    let closed = fixture.json(&[
+        "gate",
+        "close",
+        "--id",
+        &id,
+        "--terminal",
+        "--comment",
+        "approve",
+        "--json",
+    ]);
+    assert_eq!(closed["closed"], true, "{closed}");
+    assert_eq!(closed["alreadyAnswered"], false, "{closed}");
+
+    let gate = archived(&fixture, &id);
+    assert_eq!(gate["decision"], "terminal", "{gate}");
+    assert_eq!(gate["comment"], "approve", "{gate}");
+    assert!(gate["answeredAt"].is_string(), "{gate}");
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let outbox = fixture.ok(&["outbox", "--worktree", fixture.repo.to_str().unwrap()]);
+    assert_eq!(outbox.trim(), "(empty)");
+}
+
+#[test]
+fn a_terminal_close_after_a_board_answer_reports_already_answered() {
+    let fixture = Fixture::new(QUIET);
+    let id = open_question(&fixture);
+    fixture.ok(&["gate", "answer", "--id", &id, "--decision", "answer"]);
+
+    let closed = fixture.json(&["gate", "close", "--id", &id, "--terminal", "--json"]);
+    assert_eq!(closed["closed"], false, "{closed}");
+    assert_eq!(closed["alreadyAnswered"], true, "{closed}");
+    assert_eq!(archived(&fixture, &id)["decision"], "answer");
+}
+
+#[test]
+fn a_board_answer_after_a_terminal_close_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let id = open_question(&fixture);
+    fixture.ok(&["gate", "close", "--id", &id, "--terminal"]);
+
+    let refused = fixture.cmd(&["gate", "answer", "--id", &id, "--decision", "answer"]);
+    assert!(!refused.status.success(), "{refused:?}");
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        said.contains("already answered or closed (terminal)"),
+        "{said}"
+    );
+    let outbox = fixture.ok(&["outbox", "--worktree", fixture.repo.to_str().unwrap()]);
+    assert_eq!(outbox.trim(), "(empty)");
+}

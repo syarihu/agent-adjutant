@@ -83,7 +83,7 @@ pub(super) struct Server {
     port: u16,
     /// Whether the resident server is the one answering, which serves this board at a path
     /// of its own. The page reads it from the state.
-    resident: bool,
+    pub(super) resident: bool,
     /// What Jules last said about each session a card follows. The one thing here that
     /// changes after startup, and it is a cache: the record on disk stays the answer.
     jules: Arc<super::JulesWatch>,
@@ -564,6 +564,16 @@ pub fn note_board(repo: &crate::repo::RepoInfo) {
         return;
     }
     let _ = write_whole(&path, &format!("{entry:#}\n"));
+}
+
+/// Take `slug` out of the address book, so a closed hub is not offered a board any more.
+pub(super) fn forget_board(slug: &str) -> Result<(), String> {
+    let path = boards_dir().join(format!("{slug}.json"));
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("cannot remove {}: {e}", path.display())),
+    }
 }
 
 /// The pieces of the address book entry `slug` names, when they still describe that board:
@@ -1227,10 +1237,20 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/relay") => {
             reply(out, relay_findings(server, path, &req.body))
         }
+        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/issue") => {
+            reply(out, fetch_issue(server, path))
+        }
         ("POST", path) if path.starts_with("/api/tasks/") => {
             reply(out, update_task(server, req.tail(), &req.body))
         }
         ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
+        ("POST", "/api/sessions") => reply(out, super::session::start_request(server, &req.body)),
+        ("POST", path) if link_route(path).is_some() => {
+            let result = link_route(path)
+                .unwrap_or_else(|| Err("no such route".to_string()))
+                .and_then(|id| super::session::link(server, &id, &req.body));
+            reply(out, result)
+        }
         // Only on the resident's boards: starting and stopping a hub reaches outside the
         // repository's own records, and a board a hub serves lives and dies with that hub.
         ("POST", path) if server.resident && hub_route(path).is_some() => {
@@ -1338,6 +1358,9 @@ fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
 }
 
 fn state(server: &Server) -> Value {
+    // Before the gates are read: a gate whose worker has moved on is closed here rather than
+    // by a timer, since nothing in the server polls on one.
+    let _ = super::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
     let hub = messaging::hub_status(&repo.slug, &repo.hub_name);
     let tasks = with_records(
@@ -1381,6 +1404,7 @@ fn state(server: &Server) -> Value {
         let name = Path::new(path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string());
+        let task = messaging::worker_task(Path::new(path));
         workers.push(json!({
             "worktree": path,
             "name": name,
@@ -1388,6 +1412,9 @@ fn state(server: &Server) -> Value {
             "present": status.present,
             "stale": status.stale,
             "title": status.title,
+            // The task this worker reports for, which is what the card joins on: a worker
+            // with none is a session that has no card until it is linked.
+            "task": task,
             "phase": status.phase,
             "phaseAt": status.phase_at,
         }));
@@ -1523,16 +1550,7 @@ fn sessions_of(
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
-        let parent_hub = parent_hub_id(
-            repo,
-            hubs,
-            record_json
-                .as_ref()
-                .and_then(|r| r.get("hub"))
-                .and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| saved_session.as_ref().and_then(|s| s.hub.as_deref())),
-        );
+        let parent_hub = parent_hub_id(repo, hubs, messaging::worker_hub_key(wt_path).as_deref());
         let started_at = record_json
             .as_ref()
             .and_then(|r| r.get("startedAt"))
@@ -1547,16 +1565,8 @@ fn sessions_of(
             status.pid,
         );
 
-        let (saved_title, saved_task) =
-            saved_session.map(|s| (s.title, s.task)).unwrap_or_default();
-
-        let task_id = match record_json.as_ref() {
-            Some(record) => record
-                .get("task")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            None => saved_task,
-        };
+        let saved_title = saved_session.and_then(|s| s.title);
+        let task_id = messaging::worker_task(wt_path);
 
         let title = status.title.or(saved_title);
 
@@ -1585,7 +1595,11 @@ fn sessions_of(
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
     if let Some(record_json) = messaging::read_json(&main_record_path) {
         let status = messaging::worker_status(Path::new(&repo.main));
-        let parent_hub = parent_hub_id(repo, hubs, record_json.get("hub").and_then(Value::as_str));
+        let parent_hub = parent_hub_id(
+            repo,
+            hubs,
+            messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
+        );
         let started_at = record_json
             .get("startedAt")
             .and_then(Value::as_str)
@@ -1822,7 +1836,7 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
 /// is not UTF-8 is an error for the caller to say, not a different route.
 fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
     let (raw, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
-    (!raw.is_empty() && !raw.contains('/') && matches!(action, "start" | "stop"))
+    (!raw.is_empty() && !raw.contains('/') && matches!(action, "start" | "stop" | "close"))
         .then(|| (decode_segment(raw), action))
 }
 
@@ -1833,6 +1847,12 @@ fn terminal_route(path: &str) -> Option<Result<String, String>> {
     let raw = path
         .strip_prefix("/api/sessions/")?
         .strip_suffix("/terminal")?;
+    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
+}
+
+/// `/api/sessions/<id>/link` as the session id, percent-decoded as `terminal_route` does.
+fn link_route(path: &str) -> Option<Result<String, String>> {
+    let raw = path.strip_prefix("/api/sessions/")?.strip_suffix("/link")?;
     (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
 }
 
@@ -1884,7 +1904,7 @@ fn decode_segment(raw: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|_| format!("the id is not valid UTF-8: {raw}"))
 }
 
-/// Start or stop one of the repository's hubs from the board. `id` is the `hubs[].id` the
+/// Start, stop or close one of the repository's hubs from the board. `id` is the `hubs[].id` the
 /// page was given, so the page can only name a hub this repository was found to have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
     let (id, action) = hub_route(path).ok_or("no such route")?;
@@ -1928,7 +1948,11 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                 }
             }
         }
-        _ => {
+        "stop" | "close" => {
+            let closing = action == "close";
+            if closing {
+                super::closable_check(repo, &hub)?;
+            }
             // Addressed by the slug the hub was listed under: a hub whose key cannot be told
             // can still be stopped, and nothing here needs the key for it.
             let mut stopping = repo.clone();
@@ -1939,9 +1963,21 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                 resolved: server.ctx.resolved.clone(),
                 settings,
             };
+            // A hub that will not stop is not closed: nothing is forgotten until it is gone.
             let was_running = super::stop_hub(&ctx)?;
-            Ok(json!({ "stopped": true, "wasRunning": was_running }))
+            if closing {
+                // `stop_hub` cleared a record naming the process it stopped; what is left
+                // names none, unless a hub registered in the meantime, which stays.
+                if !messaging::unregister_hub_if_unnamed(&hub.slug)? {
+                    return Err(format!("{} changed while it was being closed", hub.name));
+                }
+                forget_board(&hub.slug)?;
+                Ok(json!({ "closed": true, "wasRunning": was_running, "unread": hub.inbox_count }))
+            } else {
+                Ok(json!({ "stopped": true, "wasRunning": was_running }))
+            }
         }
+        other => Err(format!("no such action: {other}")),
     }
 }
 
@@ -1981,6 +2017,13 @@ fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result<Value, Str
     )
 }
 
+/// The board's 「再取得」: read the task's issue again, on a click and never on a poll.
+fn fetch_issue(server: &Server, path: &str) -> Result<Value, String> {
+    let id = task_id_in(path, "issue").ok_or("no such task")?;
+    let task = super::task::fetch_issue(&server.ctx, id)?;
+    Ok(json!({ "task": task }))
+}
+
 /// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
 /// in its log before it redraws.
 fn refresh_tasks(server: &Server) -> Result<Value, String> {
@@ -2004,6 +2047,7 @@ fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
             &server.ctx,
             id,
             input.get("comment").and_then(Value::as_str),
+            false,
         )?;
         return Ok(json!({ "gate": gate, "closed": true }));
     }
@@ -2041,6 +2085,20 @@ fn open_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forgetting_a_board_removes_only_that_slug() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        std::fs::create_dir_all(boards_dir()).unwrap();
+        for slug in ["acme-widget-a", "acme-widget-b"] {
+            std::fs::write(boards_dir().join(format!("{slug}.json")), "{}").unwrap();
+        }
+        forget_board("acme-widget-a").unwrap();
+        assert!(!boards_dir().join("acme-widget-a.json").exists());
+        assert!(boards_dir().join("acme-widget-b.json").exists());
+        // Nothing to forget is not an error.
+        forget_board("acme-widget-a").unwrap();
+    }
 
     #[test]
     fn the_page_pieces_join_into_one_document() {
@@ -2223,6 +2281,10 @@ mod tests {
             route("/api/hubs/hub-%E8%A6%AA%20%E3%82%AD%E3%83%BC/stop"),
             Some(("hub-親 キー".into(), "stop"))
         );
+        assert_eq!(
+            route("/api/hubs/hub-wid-957/close"),
+            Some(("hub-wid-957".into(), "close"))
+        );
         assert_eq!(route("/api/hubs/a+b/start"), Some(("a+b".into(), "start")));
         // An encoding that is wrong is the caller's mistake to be told, not another route.
         for bad in [
@@ -2285,6 +2347,7 @@ mod tests {
             note: None,
             instruction: None,
             gate_answered_at: None,
+            issue_snapshot: None,
             created_at: "20260922T000000Z".to_string(),
             updated_at: "20260922T000000Z".to_string(),
         }
@@ -2618,6 +2681,30 @@ mod tests {
             "/",
         ] {
             assert!(terminal_route(other).is_none(), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_link_route_names_a_session_id() {
+        fn id(path: &str) -> Option<String> {
+            link_route(path).map(|id| id.unwrap())
+        }
+        assert_eq!(id("/api/sessions/worker-x/link"), Some("worker-x".into()));
+        // As `encodeURIComponent` sends an id with a slash or a space in it.
+        assert_eq!(
+            id("/api/sessions/worker-a%2Fb%20c/link"),
+            Some("worker-a/b c".into())
+        );
+        assert!(link_route("/api/sessions/%FF/link").is_some_and(|id| id.is_err()));
+        for other in [
+            "/api/sessions",
+            "/api/sessions//link",
+            "/api/sessions/a/b/link",
+            "/api/sessions/worker-x/terminal",
+            "/api/sessions/worker-x/link/x",
+            "/api/tasks/x/link",
+        ] {
+            assert!(link_route(other).is_none(), "{other}");
         }
     }
 

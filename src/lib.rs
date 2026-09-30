@@ -401,6 +401,14 @@ enum Commands {
         #[arg(long)]
         hub: Option<String>,
     },
+    /// Close a parent-task hub whose workers are all gone: clear its record and take it off the board
+    HubClose {
+        #[arg(long)]
+        repo: Option<String>,
+        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+        #[arg(long)]
+        hub: Option<String>,
+    },
     /// Open a worktree in the configured editor
     Ide {
         #[arg(long)]
@@ -447,6 +455,9 @@ enum Commands {
         /// The task source's branchPattern, if it has one
         #[arg(long)]
         pattern: Option<String>,
+        /// With --name: take the first of name, name-2, name-3… whose path and branch are free
+        #[arg(long, requires = "name", conflicts_with = "branch")]
+        unique: bool,
     },
     /// Run the stdio MCP server
     Mcp,
@@ -591,6 +602,9 @@ enum GateAction {
         /// Reason or note for closing
         #[arg(long)]
         comment: Option<String>,
+        /// The person answered in the worker's terminal
+        #[arg(long)]
+        terminal: bool,
         #[arg(long)]
         json: bool,
     },
@@ -692,6 +706,10 @@ enum TmuxAction {
         pid: u32,
         #[arg(long)]
         line: Option<String>,
+        /// The agent in the pane, whose screen is read before typing: claude | agy | generic
+        /// (default: generic, which types without looking)
+        #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
+        agent: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -826,6 +844,17 @@ enum TaskAction {
         repo: Option<String>,
         #[arg(long)]
         hub: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read the task's issue again and keep its title and body on the record
+    FetchIssue {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        #[arg(long)]
+        id: String,
         #[arg(long)]
         json: bool,
     },
@@ -1097,6 +1126,9 @@ pub fn run() -> ! {
         Commands::HubStop { repo, hub } => {
             cmd::hub_stop(repo.as_deref(), hub.as_deref()).map(|_| 0)
         }
+        Commands::HubClose { repo, hub } => {
+            cmd::hub_close(repo.as_deref(), hub.as_deref()).map(|_| 0)
+        }
         Commands::Ide {
             repo,
             worktree,
@@ -1119,12 +1151,14 @@ pub fn run() -> ! {
             name,
             user,
             pattern,
+            unique,
         } => cmd::worktree_path(&cmd::WorktreeArgs {
             repo: repo.as_deref(),
             branch: branch.as_deref(),
             name: name.as_deref(),
             user: user.as_deref(),
             pattern: pattern.as_deref(),
+            unique: *unique,
         })
         .map(|_| 0),
         Commands::Mcp => mcp::run_server().map(|_| 0).map_err(|e| e.to_string()),
@@ -1209,6 +1243,12 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
         TaskAction::Refresh { repo, hub, json } => {
             cmd::task_refresh_cmd(repo.as_deref(), hub.as_deref(), *json)
         }
+        TaskAction::FetchIssue {
+            repo,
+            hub,
+            id,
+            json,
+        } => cmd::task_fetch_issue_cmd(repo.as_deref(), hub.as_deref(), id, *json),
         TaskAction::Update {
             repo,
             hub,
@@ -1344,12 +1384,14 @@ fn run_gate(action: &GateAction) -> Result<(), String> {
             hub,
             id,
             comment,
+            terminal,
             json,
         } => cmd::gate_close(&cmd::CloseArgs {
             repo: repo.as_deref(),
             hub: hub.as_deref(),
             id,
             comment: comment.as_deref(),
+            terminal: *terminal,
             json: *json,
         }),
     }
@@ -1376,12 +1418,14 @@ fn run_tmux(action: &TmuxAction) -> Result<(), String> {
             socket,
             pid,
             line,
+            agent,
             dry_run,
         } => cmd::tmux::wake(
             repo.as_deref(),
             socket.as_deref(),
             *pid,
             line.as_deref(),
+            agent.as_deref(),
             *dry_run,
         ),
         TmuxAction::Focus {

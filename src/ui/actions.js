@@ -104,8 +104,15 @@ function renderHubRows() {
     const present = h.state?.present;
     const stale = !present && h.state?.stale;
     const text = present ? '稼働中' : stale ? '停止中（記録あり）' : '停止中';
+    // A parent-task hub none of whose checkouts report to it any more is finished: closing
+    // it stops it and takes it off the list. Any other hub can only be stopped.
+    const closable = h.parent && !h.children;
+    const closeButton = closable
+      ? hubIconButton('close', '閉じる', 'この hub を止めて一覧から外します。タスク・gate・受信箱の記録は残ります', `data-hub-act="close" data-hub-id="${esc(h.id)}"`) : '';
     let button;
-    if (present) {
+    if (present && closable) {
+      button = '';
+    } else if (present) {
       button = hubIconButton('stop', '停止', 'hub が動いている tmux のペインを閉じます', `data-hub-act="stop" data-hub-id="${esc(h.id)}"`);
     } else if (h.parent && !h.key) {
       button = hubIconButton('play_arrow', '起動', 'キーが分からないため起動できません。adj hub --hub <キー> で起動してください', 'disabled');
@@ -122,7 +129,7 @@ function renderHubRows() {
       <div class="hub-text">
         <div class="hub-name"><span class="hub-dot ${tone}"></span><span>${esc(hubShortName(h))}</span></div>
         <div class="hub-state">${esc(text)}</div>
-      </div>${term}${button}</div>`;
+      </div>${term}${button}${closeButton}</div>`;
   }).join('');
 }
 document.getElementById('hub-rows').addEventListener('click', e => {
@@ -134,7 +141,7 @@ document.getElementById('hub-rows').addEventListener('click', e => {
   const button = e.target.closest('button[data-hub-act]');
   if (!button) return;
   if (button.dataset.hubAct === 'start') hubStart(button.dataset.hubId);
-  else openHubStopDialog(button.dataset.hubId);
+  else openHubStopDialog(button.dataset.hubId, button.dataset.hubAct);
 });
 
 async function hubStart(id) {
@@ -151,11 +158,24 @@ async function hubStart(id) {
 }
 
 let hubStopTarget = null;
-function openHubStopDialog(id) {
+let hubStopMode = 'stop';
+/* One dialog for both: `mode` is 'stop' for a hub that keeps its place in the list, and
+   'close' for a parent-task hub that leaves it. */
+function openHubStopDialog(id, mode = 'stop') {
   const h = (state.hubs || []).find(x => x.id === id);
   if (!h) return;
   hubStopTarget = id;
-  document.getElementById('hub-stop-lead').textContent = `${h.name} が動いている tmux のペインを閉じます。hub は止まります。`;
+  hubStopMode = mode;
+  const closing = mode === 'close';
+  const running = h.state?.present;
+  document.getElementById('hub-stop-heading').textContent = closing ? 'hub を閉じる' : 'hub を止める';
+  document.getElementById('hub-stop-confirm').textContent = closing ? 'hub を閉じる' : 'hub を止める';
+  document.getElementById('hub-stop-lead').textContent = closing
+    ? `${h.name} を閉じます。${running ? '動いている tmux のペインを閉じて hub を止め、' : ''}一覧から外します。`
+    : `${h.name} が動いている tmux のペインを閉じます。hub は止まります。`;
+  document.getElementById('hub-stop-note').textContent = closing
+    ? 'このハブを閉じて一覧から外します。タスク・gate・受信箱の記録は残り、同じキーで起動すると引き継ぎます。'
+    : '受信箱・タスク・gate の記録は残ります。次に起動すると、hubAutoResumeHours 以内なら同じ会話を再開します。';
   const dialog = document.getElementById('hub-stop-dialog');
   dialog.returnValue = '';
   dialog.showModal();
@@ -163,7 +183,10 @@ function openHubStopDialog(id) {
 document.getElementById('hub-stop-dialog').addEventListener('close', e => {
   const id = hubStopTarget;
   hubStopTarget = null;
-  if (e.target.returnValue === 'stop' && id) hubStop(id);
+  if (e.target.returnValue === 'stop' && id) {
+    if (hubStopMode === 'close') hubClose(id);
+    else hubStop(id);
+  }
 });
 
 async function hubStop(id) {
@@ -173,6 +196,20 @@ async function hubStop(id) {
   try {
     const data = await api(`/api/hubs/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' });
     note(line, false, data.wasRunning ? 'hub を止めました' : 'hub はすでに止まっていました（記録を片付けました）');
+    await refresh();
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+  }
+}
+
+async function hubClose(id) {
+  const h = (state.hubs || []).find(x => x.id === id);
+  if (!h) return;
+  const line = `adj hub-close (hub ${h.name})`;
+  try {
+    const data = await api(`/api/hubs/${encodeURIComponent(id)}/close`, { method: 'POST', body: '{}' });
+    const unread = data.unread ? `（未読 ${data.unread} 件は残っています）` : '';
+    note(line, false, `hub を閉じました${unread}`);
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
@@ -264,6 +301,22 @@ async function nudgeHub() {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
+  }
+}
+
+/* Read a task's issue again. On a click only: the board never asks the tracker on its own. */
+async function fetchIssue(id, e) {
+  const line = `adj task fetch-issue --id ${id}`;
+  const button = e?.currentTarget;
+  if (button) button.disabled = true;
+  try {
+    await api(`/api/tasks/${encodeURIComponent(id)}/issue`, { method: 'POST' });
+    note(line, false, 'Issue を取得しました');
+    await refresh();
+  } catch (err) {
+    note(`${line} → ${err.message}`, true);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 

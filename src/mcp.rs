@@ -304,12 +304,13 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "adjutant_gate_close",
-            "description": "Archive an open gate without delivering an answer to the outbox, the same as `adj gate close`: used when the question was answered directly in the terminal tab or rendered moot, so the gate does not stay on the board waiting.",
+            "description": "Archive an open gate without delivering an answer to the outbox, the same as `adj gate close`: used when the question was answered directly in the terminal tab or rendered moot, so the gate does not stay on the board waiting. When the person answered in the terminal, pass `terminal: true` and put what they decided in `comment`: the gate is then recorded as answered in the terminal.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": { "type": "string", "description": "The gate id to close." },
-                    "comment": { "type": "string", "description": "Optional reason for closing." },
+                    "comment": { "type": "string", "description": "Optional reason for closing. With `terminal`, what the person decided." },
+                    "terminal": { "type": "boolean", "description": "The person answered this gate in your terminal: record it as answered in the terminal (put what they decided in comment)." },
                     "repo": repo_property(),
                     "hub": hub_property(),
                     "cwd": cwd_property(),
@@ -413,18 +414,31 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let wake = args.get("wake").and_then(|v| v.as_bool());
             let ctx = crate::cmd::context_of(info)?;
             let delivered = crate::cmd::deliver_to_hub_with_wake(&ctx, &message, true, wake)?;
-            Ok(json!({
+            let mut note = match (
+                delivered.delivery.present,
+                delivered.woken,
+                delivered.wake_needed,
+            ) {
+                (true, true, _) => "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
+                (true, false, false) => "The hub is running; waking was skipped because this message needs no action. It will pick this up the next time it checks its inbox.",
+                (true, false, true) => "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
+                (false, _, _) => "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
+            }
+            .to_string();
+            if let Some(why) = &delivered.wake_note {
+                note = format!("{} {note}", crate::cmd::wake_note_sentence(why));
+            }
+            let mut out = json!({
                 "hubName": ctx.repo.hub_name,
                 "present": delivered.delivery.present,
                 "woken": delivered.woken,
                 "path": delivered.delivery.path.to_string_lossy(),
-                "note": match (delivered.delivery.present, delivered.woken, delivered.wake_needed) {
-                    (true, true, _) => "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
-                    (true, false, false) => "The hub is running; waking was skipped because this message needs no action. It will pick this up the next time it checks its inbox.",
-                    (true, false, true) => "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
-                    (false, _, _) => "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
-                },
-            }))
+                "note": note,
+            });
+            if let Some(why) = &delivered.wake_note {
+                out["wakeNote"] = json!(why);
+            }
+            Ok(out)
         }
         "adjutant_pending" => {
             let info = resolve_repo(args)?;
@@ -475,18 +489,27 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .to_string();
             let wake = args.get("wake").and_then(|v| v.as_bool());
             let told = crate::cmd::deliver_to_worker(&ctx, &worktree, &from, subject, body, wake)?;
-            Ok(json!({
+            let mut note = match (told.present, told.woken, told.wake_needed) {
+                (true, true, _) => "Woke the worker. Do not wait for a reply, go back to waiting.",
+                (true, false, false) => "The worker is running; waking was skipped because this message needs no action. It will read this the next time it checks its outbox.",
+                (true, false, true) => "The worker is running; it will read this the next time it checks its outbox.",
+                (false, _, _) => "The worker is not running; it will read this the next time it starts.",
+            }
+            .to_string();
+            if let Some(why) = &told.wake_note {
+                note = format!("{} {note}", crate::cmd::wake_note_sentence(why));
+            }
+            let mut out = json!({
                 "worktree": worktree.to_string_lossy(),
                 "outbox": told.path.to_string_lossy(),
                 "present": told.present,
                 "woken": told.woken,
-                "note": match (told.present, told.woken, told.wake_needed) {
-                    (true, true, _) => "Woke the worker. Do not wait for a reply, go back to waiting.",
-                    (true, false, false) => "The worker is running; waking was skipped because this message needs no action. It will read this the next time it checks its outbox.",
-                    (true, false, true) => "The worker is running; it will read this the next time it checks its outbox.",
-                    (false, _, _) => "The worker is not running; it will read this the next time it starts.",
-                },
-            }))
+                "note": note,
+            });
+            if let Some(why) = &told.wake_note {
+                out["wakeNote"] = json!(why);
+            }
+            Ok(out)
         }
         "adjutant_outbox" => {
             let worktree = match args["worktree"]
@@ -544,9 +567,13 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let id = args["id"].as_str().ok_or("a gate needs an id")?;
             let comment = args.get("comment").and_then(Value::as_str);
             let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
-            let gate = crate::cmd::gate_close_payload(&ctx, id, comment)?;
-            let closed = gate.decision.as_deref() == Some("closed");
-            Ok(json!({ "gate": gate, "closed": closed, "alreadyAnswered": !closed }))
+            let terminal = args
+                .get("terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let gate = crate::cmd::gate_close_payload(&ctx, id, comment, terminal)?;
+            let on_board = gate.answered_on_board();
+            Ok(json!({ "gate": gate, "closed": !on_board, "alreadyAnswered": on_board }))
         }
         "adjutant_refresh" => {
             let ctx = crate::cmd::context_of(resolve_repo(args)?)?;

@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.284
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+  Sonnet 5.5 is here, and it's faster and excels at well-scoped tasks. Opus 5.5 is still your
+  default. Switch with /model.
+
+❯ Run the shell command: sleep 25. Then reply with just: ok
+
+  Ran 1 shell command
+
+⏺ sleep 25 is running in the background. I'll reply once it finishes.
+
+✻ Cogitated for 8s · done 2:18 · 1 shell still running
+
+❯ Write 300 words about green tea, no tools.
+
+
+
+
+
+✻ Pondering… (3s · thinking)
+  ⎿  Tip: Send messages to Claude while it works to steer Claude in real-time
+                                                                      Ctrl+Y to paste deleted text
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ [39m
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on · 1 shell · ← for agents
+@@adjutant:pane@@
+0	2	26

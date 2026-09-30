@@ -160,6 +160,48 @@ fn a_task_source_with_its_own_branch_shape_overrides_the_fallback() {
 }
 
 #[test]
+fn worktree_path_unique_takes_the_next_free_name() {
+    let fixture = Fixture::new(QUIET);
+    let ask = || -> serde_json::Value {
+        fixture.json(&[
+            "worktree-path",
+            "--name",
+            "try",
+            "--user",
+            "someone",
+            "--unique",
+        ])
+    };
+    let free = ask();
+    assert_eq!(free["name"], "try");
+    assert_eq!(free["branch"], "someone/try");
+
+    // A path that is already there.
+    std::fs::create_dir_all(fixture.repo.join(".claude/worktrees/someone-try")).unwrap();
+    let out = ask();
+    assert_eq!(out["name"], "try-2");
+    assert_eq!(out["branch"], "someone/try-2");
+    assert_eq!(
+        out["path"].as_str().unwrap(),
+        format!("{}/.claude/worktrees/someone-try-2", fixture.repo.display())
+    );
+
+    // A branch that is already there, with no directory: a second worktree on it would fail.
+    let branch = Command::new("git")
+        .hermetic()
+        .args(["branch", "someone/try-2"])
+        .current_dir(&fixture.repo)
+        .output()
+        .unwrap();
+    assert!(branch.status.success());
+    assert_eq!(ask()["name"], "try-3");
+
+    // Without the flag it is the name as given, taken or not.
+    let plain = fixture.json(&["worktree-path", "--name", "try", "--user", "someone"]);
+    assert_eq!(plain["name"], "try");
+}
+
+#[test]
 fn asking_for_neither_a_branch_nor_a_name_is_an_error_not_a_guess() {
     let fixture = Fixture::new(QUIET);
     assert!(!fixture.cmd(&["worktree-path"]).status.success());

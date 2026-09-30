@@ -1,0 +1,32 @@
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> Write 200 words about barley tea. No tools.
+
+▸ Thought for 24s, 4.6k tokens
+  I'm focusing on how barley tea's subtle bitterness balances rich foods and its adaptability as...
+  Barley tea, widely known as mugicha in Japan, boricha in Korea, and dàmàichá in China, is an
+  East Asian roasted-grain infusion cherished for its deep, comforting flavor and refreshing
+  qualities. Crafted simply by simmering or steeping roasted unhulled barley kernels in water,
+  this golden-brown beverage delivers a distinctively toasted, nutty aroma with subtle earthy
+  undertones and a mild, natural sweetness.
+
+  Unlike traditional teas derived from the Camellia sinensis plant, barley tea is completely
+  caffeine-free and contains virtually no sugar or calories. This makes it a wholesome, hydrating
+  staple suitable for all ages at any hour of the day or night. Traditionally believed to aid
+  digestion, relieve stress, and cool the body, its gentle roasted bitterness also balances rich
+  foods, making it an ideal companion for everyday meals.
+
+  During sweltering summer months, massive pitchers of iced barley tea reside in refrigerators
+  across East Asia, serving as the quintessential antidote to humid heat. Conversely, during
+  colder seasons, it is served steaming hot to provide soothing, aromatic warmth and relaxation.
+  Whether brewed from whole roasted grains or steeped conveniently using tea bags, barley tea
+  remains an enduring household favorite across generations, celebrated for its pure simplicity,
+  rustic appeal, and universally restorative, comforting charm.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                              Gemini 3.8 Flash · hig
+@@adjutant:pane@@
+0	2	27

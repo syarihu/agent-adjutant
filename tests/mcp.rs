@@ -333,6 +333,8 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
             .unwrap()
             .contains("adjutant_outbox")
     );
+    // The default terminal's wake types without looking, so nothing is promised about it.
+    assert!(opened.get("wakeChecksScreen").is_none());
     let id = opened["gate"]["id"].as_str().unwrap();
 
     let replies = mcp(
@@ -382,6 +384,47 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
             .unwrap()
             .is_empty()
     );
+
+    // Answered in the terminal: recorded as such, and not as a board answer.
+    let replies = mcp(
+        &fixture,
+        &[request(
+            30,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "question",
+                    "title": "どちらか",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let id_t = tool_result(&replies[0])["gate"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let replies = mcp(
+        &fixture,
+        &[request(
+            31,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_close",
+                "arguments": {
+                    "id": id_t,
+                    "terminal": true,
+                    "comment": "chose A",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    let terminal = tool_result(&replies[0]);
+    assert_eq!(terminal["gate"]["decision"], "terminal", "{terminal}");
+    assert_eq!(terminal["closed"], true);
+    assert_eq!(terminal["alreadyAnswered"], false);
 
     // When a gate was already answered on the board, closing it reports alreadyAnswered
     let replies = mcp(
@@ -494,6 +537,62 @@ fn a_gate_opened_with_waking_off_omits_the_wake_line() {
     );
     let opened = tool_result(&replies[0]);
     assert!(opened.get("wakeLine").is_none());
+}
+
+/// What a waiting gate says about its wake under a tmux terminal and the given extra config.
+fn gate_opened_under_tmux(extra: &str) -> serde_json::Value {
+    let fixture = Fixture::new(&format!(
+        r#"{{{extra} "terminal": {{"preset": "tmux"}}, "notification": "true",
+            "repos": {{"acme/widget": {{"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {{"acme/widget": "WID"}}, "ide": "code"}}}}}}"#
+    ));
+    let replies = mcp(
+        &fixture,
+        &[request(
+            1,
+            "tools/call",
+            serde_json::json!({
+                "name": "adjutant_gate_open",
+                "arguments": {
+                    "kind": "plan",
+                    "title": "計画の承認",
+                    "problem": "問題",
+                    "goal": "目標",
+                    "cwd": fixture.repo.to_str().unwrap(),
+                }
+            }),
+        )],
+    );
+    tool_result(&replies[0])
+}
+
+#[test]
+fn a_gate_says_when_its_wake_looks_at_the_screen_first() {
+    // The built-in tmux wake reads the worker's screen and holds its line back from a
+    // question, so a worker told so can end its turn at an empty prompt.
+    let opened = gate_opened_under_tmux("");
+    assert_eq!(opened["wakeChecksScreen"], true, "{opened}");
+    assert!(
+        opened["wakeLine"]
+            .as_str()
+            .unwrap()
+            .contains("adjutant_outbox")
+    );
+
+    // A wake of the config's own is somebody else's command, and turned off is no wake.
+    let template =
+        gate_opened_under_tmux(r#""workerWake": "tmux send-keys -t {tty} {line} Enter","#);
+    assert!(template.get("wakeChecksScreen").is_none(), "{template}");
+    assert!(template.get("wakeLine").is_some());
+    let off = gate_opened_under_tmux(r#""workerWake": false,"#);
+    assert!(off.get("wakeChecksScreen").is_none(), "{off}");
+
+    // A custom runner is neither claude nor agy: its screen is not read, so nothing is promised.
+    let custom = gate_opened_under_tmux(r#""agentRunner": "codex exec {prompt}","#);
+    assert!(custom.get("wakeChecksScreen").is_none(), "{custom}");
+    assert!(custom.get("wakeLine").is_some());
+    let claude = gate_opened_under_tmux(r#""agentRunner": "claude {prompt}","#);
+    assert_eq!(claude["wakeChecksScreen"], true, "{claude}");
 }
 
 /// An MCP server started with a hub's line, talked to until it has said where the board is.

@@ -1,0 +1,31 @@
+
+ ▐▛███▛█   Claude Code v2.1.284
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+  Sonnet 5.5 is here, and it's faster and excels at well-scoped tasks. Opus 5.5 is still your
+  default. Switch with /model.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ hello typed
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+@@adjutant:pane@@
+0	13	26

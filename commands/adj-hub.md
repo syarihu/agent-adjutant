@@ -33,7 +33,11 @@ rules** — both sides calling the same command is the only thing that guarantee
   another but moves focus to that tab. With two hubs, which one empties the inbox first is luck.
 
 The process it starts registers itself in the register (it replaces itself with `exec`, so the
-recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off.
+recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off. A parent
+task's hub that has finished for good (no worktree reports to it any more) is taken off the board's
+list with `adjutant hub-close --hub {identifier}` instead (run it from inside this hub; it stops no
+process, and refuses to close a hub that is still running when run from outside); the saved
+conversation stays for `--resume`.
 
 **A hub that went down, for an agent update or the like, comes back into the same conversation with
 a plain `adj hub` within a few hours of ending (`hubAutoResumeHours`).** A conversation that ended
@@ -223,6 +227,7 @@ heavy collection to a sub-agent.
    | --- | --- | --- |
    | `report` | a worker | Run "When a request arrives" from Step 0 |
    | `request` | a person (the dashboard) | Run "When a request arrives" **from Step 2** (→ "A request from the dashboard") |
+   | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
    | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
    | `question` | the hub itself (its copy of a report it asked back about and is waiting on) | If the matching `answer` has come, resume. If not, leave it without ack |
    | `needs-user` | the hub itself (waiting on the user's judgement) | Show its content and ask when a person is at this tab |
@@ -276,6 +281,10 @@ A hub whose `adjutant_config` `hub` holds an identifier is **the hub for the par
 identifier names**. If it is `null` this is the repository's own hub, and this whole section does not
 apply.
 
+A worker can also join or leave this hub after it started, by being linked to a task on the board;
+its record then names this hub (or no hub) and it reports there from then on. That is not a dispatch,
+and nothing arrives in the inbox for it.
+
 **The identifier is the parent task's key itself** (`ALPHA-233` / `ABC-819`). So what to read needs
 no place in the config or the state — reverse the identifier and the tracker and repo fall out. The
 lookup is the same as 3 in "When asked to work on an existing worktree": for the `github` family,
@@ -314,6 +323,13 @@ that entry to use:
 claim a parent task has nothing to say about one. Say so in one line and skip this section. Do not
 guess by leaning towards a similar key — a hub reading and reporting under another task is a hub
 that is silently wrong.
+
+**A hub for a parent task can be closed once its last worktree is gone.** The board lists it while
+some worktree still reports to it (running or ended), and drops it when the last one has been
+cleaned up or moved to another hub. When you have cleaned up the last worktree, say in one line that
+this hub can be closed (from the board, or with `adj hub-close --hub {identifier}`). **Do not close
+it on your own** while sub-issues of the parent task may still be dispatched: closing it ends this
+hub for the board, and a person is the one who knows the parent task is finished.
 
 ### Read at startup
 
@@ -706,7 +722,9 @@ itself.
   line telling you to check the inbox). That this one line is all that arrives, with the report's body
   out of sight, is deliberate: the body is in the inbox, and copying it into the prompt would put the
   same thing in two places and ack only one of them.
-  **When woken, start by looking at `adjutant_pending`.**
+  **When woken, start by looking at `adjutant_pending`.** On tmux the wake is typed only at an empty
+  prompt: while this tab shows a question or someone's own typing (or a screen it does not
+  recognise), nothing is typed and the person is notified instead.
 
 - **Even so, do not count on being woken.** Some setups turn `hubWake` off, and waking can fail
   (delivery succeeded, so the sender gets no error). That is why when to look at `adjutant_pending`
@@ -737,7 +755,10 @@ so it arrives whatever that tab is running.
   Plain notices and `[ack]` are delivered to the outbox without waking, so an open question in the
   worker's tab is not answered by the wake line. `present` / `woken` come back
 - Notifies a person only when waking was needed but could not reach the worker (a worker that woke
-  reads it itself, and notices that do not wake need no human interrupt either)
+  reads it itself, and notices that do not wake need no human interrupt either). On tmux the wake
+  is typed only at the worker's empty prompt: while its screen shows a question or someone's own
+  typing (or one it does not recognise), nothing is typed, `woken` is false and the reply's
+  `wakeNote` says why
 
 **The first line of `subject` is the signal.** `[question {YYYYMMDD-HHMMSS}]` / `[ack]` / anything
 else (a notice). Always give `[question]` an identifier — the worker's answer comes back to the inbox
@@ -858,6 +879,9 @@ every start when nobody asked", not the list itself. Two reasons:
 - **So as not to pollute the transcript.** The hub lives all day, so raw JSON piling up makes every
   later turn heavy. The agent returns only the table and the machine rows.
 
+**A worktree of a session started with no task is cleaned up only when a person asks.** Nothing marks
+it as finished, so Step 1 does not offer it.
+
 **Cleanup (Step 1) is done by the hub.** It is one proctor call and a confirmation from the user, and
 a sub-agent cannot ask for that. **The order is: send out Step 2's agent, then Step 1.** The proctor
 call and the user's answer overlap with the collection, so by the time the answer comes back the table
@@ -976,6 +1000,8 @@ independently:
 8. **When `settings.maxWorkers` is set, finally run "When a worker slot frees up, start the next"
    once.** One worker fewer, so a task waiting for a slot is picked up here. If it was not removed in
    4, the worker is still there, so it can be skipped.
+9. **If this is a hub for a parent task and that was its last worktree**, say in one line that it can
+   be closed (see "A hub for a parent task"). Do not close it yourself.
 
 #### When a worker slot frees up, start the next
 
@@ -1929,6 +1955,50 @@ worker's `report`; only the two ends differ.**
 
 - Ack the inbox message after writing back to the record.
 
+### A session request from the dashboard (`kind: session`)
+
+A person asked the board for a session with **no task**: a worker to talk to in its own tab, with
+nothing filed and no card yet. The body's `##` lines are the answers (`## Agent`, `## Worktree name`)
+and `## Instruction` is what the person wants done, verbatim to the end of the body.
+
+**No task record is made.** Do not run Steps 2 to 5 of "When a request arrives", and do not
+`adj task add` for it. If the person later links the session to a task on the board, the record is
+made or picked there and the session is told; that is not the hub's step.
+
+1. **Create the worktree as in "3. Create the worktree"**, with one difference: the name is a
+   *request*, not a fact. Choose the final name with
+
+   ```bash
+   adj worktree-path --name '{worktree name}' --unique --user '{GitHub user}'
+   ```
+
+   which prints `name`, `branch`, `path` and `main` for the first of `{name}`, `{name}-2`, `{name}-3`…
+   that nothing holds yet. Use `branch` and `path` from that answer as they are, even where proctor is
+   installed (it does not know a task-less name is free). The branching point is the usual one
+   ("Base branch", the config's `baseBranch`). Then run the config's `postCreate` commands.
+   The name is already checked for a safe charset where it came in, so it may be put on a command line;
+   the instruction may not.
+2. **Write the brief** to `{worktree}/.claude/task-brief.md` after `mkdir -p {worktree}/.claude`, with
+   a file-writing tool, from Appendix — The session's brief. **The instruction goes into the file, never
+   onto a command line** ("Keep task text off the shell").
+3. **Start the worker:**
+
+   ```bash
+   adjutant work --worktree '{path}' --title '{final name}'
+   ```
+
+   `--title` rather than `--task`, since there is no record to take a title from. Run it one at a time,
+   as in Step 3 of "4. Start the worker".
+   - **Exit code 3 is "no free worker slot".** There is no record to wait in, so nothing will pick this
+     up later. Leave the worktree and the brief, and say in one line that the session was not started
+     and that `adjutant work --worktree '{path}' --title '{final name}'` on that path starts it when a
+     slot is free. Run `adj notify` too: the board checked for a free slot when the request came in,
+     so the requester believes it is starting and nothing else will tell them it did not.
+   - **Any other failure:** say what failed in this tab, and run `adj notify` so a person at the board
+     hears of it, because the requester is a browser and nothing else will tell them.
+4. **Ack the inbox message** (`adjutant_pending` `action: ack`) once the worker is started or the
+   failure is said. Tell the person in one line which worktree and tab it is, then go back to waiting.
+
 ### The answer to a gate the hub opened (`kind: gate`)
 
 When a person answers a gate the hub opened (`dispatch` / `relay`, or a `plan` for Jules) on the board, the answer arrives in
@@ -2699,6 +2769,42 @@ name, it can be fetched with `adjutant_skill` or `adj skill adj-worker`. **This 
 file itself** — when one procedure mentions another, it writes `adj-worker` by name.
 (Even in Claude Code, `/adj-worker` does not resolve. Procedures served over MCP are named
 `/mcp__adjutant__adj-worker`.)
+
+## Appendix — The session's brief
+
+Written out to `{worktree}/.claude/task-brief.md` in "A session request from the dashboard". It is
+the worker's brief with the task lines empty and the person's instruction in their place, so the
+worker still finds the same file where the default start prompt sends it. **Do not fill a task in by
+guessing**: there is none, and a worker handed an id that does not exist ties its gates to no card.
+
+```
+You are the one working in this worktree. You are not the hub (the side that hands tasks out).
+
+- Task: -
+- Workspace: the current cwd is that worktree (branch {branch})
+- Base branch: {base_branch}
+- Parent task: -
+- Task record: -
+- Done when: as the instruction says
+- Report to: **the user at this tab**.
+
+This session has no task. Do what the instruction says, with the person in this tab. The gates, the
+card and the PR steps of `adj-worker` apply only once a task is linked to this session: until then
+there is no record to open a gate for or to move to "in review". Check `adjutant_outbox` after each
+step and before you answer the person — a message headed `[linked {id}]` means the person has linked
+this session to a task, and `adj skill adj-worker` says what to do from there.
+
+Important overrides. If you remember the hub's procedure, the following take precedence:
+
+1. Do not use `isolation: worktree` or `EnterWorktree`. You are already inside; work in the current cwd.
+2. Neither `git -C <worktree_path>` nor an absolute worktree path is needed.
+3. If you find "a bug unrelated to what you were asked" while working, **do not fix it yourself**.
+   Hand it to the hub following the `adj skill adj-report` procedure, and go back to what you were doing.
+
+## Instruction
+
+{the instruction, verbatim}
+```
 
 ## Do not
 

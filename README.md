@@ -82,12 +82,13 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
 | `adjutant notify --message …` | tell the human something happened |
-| `adjutant worktree-path --name …` | the branch, path and the main checkout to create it in |
+| `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue` | the records that board is a view of (`next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
+| `adjutant hub-close --hub KEY` | close a parent-task hub none of whose checkouts report to it any more: clear its record and take it off the board's list; run by the hub itself or against a hub that is no longer running, it refuses a running hub from outside (its saved session, tasks, gates and inbox stay) |
 
 Agent-side (`adjutant mcp`), the same machinery as ten tools and three prompts:
 
@@ -130,13 +131,20 @@ command line too, and takes an inherited `ADJUTANT_HUB` out of the environment f
 terminal template that passes its environment on (tmux does) would otherwise hand the agent
 the identifier of whichever hub opened the tab, which outranks the record.
 
+A running worker follows its record, though: a command run by the worker itself — its agent,
+that agent's MCP server, or a shell under it — reads the hub from the worker record in its
+worktree even when `ADJUTANT_HUB` says otherwise, and a record with no hub means the
+repository's own. That is what lets the board move a worker to another hub by linking it to a
+task (see [The board](#the-board)) without restarting its agent. Anything else keeps the old
+order, so a hub running a command inside a worker's worktree is still itself.
+
 `agentEnv` may name `ADJUTANT_HUB`. It is a default: `hub`, `work` and `worker` take it when
 neither `--hub` nor the environment says anything, and claim that hub rather than the
 repository's own, so the command and the agent it starts agree on one address. A flag or an
 inherited `ADJUTANT_HUB` still wins, and replaces the configured value on the agent's line.
 Stop a running hub of the repository before adding the key: from then on a plain `adj hub`
 looks for, and starts, the configured hub instead, and `adj work` files new workers under it.
-The commands that address a hub (`send`, `pending`, `hub-stop` and the rest) do not read
+The commands that address a hub (`send`, `pending`, `hub-stop`, `hub-close` and the rest) do not read
 `agentEnv`, so from a shell that is not the hub's own, pass `--hub` or set `ADJUTANT_HUB`.
 
 `--no-dashboard` and `--dashboard` ride the same channel: they become
@@ -171,6 +179,15 @@ them: the hub's id under `sessions/` in the state directory, the worker's in the
 leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
 (Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
 the agent to check its inbox or outbox for whatever arrived while it was gone.
+
+A parent-task hub is listed while a hub record or a checkout (a worktree whose worker record or
+saved session names its key) points at it. A stopped one with no such checkout is no longer
+listed, and neither is one known only from its saved session. `adjutant hub-close --hub KEY`, or
+「閉じる」 on the board, closes a parent-task hub that has no checkouts left and drops it from the
+list. The board's close stops a running hub first; `adjutant hub-close` does not stop one, so it
+is for the hub itself or a hub that is no longer running, and refuses a running hub from outside.
+Its saved session, tasks, gates and inbox stay, so `adj hub --hub KEY --resume` picks them up
+again. The repository's own hub can only be stopped.
 
 When the hub ended is written by the hub's own MCP server. For a start that records a session
 (a runner that takes `{sessionId}`, or a resume), `adj hub` puts `ADJUTANT_HUB_SESSION` on the
@@ -372,13 +389,13 @@ agent profile.
 When `"terminal": { "preset": "tmux" }` is configured, adjutant acts as a first-class tmux backend:
 - **Detached window spawning**: Workers start in detached windows (`tmux new-window -d -t <session> -c <cwd> -n <title> <command>`) so current focus is not stolen. If the session does not exist, an initial session is created.
 - **Process-to-pane mapping**: adjutant automatically maps worker `{pid}` and `{tty}` to tmux panes by inspecting pane PIDs, TTYs, and process hierarchy. No wrapper scripts required.
-- **Waking**: Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, followed by Enter after a short delay.
+- **Waking**: The built-in wake reads the pane first (`tmux capture-pane`) and types only when the agent (Claude Code for the built-in runner or a `claude` one, agy for an `agy` one) sits at an empty input prompt. Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, the line is checked to have landed at the prompt, and Enter follows after a short delay. A question, permission prompt or menu on screen, text someone is midway through typing, and a screen that is not recognised are left alone: nothing is typed, the reply of `send` / `tell` says why (`wakeNote`), and the person is notified as for any wake that did not happen. A turn in progress is waited for, up to five seconds. With a `wake` template, on iTerm2, or for any other custom runner, the line is typed without looking. The line typed has to be all that is in the input box before Enter is pressed.
 - **Focus & Close**: `adj focus` selects the window and pane (`tmux select-window`, `tmux select-pane`). `adj close` disposes of the worker's window (`tmux kill-window`).
 - **Attaching**: Connect to the session at any time with `tmux attach -t adjutant`, control mode with `tmux -CC attach -t adjutant`, or browse via web terminal (e.g. `ttyd`).
 - **CLI helpers**: `adj tmux` provides subcommands to inspect and manage tmux sessions directly:
   - `adj tmux pane [--pid <pid>] [--tty <tty>] [--json]`: list panes or look up pane info.
   - `adj tmux spawn [--title <title>] [--cwd <cwd>] <command...>`: spawn a detached window.
-  - `adj tmux wake --pid <pid> [--line <line>] [--dry-run]`: type into a worker pane.
+  - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: type into a worker pane; with `--agent claude` or `agy` the pane is read first, and the default `generic` types without looking.
   - `adj tmux focus --pid <pid> [--dry-run]`: select a worker window and pane.
   - `adj tmux close --pid <pid> [--dry-run]`: close a worker window.
 - **Environment variables**: `$ADJUTANT_TMUX_SESSION` (overrides default `"adjutant"`) and `$ADJUTANT_TMUX_SOCKET` (runs `tmux -L <socket>`).
@@ -498,6 +515,38 @@ the ones whose PR was merged to `done`. A PR that is open, closed without mergin
 cannot read is left alone and listed instead: a closed PR may have been replaced by another,
 and only a person knows. The hub runs it once when it starts; nothing runs it on a timer.
 
+A record holds the task's own text, not the issue's. So that the board can show what the issue
+said, `adjutant task add` and `task update` read a GitHub issue (`gh issue view`) when they
+start the task — dispatched or in review — or change its issue, and keep its title and body on
+the record as `issueSnapshot`, with the time it was read. The title is cut to 256 characters
+and the body to 16 KiB, and a cut body is marked. Other updates do not read it, and the server
+never polls a tracker: an issue edited afterwards is read again only when someone clicks
+「再取得」 on the task or runs `adjutant task fetch-issue --id <id>`. A `gh` that cannot read
+the issue leaves the record as it was and prints why; other trackers' URLs are left alone.
+
+### Sessions without a task
+
+A worker normally starts from a task, and the board joins a task to its worker by worktree,
+so a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
+`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Only
+`instruction` is required. The hub defaults to this board's own; the name is checked as a
+task's is, and taken from the instruction when it is left out; `agent`, when given, has to be
+the one `agentRunner` starts. The request is a `session` message in that hub's inbox, and the
+hub starts its tab if it is not running and the resident server can. Nothing is queued for a
+free worker slot, so the request is refused when none is free. The hub creates the worktree
+under the first free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with
+the instruction in its brief; no task record is made.
+
+`POST /api/sessions/<id>/link` gives that session a task afterwards: `{"task": "<id>"}` for an
+existing one or `{"newTask": {…}}` with the fields `POST /api/tasks` takes, and an optional
+`hub`. The hub the session belongs to follows the task: the one whose task directory holds it,
+so a task on a parent-task hub's board moves the worker to that hub, a repository-board task
+moves it back to the repository's, and a new task made under a parent-task hub is a child of
+that parent. The task becomes `dispatched` (or stays `pr`) with the worktree, the worker's
+record gets the task and, if it has none, the `implement` phase, and the worker is told in its
+outbox (`[linked <id>]`) and woken, as for a question. A session that has not started, one that has ended (no worker running), one that already has a different
+task, a finished task, a Jules task and one another running worker holds are refused.
+
 ### Gates
 
 A gate is the other half: something an agent has prepared for a person to look at, and the
@@ -525,6 +574,11 @@ rather than an outbox, so the answer to a gate the hub opened is delivered there
 conversation, and a conversation is faster in the tab than through an outbox — so the board
 counts the rounds, says so, and offers a button that raises the tab *without* closing the
 gate. Leaving is not failing.
+
+A gate the person answers in the worker's terminal instead is closed by the worker with
+`adj gate close --terminal --comment "<what was decided>"`. If it forgets, the board closes
+the gate once the same worker moves to a later phase or opens its next gate, and shows it as
+answered in the terminal; a gate the hub opened is never closed this way.
 
 `adj gate open` reads its payload as JSON on stdin and answers with `server: up` or
 `server: down`. That second answer is the whole reason it reports rather than just
@@ -710,7 +764,9 @@ reaches an interactive agent exactly as if the person had typed it. The line
 typed points at the inbox rather than repeating the report, so the text lives in one place.
 `send` fires `notification` either way; `tell` fires it only when the worker could not be
 woken, since a woken worker reads the message without anyone's help. Both replies say which
-of `present` / `woken` happened. Waking is best-effort by construction: the message is already delivered before the
+of `present` / `woken` happened. Under tmux the built-in wake types only when the agent's screen
+shows an empty prompt: over a question or someone's own typing nothing is typed, and the person is
+notified instead. Waking is best-effort by construction: the message is already delivered before the
 hook runs, so a failed poke never fails a send, and the hub re-reads its inbox at three fixed
 points anyway.
 

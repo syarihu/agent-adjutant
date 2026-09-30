@@ -67,11 +67,17 @@ pub fn wake(
     socket: Option<&str>,
     pid: u32,
     line: Option<&str>,
+    agent: Option<&str>,
     dry_run: bool,
 ) -> Result<(), String> {
     let settings = settings_for(repo);
     let socket = socket.or_else(|| settings.terminal.tmux_socket());
-    let performed = terminal::tmux_wake(socket, pid, line, dry_run)?;
+    // Generic unless told: a pane whose screen is not known is typed into without looking,
+    // as it always was, and looking is what the caller asks for by naming the agent.
+    let agent = agent
+        .and_then(crate::prompts::Agent::parse)
+        .unwrap_or(crate::prompts::Agent::Generic);
+    let performed = terminal::tmux_wake(socket, pid, line, agent, dry_run)?;
     if dry_run {
         println!("{}", performed.script);
         return Ok(());

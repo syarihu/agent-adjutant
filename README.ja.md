@@ -68,9 +68,11 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
 | `adjutant notify --message …` | 人間にデスクトップ通知を送る |
-| `adjutant worktree-path --name …` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力 |
+| `adjutant worktree-path --name … [--unique]` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力（`--unique`: パスもブランチも空いている最初の `name`、`name-2`、`name-3`… を選び、`name` として返す） |
+| `adjutant task fetch-issue --id …` | タスクの GitHub Issue を読み直し、タイトルと本文をレコードの `issueSnapshot` に保存する。`task add` / `task update` は、タスクが着手済み（dispatched か pr）になったとき、または Issue が変わったときに同じ読み取りをする。タイトルは256文字、本文は16 KiB まで。板は表示のたびに GitHub へ問い合わせず、「再取得」を押したときだけ読み直す |
 | `adjutant jules start\|show\|findings\|relay` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する。レビュー指摘を Jules に回す（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
+| `adjutant hub-close --hub KEY` | 親タスクの hub を閉じる（この hub に報告する checkout が残っていないときだけ）。実行記録を消し、ボードの一覧から外す。プロセスは止めないので、hub 自身から、または動いていない hub に対して使い、動いている hub を外から閉じようとすると断る。保存済みのセッション・タスク・gate・受信箱は残る |
 
 エージェント側（`adjutant mcp`）：10個のツールと3つのプロンプトを提供します。
 
@@ -87,7 +89,9 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 `adj worker` も、登録した識別子をエージェントのコマンドラインに載せます。その前に、引き継いだ `ADJUTANT_HUB` は環境から外します。tmux のように環境を引き継ぐ terminal テンプレートでは、タブを開いた hub の識別子がエージェントに渡り、worktree のレコードより優先されてしまうからです。
 
-`agentEnv` には `ADJUTANT_HUB` を書けます。これは既定値の扱いで、`--hub` も環境変数も無いときに `hub` / `work` / `worker` がこの値を使い、リポジトリ自身の hub ではなくその hub を立てます。起動したコマンドとエージェントが同じ hub を指すようにするためです。`--hub` や引き継いだ `ADJUTANT_HUB` があればそちらが優先され、エージェントのコマンドラインでも設定の値を置き換えます。このキーを足す前に、そのリポジトリで動いている hub は止めてください。足したあとは、素の `adj hub` が設定の hub を探して立て、`adj work` も新しい worker をその hub の下に登録します。hub を指すコマンド（`send` / `pending` / `hub-stop` など）は `agentEnv` を読まないので、hub 自身のシェル以外から打つときは `--hub` か `ADJUTANT_HUB` で指定してください。
+ただし動いている worker 自身が打つコマンド（エージェント、そのエージェントの MCP サーバー、その下のシェル）は、`ADJUTANT_HUB` が別の値でも、worktree の worker レコードから hub を読みます。レコードに hub が無ければリポジトリ自身の hub です。ボードでタスクに紐づけて worker の hub を移しても、エージェントを起動し直さずに済むのはこのためです。それ以外のコマンドは従来どおりの優先順位なので、worker の worktree の中でコマンドを打つ hub は、これまでどおり自分自身を指します。
+
+`agentEnv` には `ADJUTANT_HUB` を書けます。これは既定値の扱いで、`--hub` も環境変数も無いときに `hub` / `work` / `worker` がこの値を使い、リポジトリ自身の hub ではなくその hub を立てます。起動したコマンドとエージェントが同じ hub を指すようにするためです。`--hub` や引き継いだ `ADJUTANT_HUB` があればそちらが優先され、エージェントのコマンドラインでも設定の値を置き換えます。このキーを足す前に、そのリポジトリで動いている hub は止めてください。足したあとは、素の `adj hub` が設定の hub を探して立て、`adj work` も新しい worker をその hub の下に登録します。hub を指すコマンド（`send` / `pending` / `hub-stop` / `hub-close` など）は `agentEnv` を読まないので、hub 自身のシェル以外から打つときは `--hub` か `ADJUTANT_HUB` で指定してください。
 
 `--no-dashboard` / `--dashboard` も同じ経路を通ります。これらは同じコマンドラインに `ADJUTANT_STARTUP_DASHBOARD` として載り、`adjutant config` が解決の時点で織り込むため、`settings.startupDashboard` を読む手順書には設定ファイルの値ではなく**その hub が起動したときのフラグ**が見えます。ただし `--tab` のときはこの変数が出てきません。ターミナルに渡せるのはコマンドラインだけなので、フラグは新しいタブで走る `adjutant hub` にそのまま転送され、**環境を組み立てるのはそちらの `adjutant hub`** になります。最終的な結果は同じで、1プロセス遅れるだけです（2つの経路の dry run の出力が違って見えるのはこのためです）。
 
@@ -102,6 +106,8 @@ adj worker --resume               # worktree の中で実行すると、そこ�
 ```
 
 `{sessionId}` を含むランナー（既定のランナーは `--session-id {sessionId}` として含んでいます）で新しく起動するときは、セッション ID を作ってエージェントに渡し、保存します。再開するときは新しく作らず、保存済みの ID を使います。`{sessionId}` を含まないランナーで新しく起動したときは ID を作らず、前の起動が保存した ID を消します。これで2つ前の起動の会話が開かれることはありません。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
+
+親タスクの hub は、hub の実行記録か、その hub のキーを指す checkout（worker の記録か保存済みセッションがそのキーを名指ししている worktree）があるあいだ一覧に出ます。止まっていて checkout が残っていないものや、保存済みのセッションだけが残っているものは、もう一覧に出ません。checkout が残っていない親タスクの hub は `adjutant hub-close --hub KEY`（ボードでは「閉じる」）で閉じられます。ボードの「閉じる」は、動いている hub を止めたうえで一覧から外します。`adjutant hub-close` はプロセスを止めないので、hub 自身から打つか、動いていない hub に対して使います。動いている hub を外から閉じようとすると断ります。保存済みのセッション・タスク・gate・受信箱は残るので、`adj hub --hub KEY --resume` で引き継げます。リポジトリ自身の hub は止めることしかできません。
 
 hub の終了時刻は、hub の下で動く MCP サーバーが記録します。`adj hub` はセッションを記録する起動（`{sessionId}` を含むランナーでの起動と、再開）のときだけ、`exec` するコマンドラインに `ADJUTANT_HUB_SESSION` を載せます。エージェントが起動する `adjutant mcp` がそれを引き継ぎます。`{sessionId}` を含まないランナーで新しく起動した hub にはこの変数が付かないので、MCP サーバーが動いていても終了時刻は記録されません。MCP サーバーは1分ごとと、エージェントがパイプを閉じたときに、セッションが生きていたことを `sessions/<slug>.alive` に書きます。保存したセッションとは別のファイルにしているのは、古い hub の最後の書き込みが新しい hub の保存を上書きしないようにするためです。MCP サーバーはマシン上のすべてのセッションで動きますが、書き込むのはこの変数を持つものだけです。`adj worker` はエージェントを起動する前にこの変数を外します。hub の下に MCP サーバーが無い場合は終了時刻が分からないので、推測せずに新しく起動します。`hubRunner` を独自に設定していて `hubResumeRunner` を設定していない場合も同じです。組み込みの再開コマンドで開くと独自の runner で足した指定が抜けるので、`--resume` を付けたときだけ再開します。
 
@@ -255,6 +261,7 @@ security add-generic-password -s jules-api -a "$USER" -w
 - `send` は常にデスクトップ通知（`notification`）を発火します。
 - `tell` は worker を wake できなかった場合のみデスクトップ通知を発火します（wake できた場合は worker が自律して読むため）。
 - wake 処理はベストエフォートであり、失敗してもメッセージ送信自体は成功します。
+- tmux では、組み込みの wake はエージェントの画面が空の入力欄のときだけ入力します。質問が出ているときや人が入力の途中のときは何も入力せず、代わりに人に通知します。
 
 これらをテンプレート経由で抽象化しているため、ターミナルやエージェントの種類を問わず柔軟に連携できます。
 
@@ -264,15 +271,24 @@ security add-generic-password -s jules-api -a "$USER" -w
 
 - **デタッチウィンドウ起動**: worker をバックグラウンドウィンドウ（`tmux new-window -d`）として起動するため、現在の作業画面のフォーカスを奪いません。対象セッションが存在しない場合は自動で初期セッションを作成します。
 - **PID/TTYからペインへの自動解決**: プロセスツリーと TTY を探索して tmux ペインを特定するため、手書きのラッパースクリプトなしで wake や focus、close が動きます。
-- **入力通知（wake）**: `tmux send-keys -l` でリテラル文字列を送信し、少し遅れて Enter を押します。
+- **入力通知（wake）**: 組み込みの wake は、先にペインを読み（`tmux capture-pane`）、エージェント（組み込みの runner か `claude` の runner なら Claude Code、`agy` の runner なら agy）が空の入力欄で待っているときだけ入力します。`tmux send-keys -l` でリテラル文字列を送信し、その行が入力欄に入ったことを確かめてから、少し遅れて Enter を押します。質問・許可確認・メニューが出ているとき、人が入力の途中のとき、画面を判別できないときは何も入力せず、`send` / `tell` の返答（`wakeNote`）に理由が出て、wake できなかった場合と同じく人に通知します。ターン実行中は最大5秒待ちます。`wake` テンプレート、iTerm2、それ以外の自前 runner は、画面を見ずにそのまま入力します。Enter を押す前に、入力欄にあるのが入力した行だけであることも確かめます。
 - **フォーカスと終了**: `adj focus` でウィンドウとペインを選択し、`adj close` で worker のウィンドウを片付けます（`tmux kill-window`）。
 - **アタッチ**: `tmux attach -t adjutant` や `tmux -CC attach -t adjutant`（iTerm2 連携）、`ttyd` 等でいつでもセッションに接続できます。
 - **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）で tmux セッションの状態確認や操作を直接行えます。
+  - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: `--agent claude` / `agy` ではペインを先に読みます。既定の `generic` は画面を見ずに入力します。
 - **環境変数**: `$ADJUTANT_TMUX_SESSION`（既定のセッション名 `"adjutant"` を上書き）および `$ADJUTANT_TMUX_SOCKET`（`tmux -L <socket>` でソケットを指定）に対応しています。
 
 ### ボードから端末を開く
 
 常駐サーバー（`adj server start`）のボードでは、tmux で動いているセッションの tmux ウィンドウをページ内で開き、読んだり入力したりできます。ボタンはカード、サイドシート、レールの hub の行にあり、`terminal.preset: "tmux"` で動いていて生きているセッションにだけ出ます。閉じても切り離すだけで、ウィンドウもその中のエージェントも止まりません。ボードは専用のクライアントとしてアタッチするため、ウィンドウの大きさは tmux の `window-size` オプションに従います。既定は `latest` で、最後に操作したクライアントの大きさになります。
+
+worker の端末で答えたゲートは、worker が `adj gate close --terminal --comment "<決めたこと>"` で閉じます。閉じ忘れても、同じ worker が次のフェーズへ進むか次のゲートを開いた時点でボードが閉じ、「ターミナルで答えた」として表示します。hub が開いたゲートをこの方法で閉じることはありません。
+
+### タスクなしのセッション
+
+worker は普通タスクから始まり、ボードはタスクと worker を worktree で結ぶので、タスクのない worker にはカードがありません。`POST /api/sessions` は、それでも hub に worker を立ててもらうための API です。`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}` を送り、必須なのは `instruction` だけです。`hub` を省くとこのボードの hub になります。名前はタスクと同じ規則で検査し、省くと指示文から作ります。`agent` を渡す場合は `agentRunner` が起動するものと同じでなければなりません。依頼はその hub の受信箱に `session` メッセージとして入り、hub が動いておらず常駐サーバーが起動できるときは、hub のタブも開きます。空きを待つレコードが無いので、worker の空きが無いときは依頼を断ります。hub は空いている最初の `name`、`name-2`… で worktree を作り（`worktree-path --unique`）、指示文を brief に入れて worker を起動します。タスクのレコードは作りません。
+
+`POST /api/sessions/<id>/link` は、そのセッションに後からタスクを持たせます。既存のタスクは `{"task": "<id>"}`、新しいタスクは `{"newTask": {…}}`（`POST /api/tasks` と同じ項目）で、`hub` も任意で渡せます。セッションの所属先の hub はタスクに従います。そのタスクのディレクトリを持つ hub が所属先になるので、親タスクの hub のボードにあるタスクなら worker はその hub へ移り、リポジトリのボードのタスクならリポジトリ自身の hub へ戻ります。親タスクの hub の下で作った新しいタスクは、その親の子になります。タスクは worktree を持って `dispatched`（`pr` ならそのまま）になり、worker のレコードにはタスクと、フェーズが無ければ `implement` が入り、worker には outbox に `[linked <id>]` で知らせ、質問のときと同じく起こします。まだ起動していないセッション、終了したセッション（動いている worker が無い）、すでに別のタスクを持つセッション、完了済みのタスク、Jules のタスク、別の動いている worker が持っているタスクは断ります。
 
 ## レイヤ構成
 
