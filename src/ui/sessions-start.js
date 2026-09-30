@@ -312,10 +312,12 @@ function startInInbox(p) {
 }
 
 /* The worker the hub made for `p`: its name is the one asked for, or that with `-2` and so on
-   when the hub found it taken. */
+   when the hub found it taken. Only once it has a record: the hub makes the worktree before it
+   starts the worker, and a worktree left behind by a start that failed must not count. */
 function startedSession(p, claimed) {
   const re = new RegExp(`^${escRegex(p.name)}(-\\d+)?$`);
-  return (state.sessions || []).find(s => s.kind === 'worker' && (hubOfSession(s) || repoHubId()) === p.hubId
+  return (state.sessions || []).find(s => s.kind === 'worker' && s.startedAt
+    && (hubOfSession(s) || repoHubId()) === p.hubId
     && !p.before.includes(s.id) && !claimed.has(s.id) && workerNames(s).some(n => re.test(n)));
 }
 
