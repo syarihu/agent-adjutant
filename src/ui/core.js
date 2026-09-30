@@ -12,7 +12,9 @@ let log = [];
 let selectedTaskId = null;
 
 const PREF_KEY = 'adj-board-split';
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human' },
+// sessionsRail: null follows the window's width until the person chooses 'open' or 'collapsed';
+// sessionsFolded holds the hub ids folded away, and 'orphans' while that group is open.
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsRail:null, sessionsFilter:'all', sessionsFolded:[] },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -313,7 +315,7 @@ async function refresh(force = false) {
     const { now, ...rest } = next;
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
-    const clockOnly = nextJson === lastStateJson && minute !== lastMinute && view === 'board';
+    const clockOnly = nextJson === lastStateJson && minute !== lastMinute && (view === 'board' || view === 'sessions');
     if (!force && nextJson === lastStateJson && !clockOnly) return;
     lastStateJson = nextJson;
     lastMinute = minute;
@@ -374,6 +376,9 @@ function render() {
   // having to look at the page.
   document.title = (totalHuman ? `(${totalHuman}) ` : '') + 'adj';
   updateNotifyButton();
+  renderSessionsRail();
+  openPendingSession();
+  renderSessionsView();
   renderDrawer();
   redrawReview();
   redrawTaskView();

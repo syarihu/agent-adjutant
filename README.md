@@ -441,12 +441,15 @@ learns where a repository is from the hubs that start in it and from `adj config
 none of these has seen is added by running `adj server start` inside it. Without a resident
 server, everything is as described above.
 
-**A session's terminal in the board.** On the resident server's boards, a card, its side sheet
-and a hub's row in the rail have a button that opens the session's tmux window in the page,
-where you can read it and type to it. It is offered only for a session that runs in tmux
-(`terminal.preset: "tmux"`) and is alive. Closing it only detaches: the window and the agent
-in it keep running. The board attaches as a client of its own, so the window's size follows
-tmux's `window-size` option, which is `latest` by default: the client that acted last decides.
+**A session's terminal in the board.** On the resident server's boards, the rail has a セッション
+view: a tree of the repository's hub and the parent-task hubs with their workers, and the
+selected session's tmux window beside it, where you can read it and type to it. A card, its side
+sheet and a hub's row in the rail have a button that opens the view with that session selected,
+with a link back to where you were. A terminal is offered only for a session that runs in tmux
+(`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
+detaches: the window and the agent in it keep running. The board attaches as a client of its own,
+so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
+that acted last decides.
 
 To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
 does it:

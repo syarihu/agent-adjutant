@@ -1,5 +1,5 @@
 /* A tmux session's terminal, inside any container. The component only assumes the container
-   has a size of its own: it fills it and follows it. The board's overlay mounts it below; a
+   has a size of its own: it fills it and follows it. The board's セッション view mounts it; a
    page of its own for a session can mount the same. xterm.js is served by the resident server
    and loaded on first use. */
 let xtermLoading = null;
@@ -117,31 +117,6 @@ function mountSessionTerminal(container, { sessionId, onEnd } = {}) {
   };
 }
 
-let terminalOverlay = null;
-
-function closeTerminalOverlay() {
-  if (!terminalOverlay) return;
-  terminalOverlay.mounted.dispose();
-  terminalOverlay = null;
-  const overlay = document.getElementById('term-overlay');
-  overlay.hidden = true;
-  overlay.querySelector('.term-title').textContent = '';
-  overlay.querySelector('.term-where').textContent = '';
-}
-
-function openTerminalOverlay(sessionId, label) {
-  closeTerminalOverlay();
-  const overlay = document.getElementById('term-overlay');
-  const session = (state.sessions || []).find(s => s.id === sessionId);
-  const t = session?.terminal;
-  overlay.querySelector('.term-title').textContent = label || sessionId;
-  overlay.querySelector('.term-where').textContent = t ? `tmux ${t.session || ''}:${t.window || ''}` : '';
-  overlay.hidden = false;
-  const host = overlay.querySelector('.term-host');
-  terminalOverlay = { sessionId, mounted: mountSessionTerminal(host, { sessionId }) };
-}
-document.getElementById('term-close').addEventListener('click', closeTerminalOverlay);
-
 /* A terminal is offered only where it can open: the resident server has tmux, and the session
    is alive in a tmux window. Where it cannot, there is no button at all. */
 const boardTerminalReady = s =>
@@ -157,5 +132,5 @@ const readySessionOfTask = task => {
 function openTaskTerminal(taskId) {
   const task = (state.tasks || []).find(t => t.id === taskId);
   const s = readySessionOfTask(task);
-  if (s) openTerminalOverlay(s.id, task.title || task.id);
+  if (s) openSessionsView(s.id, { from: { view, taskId } });
 }

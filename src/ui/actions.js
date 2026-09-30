@@ -135,8 +135,7 @@ function renderHubRows() {
 document.getElementById('hub-rows').addEventListener('click', e => {
   const term = e.target.closest('button[data-hub-term]');
   if (term) {
-    const h = (state.hubs || []).find(x => x.id === term.dataset.hubTerm);
-    return openTerminalOverlay(term.dataset.hubTerm, h ? hubLabel(h) : term.dataset.hubTerm);
+    return openSessionsView(term.dataset.hubTerm, { from: { view } });
   }
   const button = e.target.closest('button[data-hub-act]');
   if (!button) return;

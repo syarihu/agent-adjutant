@@ -29,10 +29,12 @@ document.addEventListener('keydown', e => {
 });
 
 function setView(v) {
+  const prev = view;
   view = v;
   const boardView = document.getElementById('board-view');
   const reviewView = document.getElementById('review');
   const taskView = document.getElementById('task-view');
+  const sessionsView = document.getElementById('sessions-view');
 
   if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
   if (reviewView) {
@@ -44,11 +46,20 @@ function setView(v) {
     taskView.style.display = v === 'task' ? 'grid' : 'none';
   }
 
+  if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
+  document.body.classList.toggle('view-sessions', v === 'sessions');
+  if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
+
   // Navigation rail active states
   const navReview = document.getElementById('nav-review');
   if (navReview) {
     if (v === 'review') navReview.setAttribute('aria-current', 'page');
     else navReview.removeAttribute('aria-current');
+  }
+  const navSessions = document.getElementById('nav-sessions');
+  if (navSessions) {
+    if (v === 'sessions') navSessions.setAttribute('aria-current', 'page');
+    else navSessions.removeAttribute('aria-current');
   }
   applyLayout();
 
@@ -65,6 +76,9 @@ function setView(v) {
     } else if (v === 'task') {
       pageTitle.textContent = 'タスク詳細';
       pageSub.textContent = '個別タスクの全工程記録と実行タイムライン';
+    } else if (v === 'sessions') {
+      pageTitle.textContent = 'セッション';
+      pageSub.textContent = 'hub と worker の端末をここで開く';
     }
   }
 
@@ -76,10 +90,15 @@ function setView(v) {
     taskViewShown = null;
     renderDrawer();
     renderTaskView();
+  } else if (v === 'sessions') {
+    // The card that was open comes back through the link, not by staying selected.
+    closeDrawer();
+    renderSessionsRail();
+    renderSessionsView();
   } else if (v !== 'board') {
     closeDrawer();
   } else {
-    if (/^#(task|gate)\//.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+    if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     if (!(state.gates || []).some(g => g.id === focused)) focused = null;
     render();
   }
@@ -121,10 +140,16 @@ const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);
 // and leave a page that never loads: such a link opens the board instead.
 let deepTaskId = null;
 try { deepTaskId = deepTask && decodeURIComponent(deepTask[1]); } catch { deepTaskId = null; }
+// #session/<id> (or #sessions) on the セッション view. Whether a terminal exists is known only
+// once the first poll is in, so the board is shown meanwhile.
+const deepSession = location.hash.match(/^#sessions?(?:\/(.+))?$/);
+let deepSessionId = null;
+try { deepSessionId = deepSession && deepSession[1] ? decodeURIComponent(deepSession[1]) : null; } catch { deepSessionId = null; }
+if (deepSession) sessView.pending = { id: deepSessionId };
 if (deep) { focused = deep[1]; setView('review'); }
 else if (deepTaskId) openTask(deepTaskId, TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
 else { setView('board'); }
-refresh();
+refresh().then(openPendingSession);
 updateNotifyButton();
 // The server holds no clock, so the page carries one: it asks, nothing pushes.
 setInterval(refresh, 2000);

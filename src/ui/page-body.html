@@ -41,10 +41,16 @@
     </div>
 
     <div class="rail-divider"></div>
-    <button class="rail-item" id="nav-review" onclick="goToQueue()">
+    <button class="rail-item" id="nav-review" title="要対応レビュー" onclick="goToQueue()">
       <span class="material-symbols-outlined">mark_chat_unread</span>
       <span>要対応レビュー</span>
       <span class="rail-badge" id="gate-count">0</span>
+    </button>
+    <button type="button" class="rail-item" id="nav-sessions" title="セッション" hidden onclick="openSessionsView()">
+      <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+      <span>セッション</span>
+      <span class="rail-count zero" id="sessions-count" title="動いているセッション">0</span>
+      <span class="rail-dot" id="sessions-dot" title="止まった hub / worker があります" hidden></span>
     </button>
   </div>
 
@@ -136,6 +142,43 @@
     </div>
     <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
+    <div id="sessions-view">
+      <aside class="sess-rail" aria-label="セッションの一覧">
+        <div class="sess-rail-head">
+          <button type="button" class="tool-btn" id="sess-collapse" data-sess-collapse aria-expanded="true"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span></button>
+          <div class="sess-filters">
+            <button type="button" class="m3-filter-chip" data-sess-filter="all">すべて</button>
+            <button type="button" class="m3-filter-chip" data-sess-filter="attention">要対応</button>
+            <button type="button" class="m3-filter-chip" data-sess-filter="running">稼働中</button>
+          </div>
+        </div>
+        <div class="sess-scroll">
+          <div class="sess-tree" id="sess-tree"></div>
+          <details class="sess-orphans" id="sess-orphans" hidden>
+            <summary><span class="material-symbols-outlined" aria-hidden="true">folder_off</span><span class="sess-orphans-text">セッションのない worktree（<span id="sess-orphans-count">0</span>）</span></summary>
+            <div id="sess-orphans-list"></div>
+          </details>
+        </div>
+      </aside>
+      <section class="sess-main">
+        <div class="sess-context" id="sess-context" hidden>
+          <button type="button" class="btn-m3-tonal sess-back" id="sess-back" hidden></button>
+          <span class="sess-key" id="sess-key"></span>
+          <span class="sess-title" id="sess-title"></span>
+          <span class="m3-pill" id="sess-state"></span>
+          <span class="sess-meta" id="sess-hub"></span>
+          <span class="sess-meta" id="sess-last"></span>
+          <button type="button" class="btn-m3-tonal sess-reconnect" id="sess-reconnect" hidden>再接続</button>
+        </div>
+        <div class="sess-term-host" id="sess-term-host" hidden></div>
+        <div class="sess-placeholder" id="sess-placeholder"></div>
+        <div class="sess-strip">
+          <span id="sess-strip-where"></span>
+          <span id="sess-strip-attach"></span>
+          <span class="sess-strip-note">切り替えても離れてもセッションは止まりません（切り離すだけです）</span>
+        </div>
+      </section>
+    </div>
   </main>
 
   <footer id="m3-bottom-sheet">
@@ -155,18 +198,6 @@
       <ol id="log" style="list-style:none;display:flex;flex-direction:column;gap:4px;"></ol>
     </div>
   </footer>
-</div>
-
-<div id="term-overlay" class="adj-terminal-overlay" role="region" aria-label="セッションの端末" hidden>
-  <div class="term-panel">
-    <div class="term-head">
-      <span class="term-title"></span>
-      <span class="term-where"></span>
-      <span class="term-note">閉じてもセッションは止まりません（切り離すだけです）</span>
-      <button type="button" class="btn-m3-tonal" id="term-close" style="padding:4px 12px;font-size:12px;">閉じる</button>
-    </div>
-    <div class="term-host"></div>
-  </div>
 </div>
 
 <dialog id="form">

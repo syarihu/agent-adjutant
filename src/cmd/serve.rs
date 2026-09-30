@@ -40,6 +40,7 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/task-view.css"),
     include_str!("../ui/console-and-dialog.css"),
     include_str!("../ui/terminal.css"),
+    include_str!("../ui/sessions.css"),
     include_str!("../ui/page-body.html"),
     include_str!("../ui/core.js"),
     include_str!("../ui/terminal.js"),
@@ -47,6 +48,7 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/actions.js"),
     include_str!("../ui/review.js"),
     include_str!("../ui/task-view.js"),
+    include_str!("../ui/sessions.js"),
     include_str!("../ui/main.js"),
     include_str!("../ui/page-end.html"),
 );
@@ -2392,6 +2394,30 @@ mod tests {
         assert!(at("</style>") < at("<body>"));
         assert!(at("<script>") < at("</script>"));
         assert!(at("</script>") < at("</body>"));
+    }
+
+    #[test]
+    fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
+        for piece in [
+            "id=\"sessions-view\"",
+            "id=\"nav-sessions\"",
+            "#session/",
+            "function boardOfSession",
+            "mountSessionTerminal(",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        for gone in [
+            "term-overlay",
+            "openTerminalOverlay",
+            "closeTerminalOverlay",
+        ] {
+            assert!(!UI_HTML.contains(gone), "{gone}");
+        }
+        // The script uses what `terminal.js` and `actions.js` define, and `main.js` calls it.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("function mountSessionTerminal") < at("function sessionState"));
+        assert!(at("function sessionState") < at("openPendingSession)"));
     }
 
     fn request(method: &str, path: &str, headers: &[(&str, &str)]) -> Request {
