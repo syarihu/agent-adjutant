@@ -148,6 +148,9 @@ function startRepoHub() {
 
 /* ── A parent task's hub, by key ── */
 let hubKeyBusy = false;
+// A started hub claims itself a few seconds after its tab opens; until then the server would
+// open a second tab for the same key.
+const hubKeyStartedAt = {};
 
 function openHubKeyDialog() {
   dialogOpening.hubkey++;
@@ -162,6 +165,9 @@ async function submitHubKey(e) {
   if (hubKeyBusy) return;
   const key = sessEl('hubkey-key').value.trim();
   if (!key) return showDlgError('hubkey-error', 'キーを入力してください');
+  if (hubKeyStartedAt[key] != null && Date.now() - hubKeyStartedAt[key] < HUB_STARTING_MS) {
+    return showDlgError('hubkey-error', `親タスク ${key} の hub を起動しています`);
+  }
   const opening = dialogOpening.hubkey;
   hubKeyBusy = true;
   sessEl('hubkey-submit').disabled = true;
@@ -171,6 +177,7 @@ async function submitHubKey(e) {
     const data = await api('/api/hubs', { method: 'POST', body: JSON.stringify({ key }) });
     const text = data.alreadyRunning ? `親タスク ${key} の hub はすでに動いています` : `親タスク ${key} の hub を tmux で起動しました`;
     note(line, false, text);
+    if (!data.alreadyRunning) hubKeyStartedAt[key] = Date.now();
     if (opening === dialogOpening.hubkey) closeDialogById('hubkey-dialog');
     showSessNotice(text);
     await refresh(true);

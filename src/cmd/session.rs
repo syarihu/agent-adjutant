@@ -138,6 +138,10 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
     let settings = settings_now(server);
     // Optional: the worker greets the person and waits when there is none.
     let instruction = text(&input, "instruction")?.unwrap_or("");
+    // The brief writes a missing instruction as `-`, so the hub could not tell this one apart.
+    if instruction.trim() == "-" {
+        return Err("an instruction of only `-` means no instruction; leave it empty".to_string());
+    }
     let configured = runner::agent_from_runner(
         settings
             .agent_runner

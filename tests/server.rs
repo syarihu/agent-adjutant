@@ -1262,6 +1262,7 @@ fn a_session_request_with_a_bad_name_another_agent_or_a_non_text_instruction_is_
             "branch",
         ),
         (serde_json::json!({"instruction": 5}), "instruction"),
+        (serde_json::json!({"instruction": " - "}), "no instruction"),
         (
             serde_json::json!({"instruction": "x", "agent": ["claude"]}),
             "agent",
