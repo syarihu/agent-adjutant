@@ -35,6 +35,8 @@ function historyOf(task, base = BASE, data = state) {
   const key = `${task.gateAnsweredAt || ''}|${openGate(task, data)?.id || ''}|${task.status}`;
   const hk = historyKey(task, base);
   let entry = histories[hk];
+  // After a failure the entry waits out `retryAt`: every poll redraws, and each would ask again.
+  if (entry && entry.key !== key && entry.retryAt > Date.now() && entry.failedKey === key) return entry;
   if (!entry || entry.key !== key) {
     entry = histories[hk] = { key, answered: entry?.answered || [], records: entry?.records || [], loaded: !!entry?.loaded };
     const mine = entry;
@@ -47,7 +49,11 @@ function historyOf(task, base = BASE, data = state) {
       redrawHistoryOf(task.id);
     }).catch(e => {
       // Asked for again on the next redraw, keeping what was read before on screen meanwhile.
-      if (histories[hk] === mine) mine.key = null;
+      if (histories[hk] === mine) {
+        mine.key = null;
+        mine.failedKey = key;
+        mine.retryAt = Date.now() + 30000;
+      }
       // Said once per run of failures, so the retries below do not push the log of what was
       // done off the footer.
       if (!historyFailed.has(hk)) note(`経過を取得できませんでした: ${e.message}`, true);

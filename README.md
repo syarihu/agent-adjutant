@@ -677,8 +677,9 @@ For a worker with a task it shows the task (key and issue link, parent, where th
 the two boards), the latest five entries of what was asked and answered with a link to the
 full history, the phase timeline with times, the done-when and stop-at settings, the PR link
 and its state from the record, the branch, base and worktree with its git state, the children
-of the same parent (a queued child can be started through its hub, which is started first when
-it is stopped), the note, and the cached issue body cut to six lines with its refetch. For a
+of the same parent (a backlog child is handed over from the sidebar, starting its hub first
+when it is stopped; for a queued child the sidebar can start its hub, or ask a running hub to
+take the head of the queue), the note, and the cached issue body cut to six lines with its refetch. For a
 hub it shows the inbox, the workers it started, a parent-task hub's children and the command it
 runs; for a session with no task or a worktree with no session, what it is and its git state.
 The task, gates and history of a session under a parent-task hub are read from that hub's own

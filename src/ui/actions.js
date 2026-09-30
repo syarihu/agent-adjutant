@@ -260,9 +260,23 @@ function closeHandoverDialog() {
   handoverTarget = null;
 }
 
+let handoverBusy = false;
 async function submitHandover(e) {
   if (e) e.preventDefault();
-  if (!handoverTargetTaskId) return;
+  // A second press while the hub is still starting would hand the task over twice.
+  if (!handoverTargetTaskId || handoverBusy) return;
+  handoverBusy = true;
+  const submit = document.getElementById('handover-submit-btn');
+  if (submit) submit.disabled = true;
+  try {
+    await submitHandoverNow();
+  } finally {
+    handoverBusy = false;
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function submitHandoverNow() {
   const textarea = document.getElementById('handover-instruction');
   const instruction = textarea ? textarea.value.trim() : '';
   const id = handoverTargetTaskId;
@@ -274,8 +288,8 @@ async function submitHandover(e) {
   if (target?.startHub) {
     const line = `adj hub --tab --hub=${target.hubId}`;
     try {
-      await api(`/api/hubs/${encodeURIComponent(target.hubId)}/start`, { method:'POST', body:'{}' });
-      note(line, false, 'hub を tmux で起動しました');
+      const started = await api(`/api/hubs/${encodeURIComponent(target.hubId)}/start`, { method:'POST', body:'{}' });
+      note(line, false, started.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました');
     } catch (err) {
       note(`${line} → ${err.message}`, true);
       const hubNote = document.getElementById('handover-hub-note');

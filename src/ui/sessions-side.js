@@ -128,7 +128,7 @@ function gitFactsHtml(s) {
     const items = [
       u.files > 0 ? `未コミット ${u.files} ファイル（+${u.insertions} -${u.deletions}）` : '未コミットの変更なし',
       u.untracked > 0 ? `追跡外 ${u.untracked} 件` : null,
-      up.count > 0 ? `push していない ${up.count} 件${up.against ? `（${up.against} と比べて）` : ''}` : 'push していないコミットなし',
+      up.count > 0 ? `push していない ${up.count} 件${up.against === 'remotes' ? '（どのリモートにもない）' : up.against === 'upstream' ? '（upstream と比べて）' : ''}` : 'push していないコミットなし',
       m.merged === true ? `${m.ref || m.base} にマージ済み`
         : m.merged === false ? `${m.ref || m.base || 'ベース'} に未マージ`
           : `マージ済みかは判定できません${m.reason ? `（${m.reason}）` : ''}`,
@@ -380,6 +380,9 @@ function renderSessionSidebar() {
     } else {
       html = sideBareHtml(s, st, b, !!s.task);
     }
+    // The last answer is kept on screen when a reload fails; it says so, rather than passing
+    // for current.
+    if (b.data && b.error && !b.own) html = `<div class="sess-side-err" role="alert">${esc(`更新できませんでした: ${b.error}`)}</div>` + html;
   }
   const sig = JSON.stringify([id, html]);
   if (sig === sessView.sideSig) return;
