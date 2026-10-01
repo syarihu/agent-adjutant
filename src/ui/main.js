@@ -184,7 +184,10 @@ async function boot() {
   if (deepTaskId) {
     // The task's own view on the board the address names; the hash stays as it is.
     nav.view = 'human';
+    const epoch = navEpoch;
     refresh(true).then(() => {
+      // The person may have gone to another board while the first state was on its way.
+      if (epoch !== navEpoch) return;
       openTask(deepTaskId, TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
     });
   } else {

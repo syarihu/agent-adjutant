@@ -97,10 +97,13 @@ const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読�
 function gatesOf(task, data = state, base = baseOf(task)) {
   const h = historyOf(task, base, data);
   const byId = new Map();
+  // What the history holds belongs to the task's board; in a merged state it says so, as the
+  // open gates do, or a gate picked from it could be taken for another board's.
+  const own = g => g && task._slug ? { ...g, _slug: task._slug, _base: task._base } : g;
   const add = g => g && byId.set(g.id, g);
-  h.answered.forEach(add);
-  add(task.approvedPlan);
-  (task.records || h.records).forEach(r => add(task.records ? withDiff(r, task, base, data) : r));
+  h.answered.forEach(g => add(own(g)));
+  add(own(task.approvedPlan));
+  (task.records || h.records).forEach(r => add(own(task.records ? withDiff(r, task, base, data) : r)));
   (data.gates || []).filter(g => g.task === task.id && (!task._slug || g._slug === task._slug)).forEach(add);
   // Same-second ties go by the sequence at the end of the id, as `recordsOf` orders them, so
   // the latest of a kind is the one claimed last.

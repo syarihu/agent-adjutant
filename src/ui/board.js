@@ -137,13 +137,14 @@ function seenRecords() {
   catch { seenCache = new Set(); }
   return seenCache;
 }
-const isUnread = r => !seenRecords().has(r.id);
+// Keyed like the review queue names a record, so records of several boards do not share a mark.
+const isUnread = r => !seenRecords().has(gateRef(r));
 function markSeen(id) {
   seenCache = null;
   const seen = seenRecords();
   if (seen.has(id)) return;
   seen.add(id);
-  const live = new Set(allRecords().map(r => r.id));
+  const live = new Set(allRecords().map(gateRef));
   try { localStorage.setItem(SEEN_KEY(), JSON.stringify([...seen].filter(x => live.has(x)))); }
   catch {}
 }
@@ -185,7 +186,7 @@ function chipsOf(task) {
   const chips = [];
   for (const r of Object.values(latest)) {
     const [text, tone] = recordSummary(r);
-    chips.push({ id: r.id, text: text + ((r.answers || []).length ? ' ↩' : ''), tone, unread: isUnread(r) });
+    chips.push({ id: r.id, text: text + ((r.answers || []).length ? ' ↩' : ''), tone, unread: isUnread(task._slug && !r._slug ? { ...r, _slug: task._slug } : r) });
     if (r.kind === 'verify' && (r.manual || []).length) {
       chips.push({ id: r.id, text: `手で見る ${r.manual.length}件`, tone: '', unread: false });
     }

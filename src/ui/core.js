@@ -281,6 +281,8 @@ function parseUrl(loc = location) {
   const v = q.get('view');
   if (v === 'agent' || v === 'sessions') out.view = v;
   if (out.board === 'all' && out.view === 'sessions') out.view = 'human';
+  // The side sheet opens on a board of its own; 「すべて」 switches to the card's board first.
+  if (out.board === 'all') out.task = null;
   return out;
 }
 

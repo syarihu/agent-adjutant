@@ -431,7 +431,7 @@ function renderReview() {
   }
   focused = gateRef(g);
   const record = g.wait === false;
-  if (record && view === 'review') markSeen(g.id);
+  if (record && view === 'review') markSeen(gateRef(g));
   // A permalink, so "反映しといたから見てね" can point at this one card.
   if (view === 'review' && nav.item !== gateRef(g)) setNav({ item: gateRef(g) });
 
@@ -740,7 +740,7 @@ function checkPanels(g) {
     h += `<div class="panel">
       <h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>人が見る確認項目</span></h3>
       <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map((m, i) =>
-        `<li><label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" data-manual-gate="${esc(g.id)}" data-manual-index="${i}"${manualChecked(g.id).has(i) ? ' checked' : ''} style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></label></li>`).join('')}</ul></div>`;
+        `<li><label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" data-manual-gate="${esc(gateRef(g))}" data-manual-index="${i}"${manualChecked(gateRef(g)).has(i) ? ' checked' : ''} style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></label></li>`).join('')}</ul></div>`;
   }
   return h;
 }
