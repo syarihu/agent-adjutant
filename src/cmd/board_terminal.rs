@@ -243,7 +243,6 @@ mod imp {
                 socket,
                 &name,
                 version >= (3, 3),
-                version >= (3, 4),
             ))
             .env("TERM", "xterm-256color")
             .env_remove("TMUX")
