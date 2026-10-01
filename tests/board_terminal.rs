@@ -403,7 +403,10 @@ fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
         !calls.iter().any(|c| c.contains("spy-other")),
         "another worktree was asked about: {calls:?}"
     );
-    assert_eq!(asked("branch --show-current"), 1, "{calls:?}");
+    // The branch comes out of the worktree listing, not from a `git branch` of its own, and
+    // the listing is read once for the session, besides the one that locates the repository.
+    assert_eq!(asked("branch --show-current"), 0, "{calls:?}");
+    assert_eq!(asked("worktree list"), 2, "{calls:?}");
     let ps: Vec<&String> = calls.iter().filter(|c| c.starts_with("ps ")).collect();
     assert!(!ps.is_empty(), "{calls:?}");
     assert!(

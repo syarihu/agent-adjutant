@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use crate::gate;
 use crate::http::{self, Request};
 use crate::messaging;
+use crate::repo::Worktree;
 use crate::runner;
 use crate::session;
 use crate::task;
@@ -1396,7 +1397,6 @@ fn state(server: &Server) -> Value {
     // by a timer, since nothing in the server polls on one.
     let _ = super::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
-    let hub = messaging::hub_status(&repo.slug, &repo.hub_name);
     let tasks = with_records(
         task::list(&super::task::dir(&server.ctx)),
         gate::list(&super::gate::records_dir(&server.ctx)),
@@ -1421,20 +1421,44 @@ fn state(server: &Server) -> Value {
         .filter_map(|t| t["jules"]["session"].as_str().map(str::to_string))
         .collect();
     server.jules.keep_only(&shown);
-    // Counted as `adj work` counts, main checkout included, though it is not listed below.
-    let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
+    // One `git worktree list` and one `ps` serve every question below, so what a poll costs
+    // does not grow with the number of worktrees. The `ps` is only run if a record names a pid.
+    let processes = messaging::ProcessTable::snapshot();
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
-    let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
-    let mut workers_data = Vec::with_capacity(linked_paths.len());
-    let mut workers: Vec<Value> = Vec::with_capacity(linked_paths.len());
-    for path in &linked_paths {
-        let status = messaging::worker_status(Path::new(path));
+    let listed = crate::repo::worktrees(&repo.main).unwrap_or_default();
+    let (main_branch, linked) = split_main(&repo.main, listed);
+    let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
+    // Counted as `adj work` counts, main checkout included, though it is not listed below.
+    let mut busy = usize::from(messaging::holds_worker_slot_with(
+        &processes,
+        Path::new(&repo.main),
+        now,
+    ));
+    let hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    // The repository's own hub is one of `hubs`; asked separately only if it is not there.
+    let hub = hubs
+        .iter()
+        .find(|h| h.slug == repo.slug)
+        .map(|h| h.state.clone())
+        .unwrap_or_else(|| {
+            let status = messaging::hub_status_with(&processes, &repo.slug, &repo.hub_name);
+            session::RepoHubState {
+                present: status.present,
+                stale: status.stale,
+                pid: status.pid,
+                started_at: status.started_at,
+            }
+        });
+    let mut workers_data = Vec::with_capacity(linked.len());
+    let mut workers: Vec<Value> = Vec::with_capacity(linked.len());
+    for Worktree { path, branch } in &linked {
+        let status = messaging::worker_status_with(&processes, Path::new(path));
         // A present worker holds a slot without asking `ps` again; the rest are asked
         // the way `adj work` asks, so the header and the refusal cannot disagree.
-        if status.present || messaging::holds_worker_slot(Path::new(path), now) {
+        if status.present || messaging::holds_worker_slot_with(&processes, Path::new(path), now) {
             busy += 1;
         }
-        let branch = branch_of(path);
+        let branch = branch.clone();
         let name = Path::new(path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string());
@@ -1455,11 +1479,18 @@ fn state(server: &Server) -> Value {
         workers_data.push((status, branch));
     }
 
-    let hubs = messaging::all_repo_hubs(repo);
-
-    let sessions = sessions_of(server, &settings, &hubs, &linked_paths, None, |index, _| {
-        workers_data[index].clone()
-    });
+    let sessions = sessions_of(
+        server,
+        &settings,
+        &hubs,
+        &linked_paths,
+        Listing {
+            processes: &processes,
+            main_branch,
+        },
+        None,
+        |index, _| workers_data[index].clone(),
+    );
 
     let pending: Vec<Value> = messaging::list(&repo.slug)
         .iter()
@@ -1708,6 +1739,13 @@ fn waiting_hub(hub: &session::RepoHub, gates: &[gate::Gate]) -> Option<session::
     session_waiting(hub, &open)
 }
 
+/// What one poll has already asked of the system, so `sessions_of` does not ask again: the
+/// process table, and the branch the main checkout's listing entry names.
+struct Listing<'a> {
+    processes: &'a messaging::ProcessTable,
+    main_branch: Option<String>,
+}
+
 /// The sessions this board lists, hubs first and then the workers of `linked_paths`, as the
 /// page reads them and as a board terminal resolves an id. `worker_data` is asked for a
 /// worker's status and branch by its place in `linked_paths`.
@@ -1719,6 +1757,7 @@ fn sessions_of(
     settings: &crate::config::Settings,
     hubs: &[session::RepoHub],
     linked_paths: &[String],
+    listing: Listing<'_>,
     only: Option<&str>,
     mut worker_data: impl FnMut(usize, &str) -> (messaging::WorkerStatus, Option<String>),
 ) -> Vec<session::Session> {
@@ -1757,12 +1796,11 @@ fn sessions_of(
             .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
     );
 
-    let main_branch_cell = std::cell::OnceCell::new();
-    let main_branch = || {
-        main_branch_cell
-            .get_or_init(|| branch_of(&repo.main))
-            .clone()
-    };
+    let Listing {
+        processes,
+        main_branch,
+    } = listing;
+    let main_branch = || main_branch.clone();
     let mut sessions: Vec<session::Session> = Vec::new();
 
     // 1. Hub sessions from hubs
@@ -1871,7 +1909,7 @@ fn sessions_of(
         return sessions;
     }
     if let Some(record_json) = messaging::read_json(&main_record_path) {
-        let status = messaging::worker_status(Path::new(&repo.main));
+        let status = messaging::worker_status_with(processes, Path::new(&repo.main));
         let parent_hub = parent_hub_id(
             repo,
             hubs,
@@ -1966,23 +2004,51 @@ pub(super) fn board_session(
     id: &str,
 ) -> Option<session::Session> {
     let repo = &server.ctx.repo;
-    let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
-    let hubs = messaging::all_repo_hubs_among(repo, &linked_paths);
+    let listed = crate::repo::worktrees(&repo.main).unwrap_or_default();
+    let (main_branch, linked) = split_main(&repo.main, listed);
+    let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
+    // A `ps` for each of the few it is asked about, not the whole process table.
+    let processes = messaging::ProcessTable::each();
+    let hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
     sessions_of(
         server,
         settings,
         &hubs,
         &linked_paths,
+        Listing {
+            processes: &processes,
+            main_branch,
+        },
         Some(id),
-        worker_looked_at,
+        |index, path| {
+            (
+                messaging::worker_status_with(&processes, Path::new(path)),
+                linked[index].branch.clone(),
+            )
+        },
     )
     .into_iter()
     .next()
 }
 
-/// A worker's status and branch, asked of the worktree itself.
-fn worker_looked_at(_index: usize, path: &str) -> (messaging::WorkerStatus, Option<String>) {
-    (messaging::worker_status(Path::new(path)), branch_of(path))
+/// The main checkout's branch and the linked worktrees, out of one listing. The branch is
+/// asked of git when the listing does not name the main checkout at all.
+fn split_main(main: &str, listed: Vec<Worktree>) -> (Option<String>, Vec<Worktree>) {
+    let mut main_branch = None;
+    let mut found_main = false;
+    let mut linked = Vec::with_capacity(listed.len());
+    for worktree in listed {
+        if Path::new(&worktree.path) == Path::new(main) {
+            found_main = true;
+            main_branch = worktree.branch;
+        } else {
+            linked.push(worktree);
+        }
+    }
+    if !found_main {
+        main_branch = branch_of(main);
+    }
+    (main_branch, linked)
 }
 
 /// The tasks as the board reads them, each live one with what its worker recorded without

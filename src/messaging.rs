@@ -14,6 +14,7 @@
 //! so `present: false` is information for the sender, not an error.
 
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -455,6 +456,84 @@ pub fn ps_started(pid: u32) -> Option<String> {
     ps_field(pid, "lstart").filter(|s| !s.is_empty())
 }
 
+/// Where a check for "when did this pid start" gets its answer: one `ps` per pid, or one `ps`
+/// for the whole process table, asked the first time it is needed and kept after.
+///
+/// The table is for a caller that checks many records in one go, such as the board's poll,
+/// where one `ps` per worker made the cost grow with the number of worktrees.
+pub struct ProcessTable {
+    all: bool,
+    snapshot: std::cell::OnceCell<Option<HashMap<u32, String>>>,
+}
+
+impl ProcessTable {
+    /// Asks `ps` about each pid on its own.
+    pub fn each() -> Self {
+        ProcessTable {
+            all: false,
+            snapshot: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Asks `ps` once, and only when a pid is first looked up.
+    pub fn snapshot() -> Self {
+        ProcessTable {
+            all: true,
+            snapshot: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn lstart(&self, pid: u32) -> Answer {
+        if !self.all {
+            return ps_answer(pid, "lstart");
+        }
+        match self.snapshot.get_or_init(process_starts) {
+            // `ps` could not be run: the answer the single call gives for every pid.
+            None => Answer::CannotTell,
+            Some(starts) => match starts.get(&pid) {
+                Some(started) => Answer::Said(started.clone()),
+                None => Answer::NoSuchProcess,
+            },
+        }
+    }
+
+    fn started(&self, pid: u32) -> Option<String> {
+        match self.lstart(pid) {
+            Answer::Said(value) => Some(value).filter(|s| !s.is_empty()),
+            _ => None,
+        }
+    }
+}
+
+/// Every process's start time, from one `ps`. `None` when `ps` cannot be run or fails, which
+/// the single-pid call reads as "cannot tell" as well.
+fn process_starts() -> Option<HashMap<u32, String>> {
+    let out = Command::new("ps")
+        .args(["-A", "-o", "pid=,lstart="])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| parse_process_starts(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The pid and start time of each line of `ps -A -o pid=,lstart=`.
+///
+/// The start time is the rest of the line, trimmed: it holds spaces of its own, and a
+/// localized day name can be multi-byte. Trimmed because that is what the single-pid call's
+/// answer is, and the two are compared to the same recorded string.
+fn parse_process_starts(output: &str) -> HashMap<u32, String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            let pid = line[..digits].parse().ok()?;
+            Some((pid, line[digits..].trim().to_string()))
+        })
+        .collect()
+}
+
 /// Whether this process is `pid` or runs somewhere below it: how a command run by an agent
 /// tells that it was run by that agent, whatever shells sit between them.
 pub fn is_self_or_descendant_of(pid: u32) -> bool {
@@ -487,8 +566,17 @@ fn parent_of(pid: u32) -> Option<u32> {
 /// somewhere `exec` discards (`env NAME={name} agent …`) produced a live hub that read as
 /// absent forever, and the check bought nothing the start time had not already ruled out.
 fn process_matches(pid: u32, expect_in_command: Option<&str>, started: Option<&str>) -> bool {
+    process_matches_with(&ProcessTable::each(), pid, expect_in_command, started)
+}
+
+fn process_matches_with(
+    table: &ProcessTable,
+    pid: u32,
+    expect_in_command: Option<&str>,
+    started: Option<&str>,
+) -> bool {
     match started {
-        Some(started) => ps_started(pid).as_deref() == Some(started),
+        Some(started) => table.started(pid).as_deref() == Some(started),
         None => match expect_in_command {
             Some(name) => ps_field(pid, "command").is_some_and(|c| c.contains(name)),
             None => ps_field(pid, "command").is_some(),
@@ -497,6 +585,11 @@ fn process_matches(pid: u32, expect_in_command: Option<&str>, started: Option<&s
 }
 
 pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
+    hub_status_with(&ProcessTable::each(), slug, hub_name)
+}
+
+/// `hub_status`, asking `table` when the hub's process started.
+pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubStatus {
     let mut status = HubStatus {
         slug: slug.to_string(),
         hub_name: hub_name.to_string(),
@@ -537,7 +630,7 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
         .unwrap_or(hub_name);
     let expect = named.then_some(recorded_name);
     match status.pid {
-        Some(pid) if process_matches(pid, expect, ps_started) => status.present = true,
+        Some(pid) if process_matches_with(table, pid, expect, ps_started) => status.present = true,
         _ => status.stale = true,
     }
     status
@@ -581,6 +674,15 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
 /// `all_repo_hubs` for a caller that has already listed the linked worktrees of `repo`, so that
 /// git is not asked for them a second time.
 pub fn all_repo_hubs_among(
+    repo: &crate::repo::RepoInfo,
+    worktrees: &[String],
+) -> Vec<crate::session::RepoHub> {
+    all_repo_hubs_among_with(&ProcessTable::each(), repo, worktrees)
+}
+
+/// `all_repo_hubs_among`, asking `table` when each hub's process started.
+pub fn all_repo_hubs_among_with(
+    table: &ProcessTable,
     repo: &crate::repo::RepoInfo,
     worktrees: &[String],
 ) -> Vec<crate::session::RepoHub> {
@@ -700,7 +802,7 @@ pub fn all_repo_hubs_among(
                     .and_then(|session| session.hub)
                     .or_else(|| crate::repo::hub_key_from_slug(&repo.nwo, &slug));
             }
-            let status = hub_status(&slug, &hub_name);
+            let status = hub_status_with(table, &slug, &hub_name);
             let entries = list(&slug);
             let inbox_count = entries.len();
             // `list` is oldest first, so the newest are at the end.
@@ -1198,8 +1300,13 @@ pub fn unmark_worker_starting(worktree: &Path) -> Result<(), String> {
 /// only delays a dispatch, and not for long — a pid that is no longer running is `Gone`
 /// whatever else the record lacks.
 pub fn holds_worker_slot(worktree: &Path, now: i64) -> bool {
+    holds_worker_slot_with(&ProcessTable::each(), worktree, now)
+}
+
+/// `holds_worker_slot`, asking `table` when the worker's process started.
+pub fn holds_worker_slot_with(table: &ProcessTable, worktree: &Path, now: i64) -> bool {
     let registered = match read_worker(worktree) {
-        WorkerRecord::Named(worker) => worker_liveness(&worker) != Liveness::Gone,
+        WorkerRecord::Named(worker) => worker_liveness_with(table, &worker) != Liveness::Gone,
         // Neither names a process that could be running.
         WorkerRecord::Absent | WorkerRecord::Unreadable => false,
     };
@@ -1349,6 +1456,11 @@ pub fn busy_worktrees(worktrees: &[String], except: Option<&Path>) -> Vec<String
 }
 
 pub fn worker_status(worktree: &Path) -> WorkerStatus {
+    worker_status_with(&ProcessTable::each(), worktree)
+}
+
+/// `worker_status`, asking `table` when the worker's process started.
+pub fn worker_status_with(table: &ProcessTable, worktree: &Path) -> WorkerStatus {
     let mut status = WorkerStatus {
         worktree: worktree.to_string_lossy().to_string(),
         present: false,
@@ -1391,7 +1503,7 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
     // question narrows to whether that pid is there at all.
     let ps_started = recorded_anchor(&record);
     match status.pid {
-        Some(pid) if process_matches(pid, None, ps_started) => status.present = true,
+        Some(pid) if process_matches_with(table, pid, None, ps_started) => status.present = true,
         _ => status.stale = true,
     }
     status
@@ -1486,7 +1598,12 @@ pub fn read_worker(worktree: &Path) -> WorkerRecord {
 /// into "nobody there", which is the safe reading when being wrong costs a message that
 /// waits in a file until somebody reads it. Here it is the unsafe one.
 pub fn worker_liveness(worker: &WorkerIdentity) -> Liveness {
-    match ps_answer(worker.pid, "lstart") {
+    worker_liveness_with(&ProcessTable::each(), worker)
+}
+
+/// `worker_liveness`, asking `table` when the worker's process started.
+pub fn worker_liveness_with(table: &ProcessTable, worker: &WorkerIdentity) -> Liveness {
+    match table.lstart(worker.pid) {
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match &worker.started {
@@ -2390,6 +2507,35 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn process_starts_keep_the_whole_start_time_and_skip_what_is_not_a_process_line() {
+        let output = "    1 Mon Sep 30 10:43:37 2026\n\
+            12345 水  9/30 10:43:37 2026\n\
+             \n\
+            garbage line\n\
+            777\n";
+        let starts = parse_process_starts(output);
+        assert_eq!(
+            starts.get(&1).map(String::as_str),
+            Some("Mon Sep 30 10:43:37 2026")
+        );
+        assert_eq!(
+            starts.get(&12345).map(String::as_str),
+            Some("水  9/30 10:43:37 2026")
+        );
+        assert_eq!(starts.get(&777).map(String::as_str), Some(""));
+        assert_eq!(starts.len(), 3);
+        assert!(parse_process_starts("").is_empty());
+    }
+
+    #[test]
+    fn the_process_snapshot_agrees_with_asking_ps_about_one_pid() {
+        let pid = std::process::id();
+        let table = ProcessTable::snapshot();
+        assert_eq!(table.started(pid), ps_started(pid));
+        assert!(ProcessTable::each().started(pid).is_some());
     }
 
     #[test]

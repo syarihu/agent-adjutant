@@ -116,6 +116,25 @@ pub fn main_worktree(start: Option<&Path>) -> Result<String, String> {
 /// these is busy", and a list that failed to come back read as "none" would let a dispatch
 /// past `maxWorkers` whenever git hiccupped.
 pub fn linked_worktrees(main: &str) -> Result<Vec<String>, String> {
+    Ok(worktrees(main)?
+        .into_iter()
+        .filter(|w| Path::new(&w.path) != Path::new(main))
+        .map(|w| w.path)
+        .collect())
+}
+
+/// A worktree as `git worktree list` names it: where it is and what it has checked out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: String,
+    /// `None` for a detached HEAD, and for a bare entry.
+    pub branch: Option<String>,
+}
+
+/// Every worktree of `main`, the main checkout included, with the branch each has checked out.
+///
+/// An error when git cannot answer, for the reason `linked_worktrees` gives.
+pub fn worktrees(main: &str) -> Result<Vec<Worktree>, String> {
     let out = git(&["worktree", "list", "--porcelain"], Some(Path::new(main)))?;
     if !out.status.success() {
         return Err(format!(
@@ -123,12 +142,36 @@ pub fn linked_worktrees(main: &str) -> Result<Vec<String>, String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .filter(|path| Path::new(path) != Path::new(main))
-        .map(str::to_string)
-        .collect())
+    Ok(parse_worktrees(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The entries of `git worktree list --porcelain`: blocks of `key value` lines, each opening
+/// with `worktree <path>` and separated by a blank line.
+///
+/// Only `worktree` and `branch` are read. `locked` and `prunable` (with or without a reason),
+/// `bare`, `detached` and `HEAD` say nothing a caller of this needs, and a path is the rest
+/// of its line, so one with spaces is whole.
+pub fn parse_worktrees(porcelain: &str) -> Vec<Worktree> {
+    let mut found: Vec<Worktree> = Vec::new();
+    for line in porcelain.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            found.push(Worktree {
+                path: path.to_string(),
+                branch: None,
+            });
+        } else if let Some(branch) = line.strip_prefix("branch ")
+            && let Some(last) = found.last_mut()
+        {
+            last.branch = Some(
+                branch
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(branch)
+                    .to_string(),
+            )
+            .filter(|b| !b.is_empty());
+        }
+    }
+    found
 }
 
 /// `owner/name` from a remote URL.
@@ -1016,6 +1059,34 @@ mod tests {
             hub_key_from_slug("acme/widget", &slug_for("acme/other", Some("x"))),
             None
         );
+    }
+
+    #[test]
+    fn parse_worktrees_reads_path_and_branch_of_each_entry() {
+        let porcelain = "worktree /repo/main\nHEAD 1111\nbranch refs/heads/main\n\n\
+            worktree /repo/wt/with space\nHEAD 2222\nbranch refs/heads/feature/login-form\n\n\
+            worktree /repo/wt/detached\nHEAD 3333\ndetached\n\n\
+            worktree /repo/wt/locked\nHEAD 4444\nbranch refs/heads/locked-one\nlocked in use\n\n\
+            worktree /repo/wt/gone\nHEAD 5555\ndetached\nprunable gitdir file points to non-existent location\n\n\
+            worktree /repo/bare\nbare\n";
+        let found: Vec<(String, Option<String>)> = parse_worktrees(porcelain)
+            .into_iter()
+            .map(|w| (w.path, w.branch))
+            .collect();
+        let want =
+            |path: &str, branch: Option<&str>| (path.to_string(), branch.map(str::to_string));
+        assert_eq!(
+            found,
+            [
+                want("/repo/main", Some("main")),
+                want("/repo/wt/with space", Some("feature/login-form")),
+                want("/repo/wt/detached", None),
+                want("/repo/wt/locked", Some("locked-one")),
+                want("/repo/wt/gone", None),
+                want("/repo/bare", None),
+            ]
+        );
+        assert!(parse_worktrees("").is_empty());
     }
 
     #[test]

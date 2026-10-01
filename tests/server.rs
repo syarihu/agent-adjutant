@@ -2131,8 +2131,9 @@ fn the_git_route_looks_at_its_own_worktree_and_no_other() {
         calls.iter().any(|c| c.contains("spy-target")),
         "the target was never looked at: {calls:?}"
     );
+    // The branch is read from the worktree listing, so no `git branch` is run for it.
     let branches = calls.iter().filter(|c| c.contains("branch --show-current"));
-    assert_eq!(branches.count(), 1, "{calls:?}");
+    assert_eq!(branches.count(), 0, "{calls:?}");
     assert!(
         !calls.iter().any(|c| c.contains("spy-other")),
         "another worktree was asked about: {calls:?}"
