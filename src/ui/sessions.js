@@ -139,7 +139,7 @@ function sessionTree(filter, pendingHubs = new Set()) {
     g.own = g.hubSession || { kind: 'hub', id: g.id, present: !!g.hub?.state?.present };
     g.state = sessionState(g.own);
     g.short = g.hub ? hubShortName(g.hub) : g.id === 'hub' ? 'リポジトリ' : g.id.replace(/^hub-/, '');
-    g.title = g.hub ? hubTitle(g.hub) : g.id === 'hub' ? (state.repo || '').split('/').pop() || null : null;
+    g.title = g.hub ? hubTitle(g.hub) : g.id === 'hub' ? repoName() : null;
     g.text = g.title || g.short;
     // The repository's own hub says only the name; a parent task's key goes beside its title.
     g.tag = g.title && g.hub?.parent && g.hub.key ? g.hub.key : '';

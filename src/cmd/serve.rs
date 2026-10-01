@@ -2713,6 +2713,19 @@ mod tests {
     }
 
     #[test]
+    fn the_tab_title_names_the_board() {
+        for piece in [
+            "function boardTitle",
+            "function pageHub",
+            "+ boardTitle()",
+            "— adj`",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        assert!(!UI_HTML.contains("+ 'adj';"));
+    }
+
+    #[test]
     fn the_sessions_view_has_a_sidebar_for_the_selected_session() {
         for piece in [
             "id=\"sess-side\"",
