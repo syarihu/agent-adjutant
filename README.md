@@ -724,7 +724,7 @@ before anything is stopped. The answer is `{reset, wasRunning, started, descript
 reset did not start, `reset` is `false`, and `wasRunning` says whether one was stopped first. When the hub was stopped but could not be started
 again, the answer is a 400 whose message says it was stopped.
 
-### The Sessions sidebar
+### The sessions tab's sidebar
 
 The セッション tab has a right sidebar for the selected session, shown or hidden as a whole.
 For a worker with a task it shows the task (key and issue link, parent, where the card sits on

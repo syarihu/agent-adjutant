@@ -298,13 +298,24 @@ function openSessionsView(id = null) {
 /* An address that arrived before the first poll had said whether this board has terminals. */
 function openPendingSession() {
   // No terminal key yet means no poll has succeeded; the next one comes back here.
-  if (!sessView.pending || state.boardTerminal === undefined) return;
+  if (!sessView.pending) return;
+  if (nav.view !== 'sessions') { sessView.pending = false; return; }
+  if (state.boardTerminal === undefined) return;
   sessView.pending = false;
   if (state.boardTerminal?.available) {
     openSessionsView(nav.session);
     // The poll that told us had no `lines=1`: ask again now that this tab is on screen.
     if (view === 'sessions') refresh(true);
-  } else if (view !== 'board') setView('board');
+  } else giveUpSessions();
+}
+
+/* Where there are no terminals the tab is not there: the address and the screen go back to the
+   board that was last shown. */
+function giveUpSessions() {
+  nav.view = prefs.tab === 'agent' ? 'agent' : 'human';
+  nav.session = null;
+  history.replaceState(null, '', urlOf());
+  if (view !== 'board') setView('board'); else applyLayout();
 }
 
 /* Open the session `id` of this board beside the list: a step in the history. */
@@ -555,6 +566,15 @@ function renderSessionList() {
   sessEl('sess-scope').textContent = sessionScopeText();
   sessEl('sess-add').disabled = scopeAll();
   sessEl('sess-add').title = scopeAll() ? '追加するボードを選んでください（「すべて」からは追加できません）' : 'hub やセッションを追加';
+  // 「すべて」 has its hubs before it has their sessions: drawn now, every hub would read as empty.
+  if (scopeAll() && !state.sessionsRead) {
+    if (sessView.listStructure !== 'loading') {
+      sessView.listStructure = 'loading';
+      sessView.listRows = new Map();
+      sessEl('sess-groups').innerHTML = '<div class="sess-empty">読み込み中…</div>';
+    }
+    return;
+  }
   const open = new Set(prefs.sessionsFolded || []);
   const opened = g => open.has(`orphans:${g.gid}`);
   // What each row draws, one signature per row, so that a row is redrawn only when its own
@@ -671,7 +691,7 @@ function applySessionSelection() {
 
 function renderSessionsView() {
   if (view !== 'sessions') return;
-  if (!state.boardTerminal?.available) { setView('board'); return; }
+  if (!state.boardTerminal?.available) { giveUpSessions(); return; }
   const cur = currentSession();
   if (cur) sessView.last = cur;
 

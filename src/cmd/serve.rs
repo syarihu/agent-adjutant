@@ -1914,6 +1914,9 @@ const LAST_LINE_MIN_AGE: Duration = Duration::from_secs(5);
 struct LastRead {
     activity: Option<i64>,
     at: Instant,
+    /// The epoch second it was read in, against a window activity that has one-second
+    /// resolution: activity in the same second may have come after the read.
+    secs: i64,
     line: Option<String>,
 }
 
@@ -1931,13 +1934,15 @@ impl LastLines {
         key: &str,
         activity: Option<i64>,
         now: Instant,
+        secs: i64,
         read: impl FnOnce() -> Option<String>,
     ) -> Option<String> {
         if let Some(last) = self.read.lock().ok()?.get(key) {
             let recent = now.duration_since(last.at) < LAST_LINE_MIN_AGE;
             // Unknown activity says nothing of whether the pane moved, and a read that found
             // nothing may only have been early: both are read again once the age is up.
-            let unchanged = activity.is_some() && last.activity == activity && last.line.is_some();
+            let unchanged = last.line.is_some()
+                && activity.is_some_and(|a| last.activity == Some(a) && last.secs > a);
             if recent || unchanged {
                 return last.line.clone();
             }
@@ -1950,6 +1955,7 @@ impl LastLines {
                 LastRead {
                     activity,
                     at: now,
+                    secs,
                     line: line.clone(),
                 },
             );
@@ -2171,10 +2177,16 @@ fn sessions_of(
         );
         screens.insert(key.clone());
         let agent = crate::prompts::Agent::parse(agent).unwrap_or(crate::prompts::Agent::Generic);
-        server.last_lines.look(&key, activity, Instant::now(), || {
-            let screen = crate::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
-            crate::terminal::last_output_line(agent, &screen)
-        })
+        server.last_lines.look(
+            &key,
+            activity,
+            Instant::now(),
+            messaging::now_secs(),
+            || {
+                let screen = crate::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
+                crate::terminal::last_output_line(agent, &screen)
+            },
+        )
     };
 
     let main_branch = || main_branch.clone();
@@ -3055,12 +3067,14 @@ mod tests {
         let lines = LastLines::default();
         let t0 = Instant::now();
         let reads = std::cell::Cell::new(0);
-        let look = |activity, at: Instant| {
-            lines.look("pane", Some(activity), at, || {
+        // The read is made at epoch second 1000 unless a case says otherwise.
+        let look_at = |activity, at: Instant, secs| {
+            lines.look("pane", Some(activity), at, secs, || {
                 reads.set(reads.get() + 1);
                 Some(format!("read {}", reads.get()))
             })
         };
+        let look = |activity, at| look_at(activity, at, 1000);
         assert_eq!(look(10, t0).as_deref(), Some("read 1"));
         // Nothing moved: the answer stands, however old.
         assert_eq!(
@@ -3075,11 +3089,30 @@ mod tests {
         // Moved and read long enough ago.
         assert_eq!(look(11, t0 + LAST_LINE_MIN_AGE).as_deref(), Some("read 2"));
         assert_eq!(reads.get(), 2);
+        // Activity has one-second resolution: output in the second of the read may have come
+        // after it, so that read is not trusted once the age is up.
+        assert_eq!(
+            look_at(2000, t0 + Duration::from_secs(20), 2000).as_deref(),
+            Some("read 3")
+        );
+        assert_eq!(
+            look_at(2000, t0 + Duration::from_secs(21), 2000).as_deref(),
+            Some("read 3")
+        );
+        assert_eq!(
+            look_at(2000, t0 + Duration::from_secs(30), 2001).as_deref(),
+            Some("read 4")
+        );
+        assert_eq!(
+            look_at(2000, t0 + Duration::from_secs(40), 2005).as_deref(),
+            Some("read 4")
+        );
         // A read that found nothing, or a window with no known activity, is tried again.
-        let nothing = |activity, at: Instant| lines.look("empty", activity, at, || None);
+        let nothing = |activity, at: Instant| lines.look("empty", activity, at, 1000, || None);
         assert_eq!(nothing(Some(5), t0), None);
-        let found =
-            |activity, at: Instant| lines.look("empty", activity, at, || Some("late".to_string()));
+        let found = |activity, at: Instant| {
+            lines.look("empty", activity, at, 1000, || Some("late".to_string()))
+        };
         assert_eq!(found(Some(5), t0 + Duration::from_secs(1)), None);
         assert_eq!(
             found(Some(5), t0 + LAST_LINE_MIN_AGE).as_deref(),
@@ -3089,19 +3122,11 @@ mod tests {
             found(None, t0 + LAST_LINE_MIN_AGE * 2).as_deref(),
             Some("late")
         );
-        assert_eq!(
-            lines
-                .look("empty", None, t0 + LAST_LINE_MIN_AGE * 4, || Some(
-                    "again".to_string()
-                ))
-                .as_deref(),
-            Some("again")
-        );
         // A pane that is no longer listed is forgotten.
         lines.keep_only(&HashSet::new());
         assert_eq!(
             look(11, t0 + Duration::from_secs(70)).as_deref(),
-            Some("read 3")
+            Some("read 5")
         );
     }
 

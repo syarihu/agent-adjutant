@@ -1657,6 +1657,12 @@ const LAST_LINE_CHARS: usize = 200;
 /// that deep; that is traded for not showing Claude's hints as the last thing it said.
 const RIGHT_ALIGNED_INDENT: usize = 24;
 
+/// The footer a menu or a question draws to say which keys answer it.
+fn is_key_hint(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("enter to select") || lower.contains("esc to cancel")
+}
+
 /// Lines an agent draws between its output and its input box that are not output: hints about
 /// itself and about the terminal it found itself in.
 fn is_chrome(plain: &str) -> bool {
@@ -1667,6 +1673,7 @@ fn is_chrome(plain: &str) -> bool {
             .strip_prefix('⎿')
             .is_some_and(|rest| rest.trim_start().starts_with("Tip:"))
         || line.starts_with("tmux detected")
+        || is_key_hint(line)
 }
 
 /// The last thing the agent wrote, as one line of what its screen shows: the last line above
@@ -3713,11 +3720,12 @@ mod tests {
 
     #[test]
     fn a_screen_without_an_input_box_gives_its_last_line() {
-        // A question replaces the box, so there is nothing to look above.
+        // A question replaces the box, so there is nothing to look above; its key hints are not
+        // the question.
         let question = parse_pane_screen(fixture("claude-question"));
         assert_eq!(
             last_output_line(Agent::Claude, &question).as_deref(),
-            Some("Enter to select · ↑/↓ to navigate · Esc to cancel")
+            Some("4. Chat about this")
         );
         // An agent whose screen is not known has no box to find, whatever it draws.
         let generic = parse_pane_screen("$ make\ncc -o a a.c\n\n  built a\n\n");

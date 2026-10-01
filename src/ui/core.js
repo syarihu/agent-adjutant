@@ -370,6 +370,7 @@ function askSessionsOfAll(prevView, boardChanged) {
 /* Draw the screen the address names. */
 function applyNav(boardChanged) {
   const wantTask = nav.task;
+  if (nav.view !== 'sessions') sessView.pending = false;
   navApplying = true;
   try {
     if (nav.view === 'review') {
@@ -380,7 +381,8 @@ function applyNav(boardChanged) {
         // The first poll of this board has not said whether it has terminals.
         sessView.pending = true;
         if (view !== 'board') setView('board');
-      } else openSessionsView(nav.session);
+      } else if (!state.boardTerminal?.available) giveUpSessions();
+      else openSessionsView(nav.session);
     } else {
       prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
       if (view !== 'board') setView('board'); else applyLayout();
