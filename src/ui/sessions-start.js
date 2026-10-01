@@ -482,12 +482,12 @@ function linkBoards() {
   const seen = new Map();
   // Without the resident server every hub falls back to BASE, and the first of them is the
   // repository hub even on a page served for a parent-task hub.
-  const pageHub = (state.hubs || []).find(h => h.name === state.hubName);
+  const served = pageHub();
   for (const h of state.hubs || []) {
     if (h.parent && !h.key) continue;
     const base = state.resident && h.slug ? `/b/${h.slug}` : BASE;
     if (!seen.has(base)) {
-      seen.set(base, { base, hub: base === BASE ? pageHub || h : h, own: base === BASE });
+      seen.set(base, { base, hub: base === BASE ? served || h : h, own: base === BASE });
     }
   }
   return [...seen.values()];

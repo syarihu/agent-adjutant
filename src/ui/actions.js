@@ -99,8 +99,25 @@ function hubShortName(h) {
 /* What a hub's row is titled: the repository's name for its own hub, the parent task's title for
    a parent-task hub (null until it is known, when the row keeps its key). */
 function hubTitle(h) {
-  if (!h.parent) return (state.repo || '').split('/').pop() || null;
+  if (!h.parent) return repoName();
   return h.title || null;
+}
+function repoName() {
+  return (state.repo || '').split('/').pop() || null;
+}
+/* The hub this page is served for; the list always includes the board's own. */
+function pageHub() {
+  return (state.hubs || []).find(h => h.name === state.hubName) || null;
+}
+/* The tab's title. The board's name comes first so a narrow tab still shows it, and a parent-task
+   hub's title is the one the session tree shows (`hubTitle`), so the two never disagree. */
+function boardTitle() {
+  const repo = repoName();
+  if (!repo) return 'adj';
+  const h = pageHub();
+  if (!h || !h.parent) return `${repo} — adj`;
+  const label = h.key ? [h.key, hubTitle(h)].filter(Boolean).join(' ') : hubShortName(h);
+  return `${label} — ${repo}`;
 }
 function hubIconButton(icon, label, title, attrs = '') {
   return `<button type="button" class="hub-btn" ${attrs} title="${esc(title)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;

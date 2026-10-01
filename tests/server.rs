@@ -170,6 +170,25 @@ fn a_parent_task_hub_s_board_is_served_at_its_own_path() {
     let (_, other) = resident.get(&format!("/b/{SLUG}/api/state"));
     let other: serde_json::Value = serde_json::from_str(&other).unwrap();
     assert_eq!(other["hubName"], HUB);
+
+    // The tab title looks the page's own hub up in this list, by name.
+    let own = |state: &serde_json::Value| {
+        let found: Vec<_> = state["hubs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|h| h["name"] == state["hubName"])
+            .cloned()
+            .collect();
+        assert_eq!(found.len(), 1, "{state}");
+        found[0].clone()
+    };
+    let parent = own(&state);
+    assert_eq!(parent["parent"], true, "{parent}");
+    assert_eq!(parent["key"], FEATURE, "{parent}");
+    let repository = own(&other);
+    assert_eq!(repository["parent"], false, "{repository}");
+    assert!(repository["key"].is_null(), "{repository}");
 }
 
 #[test]

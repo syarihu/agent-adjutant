@@ -389,8 +389,8 @@ function render() {
   }
 
   // The ball count belongs in the tab title: you should know it is your turn without
-  // having to look at the page.
-  document.title = (totalHuman ? `(${totalHuman}) ` : '') + 'adj';
+  // having to look at the page. The board's name follows it, so tabs of several boards differ.
+  document.title = (totalHuman ? `(${totalHuman}) ` : '') + boardTitle();
   updateNotifyButton();
   renderSessionsRail();
   openPendingSession();
