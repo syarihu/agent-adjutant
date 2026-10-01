@@ -461,6 +461,10 @@ pub fn ps_started(pid: u32) -> Option<String> {
 ///
 /// The table is for a caller that checks many records in one go, such as the board's poll,
 /// where one `ps` per worker made the cost grow with the number of worktrees.
+///
+/// A `ps -A` that cannot be run or exits non-zero reads as "cannot tell" for every pid, on
+/// purpose: a failure of the whole table says nothing about one pid. The per-pid call reads a
+/// silent non-zero exit as "no such process", which is how `ps -p` answers for a pid that is gone.
 pub struct ProcessTable {
     all: bool,
     snapshot: std::cell::OnceCell<Option<HashMap<u32, String>>>,

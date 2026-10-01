@@ -2313,8 +2313,6 @@ mod tests {
     use super::*;
     use crate::config::Hook;
 
-    /// A line the terminal would mangle is put in a file instead. The failure this prevents
-    /// is silent: the tab opens and runs something that was never written.
     #[test]
     fn a_tmux_socket_is_the_same_path_however_it_is_spelled() {
         let path = |socket, env, tmpdir| tmux_socket_path(socket, env, tmpdir, 501);
@@ -2350,6 +2348,8 @@ mod tests {
         );
     }
 
+    /// A line the terminal would mangle is put in a file instead. The failure this prevents
+    /// is silent: the tab opens and runs something that was never written.
     #[test]
     fn an_overlong_command_is_staged_in_a_file() {
         let long = format!("echo {}", "x".repeat(MAX_INLINE_COMMAND));

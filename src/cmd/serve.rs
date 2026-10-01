@@ -1572,12 +1572,22 @@ fn socket_key(socket: Option<&str>) -> PathBuf {
     let uid = unsafe { libc::getuid() };
     #[cfg(not(unix))]
     let uid = 0;
-    let path = crate::terminal::tmux_socket_path(
+    socket_key_in(
         socket,
         std::env::var("TMUX").ok().as_deref(),
         std::env::var("TMUX_TMPDIR").ok().as_deref(),
         uid,
-    );
+    )
+}
+
+/// `socket_key` with the environment it reads handed in.
+fn socket_key_in(
+    socket: Option<&str>,
+    tmux_env: Option<&str>,
+    tmpdir: Option<&str>,
+    uid: u32,
+) -> PathBuf {
+    let path = crate::terminal::tmux_socket_path(socket, tmux_env, tmpdir, uid);
     match (
         path.parent().and_then(|dir| dir.canonicalize().ok()),
         path.file_name(),
@@ -3484,16 +3494,15 @@ mod tests {
     }
 
     #[test]
-    fn one_tmux_server_is_one_view_however_a_session_names_its_socket() {
-        let mut views: HashMap<PathBuf, TmuxView> = HashMap::new();
-        // A session that falls back to the settings, which name no socket, and one whose
-        // record kept the path of the default server.
-        let default_path = socket_key(None).to_string_lossy().to_string();
-        tmux_view(&mut views, None);
-        tmux_view(&mut views, Some(&default_path));
-        tmux_view(&mut views, Some("  "));
-        assert_eq!(views.len(), 1);
-        tmux_view(&mut views, Some("another-adjutant-test-socket"));
-        assert_eq!(views.len(), 2);
+    fn one_tmux_server_is_one_key_however_a_session_names_its_socket() {
+        // A directory that is not there, so nothing is resolved and nothing is read from the
+        // environment: the keys are what the spellings alone make of them.
+        let key = |socket| socket_key_in(socket, None, Some("/nonexistent-tmux-dir"), 501);
+        let default_path = key(None).to_string_lossy().to_string();
+        assert_eq!(default_path, "/nonexistent-tmux-dir/tmux-501/default");
+        assert_eq!(key(Some(&default_path)), key(None));
+        assert_eq!(key(Some("  ")), key(None));
+        assert_eq!(key(Some("default")), key(None));
+        assert_ne!(key(Some("another")), key(None));
     }
 }
