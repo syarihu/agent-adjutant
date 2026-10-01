@@ -18,7 +18,6 @@ const STATE_ICON = {
 const STATE_PILL = {
   waiting: 'pill-warn', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral',
 };
-const BACK_LABEL = { board: 'ボード', review: '要対応レビュー', task: 'タスク詳細', sessions: 'セッション' };
 /* A row's state in the few words it has room for. A quiet window is running too: it only has
    the neutral pill (STATE_PILL), so it is not taken for one that is writing. */
 const ROW_LABEL = { waiting: '入力待ち', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了' };
@@ -237,7 +236,6 @@ function renderSessionsTab() {
 const sessView = {
   selectedId: null,
   last: null,        // the selected session as last listed, kept after it drops off the list
-  back: null,        // { view, taskId } to return to, until the first switch to another session
   mounted: null,     // { sessionId, term, ended }
   pending: false,    // the address names this tab; opened once the first poll says whether a terminal exists
   listStructure: '', // what the list was last built from (renderSessionList)
@@ -344,7 +342,6 @@ function openSessionRef(ref) {
 function showSession(id) {
   const changed = sessView.selectedId !== id;
   if (changed) {
-    sessView.back = null;
     sessView.last = null;
     sessView.git = null;
     sessView.reconnectWhenReady = null;
@@ -365,15 +362,8 @@ function connectSelected() {
 }
 
 function returnFromSessions() {
-  const back = sessView.back;
-  sessView.back = null;
-  // Opened from the list: back to the list.
-  if (!back) return go({ session: null });
   // Through `go`, so that the address leaves the session as the screen does.
-  if (back.view === 'review') return go({ view: 'review', session: null });
-  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', session: null });
-  if (back.view === 'task' && back.taskId) return openTask(back.taskId);
-  if (back.taskId && (back.view || 'board') === 'board' && (state.tasks || []).some(t => t.id === back.taskId)) selectTask(back.taskId);
+  go({ session: null });
 }
 
 /* A worker's task title when the server did not give one. The task of another board is not in
@@ -404,7 +394,7 @@ function renderSessionContext() {
   const gone = !!id && !currentSession() && sessView.last?.id === id;
   sessEl('sess-context').hidden = !id;
   sessEl('sess-back').hidden = !id;
-  sessEl('sess-back').textContent = `← ${BACK_LABEL[sessView.back ? sessView.back.view : 'sessions'] || 'ボード'}に戻る`;
+  sessEl('sess-back').textContent = '← セッションに戻る';
   if (!id) return;
   const label = s ? sessionLabel(s, true) : { tag: id, text: '' };
   const keyEl = sessEl('sess-key');
@@ -441,6 +431,7 @@ function sessionPlaceholder(s) {
   if (st === 'none') return `セッションはありません。\n${s.worktree}${s.branch ? `（${s.branch}）` : ''}`;
   if (st === 'stopped') return 'セッションは止まっています';
   if (st === 'ended') return 'セッションは終了しています';
+  if (panelTerm.term && panelTerm.sessionId === id) return 'このセッションの端末はタスクのパネルで開いています';
   if (!s.present) return 'このセッションは動いていません';
   return 'このセッションの端末はボードから開けません（tmux で動いているセッションだけ開けます）';
 }

@@ -1132,7 +1132,6 @@ function openTaskPanel(id, pane = 'detail') {
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
 }
-const selectTask = id => openTaskPanel(id);
 
 /* The panel's state, without the address: for a move the address already made. */
 function hideTaskPanelState() {
@@ -1183,8 +1182,11 @@ function applyRailMode() {
 }
 narrowRail.addEventListener('change', applyRailMode);
 termRail.addEventListener('change', applyRailMode);
+// Before the first poll has drawn anything, a narrow window already has its icon rail.
+applyRailMode();
 
 /* What each part was last drawn from: a part is drawn again only when it changed. */
+let panelScrolledFor = null;
 const panelSig = { head: '', tabs: '', gate: '', rest: '', bar: '', ph: '' };
 function setPanelPart(part, el, html) {
   if (panelSig[part] === html) return;
@@ -1200,6 +1202,11 @@ function renderTaskPanel() {
   if (selectedTaskId && !task) return dismissTaskPanel();
   const shown = !!task && (view === 'board' || view === 'sessions');
   const cls = document.body.classList;
+  // Another task starts at the top, not where the last one was scrolled to.
+  if (shown && panelScrolledFor !== task.id) {
+    panelScrolledFor = task.id;
+    tp('tp-detail').scrollTop = 0;
+  }
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop);
   cls.toggle('panel-open', shown);
@@ -1395,7 +1402,8 @@ function syncPanelTerminal(task, s, pane) {
   panelTerm.taskId = task.id;
   if (pane !== 'term' || panelTerm.term || !boardTerminalReady(s)) return;
   // One session, one terminal: the セッション tab lets go of it.
-  if (sessView.selectedId === s.id) detachSessionTerminal();
+  const heldBySessions = sessView.selectedId === s.id;
+  if (heldBySessions) detachSessionTerminal();
   panelTerm.sessionId = s.id;
   panelTerm.ended = null;
   const handle = mountSessionTerminal(tp('tp-term-host'), {
@@ -1408,6 +1416,8 @@ function syncPanelTerminal(task, s, pane) {
     },
   });
   panelTerm.term = handle;
+  // The sessions tab says where its terminal went.
+  if (heldBySessions && view === 'sessions') renderSessionsView();
 }
 
 function disposePanelTerminal() {
@@ -1417,6 +1427,8 @@ function disposePanelTerminal() {
     term.dispose();
   }
   Object.assign(panelTerm, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
+  // The sessions tab may mount the session again, now that the panel has let go of it.
+  if (term && view === 'sessions') renderSessionsView();
 }
 
 function termBarHtml(s) {
@@ -1458,7 +1470,11 @@ tp('task-panel').addEventListener('click', e => {
   const hit = sel => e.target.closest(sel);
   let b;
   if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
-  if (hit('[data-tp-close]')) return closeTaskPanel();
+  if (hit('[data-tp-close]')) {
+    // Closing a popped-out panel puts it back on its side, as a click outside does; the next closes it.
+    if (panelPop) { panelPop = false; return renderTaskPanel(); }
+    return closeTaskPanel();
+  }
   if ((b = hit('[data-tp-place]'))) return placePanel(b.dataset.tpPlace);
   if (hit('[data-tp-jump]')) {
     // A popped-out panel is over the card: it goes back to its side first.
@@ -1510,7 +1526,7 @@ tp('tp-resize').addEventListener('pointerdown', e => {
   const move = ev => {
     const rail = tp('nav-rail').offsetWidth;
     const raw = prefs.panelSide === 'right' ? innerWidth - ev.clientX : ev.clientX - rail;
-    prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 360)));
+    prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
     document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
   };
   const end = () => {

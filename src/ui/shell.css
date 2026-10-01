@@ -448,6 +448,8 @@ main { flex: 1; overflow: hidden; position: relative; }
    as their key number, a badge for what waits. `rail-icons` is set (applyRailMode) on a narrow
    window, while a session's terminal takes the width of the セッション tab, and while the task
    panel sits on the left. */
+body { --rail-w: 240px; }
+body.rail-icons { --rail-w: 72px; }
 body.rail-icons #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
 body.rail-icons .rail-brand { padding: 4px 0 10px; }
 body.rail-icons .rail-brand .repo-info,
@@ -480,6 +482,8 @@ body.rail-icons .rail-tools { flex-direction: column; gap: 4px; }
   order: 1;
   flex: none;
   width: var(--panel-w, 520px);
+  /* The board keeps at least 320px beside the rail, whichever shape that is in. */
+  max-width: calc(100vw - var(--rail-w, 240px) - 320px);
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -498,6 +502,7 @@ body.tp-dragging { user-select: none; cursor: col-resize; }
 body.panel-pop .tp-resize { display: none; }
 body.panel-pop #task-panel {
   position: fixed;
+  max-width: none;
   inset: 6vh 8vw;
   width: auto;
   z-index: 60;
@@ -510,7 +515,7 @@ body.panel-pop #task-panel {
 #tp-scrim[hidden] { display: none; }
 /* On a narrow window the panel floats over the board, from either side. */
 @media (max-width: 720px) {
-  #task-panel { position: fixed; top: 0; bottom: 0; left: 72px; width: calc(100% - 100px); z-index: 25; box-shadow: var(--md-elevation-4); }
+  #task-panel { max-width: none; position: fixed; top: 0; bottom: 0; left: 72px; width: calc(100% - 100px); z-index: 25; box-shadow: var(--md-elevation-4); }
   body.panel-right #task-panel { left: auto; right: 0; width: 88%; }
   .tp-resize { display: none; }
 }

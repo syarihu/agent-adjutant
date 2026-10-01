@@ -21,7 +21,8 @@ function openTask(id, tab = 'overview', gateId = null) {
 
 function backToBoard() {
   // The card being read stays open on the board.
-  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', task: selectedTaskId });
+  // The tab of another task's panel is not carried over to this one.
+  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', task: selectedTaskId, ...(selectedTaskId === nav.task ? {} : { pane: 'detail' }) });
 }
 
 /* What a task's gates left in the archive, read when its view or the task panel opens

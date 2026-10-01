@@ -25,7 +25,8 @@ const PREF_KEY = 'adj-board-split';
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[], panelSide:'left', panelWidth:520 },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 if (prefs.panelSide !== 'right') prefs.panelSide = 'left';
-if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
+// Narrower than the board needs room for: at least 320px of it is left, beside the icon rail.
+prefs.panelWidth = !(prefs.panelWidth >= 320) ? 520 : Math.min(prefs.panelWidth, Math.max(320, innerWidth - 72 - 320));
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 function applyLayout() {
