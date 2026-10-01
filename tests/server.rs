@@ -50,6 +50,11 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         page.contains("boardApi(BASE, path"),
         "the page does not use BASE"
     );
+    // The views are tabs under the board's title; the sidebar no longer lists them.
+    for piece in ["id=\"view-tabs-row\"", "data-tab=\"sessions\"", "1つずつ"] {
+        assert!(page.contains(piece), "{piece}");
+    }
+    assert!(!page.contains("id=\"nav-sessions\""));
 
     let (status, list) = resident.get("/api/boards");
     assert_eq!(status, 200);

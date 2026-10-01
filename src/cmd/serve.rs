@@ -2918,8 +2918,8 @@ mod tests {
     fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
         for piece in [
             "id=\"sessions-view\"",
-            "id=\"nav-sessions\"",
-            "#session/",
+            "id=\"tab-sessions\"",
+            "&session=",
             "function boardOfSession",
             "mountSessionTerminal(",
         ] {
@@ -2959,16 +2959,16 @@ mod tests {
     }
 
     #[test]
-    fn the_sessions_view_patches_its_tree_and_lets_the_terminal_go_first() {
+    fn the_sessions_tab_patches_its_list_and_lets_the_terminal_go_first() {
         for piece in [
-            "function patchSessionTree",
+            "function patchSessionList",
             "data-gid=",
             "function holdSideForSelection",
             "function releaseSide",
             "onReady: () => releaseSide(id)",
             "function sessionTitle",
             "function hubTitle",
-            "sessionLabel(s), sessionTip(s)",
+            "sessionLabel(s, false, g.data), sessionTip(s, st, g.data)",
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }

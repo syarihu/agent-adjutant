@@ -435,14 +435,8 @@ function pendingRowHtml(p) {
     (buttons.length ? `<span class="sess-pend-btns">${buttons.join('')}</span>` : '') + '</div>';
 }
 
-sessEl('sess-tree').addEventListener('click', e => {
+sessEl('sess-groups').addEventListener('click', e => {
   const b = e.target.closest('[data-pend-act]');
-  // In the icon-only rail a row has no words or buttons: pressing it opens the rail to them.
-  if (!b && e.target.closest('[data-pend-row]') && railCollapsed()) {
-    prefs.sessionsRail = 'open';
-    savePrefs();
-    return renderSessionsView();
-  }
   if (!b || b.disabled) return;
   const key = b.dataset.pend;
   const row = sessionPendingRows().find(r => r.key === key);
@@ -503,7 +497,7 @@ setInterval(() => {
     if (view === 'sessions') renderSessionsView();
   }
   if (view !== 'sessions') return;
-  if (sessView.starts.length) renderSessionTree();
+  if (sessView.starts.length) renderSessionList();
   syncStartDialog();
   syncLinkDialog();
 }, 2000);

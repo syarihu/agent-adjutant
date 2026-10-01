@@ -99,12 +99,12 @@ function hubShortName(h) {
 }
 /* What a hub's row is titled: the repository's name for its own hub, the parent task's title for
    a parent-task hub (null until it is known, when the row keeps its key). */
-function hubTitle(h) {
-  if (!h.parent) return repoName();
+function hubTitle(h, data = state) {
+  if (!h.parent) return repoName(data);
   return h.title || null;
 }
-function repoName() {
-  return (state.repo || '').split('/').pop() || null;
+function repoName(data = state) {
+  return (data.repo || '').split('/').pop() || null;
 }
 /* The hub this page is served for; the list always includes the board's own. */
 function pageHub() {
@@ -266,10 +266,10 @@ document.getElementById('board-rows').addEventListener('keydown', e => {
   openBoard(row.dataset.board);
 });
 
-/* A row of the sidebar: that board, in the view that is open. The review queue and 「すべて」
-   have no session list, so they open the board's cards. */
+/* A row of the sidebar: that board, in the view that is open. The review queue is not a view of
+   a board, so it opens the board's cards. */
 function openBoard(slug) {
-  const keep = nav.view === 'review' || (slug === 'all' && nav.view === 'sessions') ? 'human' : nav.view;
+  const keep = nav.view === 'review' ? 'human' : nav.view;
   go({ board: slug, view: keep, task: null, item: null });
 }
 
@@ -302,8 +302,10 @@ function renderTitle() {
     trail = owner ? [owner, repoName()] : [];
   }
   crumbs.innerHTML = trail.map(esc).join(sep);
-  if (subtitle) subtitle.hidden = view === 'board';
-  if (view !== 'board' || !title) return;
+  // The セッション tab is a view of the board, under the board's own title.
+  const ofBoard = view === 'board' || view === 'sessions';
+  if (subtitle) subtitle.hidden = ofBoard;
+  if (!ofBoard || !title) return;
   if (scopeAll()) { title.textContent = 'すべて'; return; }
   const hubState = entry ? boardState(entry)
     : (state.hub?.present ? { tone: 'good' } : { tone: state.hub?.stale ? 'bad' : 'off' });

@@ -49,7 +49,6 @@ function setView(v) {
   }
 
   if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
-  document.body.classList.toggle('view-sessions', v === 'sessions');
   if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
 
   // Navigation rail active states
@@ -57,11 +56,6 @@ function setView(v) {
   if (navReview) {
     if (v === 'review') navReview.setAttribute('aria-current', 'page');
     else navReview.removeAttribute('aria-current');
-  }
-  const navSessions = document.getElementById('nav-sessions');
-  if (navSessions) {
-    if (v === 'sessions') navSessions.setAttribute('aria-current', 'page');
-    else navSessions.removeAttribute('aria-current');
   }
   applyLayout();
 
@@ -75,7 +69,7 @@ function setView(v) {
   const pageTitle = document.getElementById('page-title');
   const pageSub = document.getElementById('page-subtitle');
   if (pageTitle && pageSub) {
-    if (v === 'board') {
+    if (v === 'board' || v === 'sessions') {
       renderTitle();
     } else if (v === 'review') {
       pageTitle.textContent = '要対応レビュー';
@@ -83,9 +77,6 @@ function setView(v) {
     } else if (v === 'task') {
       pageTitle.textContent = 'タスク詳細';
       pageSub.textContent = '個別タスクの全工程記録と実行タイムライン';
-    } else if (v === 'sessions') {
-      pageTitle.textContent = 'セッション';
-      pageSub.textContent = 'hub と worker の端末をここで開く';
     }
   }
 
@@ -101,7 +92,7 @@ function setView(v) {
   } else if (v === 'sessions') {
     // The card that was open comes back through the link, not by staying selected.
     closeDrawer();
-    renderSessionsRail();
+    renderSessionsTab();
     renderSessionsView();
   } else if (v !== 'board') {
     closeDrawer();
@@ -164,18 +155,18 @@ async function boot() {
   // and leave a page that never loads: such a link opens the board instead.
   let deepTaskId = null;
   try { deepTaskId = deepTask && decodeURIComponent(deepTask[1]); } catch { deepTaskId = null; }
-  // #session/<id> (or #sessions) on the セッション view. Whether a terminal exists is known only
-  // once the first poll is in, so the board is shown meanwhile.
+  // #session/<id> (or #sessions), from before the address named it: the セッション tab. Whether a
+  // terminal exists is known only once the first poll is in, so the board is shown meanwhile.
   const deepSession = location.hash.match(/^#sessions?(?:\/(.+))?$/);
   let deepSessionId = null;
   try { deepSessionId = deepSession && deepSession[1] ? decodeURIComponent(deepSession[1]) : null; } catch { deepSessionId = null; }
   Object.assign(nav, parseUrl(location));
   BASE = multiBoard && nav.board && nav.board !== 'all' ? `/b/${nav.board}` : '';
-  if (deepSession) sessView.pending = { id: deepSessionId };
+  if (deepSession) { nav.view = 'sessions'; nav.session = deepSessionId; }
   // A link made before the address named the review queue: carry its gate over.
   if (deep) { nav.view = 'review'; nav.item = (m => m ? `${m[1]}/${deep[1]}` : deep[1])(/^\/b\/([^/]+)/.exec(location.pathname)); if (multiBoard) nav.board = 'all'; }
   // The address in its own spelling, so a go() to the same screen does not push a twin.
-  history.replaceState(null, '', urlOf() + (deep ? '' : location.hash));
+  history.replaceState(null, '', urlOf() + (deep || deepSession ? '' : location.hash));
   // The page's sections are shown or hidden by the first `setView`; the address has the say on
   // which view that is, so it is not allowed to rewrite it.
   navApplying = true;

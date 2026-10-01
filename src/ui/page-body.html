@@ -28,37 +28,6 @@
 
     <div class="rail-section-label rail-boards-label">ボード</div>
     <div id="board-rows"></div>
-
-    <div class="rail-divider"></div>
-    <div class="rail-section-label rail-view-label">表示</div>
-    <button type="button" class="rail-item" data-tab="human" title="あなたの確認を待っているもの" onclick="showBoard('human')">
-      <span class="material-symbols-outlined" aria-hidden="true">person</span>
-      <span class="rail-text"><span class="rail-label">人</span><span class="rail-sub">あなたの確認待ち</span></span>
-      <span class="rail-badge" id="human-badge">0</span>
-    </button>
-    <button type="button" class="rail-item" data-tab="agent" title="worker の工程" onclick="showBoard('agent')">
-      <span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>
-      <span class="rail-text"><span class="rail-label">エージェント</span><span class="rail-sub">worker の工程</span></span>
-      <span class="rail-count" id="agent-count" title="作業中の worker">0</span>
-    </button>
-
-    <div class="rail-view">
-      <div class="m3-segmented-tabs" id="layout-switch">
-        <button type="button" class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>タブ</button>
-        <button type="button" class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
-      </div>
-      <div class="m3-segmented-tabs" id="arrange-switch">
-        <button type="button" class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
-        <button type="button" class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
-      </div>
-    </div>
-
-    <button type="button" class="rail-item" id="nav-sessions" title="セッション" hidden onclick="openSessionsView()">
-      <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
-      <span class="rail-label">セッション</span>
-      <span class="rail-count zero" id="sessions-count" title="動いているセッション">0</span>
-      <span class="rail-dot" id="sessions-dot" title="止まった hub / worker があります" hidden></span>
-    </button>
   </div>
 
   <div class="rail-footer">
@@ -89,6 +58,24 @@
       <button class="tool-btn" id="btn-resync" onclick="refreshAll()" title="再同期 (adj refresh)">
         <span class="material-symbols-outlined">refresh</span>
       </button>
+    </div>
+
+    <div class="view-tabs-row" id="view-tabs-row">
+      <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
+        <button type="button" role="tab" class="view-tab" data-tab="human" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
+        <button type="button" role="tab" class="view-tab" data-tab="agent" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
+        <button type="button" role="tab" class="view-tab" data-tab="sessions" id="tab-sessions" title="hub と worker のセッション" hidden><span class="material-symbols-outlined" aria-hidden="true">terminal</span><span class="lbl">セッション</span><span class="rail-badge zero" id="sessions-waiting" title="入力待ち">0</span><span class="rail-count zero" id="sessions-count" title="セッション数">0</span></button>
+      </nav>
+      <div class="view-tools" id="view-tools">
+        <div class="m3-segmented-tabs" id="layout-switch">
+          <button type="button" class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
+          <button type="button" class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
+        </div>
+        <div class="m3-segmented-tabs" id="arrange-switch">
+          <button type="button" class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
+          <button type="button" class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -140,27 +127,20 @@
     <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
     <div id="sessions-view">
-      <aside class="sess-rail" aria-label="セッションの一覧">
-        <div class="sess-rail-head">
-          <button type="button" class="tool-btn" id="sess-collapse" data-sess-collapse aria-expanded="true"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span></button>
+      <section class="sess-list" aria-label="セッションの一覧">
+        <div class="pane-head sess-list-head">
+          <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+          <span class="pane-title">セッション</span>
+          <span class="pane-sub" id="sess-scope"></span>
           <div class="sess-add-wrap">
             <button type="button" class="tool-btn" id="sess-add" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-add-menu" title="hub やセッションを追加" aria-label="hub やセッションを追加"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
             <div class="sess-menu" id="sess-add-menu" role="menu" aria-labelledby="sess-add" hidden></div>
           </div>
-          <div class="sess-filters">
-            <button type="button" class="m3-filter-chip" data-sess-filter="all">すべて</button>
-            <button type="button" class="m3-filter-chip" data-sess-filter="attention">要対応</button>
-            <button type="button" class="m3-filter-chip" data-sess-filter="running">稼働中</button>
-          </div>
         </div>
-        <div class="sess-scroll">
-          <div class="sess-tree" id="sess-tree"></div>
-          <details class="sess-orphans" id="sess-orphans" hidden>
-            <summary><span class="material-symbols-outlined" aria-hidden="true">folder_off</span><span class="sess-orphans-text">セッションのない worktree（<span id="sess-orphans-count">0</span>）</span></summary>
-            <div id="sess-orphans-list"></div>
-          </details>
+        <div class="sess-list-scroll">
+          <div id="sess-groups"></div>
         </div>
-      </aside>
+      </section>
       <section class="sess-main">
         <div class="sess-context" id="sess-context" hidden>
           <button type="button" class="btn-m3-tonal sess-back" id="sess-back" hidden></button>

@@ -170,7 +170,7 @@ adj worker --resume               # in a worktree: the worker that was working t
 ```
 
 The board's 「hub をリセット」 (a button on the hub's row, and in the menu above the terminal in the
-Sessions view) does what `--new` does: after a confirmation it stops the hub if it runs and starts
+セッション tab) does what `--new` does: after a confirmation it stops the hub if it runs and starts
 it again on a new conversation. The old conversation is not deleted, but it is not resumed either,
 and from then on `adj hub --resume` reaches the new one (with a runner that records no session id
 there is nothing to resume). The inbox, the task and gate records and the running workers stay as they are.
@@ -457,10 +457,19 @@ learns where a repository is from the hubs that start in it and from `adj config
 none of these has seen is added by running `adj server start` inside it. Without a resident
 server, everything is as described above.
 
-**A session's terminal in the board.** On the resident server's boards, the rail has a セッション
-view: a tree of the repository's hub and the parent-task hubs with their workers, and the
-selected session's tmux window beside it, where you can read it and type to it. A card and its side
-sheet have a button that opens the view with that session selected,
+**A session's terminal in the board.** On the resident server's boards, the tabs under the
+board's title (人 / エージェント / セッション) include a セッション tab. It lists the board's hubs,
+each with its workers: a repository's board lists its own hub and then its parent-task hubs
+(indented), a parent-task board only its own hub, and 「すべて」 every repository's. A hub's header
+sticks to the top while its sessions scroll, and shows the hub's state, how many sessions it has and
+how many wait for input, with a 「hub」 button that opens the hub's terminal (or 「hub を起動」
+when it is stopped). A worker's row shows 入力待ち / 稼働 / 停止 (a finished one is dimmed 終了),
+its title and when it last wrote; rows waiting for input come first, and worktrees with no
+session are folded at the bottom of their hub's group. Pressing a row opens that session's tmux
+window beside the list (`?view=sessions&session=<id>`), where you can read it and type to it;
+in 「すべて」 it first switches to the hub's board. The tab asks the server for the sessions only
+while it is on screen, and in 「すべて」 of one board per repository. A card and its side
+sheet have a button that opens the session in the same place,
 with a link back to where you were. A terminal is offered only for a session that runs in tmux
 (`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
 detaches: the window and the agent in it keep running. The board attaches as a client of its own,
@@ -567,7 +576,7 @@ a worker with no task has no card. `POST /api/sessions` asks a hub to start one 
 `{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Every field is
 optional. The hub defaults to this board's own; the name is checked as a task's is, and left
 out it is the first four ASCII words of the instruction, lowercased and joined with `-`, or
-`session-YYYYMMDD-HHMM` (UTC; the Sessions view proposes the same in local time) when there are
+`session-YYYYMMDD-HHMM` (UTC; the セッション tab proposes the same in local time) when there are
 none; with no instruction the worker greets the person in its tab and waits (`## Instruction`
 reads `-` in the message); `agent`, when given, has to be the one `agentRunner` starts
 (`state.sessionStart.agent`). The reply adds `hub` (the `hubs[].id` that took it) and `message`
@@ -711,7 +720,7 @@ again, the answer is a 400 whose message says it was stopped.
 
 ### The Sessions sidebar
 
-The Sessions view has a right sidebar for the selected session, shown or hidden as a whole.
+The セッション tab has a right sidebar for the selected session, shown or hidden as a whole.
 For a worker with a task it shows the task (key and issue link, parent, where the card sits on
 the two boards), the latest five entries of what was asked and answered with a link to the
 full history, the phase timeline with times, the done-when and stop-at settings, the PR link
@@ -729,9 +738,9 @@ hub's command template as configured, sent with its placeholders in place; the s
 only `{name}` and shows the rest as they are. It is shown on the board as configured, so keep
 secrets out of it.
 
-### Starting and linking from the Sessions view
+### Starting and linking from the セッション tab
 
-The `+` at the top of the session tree stays in the 64px rail and opens a menu: start the
+The `+` at the right end of the list's header (off in 「すべて」) opens a menu: start the
 repository's hub (off while it runs), start a parent task's hub by key, and start a session
 with no task. The start dialog picks the hub (a stopped one is started after the request is
 sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
@@ -739,7 +748,7 @@ from it (a dated one is in local time, where the server's own fallback is UTC) u
 field is edited. A name git refuses is marked and cannot be sent; a name already in use is only
 noted, since the hub picks the final one. Only the agent `agentRunner` starts can be chosen,
 and the button is off while no worker slot is free. A refused request keeps the dialog and its
-text open with the reason. Until the hub has started the session the tree shows a row for it
+text open with the reason. Until the hub has started the session the list shows a row for it
 under its hub, derived from the hub's inbox so it survives a reload: waiting, hub stopped (with
 a start button, or why it could not start), or, when the hub took the request and started
 nothing for about 15 seconds, could not start.

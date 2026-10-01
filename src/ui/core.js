@@ -14,11 +14,10 @@ let log = [];
 let selectedTaskId = null;
 
 const PREF_KEY = 'adj-board-split';
-// sessionsRail: null follows the window's width until the person chooses 'open' or 'collapsed';
-// sessionsFolded holds the hub ids folded away, and 'orphans' while that group is open;
+// sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
 // sessionsSide is the detail sidebar's choice, kept only where the window has room for it;
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsRail:null, sessionsFilter:'all', sessionsFolded:[], sessionsSide:'open', boardsFolded:[] },
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[] },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -32,10 +31,20 @@ function applyLayout() {
   const pa = document.getElementById('pane-agent');
   if (ph) ph.classList.toggle('active', prefs.tab === 'human');
   if (pa) pa.classList.toggle('active', prefs.tab === 'agent');
-  document.querySelectorAll('[data-tab]').forEach(b => {
-    if (b.dataset.tab === prefs.tab && view === 'board') b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
+  // Side by side, both boards are on screen, so both tabs are lit.
+  const split = prefs.layout === 'split';
+  document.querySelectorAll('.view-tab[data-tab]').forEach(b => {
+    const tab = b.dataset.tab;
+    const on = tab === 'sessions' ? nav.view === 'sessions'
+      : view === 'board' && nav.view !== 'sessions' && (split || tab === prefs.tab);
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
   });
+  // The layout switches belong to the two boards; the review queue and the task view have no tabs.
+  const tools = document.getElementById('view-tools');
+  if (tools) tools.hidden = view !== 'board' || nav.view === 'sessions';
+  const tabsRow = document.getElementById('view-tabs-row');
+  if (tabsRow) tabsRow.hidden = view === 'review' || view === 'task';
   document.querySelectorAll('[data-layout]').forEach(b => {
     const on = b.dataset.layout === prefs.layout;
     b.classList.toggle('active', on);
@@ -51,16 +60,17 @@ function applyLayout() {
 window.setBoardLayout = function(layout) { prefs.layout = layout; applyLayout(); };
 window.setBoardArrange = function(arrange) { prefs.arrange = arrange; applyLayout(); };
 window.showBoard = function(board) {
+  // Side by side both are already on screen: choosing one is choosing to look at it alone.
+  if (prefs.layout === 'split') { prefs.layout = 'tabs'; savePrefs(); }
   // The address says which tab it is (and a board shown on its own page keeps it).
-  go({ view: board === 'agent' ? 'agent' : 'human' });
-  if (prefs.layout === 'split') {
-    const pane = document.getElementById(`pane-${board}`);
-    if (pane) {
-      pane.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'nearest' });
-      pane.classList.remove('flash-pane'); void pane.offsetWidth; pane.classList.add('flash-pane');
-    }
-  }
+  go({ view: board === 'agent' ? 'agent' : 'human', session: null });
 };
+window.showSessions = () => go({ view: 'sessions', session: null });
+document.querySelector('.view-tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.view-tab[data-tab]');
+  if (!tab) return;
+  if (tab.dataset.tab === 'sessions') showSessions(); else showBoard(tab.dataset.tab);
+});
 window.jump = function(board, id) {
   const want = board === 'agent' ? 'agent' : 'human';
   if (view !== 'board' || nav.view !== want) go({ view: want });
@@ -252,12 +262,13 @@ const api = (path, options) => boardApi(BASE, path, options);
 /* ── Where the page is: one board, every board, or the review queue ──────────────────────
    Navigation state lives in the address, so back/forward and a pasted link land on the same
    screen without a reload; what is only a preference (layout, folded repositories) does not.
-     /b/<slug>/?view=agent|sessions&task=<id>&pane=term   one board
+     /b/<slug>/?view=agent&task=<id>&pane=term             one board
+     /b/<slug>/?view=sessions&session=<id>                 its sessions, one of them open
      /                                                     すべて, every board
      /review?item=<id>                                     要対応レビュー, every board
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. */
-const nav = { board: null, view: 'human', task: null, pane: 'detail', item: null };
+const nav = { board: null, view: 'human', task: null, pane: 'detail', item: null, session: null };
 let boards = [];                 // /api/boards: the sidebar's rows
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
@@ -270,7 +281,7 @@ const scopeAll = () => multiBoard && nav.board === 'all';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
-  const out = { board: null, view: 'human', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item') };
+  const out = { board: null, view: 'human', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item'), session: null };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   if (loc.pathname === '/review') {
     out.board = multiBoard ? 'all' : null;
@@ -280,7 +291,7 @@ function parseUrl(loc = location) {
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   const v = q.get('view');
   if (v === 'agent' || v === 'sessions') out.view = v;
-  if (out.board === 'all' && out.view === 'sessions') out.view = 'human';
+  if (out.view === 'sessions') out.session = q.get('session');
   // The side sheet opens on a board of its own; 「すべて」 switches to the card's board first.
   if (out.board === 'all') out.task = null;
   return out;
@@ -290,6 +301,7 @@ function urlOf(n = nav) {
   const path = n.view === 'review' ? '/review' : n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
   if (n.view === 'agent' || n.view === 'sessions') url += `&view=${n.view}`;
+  if (n.session && n.view === 'sessions') url += `&session=${encodeURIComponent(n.session)}`;
   if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
   if (n.pane === 'term') url += '&pane=term';
   if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
@@ -302,7 +314,7 @@ function setNav(patch) {
   history.replaceState(null, '', urlOf());
 }
 
-const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item;
+const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item && a.session === b.session;
 
 /* Everything that pointed into the board being left. */
 function switchBoard() {
@@ -335,14 +347,22 @@ function go(patch = {}, { replace = false } = {}) {
     if (!('item' in patch)) nav.item = null;
   }
   if (nav.view !== 'review') nav.item = null;
+  // A session is one of its board's: it does not follow a move to another board or view.
+  if (nav.view !== 'sessions' || (nav.board !== prev.board && !('session' in patch))) nav.session = null;
   if (nav.view === 'review' && multiBoard) nav.board = 'all';
-  if (nav.board === 'all' && nav.view === 'sessions') nav.view = 'human';
   const boardChanged = nav.board !== prev.board;
   if (boardChanged) switchBoard();
   const url = urlOf();
   if (replace || url === location.pathname + location.search) history.replaceState(null, '', url);
   else history.pushState(null, '', url);
   applyNav(boardChanged);
+  askSessionsOfAll(prev.view, boardChanged);
+}
+
+/* 「すべて」 reads sessions only while its セッション tab is shown (see refreshAllBoards): a
+   move to or from the tab changes what the next round asks for, so it is made now. */
+function askSessionsOfAll(prevView, boardChanged) {
+  if (!boardChanged && scopeAll() && (nav.view === 'sessions') !== (prevView === 'sessions')) refresh(true);
 }
 
 /* Draw the screen the address names. */
@@ -356,9 +376,9 @@ function applyNav(boardChanged) {
     } else if (nav.view === 'sessions') {
       if (state.boardTerminal === undefined) {
         // The first poll of this board has not said whether it has terminals.
-        sessView.pending = sessView.pending || { id: null };
+        sessView.pending = true;
         if (view !== 'board') setView('board');
-      } else openSessionsView();
+      } else openSessionsView(nav.session);
     } else {
       prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
       if (view !== 'board') setView('board'); else applyLayout();
@@ -404,9 +424,11 @@ window.addEventListener('popstate', () => {
   boardJob = null;
   if (sameNav(next, nav)) return;
   const boardChanged = next.board !== nav.board;
+  const prevView = nav.view;
   Object.assign(nav, next);
   if (boardChanged) switchBoard();
   applyNav(boardChanged);
+  askSessionsOfAll(prevView, boardChanged);
 });
 
 let lastStateJson = '';
@@ -524,7 +546,20 @@ let allAgain = false;            // a forced round asked for while one was out
 let allRound = false;            // the first full round of this scope has been drawn
 let allSkip = false;
 let allMinute = null;
+/* The board of each repository that answers for it on the セッション tab of 「すべて」: its own
+   board, which lists the sessions of its parent-task hubs too, else the first one there is. */
+function sessionCarriers(listed) {
+  const by = new Map();
+  for (const b of listed) {
+    const have = by.get(b.nwo);
+    if (!have || (have.hub && !b.hub)) by.set(b.nwo, b);
+  }
+  return [...by.values()].sort((a, b) => a.nwo.localeCompare(b.nwo));
+}
+
 /* 「すべて」 and the review queue: each board's state, one after another, without its sessions.
+   Only the セッション tab of 「すべて」 asks for sessions, and only of one board per repository,
+   since listing them is the dearest part of a poll.
    A board whose state is unchanged is not redrawn, and nothing is drawn at all unless one is. */
 async function refreshAllBoards(force) {
   if (allBusy) {
@@ -538,15 +573,17 @@ async function refreshAllBoards(force) {
     if (!boards.length) await fetchBoards();
     if (epoch !== navEpoch) return;
     const listed = readBoards();
+    const carriers = new Set(nav.view === 'sessions' ? sessionCarriers(listed).map(b => b.slug) : []);
     let changed = force;
     let now = 0;
     for (const b of listed) {
       try {
-        const next = await boardApi(`/b/${b.slug}`, '/api/state?sessions=0');
+        const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state' : '/api/state?sessions=0');
         if (epoch !== navEpoch) return;
         const { now: at, ...rest } = next;
         now = Math.max(now, at || 0);
-        const json = JSON.stringify(rest);
+        // As `refresh` compares them, so a minute turning over does not redraw each board.
+        const json = JSON.stringify({ ...rest, sessions: minuteSessions(rest.sessions, at) });
         if (boardStates[b.slug]?.json !== json) changed = true;
         boardStates[b.slug] = { json, data: next };
       } catch (e) {
@@ -564,7 +601,7 @@ async function refreshAllBoards(force) {
     const minute = Math.floor(now / 60);
     if (!changed && minute === allMinute) return;
     allMinute = minute;
-    state = mergeStates(listed, now);
+    state = mergeStates(listed, now, carriers);
     allRound = true;
     if (window.__from) return;
     render();
@@ -580,10 +617,13 @@ async function refreshAllBoards(force) {
 }
 
 /* One state out of the boards': tasks and gates tagged with the board they came from, workers
-   once each (a parent-task hub's board lists its repository's worktrees too). What belongs to
-   a single board — sessions, hubs, the inbox — is left empty. */
-function mergeStates(listed, now) {
+   once each (a parent-task hub's board lists its repository's worktrees too). The hubs and
+   sessions are the carrier boards' (see sessionCarriers), tagged the same way, since a hub's
+   id is only its own repository's: the repository hub of every repository is `hub`. Sessions
+   are there only while the セッション tab asks for them. The inbox is left empty. */
+function mergeStates(listed, now, carriers = new Set()) {
   const parts = listed.filter(b => boardStates[b.slug]).map(b => ({ slug: b.slug, data: boardStates[b.slug].data }));
+  const carried = sessionCarriers(listed).map(b => b.slug).filter(slug => boardStates[slug]);
   const tag = (list, slug) => (list || []).map(x => ({ ...x, _slug: slug, _base: `/b/${slug}` }));
   const seen = new Set();
   const workers = [];
@@ -595,20 +635,40 @@ function mergeStates(listed, now) {
     }
   }
   const first = parts[0]?.data || {};
+  const lead = boardStates[carried[0]]?.data || first;
+  const nwoOf = slug => listed.find(b => b.slug === slug)?.nwo || '';
   return {
     repo: '',
     resident: true,
     tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
     gates: parts.flatMap(p => tag(p.data.gates, p.slug)),
     workers,
-    sessions: [],
-    hubs: [],
+    // Each repository's carrier board, in the order the tab lists them.
+    carriers: carried.map(slug => ({ slug, nwo: nwoOf(slug) })),
+    sessions: carried.filter(slug => carriers.has(slug)).flatMap(slug => tag(boardStates[slug].data.sessions, slug)),
+    hubs: carried.flatMap(slug => tag(boardStates[slug].data.hubs, slug)),
     pending: [],
     now,
     ideConfigured: first.ideConfigured,
     stuckAfterMinutes: first.stuckAfterMinutes,
     configPath: first.configPath,
+    // What the tab's buttons ask of the server is the same for every board of it.
+    boardTerminal: lead.boardTerminal,
+    hubStart: lead.hubStart,
+    sessionOpen: lead.sessionOpen,
+    sessionResume: lead.sessionResume,
+    sessionStart: lead.sessionStart,
+    hubRunner: lead.hubRunner,
   };
+}
+
+/* The sessions as two polls are compared: a session's last activity as the whole minutes it has
+   been idle at `now`, which is as fine as the page shows it. `shows` false leaves it out, for the
+   views that do not draw it. Clamped at 0: tmux's activity can be a second later than the
+   poll's clock, and -1 against 0 between two polls would redraw for nothing. */
+function minuteSessions(sessions, now, shows = true) {
+  return (sessions || []).map(({ lastActivityAt, ...s }) => !shows || lastActivityAt == null ? s
+    : { ...s, lastActivityAt: Math.max(0, Math.floor((now - lastActivityAt) / 60)) });
 }
 
 async function refresh(force = false) {
@@ -632,18 +692,12 @@ async function refresh(force = false) {
     // composition every two seconds. The clock only moves the elapsed times on the board, so
     // the board is redrawn for it once a minute. Its one box to type into, the instruction in
     // the side sheet, is kept across a redraw (renderHandForm).
-    // A session's last activity is compared as the whole minutes it has been idle, which is as
-    // fine as the page shows it: the timestamp itself moves on nearly every poll. The views
-    // that do not show it leave it out, so a minute turning over does not redraw them (and
-    // cut a comment being typed there); a view switch draws its view afresh.
-    // Clamped at 0: tmux's activity can be a second later than the poll's clock, and -1 against 0
-    // between two polls would redraw for nothing.
+    // A session's last activity is compared by `minuteSessions`: the timestamp itself moves on
+    // nearly every poll. The views that do not show it leave it out, so a minute turning over
+    // does not redraw them (and cut a comment being typed there); a view switch draws its view
+    // afresh.
     const { now, ...rest } = next;
-    if (rest.sessions) {
-      const shows = view === 'board' || view === 'sessions';
-      rest.sessions = rest.sessions.map(({ lastActivityAt, ...s }) => !shows || lastActivityAt == null ? s
-        : { ...s, lastActivityAt: Math.max(0, Math.floor((now - lastActivityAt) / 60)) });
-    }
+    if (rest.sessions) rest.sessions = minuteSessions(rest.sessions, now, view === 'board' || view === 'sessions');
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
     const changed = nextJson !== lastStateJson;
@@ -712,7 +766,7 @@ function render() {
   renderBoardRows();
   renderTitle();
   updateNotifyButton();
-  renderSessionsRail();
+  renderSessionsTab();
   openPendingSession();
   renderSessionsView();
   renderDrawer();

@@ -156,7 +156,7 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
    is alive in a tmux window. Where it cannot, there is no button at all. */
 const boardTerminalReady = s =>
   !!(state.boardTerminal?.available && s?.present && s.terminal?.backend === 'tmux' && s.terminal.window);
-const sessionOfTask = task => task && (state.sessions || []).find(s =>
+const sessionOfTask = task => task && !scopeAll() && (state.sessions || []).find(s =>
   // The worktree stands in only for a session with no task of its own: one that belongs to
   // another task is not this card's, even where a worktree was reused.
   s.kind === 'worker' && (s.task ? s.task === task.id : !!task.worktree && s.worktree === task.worktree));
@@ -167,5 +167,10 @@ const readySessionOfTask = task => {
 function openTaskTerminal(taskId) {
   const task = (state.tasks || []).find(t => t.id === taskId);
   const s = readySessionOfTask(task);
-  if (s) openSessionsView(s.id, { from: { view, taskId } });
+  if (!s) return;
+  const from = { view, taskId };
+  go({ view: 'sessions', session: s.id });
+  // After the selection, which clears a link left over from an earlier switch.
+  sessView.back = from;
+  renderSessionContext();
 }
