@@ -861,7 +861,7 @@ function openGateInReview(s) {
   const w = s?.waiting;
   if (!w) return;
   // The review queue reads every board, so the gate is there whichever board it is on.
-  goToGate(w.id);
+  goToGate(w.id, w.slug);
 }
 
 /* ── The panel over a session that is not running ── */

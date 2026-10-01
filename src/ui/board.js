@@ -156,6 +156,7 @@ window.addEventListener('storage', e => {
 // A record of a merged state carries its board, so answering it reaches the right one.
 const allRecords = () => (state.tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
+const recordByRef = ref => allRecords().find(r => gateRef(r) === ref) || (ref && !String(ref).includes('/') ? recordById(ref) : undefined);
 const recordSeq = r => +(/-record-(\d+)$/.exec(r.id)?.[1] || 1);
 const recordsOf = task => [...(task.records || [])].sort((a, b) =>
   (a.openedAt || '').localeCompare(b.openedAt || '') || recordSeq(a) - recordSeq(b));
@@ -195,9 +196,7 @@ function chipsOf(task) {
 function openRecord(id) {
   const r = recordById(id);
   if (r && r.task) return openTask(r.task, TAB_OF_KIND[r.kind] || 'history', id);
-  focused = id;
-  go({ view: 'review', item: id }, { replace: view === 'review' });
-  renderReview();
+  goToGate(id);
 }
 
 /* ── Inline reply forms on human board ── */
@@ -229,14 +228,14 @@ async function act(action, id, choice) {
 
   try {
     const t = (state.tasks || []).find(x => x.id === id);
-    const gate = t ? openGate(t) : (state.gates || []).find(g => g.id === id);
+    const gate = t ? openGate(t) : (state.gates || []).find(g => gateRef(g) === id);
     const replyEl = document.querySelector(`textarea[data-reply="${id}"]`);
     const reply = replyEl ? replyEl.value.trim() : '';
 
     switch (action) {
       case 'start': {
         if (gate) {
-          await submitAnswer('approve', undefined, gate.id, '');
+          await submitAnswer('approve', undefined, gateRef(gate), '');
         } else if (t) {
           try {
             await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
@@ -251,7 +250,7 @@ async function act(action, id, choice) {
       }
       case 'shelve': {
         if (gate) {
-          await submitAnswer('reject', undefined, gate.id, '');
+          await submitAnswer('reject', undefined, gateRef(gate), '');
         } else if (t) {
           // The queue is one board's; from 「すべて」 the card's own board takes it.
           if (scopeAll()) {
@@ -270,26 +269,26 @@ async function act(action, id, choice) {
       case 'approve': {
         const decision = gate?.kind === 'result' ? 'ack' : 'approve';
         if (gate) {
-          await submitAnswer(decision, undefined, gate.id, reply);
+          await submitAnswer(decision, undefined, gateRef(gate), reply);
         }
         break;
       }
       case 'choice': {
         if (gate && choice) {
-          await submitAnswer('choice', choice, gate.id, reply);
+          await submitAnswer('choice', choice, gateRef(gate), reply);
         }
         break;
       }
       case 'send-reject': {
         const decision = gate?.kind === 'verify' || gate?.kind === 'diff' ? 'changes' : 'reject';
         if (gate) {
-          await submitAnswer(decision, undefined, gate.id, reply || '差し戻し');
+          await submitAnswer(decision, undefined, gateRef(gate), reply || '差し戻し');
         }
         break;
       }
       case 'send-changes': {
         if (gate) {
-          await submitAnswer('changes', undefined, gate.id, reply || '修正指示');
+          await submitAnswer('changes', undefined, gateRef(gate), reply || '修正指示');
         } else if (t && reply) {
           try {
             await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
@@ -304,13 +303,13 @@ async function act(action, id, choice) {
       }
       case 'send-answer': {
         if (gate) {
-          await submitAnswer('answer', undefined, gate.id, reply || '回答');
+          await submitAnswer('answer', undefined, gateRef(gate), reply || '回答');
         }
         break;
       }
       case 'send-ask': {
         if (gate) {
-          await submitAnswer('ask', undefined, gate.id, reply || '追加の質問');
+          await submitAnswer('ask', undefined, gateRef(gate), reply || '追加の質問');
         }
         break;
       }
@@ -429,7 +428,7 @@ function humanActions(task, col, gate) {
 }
 
 function humanGateActions(gate, col) {
-  const open = openReplies[gate.id];
+  const open = openReplies[gateRef(gate)];
   if (open) {
     const ph = open === 'answer' ? '回答を入力してください...'
              : open === 'ask' ? '追加で聞きたい内容を入力してください...'
@@ -441,13 +440,13 @@ function humanGateActions(gate, col) {
                     : '差し戻す';
     return `
       <div class="hcard-reply">
-        <textarea data-reply="${esc(gate.id)}" placeholder="${esc(ph)}"></textarea>
+        <textarea data-reply="${esc(gateRef(gate))}" placeholder="${esc(ph)}"></textarea>
         <div class="hcard-actions">
-          <button type="button" class="btn-m3-primary" data-act="send-${open}" data-id="${esc(gate.id)}">
+          <button type="button" class="btn-m3-primary" data-act="send-${open}" data-id="${esc(gateRef(gate))}">
             <span class="material-symbols-outlined">send</span>
             <span>${esc(sendLabel)}</span>
           </button>
-          <button type="button" class="btn-m3-text" data-act="cancel" data-id="${esc(gate.id)}">やめる</button>
+          <button type="button" class="btn-m3-text" data-act="cancel" data-id="${esc(gateRef(gate))}">やめる</button>
         </div>
       </div>
     `;
@@ -455,42 +454,42 @@ function humanGateActions(gate, col) {
   let buttons = '';
   if (col === 'dispatch') {
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">play_arrow</span><span>着手する</span>
       </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">undo</span><span>Backlog に戻す</span>
       </button>
     `;
   } else if (col === 'plan' || col === 'diff') {
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">check</span><span>承認する</span>
       </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">reply</span><span>差し戻す</span>
       </button>
     `;
   } else if (col === 'verify') {
     const isResult = gate.kind === 'result';
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">check</span><span>${isResult ? '了解' : '確認した'}</span>
       </button>
-      <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${isResult ? '追加で聞く' : '直してほしい'}</span>
       </button>
     `;
   } else if (col === 'question') {
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">chat</span><span>回答する</span>
       </button>
     `;
   }
   if (gate.choices && gate.choices.length) {
     buttons += gate.choices.map(c => `
-      <button type="button" class="btn-m3-tonal" data-act="choice" data-choice="${esc(c.id)}" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="choice" data-choice="${esc(c.id)}" data-id="${esc(gateRef(gate))}">
         <span>${esc(c.label || c.id)}</span>
       </button>
     `).join('');
@@ -570,7 +569,7 @@ function humanGateCard(gate, col) {
   const el = document.createElement('div');
   el.className = 'card hcard';
   el.id = `human-${gate.id}`;
-  el.dataset.id = gate.id;
+  el.dataset.id = gateRef(gate);
   if (gate._slug) el.dataset.slug = gate._slug;
 
   const mins = stampSecs(gate.openedAt) ? Math.max(0, Math.floor((Date.now() - stampSecs(gate.openedAt) * 1000) / 60000)) : 0;
@@ -1001,9 +1000,14 @@ function closeDrawer() {
   renderDrawer();
 }
 
-function goToGate(gateId) {
-  focused = gateId;
-  go({ view: 'review', item: gateId }, { replace: view === 'review' });
+/* A gate is named by its board and id in the review queue, which reads several boards: two of
+   them can open a gate of one kind in the same second. `slug` is the board it is on; from a
+   board's own page that is the board shown. */
+function goToGate(gateId, slug = null) {
+  const on = slug || (multiBoard && nav.board && nav.board !== 'all' ? nav.board : null);
+  const ref = on ? `${on}/${gateId}` : gateId;
+  focused = ref;
+  go({ view: 'review', item: ref }, { replace: view === 'review' });
   renderReview();
 }
 

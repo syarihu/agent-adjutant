@@ -107,7 +107,7 @@ function setView(v) {
     closeDrawer();
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-    if (!(state.gates || []).some(g => g.id === focused)) focused = null;
+    if (!(state.gates || []).some(g => gateRef(g) === focused)) focused = null;
     render();
   }
 }
@@ -173,7 +173,7 @@ async function boot() {
   BASE = multiBoard && nav.board && nav.board !== 'all' ? `/b/${nav.board}` : '';
   if (deepSession) sessView.pending = { id: deepSessionId };
   // A link made before the address named the review queue: carry its gate over.
-  if (deep) { nav.view = 'review'; nav.item = deep[1]; if (multiBoard) nav.board = 'all'; }
+  if (deep) { nav.view = 'review'; nav.item = (m => m ? `${m[1]}/${deep[1]}` : deep[1])(/^\/b\/([^/]+)/.exec(location.pathname)); if (multiBoard) nav.board = 'all'; }
   // The address in its own spelling, so a go() to the same screen does not push a twin.
   history.replaceState(null, '', urlOf() + (deep ? '' : location.hash));
   // The page's sections are shown or hidden by the first `setView`; the address has the say on

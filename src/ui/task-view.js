@@ -78,7 +78,7 @@ function redrawHistoryOf(id) {
   if (view === 'sessions') renderSessionSidebar();
   // A record's diff arrives with the history, and nothing else redraws a quiet board.
   // Only the record on screen, and held while a comment is being typed there.
-  if (view === 'review' && recordById(focused)?.task === id) redrawReview();
+  if (view === 'review' && recordByRef(focused)?.task === id) redrawReview();
 }
 
 /* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the

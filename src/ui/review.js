@@ -21,6 +21,16 @@ const kindOf = k => KINDS[k] || [k, '#898781'];
 
 let focused = null;
 
+/* How the review queue names a gate: its board and id, since gates of several boards share it.
+   On a board of its own there is no board to name. */
+const gateRef = g => g._slug ? `${g._slug}/${g.id}` : g.id;
+/* The open gate or record a ref names; a plain id from an old link takes the first of that id. */
+function gateByRef(ref) {
+  const gates = state.gates || [];
+  return gates.find(g => gateRef(g) === ref) || recordByRef(ref)
+    || (ref && !String(ref).includes('/') ? gates.find(g => g.id === ref) : undefined);
+}
+
 /* `20260922T041233Z` → 「4分前」. The stamp is UTC and says so; the reader wants neither. */
 function ago(stamp) {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
@@ -235,7 +245,7 @@ const BUTTONS = {
    gate that waits. */
 function decideHtml(g) {
   if (g.wait === false) {
-    return `<div class="decision-dock panel" data-gate="${esc(g.id)}">
+    return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
       <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
         <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">replay</span>
         <span>差し戻す</span>
@@ -265,7 +275,7 @@ function decideHtml(g) {
       <p style="color:var(--md-sys-color-outline);font-size:11.5px;margin-top:10px">
         worker はこの記録を残して先に進んでいます。差し戻すと <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。記録はそのまま残り、差し戻しが追記されます。</p></div>`;
   }
-  return `<div class="decision-dock panel" data-gate="${esc(g.id)}">
+  return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
     <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
       <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">gavel</span>
       <span>${g.kind === 'verify' ? '確かめたら（判定）' : 'あなたの判定・指示'}</span>
@@ -378,7 +388,7 @@ function renderReview() {
   const listEl = rail.querySelector('.review-inbox-list');
 
   for (const g of gates) {
-    const isCur = (g.id === focused);
+    const isCur = (gateRef(g) === focused);
     const [label, colour] = kindOf(g.kind);
     const b = document.createElement('button');
     b.className = 'review-inbox-item item' + (isCur ? ' selected' : '');
@@ -392,7 +402,7 @@ function renderReview() {
       <div style="font-size:11px;color:var(--md-sys-color-outline);font-family:var(--font-mono);">${esc(g.worktree ? g.worktree.split('/').pop() : '')}</div>
     `;
     b.onclick = () => {
-      focused = g.id;
+      focused = gateRef(g);
       reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
       renderReview();
     };
@@ -401,7 +411,7 @@ function renderReview() {
 
   // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
   // is what waits on a person, and a record does not.
-  let g = gates.find(x => x.id === focused) || recordById(focused);
+  let g = gateByRef(focused);
   // The gate asked for may be on a board not read yet: wait for the first full round rather
   // than showing the first of the others and forgetting it.
   if (!g && focused && scopeAll() && !allRound) { pane.innerHTML = ''; return; }
@@ -419,19 +429,19 @@ function renderReview() {
     if (view === 'review' && nav.item) setNav({ item: null });
     return;
   }
-  focused = g.id;
+  focused = gateRef(g);
   const record = g.wait === false;
   if (record && view === 'review') markSeen(g.id);
   // A permalink, so "反映しといたから見てね" can point at this one card.
-  if (view === 'review' && nav.item !== g.id) setNav({ item: g.id });
+  if (view === 'review' && nav.item !== gateRef(g)) setNav({ item: gateRef(g) });
 
-  if (pane.dataset.shown !== g.id) {
+  if (pane.dataset.shown !== gateRef(g)) {
     reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
   }
 
   const wasDecidedOpen = pane.querySelector('details.decided')?.open;
   const commentEl = pane.querySelector('.gate-comment');
-  const commentVal = commentEl && pane.dataset.shown === g.id ? commentEl.value : '';
+  const commentVal = commentEl && pane.dataset.shown === gateRef(g) ? commentEl.value : '';
   const isCommentFocused = document.activeElement === commentEl;
   const paneScroll = pane.scrollTop;
 
@@ -623,10 +633,12 @@ function renderReview() {
   h += decideHtml(g);
 
   pane.innerHTML = h;
-  pane.dataset.shown = g.id;
+  pane.dataset.shown = gateRef(g);
   bindDecide(pane);
   pane.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
-    focused = b.dataset.open;
+    // An earlier gate of the task being read: on the board that gate is on.
+    const cur = gateByRef(focused);
+    focused = (cur?._slug ? `${cur._slug}/` : '') + b.dataset.open;
     renderReview();
   }));
   restoreComment(pane, commentVal, isCommentFocused, paneScroll);
@@ -636,7 +648,7 @@ function renderReview() {
    answered, the one picked is marked instead. */
 function choicesHtml(g, pickable) {
   if (!g.choices?.length) return '';
-  return `<div class="panel"${pickable ? ` data-gate="${esc(g.id)}"` : ''}>
+  return `<div class="panel"${pickable ? ` data-gate="${esc(gateRef(g))}"` : ''}>
     <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
       <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>
       <span>AI からの提案・選択肢</span>
@@ -761,7 +773,7 @@ function dropGate(g) {
 }
 
 async function answer(decision, choice, id = focused, commentOverride = null) {
-  const g = (state.gates || []).find(x => x.id === id) || recordById(id);
+  const g = gateByRef(id);
   if (!g) return false;
   const box = commentBox();
   const comment = commentOverride !== null ? commentOverride : box?.value.trim();
@@ -785,7 +797,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
     // A record stays, with this answer appended, so it stays in view to show that it went.
     if (g.wait === false && box) box.value = '';
-    else if (focused === g.id) focused = null;
+    else if (focused === gateRef(g)) focused = null;
     dropGate(g);
     await refresh(true);
     refreshBoards();
@@ -799,7 +811,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
    the ball is still with the human until they come back and close it. */
 function talk(id = focused) {
-  const g = (state.gates || []).find(x => x.id === id);
+  const g = gateByRef(id);
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
   // hub's.
@@ -808,7 +820,7 @@ function talk(id = focused) {
 }
 
 async function closeGate(id = focused) {
-  const g = (state.gates || []).find(x => x.id === id);
+  const g = gateByRef(id);
   if (!g) return;
   const comment = commentBox()?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
@@ -817,7 +829,7 @@ async function closeGate(id = focused) {
       method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
-    if (focused === g.id) focused = null;
+    if (focused === gateRef(g)) focused = null;
     dropGate(g);
     await refresh(true);
     refreshBoards();

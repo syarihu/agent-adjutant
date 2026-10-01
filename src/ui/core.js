@@ -447,19 +447,20 @@ async function toggleNotify() {
 
 function checkNewGates(gates) {
   const list = gates || [];
-  const currentIds = new Set(list.map(g => g.id));
+  const refOf = g => g._slug ? `${g._slug}/${g.id}` : g.id;
+  const currentIds = new Set(list.map(refOf));
   if (seenGateIds === null) {
     seenGateIds = currentIds;
     return;
   }
   if (window.Notification && Notification.permission === 'granted') {
     for (const g of list) {
-      if (!seenGateIds.has(g.id)) {
+      if (!seenGateIds.has(refOf(g))) {
         const [label] = kindOf(g.kind);
         const wtName = g.worktree ? g.worktree.split('/').pop() : '';
         const n = new Notification(`【${label}】${g.title}`, {
           body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
-          tag: 'gate-' + g.id,
+          tag: 'gate-' + refOf(g),
         });
         n.onclick = () => {
           window.focus();
