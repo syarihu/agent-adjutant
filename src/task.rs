@@ -324,6 +324,28 @@ pub fn snapshot_from_gh(json: &str, url: &str, stamp: &str) -> Result<IssueSnaps
     })
 }
 
+/// How a pull request's checks stand, counted rather than listed: the card shows one word.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckCounts {
+    pub pass: u32,
+    pub fail: u32,
+    pub pending: u32,
+}
+
+/// What the last PR refresh read about a record's pull request, kept so the board can show it
+/// without asking `gh` on every poll (#191). Holds nothing that changes by itself with time:
+/// the record is only rewritten when GitHub's answer differs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrStatus {
+    /// `open`, `draft`, `merged` or `closed`.
+    pub state: String,
+    pub title: String,
+    /// `approved`, `changes`, `required` or `none`.
+    pub review: String,
+    pub ci: CheckCounts,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -405,6 +427,10 @@ pub struct Task {
     /// only by a fetch, never taken from a caller's JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_snapshot: Option<IssueSnapshot>,
+    /// The pull request as the last refresh read it; see `PrStatus`. Written only by a
+    /// refresh, never taken from a caller's JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_status: Option<PrStatus>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -647,6 +673,7 @@ mod tests {
                 instruction: None,
                 gate_answered_at: None,
                 issue_snapshot: None,
+                pr_status: None,
                 created_at: stamp.to_string(),
                 updated_at: stamp.to_string(),
             }

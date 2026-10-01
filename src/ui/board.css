@@ -379,6 +379,7 @@
 
 .card-header-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -530,6 +531,7 @@
 .tp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--md-sys-color-warning); }
 .tp-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 .tp-pane[hidden] { display: none; }
+#tp-links:empty { display: none; }
 #tp-detail { padding: 16px; overflow-y: auto; }
 #tp-detail > div:empty { display: none; }
 #tp-rest { display: flex; flex-direction: column; gap: 14px; }

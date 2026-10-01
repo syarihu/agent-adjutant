@@ -92,6 +92,49 @@
 .pill-neutral { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
 .pill-purple  { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 
+/* The PR in a card's header (a coloured chip by state) and the Issue / PR rows at the top of
+   詳細 and 判断. */
+.gh-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: var(--md-shape-corner-xs);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.gh-pr.open   { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+.gh-pr.merged { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.gh-pr:hover { filter: brightness(.96); }
+.gh-block { display: flex; flex-direction: column; gap: 6px; }
+.gh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: var(--md-shape-corner-md);
+  background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+a.gh-row:hover { background: var(--md-sys-color-surface-container-high); }
+.gh-row > .material-symbols-outlined { font-size: 16px; flex-shrink: 0; color: var(--md-sys-color-outline); }
+.gh-kind { font-size: 11px; font-weight: 800; color: var(--md-sys-color-outline); flex-shrink: 0; }
+.gh-num { font-family: var(--font-mono); font-weight: 700; color: var(--md-sys-color-primary); flex-shrink: 0; }
+.gh-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-row .m3-pill { flex-shrink: 0; }
+.gh-row > .gh-out { font-size: 14px; }
+.gh-none { color: var(--md-sys-color-outline); border-style: dashed; }
+
 .m3-card {
   background: var(--md-sys-color-surface-container-lowest);
   border-radius: var(--md-shape-corner-md);

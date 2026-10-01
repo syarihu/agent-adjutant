@@ -217,6 +217,73 @@ function prNumberOf(url) {
   try { return /\/pull\/(\d+)/.exec(new URL(url).pathname)?.[1] || ''; } catch { return ''; }
 }
 
+/* The Issue and the PR of a task, as the card and the panel show them. What is known about the
+   PR comes from the record's `prStatus`, which the PR refresh writes: the page never asks
+   GitHub, so a PR that has not been refreshed yet is shown as not yet checked. */
+function prStateOf(task) {
+  return task.prStatus?.state || (task.status === 'done' && task.pr ? 'merged' : null);
+}
+const PR_STATES = {
+  open: ['オープン', 'pill-good'],
+  draft: ['下書き', 'pill-neutral'],
+  merged: ['マージ済み', 'pill-purple'],
+  closed: ['クローズ', 'pill-neutral'],
+  unknown: ['未確認', 'pill-neutral'],
+};
+const prStateInfo = task => PR_STATES[prStateOf(task) || 'unknown'] || PR_STATES.unknown;
+/* 「レビュー待ち · CI 通過」: the state, the review for an open PR, and the checks if it has any. */
+function prNoteOf(task) {
+  const st = prStateOf(task);
+  const [label] = prStateInfo(task);
+  if (st === 'merged' || st === 'closed' || !st) return label;
+  const parts = [];
+  if (st === 'draft') parts.push(label);
+  else parts.push({ approved: '承認済み', changes: '修正依頼' }[task.prStatus?.review] || 'レビュー待ち');
+  const ci = task.prStatus?.ci;
+  if (ci && ci.pass + ci.fail + ci.pending > 0) {
+    parts.push(ci.fail > 0 ? `CI 失敗 ${ci.fail}` : ci.pending > 0 ? 'CI 実行中' : 'CI 通過');
+  }
+  return parts.join(' · ');
+}
+/* Issue number and PR number for a card's header; each opens on GitHub. */
+function ghChipsHtml(task) {
+  const issueUrl = httpUrl(task.issueUrl);
+  const prUrl = httpUrl(task.pr);
+  const issueNumber = issueUrl ? issueNumberOf(issueUrl) : '';
+  const prNumber = prUrl ? prNumberOf(prUrl) : '';
+  const issue = issueNumber
+    ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
+          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
+          <span>${esc(issueNumber)}</span>
+        </a>`
+    : '';
+  const pr = prUrl
+    ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="gh-pr ${esc(prStateOf(task) || 'unknown')}" title="${esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}`)}"><span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span>${prNumber ? `<span>#${esc(prNumber)}</span>` : ''}</a>`
+    : '';
+  return issue + pr;
+}
+/* The Issue and the PR as rows for the top of 詳細 and 判断: number and title, and for the PR
+   its state, checks and review. Empty for a task with neither a PR to show nor an Issue. */
+function ghRowsHtml(task) {
+  if (!task) return '';
+  const out = '<span class="material-symbols-outlined gh-out" aria-hidden="true">open_in_new</span>';
+  const issueUrl = httpUrl(task.issueUrl);
+  const prUrl = httpUrl(task.pr);
+  let h = '';
+  if (issueUrl) {
+    const n = issueNumberOf(issueUrl);
+    h += `<a class="gh-row" href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">tag</span><span class="gh-kind">Issue</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.issueSnapshot?.title ?? task.title)}</span>${out}</a>`;
+  }
+  if (prUrl) {
+    const n = prNumberOf(prUrl);
+    const [, cls] = prStateInfo(task);
+    h += `<a class="gh-row" href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.prStatus?.title ?? task.title)}</span><span class="m3-pill ${cls}">${esc(prNoteOf(task))}</span>${out}</a>`;
+  } else {
+    h += '<div class="gh-row gh-none"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span><span class="gh-title">PR はまだありません</span></div>';
+  }
+  return `<div class="gh-block">${h}</div>`;
+}
+
 function overviewTab(task, all) {
   const plans = all.filter(g => g.kind === 'plan');
   const plan = gateShownIn(task, 'overview', all);

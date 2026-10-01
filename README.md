@@ -479,9 +479,14 @@ that acted last decides.
 **The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
 another card shows that one instead. Its header has the task's key, the board it comes from, its
 state and its title, with 「カードへ」, three placement buttons and a close button. Inside are two
-tabs. 詳細 shows, from the top, the open gate and what can be done about it (one click for a
-decision that needs no comment, 「判定画面を開く」 for the rest), the phases, the records, the
-worktree and branch with 「IDE」, and the history with the instructions. ターミナル is the task's
+tabs. 詳細 shows, from the top, the Issue and the PR (a row each, with its number and title; the PR
+also with its state, its CI and its review status, or a note that there is no PR yet), the open
+gate and what can be done about it (one click for a decision that needs no comment, 「判定画面を開く」
+for the rest), the phases, the records, the worktree and branch with 「IDE」, and the history with
+the instructions. A card carries the same two numbers in its header, each opening on GitHub, and
+the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
+read by the PR refresh (「PR確認」, `adjutant task refresh`), not by the page, so they are as new as
+the last refresh. ターミナル is the task's
 session in the built-in terminal, with a bar for resuming, closing or opening it in your own
 terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
 no session. A card's body opens 詳細; its 「ターミナル」 button, and 「ターミナルで答える」 on a
@@ -497,7 +502,7 @@ pasted link open the same task and tab.
 all boards, and opens the first one on its own. The list is grouped by board in the sidebar's
 order (a repository, then its parent-task hubs), the longest-waiting first, with each group's
 header pinned while the list scrolls. The right side has two tabs. 判断 is one column: the task's
-Issue and PR, what is waiting and why, what the kind of gate needs read (the plan or question, the
+Issue and PR rows (as at the top of 詳細), what is waiting and why, what the kind of gate needs read (the plan or question, the
 diff and findings, or the verify checks), 経過をすべて見る to the task's full view, and the buttons the
 gate's options name, with the comment box. ターミナル opens the session the gate waits on in place (the
 worker, or the hub for the gates it opens); 「ターミナルで話す」 switches to it, and switching tabs keeps

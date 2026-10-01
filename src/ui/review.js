@@ -512,12 +512,7 @@ function reviewTabsHtml(g) {
 
 /* Issue and PR of the task, a row each; a gate with no task has neither. */
 function reviewRefsHtml(g, task) {
-  const link = (label, url, n) => url
-    ? `<a class="tp-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span>${label}${n ? ` #${esc(n)}` : ''}</span><span class="material-symbols-outlined" style="font-size:14px;" aria-hidden="true">open_in_new</span></a>`
-    : `<span class="tp-muted">${label} —</span>`;
-  const issue = httpUrl(task?.issueUrl);
-  const pr = httpUrl(task?.pr);
-  return `<div class="rv-refs" data-rv-refs>${link('Issue', issue, issue && issueNumberOf(issue))}${link('PR', pr, pr && prNumberOf(pr))}</div>`;
+  return task ? `<div class="rv-refs" data-rv-refs>${ghRowsHtml(task)}</div>` : '';
 }
 
 /* What it takes to answer: the buttons the gate's options name, a comment box, 話す. */

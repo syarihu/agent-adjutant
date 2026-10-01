@@ -7,6 +7,13 @@ use common::*;
 
 const PULL: &str = "https://github.com/acme/widget/pull";
 
+/// What `gh pr view --json state,isDraft,title,reviewDecision,statusCheckRollup` prints.
+fn pr_json(state: &str) -> String {
+    format!(
+        r#"{{"state":"{state}","isDraft":false,"title":"A pull request","reviewDecision":"","statusCheckRollup":[]}}"#
+    )
+}
+
 /// A `gh` that knows four pull requests, and writes down every one it is asked about.
 ///
 /// 1 is merged, 2 is open, 3 was closed without merging, 5 is merged but its record is
@@ -23,13 +30,16 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
             "#!/bin/sh\n\
              echo \"$3\" >> {asked}\n\
              case \"$3\" in\n\
-             {PULL}/1) echo MERGED ;;\n\
-             {PULL}/2) echo OPEN ;;\n\
-             {PULL}/3) echo CLOSED ;;\n\
-             {PULL}/5) grep -l '/pull/5\"' \"$ADJUTANT_STATE_DIR\"/tasks/*/*.json | xargs rm; echo MERGED ;;\n\
+             {PULL}/1) echo '{merged}' ;;\n\
+             {PULL}/2) echo '{open}' ;;\n\
+             {PULL}/3) echo '{closed}' ;;\n\
+             {PULL}/5) grep -l '/pull/5\"' \"$ADJUTANT_STATE_DIR\"/tasks/*/*.json | xargs rm; echo '{merged}' ;;\n\
              *) echo 'GraphQL: Could not resolve to a PullRequest' >&2; exit 1 ;;\n\
              esac\n",
             asked = shell_quoted(&asked.to_string_lossy()),
+            merged = pr_json("MERGED"),
+            open = pr_json("OPEN"),
+            closed = pr_json("CLOSED"),
         ),
     )
     .unwrap();
@@ -281,4 +291,107 @@ fn the_tool_does_what_the_command_does() {
     assert_eq!(ids(&result["open"]), [open.as_str()], "{result}");
     assert_eq!(status_of(&fixture, &merged), "done");
     assert_eq!(status_of(&fixture, &open), "pr");
+}
+
+/// A `gh` that answers every pull request with a draft whose checks are one passing, one
+/// failing, and whose review is still required.
+fn stub_gh_draft(fixture: &Fixture) -> String {
+    let stubs = fixture.repo.join("stub-bin");
+    std::fs::create_dir_all(&stubs).unwrap();
+    let gh = stubs.join("gh");
+    // Values go in through placeholders: a bare upper-case string after a colon reads as a
+    // tracker key to the guard over everything that ships.
+    let run = |conclusion: &str| {
+        format!(
+            r#"{{"status":"{}","conclusion":"{conclusion}"}}"#,
+            "COMPLETED"
+        )
+    };
+    let (open, review) = ("OPEN", "REVIEW_REQUIRED");
+    let answer = format!(
+        r#"{{"state":"{open}","isDraft":true,"title":"Wire the thing","reviewDecision":"{review}","statusCheckRollup":[{},{}]}}"#,
+        run("SUCCESS"),
+        run("FAILURE"),
+    );
+    std::fs::write(&gh, format!("#!/bin/sh\necho '{answer}'\n")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    format!(
+        "{}:{}",
+        stubs.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+fn record_file(fixture: &Fixture, id: &str) -> PathBuf {
+    std::fs::read_dir(fixture.state.join("tasks"))
+        .unwrap()
+        .flatten()
+        .map(|slug| slug.path().join(format!("{id}.json")))
+        .find(|p| p.exists())
+        .expect("the record's file")
+}
+
+/// What the card shows about a PR is read by the refresh and kept on the record, so the page
+/// does not ask `gh` itself; and asking again with the same answer does not write the record.
+#[test]
+fn a_refresh_keeps_what_github_says_on_the_record_and_writes_only_when_it_changes() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "draft", "pr", &format!("{PULL}/9"));
+    let path = stub_gh_draft(&fixture);
+    let refresh = || {
+        let out = fixture
+            .command(["task", "refresh", "--json"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+
+    let result = refresh();
+    assert_eq!(ids(&result["open"]), [id.as_str()], "{result}");
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(
+        shown["prStatus"],
+        serde_json::json!({
+            "state": "draft",
+            "title": "Wire the thing",
+            "review": "required",
+            "ci": { "pass": 1, "fail": 1, "pending": 0 },
+        }),
+        "{shown}"
+    );
+    assert_eq!(status_of(&fixture, &id), "pr");
+
+    let file = record_file(&fixture, &id);
+    let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    refresh();
+    let after = std::fs::metadata(&file).unwrap().modified().unwrap();
+    assert_eq!(
+        before, after,
+        "the record was rewritten with the same answer"
+    );
+}
+
+/// A merged PR's summary is stored in the same write that moves the record to done.
+#[test]
+fn a_merged_pr_is_kept_as_merged_when_its_record_moves_to_done() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "merged", "pr", &format!("{PULL}/1"));
+    let (path, _) = stub_gh(&fixture);
+    let out = fixture
+        .command(["task", "refresh"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["status"], "done");
+    assert_eq!(shown["prStatus"]["state"], "merged", "{shown}");
 }

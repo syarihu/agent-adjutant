@@ -65,6 +65,11 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         "id=\"rv-term-host\"",
         "rv-group-head",
         "data-rv-refs",
+        // The Issue and PR rows at the top of 詳細 and 判断, and the PR chip in a card's header.
+        "id=\"tp-links\"",
+        "gh-row",
+        "gh-pr",
+        "PR はまだありません",
         "data-rv-next",
         "処理したら次へ",
     ] {

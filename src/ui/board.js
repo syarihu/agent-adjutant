@@ -401,13 +401,11 @@ function humanActions(task, col, gate) {
       </button>
     `;
   } else if (col === 'prreview') {
-    const prUrl = httpUrl(task.pr);
     buttons = `
-      ${prUrl ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="btn-m3-primary" style="text-decoration:none;"><span class="material-symbols-outlined">open_in_new</span><span>GitHub で見る</span></a>` : ''}
-      ${scopeAll() ? '' : `<button type="button" class="btn-m3-tonal" data-act="refresh-prs" data-id="${esc(task.id)}">
+      ${scopeAll() ? '' : `<button type="button" class="btn-m3-primary" data-act="refresh-prs" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">sync</span><span>PR確認</span>
       </button>`}
-      <button type="button" class="btn-m3-text" data-act="changes" data-id="${esc(task.id)}">
+      <button type="button" class="${scopeAll() ? 'btn-m3-tonal' : 'btn-m3-text'}" data-act="changes" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">rate_review</span><span>指摘をメモ</span>
       </button>
     `;
@@ -523,23 +521,14 @@ function humanCard(task, col) {
     why = 'worker は PR を出して待っています。GitHub でレビューしてください';
   }
 
-  const prUrl = httpUrl(task.pr);
-  const prNumber = prUrl ? prNumberOf(prUrl) : null;
-
   const w = workerOf(task);
   const phaseStr = task.status === 'queued' ? '着手前'
     : (w?.phase ? `${PHASE_LABEL[w.phase] || w.phase}で停止中` : `${task.status}で停止中`);
 
   el.innerHTML = `
     <div class="card-header-row">
-      ${issueNumber ? `
-        <a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
-          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
-          <span>${esc(issueNumber)}</span>
-        </a>
-      ` : `
-        <span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>
-      `}
+      ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
+      ${ghChipsHtml(task)}
       <span class="wait-time ${waitTone(mins)}" title="待たせている時間">
         <span class="material-symbols-outlined">schedule</span>
         <span>${minutesLabel(mins)}待ち</span>
@@ -548,7 +537,6 @@ function humanCard(task, col) {
     ${originChip(task)}
     <div class="title">${esc(task.title)}</div>
     ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : (why ? `<div class="why">${esc(why)}</div>` : '')}
-    ${col === 'prreview' && prUrl ? `<div class="pills"><a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く"><span class="material-symbols-outlined">merge</span>PR #${esc(prNumber || '')}</a></div>` : ''}
     ${humanActions(task, col, gate)}
     <div class="hcard-foot">
       <span>${esc(phaseStr)}</span>
@@ -635,14 +623,8 @@ function agentCard(task) {
 
   h += `
     <div class="card-header-row">
-      ${issueNumber ? `
-        <a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
-          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
-          <span>${esc(issueNumber)}</span>
-        </a>
-      ` : `
-        <span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>
-      `}
+      ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
+      ${ghChipsHtml(task)}
       ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
       ${task.status === 'queued' && task.order != null ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>` : ''}
     </div>
@@ -680,11 +662,7 @@ function agentCard(task) {
   if (!task.autoStart && task.status !== 'done') {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
   }
-  const prUrl = httpUrl(task.pr);
-  if (prUrl) {
-    const prNumber = prNumberOf(prUrl);
-    metaBadges.push(`<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く (${esc(prUrl)})"><span class="material-symbols-outlined" style="font-size:12px;">merge</span>PR${prNumber ? ` #${esc(prNumber)}` : ''}</a>`);
-  } else if (live && worker?.phase === 'pr') {
+  if (!httpUrl(task.pr) && live && worker?.phase === 'pr') {
     metaBadges.push('<span class="m3-pill pill-neutral"><span class="material-symbols-outlined" style="font-size:12px;">hourglass_top</span>PR 作成中</span>');
   }
   if (metaBadges.length) {
@@ -1246,6 +1224,7 @@ function renderTaskPanel() {
     panelTerm.term.focus();
   }
 
+  setPanelPart('links', tp('tp-links'), hub ? '' : ghRowsHtml(task));
   setPanelPart('gate', tp('tp-gate'), hub ? '' : panelGateHtml(task, gate));
   setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : panelRestHtml(task, colId));
   renderHandForm(!hub && colId === 'backlog' ? task : null);
@@ -1360,9 +1339,7 @@ function panelRestHtml(task, colId) {
 
   // Newest first: the one the worker left last is the one that describes where it is now.
   const records = recordsOf(task).reverse();
-  const prUrl = httpUrl(task.pr);
   h += `<div class="m3-filled-card">${secTitle('記録（止めずに進んだもの）')}
-    ${prUrl ? `<div class="tp-kvs">${kv('PR', `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(prUrl)}" class="tp-link"><span>${prNumberOf(prUrl) ? `#${esc(prNumberOf(prUrl))}` : 'PR を開く'}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`)}</div>` : ''}
     ${records.length ? records.map(r => {
       const [label] = kindOf(r.kind);
       const [text, tone] = recordSummary(r);
@@ -1373,9 +1350,9 @@ function panelRestHtml(task, colId) {
         <div class="tp-muted">${ago(r.openedAt)}に記録</div>
         <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
       </div>`;
-    }).join('') : (prUrl ? '' : '<div class="tp-muted">記録はまだありません</div>')}
+    }).join('') : '<div class="tp-muted">記録はまだありません</div>'}
   </div>`;
-  if (task.julesSession && prUrl && live) h += relayHtml(task);
+  if (task.julesSession && httpUrl(task.pr) && live) h += relayHtml(task);
 
   h += `<div class="m3-filled-card">${secTitle('作業場所')}
     ${task.worktree || task.branch ? `<div class="tp-kvs">
