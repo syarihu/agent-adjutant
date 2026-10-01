@@ -360,10 +360,10 @@ function go(patch = {}, { replace = false } = {}) {
   askSessionsOfAll(prev.view, boardChanged);
 }
 
-/* 「すべて」 reads sessions only while its セッション tab is shown (see refreshAllBoards): a
-   move to or from the tab changes what the next round asks for, so it is made now. */
+/* A move to or from the セッション tab changes what the next poll asks for (the sessions of
+   「すべて」, the last lines of a board's), so it is made now. */
 function askSessionsOfAll(prevView, boardChanged) {
-  if (!boardChanged && scopeAll() && (nav.view === 'sessions') !== (prevView === 'sessions')) refresh(true);
+  if (!boardChanged && (nav.view === 'sessions') !== (prevView === 'sessions')) refresh(true);
 }
 
 /* Draw the screen the address names. */
@@ -547,15 +547,16 @@ let allAgain = false;            // a forced round asked for while one was out
 let allRound = false;            // the first full round of this scope has been drawn
 let allSkip = false;
 let allMinute = null;
-/* The board of each repository that answers for it on the セッション tab of 「すべて」: its own
-   board, which lists the sessions of its parent-task hubs too, else the first one there is. */
+/* The boards that answer for their repository on the セッション tab of 「すべて」: its own board,
+   which lists the sessions of its parent-task hubs too, else each parent-task board. */
 function sessionCarriers(listed) {
   const by = new Map();
-  for (const b of listed) {
-    const have = by.get(b.nwo);
-    if (!have || (have.hub && !b.hub)) by.set(b.nwo, b);
-  }
-  return [...by.values()].sort((a, b) => a.nwo.localeCompare(b.nwo));
+  for (const b of listed) by.set(b.nwo, [...(by.get(b.nwo) || []), b]);
+  // A repository with no board of its own has only its parent tasks': each lists its own hub,
+  // so each is asked.
+  return [...by.values()]
+    .flatMap(boards => boards.some(b => !b.hub) ? [boards.find(b => !b.hub)] : boards)
+    .sort((a, b) => a.nwo.localeCompare(b.nwo));
 }
 
 /* 「すべて」 and the review queue: each board's state, one after another, without its sessions.
@@ -653,6 +654,8 @@ function mergeStates(listed, now, carriers = new Set()) {
     ideConfigured: first.ideConfigured,
     stuckAfterMinutes: first.stuckAfterMinutes,
     configPath: first.configPath,
+    // Whether this round asked for the sessions: otherwise the tab's counts are not known.
+    sessionsRead: carried.some(slug => carriers.has(slug)),
     // What the tab's buttons ask of the server is the same for every board of it.
     boardTerminal: lead.boardTerminal,
     hubStart: lead.hubStart,

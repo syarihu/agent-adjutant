@@ -127,6 +127,8 @@
     <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
     <div id="sessions-view">
+      <!-- Above the list and the terminal alike, so a notice is seen whether or not a session is open. -->
+      <div class="sess-notice" id="sess-notice" hidden></div>
       <section class="sess-list" aria-label="セッションの一覧">
         <div class="pane-head sess-list-head">
           <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
@@ -157,7 +159,6 @@
           </div>
           <button type="button" class="tool-btn" id="sess-side-toggle" aria-controls="sess-side" aria-expanded="false" aria-label="詳細を表示" title="詳細を表示"><span class="material-symbols-outlined" aria-hidden="true">right_panel_open</span></button>
         </div>
-        <div class="sess-notice" id="sess-notice" hidden></div>
         <section class="sess-gate" id="sess-gate" aria-label="確認待ちの gate" hidden></section>
         <div class="sess-stage">
           <div class="sess-term-host" id="sess-term-host" hidden></div>

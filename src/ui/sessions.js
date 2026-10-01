@@ -176,14 +176,19 @@ function sessionGroups({ pending = false } = {}) {
   const asked = new Set(pendByHub.keys());
   let groups = [];
   if (scopeAll()) {
-    for (const c of state.carriers || []) {
+    // A repository with boards of parent tasks only has several carriers, each listing its own
+    // hub: they are one repository's part, each hub and session once.
+    const repos = new Map();
+    for (const c of state.carriers || []) repos.set(c.nwo, [...(repos.get(c.nwo) || []), c.slug]);
+    const once = list => list.filter((x, i) => list.findIndex(y => y.id === x.id) === i);
+    for (const [nwo, slugs] of repos) {
       const part = {
-        repo: c.nwo,
+        repo: nwo,
         now: state.now,
-        hubs: (state.hubs || []).filter(h => h._slug === c.slug),
-        sessions: (state.sessions || []).filter(x => x._slug === c.slug),
+        hubs: once((state.hubs || []).filter(h => slugs.includes(h._slug))),
+        sessions: once((state.sessions || []).filter(x => slugs.includes(x._slug))),
       };
-      for (const g of sessionTree(part)) groups.push({ ...g, slug: c.slug, gid: `${c.slug}/${g.id}`, pending: [] });
+      for (const g of sessionTree(part)) groups.push({ ...g, slug: slugs[0], gid: `${slugs[0]}/${g.id}`, pending: [] });
     }
   } else {
     const own = pageHub();
@@ -208,6 +213,14 @@ function renderSessionsTab() {
   const available = !!state.boardTerminal?.available;
   tab.hidden = !available;
   if (!available) return;
+  // 「すべて」 reads sessions only while this tab is shown: until a round has brought them, the
+  // counts are not known, and a 0 would be wrong.
+  const unknown = scopeAll() && !state.sessionsRead;
+  if (unknown) {
+    document.getElementById('sessions-waiting').classList.add('zero');
+    document.getElementById('sessions-count').classList.add('zero');
+    return;
+  }
   // The sum of what the groups' headers say; sessions asked for and not started yet are not any.
   let waiting = 0;
   let count = 0;
@@ -335,8 +348,10 @@ function returnFromSessions() {
   sessView.back = null;
   // Opened from the list: back to the list.
   if (!back) return go({ session: null });
-  if (!back.view || back.view === 'board') go({ view: prefs.tab === 'agent' ? 'agent' : 'human' });
-  else setView(back.view);
+  // Through `go`, so that the address leaves the session as the screen does.
+  if (back.view === 'review') return go({ view: 'review', session: null });
+  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', session: null });
+  if (back.view === 'task' && back.taskId) return openTask(back.taskId);
   if (back.taskId && (back.view || 'board') === 'board' && (state.tasks || []).some(t => t.id === back.taskId)) selectTask(back.taskId);
 }
 
@@ -565,11 +580,20 @@ function renderSessionList() {
   sessView.listRows = rows;
   const scroll = document.querySelector('.sess-list-scroll');
   const top = scroll.scrollTop;
-  const focused = document.activeElement;
-  const focusedRef = focused?.closest?.('#sess-groups') ? focused.dataset?.sref : null;
+  const focused = document.activeElement?.closest?.('#sess-groups') ? document.activeElement : null;
+  // What had the focus, found again in the new list: a row, a header's button or a fold.
+  const gidOf = el => el?.closest('.sess-group')?.dataset.gid;
+  const held = !focused ? null : focused.dataset.sref != null ? { ref: focused.dataset.sref }
+    : focused.dataset.hubAct ? { gid: gidOf(focused), act: focused.dataset.hubAct }
+      : focused.matches('.sess-orphans > summary') ? { gid: gidOf(focused), fold: true } : null;
   root.innerHTML = groups.map(g => groupHtml(g, opened(g))).join('') || '<div class="sess-empty">表示できる hub がありません</div>';
   scroll.scrollTop = top;
-  if (focusedRef != null) [...root.querySelectorAll('.sess-row[data-sref]')].find(row => row.dataset.sref === focusedRef)?.focus({ preventScroll: true });
+  if (held) {
+    const group = held.gid != null ? [...root.querySelectorAll('.sess-group')].find(el => el.dataset.gid === held.gid) : null;
+    const again = held.ref != null ? [...root.querySelectorAll('.sess-row[data-sref]')].find(row => row.dataset.sref === held.ref)
+      : held.act ? group?.querySelector(`[data-hub-act="${held.act}"]`) : group?.querySelector('.sess-orphans > summary');
+    again?.focus({ preventScroll: true });
+  }
 }
 
 /* `old` replaced by the node `html` makes, keeping what a redraw must not take from a row:
@@ -1112,7 +1136,6 @@ sessEl('cleanup-dialog').addEventListener('close', () => { cleanupTarget = null;
 /* One listener for everything drawn into the main column: the bar, the menu, the banner, the
    panel over the terminal. */
 document.querySelector('.sess-main').addEventListener('click', e => {
-  if (e.target.closest('[data-sess-dismiss]')) return showSessNotice('');
   const s = currentSession();
   if (e.target.closest('[data-sess-gate-fold]')) {
     prefs.sessionsGateFolded = !prefs.sessionsGateFolded;
@@ -1175,5 +1198,7 @@ sessEl('sess-groups').addEventListener('toggle', e => {
   prefs.sessionsFolded = [...set];
   savePrefs();
 }, true);
+// The notice sits above the list and the terminal both, outside the main column.
+sessEl('sess-notice').addEventListener('click', e => { if (e.target.closest('[data-sess-dismiss]')) showSessNotice(''); });
 sessEl('sess-back').addEventListener('click', returnFromSessions);
 sessEl('sess-reconnect').addEventListener('click', connectSelected);

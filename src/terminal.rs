@@ -1653,7 +1653,8 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
 const LAST_LINE_CHARS: usize = 200;
 
 /// A line indented at least this far is the agent's right-aligned chrome (the effort level, a
-/// key hint), not something it wrote.
+/// key hint), not something it wrote. This can drop a line of output that really is indented
+/// that deep; that is traded for not showing Claude's hints as the last thing it said.
 const RIGHT_ALIGNED_INDENT: usize = 24;
 
 /// Lines an agent draws between its output and its input box that are not output: hints about

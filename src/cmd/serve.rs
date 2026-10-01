@@ -1933,10 +1933,14 @@ impl LastLines {
         now: Instant,
         read: impl FnOnce() -> Option<String>,
     ) -> Option<String> {
-        if let Some(last) = self.read.lock().ok()?.get(key)
-            && (last.activity == activity || now.duration_since(last.at) < LAST_LINE_MIN_AGE)
-        {
-            return last.line.clone();
+        if let Some(last) = self.read.lock().ok()?.get(key) {
+            let recent = now.duration_since(last.at) < LAST_LINE_MIN_AGE;
+            // Unknown activity says nothing of whether the pane moved, and a read that found
+            // nothing may only have been early: both are read again once the age is up.
+            let unchanged = activity.is_some() && last.activity == activity && last.line.is_some();
+            if recent || unchanged {
+                return last.line.clone();
+            }
         }
         // Not under the lock: reading the pane runs a command.
         let line = read();
@@ -3071,6 +3075,28 @@ mod tests {
         // Moved and read long enough ago.
         assert_eq!(look(11, t0 + LAST_LINE_MIN_AGE).as_deref(), Some("read 2"));
         assert_eq!(reads.get(), 2);
+        // A read that found nothing, or a window with no known activity, is tried again.
+        let nothing = |activity, at: Instant| lines.look("empty", activity, at, || None);
+        assert_eq!(nothing(Some(5), t0), None);
+        let found =
+            |activity, at: Instant| lines.look("empty", activity, at, || Some("late".to_string()));
+        assert_eq!(found(Some(5), t0 + Duration::from_secs(1)), None);
+        assert_eq!(
+            found(Some(5), t0 + LAST_LINE_MIN_AGE).as_deref(),
+            Some("late")
+        );
+        assert_eq!(
+            found(None, t0 + LAST_LINE_MIN_AGE * 2).as_deref(),
+            Some("late")
+        );
+        assert_eq!(
+            lines
+                .look("empty", None, t0 + LAST_LINE_MIN_AGE * 4, || Some(
+                    "again".to_string()
+                ))
+                .as_deref(),
+            Some("again")
+        );
         // A pane that is no longer listed is forgotten.
         lines.keep_only(&HashSet::new());
         assert_eq!(

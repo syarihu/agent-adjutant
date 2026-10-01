@@ -1,10 +1,11 @@
 /* ── セッション tab: the board's hubs and their sessions in a list; a session opened beside it ── */
-#sessions-view { display:none; height:100%; position:relative; grid-template-columns:minmax(0,1fr); }
+#sessions-view { display:none; height:100%; position:relative; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
 .sess-list {
-  grid-column:1; min-width:0; min-height:0; display:flex; flex-direction:column;
+  grid-column:1; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column;
   background:var(--md-sys-color-surface-container-low);
 }
-.sess-main { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; }
+#sess-notice { grid-column:1 / -1; grid-row:1; }
+.sess-main { grid-column:2; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column; }
 /* The terminal and its sidebar come only with a session; until then the list has the page. */
 #sessions-view:not(.term-open) > .sess-main,
 #sessions-view:not(.term-open) > .sess-side { display:none; }
@@ -180,7 +181,7 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 /* The detail sidebar: a column of its own where there is room, floating over the terminal where
    there is not (below). Its sections are always open. */
 .sess-side {
-  grid-column:3; width:340px; min-height:0; display:flex; flex-direction:column;
+  grid-column:3; grid-row:2; width:340px; min-height:0; display:flex; flex-direction:column;
   background:var(--md-sys-color-surface-container-low);
   border-left:1px solid var(--md-sys-color-outline-variant);
 }
@@ -222,6 +223,7 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 @media (max-width: 759px) {
   #sessions-view.term-open { grid-template-columns:minmax(0,1fr); }
   #sessions-view.term-open .sess-list { display:none; }
+  #sessions-view.term-open > .sess-main { grid-column:1; }
   .sess-strip-note { margin-left:0; }
 }
 

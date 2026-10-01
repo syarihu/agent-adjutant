@@ -62,7 +62,11 @@ function setView(v) {
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
     const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : null;
-    if (want && nav.view !== want) { nav.view = want; history.replaceState(null, '', urlOf()); }
+    if (want && nav.view !== want) {
+      nav.view = want;
+      if (want !== 'sessions') nav.session = null;
+      history.replaceState(null, '', urlOf());
+    }
   }
 
   // Top App Bar title updates. The board's own are drawn by renderTitle.
