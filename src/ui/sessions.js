@@ -453,7 +453,7 @@ function renderSessionTree() {
   // out, since moving the rows it already has is enough for that.
   const structure = JSON.stringify([
     collapsed, filter, [...folded],
-    groups.map(g => [g.id, g.short, g.tag, g.text, !!g.hubSession, !collapsed && folded.has(g.id) && !pendByHub.has(g.id),
+    groups.map(g => [g.id, g.short, !!g.hubSession, !collapsed && folded.has(g.id) && !pendByHub.has(g.id),
       g.rows.map(r => r.s.id).sort()]),
     orphans.map(s => [s.id, sessionKey(s)]),
     // Part of the signature: without it a row that appears or changes its words while nothing
