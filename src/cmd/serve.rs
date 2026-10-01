@@ -1318,7 +1318,7 @@ fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result
 fn session_terminal(
     record: Option<&Value>,
     terminal_settings: &crate::config::TerminalSettings,
-    views: &mut HashMap<Option<String>, TmuxView>,
+    views: &mut HashMap<PathBuf, TmuxView>,
     pid: Option<u32>,
 ) -> session::SessionTerminal {
     if let Some(recorded) = record
@@ -1331,7 +1331,7 @@ fn session_terminal(
     // Asked of tmux only here: a session whose record says where it runs needs no look at the
     // settings' own server.
     let pane = pid.filter(|_| tmux).and_then(|p| {
-        let view = tmux_view(views, socket_key(terminal_settings.tmux_socket()));
+        let view = tmux_view(views, terminal_settings.tmux_socket());
         crate::terminal::find_matching_pane(&view.panes, Some(p), None)
     });
     session::SessionTerminal {
@@ -1564,12 +1564,27 @@ fn state(server: &Server) -> Value {
     })
 }
 
-/// A tmux socket as a lookup key: an empty one means the default server, as it does to tmux.
-fn socket_key(socket: Option<&str>) -> Option<String> {
-    socket
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+/// A tmux socket as a lookup key: the path of the server it names, so that no setting, a bare
+/// name and the path a record kept for the same server are one key and one pair of `list-*`
+/// calls. The directory is resolved when it can be, because `/tmp` is `/private/tmp` on a Mac.
+fn socket_key(socket: Option<&str>) -> PathBuf {
+    #[cfg(unix)]
+    let uid = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let uid = 0;
+    let path = crate::terminal::tmux_socket_path(
+        socket,
+        std::env::var("TMUX").ok().as_deref(),
+        std::env::var("TMUX_TMPDIR").ok().as_deref(),
+        uid,
+    );
+    match (
+        path.parent().and_then(|dir| dir.canonicalize().ok()),
+        path.file_name(),
+    ) {
+        (Some(dir), Some(leaf)) => dir.join(leaf),
+        _ => path,
+    }
 }
 
 /// What one tmux server said about its panes and clients in one poll.
@@ -1589,17 +1604,18 @@ impl TmuxView {
 }
 
 /// What the tmux server on `socket` says, asked the first time it is needed and kept after.
-fn tmux_view(views: &mut HashMap<Option<String>, TmuxView>, socket: Option<String>) -> &TmuxView {
+/// The first spelling of a server's socket is the one tmux is run with.
+fn tmux_view<'a>(views: &'a mut HashMap<PathBuf, TmuxView>, socket: Option<&str>) -> &'a TmuxView {
     views
-        .entry(socket.clone())
-        .or_insert_with(|| TmuxView::look(socket.as_deref()))
+        .entry(socket_key(socket))
+        .or_insert_with(|| TmuxView::look(socket))
 }
 
 /// When a session's tmux window last had activity and how many clients are on it, from the
 /// server its own record names — which is not always the settings' one. Both `None` for a
 /// session that is not in tmux or whose window is not there.
 fn tmux_activity(
-    views: &mut HashMap<Option<String>, TmuxView>,
+    views: &mut HashMap<PathBuf, TmuxView>,
     terminal: &session::SessionTerminal,
 ) -> (Option<i64>, Option<u32>) {
     let Some(window) = terminal
@@ -1609,7 +1625,7 @@ fn tmux_activity(
     else {
         return (None, None);
     };
-    let view = tmux_view(views, socket_key(terminal.socket.as_deref()));
+    let view = tmux_view(views, terminal.socket.as_deref());
     let Some(pane) = view.panes.iter().find(|p| p.window_id == window) else {
         return (None, None);
     };
@@ -1766,7 +1782,7 @@ fn sessions_of(
     let skipped = |id: &str| only.is_some_and(|wanted| wanted != id);
     // What tmux says, asked once per socket per poll and only for a socket a listed session
     // needs: its record's own, or the settings' when the record says none.
-    let mut views: HashMap<Option<String>, TmuxView> = HashMap::new();
+    let mut views: HashMap<PathBuf, TmuxView> = HashMap::new();
     // Read once per poll, for the hubs of the sessions listed, so a worker under a parent-task
     // hub shows its gate on the repository board too. Read-only — closing a resumed gate stays
     // with the board that owns the hub's directory.
@@ -3427,5 +3443,19 @@ mod tests {
         assert_eq!(waiting("hub-WID-1"), Value::Null);
         assert_eq!(board_session(&server, &settings, "worker-nope"), None);
         assert_eq!(board_session(&server, &settings, "hub-nope"), None);
+    }
+
+    #[test]
+    fn one_tmux_server_is_one_view_however_a_session_names_its_socket() {
+        let mut views: HashMap<PathBuf, TmuxView> = HashMap::new();
+        // A session that falls back to the settings, which name no socket, and one whose
+        // record kept the path of the default server.
+        let default_path = socket_key(None).to_string_lossy().to_string();
+        tmux_view(&mut views, None);
+        tmux_view(&mut views, Some(&default_path));
+        tmux_view(&mut views, Some("  "));
+        assert_eq!(views.len(), 1);
+        tmux_view(&mut views, Some("another-adjutant-test-socket"));
+        assert_eq!(views.len(), 2);
     }
 }

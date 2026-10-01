@@ -1915,6 +1915,42 @@ pub fn tmux_socket_args(socket: Option<&str>) -> Vec<String> {
     }
 }
 
+/// Where the tmux server `socket` names listens, spelled the way tmux itself would.
+///
+/// `socket` is read as `tmux_socket_args` reads it: a path as it is, a name as a file of that
+/// name in tmux's socket directory, and nothing as the default server — which is the one
+/// `$TMUX` names when the caller is itself inside tmux, and `default` otherwise. So the
+/// different ways of saying "the same server" come out as one path.
+///
+/// The directory is `tmux-<uid>` under `$TMUX_TMPDIR`, or `/tmp` without it.
+pub fn tmux_socket_path(
+    socket: Option<&str>,
+    tmux_env: Option<&str>,
+    tmpdir: Option<&str>,
+    uid: u32,
+) -> std::path::PathBuf {
+    let socket = socket.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(path) = socket.filter(|s| s.contains('/')) {
+        return std::path::PathBuf::from(path);
+    }
+    let named = |name: &str| {
+        let base = tmpdir.filter(|d| !d.is_empty()).unwrap_or("/tmp");
+        std::path::Path::new(base)
+            .join(format!("tmux-{uid}"))
+            .join(name)
+    };
+    match socket {
+        Some(name) => named(name),
+        None => match tmux_env
+            .and_then(|env| env.split(',').next())
+            .filter(|path| !path.is_empty())
+        {
+            Some(path) => std::path::PathBuf::from(path),
+            None => named("default"),
+        },
+    }
+}
+
 /// `(major, minor)` out of what `tmux -V` prints: `tmux 3.7c`, `tmux 3.1`, `tmux next-3.5`.
 /// A build from the development branch (`tmux master`) is newer than any release.
 pub fn parse_tmux_version(output: &str) -> Option<(u32, u32)> {
@@ -2279,6 +2315,41 @@ mod tests {
 
     /// A line the terminal would mangle is put in a file instead. The failure this prevents
     /// is silent: the tab opens and runs something that was never written.
+    #[test]
+    fn a_tmux_socket_is_the_same_path_however_it_is_spelled() {
+        let path = |socket, env, tmpdir| tmux_socket_path(socket, env, tmpdir, 501);
+        let default = std::path::PathBuf::from("/tmp/tmux-501/default");
+        assert_eq!(path(None, None, None), default);
+        assert_eq!(path(Some("default"), None, None), default);
+        assert_eq!(path(Some("  "), None, None), default);
+        assert_eq!(
+            path(Some("work"), None, Some("/var/run")),
+            std::path::PathBuf::from("/var/run/tmux-501/work")
+        );
+        assert_ne!(
+            path(Some("work"), None, None),
+            path(Some("play"), None, None)
+        );
+        // An empty `TMUX_TMPDIR` is as good as none, as it is to tmux.
+        assert_eq!(path(None, None, Some("")), default);
+        assert_eq!(
+            path(Some("/x/own.sock"), Some("/y/z,1,0"), None),
+            std::path::PathBuf::from("/x/own.sock")
+        );
+        // Inside tmux, no socket means the server the caller is in.
+        assert_eq!(
+            path(None, Some("/x/y,123,0"), None),
+            std::path::PathBuf::from("/x/y")
+        );
+        assert_eq!(path(None, Some(""), None), default);
+        assert_eq!(path(None, Some(",1,0"), None), default);
+        // A name still means the directory's file, in tmux or not.
+        assert_eq!(
+            path(Some("work"), Some("/x/y,123,0"), None),
+            std::path::PathBuf::from("/tmp/tmux-501/work")
+        );
+    }
+
     #[test]
     fn an_overlong_command_is_staged_in_a_file() {
         let long = format!("echo {}", "x".repeat(MAX_INLINE_COMMAND));
