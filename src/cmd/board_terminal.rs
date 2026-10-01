@@ -449,6 +449,7 @@ mod tests {
             branch: None,
             task: None,
             title: None,
+            task_title: None,
             conversation: None,
             present,
             stale: false,

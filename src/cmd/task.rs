@@ -529,7 +529,7 @@ fn gh_output(main: &str, args: &[&str], deadline: std::time::Instant) -> Result<
 
 /// Read one issue through `gh`, from the main checkout so a URL on another host is still
 /// resolved with this machine's `gh` login.
-fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, String> {
+pub(super) fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, String> {
     // A value that starts with '-' would reach `gh` as a flag.
     if url.starts_with('-') {
         return Err(format!("not an issue: {url}"));
@@ -542,6 +542,26 @@ fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, String> {
         deadline,
     )?;
     task::snapshot_from_gh(&json, url, &stamp())
+}
+
+/// The title of the issue at `url` when a task record of one of these hubs already holds it:
+/// the snapshot read for a task whose issue it is, else the title of the task made from it.
+/// Looked at before `gh` is asked, so an issue the board has already read is not read again.
+pub(super) fn known_title(slugs: &[String], url: &str) -> Option<String> {
+    let state_dir = messaging::state_dir();
+    let tasks = slugs
+        .iter()
+        .flat_map(|slug| task::list(&task::dir(&state_dir, slug)));
+    let mut fallback = None;
+    for t in tasks {
+        if let Some(snapshot) = t.issue_snapshot.as_ref().filter(|s| s.url == url) {
+            return Some(snapshot.title.clone()).filter(|t| !t.is_empty());
+        }
+        if fallback.is_none() && t.issue_url.as_deref() == Some(url) && !t.title.is_empty() {
+            fallback = Some(t.title.clone());
+        }
+    }
+    fallback
 }
 
 /// Read the task's issue and keep its title and body on the record.

@@ -78,6 +78,27 @@ function sessionKey(s) {
   return (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
 }
 
+/* What a row and the context bar title a session with: `title` is the repository's name for its
+   hub, the parent task's title for a parent-task hub and the task's title for a worker, empty
+   while it is not known; `key` is what sits beside it (the hub's key, the worktree's name).
+   `ask` lets a worker's task be asked of its own board, which the rows never do themselves. */
+function sessionTitle(s, ask = false) {
+  if (s.kind === 'hub') {
+    const h = (state.hubs || []).find(x => x.id === s.id);
+    if (!h) return { key: '', title: '' };
+    return { key: h.parent ? h.key || '' : '', title: hubTitle(h) || '' };
+  }
+  return { key: sessionKey(s), title: s.taskTitle || boardTaskTitle(s, ask) };
+}
+
+/* The words of the row's main line: the title with its key beside it, or the key alone while
+   there is no title. The key is left out when it would only repeat the text. */
+function sessionLabel(s, ask = false) {
+  const { key, title } = sessionTitle(s, ask);
+  const text = title || sessionKey(s);
+  return { tag: key && key !== text ? key : '', text };
+}
+
 function lastOutputText(s) {
   if (state.now == null || s.lastActivityAt == null) return null;
   const mins = Math.max(0, Math.floor((state.now - s.lastActivityAt) / 60));
@@ -118,6 +139,10 @@ function sessionTree(filter, pendingHubs = new Set()) {
     g.own = g.hubSession || { kind: 'hub', id: g.id, present: !!g.hub?.state?.present };
     g.state = sessionState(g.own);
     g.short = g.hub ? hubShortName(g.hub) : g.id === 'hub' ? 'リポジトリ' : g.id.replace(/^hub-/, '');
+    g.title = g.hub ? hubTitle(g.hub) : g.id === 'hub' ? (state.repo || '').split('/').pop() || null : null;
+    g.text = g.title || g.short;
+    // The repository's own hub says only the name; a parent task's key goes beside its title.
+    g.tag = g.title && g.hub?.parent && g.hub.key ? g.hub.key : '';
     g.label = g.hub ? hubLabel(g.hub)
       : g.id === 'hub' ? 'リポジトリの hub' : `親タスク ${g.short} の hub（一覧にありません）`;
     g.rows.sort((a, b) =>
@@ -255,10 +280,9 @@ function returnFromSessions() {
   if (back?.taskId && (back.view || 'board') === 'board' && (state.tasks || []).some(t => t.id === back.taskId)) selectTask(back.taskId);
 }
 
-/* A worker that names no title of its own borrows its task's. The task of another board is
-   not in this page's state: asked of that board once, and remembered. */
-function taskTitleOf(s) {
-  if (s.title) return s.title;
+/* A worker's task title when the server did not give one. The task of another board is not in
+   this page's state: asked of that board once (when `ask`), and remembered. */
+function boardTaskTitle(s, ask) {
   if (!s.task) return '';
   const own = (state.tasks || []).find(t => t.id === s.task);
   if (own) return own.title || '';
@@ -270,7 +294,7 @@ function taskTitleOf(s) {
     // its board is the one the sidebar is holding back.
     const sel = currentSession();
     const held = sideHeld(sessView.selectedId) && (s.id === sel?.id || (sel && hubOfSession(sel) === hubOfSession(s)));
-    if (!held) loadSideBoard(b.slug, b.base, sideSignal(s));
+    if (ask && !held) loadSideBoard(b.slug, b.base, sideSignal(s));
     return '';
   }
   return (known.data?.tasks || []).find(t => t.id === s.task)?.title || '';
@@ -284,11 +308,14 @@ function renderSessionContext() {
   sessEl('sess-back').hidden = !sessView.back;
   if (sessView.back) sessEl('sess-back').textContent = `← ${BACK_LABEL[sessView.back.view] || 'ボード'}に戻る`;
   if (!id) return;
-  const key = s ? sessionKey(s) : id;
+  const label = s ? sessionLabel(s, true) : { tag: id, text: '' };
   const keyEl = sessEl('sess-key');
-  keyEl.textContent = key;
+  keyEl.textContent = label.tag;
+  keyEl.hidden = !label.tag;
   keyEl.title = s && s.kind !== 'hub' && s.branch ? `ブランチ: ${s.branch}` : '';
-  sessEl('sess-title').textContent = s ? taskTitleOf(s) : '';
+  const titleEl = sessEl('sess-title');
+  titleEl.textContent = label.text;
+  titleEl.title = s ? sessionTip(s) : '';
   const st = s && !gone ? sessionState(s) : null;
   const pill = sessEl('sess-state');
   pill.textContent = gone ? '一覧から消えました' : st ? STATE_LABEL[st] : 'セッションが見つかりません';
@@ -358,19 +385,37 @@ function mountSelected() {
   }
 }
 
+/* A row's words, top to bottom: the title (up to two lines), where it works (the branch, or the
+   key when there is none), and how it is. A line that would only repeat the title is left out. */
+const rowTextHtml = (text, where, sub) =>
+  `<span class="sess-row-text"><span class="sess-row-title">${esc(text)}</span>${where && where !== text ? `<span class="sess-row-branch">${esc(where)}</span>` : ''}<span class="sess-row-sub">${esc(sub)}</span></span>`;
+
+/* A row's tooltip: the whole title, where the worktree is, the tab's own title when it says
+   something else, and how the session is. */
+function sessionTip(s, st) {
+  const { title } = sessionTitle(s);
+  const where = s.kind === 'hub' ? '' : `${sessionKey(s)}${s.branch ? ` (${s.branch})` : ''}`;
+  const sub = st ? [STATE_LABEL[st], s.present ? lastOutputText(s) : null].filter(Boolean).join(' · ') : '';
+  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub].filter(Boolean).join('\n');
+}
+
 /* A hub's row says the name and tooltip of its group instead of the session's own. */
-function sessionRowHtml(s, st, { key = sessionKey(s), tip = '', cls = '' } = {}) {
+function sessionRowHtml(s, st, { label = sessionLabel(s), where = s.branch || label.tag, tip = '', cls = '' } = {}) {
   const sub = [STATE_LABEL[st], s.present ? lastOutputText(s) : null].filter(Boolean).join(' · ');
-  tip = tip || [key, s.title, sub].filter(Boolean).join('\n');
+  tip = tip || sessionTip(s, st);
   return `<button type="button" class="sess-row ${cls} ${st}" data-sid="${esc(s.id)}" title="${esc(tip)}">
     <span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[st]}</span>
-    <span class="sess-row-text"><span class="sess-row-key">${esc(key)}</span><span class="sess-row-sub">${esc(sub)}</span></span></button>`;
+    ${rowTextHtml(label.text, where, sub)}</button>`;
 }
 
 /* A group's head: the hub's own session when it has one, else a row of the group's own. */
 function sessionHeadHtml(g) {
-  if (g.hubSession) return sessionRowHtml(g.hubSession, g.state, { key: g.short, tip: g.label, cls: 'hub' });
-  return `<div class="sess-row hub ${g.state}" data-gid="${esc(g.id)}" title="${esc(g.label)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span><span class="sess-row-text"><span class="sess-row-key">${esc(g.short)}</span><span class="sess-row-sub">${esc(STATE_LABEL[g.state])}</span></span></div>`;
+  const label = { tag: g.tag, text: g.text };
+  // A parent-task hub's key says more than the branch of the checkout it runs in.
+  const where = g.tag || g.hubSession?.branch || '';
+  const tip = [g.title, g.label].filter(Boolean).join('\n');
+  if (g.hubSession) return sessionRowHtml(g.hubSession, g.state, { label, where, tip, cls: 'hub' });
+  return `<div class="sess-row hub ${g.state}" data-gid="${esc(g.id)}" title="${esc(tip)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span>${rowTextHtml(label.text, where, STATE_LABEL[g.state])}</div>`;
 }
 
 const htmlNode = html => {
@@ -401,10 +446,10 @@ function renderSessionTree() {
   const folded = new Set(prefs.sessionsFolded || []);
   // What each row draws, one signature per row, so that a row is redrawn only when its own
   // words change and not whenever any other row's do.
-  const rowSig = (s, st, tip = '') => JSON.stringify([s.id, st, s.title || '', sessionKey(s), s.present ? lastOutputText(s) : '', tip]);
+  const rowSig = (s, st, tip = '') => JSON.stringify([s.id, st, s.title || '', s.branch || '', sessionKey(s), sessionLabel(s), sessionTip(s), s.present ? lastOutputText(s) : '', tip]);
   const rows = new Map();
   for (const g of groups) {
-    rows.set(`head:${g.id}`, JSON.stringify([g.hubSession ? rowSig(g.hubSession, g.state, g.label) : null, g.id, g.short, g.label, g.state]));
+    rows.set(`head:${g.id}`, JSON.stringify([g.hubSession ? rowSig(g.hubSession, g.state, g.label) : null, g.id, g.short, g.tag, g.text, g.title, g.label, g.state]));
     for (const r of g.rows) rows.set(`row:${r.s.id}`, rowSig(r.s, r.state));
   }
   // What the tree is made of: a change here is rebuilt. The order of a group's rows is left
@@ -439,7 +484,7 @@ function renderSessionTree() {
   details.hidden = !orphans.length;
   sessEl('sess-orphans-count').textContent = orphans.length;
   details.open = folded.has('orphans');
-  sessEl('sess-orphans-list').innerHTML = orphans.map(s => sessionRowHtml(s, 'none')).join('');
+  sessEl('sess-orphans-list').innerHTML = orphans.map(s => sessionRowHtml(s, 'none', { label: { tag: '', text: sessionKey(s) } })).join('');
   scroll.scrollTop = top;
 }
 

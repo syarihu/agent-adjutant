@@ -834,6 +834,7 @@ pub fn all_repo_hubs_among_with(
                 parent,
                 key,
                 name: hub_name,
+                title: None,
                 slug,
                 state: RepoHubState {
                     present: status.present,
@@ -2369,7 +2370,7 @@ fn parent_dir(path: &Path) -> Result<&Path, String> {
 /// a half-written file reads no record at all — which for a presence check means a live
 /// session reported as absent. Writing beside the record and renaming over it means the
 /// name never points at a partial file.
-fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+pub(crate) fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     let parent = parent_dir(path)?;
     let staged = stage(parent, &render_json(value))?;
     std::fs::rename(&staged, path).map_err(|e| {

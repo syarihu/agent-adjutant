@@ -93,6 +93,9 @@ pub(super) struct Server {
     /// What Jules last said about each session a card follows. The one thing here that
     /// changes after startup, and it is a cache: the record on disk stays the answer.
     jules: Arc<super::JulesWatch>,
+    /// The titles of the parent tasks the hubs are named after: a cache of the tracker's, kept
+    /// on disk, and read from a thread of its own.
+    hub_titles: Arc<super::HubTitles>,
     /// What tmux this machine has, when the board may open terminals on it: only the resident
     /// server serves one, and only where `tmux -V` answered when it started.
     pub(super) tmux: Option<(u32, u32)>,
@@ -200,6 +203,7 @@ impl Board {
                 port,
                 resident: false,
                 jules: Arc::default(),
+                hub_titles: Arc::default(),
                 tmux: None,
                 terminals: Arc::default(),
             }),
@@ -752,6 +756,7 @@ impl Resident {
                 port: self.port,
                 resident: true,
                 jules: Arc::default(),
+                hub_titles: Arc::default(),
                 tmux: self.tmux,
                 terminals: Arc::clone(&self.terminals),
             });
@@ -1365,6 +1370,14 @@ fn parent_hub_id(
     }
 }
 
+/// The title of task `id` in the task directory of the hub `slug`, if there is such a record.
+/// Read here rather than taken from the page's own task list so that a worker under another
+/// hub names its task as well.
+fn linked_task_title(state_dir: &Path, slug: &str, id: &str) -> Option<String> {
+    let title = task::load(&task::dir(state_dir, slug), id).ok()?.title;
+    Some(title.trim().to_string()).filter(|t| !t.is_empty())
+}
+
 /// The board ids of the workers in `paths`, in order: `worker-<name>` for the worktree's own
 /// name, and `worker-<name>-<digest of the path>` when another of them has that name. A
 /// worktree called `main` keeps `worker-main` unless the main checkout's own session
@@ -1434,7 +1447,14 @@ fn state(server: &Server) -> Value {
         Path::new(&repo.main),
         now,
     ));
-    let hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    let mut hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    let slugs: Vec<String> = hubs.iter().map(|h| h.slug.clone()).collect();
+    for h in &mut hubs {
+        h.title = server.hub_titles.look(&server.ctx, h, &slugs);
+    }
+    server
+        .hub_titles
+        .keep_only(&slugs.iter().cloned().collect());
     // The repository's own hub is one of `hubs`; asked separately only if it is not there.
     let hub = hubs
         .iter()
@@ -1848,6 +1868,7 @@ fn sessions_of(
             branch: main_branch(),
             task: None,
             title: Some(h.name.clone()),
+            task_title: None,
             present: h.state.present,
             stale: h.state.stale,
             pid: h.state.pid,
@@ -1903,6 +1924,11 @@ fn sessions_of(
         let task_id = messaging::worker_task(wt_path);
 
         let title = status.title.or(saved_title);
+        let task_title = task_id.as_deref().and_then(|id| {
+            let slug =
+                crate::repo::slug_for(&repo.nwo, messaging::worker_hub_key(wt_path).as_deref());
+            linked_task_title(&gates.state_dir, &slug, id)
+        });
 
         sessions.push(session::Session {
             id,
@@ -1916,6 +1942,7 @@ fn sessions_of(
             branch,
             task: task_id,
             title,
+            task_title,
             present: status.present,
             stale: status.stale,
             pid: status.pid,
@@ -1966,6 +1993,13 @@ fn sessions_of(
             .and_then(Value::as_str)
             .map(str::to_string);
 
+        let task_title = task_id.as_deref().and_then(|id| {
+            let slug = crate::repo::slug_for(
+                &repo.nwo,
+                messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
+            );
+            linked_task_title(&gates.state_dir, &slug, id)
+        });
         sessions.push(session::Session {
             id: "worker-main".to_string(),
             conversation: messaging::worker_session(Path::new(&repo.main)).map(|s| s.session_id),
@@ -1978,6 +2012,7 @@ fn sessions_of(
             branch: main_branch(),
             task: task_id,
             title: status.title,
+            task_title,
             present: status.present,
             stale: status.stale,
             pid: status.pid,
@@ -1995,6 +2030,10 @@ fn sessions_of(
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
         let waiting = worker_waiting(&mut gates, &parent_hub, &repo.main, None, None);
 
+        let task_title = saved.task.as_deref().and_then(|id| {
+            let slug = crate::repo::slug_for(&repo.nwo, saved.hub.as_deref());
+            linked_task_title(&gates.state_dir, &slug, id)
+        });
         sessions.push(session::Session {
             id: "worker-main".to_string(),
             conversation: Some(saved.session_id.clone()),
@@ -2007,6 +2046,7 @@ fn sessions_of(
             branch: main_branch(),
             task: saved.task,
             title: saved.title,
+            task_title,
             present: false,
             stale: false,
             pid: None,
@@ -2660,9 +2700,14 @@ mod tests {
             "function holdSideForSelection",
             "function releaseSide",
             "onReady: () => releaseSide(id)",
+            "function sessionTitle",
+            "function hubTitle",
+            "sessionLabel(s), sessionTip(s)",
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
+        // The tab's title is for the tooltip: it does not stand in for the task's.
+        assert!(!UI_HTML.contains("if (s.title) return s.title"));
         // A row's own words are what a redraw follows, not the selected session's task.
         assert!(!UI_HTML.contains("JSON.stringify([s.task, s.phase"));
     }
@@ -3433,6 +3478,17 @@ mod tests {
                 .to_string(),
         )
         .unwrap();
+        // The task `bar` is on, written under the hub it reports to.
+        let tasks = task::dir(&messaging::state_dir(), &hub_slug);
+        std::fs::create_dir_all(&tasks).unwrap();
+        std::fs::write(
+            tasks.join("WID-2.json"),
+            json!({"id": "WID-2", "kind": "investigate", "title": "Retry the upload",
+                   "doneWhen": "report-only", "autoStart": true, "status": "dispatched",
+                   "createdAt": "20260101T000000Z", "updatedAt": "20260101T000000Z"})
+            .to_string(),
+        )
+        .unwrap();
         let gates = messaging::state_dir().join("gates").join(&hub_slug);
         std::fs::create_dir_all(&gates).unwrap();
         std::fs::write(
@@ -3458,6 +3514,7 @@ mod tests {
             port: 0,
             resident: false,
             jules: Arc::default(),
+            hub_titles: Arc::default(),
             tmux: None,
             terminals: Arc::default(),
         };
@@ -3488,6 +3545,14 @@ mod tests {
         }
         let waiting = |id: &str| listed.iter().find(|s| s["id"] == id).unwrap()["waiting"].clone();
         assert_eq!(waiting("worker-bar")["id"], "g1", "{listed:?}");
+        // The worker's task title is the record's, and a worker whose task has no record, or
+        // that has none, names none; the tab's own title is left alone.
+        let task_title =
+            |id: &str| listed.iter().find(|s| s["id"] == id).unwrap()["taskTitle"].clone();
+        assert_eq!(task_title("worker-bar"), "Retry the upload");
+        assert_eq!(task_title("worker-main"), Value::Null);
+        let bar = listed.iter().find(|s| s["id"] == "worker-bar").unwrap();
+        assert_eq!(bar["title"], "bar work");
         assert_eq!(waiting("hub-WID-1"), Value::Null);
         assert_eq!(board_session(&server, &settings, "worker-nope"), None);
         assert_eq!(board_session(&server, &settings, "hub-nope"), None);

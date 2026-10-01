@@ -60,6 +60,10 @@ pub struct Session {
     /// Session title or task title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The title of the linked task's record, when `task` names one this board can read. Apart
+    /// from `title`, which is the tab's own and may say anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_title: Option<String>,
     /// The agent's own session id (its conversation) saved for this session, when there is
     /// one: what a resume would reopen. Not the `id` above, which names a slot on the board.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -159,6 +163,10 @@ pub struct RepoHub {
     /// parent-task hub whose key cannot be told (`parent` says which).
     pub key: Option<String>,
     pub name: String,
+    /// The parent task's title, from the tracker cache; None for the repository hub and until
+    /// the title is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub slug: String,
     pub state: RepoHubState,
     pub inbox_count: usize,
@@ -233,6 +241,7 @@ mod tests {
             branch: None,
             task: None,
             title: None,
+            task_title: None,
             conversation: None,
             present: true,
             stale: false,
