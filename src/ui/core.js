@@ -317,7 +317,13 @@ async function refresh(force = false) {
     // composition every two seconds. The clock only moves the elapsed times on the board, so
     // the board is redrawn for it once a minute. Its one box to type into, the instruction in
     // the side sheet, is kept across a redraw (renderHandForm).
+    // A session's last activity is compared as the whole minutes it has been idle, which is as
+    // fine as the page shows it: the timestamp itself moves on nearly every poll.
     const { now, ...rest } = next;
+    if (rest.sessions) {
+      rest.sessions = rest.sessions.map(s => s.lastActivityAt == null ? s
+        : { ...s, lastActivityAt: Math.floor((now - s.lastActivityAt) / 60) });
+    }
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
     const clockOnly = nextJson === lastStateJson && minute !== lastMinute && (view === 'board' || view === 'sessions');
