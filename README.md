@@ -40,7 +40,7 @@ Via Cargo:
 ```bash
 cargo install --git https://github.com/syarihu/agent-adjutant # both binaries: `adjutant` and the short `adj`
 # or from a local checkout:
-#   cargo install --path .
+#   cargo install --path .    (or `make install`; `make restart` restarts `adj server`; `make reinstall` does both)
 # or without cargo install:
 #   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
 ```
@@ -432,7 +432,12 @@ state directory that serves the board of every repository on this machine, each 
 terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
 and any free port when it is not; `--port 0` asks for any. A second `adj server start` says
 where the first one is. `adj server status` lists the boards (`--json` for a script, exit 1
-when nothing runs) and `adj server stop` stops it. It never stops a hub.
+when nothing runs) and `adj server stop` stops it. It never stops a hub. `adj server restart`
+stops it, waits up to 5 seconds for it to exit, and starts it again on the same port (`--port`
+picks another; `--open` opens the board); with none running it starts one. The new server is
+the binary that ran the restart, so `make reinstall` (install, then restart) puts the new
+build in service. Hubs and workers are not touched, and open board tabs reconnect on their own
+when the port stays the same.
 
 While it runs, it is the board: `adj config`, `adjutant_config` and `adj gate open` report it
 (`board.resident` is `true`), and a hub's MCP server binds nothing of its own. The server
@@ -489,7 +494,9 @@ does it:
 
 Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/adj.server.plist`. Under
 `KeepAlive`, `adj server stop` is undone as soon as it lands; stop it with `launchctl bootout
-gui/$(id -u)/adj.server`.
+gui/$(id -u)/adj.server`. Do not use `adj server restart` under it either: it races
+launchd's own respawn and can leave a second, unsupervised server; use `launchctl kickstart -k
+gui/$(id -u)/adj.server` instead.
 
 **It holds almost no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
 arrives because a person clicked. The page asks for state every two seconds, and the one

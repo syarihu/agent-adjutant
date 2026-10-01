@@ -530,6 +530,15 @@ enum ServerAction {
     },
     /// Stop the resident server. Hubs keep running
     Stop,
+    /// Stop the resident server and start it again on the same port. Hubs and workers keep running
+    Restart {
+        /// Port for the new server; the old one's port when omitted
+        #[arg(long)]
+        port: Option<u16>,
+        /// Open the board in a browser once it is up
+        #[arg(long)]
+        open: bool,
+    },
     /// Whether the resident server is running, and which boards it serves (exit 1 when not)
     Status {
         #[arg(long)]
@@ -1051,6 +1060,7 @@ pub fn run() -> ! {
                 no_open,
             } => cmd::server_start(*port, *foreground, !*no_open),
             ServerAction::Stop => cmd::server_stop(),
+            ServerAction::Restart { port, open } => cmd::server_restart(*port, *open),
             ServerAction::Status { json } => cmd::server_status(*json),
         },
         Commands::Gate { action } => run_gate(action).map(|_| 0),

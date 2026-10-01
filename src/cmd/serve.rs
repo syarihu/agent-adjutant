@@ -903,7 +903,7 @@ fn anchor_state_dir() {
         return;
     };
     if let Ok(absolute) = std::path::absolute(cwd.join(path)) {
-        // SAFETY: called from `server_start` before it starts a thread.
+        // SAFETY: called from `server_start` and `server_restart` as their first step, before either starts a thread.
         unsafe { std::env::set_var(messaging::STATE_DIR_ENV, absolute) };
     }
 }
@@ -924,22 +924,32 @@ pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, Stri
         println!("adj server: already running (pid {pid}) — {shown}");
         return Ok(0);
     }
-    let child = spawn_resident(port)?;
-    let port = wait_for_resident(child)?;
+    start_detached(port, open, here.as_ref())
+}
+
+/// Start the resident detached and say where it is. The caller has already found none running.
+fn start_detached(
+    port: u16,
+    open: bool,
+    here: Option<&crate::repo::RepoInfo>,
+) -> Result<i32, String> {
+    let port = launch_resident(port)?;
     let index = resident_index_url(port)?;
     println!("adj server: serving on {index}");
-    if let Some(repo) = &here {
+    if let Some(repo) = here {
         note_board(repo);
-        println!(
-            "adj server: {} — {}",
-            repo.nwo,
-            shown_url(port, here.as_ref())?
-        );
+        println!("adj server: {} — {}", repo.nwo, shown_url(port, here)?);
     }
     if open {
-        open_browser(&shown_url(port, here.as_ref())?);
+        open_browser(&shown_url(port, here)?);
     }
     Ok(0)
+}
+
+/// Spawn the resident and wait until it says where it is: the port it bound.
+fn launch_resident(port: u16) -> Result<u16, String> {
+    let child = spawn_resident(port)?;
+    wait_for_resident(child)
 }
 
 fn resident_index_url(port: u16) -> Result<String, String> {
@@ -1134,15 +1144,19 @@ fn forget_resident(pid: u32, started: Option<&str>) {
     }
 }
 
-/// `adj server stop`. Only the server: a hub is a session of its own and goes on running.
-pub fn server_stop() -> Result<i32, String> {
+/// How long a stop waits for the resident to exit before giving up.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Ask the resident to exit and wait for it. The pid and bound port of what was stopped, or
+/// `None` when nothing was running — a record left by a killed server is forgotten on the way.
+/// `restarting` only changes the timeout message, which then says no other is started.
+fn stop_resident(restarting: bool) -> Result<Option<(u32, u16)>, String> {
     let named = recorded_resident();
-    let Some((pid, _)) = live_resident() else {
+    let Some((pid, port)) = live_resident() else {
         if let Some((pid, started)) = &named {
             forget_resident(*pid, started.as_deref());
         }
-        println!("adj server is not running");
-        return Ok(0);
+        return Ok(None);
     };
     let started = named.and_then(|(_, s)| s);
     let status = std::process::Command::new("kill")
@@ -1152,7 +1166,7 @@ pub fn server_stop() -> Result<i32, String> {
     if !status.success() {
         return Err(format!("cannot stop adj server (pid {pid})"));
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + STOP_WAIT;
     // The process this record named, not whatever the record names by now: a supervisor may
     // already have started the next one.
     let still_there = || match &started {
@@ -1161,12 +1175,81 @@ pub fn server_stop() -> Result<i32, String> {
     };
     while still_there() {
         if std::time::Instant::now() >= deadline {
-            return Err(format!("adj server (pid {pid}) did not stop within 5s"));
+            let tail = if restarting {
+                format!("; not starting another (kill -KILL {pid} to force)")
+            } else {
+                String::new()
+            };
+            return Err(format!(
+                "adj server (pid {pid}) did not stop within {}s{tail}",
+                STOP_WAIT.as_secs()
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     forget_resident(pid, started.as_deref());
-    println!("stopped adj server (pid {pid})");
+    Ok(Some((pid, port)))
+}
+
+/// `adj server stop`. Only the server: a hub is a session of its own and goes on running.
+pub fn server_stop() -> Result<i32, String> {
+    match stop_resident(false)? {
+        Some((pid, _)) => println!("stopped adj server (pid {pid})"),
+        None => println!("adj server is not running"),
+    }
+    Ok(0)
+}
+
+/// The version `server.json` names, if any.
+fn recorded_version() -> Option<String> {
+    messaging::read_json(&server_record_path())?
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// `adj server restart`: stop the resident and start it again, on the port it had unless
+/// `port` says otherwise. The new one is this binary, which is what lets a reinstall take
+/// effect. Hubs and workers are other processes and go on running; board tabs reconnect by
+/// themselves, which is why the browser is opened only on request.
+pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
+    anchor_state_dir();
+    let here = checkout_here();
+    let old_version = recorded_version();
+    let Some((old_pid, old_port)) = stop_resident(true)? else {
+        println!("adj server was not running; starting it");
+        return start_detached(port.unwrap_or(DEFAULT_PORT), open, here.as_ref());
+    };
+    println!("adj server: stopped pid {old_pid}");
+    // Catches a supervisor that was quicker than this check and nothing more: one that
+    // respawns after it still races the start below, so restart is not for a supervised server.
+    if let Some((current, _)) = live_resident() {
+        println!("adj server: its supervisor already started it again (pid {current})");
+        return Ok(0);
+    }
+    let wanted = port.unwrap_or(old_port);
+    let bound = launch_resident(wanted).map_err(|e| {
+        format!(
+            "stopped pid {old_pid}, but the new server did not start; nothing is running now: {e}"
+        )
+    })?;
+    let new_pid = live_resident().map_or(0, |(pid, _)| pid);
+    if let Some(repo) = &here {
+        note_board(repo);
+    }
+    let shown = shown_url(bound, here.as_ref())?;
+    let version = match (old_version, recorded_version()) {
+        (Some(old), Some(new)) if old != new => format!(" ({old} -> {new})"),
+        _ => String::new(),
+    };
+    println!("adj server: restarted (pid {new_pid}){version} — {shown}");
+    // 0 asks for any port, so there is nothing for the bound one to differ from.
+    if wanted != 0 && bound != wanted {
+        println!("adj server: port {wanted} was taken; now on {bound}");
+    }
+    if open {
+        open_browser(&shown);
+    }
     Ok(0)
 }
 
