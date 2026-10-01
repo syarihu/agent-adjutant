@@ -587,6 +587,8 @@ struct FakeTmux {
     clients: PathBuf,
     /// What `display-message` answers: where a window lives, as `session<TAB>group`.
     home: PathBuf,
+    /// What `capture-pane` prints: the screen of every pane.
+    screen: PathBuf,
 }
 
 impl FakeTmux {
@@ -603,6 +605,7 @@ impl FakeTmux {
              -V) echo \"tmux 3.4\" ;;\n\
              *new-window*) [ -f \"$FAKE_TMUX_LOG.failnew\" ] && { echo \"no space for a new window\" >&2; exit 1; } ;;\n\
              *display-message*) cat \"$FAKE_TMUX_HOME\" ;;\n\
+             *capture-pane*) cat \"$FAKE_TMUX_SCREEN\" ;;\n\
              *list-panes*) cat \"$FAKE_TMUX_PANES\" ;;\n\
              *list-clients*) cat \"$FAKE_TMUX_CLIENTS\" ;;\n\
              *kill-pane*|*kill-window*) [ -f \"$FAKE_TMUX_LOG.onkill\" ] && sh \"$FAKE_TMUX_LOG.onkill\"; [ -n \"$FAKE_TMUX_KILL\" ] && kill \"$FAKE_TMUX_KILL\" ;;\n\
@@ -618,12 +621,15 @@ impl FakeTmux {
         std::fs::write(&clients, "").unwrap();
         let home = root.join("home.txt");
         std::fs::write(&home, "").unwrap();
+        let screen = root.join("screen.txt");
+        std::fs::write(&screen, "").unwrap();
         FakeTmux {
             bin,
             log: root.join("tmux.log"),
             panes,
             clients,
             home,
+            screen,
         }
     }
 
@@ -661,6 +667,7 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
     let panes = tmux.panes.to_string_lossy().to_string();
     let clients = tmux.clients.to_string_lossy().to_string();
     let home = tmux.home.to_string_lossy().to_string();
+    let screen = tmux.screen.to_string_lossy().to_string();
     let kill = kill.map(|pid| pid.to_string()).unwrap_or_default();
     Resident::start_with(
         fixture,
@@ -670,6 +677,7 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
             ("FAKE_TMUX_PANES", &panes),
             ("FAKE_TMUX_CLIENTS", &clients),
             ("FAKE_TMUX_HOME", &home),
+            ("FAKE_TMUX_SCREEN", &screen),
             ("FAKE_TMUX_KILL", &kill),
         ],
     )
@@ -2465,6 +2473,59 @@ fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
         session_of(&quiet, "worker-one")["lastActivityAt"],
         1_790_000_000
     );
+}
+
+#[test]
+fn a_session_says_what_its_pane_last_showed_only_when_asked() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(
+        &tmux.screen,
+        include_str!("../src/fixtures/panes/claude-idle-after-turn.txt"),
+    )
+    .unwrap();
+    let running = Sleeper::start();
+    let one = session_worktree(&fixture, "one", None, None, running.0);
+    place_worker(&one, "@5");
+    let panes = |activity: i64| {
+        std::fs::write(
+            &tmux.panes,
+            format!("%5\t1\t/dev/ttys005\t@5\tadjutant-test\t1\tone\t{activity}\n"),
+        )
+        .unwrap();
+    };
+    panes(1_790_000_000);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let captures = || tmux.logged().matches("capture-pane").count();
+    let state_at = |query: &str| -> serde_json::Value {
+        let (status, body) = get_with_query(&resident, &format!("/b/{SLUG}/api/state"), query);
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str(&body).unwrap()
+    };
+
+    // The ordinary poll reads no screen and says nothing of one.
+    let plain = state_of(&resident);
+    assert!(session_of(&plain, "worker-one").get("lastLine").is_none());
+    assert_eq!(captures(), 0, "{}", tmux.logged());
+    // Nor does a poll that leaves the sessions out.
+    let lean = state_at("sessions=0&lines=1");
+    assert_eq!(lean["sessions"], serde_json::json!([]));
+    assert_eq!(captures(), 0, "{}", tmux.logged());
+
+    // Asked for, the line above the input box.
+    let asked = state_at("lines=1");
+    assert_eq!(
+        session_of(&asked, "worker-one")["lastLine"],
+        "✻ Brewed for 3s · done 2:20",
+        "{asked}"
+    );
+    assert_eq!(captures(), 1);
+    // A window that has not moved is not read again.
+    state_at("lines=1");
+    assert_eq!(captures(), 1, "{}", tmux.logged());
+    // How soon a window that has moved is read again depends on the clock, so that is left to
+    // the unit test of `LastLines`.
 }
 
 fn write_gate_file(fixture: &Fixture, slug: &str, id: &str, kind: &str, worktree: &Path) {

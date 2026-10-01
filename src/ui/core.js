@@ -578,7 +578,7 @@ async function refreshAllBoards(force) {
     let now = 0;
     for (const b of listed) {
       try {
-        const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state' : '/api/state?sessions=0');
+        const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state?lines=1' : '/api/state?sessions=0');
         if (epoch !== navEpoch) return;
         const { now: at, ...rest } = next;
         now = Math.max(now, at || 0);
@@ -683,7 +683,8 @@ async function refresh(force = false) {
   const base = BASE;
   const epoch = navEpoch;
   try {
-    const next = await boardApi(base, '/api/state');
+    // The last line of each session's pane is read from tmux, so only the tab that shows it asks.
+    const next = await boardApi(base, view === 'sessions' ? '/api/state?lines=1' : '/api/state');
     // The person moved to another board while this was on its way.
     if (epoch !== navEpoch) return;
     if (!multiBoard) checkNewGates(next.gates);

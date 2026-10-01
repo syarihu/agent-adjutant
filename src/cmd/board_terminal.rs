@@ -464,6 +464,7 @@ mod tests {
             phase_at: None,
             phases: Vec::new(),
             last_activity_at: None,
+            last_line: None,
             attached: None,
             waiting: None,
         }

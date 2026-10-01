@@ -9,12 +9,13 @@
 //! It holds no clock. Nothing here polls a tracker or wakes on a timer: a request arrives
 //! because a person clicked, and that is the only thing that moves.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -96,6 +97,9 @@ pub(super) struct Server {
     /// The titles of the parent tasks the hubs are named after: a cache of the tracker's, kept
     /// on disk, and read from a thread of its own.
     hub_titles: Arc<super::HubTitles>,
+    /// The last line each session's pane showed, for the pages that ask for it (`?lines=1`).
+    /// A cache: the pane is the answer.
+    last_lines: Arc<LastLines>,
     /// What tmux this machine has, when the board may open terminals on it: only the resident
     /// server serves one, and only where `tmux -V` answered when it started.
     pub(super) tmux: Option<(u32, u32)>,
@@ -204,6 +208,7 @@ impl Board {
                 resident: false,
                 jules: Arc::default(),
                 hub_titles: Arc::default(),
+                last_lines: Arc::default(),
                 tmux: None,
                 terminals: Arc::default(),
             }),
@@ -915,6 +920,7 @@ impl Resident {
                 resident: true,
                 jules: Arc::default(),
                 hub_titles: Arc::default(),
+                last_lines: Arc::default(),
                 tmux: self.tmux,
                 terminals: Arc::clone(&self.terminals),
             });
@@ -1436,7 +1442,12 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("GET", "/api/state") => http::json(
             out,
             200,
-            &state(server, req.param("sessions") != Some("0")).to_string(),
+            &state(
+                server,
+                req.param("sessions") != Some("0"),
+                req.param("lines") == Some("1"),
+            )
+            .to_string(),
         ),
         ("GET", path) if vendor_asset(path, server.resident).is_some() => {
             let (kind, body) = vendor_asset(path, server.resident).unwrap_or_default();
@@ -1610,8 +1621,10 @@ fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
 }
 
 /// `with_sessions` false leaves `sessions` empty: the page that merges several boards has no
-/// use for them, and listing them is the dearest part of a poll.
-fn state(server: &Server, with_sessions: bool) -> Value {
+/// use for them, and listing them is the dearest part of a poll. `with_lines` adds each
+/// session's last line of output (`lastLine`), which reads its tmux pane: only the page that
+/// shows it asks.
+fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
     // Before the gates are read: a gate whose worker has moved on is closed here rather than
     // by a timer, since nothing in the server polls on one.
     let _ = super::gate::close_resumed(&server.ctx);
@@ -1714,6 +1727,7 @@ fn state(server: &Server, with_sessions: bool) -> Value {
             Listing {
                 processes: &processes,
                 main_branch,
+                with_lines,
             },
             None,
             |index, _| workers_data[index].clone(),
@@ -1872,6 +1886,81 @@ fn tmux_activity(
     (pane.window_activity, view.attached.get(window).copied())
 }
 
+/// The pane whose screen stands for a session: the one its record names, else the first of its
+/// window's. `None` for a session that is not in tmux or whose window is not there.
+fn tmux_pane_of(
+    views: &mut HashMap<PathBuf, TmuxView>,
+    terminal: &session::SessionTerminal,
+) -> Option<String> {
+    let window = terminal
+        .window
+        .as_deref()
+        .filter(|_| terminal.backend == "tmux")?;
+    let view = tmux_view(views, terminal.socket.as_deref());
+    let first = view.panes.iter().find(|p| p.window_id == window)?;
+    Some(
+        terminal
+            .pane
+            .clone()
+            .unwrap_or_else(|| first.pane_id.clone()),
+    )
+}
+
+/// How soon a pane's screen is read again. A busy agent moves its window's activity on every
+/// poll, and reading its screen that often would be most of what a poll costs.
+const LAST_LINE_MIN_AGE: Duration = Duration::from_secs(5);
+
+/// A pane's last line, with the window activity it was read at and when.
+struct LastRead {
+    activity: Option<i64>,
+    at: Instant,
+    line: Option<String>,
+}
+
+/// The last line of output of each pane a page has asked for, by pane.
+#[derive(Default)]
+struct LastLines {
+    read: Mutex<HashMap<String, LastRead>>,
+}
+
+impl LastLines {
+    /// The line of `key`, which `read` produces only when the window has had activity since
+    /// the last read and that was at least `LAST_LINE_MIN_AGE` ago.
+    fn look(
+        &self,
+        key: &str,
+        activity: Option<i64>,
+        now: Instant,
+        read: impl FnOnce() -> Option<String>,
+    ) -> Option<String> {
+        if let Some(last) = self.read.lock().ok()?.get(key)
+            && (last.activity == activity || now.duration_since(last.at) < LAST_LINE_MIN_AGE)
+        {
+            return last.line.clone();
+        }
+        // Not under the lock: reading the pane runs a command.
+        let line = read();
+        if let Ok(mut all) = self.read.lock() {
+            all.insert(
+                key.to_string(),
+                LastRead {
+                    activity,
+                    at: now,
+                    line: line.clone(),
+                },
+            );
+        }
+        line
+    }
+
+    /// Forgets the panes that are no longer listed.
+    fn keep_only(&self, keys: &HashSet<String>) {
+        if let Ok(mut all) = self.read.lock() {
+            all.retain(|key, _| keys.contains(key));
+        }
+    }
+}
+
 fn session_waiting(
     hub: &session::RepoHub,
     open: &[&gate::Gate],
@@ -2000,6 +2089,9 @@ fn waiting_hub(hub: &session::RepoHub, gates: &[gate::Gate]) -> Option<session::
 struct Listing<'a> {
     processes: &'a messaging::ProcessTable,
     main_branch: Option<String>,
+    /// Whether each session carries the last line of its pane: reading it runs a command per
+    /// session, so only the page that shows it asks.
+    with_lines: bool,
 }
 
 /// The sessions this board lists, hubs first and then the workers of `linked_paths`, as the
@@ -2055,7 +2147,32 @@ fn sessions_of(
     let Listing {
         processes,
         main_branch,
+        with_lines,
     } = listing;
+    // The last line of a session's pane, when the page asked for it: read for a session that
+    // runs in tmux, and cached by pane (see `LastLines`).
+    let mut screens: HashSet<String> = HashSet::new();
+    let mut last_line = |views: &mut HashMap<PathBuf, TmuxView>,
+                         terminal: &session::SessionTerminal,
+                         agent: &str,
+                         present: bool,
+                         activity: Option<i64>| {
+        if !with_lines || !present {
+            return None;
+        }
+        let pane = tmux_pane_of(views, terminal)?;
+        let key = format!(
+            "{}\t{pane}",
+            socket_key(terminal.socket.as_deref()).display()
+        );
+        screens.insert(key.clone());
+        let agent = crate::prompts::Agent::parse(agent).unwrap_or(crate::prompts::Agent::Generic);
+        server.last_lines.look(&key, activity, Instant::now(), || {
+            let screen = crate::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
+            crate::terminal::last_output_line(agent, &screen)
+        })
+    };
+
     let main_branch = || main_branch.clone();
     let mut sessions: Vec<session::Session> = Vec::new();
 
@@ -2065,6 +2182,13 @@ fn sessions_of(
         let terminal =
             session_terminal(record.as_ref(), terminal_settings, &mut views, h.state.pid);
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        let line = last_line(
+            &mut views,
+            &terminal,
+            &hub_agent,
+            h.state.present,
+            last_activity_at,
+        );
 
         sessions.push(session::Session {
             id: h.id.clone(),
@@ -2087,6 +2211,7 @@ fn sessions_of(
             phase_at: None,
             phases: Vec::new(),
             last_activity_at,
+            last_line: line,
             attached,
             waiting: waiting_hub(h, &gates.of(&h.slug).open),
         });
@@ -2122,6 +2247,13 @@ fn sessions_of(
             status.pid,
         );
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        let line = last_line(
+            &mut views,
+            &terminal,
+            &worker_agent,
+            status.present,
+            last_activity_at,
+        );
         let waiting = worker_waiting(
             &mut gates,
             &parent_hub,
@@ -2161,6 +2293,7 @@ fn sessions_of(
             phase_at: status.phase_at,
             phases: status.phases,
             last_activity_at,
+            last_line: line,
             attached,
             waiting,
         });
@@ -2190,6 +2323,13 @@ fn sessions_of(
             status.pid,
         );
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        let line = last_line(
+            &mut views,
+            &terminal,
+            &worker_agent,
+            status.present,
+            last_activity_at,
+        );
         let waiting = worker_waiting(
             &mut gates,
             &parent_hub,
@@ -2231,6 +2371,7 @@ fn sessions_of(
             phase_at: status.phase_at,
             phases: status.phases,
             last_activity_at,
+            last_line: line,
             attached,
             waiting,
         });
@@ -2238,6 +2379,14 @@ fn sessions_of(
         let parent_hub = parent_hub_id(repo, hubs, saved.hub.as_deref());
         let terminal = session_terminal(None, terminal_settings, &mut views, None);
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        // Not present, so there is no pane to read.
+        let line = last_line(
+            &mut views,
+            &terminal,
+            &worker_agent,
+            false,
+            last_activity_at,
+        );
         let waiting = worker_waiting(&mut gates, &parent_hub, &repo.main, None, None);
 
         let task_title = saved.task.as_deref().and_then(|id| {
@@ -2265,9 +2414,13 @@ fn sessions_of(
             phase_at: None,
             phases: Vec::new(),
             last_activity_at,
+            last_line: line,
             attached,
             waiting,
         });
+    }
+    if with_lines {
+        server.last_lines.keep_only(&screens);
     }
     sessions
 }
@@ -2294,6 +2447,7 @@ pub(super) fn board_session(
         Listing {
             processes: &processes,
             main_branch,
+            with_lines: false,
         },
         Some(id),
         |index, path| {
@@ -2890,6 +3044,39 @@ mod tests {
         assert!(boards_dir().join("acme-widget-b.json").exists());
         // Nothing to forget is not an error.
         forget_board("acme-widget-a").unwrap();
+    }
+
+    #[test]
+    fn a_pane_is_read_again_only_when_it_has_moved_and_the_last_read_is_old() {
+        let lines = LastLines::default();
+        let t0 = Instant::now();
+        let reads = std::cell::Cell::new(0);
+        let look = |activity, at: Instant| {
+            lines.look("pane", Some(activity), at, || {
+                reads.set(reads.get() + 1);
+                Some(format!("read {}", reads.get()))
+            })
+        };
+        assert_eq!(look(10, t0).as_deref(), Some("read 1"));
+        // Nothing moved: the answer stands, however old.
+        assert_eq!(
+            look(10, t0 + Duration::from_secs(60)).as_deref(),
+            Some("read 1")
+        );
+        // Moved, but read a moment ago.
+        assert_eq!(
+            look(11, t0 + Duration::from_secs(2)).as_deref(),
+            Some("read 1")
+        );
+        // Moved and read long enough ago.
+        assert_eq!(look(11, t0 + LAST_LINE_MIN_AGE).as_deref(), Some("read 2"));
+        assert_eq!(reads.get(), 2);
+        // A pane that is no longer listed is forgotten.
+        lines.keep_only(&HashSet::new());
+        assert_eq!(
+            look(11, t0 + Duration::from_secs(70)).as_deref(),
+            Some("read 3")
+        );
     }
 
     #[test]
@@ -3908,13 +4095,17 @@ mod tests {
             resident: false,
             jules: Arc::default(),
             hub_titles: Arc::default(),
+            last_lines: Arc::default(),
             tmux: None,
             terminals: Arc::default(),
         };
         let settings = settings_now(&server);
 
         // What the page is sent, which is the whole list.
-        let listed = state(&server, true)["sessions"].as_array().unwrap().clone();
+        let listed = state(&server, true, false)["sessions"]
+            .as_array()
+            .unwrap()
+            .clone();
         let ids: Vec<&str> = listed.iter().map(|s| s["id"].as_str().unwrap()).collect();
         let digest = |rel: &str| crate::repo::short_digest(root.join(rel).to_str().unwrap());
         for expected in [

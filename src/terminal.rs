@@ -1541,6 +1541,8 @@ struct Line {
 struct InputBox {
     /// What is typed in it, apart from a suggestion the agent drew there.
     text: String,
+    /// The row of its top border.
+    top: usize,
     /// The row of its bottom border.
     bottom: usize,
 }
@@ -1580,6 +1582,7 @@ fn input_box(agent: Agent, lines: &[Line]) -> Option<InputBox> {
         }
         return Some(InputBox {
             text: text.trim().to_string(),
+            top,
             bottom,
         });
     }
@@ -1644,6 +1647,62 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
         return reading(PaneState::Working);
     }
     reading(PaneState::Idle)
+}
+
+/// The longest line `last_output_line` returns, in characters.
+const LAST_LINE_CHARS: usize = 200;
+
+/// A line indented at least this far is the agent's right-aligned chrome (the effort level, a
+/// key hint), not something it wrote.
+const RIGHT_ALIGNED_INDENT: usize = 24;
+
+/// Lines an agent draws between its output and its input box that are not output: hints about
+/// itself and about the terminal it found itself in.
+fn is_chrome(plain: &str) -> bool {
+    let line = plain.trim();
+    let indent = plain.chars().take_while(|c| c.is_whitespace()).count();
+    indent >= RIGHT_ALIGNED_INDENT
+        || line
+            .strip_prefix('⎿')
+            .is_some_and(|rest| rest.trim_start().starts_with("Tip:"))
+        || line.starts_with("tmux detected")
+}
+
+/// The last thing the agent wrote, as one line of what its screen shows: the last line above
+/// the input box that has anything in it, without the escapes and the agent's own chrome, cut
+/// to `LAST_LINE_CHARS`. A screen with no input box (a generic agent's, or one showing a menu)
+/// gives its last line. `None` for a blank screen.
+pub fn last_output_line(agent: Agent, screen: &PaneScreen) -> Option<String> {
+    let lines: Vec<Line> = screen
+        .text
+        .lines()
+        .map(|raw| Line {
+            plain: strip_escapes(raw),
+            raw: raw.to_string(),
+        })
+        .collect();
+    let end = match agent {
+        Agent::Generic => lines.len(),
+        _ => input_box(agent, &lines).map_or(lines.len(), |b| b.top),
+    };
+    let line = lines[..end]
+        .iter()
+        .rev()
+        .map(|l| l.plain.as_str())
+        .find(|l| !l.trim().is_empty() && !is_border(l) && !is_chrome(l))?
+        .trim();
+    let mut chars = line.chars();
+    let cut: String = chars.by_ref().take(LAST_LINE_CHARS).collect();
+    Some(if chars.next().is_some() {
+        format!("{}…", cut.trim_end())
+    } else {
+        cut
+    })
+}
+
+/// A tmux pane's screen, or `None` when tmux cannot show it (the pane is gone, no server).
+pub fn look_at_tmux_pane(socket: Option<&str>, pane_id: &str) -> Option<PaneScreen> {
+    look_at_pane(&run_shell, &tmux_capture_script(socket, pane_id)).ok()
 }
 
 /// What the agent's screen says it is doing. `Generic` is `Idle` without looking: nothing is
@@ -3619,6 +3678,85 @@ mod tests {
         let mut typed = screen.clone();
         typed.text = typed.text.replace("\x1b[2m", "");
         assert_eq!(pane_state(Agent::Claude, &typed), PaneState::Typing);
+    }
+
+    // ── the last line of output ──────────────────────────────────────
+
+    #[test]
+    fn the_last_line_is_the_one_above_the_input_box() {
+        let last = |agent, name| last_output_line(agent, &parse_pane_screen(fixture(name)));
+        // Not the box, its border, the prompt or the footer under it; and not the effort level
+        // the agent draws at the right of the row above the box.
+        assert_eq!(
+            last(Agent::Claude, "claude-idle-after-turn").as_deref(),
+            Some("✻ Brewed for 3s · done 2:20")
+        );
+        // Nor the tip it shows under the spinner, or the hint about the terminal it is in.
+        assert_eq!(
+            last(Agent::Claude, "claude-working").as_deref(),
+            Some("✻ Pondering… (3s · thinking)")
+        );
+        assert_eq!(
+            last(Agent::Claude, "claude-working-tool").as_deref(),
+            Some("✻ Pondering… (5s · ↓ 264 tokens · thought for 2s)")
+        );
+        assert_eq!(
+            last(Agent::Agy, "agy-working").as_deref(),
+            Some("⡿  Generating...")
+        );
+        assert_eq!(
+            last(Agent::Agy, "agy-idle-after-turn").as_deref(),
+            Some("rustic appeal, and universally restorative, comforting charm.")
+        );
+    }
+
+    #[test]
+    fn a_screen_without_an_input_box_gives_its_last_line() {
+        // A question replaces the box, so there is nothing to look above.
+        let question = parse_pane_screen(fixture("claude-question"));
+        assert_eq!(
+            last_output_line(Agent::Claude, &question).as_deref(),
+            Some("Enter to select · ↑/↓ to navigate · Esc to cancel")
+        );
+        // An agent whose screen is not known has no box to find, whatever it draws.
+        let generic = parse_pane_screen("$ make\ncc -o a a.c\n\n  built a\n\n");
+        assert_eq!(
+            last_output_line(Agent::Generic, &generic).as_deref(),
+            Some("built a")
+        );
+    }
+
+    #[test]
+    fn the_last_line_has_no_escapes_and_is_cut_short() {
+        let coloured = parse_pane_screen("\x1b[31m\x1b[1merror\x1b[0m: no such file\n");
+        assert_eq!(
+            last_output_line(Agent::Generic, &coloured).as_deref(),
+            Some("error: no such file")
+        );
+        let long = parse_pane_screen(&format!("{}\n", "あ".repeat(250)));
+        let line = last_output_line(Agent::Generic, &long).unwrap();
+        assert_eq!(line.chars().count(), LAST_LINE_CHARS + 1);
+        assert!(line.ends_with('…'), "{line}");
+        // A line of exactly the limit is whole.
+        let exact = parse_pane_screen(&format!("{}\n", "a".repeat(LAST_LINE_CHARS)));
+        assert_eq!(
+            last_output_line(Agent::Generic, &exact).map(|l| l.len()),
+            Some(LAST_LINE_CHARS)
+        );
+    }
+
+    #[test]
+    fn a_blank_screen_has_no_last_line() {
+        for agent in [Agent::Claude, Agent::Agy, Agent::Generic] {
+            let blank = parse_pane_screen("\n  \n\n");
+            assert_eq!(last_output_line(agent, &blank), None);
+        }
+        // Only a box and its footer: nothing was written above it.
+        let empty_box = parse_pane_screen(&format!(
+            "\n\n{rule}\n❯\n{rule}\n  ? for shortcuts\n",
+            rule = "─".repeat(40)
+        ));
+        assert_eq!(last_output_line(Agent::Claude, &empty_box), None);
     }
 
     #[test]

@@ -615,6 +615,12 @@ the gate directories.
 
 - `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
   out when the session is not in tmux or its window is not listed.
+- `lastLine` (only with `GET /api/state?lines=1`, which the セッション tab sends while it is on
+  screen): the last line the session's pane shows above its input box, cut to 200 characters. Read
+  with one `tmux capture-pane` per present tmux session, and only when the window has had activity
+  since the last read and that was at least 5 seconds ago, so a busy agent does not make the poll
+  dear. Left out for a session that is not in tmux, a pane with nothing written, and always with
+  `sessions=0`.
 - `attached`: how many clients are attached to that window, not counting the board's own
   browser terminals (`adjboard-*`); a terminal the board opened for a person (`adjterm-*`) is a person and counts. A control-mode client (iTerm2's `-CC`) counts on every
   window of its session, a plain one on the window it is looking at. `0` when nobody is; left
