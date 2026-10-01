@@ -532,6 +532,7 @@
 .tp-pane[hidden] { display: none; }
 #tp-detail { padding: 16px; overflow-y: auto; }
 #tp-detail > div:empty { display: none; }
+#tp-rest { display: flex; flex-direction: column; gap: 14px; }
 .tp-term { position: relative; gap: 0; }
 .tp-term-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .tp-term-bar:empty { display: none; }
@@ -692,8 +693,10 @@
 .agent-back:hover { text-decoration: underline; }
 .agent-back .material-symbols-outlined { font-size: 14px; }
 .hcard-foot-links { display: inline-flex; align-items: center; gap: 10px; }
+.hcard-foot > span:first-child { white-space: nowrap; }
 .hcard-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
