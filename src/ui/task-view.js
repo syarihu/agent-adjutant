@@ -32,7 +32,10 @@ const historyFailed = new Set();
    since task ids are only unique within a board; the ones of this page keep the bare id. */
 const historyKey = (task, base) => base === BASE ? task.id : `${base}|${task.id}`;
 function historyOf(task, base = BASE, data = state) {
-  const key = `${task.gateAnsweredAt || ''}|${openGate(task, data)?.id || ''}|${task.status}`;
+  // The polled records leave their diffs out and say how big each is, so a record that was
+  // written or rewritten since shows as a different key here and its diff is read again.
+  const sizes = (task.records || []).map(r => `${r.id}:${r.diffSize ?? ''}`).join(',');
+  const key = `${task.gateAnsweredAt || ''}|${openGate(task, data)?.id || ''}|${task.status}|${sizes}`;
   const hk = historyKey(task, base);
   let entry = histories[hk];
   // After a failure the entry waits out `retryAt`: every poll redraws, and each would ask again.
@@ -72,7 +75,20 @@ function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
   if (view === 'board' && selectedTaskId === id) renderDrawer();
   if (view === 'sessions') renderSessionSidebar();
+  // A record's diff arrives with the history, and nothing else redraws a quiet board.
+  if (view === 'review') renderReview();
 }
+
+/* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the
+   same record. Without it yet (still loading) the record is returned as it is, and
+   `diffPending` says to show that rather than "no diff". */
+function withDiff(record, task, base = BASE, data = state) {
+  if (!record || record.diff != null || !record.diffSize || !task) return record;
+  const kept = historyOf(task, base, data).records.find(r => r.id === record.id);
+  return kept?.diff != null ? { ...record, diff: kept.diff } : record;
+}
+const diffPending = g => !!g.diffSize && g.diff == null;
+const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読み込み中…</div></div>`;
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
    task's records come from /api/state, which is polled, so a send-back shows at once. */
@@ -82,7 +98,7 @@ function gatesOf(task, data = state, base = BASE) {
   const add = g => g && byId.set(g.id, g);
   h.answered.forEach(add);
   add(task.approvedPlan);
-  (task.records || h.records).forEach(add);
+  (task.records || h.records).forEach(r => add(task.records ? withDiff(r, task, base, data) : r));
   (data.gates || []).filter(g => g.task === task.id).forEach(add);
   // Same-second ties go by the sequence at the end of the id, as `recordsOf` orders them, so
   // the latest of a kind is the one claimed last.
@@ -311,6 +327,7 @@ function reviewTab(task, all) {
   }
   if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  else if (diffPending(g)) h += DIFF_LOADING;
   return h + (waiting ? '' : actHtml(g));
 }
 
@@ -342,6 +359,7 @@ function gateDetailHtml(g, all) {
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.decided) h += `<div class="panel"><h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  else if (diffPending(g)) h += DIFF_LOADING;
   return h + actHtml(g);
 }
 

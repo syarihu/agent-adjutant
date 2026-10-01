@@ -1142,6 +1142,56 @@ fn a_parent_hubs_board_gives_the_sidebar_its_tasks_and_history() {
 }
 
 #[test]
+fn the_polled_state_carries_no_diffs_and_the_history_still_does() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/tasks"),
+        &serde_json::json!({"title": "Has a diff"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let diff = "diff --git a/f b/f\n+one\n";
+    let records = fixture.state.join("gates").join(SLUG).join("records");
+    std::fs::create_dir_all(&records).unwrap();
+    std::fs::write(
+        records.join("20260922T041233Z-diff-record.json"),
+        serde_json::json!({
+            "id": "20260922T041233Z-diff-record",
+            "kind": "diff",
+            "task": id,
+            "worktree": fixture.repo.to_str().unwrap(),
+            "title": "round one",
+            "wait": false,
+            "openedAt": "20260922T041233Z",
+            "diff": diff,
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let state = state_of(&resident);
+    let task = state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap();
+    let record = &task["records"][0];
+    assert_eq!(record["id"], "20260922T041233Z-diff-record", "{task}");
+    assert!(record.get("diff").is_none(), "{record}");
+    assert_eq!(record["diffSize"], diff.len(), "{record}");
+
+    let (status, body) = resident.get(&format!("/b/{SLUG}/api/tasks/{id}/history"));
+    assert_eq!(status, 200, "{body}");
+    let history: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(history["records"][0]["diff"], diff, "{history}");
+}
+
+#[test]
 fn a_session_request_lands_in_the_chosen_hubs_inbox_with_its_instruction() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);

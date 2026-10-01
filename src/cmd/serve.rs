@@ -2068,7 +2068,8 @@ fn split_main(main: &str, listed: Vec<Worktree>) -> (Option<String>, Vec<Worktre
 }
 
 /// The tasks as the board reads them, each live one with what its worker recorded without
-/// stopping (`records`, oldest first) and the plan a person approved (`approvedPlan`, whose
+/// stopping (`records`, oldest first, each with its diff's byte length as `diffSize` in place
+/// of the diff) and the plan a person approved (`approvedPlan`, whose
 /// `answeredAt` is when).
 ///
 /// Joined here rather than written onto the task record: a record belongs to the gate
@@ -2095,7 +2096,20 @@ fn with_records(
                     .filter(|g| g.kind == gate::Kind::Plan)
                     .filter(|g| matches!(g.decision.as_deref(), Some("approve" | "choice")))
                     .max_by(|a, b| a.answered_at.cmp(&b.answered_at));
-                value["records"] = json!(records);
+                // Without their diffs, which are most of what a poll weighs: the page reads
+                // one from the task's history when it shows it, and `diffSize` says it is there.
+                value["records"] = records
+                    .into_iter()
+                    .map(|r| {
+                        let mut record = json!(r);
+                        if let Some(diff) = record.as_object_mut().and_then(|f| f.remove("diff"))
+                            && let Some(diff) = diff.as_str()
+                        {
+                            record["diffSize"] = json!(diff.len());
+                        }
+                        record
+                    })
+                    .collect();
                 value["approvedPlan"] = json!(plan);
             }
             Some(value)
@@ -2963,8 +2977,32 @@ mod tests {
             .map(|g| g["id"].as_str().unwrap())
             .collect();
         assert_eq!(ids, ["r1"]);
+        assert!(tasks[0]["records"][0].get("diff").is_none());
+        assert!(tasks[0]["records"][0].get("diffSize").is_none());
         assert_eq!(tasks[0]["approvedPlan"]["id"], "p-new");
         assert_eq!(tasks[0]["approvedPlan"]["answeredAt"], "20260922T040000Z");
+    }
+
+    #[test]
+    fn a_record_carries_the_size_of_its_diff_and_not_the_diff() {
+        let mut record = a_gate("r1", gate::Kind::Diff, "t1");
+        record.wait = false;
+        record.diff = Some("diff --git a/ü b/ü\n+é\n".to_string());
+        let size = record.diff.as_ref().unwrap().len();
+        let tasks = with_records(
+            vec![a_task("t1", task::Status::Dispatched)],
+            vec![record.clone()],
+            Vec::new(),
+        );
+        let carried = &tasks[0]["records"][0];
+        assert!(carried.get("diff").is_none(), "{carried}");
+        assert_eq!(carried["diffSize"], size);
+        // The history is where the diff is read from, whole.
+        let history = history_of("t1", Vec::new(), vec![record]);
+        assert_eq!(
+            history["records"][0]["diff"].as_str().map(str::len),
+            Some(size)
+        );
     }
 
     #[test]
