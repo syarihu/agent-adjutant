@@ -96,6 +96,12 @@ function hubShortName(h) {
   if (!h.parent) return 'リポジトリ';
   return h.key || '親タスク（キー不明）';
 }
+/* What a hub's row is titled: the repository's name for its own hub, the parent task's title for
+   a parent-task hub (null until it is known, when the row keeps its key). */
+function hubTitle(h) {
+  if (!h.parent) return (state.repo || '').split('/').pop() || null;
+  return h.title || null;
+}
 function hubIconButton(icon, label, title, attrs = '') {
   return `<button type="button" class="hub-btn" ${attrs} title="${esc(title)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
 }

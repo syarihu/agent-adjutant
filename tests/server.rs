@@ -1379,6 +1379,7 @@ fn linking_a_taskless_session_to_a_task_gives_it_a_card() {
         .find(|s| s["id"] == "worker-try-retry")
         .unwrap();
     assert!(session["task"].is_null(), "{session}");
+    assert!(session["taskTitle"].is_null(), "{session}");
 
     let (status, body) = resident.post(
         &sessions_url("/worker-try-retry/link"),
@@ -1409,6 +1410,7 @@ fn linking_a_taskless_session_to_a_task_gives_it_a_card() {
         .find(|s| s["id"] == "worker-try-retry")
         .unwrap();
     assert_eq!(session["task"], id, "{session}");
+    assert_eq!(session["taskTitle"], "Retry the upload", "{session}");
     let worker = after["workers"]
         .as_array()
         .unwrap()
@@ -1476,6 +1478,8 @@ fn linking_a_new_task_on_a_parent_hubs_board_moves_the_worker_to_that_hub() {
         .find(|s| s["id"] == "worker-try-retry")
         .unwrap();
     assert_eq!(session["hub"], "hub-wid-957", "{session}");
+    // The task is on the parent hub's board, not this one's, and still names the session.
+    assert_eq!(session["taskTitle"], "Child of the feature", "{session}");
 }
 
 /// The messages of `kind` waiting for the hub at `hub_args` (`[]` for the repository's).
@@ -3113,4 +3117,160 @@ fn a_worktree_git_cannot_read_is_a_reason_of_its_own() {
     assert_eq!(answer["reasons"][0]["kind"], "git", "{answer}");
     assert!(answer["git"].is_null(), "{answer}");
     assert!(worktree.is_dir());
+}
+
+// ── the parent task's title on a parent-task hub ──
+
+/// A `gh` that answers every issue with the title in `gh-title`, fails once `gh-fail` exists, and
+/// writes down the URL of each issue it is asked about. Returns the `PATH` to run the server
+/// with and that log.
+fn stub_gh_for_titles(fixture: &Fixture) -> (String, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let stubs = fixture.repo.join("stub-bin");
+    std::fs::create_dir_all(&stubs).unwrap();
+    let asked = fixture.repo.join("gh-asked");
+    let fail = fixture.repo.join("gh-fail");
+    let gh = stubs.join("gh");
+    std::fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\n\
+             for a; do u=$a; done\n\
+             echo \"$u\" >> {asked}\n\
+             [ -e {fail} ] && {{ echo 'Could not resolve to an issue' >&2; exit 1; }}\n\
+             printf '{{\"title\":\"The parent task\",\"body\":\"B\"}}'\n",
+            asked = shell_quoted(&asked.to_string_lossy()),
+            fail = shell_quoted(&fail.to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        stubs.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (path, asked)
+}
+
+fn gh_asked(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The `title` of the hub `hub-wid-957` in the state, null while it has none.
+fn feature_title(resident: &Resident) -> serde_json::Value {
+    state_of(resident)["hubs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "hub-wid-957")
+        .unwrap_or_else(|| panic!("no hub-wid-957"))["title"]
+        .clone()
+}
+
+/// Polls until the hub has a title, or says so after a few seconds.
+fn wait_for_feature_title(resident: &Resident) -> serde_json::Value {
+    for _ in 0..50 {
+        let title = feature_title(resident);
+        if !title.is_null() {
+            return title;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    serde_json::Value::Null
+}
+
+/// Polls long enough for a read that was going to start to have started and finished.
+fn poll_feature_title(resident: &Resident, times: usize) {
+    for _ in 0..times {
+        let _ = feature_title(resident);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+}
+
+#[test]
+fn a_parent_hubs_title_is_read_once_and_kept_across_a_restart() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let (path, asked) = stub_gh_for_titles(&fixture);
+    {
+        let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+        assert_eq!(wait_for_feature_title(&resident), "The parent task");
+    }
+    assert_eq!(
+        gh_asked(&asked),
+        ["https://github.com/acme/widget/issues/957"]
+    );
+    // The repository's own hub has no parent task, so no title.
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    assert_eq!(wait_for_feature_title(&resident), "The parent task");
+    poll_feature_title(&resident, 5);
+    assert_eq!(gh_asked(&asked).len(), 1, "{:?}", gh_asked(&asked));
+    let hubs = state_of(&resident)["hubs"].clone();
+    assert!(hubs[0]["title"].is_null(), "{hubs}");
+}
+
+#[test]
+fn a_parent_key_no_issue_key_matches_is_never_asked_about() {
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "defaults": {"ide": "code"},
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                                      "issueKeys": {"acme/widget": "GAMMA"}}}}"#,
+    );
+    listed_parent_hub(&fixture);
+    let (path, asked) = stub_gh_for_titles(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    poll_feature_title(&resident, 8);
+    assert!(feature_title(&resident).is_null());
+    assert!(gh_asked(&asked).is_empty(), "{:?}", gh_asked(&asked));
+}
+
+#[test]
+fn the_parent_a_child_task_names_is_preferred_to_the_issue_key() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let tasks = fixture.state.join("tasks").join(FEATURE_SLUG);
+    std::fs::create_dir_all(&tasks).unwrap();
+    std::fs::write(
+        tasks.join("child.json"),
+        serde_json::json!({
+            "id": "child", "kind": "investigate", "title": "Child", "doneWhen": "report-only",
+            "autoStart": true, "status": "backlog", "createdAt": "20260101T000000Z",
+            "updatedAt": "20260101T000000Z",
+            "parent": "https://github.com/acme/elsewhere/issues/5",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (path, asked) = stub_gh_for_titles(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    assert_eq!(wait_for_feature_title(&resident), "The parent task");
+    assert_eq!(
+        gh_asked(&asked),
+        ["https://github.com/acme/elsewhere/issues/5"]
+    );
+}
+
+#[test]
+fn an_issue_that_could_not_be_read_is_not_asked_for_again_on_the_next_poll() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let (path, asked) = stub_gh_for_titles(&fixture);
+    std::fs::write(fixture.repo.join("gh-fail"), "").unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    // Wait for the one read to have happened, so a slow machine does not pass with none.
+    for _ in 0..100 {
+        if !gh_asked(&asked).is_empty() {
+            break;
+        }
+        let _ = feature_title(&resident);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    poll_feature_title(&resident, 10);
+    assert!(feature_title(&resident).is_null());
+    assert_eq!(gh_asked(&asked).len(), 1, "{:?}", gh_asked(&asked));
 }

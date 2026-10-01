@@ -246,6 +246,29 @@ pub fn fetchable_issue(url: &str) -> bool {
         && parts[3].chars().all(|c| c.is_ascii_digit())
 }
 
+/// The issue a parent-task key names, from the config's `issueKeys` (`owner/repo` -> key): the
+/// key's prefix (`ALPHA` of `ALPHA-233`) picks the repository, ignoring case, and the number
+/// is the issue's. Only on GitHub, and only when exactly one repository has that prefix: two
+/// would be a guess, and a title of the wrong issue is worse than none.
+pub fn parent_issue_url(
+    key: &str,
+    issue_keys: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let (prefix, number) = key.trim().rsplit_once('-')?;
+    if prefix.is_empty() || number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let mut matching = issue_keys
+        .iter()
+        .filter(|(_, v)| v.as_str().is_some_and(|v| v.eq_ignore_ascii_case(prefix)))
+        .map(|(repo, _)| repo);
+    let repo = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
+    Some(format!("https://github.com/{repo}/issues/{number}"))
+}
+
 /// The issue to read for this task: the URL it was created with, else the one the worker
 /// recorded, and only if it is one `fetchable_issue` accepts.
 pub fn issue_to_fetch(task: &Task) -> Option<&str> {
@@ -769,6 +792,29 @@ mod tests {
 
         assert!(snapshot_from_gh("not json", url, "s").is_err());
         assert!(snapshot_from_gh(r#"{"body":"x"}"#, url, "s").is_err());
+    }
+
+    #[test]
+    fn a_parent_key_names_the_issue_of_the_one_repository_with_that_prefix() {
+        let keys = serde_json::json!({"acme/team-app": "ALPHA", "acme/api": "BETA"});
+        let keys = keys.as_object().unwrap();
+        assert_eq!(
+            parent_issue_url("ALPHA-233", keys).as_deref(),
+            Some("https://github.com/acme/team-app/issues/233")
+        );
+        assert_eq!(
+            parent_issue_url("alpha-7", keys).as_deref(),
+            Some("https://github.com/acme/team-app/issues/7")
+        );
+        assert_eq!(parent_issue_url("GAMMA-1", keys), None);
+        assert_eq!(parent_issue_url("ALPHA", keys), None);
+        assert_eq!(parent_issue_url("ALPHA-x", keys), None);
+        assert_eq!(parent_issue_url("-12", keys), None);
+        let twice = serde_json::json!({"acme/a": "ALPHA", "acme/b": "alpha"});
+        assert_eq!(
+            parent_issue_url("ALPHA-1", twice.as_object().unwrap()),
+            None
+        );
     }
 
     #[test]

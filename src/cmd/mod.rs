@@ -17,6 +17,7 @@ use crate::terminal::{self, SpawnRequest};
 mod board_actions;
 mod board_terminal;
 mod gate;
+mod hub_title;
 mod jules;
 mod review_engine;
 mod serve;
@@ -29,6 +30,7 @@ pub use gate::{
     close_cmd as gate_close, list as gate_list, open as gate_open_payload, open_cmd as gate_open,
     open_json as gate_open_json, show as gate_show,
 };
+pub use hub_title::HubTitles;
 pub use jules::{
     Chosen as JulesChosen, ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs,
     Watch as JulesWatch, findings as jules_findings, findings_cmd as jules_findings_cmd,
@@ -2443,6 +2445,7 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             parent: info.hub.is_some(),
             key: info.hub.clone(),
             name: info.hub_name.clone(),
+            title: None,
             slug: info.slug.clone(),
             state: crate::session::RepoHubState {
                 present: false,
