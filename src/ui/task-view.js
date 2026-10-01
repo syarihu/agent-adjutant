@@ -115,7 +115,7 @@ function gatesOf(task, data = state, base = baseOf(task)) {
    none for the first. */
 const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 
-const isWaiting = g => (state.gates || []).some(x => x.id === g.id);
+const isWaiting = g => (state.gates || []).some(x => gateRef(x) === gateRef(g));
 
 /* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. */
 function gateForTab(task, tab, all) {
@@ -197,7 +197,7 @@ function framesHtml(g) {
 /* The part of a tab a person acts on, when the gate shown can still take an answer: a gate
    waiting now, or a live task's record. A finished task's records have nowhere to go back to. */
 function actHtml(g) {
-  if (isWaiting(g) || (g.wait === false && recordById(g.id))) return decideHtml(g);
+  if (isWaiting(g) || (g.wait === false && recordByRef(gateRef(g)))) return decideHtml(g);
   return '';
 }
 
