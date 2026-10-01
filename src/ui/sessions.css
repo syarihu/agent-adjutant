@@ -29,10 +29,12 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .sess-row.working .sess-ico { color:var(--md-sys-color-success); }
 .sess-row.idle .sess-ico, .sess-row.ended .sess-ico, .sess-row.none .sess-ico { color:var(--md-sys-color-outline); }
 .sess-row-text { display:flex; flex-direction:column; min-width:0; }
-.sess-row-main { display:flex; gap:6px; min-width:0; align-items:baseline; }
-.sess-row-tag { flex:none; max-width:50%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-on-surface-variant); }
-.sess-row-title { font-size:12.5px; font-weight:600; }
-.sess-row-key, .sess-row-title, .sess-row-sub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sess-row-title {
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
+  overflow-wrap:anywhere; font-size:12.5px; font-weight:600; line-height:1.35;
+}
+.sess-row-branch { font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-on-surface-variant); font-weight:400; }
+.sess-row-key, .sess-row-branch, .sess-row-sub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sess-row-key { font-size:12.5px; font-weight:600; }
 .sess-row-sub { font-size:10.5px; color:var(--md-sys-color-outline); font-weight:500; }
 .sess-empty { padding:12px 8px; font-size:12px; color:var(--md-sys-color-outline); }

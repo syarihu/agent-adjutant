@@ -385,9 +385,10 @@ function mountSelected() {
   }
 }
 
-/* The main line of a row: the title with its key in front of it, or the key alone. */
-const rowMainHtml = ({ tag, text }) =>
-  `<span class="sess-row-main">${tag ? `<span class="sess-row-tag">${esc(tag)}</span>` : ''}<span class="sess-row-title">${esc(text)}</span></span>`;
+/* A row's words, top to bottom: the title (up to two lines), where it works (the branch, or the
+   key when there is none), and how it is. A line that would only repeat the title is left out. */
+const rowTextHtml = (text, where, sub) =>
+  `<span class="sess-row-text"><span class="sess-row-title">${esc(text)}</span>${where && where !== text ? `<span class="sess-row-branch">${esc(where)}</span>` : ''}<span class="sess-row-sub">${esc(sub)}</span></span>`;
 
 /* A row's tooltip: the whole title, where the worktree is, the tab's own title when it says
    something else, and how the session is. */
@@ -399,20 +400,22 @@ function sessionTip(s, st) {
 }
 
 /* A hub's row says the name and tooltip of its group instead of the session's own. */
-function sessionRowHtml(s, st, { label = sessionLabel(s), tip = '', cls = '' } = {}) {
+function sessionRowHtml(s, st, { label = sessionLabel(s), where = s.branch || label.tag, tip = '', cls = '' } = {}) {
   const sub = [STATE_LABEL[st], s.present ? lastOutputText(s) : null].filter(Boolean).join(' · ');
   tip = tip || sessionTip(s, st);
   return `<button type="button" class="sess-row ${cls} ${st}" data-sid="${esc(s.id)}" title="${esc(tip)}">
     <span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[st]}</span>
-    <span class="sess-row-text">${rowMainHtml(label)}<span class="sess-row-sub">${esc(sub)}</span></span></button>`;
+    ${rowTextHtml(label.text, where, sub)}</button>`;
 }
 
 /* A group's head: the hub's own session when it has one, else a row of the group's own. */
 function sessionHeadHtml(g) {
   const label = { tag: g.tag, text: g.text };
+  // A parent-task hub's key says more than the branch of the checkout it runs in.
+  const where = g.tag || g.hubSession?.branch || '';
   const tip = [g.title, g.label].filter(Boolean).join('\n');
-  if (g.hubSession) return sessionRowHtml(g.hubSession, g.state, { label, tip, cls: 'hub' });
-  return `<div class="sess-row hub ${g.state}" data-gid="${esc(g.id)}" title="${esc(tip)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span><span class="sess-row-text">${rowMainHtml(label)}<span class="sess-row-sub">${esc(STATE_LABEL[g.state])}</span></span></div>`;
+  if (g.hubSession) return sessionRowHtml(g.hubSession, g.state, { label, where, tip, cls: 'hub' });
+  return `<div class="sess-row hub ${g.state}" data-gid="${esc(g.id)}" title="${esc(tip)}"><span class="material-symbols-outlined sess-ico" aria-hidden="true">${STATE_ICON[g.state]}</span>${rowTextHtml(label.text, where, STATE_LABEL[g.state])}</div>`;
 }
 
 const htmlNode = html => {
@@ -443,7 +446,7 @@ function renderSessionTree() {
   const folded = new Set(prefs.sessionsFolded || []);
   // What each row draws, one signature per row, so that a row is redrawn only when its own
   // words change and not whenever any other row's do.
-  const rowSig = (s, st, tip = '') => JSON.stringify([s.id, st, s.title || '', sessionKey(s), sessionLabel(s), sessionTip(s), s.present ? lastOutputText(s) : '', tip]);
+  const rowSig = (s, st, tip = '') => JSON.stringify([s.id, st, s.title || '', s.branch || '', sessionKey(s), sessionLabel(s), sessionTip(s), s.present ? lastOutputText(s) : '', tip]);
   const rows = new Map();
   for (const g of groups) {
     rows.set(`head:${g.id}`, JSON.stringify([g.hubSession ? rowSig(g.hubSession, g.state, g.label) : null, g.id, g.short, g.tag, g.text, g.title, g.label, g.state]));
