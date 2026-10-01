@@ -468,13 +468,30 @@ its title and when it last wrote; rows waiting for input come first, and worktre
 session are folded at the bottom of their hub's group. Pressing a row opens that session's tmux
 window beside the list (`?view=sessions&session=<id>`), where you can read it and type to it;
 in 「すべて」 it first switches to the hub's board. The tab asks the server for the sessions only
-while it is on screen, and in 「すべて」 of one board per repository. A card and its side
-sheet have a button that opens the session in the same place,
-with a link back to where you were. A terminal is offered only for a session that runs in tmux
+while it is on screen, and in 「すべて」 of one board per repository. A worker's row whose task
+is on the board opens that task's panel on its ターミナル tab instead (see below). A terminal is
+offered only for a session that runs in tmux
 (`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
 detaches: the window and the agent in it keep running. The board attaches as a client of its own,
 so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
 that acted last decides.
+
+**The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
+another card shows that one instead. Its header has the task's key, the board it comes from, its
+state and its title, with 「カードへ」, three placement buttons and a close button. Inside are two
+tabs. 詳細 shows, from the top, the open gate and what can be done about it (one click for a
+decision that needs no comment, 「判定画面を開く」 for the rest), the phases, the records, the
+worktree and branch with 「IDE」, and the history with the instructions. ターミナル is the task's
+session in the built-in terminal, with a bar for resuming, closing or opening it in your own
+terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
+no session. A card's body opens 詳細; its 「ターミナル」 button, and 「ターミナルで答える」 on a
+question, open ターミナル. The panel sits on the left (the default) or the right of the page, or
+pops out as a large dialog that goes back to its side when closed or clicked away from. The side
+and the width are remembered by the browser; while the panel is on the left the sidebar shrinks
+to its icon rail, and on a narrow window the panel floats over the board. Moving the panel only
+changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
+The open task and tab are in the address (`task=<id>`, `pane=term`), so back and forward and a
+pasted link open the same task and tab.
 
 The bar above the terminal carries the actions for the selected session: resume a stopped
 worker, close a running one, start or stop a hub, open the session in your own terminal, and,
@@ -824,13 +841,13 @@ the task's stop point covers it. A gate that waits says which of those fired in
 On the board, a card carries a chip for the latest review and check its worker recorded
 (`レビュー 3R ✓ 収束`, `verify ✓`, `手で見る 2件`; a failure is red and marked ✗), with a dot
 until the record has been opened. Which records have been opened is kept in the browser's
-localStorage: it is one reader's state, not the task's. The drawer lists each record with a
+localStorage: it is one reader's state, not the task's. The task panel lists each record with a
 short summary and a button that opens it in the task's full view, where it can be sent back
 with a comment — that answer goes to the worktree's outbox. A gate that stopped the worker
-says which rule stopped it, on the card, in the drawer and in the review view. The new-task
+says which rule stopped it, on the card, in the task panel and in the review view. The new-task
 form takes the stop point.
 
-The full view (`#task/<id>/<tab>`, or 全体を開く in the drawer) is where everything a task's
+The full view (`#task/<id>/<tab>`, or 経過をすべて見る in the task panel) is where everything a task's
 gates left can be read at any time, whether they stopped the worker or not. The way back,
 the title, the state and the tabs stay pinned at the top. 概要 has the problem and the goal
 with where each came from, the plan with when a person approved it (or that it is waiting),
@@ -840,7 +857,7 @@ commands (folded, a failure open, a pass that took a second run marked — `atte
 command), the checks left for a person and how to run it. 経過 lists, in time order, the
 gates that waited, the records that did not and what people answered; the worker's phase is
 kept only as the one it is in now, so it closes the list. A gate waiting on a person is
-answered in the tab it belongs to — the gate's tag on a card, 判定する in the drawer, a
+answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
 notification and the レビュー tab all open it there, and a gate with no task on the board opens
 in the review view instead — and the 要対応 queue is shown beside the task only while
 the task is on it. The answered gates come from `GET /api/tasks/<id>/history`, read when the
@@ -914,7 +931,7 @@ block and Jules' link back to the session are kept as they are.
 
 **Review comments are passed on by hand, in your name.** Jules answers the comments of the
 person who started it and keeps out of other bots' threads, so a review bot's findings do not
-reach it by themselves. The side sheet of a Jules task in review has 「レビュー指摘を Jules に
+reach it by themselves. The task panel of a Jules task in review has 「レビュー指摘を Jules に
 回す」: it lists the first comment of each thread by anyone but Jules and you — a review
 bot, Copilot and a colleague alike, since Jules answers none of them — and posts the ones you
 tick as one comment on the pull request through `gh`, which is signed in as you. It does not
@@ -938,7 +955,7 @@ only comment on lines the diff touched. It opens a `relay` gate with what would 
 for each, and what it left out and why. Approving it runs `adj jules relay --plan-file`, which
 posts them with each note under its finding; `changes` has the hub adjust and pass them on,
 and `reject` drops them. The board does this at most twice per pull request (`relayRounds` on
-the task); after that a reviewer and Jules are likely answering each other, and the side sheet's
+the task); after that a reviewer and Jules are likely answering each other, and the task panel's
 manual relay is the way.
 
 The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
