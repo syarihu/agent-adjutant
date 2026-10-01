@@ -300,8 +300,11 @@ function openPendingSession() {
   // No terminal key yet means no poll has succeeded; the next one comes back here.
   if (!sessView.pending || state.boardTerminal === undefined) return;
   sessView.pending = false;
-  if (state.boardTerminal?.available) openSessionsView(nav.session);
-  else if (view !== 'board') setView('board');
+  if (state.boardTerminal?.available) {
+    openSessionsView(nav.session);
+    // The poll that told us had no `lines=1`: ask again now that this tab is on screen.
+    if (view === 'sessions') refresh(true);
+  } else if (view !== 'board') setView('board');
 }
 
 /* Open the session `id` of this board beside the list: a step in the history. */
@@ -523,7 +526,7 @@ function groupHeadHtml(g) {
   const [pillText, pillCls] = groupPill(g);
   const btn = groupButton(g);
   const tip = [g.title, g.label].filter(Boolean).join('\n');
-  const count = `${g.count} セッション${g.waiting ? ` · <b>入力待ち ${g.waiting}</b>` : ''}`;
+  const count = `<span class="sess-head-n">${g.count} セッション</span>${g.waiting ? `<span class="sess-head-sep"> · </span><b>入力待ち ${g.waiting}</b>` : ''}`;
   return `<header class="sess-head${g.waiting ? ' wait' : ''}${g.rest === 'stopped' || g.rest === 'ended' ? ' off' : ''}" title="${esc(tip)}">
     <span class="material-symbols-outlined sess-head-ico" aria-hidden="true">${g.child ? 'account_tree' : 'folder'}</span>
     <span class="sess-head-name">${g.tag ? `<span class="key">${esc(g.tag)}</span>` : ''}${esc(g.text)}</span>
@@ -585,12 +588,14 @@ function renderSessionList() {
   const gidOf = el => el?.closest('.sess-group')?.dataset.gid;
   const held = !focused ? null : focused.dataset.sref != null ? { ref: focused.dataset.sref }
     : focused.dataset.hubAct ? { gid: gidOf(focused), act: focused.dataset.hubAct }
-      : focused.matches('.sess-orphans > summary') ? { gid: gidOf(focused), fold: true } : null;
+      : focused.dataset.pendAct ? { pend: focused.dataset.pend, pendAct: focused.dataset.pendAct }
+        : focused.matches('.sess-orphans > summary') ? { gid: gidOf(focused), fold: true } : null;
   root.innerHTML = groups.map(g => groupHtml(g, opened(g))).join('') || '<div class="sess-empty">表示できる hub がありません</div>';
   scroll.scrollTop = top;
   if (held) {
     const group = held.gid != null ? [...root.querySelectorAll('.sess-group')].find(el => el.dataset.gid === held.gid) : null;
-    const again = held.ref != null ? [...root.querySelectorAll('.sess-row[data-sref]')].find(row => row.dataset.sref === held.ref)
+    const again = held.pend ? [...root.querySelectorAll('[data-pend-act]')].find(b => b.dataset.pend === held.pend && b.dataset.pendAct === held.pendAct)
+      : held.ref != null ? [...root.querySelectorAll('.sess-row[data-sref]')].find(row => row.dataset.sref === held.ref)
       : held.act ? group?.querySelector(`[data-hub-act="${held.act}"]`) : group?.querySelector('.sess-orphans > summary');
     again?.focus({ preventScroll: true });
   }

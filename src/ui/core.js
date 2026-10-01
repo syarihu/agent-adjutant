@@ -292,7 +292,8 @@ function parseUrl(loc = location) {
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   const v = q.get('view');
   if (v === 'agent' || v === 'sessions') out.view = v;
-  if (out.view === 'sessions') out.session = q.get('session');
+  // A session id is only its repository's, so 「すべて」 has none to name.
+  if (out.view === 'sessions' && out.board !== 'all') out.session = q.get('session');
   // The side sheet opens on a board of its own; 「すべて」 switches to the card's board first.
   if (out.board === 'all') out.task = null;
   return out;

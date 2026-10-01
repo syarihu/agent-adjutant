@@ -37,7 +37,8 @@
 .sess-body { padding:4px 0 0; }
 .sess-group.child { margin-left:8px; }
 .sess-group.child .sess-body { margin-left:8px; padding-left:14px; border-left:2px solid var(--md-sys-color-outline-variant); }
-#sessions-view.term-open .sess-head-count { display:none; }
+/* Beside a terminal the count goes, and what waits stays. */
+#sessions-view.term-open .sess-head-n, #sessions-view.term-open .sess-head-sep { display:none; }
 #sessions-view.term-open .sess-head-btn .lbl { display:none; }
 #sessions-view.term-open .sess-head-btn { padding:3px 6px; }
 
@@ -239,8 +240,8 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
   body.sess-term-open .rail-item { justify-content:center; padding:10px; }
   body.sess-term-open .m3-fab-extended { justify-content:center; padding:14px; min-width:0; }
   body.sess-term-open .rail-brand { justify-content:center; padding:4px 0 10px; }
-  body.sess-term-open .rail-badge,
-  body.sess-term-open .rail-count { position:absolute; top:2px; right:2px; margin:0; padding:1px 5px; font-size:10px; }
+  body.sess-term-open .rail-item .rail-badge,
+  body.sess-term-open .rail-item .rail-count { position:absolute; top:2px; right:2px; margin:0; padding:1px 5px; font-size:10px; }
   body.sess-term-open .rail-tools { flex-direction:column; gap:6px; }
 }
 
