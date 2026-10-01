@@ -1895,15 +1895,10 @@ pub fn board_detach_script(socket: Option<&str>, name: &str) -> String {
 /// session's environment alone; `active-pane` (tmux 3.3 and later) keeps the client from
 /// resizing panes it is not looking at.
 ///
-/// With `keep_last` (tmux 3.4 and later) tmux also removes the session when its last client
-/// leaves, for this session only. It is a second command in the same invocation because on a
-/// session nobody is attached to yet, setting the option destroys it on the spot.
-pub fn board_attach_args(
-    socket: Option<&str>,
-    name: &str,
-    active_pane: bool,
-    keep_last: bool,
-) -> Vec<String> {
+/// The session option `destroy-unattached` is deliberately not set: tmux removing the session
+/// itself crashes the server (seen on 3.4, 3.5 and 3.7 on Linux), so removal is left to
+/// `board_release_script` and `board_sweep_script`.
+pub fn board_attach_args(socket: Option<&str>, name: &str, active_pane: bool) -> Vec<String> {
     let mut args = vec!["-u".to_string()];
     args.extend(tmux_socket_args(socket));
     args.push("attach-session".to_string());
@@ -1912,15 +1907,6 @@ pub fn board_attach_args(
         args.extend(["-f".to_string(), "active-pane".to_string()]);
     }
     args.extend(["-t".to_string(), format!("={name}")]);
-    if keep_last {
-        args.extend(
-            [";", "set-option", "-t"]
-                .map(str::to_string)
-                .into_iter()
-                .chain([format!("={name}:")])
-                .chain(["destroy-unattached", "keep-last"].map(str::to_string)),
-        );
-    }
     args
 }
 
@@ -3114,7 +3100,7 @@ mod tests {
     #[test]
     fn the_attach_command_is_gated_on_the_tmux_version() {
         assert_eq!(
-            board_attach_args(Some("adj-test"), "adjboard-1-2", true, true),
+            board_attach_args(Some("adj-test"), "adjboard-1-2", true),
             [
                 "-u",
                 "-L",
@@ -3124,17 +3110,11 @@ mod tests {
                 "-f",
                 "active-pane",
                 "-t",
-                "=adjboard-1-2",
-                ";",
-                "set-option",
-                "-t",
-                "=adjboard-1-2:",
-                "destroy-unattached",
-                "keep-last"
+                "=adjboard-1-2"
             ]
         );
         assert_eq!(
-            board_attach_args(Some("/tmp/t/sock"), "adjboard-1-2", false, false),
+            board_attach_args(Some("/tmp/t/sock"), "adjboard-1-2", false),
             [
                 "-u",
                 "-S",
@@ -3146,7 +3126,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            board_attach_args(None, "adjboard-1-2", true, false),
+            board_attach_args(None, "adjboard-1-2", true),
             [
                 "-u",
                 "attach-session",
@@ -3157,8 +3137,11 @@ mod tests {
                 "=adjboard-1-2"
             ]
         );
-        // Never the option for every session.
-        assert!(!board_attach_args(None, "x", true, true).contains(&"-g".to_string()));
+        // tmux removing a session itself crashes the server, so it is never asked to.
+        for active_pane in [true, false] {
+            let args = board_attach_args(None, "x", active_pane);
+            assert!(!args.iter().any(|a| a.contains("destroy-unattached")));
+        }
     }
 
     #[test]
