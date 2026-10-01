@@ -409,7 +409,7 @@ function renderReview() {
     listEl.appendChild(b);
   }
 
-  // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
+  // A record is shown here too, opened from a card or the task panel. It is not in the rail, which
   // is what waits on a person, and a record does not.
   let g = gateByRef(focused);
   // The gate asked for may be on a board not read yet: wait for the first full round rather

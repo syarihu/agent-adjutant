@@ -280,6 +280,7 @@ function keepScreen(rec) {
 function leaveSessionsView() {
   detachSessionTerminal();
   document.body.classList.remove('sess-term-open');
+  applyRailMode();
   if (/^#sessions?(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
 }
 
@@ -714,6 +715,7 @@ function renderSessionsView() {
   const open = !!sessView.selectedId;
   sessEl('sessions-view').classList.toggle('term-open', open);
   document.body.classList.toggle('sess-term-open', open);
+  applyRailMode();
   renderSessionList();
   applySessionSelection();
   mountSelected();

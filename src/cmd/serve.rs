@@ -3153,6 +3153,36 @@ mod tests {
     }
 
     #[test]
+    fn the_page_has_one_task_panel_and_no_drawer() {
+        for piece in [
+            "id=\"task-panel\"",
+            "id=\"tp-term-host\"",
+            "data-pane=",
+            "panelSide",
+            "rail-icons",
+            "function renderTaskPanel",
+            "function openTaskPanel",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        for gone in [
+            "id=\"task-drawer\"",
+            "function renderDrawer",
+            "sidesheet-header",
+            // The card's button for the terminal tab outside the board. The task view and the
+            // review view keep theirs, which have a `style=` between the class and the title.
+            "class=\"m3-icon-button\" title=\"ターミナルのworkerタブを前面表示\"",
+        ] {
+            assert!(!UI_HTML.contains(gone), "{gone}");
+        }
+        // The terminal's host sits inside the panel, which sits between the sidebar and the page.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("id=\"nav-rail\"") < at("id=\"task-panel\""));
+        assert!(at("id=\"task-panel\"") < at("id=\"tp-term-host\""));
+        assert!(at("id=\"tp-term-host\"") < at("id=\"app-main\""));
+    }
+
+    #[test]
     fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
         for piece in [
             "id=\"sessions-view\"",

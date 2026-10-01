@@ -42,6 +42,27 @@
   </div>
 </aside>
 
+<!-- The task panel is a child of body, between the sidebar and the page, and is never moved:
+     left or right is a class on body (CSS order), so the terminal inside it keeps its socket.
+     Only the parts around #tp-term-host are redrawn; the host and its ancestors are not. -->
+<section id="task-panel" aria-label="タスクのパネル" hidden>
+  <div class="tp-resize" id="tp-resize" title="ドラッグで幅を変える"></div>
+  <header class="tp-head" id="tp-head"></header>
+  <div class="tp-tabs" role="tablist" id="tp-tabs"></div>
+  <div class="tp-pane" id="tp-detail" role="tabpanel">
+    <div id="tp-links"></div>
+    <div id="tp-gate"></div>
+    <div id="tp-form"></div>
+    <div id="tp-rest"></div>
+  </div>
+  <div class="tp-pane tp-term" id="tp-term" role="tabpanel" hidden>
+    <div class="tp-term-bar" id="tp-term-bar"></div>
+    <div class="tp-term-host" id="tp-term-host"></div>
+    <div class="tp-term-ph" id="tp-term-ph" hidden></div>
+  </div>
+</section>
+<div id="tp-scrim" hidden></div>
+
 <div id="app-main">
   <header class="top-app-bar">
     <div class="page-title-area">
@@ -100,29 +121,6 @@
           <div class="board" id="board-agent"></div>
         </section>
       </div>
-      <aside id="task-drawer" class="hidden">
-        <div class="sidesheet-header">
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1">
-            <div id="drawer-badges" style="display:flex;align-items:center;gap:6px"></div>
-            <h2 id="drawer-title" style="font-size:16px;font-weight:700;line-height:1.4"></h2>
-          </div>
-          <div style="display:flex;align-items:center;gap:4px">
-            <button class="tool-btn" id="drawer-expand-btn" title="詳細画面を開く">
-              <span class="material-symbols-outlined">open_in_full</span>
-            </button>
-            <button class="tool-btn" onclick="closeDrawer()" title="閉じる">
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-        </div>
-        <div class="sidesheet-body" id="drawer-body">
-          <!-- Three parts, so the hand-over form can outlive a redraw of the others. display:contents
-               keeps the body's gap between the cards inside them. -->
-          <div id="drawer-head" style="display:contents"></div>
-          <div id="drawer-form" style="display:contents"></div>
-          <div id="drawer-rest" style="display:contents"></div>
-        </div>
-      </aside>
     </div>
     <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>

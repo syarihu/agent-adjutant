@@ -228,23 +228,6 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
   .sess-strip-note { margin-left:0; }
 }
 
-/* On a narrow window the main rail is icons only while a terminal is open, so it keeps its width. */
-@media (max-width: 1199px) {
-  body.sess-term-open #nav-rail { width:64px; padding:16px 8px; align-items:center; }
-  body.sess-term-open .rail-destinations, body.sess-term-open .rail-footer { align-items:center; width:100%; }
-  body.sess-term-open .rail-section-label,
-  body.sess-term-open .repo-info,
-  body.sess-term-open .status-pill-group,
-  body.sess-term-open .rail-item > span:not(.material-symbols-outlined):not(.rail-badge):not(.rail-count),
-  body.sess-term-open .m3-fab-extended > span:not(.material-symbols-outlined) { display:none; }
-  body.sess-term-open .rail-item { justify-content:center; padding:10px; }
-  body.sess-term-open .m3-fab-extended { justify-content:center; padding:14px; min-width:0; }
-  body.sess-term-open .rail-brand { justify-content:center; padding:4px 0 10px; }
-  body.sess-term-open .rail-item .rail-badge,
-  body.sess-term-open .rail-item .rail-count { position:absolute; top:2px; right:2px; margin:0; padding:1px 5px; font-size:10px; }
-  body.sess-term-open .rail-tools { flex-direction:column; gap:6px; }
-}
-
 /* The + sits at the right end of the list's header; its menu opens leftwards from there. */
 .sess-add-wrap { position:relative; margin-left:auto; }
 .sess-add-wrap .sess-menu { left:auto; right:0; }

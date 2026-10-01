@@ -306,7 +306,6 @@ main { flex: 1; overflow: hidden; position: relative; }
 #board-view { display: flex; height: 100%; width: 100%; min-width: 0; overflow: hidden; }
 @media (max-width: 900px) {
   #board-view { position: relative; }
-  #board-view #task-drawer { position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%; }
   /* When the top bar wraps, its actions stay on the right of their own line. */
   .top-bar-actions { margin-left: auto; }
 }
@@ -445,34 +444,77 @@ main { flex: 1; overflow: hidden; position: relative; }
 .hub-pill.off { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
 .hub-pill.bad { background: color-mix(in srgb, var(--md-sys-color-error) 14%, transparent); color: var(--md-sys-color-error); }
 
-/* Narrow windows: the rail keeps only what a glance needs — repositories as their initials,
-   parent-task hubs as their key number, a badge for what waits. */
-@media (max-width: 1024px) {
-  #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
-  .rail-brand { padding: 4px 0 10px; }
-  .rail-brand .repo-info,
-  .rail-section-label,
-  .rail-item .rail-label,
-  .board-row .txt,
-  .board-row .counts,
-  .board-row .repo-toggle,
-  .board-row .start-btn,
-  .board-row .hub-dot { display: none; }
-  .m3-fab-extended span:last-child { display: none; }
-  .m3-fab-extended { padding: 12px; }
-  .rail-item { padding: 10px; justify-content: center; }
-  .rail-item .rail-badge,
-  .rail-item .rail-count { position: absolute; top: 0; right: 0; margin: 0; font-size: 10px; padding: 1px 5px; }
-  .board-row { justify-content: center; padding: 4px; }
-  .board-row.child { margin-left: 0; }
-  .board-row .avatar { display: flex; }
-  .board-row .avatar .mini-badge:not(:empty) { display: block; }
-  .board-row.stopped:hover .start-btn,
-  .board-row.stopped:focus-within .start-btn { display: none; }
-  /* The rail has no fold toggle, so every hub shows. */
-  .repo-group.collapsed .board-row.child { display: flex; }
-  .rail-tools { flex-direction: column; gap: 4px; }
+/* The rail keeps only what a glance needs — repositories as their initials, parent-task hubs
+   as their key number, a badge for what waits. `rail-icons` is set (applyRailMode) on a narrow
+   window, while a session's terminal takes the width of the セッション tab, and while the task
+   panel sits on the left. */
+body.rail-icons #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
+body.rail-icons .rail-brand { padding: 4px 0 10px; }
+body.rail-icons .rail-brand .repo-info,
+body.rail-icons .rail-section-label,
+body.rail-icons .rail-item .rail-label,
+body.rail-icons .board-row .txt,
+body.rail-icons .board-row .counts,
+body.rail-icons .board-row .repo-toggle,
+body.rail-icons .board-row .start-btn,
+body.rail-icons .board-row .hub-dot { display: none; }
+body.rail-icons .m3-fab-extended span:last-child { display: none; }
+body.rail-icons .m3-fab-extended { padding: 12px; }
+body.rail-icons .rail-item { padding: 10px; justify-content: center; }
+body.rail-icons .rail-item .rail-badge,
+body.rail-icons .rail-item .rail-count { position: absolute; top: 0; right: 0; margin: 0; font-size: 10px; padding: 1px 5px; }
+body.rail-icons .board-row { justify-content: center; padding: 4px; }
+body.rail-icons .board-row.child { margin-left: 0; }
+body.rail-icons .board-row .avatar { display: flex; }
+body.rail-icons .board-row .avatar .mini-badge:not(:empty) { display: block; }
+body.rail-icons .board-row.stopped:hover .start-btn,
+body.rail-icons .board-row.stopped:focus-within .start-btn { display: none; }
+/* The rail has no fold toggle, so every hub shows. */
+body.rail-icons .repo-group.collapsed .board-row.child { display: flex; }
+body.rail-icons .rail-tools { flex-direction: column; gap: 4px; }
+/* ── The task panel ──
+   A child of body between the sidebar and the page. Left or right is only `order`, and pop-out
+   only `position`: the panel is never moved in the document, so the terminal inside it keeps
+   its connection and just refits to the width it is given. */
+#task-panel {
+  order: 1;
+  flex: none;
+  width: var(--panel-w, 520px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--md-sys-color-surface-container-low);
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  z-index: 15;
 }
+#task-panel[hidden] { display: none; }
+#app-main { order: 2; }
+body.panel-right #task-panel { order: 3; border-right: 0; border-left: 1px solid var(--md-sys-color-outline-variant); }
+.tp-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 2; }
+body.panel-right .tp-resize { right: auto; left: -4px; }
+.tp-resize:hover, body.tp-dragging .tp-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+body.tp-dragging { user-select: none; cursor: col-resize; }
+body.panel-pop .tp-resize { display: none; }
+body.panel-pop #task-panel {
+  position: fixed;
+  inset: 6vh 8vw;
+  width: auto;
+  z-index: 60;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-lg);
+  box-shadow: var(--md-elevation-4);
+  overflow: hidden;
+}
+#tp-scrim { position: fixed; inset: 0; z-index: 59; background: rgba(0, 0, 0, .45); }
+#tp-scrim[hidden] { display: none; }
+/* On a narrow window the panel floats over the board, from either side. */
+@media (max-width: 720px) {
+  #task-panel { position: fixed; top: 0; bottom: 0; left: 72px; width: calc(100% - 100px); z-index: 25; box-shadow: var(--md-elevation-4); }
+  body.panel-right #task-panel { left: auto; right: 0; width: 88%; }
+  .tp-resize { display: none; }
+}
+
 .rail-item[hidden] { display: none; }
 .single-board .rail-boards-label, .single-board #board-rows { display: none; }
 #btn-nudge[hidden], #btn-resync[hidden] { display: none; }

@@ -5,7 +5,7 @@ document.addEventListener('keydown', e => {
     // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
     // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.
     if (e.isComposing || e.keyCode === 229) return;
-    // An open dialog takes Escape, whichever it is; the side sheet or task view behind it stays.
+    // An open dialog takes Escape, whichever it is; the task panel or task view behind it stays.
     const dialog = document.querySelector('dialog[open]');
     if (dialog) {
       if (dialog.id === 'handover-dialog') closeHandoverDialog();
@@ -19,8 +19,9 @@ document.addEventListener('keydown', e => {
       backToBoard();
       return;
     }
-    if (view === 'board' && selectedTaskId) {
-      closeDrawer();
+    if ((view === 'board' || view === 'sessions') && selectedTaskId) {
+      // A popped-out panel goes back to its side first; the next Escape closes it.
+      if (panelPop) { panelPop = false; renderTaskPanel(); } else closeTaskPanel();
       return;
     }
   }
@@ -91,15 +92,15 @@ function setView(v) {
 
   if (v === 'task') {
     taskViewShown = null;
-    renderDrawer();
+    // Out of sight, not closed: the board comes back with the panel on the same card.
+    renderTaskPanel();
     renderTaskView();
   } else if (v === 'sessions') {
-    // The card that was open comes back through the link, not by staying selected.
-    closeDrawer();
     renderSessionsTab();
     renderSessionsView();
+    renderTaskPanel();
   } else if (v !== 'board') {
-    closeDrawer();
+    dismissTaskPanel();
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     if (!(state.gates || []).some(g => gateRef(g) === focused)) focused = null;

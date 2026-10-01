@@ -11,14 +11,21 @@ const emptyState = () => ({ tasks: [], workers: [], pending: [], gates: [] });
 let state = emptyState();
 let view = 'board';
 let log = [];
-let selectedTaskId = null;
+let selectedTaskId = null;   // the task the panel is open on
+let panelPop = false;        // the panel is popped out: never saved, so a reload comes back to its side
+// The panel's terminal, kept while its task is open: moving the panel or switching to 詳細 must
+// not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
+const panelTerm = { taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
 
 const PREF_KEY = 'adj-board-split';
 // sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
 // sessionsSide is the detail sidebar's choice, kept only where the window has room for it;
-// boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[] },
+// boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
+// panelSide and panelWidth are where the task panel sits (left or right) and how wide it is.
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[], panelSide:'left', panelWidth:520 },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
+if (prefs.panelSide !== 'right') prefs.panelSide = 'left';
+if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 function applyLayout() {
@@ -294,7 +301,7 @@ function parseUrl(loc = location) {
   if (v === 'agent' || v === 'sessions') out.view = v;
   // A session id is only its repository's, so 「すべて」 has none to name.
   if (out.view === 'sessions' && out.board !== 'all') out.session = q.get('session');
-  // The side sheet opens on a board of its own; 「すべて」 switches to the card's board first.
+  // The task panel opens on a board of its own; 「すべて」 switches to the card's board first.
   if (out.board === 'all') out.task = null;
   return out;
 }
@@ -305,7 +312,7 @@ function urlOf(n = nav) {
   if (n.view === 'agent' || n.view === 'sessions') url += `&view=${n.view}`;
   if (n.session && n.view === 'sessions') url += `&session=${encodeURIComponent(n.session)}`;
   if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
-  if (n.pane === 'term') url += '&pane=term';
+  if (n.task && n.view !== 'review' && n.pane === 'term') url += '&pane=term';
   if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
   return url;
 }
@@ -316,7 +323,7 @@ function setNav(patch) {
   history.replaceState(null, '', urlOf());
 }
 
-const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item && a.session === b.session;
+const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item && a.session === b.session && a.pane === b.pane;
 
 /* Everything that pointed into the board being left. */
 function switchBoard() {
@@ -325,7 +332,7 @@ function switchBoard() {
   lastStateJson = '';
   lastMinute = null;
   if (!multiBoard) seenGateIds = null;
-  selectedTaskId = null;
+  hideTaskPanelState();
   if (typeof detachSessionTerminal === 'function') detachSessionTerminal();
   sessView.selectedId = null;
   sessView.last = null;
@@ -357,9 +364,14 @@ function go(patch = {}, { replace = false } = {}) {
   const url = urlOf();
   if (replace || url === location.pathname + location.search) history.replaceState(null, '', url);
   else history.pushState(null, '', url);
-  applyNav(boardChanged);
+  applyNav(boardChanged, onlyPanelMoved(prev));
   askSessionsOfAll(prev.view, boardChanged);
 }
+
+/* Only the task panel's card or tab changed: the screen under it is as it was, and drawing it
+   again would reconnect the terminal of the セッション tab. */
+const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.view && nav.session === prev.session
+  && nav.item === prev.item && (nav.view === 'sessions' ? view === 'sessions' : nav.view !== 'review' && view === 'board');
 
 /* A move to or from the セッション tab changes what the next poll asks for (the sessions of
    「すべて」, the last lines of a board's), so it is made now. */
@@ -368,8 +380,22 @@ function askSessionsOfAll(prevView, boardChanged) {
 }
 
 /* Draw the screen the address names. */
-function applyNav(boardChanged) {
+function applyNav(boardChanged, panelOnly = false) {
   const wantTask = nav.task;
+  if (!panelOnly) drawScreen(boardChanged);
+  // The address names the card that is open: back to one with none closes the panel, back to
+  // the card that is open shows its tab, and another card is opened below.
+  if (view === 'board' || view === 'sessions') {
+    if (!nav.task) { if (selectedTaskId) hideTaskPanelState(); }
+    else if (selectedTaskId === nav.task) renderTaskPanel();
+  }
+  pendingTask = nav.view === 'review' ? null : wantTask;
+  if (boardChanged) render();
+  if (boardChanged) refresh(true);
+  else applyPendingTask();
+}
+
+function drawScreen(boardChanged) {
   if (nav.view !== 'sessions') sessView.pending = false;
   navApplying = true;
   try {
@@ -389,24 +415,18 @@ function applyNav(boardChanged) {
     }
   } finally { navApplying = false; }
   if (nav.view === 'review') renderReview();
-  // Back to an address with no card open closes the one that is.
-  if (view === 'board' && !nav.task && selectedTaskId) closeDrawer();
-  pendingTask = nav.view === 'review' || nav.view === 'sessions' ? null : wantTask;
-  if (boardChanged) render();
-  if (boardChanged) refresh(true);
-  else applyPendingTask();
 }
 
 /* `final` is a state the board really answered with: a task it does not list is not coming. */
 function applyPendingTask(final = false) {
-  if (!pendingTask || view !== 'board') return;
+  if (!pendingTask || (view !== 'board' && view !== 'sessions')) return;
   const id = pendingTask;
   if (!(state.tasks || []).some(t => t.id === id)) {
     if (final) pendingTask = null;
     return;
   }
   pendingTask = null;
-  if (selectedTaskId !== id) selectTask(id);
+  if (selectedTaskId !== id) showTaskPanel(id);
 }
 
 /* Run `fn` on the board `slug`: now when it is the one shown, else after switching to it and
@@ -428,11 +448,11 @@ window.addEventListener('popstate', () => {
   boardJob = null;
   if (sameNav(next, nav)) return;
   const boardChanged = next.board !== nav.board;
-  const prevView = nav.view;
+  const prev = { ...nav };
   Object.assign(nav, next);
   if (boardChanged) switchBoard();
-  applyNav(boardChanged);
-  askSessionsOfAll(prevView, boardChanged);
+  applyNav(boardChanged, onlyPanelMoved(prev));
+  askSessionsOfAll(prev.view, boardChanged);
 });
 
 let lastStateJson = '';
@@ -701,7 +721,7 @@ async function refresh(force = false) {
     // refresh redrew the page, and a comment being typed into a gate lost its IME
     // composition every two seconds. The clock only moves the elapsed times on the board, so
     // the board is redrawn for it once a minute. Its one box to type into, the instruction in
-    // the side sheet, is kept across a redraw (renderHandForm).
+    // the task panel, is kept across a redraw (renderHandForm).
     // A session's last activity is compared by `minuteSessions`: the timestamp itself moves on
     // nearly every poll. The views that do not show it leave it out, so a minute turning over
     // does not redraw them (and cut a comment being typed there); a view switch draws its view
@@ -779,7 +799,7 @@ function render() {
   renderSessionsTab();
   openPendingSession();
   renderSessionsView();
-  renderDrawer();
+  renderTaskPanel();
   redrawReview();
   redrawTaskView();
   applyLayout();

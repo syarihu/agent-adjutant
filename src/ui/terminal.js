@@ -1,7 +1,7 @@
 /* A tmux session's terminal, inside any container. The component only assumes the container
-   has a size of its own: it fills it and follows it. The board's セッション view mounts it; a
-   page of its own for a session can mount the same. xterm.js is served by the resident server
-   and loaded on first use. */
+   has a size of its own: it fills it and follows it. The board's セッション view and the task
+   panel mount it; a page of its own for a session can mount the same. xterm.js is served by the
+   resident server and loaded on first use. */
 let xtermLoading = null;
 function loadXterm() {
   if (window.Terminal && window.FitAddon && window.Unicode11Addon) return Promise.resolve();
@@ -164,13 +164,3 @@ const readySessionOfTask = task => {
   const s = sessionOfTask(task);
   return boardTerminalReady(s) ? s : null;
 };
-function openTaskTerminal(taskId) {
-  const task = (state.tasks || []).find(t => t.id === taskId);
-  const s = readySessionOfTask(task);
-  if (!s) return;
-  const from = { view, taskId };
-  go({ view: 'sessions', session: s.id });
-  // After the selection, which clears a link left over from an earlier switch.
-  sessView.back = from;
-  renderSessionContext();
-}

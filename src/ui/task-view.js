@@ -14,7 +14,7 @@ let taskView = { id: null, tab: 'overview', pick: {} };
 
 function openTask(id, tab = 'overview', gateId = null) {
   taskView = { id, tab, pick: gateId ? { [tab]: gateId } : {} };
-  // Back on the board, the drawer is open on the task that was being read.
+  // Back on the board, the panel is open on the task that was being read.
   selectedTaskId = id;
   setView('task');
 }
@@ -24,7 +24,7 @@ function backToBoard() {
   go({ view: prefs.tab === 'agent' ? 'agent' : 'human', task: selectedTaskId });
 }
 
-/* What a task's gates left in the archive, read when its view or the side sheet opens
+/* What a task's gates left in the archive, read when its view or the task panel opens
    on it rather than on every poll: the archive only grows. Read again when a gate of the task has been answered since,
    which is when it can have changed. */
 const histories = {};
@@ -70,11 +70,11 @@ function historyOf(task, base = baseOf(task), data = state) {
   return entry;
 }
 
-/* Redraws what shows a task's history: its view, or the side sheet open on it. The side sheet
+/* Redraws what shows a task's history: its view, or the task panel open on it. The panel
    keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
-  if (view === 'board' && selectedTaskId === id) renderDrawer();
+  if ((view === 'board' || view === 'sessions') && selectedTaskId === id) renderTaskPanel();
   if (view === 'sessions') renderSessionSidebar();
   // A record's diff arrives with the history, and nothing else redraws a quiet board.
   // Only the record on screen, and held while a comment is being typed there.
@@ -398,8 +398,8 @@ function historyEventsOf(task, all, waiting = isWaiting) {
   return events.sort((a, b) => a.at - b.at);
 }
 
-/* The timeline of 経過, shared by the tab and the side sheet. `limit` keeps only the latest
-   entries, for the side sheet, where a long history would push the actions out of reach. The
+/* The timeline of 経過, shared by the tab and the task panel. `limit` keeps only the latest
+   entries, for the panel, where a long history would push the actions out of reach. The
    worker's phase is not kept as a history — only the one it is in now — so it closes the
    list rather than running through it. */
 function timelineHtml(task, all, limit = Infinity, data = state, base = baseOf(task)) {
