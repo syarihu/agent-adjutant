@@ -78,11 +78,16 @@ mod imp {
 
     impl Slot {
         fn take(open: &Arc<AtomicUsize>) -> Option<Slot> {
-            open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                (n < MAX_TERMINALS).then_some(n + 1)
-            })
-            .ok()
-            .map(|_| Slot(Arc::clone(open)))
+            // A compare_exchange loop rather than fetch_update (deprecated on newer stable)
+            // or try_update (not on older stable), so it builds on both.
+            let mut n = open.load(Ordering::SeqCst);
+            while n < MAX_TERMINALS {
+                match open.compare_exchange_weak(n, n + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                    Ok(_) => return Some(Slot(Arc::clone(open))),
+                    Err(now) => n = now,
+                }
+            }
+            None
         }
     }
 
