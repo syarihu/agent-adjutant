@@ -60,8 +60,9 @@ function applyLayout() {
 window.setBoardLayout = function(layout) { prefs.layout = layout; applyLayout(); };
 window.setBoardArrange = function(arrange) { prefs.arrange = arrange; applyLayout(); };
 window.showBoard = function(board) {
-  // Side by side both are already on screen: choosing one is choosing to look at it alone.
-  if (prefs.layout === 'split') { prefs.layout = 'tabs'; savePrefs(); }
+  // Side by side both are already on screen: choosing one is choosing to look at it alone. From
+  // another tab nothing was on screen to choose between, and the layout is left as it was.
+  if (prefs.layout === 'split' && view === 'board' && nav.view !== 'sessions') { prefs.layout = 'tabs'; savePrefs(); }
   // The address says which tab it is (and a board shown on its own page keeps it).
   go({ view: board === 'agent' ? 'agent' : 'human', session: null });
 };
