@@ -249,7 +249,8 @@ async function hubReset(id) {
     if (inSessions) showSessNotice('hub をリセットしています…');
     try {
       const data = await run();
-      const text = data.reset === false ? 'hub はすでに動いているため、リセットしませんでした'
+      const text = data.reset === false
+        ? (data.wasRunning ? 'hub を止めましたが、別の起動が先に hub を立ち上げたため新しい会話にはなっていません' : 'hub はすでに動いているため、リセットしませんでした')
         : data.alreadyRunning ? 'hub はすでに動いています' : '新しい会話で hub を起動しました';
       note(line, false, text);
       if (inSessions) { showSessNotice(text); sessView.reconnectWhenReady = id; }

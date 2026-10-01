@@ -693,8 +693,8 @@ once its `adjutant hub` has written its record.
 `adj hub --tab --new [--hub KEY]` does, so the new hub opens a new conversation. Everything start
 would refuse (no `terminal.preset: "tmux"`, a parent-task hub whose key is not known) is refused
 before anything is stopped. The answer is `{reset, wasRunning, started, description}`, or
-`{reset, wasRunning, alreadyRunning, pid}`; when nothing was running to stop and a hub came up
-in the meantime, `reset` is `false`, because nothing was reset. When the hub was stopped but could not be started
+`{reset, wasRunning, alreadyRunning, pid}`; when a hub came up in the meantime that the
+reset did not start, `reset` is `false`, and `wasRunning` says whether one was stopped first. When the hub was stopped but could not be started
 again, the answer is a 400 whose message says it was stopped.
 
 ### The Sessions sidebar

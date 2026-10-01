@@ -2524,10 +2524,11 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                     "started": true,
                     "description": done.description,
                 })),
-                // Nothing was stopped and a hub is up: it is not a new conversation, and the
-                // answer must not say it is.
+                // A hub is up that this request did not start (nothing was running, or another
+                // start won the race after the stop), so it is not a new conversation, and
+                // the answer must not say it is.
                 Ok(super::TabOutcome::AlreadyRunning(status)) => Ok(json!({
-                    "reset": was_running,
+                    "reset": false,
                     "wasRunning": was_running,
                     "alreadyRunning": true,
                     "pid": status.pid,

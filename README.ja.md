@@ -320,7 +320,7 @@ worker は普通タスクから始まり、ボードはタスクと worker を w
 
 `POST /api/hubs` に `{"key": "WID-957", "start": "auto"|"resume"|"new"}` を送ると、親タスクのキーの hub を `adjutant hub --hub KEY` と同じように起動します。まだ何もそのキーを指していなくても使えます（`/api/hubs/<id>/start` はボードが一覧に持っている hub にしか使えません）。返り値は `{started, description, hub: {id, slug}}`、すでに動いていれば `{alreadyRunning, pid, hub}` です。hub が `hubs[]` に現れるのは、`adjutant hub` が自分のレコードを書いてからです。
 
-`POST /api/hubs/<id>/reset`（常駐サーバーのみ）は、hub が動いていれば止め、`adj hub --tab --new [--hub KEY]` と同じように起動し直すので、新しい hub は新しい会話で始まります。起動が断られる場合（`terminal.preset: "tmux"` でない、キーの分からない親タスクの hub）は、何も止める前に断ります。返り値は `{reset, wasRunning, started, description}`、すでに動いていれば `{reset, wasRunning, alreadyRunning, pid}` です。止めるものが無く、その間に hub が起動していたときは、何もリセットしていないので `reset` は `false` です。止めたあとで起動できなかったときは、止めたことを伝えるメッセージ付きの 400 です。
+`POST /api/hubs/<id>/reset`（常駐サーバーのみ）は、hub が動いていれば止め、`adj hub --tab --new [--hub KEY]` と同じように起動し直すので、新しい hub は新しい会話で始まります。起動が断られる場合（`terminal.preset: "tmux"` でない、キーの分からない親タスクの hub）は、何も止める前に断ります。返り値は `{reset, wasRunning, started, description}`、すでに動いていれば `{reset, wasRunning, alreadyRunning, pid}` です。その間にリセットが起動したのではない hub が立ち上がっていたときは、新しい会話にはなっていないので `reset` は `false` で、先に止めたかどうかは `wasRunning` で分かります。止めたあとで起動できなかったときは、止めたことを伝えるメッセージ付きの 400 です。
 
 ### セッションのサイドバー
 
