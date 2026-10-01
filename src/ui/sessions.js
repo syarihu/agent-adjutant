@@ -568,10 +568,12 @@ function renderSessionList() {
   sessEl('sess-add').title = scopeAll() ? '追加するボードを選んでください（「すべて」からは追加できません）' : 'hub やセッションを追加';
   // 「すべて」 has its hubs before it has their sessions: drawn now, every hub would read as empty.
   if (scopeAll() && !state.sessionsRead) {
-    if (sessView.listStructure !== 'loading') {
-      sessView.listStructure = 'loading';
+    // A round that asked and got no answer is not one still on its way; the next round retries.
+    const token = state.sessionsAsked ? 'failed' : 'loading';
+    if (sessView.listStructure !== token) {
+      sessView.listStructure = token;
       sessView.listRows = new Map();
-      sessEl('sess-groups').innerHTML = '<div class="sess-empty">読み込み中…</div>';
+      sessEl('sess-groups').innerHTML = `<div class="sess-empty">${state.sessionsAsked ? 'セッションを読めませんでした' : '読み込み中…'}</div>`;
     }
     return;
   }
@@ -691,7 +693,11 @@ function applySessionSelection() {
 
 function renderSessionsView() {
   if (view !== 'sessions') return;
-  if (!state.boardTerminal?.available) { giveUpSessions(); return; }
+  // A round of 「すべて」 that has no lead board yet says nothing either way: the tab stays.
+  if (!state.boardTerminal?.available) {
+    if (state.boardTerminal) giveUpSessions();
+    return;
+  }
   const cur = currentSession();
   if (cur) sessView.last = cur;
 

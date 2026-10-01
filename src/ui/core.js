@@ -659,6 +659,8 @@ function mergeStates(listed, now, carriers = new Set()) {
     configPath: first.configPath,
     // Whether this round asked for the sessions: otherwise the tab's counts are not known.
     sessionsRead: carried.some(slug => carriers.has(slug)),
+    // Whether it asked at all: asked and not read is a failure, not a wait.
+    sessionsAsked: carriers.size > 0,
     // What the tab's buttons ask of the server is the same for every board of it.
     boardTerminal: lead.boardTerminal,
     hubStart: lead.hubStart,

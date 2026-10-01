@@ -1659,8 +1659,11 @@ const RIGHT_ALIGNED_INDENT: usize = 24;
 
 /// The footer a menu or a question draws to say which keys answer it.
 fn is_key_hint(line: &str) -> bool {
-    let lower = line.to_lowercase();
-    lower.contains("enter to select") || lower.contains("esc to cancel")
+    let lower = line.trim().to_lowercase();
+    let hint = |s: &str| s.starts_with("enter to select") || s.starts_with("esc to cancel");
+    // Either the hint itself, or one of several joined by the dot a footer separates them with;
+    // a sentence that only mentions the keys is output.
+    hint(&lower) || (lower.contains('·') && lower.split('·').any(|part| hint(part.trim())))
 }
 
 /// Lines an agent draws between its output and its input box that are not output: hints about
@@ -3732,6 +3735,15 @@ mod tests {
         assert_eq!(
             last_output_line(Agent::Generic, &generic).as_deref(),
             Some("built a")
+        );
+    }
+
+    #[test]
+    fn a_line_that_only_mentions_a_key_is_not_a_hint() {
+        let screen = parse_pane_screen("building\nPress Esc to cancel the build\n");
+        assert_eq!(
+            last_output_line(Agent::Generic, &screen).as_deref(),
+            Some("Press Esc to cancel the build")
         );
     }
 
