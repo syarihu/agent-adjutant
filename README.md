@@ -433,7 +433,12 @@ Nothing opens a browser.
 
 **One resident server for every repository.** `adj server start` runs a single server per
 state directory that serves the board of every repository on this machine, each at
-`/b/<slug>/`, whether or not a hub is running. `/` lists the boards it knows. It detaches
+`/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
+boards in place: the sidebar lists a row per repository, with its parent-task hubs under it
+(each row shows whether its hub runs, what waits on you and how many workers are at work),
+and "すべて" reads every board at once. `/review` is the review queue of every board. Each
+screen has an address that carries the board and the view, so back and forward and a pasted
+link land on the same screen. It detaches
 (its output goes to `server.log` in the state directory); `--foreground` keeps it in the
 terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
 and any free port when it is not; `--port 0` asks for any. A second `adj server start` says
@@ -454,8 +459,8 @@ server, everything is as described above.
 
 **A session's terminal in the board.** On the resident server's boards, the rail has a セッション
 view: a tree of the repository's hub and the parent-task hubs with their workers, and the
-selected session's tmux window beside it, where you can read it and type to it. A card, its side
-sheet and a hub's row in the rail have a button that opens the view with that session selected,
+selected session's tmux window beside it, where you can read it and type to it. A card and its side
+sheet have a button that opens the view with that session selected,
 with a link back to where you were. A terminal is offered only for a session that runs in tmux
 (`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
 detaches: the window and the agent in it keep running. The board attaches as a client of its own,

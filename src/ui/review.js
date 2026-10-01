@@ -354,6 +354,9 @@ document.getElementById('review').addEventListener('focusout', e => {
   });
 });
 
+/* The task a gate belongs to; with several boards, the one on the gate's own. */
+const taskOfGate = g => (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
+
 function renderReview() {
   reviewHeld = false;
   const rail = document.querySelector('#review .rail');
@@ -398,9 +401,13 @@ function renderReview() {
 
   // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
   // is what waits on a person, and a record does not.
-  let g = gates.find(x => x.id === focused) || recordById(focused) || gates[0];
+  let g = gates.find(x => x.id === focused) || recordById(focused);
+  // The gate asked for may be on a board not read yet: wait for the first full round rather
+  // than showing the first of the others and forgetting it.
+  if (!g && focused && scopeAll() && !allRound) { pane.innerHTML = ''; return; }
+  g = g || gates[0];
   // A polled record has no diff of its own; its task's history has it.
-  if (g && g.wait === false) g = withDiff(g, (state.tasks || []).find(t => t.id === g.task));
+  if (g && g.wait === false) g = withDiff(g, taskOfGate(g));
   if (!g) {
     pane.innerHTML = `
       <div class="empty-state" style="padding:80px 20px;text-align:center;">
@@ -409,14 +416,14 @@ function renderReview() {
         <div style="font-size:13px;color:var(--md-sys-color-outline);margin-top:6px;">ボード画面でお待ちください</div>
       </div>
     `;
-    if (view === 'review') location.hash = '';
+    if (view === 'review' && nav.item) setNav({ item: null });
     return;
   }
   focused = g.id;
   const record = g.wait === false;
   if (record && view === 'review') markSeen(g.id);
   // A permalink, so "反映しといたから見てね" can point at this one card.
-  if (view === 'review') location.hash = 'gate/' + g.id;
+  if (view === 'review' && nav.item !== g.id) setNav({ item: g.id });
 
   if (pane.dataset.shown !== g.id) {
     reviewActiveTab = TAB_OF_KIND[g.kind] || 'overview';
@@ -428,7 +435,7 @@ function renderReview() {
   const isCommentFocused = document.activeElement === commentEl;
   const paneScroll = pane.scrollTop;
 
-  const parentTask = (state.tasks || []).find(t => t.id === g.task) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree);
+  const parentTask = taskOfGate(g) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree && (!g._slug || t._slug === g._slug));
   const taskTitle = parentTask ? parentTask.title : g.title;
   const taskId = parentTask ? parentTask.id : (g.task || g.id);
   const taskBranch = parentTask ? parentTask.branch : '';
@@ -745,6 +752,14 @@ document.addEventListener('change', e => {
    at once, the hidden one included, so it is looked up inside the one being shown. */
 const commentBox = () => document.querySelector(view === 'task' ? '#task-view .gate-comment' : '#review .gate-comment');
 
+/* An answered gate leaves the list at once; the round that follows confirms it. In a merged
+   state that round can be a while off. */
+function dropGate(g) {
+  if (!g._slug) return;
+  state = { ...state, gates: (state.gates || []).filter(x => !(x.id === g.id && x._slug === g._slug)) };
+  render();
+}
+
 async function answer(decision, choice, id = focused, commentOverride = null) {
   const g = (state.gates || []).find(x => x.id === id) || recordById(id);
   if (!g) return false;
@@ -758,7 +773,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
   }
   const line = `adj gate answer --id ${g.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
   try {
-    const data = await api(`/api/gates/${encodeURIComponent(g.id)}`, {
+    const data = await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
     });
     // The hub opened this gate, and its answer goes to the hub's inbox instead.
@@ -771,7 +786,9 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
     // A record stays, with this answer appended, so it stays in view to show that it went.
     if (g.wait === false && box) box.value = '';
     else if (focused === g.id) focused = null;
-    await refresh();
+    dropGate(g);
+    await refresh(true);
+    refreshBoards();
     return true;
   } catch (e) {
     note(line, true, e.message);
@@ -786,7 +803,7 @@ function talk(id = focused) {
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
   // hub's.
-  if (hubsGate(g)) focusHub(); else worktreeAct('focus', g.worktree);
+  if (hubsGate(g)) focusHub(g._slug); else worktreeAct('focus', g.worktree, false, g._slug);
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
@@ -796,12 +813,14 @@ async function closeGate(id = focused) {
   const comment = commentBox()?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
   try {
-    await api(`/api/gates/${encodeURIComponent(g.id)}`, {
+    await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
     if (focused === g.id) focused = null;
-    await refresh();
+    dropGate(g);
+    await refresh(true);
+    refreshBoards();
   } catch (e) { note(line, true, e.message); }
 }
 

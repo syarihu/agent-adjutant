@@ -499,7 +499,7 @@ setInterval(() => {
     sessView.starts.map(p => p.hubStartedAt != null && Date.now() - p.hubStartedAt < HUB_STARTING_MS)]);
   if (sig !== startingSig) {
     startingSig = sig;
-    renderHubRows();
+    renderBoardRows();
     if (view === 'sessions') renderSessionsView();
   }
   if (view !== 'sessions') return;

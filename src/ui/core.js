@@ -2,11 +2,13 @@
    header — which is also the half of the CSRF defence a cross-site form cannot reproduce. */
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
-/* Where this page's board lives: the root for a board served on its own, and `/b/<slug>` when
-   the resident server serves it. Every call the page makes is relative to it. */
-const BASE = location.pathname.replace(/\/(index\.html)?$/, '');
+/* Where the selected board lives: the root for a board served on its own, and `/b/<slug>` when
+   the resident server serves it. Every call the page makes is relative to it, so it follows the
+   selected board: `go()` reassigns it on a board switch, and nothing may keep a copy of it. */
+let BASE = (m => m ? `/b/${m[1]}` : '')(/^\/b\/([^/]+)/.exec(location.pathname));
 
-let state = { tasks: [], workers: [], pending: [], gates: [] };
+const emptyState = () => ({ tasks: [], workers: [], pending: [], gates: [] });
+let state = emptyState();
 let view = 'board';
 let log = [];
 let selectedTaskId = null;
@@ -14,8 +16,9 @@ let selectedTaskId = null;
 const PREF_KEY = 'adj-board-split';
 // sessionsRail: null follows the window's width until the person chooses 'open' or 'collapsed';
 // sessionsFolded holds the hub ids folded away, and 'orphans' while that group is open;
-// sessionsSide is the detail sidebar's choice, kept only where the window has room for it.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsRail:null, sessionsFilter:'all', sessionsFolded:[], sessionsSide:'open' },
+// sessionsSide is the detail sidebar's choice, kept only where the window has room for it;
+// boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar.
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsRail:null, sessionsFilter:'all', sessionsFolded:[], sessionsSide:'open', boardsFolded:[] },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -48,8 +51,8 @@ function applyLayout() {
 window.setBoardLayout = function(layout) { prefs.layout = layout; applyLayout(); };
 window.setBoardArrange = function(arrange) { prefs.arrange = arrange; applyLayout(); };
 window.showBoard = function(board) {
-  if (view !== 'board') setView('board');
-  if (prefs.tab !== board) { prefs.tab = board; applyLayout(); }
+  // The address says which tab it is (and a board shown on its own page keeps it).
+  go({ view: board === 'agent' ? 'agent' : 'human' });
   if (prefs.layout === 'split') {
     const pane = document.getElementById(`pane-${board}`);
     if (pane) {
@@ -59,8 +62,8 @@ window.showBoard = function(board) {
   }
 };
 window.jump = function(board, id) {
-  if (view !== 'board') setView('board');
-  if (prefs.tab !== board) { prefs.tab = board; applyLayout(); }
+  const want = board === 'agent' ? 'agent' : 'human';
+  if (view !== 'board' || nav.view !== want) go({ view: want });
   const el = document.getElementById(`${board}-${id}`);
   if (!el) return;
   el.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
@@ -99,7 +102,7 @@ const COLUMNS = [...AGENT_COLUMNS, ...HUMAN_COLUMNS];
 
 /* 要対応 is derived from the gate directory, never stored as a status — so the board reads
    the thing it is describing rather than a second copy of it. */
-const openGate = (t, data = state) => (data.gates || []).find(g => g.task === t.id);
+const openGate = (t, data = state) => (data.gates || []).find(g => g.task === t.id && (!t._slug || g._slug === t._slug));
 
 const humanLabel = col => (HUMAN_COLUMNS.find(c => c.id === col) || {}).label || col;
 const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label || col;
@@ -136,6 +139,8 @@ function gateHumanCol(kind) {
   }
 }
 
+/* The Rust `board_counts` (src/cmd/serve.rs) counts what waits from the same rules, for the
+   sidebar's board rows. Change one and change the other. */
 function humanColOf(t, data = state) {
   if (!t) return null;
   const g = openGate(t, data);
@@ -244,6 +249,164 @@ async function boardApi(base, path, options = {}) {
 
 const api = (path, options) => boardApi(BASE, path, options);
 
+/* ── Where the page is: one board, every board, or the review queue ──────────────────────
+   Navigation state lives in the address, so back/forward and a pasted link land on the same
+   screen without a reload; what is only a preference (layout, folded repositories) does not.
+     /b/<slug>/?view=agent|sessions&task=<id>&pane=term   one board
+     /                                                     すべて, every board
+     /review?item=<id>                                     要対応レビュー, every board
+   A board served on its own has no list of boards, so it is `board: null` at `/`. Every
+   address carries `?token=`: the server refuses a GET without it. */
+const nav = { board: null, view: 'human', task: null, pane: 'detail', item: null };
+let boards = [];                 // /api/boards: the sidebar's rows
+let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
+let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
+let navApplying = false;
+let pendingTask = null;          // opened once the board's first state is in
+let boardJob = null;             // { slug, fn }: run once that board has loaded
+const boardStates = {};          // 「すべて」: each board's last state, by slug
+const baseOf = x => x?._base || BASE;
+const scopeAll = () => multiBoard && nav.board === 'all';
+
+function parseUrl(loc = location) {
+  const q = new URLSearchParams(loc.search);
+  const out = { board: null, view: 'human', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item') };
+  const m = /^\/b\/([^/]+)/.exec(loc.pathname);
+  if (loc.pathname === '/review') {
+    out.board = multiBoard ? 'all' : null;
+    out.view = 'review';
+    return out;
+  }
+  out.board = m ? m[1] : multiBoard ? 'all' : null;
+  const v = q.get('view');
+  if (v === 'agent' || v === 'sessions') out.view = v;
+  if (out.board === 'all' && out.view === 'sessions') out.view = 'human';
+  return out;
+}
+
+function urlOf(n = nav) {
+  const path = n.view === 'review' ? '/review' : n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
+  let url = path + '?token=' + encodeURIComponent(TOKEN);
+  if (n.view === 'agent' || n.view === 'sessions') url += `&view=${n.view}`;
+  if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
+  if (n.pane === 'term') url += '&pane=term';
+  if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
+  return url;
+}
+
+/* A change of address that is not a move: the card being looked at, the gate being read. */
+function setNav(patch) {
+  Object.assign(nav, patch);
+  history.replaceState(null, '', urlOf());
+}
+
+const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item;
+
+/* Everything that pointed into the board being left. */
+function switchBoard() {
+  navEpoch++;
+  BASE = multiBoard && nav.board && nav.board !== 'all' ? `/b/${nav.board}` : '';
+  lastStateJson = '';
+  lastMinute = null;
+  if (!multiBoard) seenGateIds = null;
+  selectedTaskId = null;
+  if (typeof detachSessionTerminal === 'function') detachSessionTerminal();
+  sessView.selectedId = null;
+  sessView.last = null;
+  sessView.pending = null;
+  boardJob = null;
+  // Caches keyed by a bare task id belong to the board being left.
+  for (const cache of [histories, openReplies]) for (const k of Object.keys(cache)) delete cache[k];
+  historyFailed.clear();
+  // 「すべて」 shows what it last read while the new round is on its way; the review queue
+  // keeps the gate it was asked for until that round is in (see renderReview).
+  allRound = false;
+  state = scopeAll() && Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
+}
+
+function go(patch = {}, { replace = false } = {}) {
+  if (boardJob && 'board' in patch && patch.board !== boardJob.slug) boardJob = null;
+  const prev = { ...nav };
+  Object.assign(nav, patch);
+  if (nav.board !== prev.board) {
+    if (!('task' in patch)) nav.task = null;
+    if (!('item' in patch)) nav.item = null;
+  }
+  if (nav.view !== 'review') nav.item = null;
+  if (nav.view === 'review' && multiBoard) nav.board = 'all';
+  if (nav.board === 'all' && nav.view === 'sessions') nav.view = 'human';
+  const boardChanged = nav.board !== prev.board;
+  if (boardChanged) switchBoard();
+  const url = urlOf();
+  if (replace || url === location.pathname + location.search) history.replaceState(null, '', url);
+  else history.pushState(null, '', url);
+  applyNav(boardChanged);
+}
+
+/* Draw the screen the address names. */
+function applyNav(boardChanged) {
+  const wantTask = nav.task;
+  navApplying = true;
+  try {
+    if (nav.view === 'review') {
+      if (nav.item) focused = nav.item;
+      setView('review');
+    } else if (nav.view === 'sessions') {
+      if (state.boardTerminal === undefined) {
+        // The first poll of this board has not said whether it has terminals.
+        sessView.pending = sessView.pending || { id: null };
+        if (view !== 'board') setView('board');
+      } else openSessionsView();
+    } else {
+      prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
+      if (view !== 'board') setView('board'); else applyLayout();
+    }
+  } finally { navApplying = false; }
+  if (nav.view === 'review') renderReview();
+  // Back to an address with no card open closes the one that is.
+  if (view === 'board' && !nav.task && selectedTaskId) closeDrawer();
+  pendingTask = nav.view === 'review' || nav.view === 'sessions' ? null : wantTask;
+  if (boardChanged) render();
+  if (boardChanged) refresh(true);
+  else applyPendingTask();
+}
+
+/* `final` is a state the board really answered with: a task it does not list is not coming. */
+function applyPendingTask(final = false) {
+  if (!pendingTask || view !== 'board') return;
+  const id = pendingTask;
+  if (!(state.tasks || []).some(t => t.id === id)) {
+    if (final) pendingTask = null;
+    return;
+  }
+  pendingTask = null;
+  if (selectedTaskId !== id) selectTask(id);
+}
+
+/* Run `fn` on the board `slug`: now when it is the one shown, else after switching to it and
+   after its first state is in, since what `fn` opens is read from that state. */
+function onBoard(slug, fn) {
+  if (!slug || !multiBoard || (nav.board === slug && nav.view !== 'review')) return fn();
+  go({ board: slug, view: nav.view === 'agent' ? 'agent' : 'human' });
+  boardJob = { slug, fn };
+}
+function runBoardJob() {
+  if (!boardJob || nav.board !== boardJob.slug) return;
+  const { fn } = boardJob;
+  boardJob = null;
+  fn();
+}
+
+window.addEventListener('popstate', () => {
+  const next = parseUrl(location);
+  boardJob = null;
+  if (sameNav(next, nav)) return;
+  const boardChanged = next.board !== nav.board;
+  Object.assign(nav, next);
+  if (boardChanged) switchBoard();
+  applyNav(boardChanged);
+});
+
 let lastStateJson = '';
 let lastMinute = null;
 let seenGateIds = null;
@@ -300,7 +463,7 @@ function checkNewGates(gates) {
         });
         n.onclick = () => {
           window.focus();
-          judgeGate(g.id);
+          onBoard(g._slug, () => judgeGate(g.id));
         };
       }
     }
@@ -308,10 +471,159 @@ function checkNewGates(gates) {
   seenGateIds = currentIds;
 }
 
-async function refresh(force = false) {
+/* The gates of every board, as /api/boards lists them: with several boards, a gate that opens
+   on one that is not shown is still announced. */
+const everyGate = () => boards.flatMap(b => (b.gates || []).map(g => ({ ...g, _slug: b.slug })));
+
+let boardsBusy = false;
+let boardsAgain = false;
+let boardsFetchedAt = 0;
+let boardsTimer = null;
+const BOARDS_GAP_MS = 5000;
+/* The sidebar's list of boards, asked for at most once per BOARDS_GAP_MS however often the
+   page wants it: each answer costs the server a `ps` and a `git worktree list` per repository,
+   and the selected board's own 2-second poll must stay cheap. A request that comes too soon
+   is not lost; it is made when the gap is over. */
+function refreshBoards() {
+  if (!multiBoard) return Promise.resolve();
+  const wait = boardsFetchedAt + BOARDS_GAP_MS - Date.now();
+  if (wait <= 0) return fetchBoards();
+  if (!boardsTimer) boardsTimer = setTimeout(() => { boardsTimer = null; fetchBoards(); }, wait);
+  return Promise.resolve();
+}
+
+/* Each board's counts and gates, as /api/boards lists them; it reads records only. */
+async function fetchBoards() {
+  if (!multiBoard) return;
+  if (boardsBusy) { boardsAgain = true; return; }
+  boardsBusy = true;
+  boardsFetchedAt = Date.now();
   try {
-    const next = await api('/api/state');
-    checkNewGates(next.gates);
+    boards = await boardApi('', '/api/boards');
+    checkNewGates(everyGate());
+    renderBoardRows();
+    renderTitle();
+    renderGateCount();
+  } catch {
+    // The list is a convenience; the board polls keep reporting a server that is gone.
+  } finally {
+    boardsBusy = false;
+    if (boardsAgain) { boardsAgain = false; refreshBoards(); }
+  }
+}
+
+/* The boards 「すべて」 and the review queue read, in the order the sidebar lists them. A hub
+   that is finished has nothing left to show. */
+const readBoards = () => boards.filter(b => !b.finished);
+
+let allBusy = false;
+let allAgain = false;            // a forced round asked for while one was out
+let allRound = false;            // the first full round of this scope has been drawn
+let allSkip = false;
+let allMinute = null;
+/* 「すべて」 and the review queue: each board's state, one after another, without its sessions.
+   A board whose state is unchanged is not redrawn, and nothing is drawn at all unless one is. */
+async function refreshAllBoards(force) {
+  if (allBusy) {
+    // An answer to something just done must not be lost to the round already out.
+    if (force) allAgain = true;
+    return;
+  }
+  allBusy = true;
+  const epoch = navEpoch;
+  try {
+    if (!boards.length) await fetchBoards();
+    if (epoch !== navEpoch) return;
+    const listed = readBoards();
+    let changed = force;
+    let now = 0;
+    for (const b of listed) {
+      try {
+        const next = await boardApi(`/b/${b.slug}`, '/api/state?sessions=0');
+        if (epoch !== navEpoch) return;
+        const { now: at, ...rest } = next;
+        now = Math.max(now, at || 0);
+        const json = JSON.stringify(rest);
+        if (boardStates[b.slug]?.json !== json) changed = true;
+        boardStates[b.slug] = { json, data: next };
+      } catch (e) {
+        if (epoch !== navEpoch) return;
+        // A board that cannot answer drops out of the round rather than failing it.
+        if (boardStates[b.slug]) { delete boardStates[b.slug]; changed = true; }
+      }
+    }
+    // The person may have moved on while the last board was answering.
+    if (epoch !== navEpoch) return;
+    const slugs = new Set(listed.map(b => b.slug));
+    for (const slug of Object.keys(boardStates)) {
+      if (!slugs.has(slug)) { delete boardStates[slug]; changed = true; }
+    }
+    const minute = Math.floor(now / 60);
+    if (!changed && minute === allMinute) return;
+    allMinute = minute;
+    state = mergeStates(listed, now);
+    allRound = true;
+    if (window.__from) return;
+    render();
+    runBoardJob();
+    if (changed) refreshBoards();
+  } finally {
+    allBusy = false;
+    if (allAgain) {
+      allAgain = false;
+      if (scopeAll()) refreshAllBoards(true);
+    }
+  }
+}
+
+/* One state out of the boards': tasks and gates tagged with the board they came from, workers
+   once each (a parent-task hub's board lists its repository's worktrees too). What belongs to
+   a single board — sessions, hubs, the inbox — is left empty. */
+function mergeStates(listed, now) {
+  const parts = listed.filter(b => boardStates[b.slug]).map(b => ({ slug: b.slug, data: boardStates[b.slug].data }));
+  const tag = (list, slug) => (list || []).map(x => ({ ...x, _slug: slug, _base: `/b/${slug}` }));
+  const seen = new Set();
+  const workers = [];
+  for (const { slug, data } of parts) {
+    for (const w of data.workers || []) {
+      if (seen.has(w.worktree)) continue;
+      seen.add(w.worktree);
+      workers.push({ ...w, _slug: slug, _base: `/b/${slug}` });
+    }
+  }
+  const first = parts[0]?.data || {};
+  return {
+    repo: '',
+    resident: true,
+    tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
+    gates: parts.flatMap(p => tag(p.data.gates, p.slug)),
+    workers,
+    sessions: [],
+    hubs: [],
+    pending: [],
+    now,
+    ideConfigured: first.ideConfigured,
+    stuckAfterMinutes: first.stuckAfterMinutes,
+    configPath: first.configPath,
+  };
+}
+
+async function refresh(force = false) {
+  if (scopeAll()) {
+    // Every board is read, so this runs half as often.
+    if (!force) {
+      allSkip = !allSkip;
+      if (allSkip) return;
+    }
+    return refreshAllBoards(force);
+  }
+  const base = BASE;
+  const epoch = navEpoch;
+  try {
+    const next = await boardApi(base, '/api/state');
+    // The person moved to another board while this was on its way.
+    if (epoch !== navEpoch) return;
+    if (!multiBoard) checkNewGates(next.gates);
     // Compared without the server's clock, which changes on every poll: with it in, every
     // refresh redrew the page, and a comment being typed into a gate lost its IME
     // composition every two seconds. The clock only moves the elapsed times on the board, so
@@ -331,8 +643,9 @@ async function refresh(force = false) {
     }
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
-    const clockOnly = nextJson === lastStateJson && minute !== lastMinute && (view === 'board' || view === 'sessions');
-    if (!force && nextJson === lastStateJson && !clockOnly) return;
+    const changed = nextJson !== lastStateJson;
+    const clockOnly = !changed && minute !== lastMinute && (view === 'board' || view === 'sessions');
+    if (!force && !changed && !clockOnly) return;
     lastStateJson = nextJson;
     lastMinute = minute;
     // A hub that was not running and is now: it has finished starting, whatever the page
@@ -342,48 +655,47 @@ async function refresh(force = false) {
     state = next;
     if (window.__from) return;
     render();
+    applyPendingTask(true);
+    runBoardJob();
+    // What changed here changes the counts in the sidebar: read them now rather than at the
+    // next tick.
+    if (multiBoard && (changed || force)) refreshBoards();
   } catch (e) {
     note(`状態を取得できませんでした: ${e.message}`, true);
   }
 }
 
+/* How many things wait on the person in `data`: tasks with the ball, and gates whose task is
+   not on the board. */
+function waitingIn(data = state) {
+  const humanItems = (data.tasks || []).filter(t => humanColOf(t, data));
+  const taskIds = new Set((data.tasks || []).map(t => t.id));
+  const standalone = (data.gates || []).filter(g => !g.task || !taskIds.has(g.task));
+  return humanItems.length + standalone.length;
+}
+
+function renderGateCount() {
+  const mine = multiBoard ? boards.reduce((n, b) => n + (b.gates || []).length, 0) : (state.gates || []).length;
+  const gateCount = document.getElementById('gate-count');
+  if (gateCount) {
+    gateCount.textContent = mine;
+    gateCount.classList.toggle('zero', !mine);
+  }
+}
+
 function render() {
-  document.getElementById('repo').textContent = state.repo || '';
-  const hub = state.hub || {};
-  const hubEl = document.getElementById('hub');
-  hubEl.className = 'state ' + (hub.present ? 'good' : hub.stale ? 'bad' : 'warn');
-  hubEl.innerHTML = hub.present
-    ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-success);">check_circle</span><span>hub 稼働中</span>'
-    : hub.stale ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">error</span><span>hub の記録が残っているが止まっている</span>'
-                : '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">radio_button_unchecked</span><span>hub は止まっている</span>';
-
-  renderHubRows();
-
-  const waiting = (state.pending || []).length;
-  document.getElementById('inbox').innerHTML = waiting
-    ? `<span class="material-symbols-outlined" style="font-size:14px;vertical-align:text-bottom;">mail</span><span>受信箱 ${waiting} 件(hub が未読)</span>` : '';
-
   document.body.classList.toggle('ide-unset', !ideReady());
 
   renderColumns();
 
-  const humanItems = (state.tasks || []).filter(t => humanColOf(t));
-  const gateTaskIds = new Set((state.tasks || []).map(t => t.id));
-  const standaloneGates = (state.gates || []).filter(g => !g.task || !gateTaskIds.has(g.task));
-  const totalHuman = humanItems.length + standaloneGates.length;
-
+  const totalHuman = waitingIn();
   const humanBadge = document.getElementById('human-badge');
   if (humanBadge) {
     humanBadge.textContent = totalHuman;
     humanBadge.classList.toggle('zero', !totalHuman);
   }
 
-  const mine = (state.gates || []).length;
-  const gateCount = document.getElementById('gate-count');
-  if (gateCount) {
-    gateCount.textContent = mine;
-    gateCount.classList.toggle('zero', !mine);
-  }
+  renderGateCount();
 
   // Count active workers not waiting on human
   const activeWorkers = (state.tasks || []).filter(t => ['dispatched', 'pr'].includes(t.status) && !humanColOf(t)).length;
@@ -394,7 +706,8 @@ function render() {
 
   // The ball count belongs in the tab title: you should know it is your turn without
   // having to look at the page. The board's name follows it, so tabs of several boards differ.
-  document.title = (totalHuman ? `(${totalHuman}) ` : '') + boardTitle();
+  renderBoardRows();
+  renderTitle();
   updateNotifyButton();
   renderSessionsRail();
   openPendingSession();
@@ -404,4 +717,3 @@ function render() {
   redrawTaskView();
   applyLayout();
 }
-

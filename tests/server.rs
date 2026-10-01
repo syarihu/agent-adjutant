@@ -65,11 +65,18 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         "{list}"
     );
 
-    let (status, index) = resident.get("/");
-    assert_eq!(status, 200);
-    assert!(index.contains("adj ボード一覧"), "{index}");
-    assert!(index.contains("hub 停止中"), "{index}");
-    assert!(index.contains(&format!("/b/{SLUG}/?token=")), "{index}");
+    // `/` and `/review` are the one page that switches between boards.
+    for path in ["/", "/review"] {
+        let (status, page) = resident.get(path);
+        assert_eq!(status, 200, "{path}");
+        assert!(page.contains("id=\"board-rows\""), "{path}");
+    }
+    assert_eq!(list[0]["hubId"], "hub", "{list}");
+    assert_eq!(list[0]["waiting"], 0, "{list}");
+    assert_eq!(list[0]["working"], 0, "{list}");
+    assert_eq!(list[0]["finished"], false, "{list}");
+    assert!(list[0]["hubLastAlive"].is_null(), "{list}");
+    assert_eq!(list[0]["gates"], serde_json::json!([]), "{list}");
 
     assert_eq!(resident.get("/b/no-such-board/api/state").0, 404);
     assert_eq!(
@@ -189,6 +196,203 @@ fn a_parent_task_hub_s_board_is_served_at_its_own_path() {
     let repository = own(&other);
     assert_eq!(repository["parent"], false, "{repository}");
     assert!(repository["key"].is_null(), "{repository}");
+}
+
+/// A GET whose own query is `query`, with the token added after it.
+fn get_with_query(resident: &Resident, path: &str, query: &str) -> (u16, String) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", resident.port)).unwrap();
+    write!(
+        stream,
+        "GET {path}?{query}&token={} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        resident.token
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        body.to_string(),
+    )
+}
+
+/// `/api/boards`, as a list of objects.
+fn boards_of(resident: &Resident) -> Vec<serde_json::Value> {
+    let (status, body) = resident.get("/api/boards");
+    assert_eq!(status, 200, "{body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+fn board_of(resident: &Resident, slug: &str) -> serde_json::Value {
+    boards_of(resident)
+        .into_iter()
+        .find(|b| b["slug"] == slug)
+        .unwrap_or_else(|| panic!("no board {slug}"))
+}
+
+/// Writes `patch` into a task's record on disk, which is how a test puts a task in a status
+/// the board's own routes would not.
+fn patch_task(fixture: &Fixture, slug: &str, id: &str, patch: serde_json::Value) {
+    let path = fixture
+        .state
+        .join("tasks")
+        .join(slug)
+        .join(format!("{id}.json"));
+    let mut task: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for (key, value) in patch.as_object().unwrap() {
+        task[key] = value.clone();
+    }
+    std::fs::write(path, task.to_string()).unwrap();
+}
+
+#[test]
+fn a_dedicated_board_has_no_board_list() {
+    let fixture = Fixture::new(QUIET);
+    let mut board = fixture
+        .command(["serve", "--port", "0", "--no-open"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::io::BufReader::new(board.stdout.as_mut().unwrap())
+        .read_line(&mut said)
+        .unwrap();
+    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
+    let (host, query) = url
+        .strip_prefix("http://")
+        .unwrap()
+        .split_once('/')
+        .unwrap();
+    let port: u16 = host.rsplit(':').next().unwrap().parse().unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+
+    // The page tells a dedicated board from the resident by this 404.
+    let (boards, _) = get(port, token, "/api/boards");
+    let (status, page) = get(port, token, "/review");
+    board.kill().unwrap();
+    board.wait().unwrap();
+
+    assert_eq!(boards, 404);
+    assert_eq!(status, 200);
+    assert!(page.contains("id=\"board-rows\""));
+}
+
+#[test]
+fn the_board_list_counts_what_waits_and_who_works() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    write_gate_file(&fixture, SLUG, "g-open", "verify", &fixture.repo);
+    let on_pr = made_task(&resident, serde_json::json!({"title": "A pull request"}));
+    let working = made_task(&resident, serde_json::json!({"title": "At work"}));
+    patch_task(
+        &fixture,
+        SLUG,
+        on_pr["id"].as_str().unwrap(),
+        serde_json::json!({"status": "pr", "pr": "https://example.com/pull/1"}),
+    );
+    patch_task(
+        &fixture,
+        SLUG,
+        working["id"].as_str().unwrap(),
+        serde_json::json!({"status": "dispatched"}),
+    );
+
+    let board = board_of(&resident, SLUG);
+    // The gate has no task on the board, and the pull request has no worker to say otherwise.
+    assert_eq!(board["waiting"], 2, "{board}");
+    assert_eq!(board["working"], 1, "{board}");
+    assert_eq!(board["gates"].as_array().unwrap().len(), 1, "{board}");
+    assert_eq!(board["gates"][0]["kind"], "verify", "{board}");
+    assert!(board["gates"][0]["worktree"].is_string(), "{board}");
+}
+
+#[test]
+fn a_parent_board_is_listed_with_its_key_and_hub_id_and_hides_when_finished() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let board = board_of(&resident, FEATURE_SLUG);
+    assert_eq!(board["hub"], FEATURE, "{board}");
+    assert_eq!(board["hubId"], format!("hub-{FEATURE}"), "{board}");
+    // A hub with no task yet has not been used: it stays listed, to be started.
+    assert_eq!(board["finished"], false, "{board}");
+    // The repository's own board is never finished.
+    assert_eq!(board_of(&resident, SLUG)["finished"], false);
+
+    // A task still to be done keeps it too, though nothing works on it yet.
+    let (status, body) = resident.post(
+        &format!("/b/{FEATURE_SLUG}/api/tasks"),
+        &serde_json::json!({"title": "Still to do"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(board_of(&resident, FEATURE_SLUG)["finished"], false);
+    patch_task(
+        &fixture,
+        FEATURE_SLUG,
+        &id,
+        serde_json::json!({"status": "done"}),
+    );
+    assert_eq!(board_of(&resident, FEATURE_SLUG)["finished"], true);
+
+    // A gate left on disk keeps the board in the list.
+    write_gate_file(&fixture, FEATURE_SLUG, "g-left", "question", &fixture.repo);
+    let board = board_of(&resident, FEATURE_SLUG);
+    assert_eq!(board["finished"], false, "{board}");
+    assert_eq!(board["waiting"], 1, "{board}");
+}
+
+#[test]
+fn a_stopped_hub_says_when_it_was_last_alive() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let sessions = fixture.state.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join(format!("{SLUG}.json")),
+        serde_json::json!({"sessionId": "s-1", "nwo": "acme/widget"}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        sessions.join(format!("{SLUG}.alive")),
+        serde_json::json!({"sessionId": "s-1", "lastAlive": 1_700_000_000}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(board_of(&resident, SLUG)["hubLastAlive"], 1_700_000_000);
+
+    // A heartbeat from another session says nothing about this one.
+    std::fs::write(
+        sessions.join(format!("{SLUG}.alive")),
+        serde_json::json!({"sessionId": "s-2", "lastAlive": 1_700_000_000}).to_string(),
+    )
+    .unwrap();
+    assert!(board_of(&resident, SLUG)["hubLastAlive"].is_null());
+}
+
+#[test]
+fn the_state_can_leave_the_sessions_out() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    write_gate_file(&fixture, SLUG, "g-open", "verify", &fixture.repo);
+
+    let (_, full) = resident.get(&format!("/b/{SLUG}/api/state"));
+    let full: serde_json::Value = serde_json::from_str(&full).unwrap();
+    assert!(!full["sessions"].as_array().unwrap().is_empty(), "{full}");
+
+    let (status, lean) = get_with_query(&resident, &format!("/b/{SLUG}/api/state"), "sessions=0");
+    assert_eq!(status, 200, "{lean}");
+    let lean: serde_json::Value = serde_json::from_str(&lean).unwrap();
+    assert_eq!(lean["sessions"], serde_json::json!([]));
+    for key in ["tasks", "gates", "workers", "hubs"] {
+        assert!(lean[key].is_array(), "{key}");
+    }
+    assert_eq!(lean["gates"].as_array().unwrap().len(), 1, "{lean}");
 }
 
 #[test]

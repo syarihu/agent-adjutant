@@ -185,29 +185,6 @@ body:not(.layout-split) #arrange-switch { display: none; }
   align-items: center;
   justify-content: space-between;
 }
-.hub-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 0;
-}
-.hub-text { flex: 1; min-width: 0; }
-.hub-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  color: var(--md-sys-color-on-surface);
-}
-.hub-name > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hub-state {
-  padding-left: 14px;
-  font-size: 10.5px;
-  color: var(--md-sys-color-outline);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .hub-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .hub-dot.good { background: var(--md-sys-color-success); }
 .hub-dot.warn { background: var(--md-sys-color-warning); }
@@ -332,3 +309,170 @@ main { flex: 1; overflow: hidden; position: relative; }
   .top-bar-actions { margin-left: auto; }
 }
 
+
+/* ── Boards in the rail ── */
+.field[hidden] { display: none; }
+.rail-global { display: flex; flex-direction: column; gap: 4px; }
+#board-rows { display: flex; flex-direction: column; gap: 2px; }
+.repo-group { display: flex; flex-direction: column; gap: 2px; }
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--md-shape-corner-md);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  min-width: 0;
+}
+.board-row:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.board-row[aria-current="page"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-weight: 700;
+}
+.board-row.child { margin-left: 18px; }
+.board-row.stopped { opacity: .6; }
+.board-row.stopped:hover { opacity: 1; }
+.board-row .avatar {
+  display: none;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--md-shape-corner-md);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+  font-size: 12px;
+  font-weight: 800;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.board-row .mini-badge {
+  display: none;
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.board-row .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.board-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-row .sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--md-sys-color-outline);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-row .counts { display: flex; align-items: center; gap: 4px; flex: none; }
+.board-row .repo-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.board-row .repo-toggle:hover { background: var(--md-sys-color-surface-container-highest); }
+.board-row .repo-toggle .material-symbols-outlined { font-size: 18px; transition: transform .15s ease; }
+.repo-group.collapsed .repo-toggle .material-symbols-outlined { transform: rotate(-90deg); }
+.repo-group.collapsed .board-row.child { display: none; }
+.hub-dot.off { background: var(--md-sys-color-outline); opacity: .6; }
+.board-row .start-btn {
+  display: none;
+  flex: none;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.board-row.stopped:hover .start-btn,
+.board-row.stopped:focus-within .start-btn { display: inline-flex; }
+.board-row.stopped:hover .counts .rail-count,
+.board-row.stopped:focus-within .counts .rail-count { display: none; }
+.origin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.origin-chip .material-symbols-outlined { font-size: 12px; }
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.crumbs:empty { display: none; }
+.crumbs .sep { opacity: .6; }
+.page-title-row { display: flex; align-items: center; gap: 8px; }
+.hub-pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: var(--md-shape-corner-full); }
+.hub-pill.good { background: color-mix(in srgb, var(--md-sys-color-success) 18%, transparent); color: var(--md-sys-color-success); }
+.hub-pill.off { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
+.hub-pill.bad { background: color-mix(in srgb, var(--md-sys-color-error) 14%, transparent); color: var(--md-sys-color-error); }
+
+/* Narrow windows: the rail keeps only what a glance needs — repositories as their initials,
+   parent-task hubs as their key number, a badge for what waits. */
+@media (max-width: 1024px) {
+  #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
+  .rail-brand { padding: 4px 0 10px; }
+  .rail-brand .repo-info,
+  .rail-section-label,
+  .rail-item .rail-label,
+  .rail-item .rail-sub,
+  .rail-view,
+  .board-row .txt,
+  .board-row .counts,
+  .board-row .repo-toggle,
+  .board-row .start-btn,
+  .board-row .hub-dot { display: none; }
+  .m3-fab-extended span:last-child { display: none; }
+  .m3-fab-extended { padding: 12px; }
+  .rail-item { padding: 10px; justify-content: center; }
+  .rail-item .rail-badge,
+  .rail-item .rail-count { position: absolute; top: 0; right: 0; margin: 0; font-size: 10px; padding: 1px 5px; }
+  .board-row { justify-content: center; padding: 4px; }
+  .board-row.child { margin-left: 0; }
+  .board-row .avatar { display: flex; }
+  .board-row .avatar .mini-badge:not(:empty) { display: block; }
+  .board-row.stopped:hover .start-btn,
+  .board-row.stopped:focus-within .start-btn { display: none; }
+  /* The rail has no fold toggle, so every hub shows. */
+  .repo-group.collapsed .board-row.child { display: flex; }
+  .rail-tools { flex-direction: column; gap: 4px; }
+}
+.rail-item[hidden] { display: none; }
+.single-board .rail-boards-label, .single-board #board-rows { display: none; }
+#btn-nudge[hidden], #btn-resync[hidden] { display: none; }

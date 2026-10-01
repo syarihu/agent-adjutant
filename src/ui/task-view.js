@@ -20,7 +20,8 @@ function openTask(id, tab = 'overview', gateId = null) {
 }
 
 function backToBoard() {
-  setView('board');
+  // The card being read stays open on the board.
+  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', task: selectedTaskId });
 }
 
 /* What a task's gates left in the archive, read when its view or the side sheet opens
@@ -31,7 +32,7 @@ const historyFailed = new Set();
 /* A task of another board (the Sessions sidebar reads those) is kept under its board's path,
    since task ids are only unique within a board; the ones of this page keep the bare id. */
 const historyKey = (task, base) => base === BASE ? task.id : `${base}|${task.id}`;
-function historyOf(task, base = BASE, data = state) {
+function historyOf(task, base = baseOf(task), data = state) {
   // The polled records leave their diffs out and say how big each is, so a record that was
   // written or rewritten since shows as a different key here and its diff is read again.
   const sizes = (task.records || []).map(r => `${r.id}:${r.diffSize ?? ''}`).join(',');
@@ -83,7 +84,7 @@ function redrawHistoryOf(id) {
 /* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the
    same record. Without it yet (still loading) the record is returned as it is, and
    `diffPending` says to show that rather than "no diff". */
-function withDiff(record, task, base = BASE, data = state) {
+function withDiff(record, task, base = baseOf(task), data = state) {
   if (!record || record.diff != null || !record.diffSize || !task) return record;
   const kept = historyOf(task, base, data).records.find(r => r.id === record.id);
   return kept?.diff != null ? { ...record, diff: kept.diff } : record;
@@ -93,14 +94,14 @@ const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読�
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
    task's records come from /api/state, which is polled, so a send-back shows at once. */
-function gatesOf(task, data = state, base = BASE) {
+function gatesOf(task, data = state, base = baseOf(task)) {
   const h = historyOf(task, base, data);
   const byId = new Map();
   const add = g => g && byId.set(g.id, g);
   h.answered.forEach(add);
   add(task.approvedPlan);
   (task.records || h.records).forEach(r => add(task.records ? withDiff(r, task, base, data) : r));
-  (data.gates || []).filter(g => g.task === task.id).forEach(add);
+  (data.gates || []).filter(g => g.task === task.id && (!task._slug || g._slug === task._slug)).forEach(add);
   // Same-second ties go by the sequence at the end of the id, as `recordsOf` orders them, so
   // the latest of a kind is the one claimed last.
   return [...byId.values()].sort((a, b) =>
@@ -398,7 +399,7 @@ function historyEventsOf(task, all, waiting = isWaiting) {
    entries, for the side sheet, where a long history would push the actions out of reach. The
    worker's phase is not kept as a history — only the one it is in now — so it closes the
    list rather than running through it. */
-function timelineHtml(task, all, limit = Infinity, data = state, base = BASE) {
+function timelineHtml(task, all, limit = Infinity, data = state, base = baseOf(task)) {
   // The waiting gates are those of the board the task is on, not of this page's.
   const events = historyEventsOf(task, all, data === state ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));
   const shown = events.slice(-limit);

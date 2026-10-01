@@ -79,23 +79,27 @@ let showOlderDone = false;
 
 /* The buttons a card has for the worker behind it. Each runs on the server through the same
    templates the commands use; the log line says which command that was. */
-async function focusHub() {
+async function focusHub(slug = null) {
   const line = 'adj focus';
   try {
-    const data = await api('/api/hub/focus', { method: 'POST', body: '{}' });
+    const data = await boardApi(slug ? `/b/${slug}` : BASE, '/api/hub/focus', { method: 'POST', body: '{}' });
     note(line, false, data.present ? (data.ran ? 'hub のタブを前に出しました' : 'hub のタブが見つかりませんでした') : 'hub は動いていません');
   } catch (e) { note(`${line} → ${e.message}`, true); }
 }
 
 /* `confirmed` is set by the close dialog: closing stops the worker, so it is asked there first. */
-async function worktreeAct(action, worktree, confirmed = false) {
+/* The board a worktree belongs to, for the merged state of 「すべて」 and the review queue. */
+const slugOfWorktree = wt => ((state.gates || []).find(g => g.worktree === wt) || (state.tasks || []).find(t => t.worktree === wt))?._slug || null;
+
+async function worktreeAct(action, worktree, confirmed = false, slug = null) {
+  if (!slug && scopeAll()) slug = slugOfWorktree(worktree);
   const line = { focus: `adj focus --worktree ${worktree}`, ide: `adj ide --worktree ${worktree}`,
                  close: `adj close --worktree ${worktree}` }[action];
   // With no editor configured the server can only refuse, so say how to set one instead.
   if (action === 'ide' && !ideReady()) { openIdeDialog(); return; }
   if (action === 'close' && !confirmed) { openCloseDialog(worktree); return; }
   try {
-    const data = await api(`/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
+    const data = await boardApi(slug ? `/b/${slug}` : BASE, `/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
     const why = action === 'focus' ? (data.present ? (data.ran ? 'タブを前に出しました' : 'worker のタブが見つかりませんでした') : 'worker は動いていません')
               : action === 'close' ? (data.closed ? 'タブを閉じました' : 'まだ閉じていません（確認待ちかもしれません）')
               : 'エディタで開きました';
@@ -149,7 +153,8 @@ window.addEventListener('storage', e => {
   if (view === 'board') render();
   else if (view === 'task') redrawTaskView();
 });
-const allRecords = () => (state.tasks || []).flatMap(t => t.records || []);
+// A record of a merged state carries its board, so answering it reaches the right one.
+const allRecords = () => (state.tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
 const recordSeq = r => +(/-record-(\d+)$/.exec(r.id)?.[1] || 1);
 const recordsOf = task => [...(task.records || [])].sort((a, b) =>
@@ -191,7 +196,7 @@ function openRecord(id) {
   const r = recordById(id);
   if (r && r.task) return openTask(r.task, TAB_OF_KIND[r.kind] || 'history', id);
   focused = id;
-  setView('review');
+  go({ view: 'review', item: id }, { replace: view === 'review' });
   renderReview();
 }
 
@@ -234,7 +239,7 @@ async function act(action, id, choice) {
           await submitAnswer('approve', undefined, gate.id, '');
         } else if (t) {
           try {
-            await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+            await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
               method: 'POST', body: JSON.stringify({ autoStart: true }),
             });
           } catch (e) {
@@ -248,7 +253,17 @@ async function act(action, id, choice) {
         if (gate) {
           await submitAnswer('reject', undefined, gate.id, '');
         } else if (t) {
-          await move(t.id, 'backlog');
+          // The queue is one board's; from 「すべて」 the card's own board takes it.
+          if (scopeAll()) {
+            try {
+              await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
+                method: 'POST', body: JSON.stringify({ status: 'backlog' }),
+              });
+            } catch (e) {
+              note(`adj task update --id ${t.id} --status backlog → ${e.message}`, true);
+              succeeded = false;
+            }
+          } else await move(t.id, 'backlog');
         }
         break;
       }
@@ -277,7 +292,7 @@ async function act(action, id, choice) {
           await submitAnswer('changes', undefined, gate.id, reply || '修正指示');
         } else if (t && reply) {
           try {
-            await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+            await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
               method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
             });
           } catch (e) {
@@ -312,6 +327,15 @@ async function act(action, id, choice) {
   } finally {
     acting.delete(id);
   }
+}
+
+/* In 「すべて」 a card says which board it came from; on a board of its own that is known. */
+function originChip(item) {
+  if (!scopeAll() || !item?._slug) return '';
+  const b = boards.find(x => x.slug === item._slug);
+  const name = b ? (b.hub || repoNameOf(b)) : item._slug;
+  const title = b ? boardName(b) + (b.hub ? ` (${b.nwo})` : '') : item._slug;
+  return `<span class="origin-chip" title="${esc(title)}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(name)}</span></span>`;
 }
 
 function humanActions(task, col, gate) {
@@ -380,9 +404,9 @@ function humanActions(task, col, gate) {
     const prUrl = httpUrl(task.pr);
     buttons = `
       ${prUrl ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="btn-m3-primary" style="text-decoration:none;"><span class="material-symbols-outlined">open_in_new</span><span>GitHub で見る</span></a>` : ''}
-      <button type="button" class="btn-m3-tonal" data-act="refresh-prs" data-id="${esc(task.id)}">
+      ${scopeAll() ? '' : `<button type="button" class="btn-m3-tonal" data-act="refresh-prs" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">sync</span><span>PR確認</span>
-      </button>
+      </button>`}
       <button type="button" class="btn-m3-text" data-act="changes" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">rate_review</span><span>指摘をメモ</span>
       </button>
@@ -479,6 +503,7 @@ function humanCard(task, col) {
   el.className = 'card hcard' + (selectedTaskId === task.id ? ' selected' : '');
   el.id = `human-${task.id}`;
   el.dataset.id = task.id;
+  if (task._slug) el.dataset.slug = task._slug;
 
   const gate = openGate(task);
   const mins = waitingMinutes(task);
@@ -517,6 +542,7 @@ function humanCard(task, col) {
         <span>${minutesLabel(mins)}待ち</span>
       </span>
     </div>
+    ${originChip(task)}
     <div class="title">${esc(task.title)}</div>
     ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : (why ? `<div class="why">${esc(why)}</div>` : '')}
     ${col === 'prreview' && prUrl ? `<div class="pills"><a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く"><span class="material-symbols-outlined">merge</span>PR #${esc(prNumber || '')}</a></div>` : ''}
@@ -532,8 +558,10 @@ function humanCard(task, col) {
 
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('a') || e.target.closest('textarea') || e.target.closest('input')) return;
-    if (gate) judgeGate(gate.id);
-    else selectTask(task.id);
+    onBoard(task._slug, () => {
+      if (gate) judgeGate(gate.id);
+      else selectTask(task.id);
+    });
   };
   return el;
 }
@@ -543,6 +571,7 @@ function humanGateCard(gate, col) {
   el.className = 'card hcard';
   el.id = `human-${gate.id}`;
   el.dataset.id = gate.id;
+  if (gate._slug) el.dataset.slug = gate._slug;
 
   const mins = stampSecs(gate.openedAt) ? Math.max(0, Math.floor((Date.now() - stampSecs(gate.openedAt) * 1000) / 60000)) : 0;
   const wtName = gate.worktree ? gate.worktree.split('/').pop() : gate.id;
@@ -556,6 +585,7 @@ function humanGateCard(gate, col) {
         <span>${minutesLabel(mins)}待ち</span>
       </span>
     </div>
+    ${originChip(gate)}
     <div class="title">${esc(gate.title)}</div>
     ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : `<div class="why">${esc(why)}</div>`}
     ${humanGateActions(gate, col)}
@@ -567,7 +597,7 @@ function humanGateCard(gate, col) {
 
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('a') || e.target.closest('textarea') || e.target.closest('input')) return;
-    judgeGate(gate.id);
+    onBoard(gate._slug, () => judgeGate(gate.id));
   };
   return el;
 }
@@ -580,6 +610,7 @@ function agentCard(task) {
   el.className = 'card' + (hcol ? ' waiting' : '') + (stuck && !hcol ? ' stuck' : '') + (compact ? ' compact' : '') + (selectedTaskId === task.id ? ' selected' : '');
   el.id = `agent-${task.id}`;
   el.dataset.id = task.id;
+  if (task._slug) el.dataset.slug = task._slug;
 
   const live = ['dispatched', 'pr'].includes(task.status);
   const worker = live ? workerOf(task) : null;
@@ -612,6 +643,7 @@ function agentCard(task) {
   `;
 
   // 2. Title
+  h += originChip(task);
   h += `<div class="title">${esc(task.title)}</div>`;
 
   // 3. Worker Status (or Jules)
@@ -741,7 +773,7 @@ function agentCard(task) {
   el.innerHTML = h;
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('a')) return;
-    selectTask(task.id);
+    onBoard(task._slug, () => selectTask(task.id));
   };
   return el;
 }
@@ -801,7 +833,7 @@ function renderColumns(force = false) {
               <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
               <span class="col-count-pill">${allItems.length}</span>
             </div>
-            ${def.id === 'prreview' ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
+            ${def.id === 'prreview' && !scopeAll() ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
           </div>
           ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
         </div>
@@ -864,7 +896,7 @@ function renderColumns(force = false) {
       col.className = 'col' + (isNarrow ? ' narrow' : '') + (isEmpty ? ' empty' : '');
       col.dataset.col = def.id;
 
-      const nextBtn = def.id === 'before'
+      const nextBtn = def.id === 'before' && !scopeAll()
         ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" onclick="nudgeHub()"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
         : '';
 
@@ -950,7 +982,9 @@ function ghostEl(worker) {
 }
 
 function selectTask(id) {
+  pendingTask = null;
   selectedTaskId = (selectedTaskId === id ? null : id);
+  if (view === 'board') setNav({ task: selectedTaskId });
   for (const card of document.querySelectorAll('#boards .card')) {
     card.classList.toggle('selected', card.dataset.id === selectedTaskId);
   }
@@ -958,7 +992,9 @@ function selectTask(id) {
 }
 
 function closeDrawer() {
+  pendingTask = null;
   selectedTaskId = null;
+  if (nav.task) setNav({ task: null });
   for (const card of document.querySelectorAll('#boards .card')) {
     card.classList.remove('selected');
   }
@@ -967,7 +1003,7 @@ function closeDrawer() {
 
 function goToGate(gateId) {
   focused = gateId;
-  setView('review');
+  go({ view: 'review', item: gateId }, { replace: view === 'review' });
   renderReview();
 }
 
@@ -976,16 +1012,21 @@ function goToGate(gateId) {
    such view and opens in the review view. */
 function judgeGate(gateId) {
   const g = (state.gates || []).find(x => x.id === gateId);
-  const owner = g?.task && (state.tasks || []).find(t => t.id === g.task);
-  if (owner) openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id);
+  const owner = g?.task && (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
+  if (owner) onBoard(g._slug, () => openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id));
   else goToGate(gateId);
 }
 
 /* The レビュー tab: the first gate in the queue, where it is answered; the review view when the
-   queue is empty, which says so. */
+   queue is empty, which says so. With several boards the queue is the oldest gate of any of them. */
 function goToQueue() {
   // Already on the queue: stay on the one being read, and on whatever is typed for it.
   if (view === 'review') return;
+  if (multiBoard) {
+    const first = everyGate().sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || ''))[0];
+    if (first) return onBoard(first._slug, () => judgeGate(first.id));
+    return go({ view: 'review' });
+  }
   const first = (state.gates || [])[0];
   if (first) judgeGate(first.id);
   else setView('review');
@@ -1348,6 +1389,9 @@ function renderHandForm(task) {
   });
 }
 
+/* The board a card came from, which only 「すべて」 draws cards of. */
+const slugOf = el => scopeAll() ? el.closest('[data-slug]')?.dataset.slug || null : null;
+
 document.addEventListener('click', e => {
   if (!e.target.closest('#boards')) return;
   const a = e.target.closest('[data-act]');
@@ -1368,32 +1412,32 @@ document.addEventListener('click', e => {
   const dh = e.target.closest('[data-hand]');
   if (dh) {
     e.stopPropagation();
-    return openHandoverDialog(dh.dataset.hand);
+    return onBoard(slugOf(dh), () => openHandoverDialog(dh.dataset.hand));
   }
   const di = e.target.closest('[data-ide]');
   if (di) {
     e.stopPropagation();
-    return worktreeAct('ide', di.dataset.ide);
+    return worktreeAct('ide', di.dataset.ide, false, slugOf(di));
   }
   const dt = e.target.closest('[data-term-session]');
   if (dt) {
     e.stopPropagation();
-    return openTaskTerminal(dt.dataset.termSession);
+    return onBoard(slugOf(dt), () => openTaskTerminal(dt.dataset.termSession));
   }
   const df = e.target.closest('[data-focus]');
   if (df) {
     e.stopPropagation();
-    return worktreeAct('focus', df.dataset.focus);
+    return worktreeAct('focus', df.dataset.focus, false, slugOf(df));
   }
   const dg = e.target.closest('[data-gate]');
   if (dg) {
     e.stopPropagation();
-    return judgeGate(dg.dataset.gate);
+    return onBoard(slugOf(dg), () => judgeGate(dg.dataset.gate));
   }
   const dr = e.target.closest('[data-record]');
   if (dr) {
     e.stopPropagation();
-    return openRecord(dr.dataset.record);
+    return onBoard(slugOf(dr), () => openRecord(dr.dataset.record));
   }
 });
 

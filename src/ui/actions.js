@@ -1,6 +1,8 @@
 // ── the actions, each one logging the adj command it maps to ──────────
 
 async function move(id, to, before) {
+  // Cards of several boards share one queue order only on their own board.
+  if (scopeAll()) return;
   const task = (state.tasks || []).find(t => t.id === id);
   if (!task || !canDrop(columnOf(task), to)) return;
   if (columnOf(task) === 'backlog' && to === 'queued') return openHandoverDialog(id, before);
@@ -24,6 +26,7 @@ async function move(id, to, before) {
    order. They move from the last one up, each into an order nobody holds, so a request that
    fails part way leaves the queue in the same sequence with no order shared. Null then. */
 async function queueOrder(id, before, dest = null) {
+  if (scopeAll()) return null;
   const queue = (dest?.tasks || state.tasks || []).filter(t => t.status === 'queued' && t.id !== id)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   const at = before ? queue.findIndex(t => t.id === before) : -1;
@@ -84,9 +87,7 @@ document.getElementById('close-dialog').addEventListener('close', e => {
   if (e.target.returnValue === 'close' && worktree && running) worktreeAct('close', worktree, true);
 });
 
-/* The repository's hubs, one row each under 「自律 hub」, with a button to start or stop it.
-   Only on a board the resident server serves: the buttons reach outside this repository's
-   records, and a board a hub serves itself lives and dies with that hub. */
+/* How the Sessions view names a hub. */
 function hubLabel(h) {
   if (!h.parent) return 'リポジトリの hub';
   return h.key ? `親タスク ${h.key} の hub` : '親タスクの hub（キー不明）';
@@ -112,6 +113,12 @@ function pageHub() {
 /* The tab's title. The board's name comes first so a narrow tab still shows it, and a parent-task
    hub's title is the one the session tree shows (`hubTitle`), so the two never disagree. */
 function boardTitle() {
+  if (scopeAll()) return nav.view === 'review' ? '要対応レビュー — adj' : 'すべて — adj';
+  const entry = selectedBoard();
+  if (entry) {
+    const repo = entry.nwo.split('/').pop();
+    return entry.hub ? `${boardName(entry)} — ${repo}` : `${repo} — adj`;
+  }
   const repo = repoName();
   if (!repo) return 'adj';
   const h = pageHub();
@@ -119,82 +126,215 @@ function boardTitle() {
   const label = h.key ? [h.key, hubTitle(h)].filter(Boolean).join(' ') : hubShortName(h);
   return `${label} — ${repo}`;
 }
-function hubIconButton(icon, label, title, attrs = '') {
-  return `<button type="button" class="hub-btn" ${attrs} title="${esc(title)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+
+/* ── the boards in the sidebar ── */
+const selectedBoard = () => multiBoard && nav.board && nav.board !== 'all' ? boards.find(b => b.slug === nav.board) || null : null;
+const repoNameOf = b => (b.nwo || '').split('/').pop() || b.nwo || '';
+/* A repository's board is named for the repository, a parent-task hub's for its key and, once
+   it is known, the parent task's title. */
+const boardName = b => b.hub ? [b.hub, b.title].filter(Boolean).join(' ') : repoNameOf(b);
+
+function initialsOf(b) {
+  if (b.hub) return (/(\d+)\s*$/.exec(b.hub) || [])[1] || b.hub.slice(0, 3);
+  const name = repoNameOf(b);
+  const parts = name.split(/[-_.]/).filter(Boolean);
+  return (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase();
 }
-function renderHubRows() {
-  const box = document.getElementById('hub-rows');
+
+function sinceLabel(secs) {
+  if (secs == null) return '';
+  const mins = Math.max(0, Math.floor((Date.now() / 1000 - secs) / 60));
+  if (mins < 1) return 'たった今';
+  if (mins < 60) return `${mins} 分前`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `${hours} 時間前` : `${Math.floor(hours / 24)} 日前`;
+}
+
+const rowStartedAt = {};
+const rowStartingNow = b => rowStartedAt[b.slug] != null && Date.now() - rowStartedAt[b.slug] < HUB_STARTING_MS;
+
+/* The hub's state in the words a row has room for. */
+function boardState(b) {
+  if (b.hubPresent) return { tone: 'good', text: b.hub ? '親タスク hub' : 'リポジトリ hub', stopped: false };
+  const since = sinceLabel(b.hubLastAlive);
+  return {
+    tone: b.hubStale ? 'bad' : 'off',
+    text: rowStartingNow(b) ? '起動しています…' : `停止中${since ? ` · ${since}` : ''}`,
+    stopped: true,
+  };
+}
+
+function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiting }) {
+  const st = boardState(b);
+  const current = nav.board === b.slug && nav.view !== 'review';
+  const sub = st.stopped ? st.text : (b.hub ? '親タスク hub' : `${(b.nwo || '').split('/')[0]} · リポジトリ hub`);
+  const start = st.stopped
+    ? `<button type="button" class="start-btn" data-start-slug="${esc(b.slug)}" title="hub を起動します" ${rowStartingNow(b) ? 'disabled' : ''}>起動</button>` : '';
+  const toggle = chevron
+    ? `<button type="button" class="repo-toggle" data-fold="${esc(b.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : '';
+  return `<div class="board-row ${child ? 'child' : 'repo'}${st.stopped ? ' stopped' : ''}" role="link" tabindex="0" data-board="${esc(b.slug)}"${current ? ' aria-current="page"' : ''} title="${esc(boardName(b))}">
+    <span class="avatar" aria-hidden="true">${esc(initialsOf(b))}<span class="mini-badge">${own || ''}</span></span>
+    <span class="hub-dot ${st.tone}" title="${esc(st.stopped ? '停止中' : '稼働中')}"></span>
+    <span class="txt"><span class="name">${esc(boardName(b))}</span><span class="sub">${esc(sub)}</span></span>
+    <span class="counts"><span class="rail-badge${waiting ? '' : ' zero'}" title="あなたの確認待ち">${waiting}</span><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span>
+    ${start}${toggle}</div>`;
+}
+
+function renderBoardRows() {
+  const box = document.getElementById('board-rows');
+  const sub = document.getElementById('boards-sub');
+  if (!multiBoard) {
+    if (sub) sub.textContent = repoName() || '';
+    if (box) box.innerHTML = '';
+    return;
+  }
   if (!box) return;
-  if (!state.resident) { box.innerHTML = ''; box.dataset.sig = ''; return; }
-  const html = (state.hubs || []).map(h => {
-    const present = h.state?.present;
-    const stale = !present && h.state?.stale;
-    const text = present ? '稼働中' : stale ? '停止中（記録あり）' : '停止中';
-    // A parent-task hub none of whose checkouts report to it any more is finished: closing
-    // it stops it and takes it off the list. Any other hub can only be stopped.
-    const closable = h.parent && !h.children;
-    // While a reset is out, stopping or closing the hub would race it.
-    const resetting = hubResetting.has(h.id);
-    const closeHeld = hubStartingNow(h);
-    const closeButton = closable
-      ? hubIconButton('close', '閉じる', resetting ? 'hub をリセットしています' : closeHeld ? 'hub を起動しています' : 'この hub を止めて一覧から外します。タスク・gate・受信箱の記録は残ります', closeHeld ? 'disabled' : `data-hub-act="close" data-hub-id="${esc(h.id)}"`) : '';
-    // Reset is offered for the reasons start is: it starts the hub again.
-    const startWhy = hubStartWhy(h);
-    const resetWhy = startWhy || (hubStartingNow(h) ? 'hub を起動しています' : '');
-    const resetButton = hubIconButton('fiber_new', 'リセット',
-      resetWhy || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）',
-      resetWhy ? 'disabled' : `data-hub-act="reset" data-hub-id="${esc(h.id)}"`);
-    let button;
-    if (present && closable) {
-      button = '';
-    } else if (present) {
-      button = hubIconButton('stop', '停止', resetting ? 'hub をリセットしています' : 'hub が動いている tmux のペインを閉じます', resetting ? 'disabled' : `data-hub-act="stop" data-hub-id="${esc(h.id)}"`);
-    } else if (startWhy) {
-      button = hubIconButton('play_arrow', '起動', startWhy, 'disabled');
-    } else if (hubStartingNow(h)) {
-      button = hubIconButton('play_arrow', '起動', 'hub を起動しています', 'disabled');
+  // A parent-task hub that is finished is out of the list, unless it is the one being read.
+  const shown = boards.filter(b => !b.finished || nav.board === b.slug);
+  const repos = [];
+  for (const b of shown) {
+    let group = repos.find(r => r.nwo === b.nwo);
+    if (!group) repos.push(group = { nwo: b.nwo, repo: null, children: [] });
+    if (b.hub) group.children.push(b); else group.repo = b;
+  }
+  repos.sort((a, b) => a.nwo.localeCompare(b.nwo));
+  for (const r of repos) r.children.sort((a, b) => (a.hub || '').localeCompare(b.hub || ''));
+  const live = boards.filter(b => !b.finished);
+  const total = live.reduce((n, b) => n + (b.waiting || 0), 0);
+  const working = live.reduce((n, b) => n + (b.working || 0), 0);
+  const allCurrent = scopeAll() && nav.view !== 'review';
+  let html = `<div class="board-row all" role="link" tabindex="0" data-board="all"${allCurrent ? ' aria-current="page"' : ''} title="すべてのボード">
+    <span class="avatar" aria-hidden="true"><span class="material-symbols-outlined" style="font-size:18px;">dashboard</span><span class="mini-badge">${total || ''}</span></span>
+    <span class="txt"><span class="name">すべて</span><span class="sub">${repos.length} リポジトリ</span></span>
+    <span class="counts"><span class="rail-badge${total ? '' : ' zero'}" title="あなたの確認待ち">${total}</span><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span></div>`;
+  for (const r of repos) {
+    const folded = prefs.boardsFolded.includes(r.nwo);
+    const own = r.repo;
+    const withChildren = r.children.length > 0;
+    let rows = '';
+    if (own) {
+      const hidden = folded && withChildren;
+      const waiting = (own.waiting || 0) + (hidden ? r.children.reduce((n, c) => n + (c.waiting || 0), 0) : 0);
+      const busy = (own.working || 0) + (hidden ? r.children.reduce((n, c) => n + (c.working || 0), 0) : 0);
+      rows += boardRowHtml(own, { child: false, waiting, working: busy, chevron: withChildren, folded, own: own.waiting || 0 });
     } else {
-      button = hubIconButton('play_arrow', '起動', 'tmux の新しいウィンドウで adj hub を実行します', `data-hub-act="start" data-hub-id="${esc(h.id)}"`);
+      // Parent-task hubs whose repository has no board of its own: a header with no page.
+      rows += `<div class="board-row repo unlinked" title="${esc(r.nwo)}">
+        <span class="avatar" aria-hidden="true">${esc((r.nwo.split('/').pop() || '').slice(0, 2).toUpperCase())}</span>
+        <span class="txt"><span class="name">${esc(r.nwo.split('/').pop())}</span><span class="sub">${esc(r.nwo.split('/')[0])}</span></span>
+        <button type="button" class="repo-toggle" data-fold="${esc(r.nwo)}" aria-expanded="${!folded}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button></div>`;
     }
-    const session = (state.sessions || []).find(s => s.id === h.id);
-    const term = boardTerminalReady(session)
-      ? hubIconButton('web_asset', '端末を開く', 'この hub の tmux をボードで開く', `data-hub-term="${esc(h.id)}"`) : '';
-    const tone = present ? 'good' : stale ? 'bad' : 'warn';
-    return `<div class="hub-row" title="${esc(hubLabel(h))}">
-      <div class="hub-text">
-        <div class="hub-name"><span class="hub-dot ${tone}"></span><span>${esc(hubShortName(h))}</span></div>
-        <div class="hub-state">${esc(text)}</div>
-      </div>${term}${button}${resetButton}${closeButton}</div>`;
-  }).join('');
+    for (const c of r.children) {
+      rows += boardRowHtml(c, { child: true, waiting: c.waiting || 0, working: c.working || 0 });
+    }
+    html += `<div class="repo-group${folded && withChildren ? ' collapsed' : ''}">${rows}</div>`;
+  }
+  const sig = html;
+  const subText = `${repos.length} リポジトリ · hub ${live.filter(b => b.hubPresent).length}`;
+  if (sub) sub.textContent = subText;
   // Not rebuilt for the same rows: that would drop the focus and a click in progress.
-  if (box.dataset.sig === html) return;
-  box.dataset.sig = html;
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
   box.innerHTML = html;
 }
-document.getElementById('hub-rows').addEventListener('click', e => {
-  const term = e.target.closest('button[data-hub-term]');
-  if (term) {
-    return openSessionsView(term.dataset.hubTerm, { from: { view } });
+
+document.getElementById('board-rows').addEventListener('click', e => {
+  const start = e.target.closest('button[data-start-slug]');
+  if (start) {
+    e.stopPropagation();
+    const b = boards.find(x => x.slug === start.dataset.startSlug);
+    if (b) hubStartAt(`/b/${b.slug}`, b.hubId, b.hub, b);
+    return;
   }
-  const button = e.target.closest('button[data-hub-act]');
-  if (!button) return;
-  if (button.dataset.hubAct === 'start') hubStart(button.dataset.hubId);
-  else openHubStopDialog(button.dataset.hubId, button.dataset.hubAct);
+  const fold = e.target.closest('button[data-fold]');
+  if (fold) {
+    const nwo = fold.dataset.fold;
+    const at = prefs.boardsFolded.indexOf(nwo);
+    if (at >= 0) prefs.boardsFolded.splice(at, 1); else prefs.boardsFolded.push(nwo);
+    savePrefs();
+    renderBoardRows();
+    return;
+  }
+  const row = e.target.closest('.board-row[data-board]');
+  if (row) openBoard(row.dataset.board);
 });
+document.getElementById('board-rows').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('.board-row[data-board]');
+  if (!row || e.target !== row) return;
+  e.preventDefault();
+  openBoard(row.dataset.board);
+});
+
+/* A row of the sidebar: that board, in the view that is open. The review queue and 「すべて」
+   have no session list, so they open the board's cards. */
+function openBoard(slug) {
+  const keep = nav.view === 'review' || (slug === 'all' && nav.view === 'sessions') ? 'human' : nav.view;
+  go({ board: slug, view: keep, task: null, item: null });
+}
+
+/* The name and state the top bar gives the screen. Only a board's own screen has its name in
+   the title; the other views keep the title `setView` gave them and add the path to it. */
+function renderTitle() {
+  // The hub's own buttons have no board to act on in 「すべて」 and the review queue.
+  for (const id of ['btn-nudge', 'btn-resync']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = scopeAll();
+  }
+  const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + (b.waiting || 0), 0) : waitingIn();
+  document.title = (sum ? `(${sum}) ` : '') + boardTitle();
+  const crumbs = document.getElementById('crumbs');
+  const title = document.getElementById('page-title');
+  const subtitle = document.getElementById('page-subtitle');
+  if (!crumbs) return;
+  const entry = selectedBoard();
+  const sep = '<span class="sep">›</span>';
+  let trail;
+  if (view === 'review') {
+    trail = ['全体', '要対応レビュー'];
+  } else if (scopeAll()) {
+    trail = ['すべてのボード'];
+  } else if (entry) {
+    const [owner] = (entry.nwo || '').split('/');
+    trail = entry.hub ? [owner, repoNameOf(entry), boardName(entry)] : [owner, repoNameOf(entry)];
+  } else {
+    const [owner] = (state.repo || '').split('/');
+    trail = owner ? [owner, repoName()] : [];
+  }
+  crumbs.innerHTML = trail.map(esc).join(sep);
+  if (subtitle) subtitle.hidden = view === 'board';
+  if (view !== 'board' || !title) return;
+  if (scopeAll()) { title.textContent = 'すべて'; return; }
+  const hubState = entry ? boardState(entry)
+    : (state.hub?.present ? { tone: 'good' } : { tone: state.hub?.stale ? 'bad' : 'off' });
+  const present = entry ? !!entry.hubPresent : !!state.hub?.present;
+  const name = entry ? boardName(entry) : (pageHub()?.parent ? (pageHub().key || '') : (repoName() || 'タスクボード'));
+  title.innerHTML = `${esc(name)} <span class="hub-pill ${present ? 'good' : hubState.tone === 'bad' ? 'bad' : 'off'}">${present ? 'hub 稼働中' : 'hub 停止中'}</span>`;
+}
+
+/* Start the hub of the board at `base`. The route is the resident's, so it works from any
+   page. */
+async function hubStartAt(base, hubId, key, row = null) {
+  if (row && rowStartingNow(row)) return note('hub を起動', false, 'hub を起動しています');
+  const line = key ? `adj hub --tab --hub=${key}` : 'adj hub --tab';
+  try {
+    const data = await boardApi(base, `/api/hubs/${encodeURIComponent(hubId)}/start`, { method: 'POST', body: '{}' });
+    if (row && !data.alreadyRunning) rowStartedAt[row.slug] = Date.now();
+    note(line, false, data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました');
+    await refreshBoards();
+    renderBoardRows();
+  } catch (e) {
+    note(`${line} → ${e.message}`, true);
+  }
+}
 
 async function hubStart(id) {
   const h = (state.hubs || []).find(x => x.id === id);
   if (!h) return;
   // A start now would resume the old conversation, or open a second window.
   if (hubStartingNow(h)) return note('hub を起動', false, 'hub を起動しています');
-  const line = h.key ? `adj hub --tab --hub=${h.key}` : 'adj hub --tab';
-  try {
-    const data = await api(`/api/hubs/${encodeURIComponent(id)}/start`, { method: 'POST', body: '{}' });
-    note(line, false, data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました');
-    await refresh();
-  } catch (e) {
-    note(`${line} → ${e.message}`, true);
-  }
+  await hubStartAt(BASE, id, h.key);
+  await refresh();
 }
 
 let hubStopTarget = null;
@@ -262,7 +402,7 @@ async function hubReset(id) {
     // resume the old conversation. Added and removed in this one function, so that no early
     // return can leave the hub marked.
     hubResetting.add(id);
-    renderHubRows();
+    renderBoardRows();
     if (inSessions) showSessNotice('hub をリセットしています…');
     try {
       const data = await run();
@@ -282,7 +422,7 @@ async function hubReset(id) {
     } finally {
       hubResetting.delete(id);
       // `refresh` draws nothing when the state is unchanged, so the buttons are redrawn here.
-      renderHubRows();
+      renderBoardRows();
       if (inSessions) renderSessionsView();
     }
   };
@@ -509,7 +649,20 @@ function handedNote(handed) {
   return handed.woken ? ' / hub を起動/通知しました' : ' / hub は稼働中。次回の受信箱確認時に処理されます';
 }
 
-function openForm() { document.getElementById('form').showModal(); syncForm(); }
+function openForm() {
+  if (scopeAll() && !boards.some(b => !b.finished)) return note('新しいタスク', true, '作り先のボードがありません');
+  // 「すべて」 has no board of its own to create the task in: ask which.
+  const field = document.getElementById('f-board');
+  if (field) {
+    field.hidden = !scopeAll();
+    if (scopeAll()) {
+      field.querySelector('select').innerHTML = boards.filter(b => !b.finished)
+        .map(b => `<option value="${esc(b.slug)}">${esc(b.hub ? `${repoNameOf(b)} › ${boardName(b)}` : repoNameOf(b))}</option>`).join('');
+    }
+  }
+  document.getElementById('form').showModal();
+  syncForm();
+}
 function syncForm() {
   const kind = document.querySelector('input[name=kind]:checked').value;
   document.getElementById('f-issue').classList.toggle('hidden', kind !== 'start');
@@ -538,11 +691,13 @@ async function submitForm(e) {
   const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` +
     (body.stopAt && body.stopAt !== 'plan' ? ` --stop-at ${body.stopAt}` : '') +
     (body.executor === 'jules' ? ' --executor jules' : '') + (status === 'queued' ? ' --queue' : '');
+  if (scopeAll() && !f.get('board')) return note('adj task add', true, '作り先のボードを選んでください');
   try {
-    const data = await api('/api/tasks', { method:'POST', body: JSON.stringify(body) });
+    const into = scopeAll() ? `/b/${f.get('board')}` : BASE;
+    const data = await boardApi(into, '/api/tasks', { method:'POST', body: JSON.stringify(body) });
     note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));
     e.target.reset();
-    await refresh();
+    await refresh(true);
   } catch (err) {
     note(`${line} → ${err.message}`, true);
   }

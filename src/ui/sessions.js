@@ -230,6 +230,14 @@ function openSessionsView(id, { from } = {}) {
     if (id) selectSession(id);
     return;
   }
+  // A change of view is a step in the history: Back returns to the board.
+  if (!navApplying && nav.view !== 'sessions') {
+    go({ view: 'sessions' });
+    if (id) selectSession(id);
+    sessView.back = from || null;
+    renderSessionContext();
+    return;
+  }
   // Below 1400px the sidebar floats over the terminal, so it starts out of the way.
   sessView.sideNarrowOpen = false;
   setView('sessions');
@@ -276,7 +284,8 @@ function connectSelected() {
 function returnFromSessions() {
   const back = sessView.back;
   sessView.back = null;
-  setView(back?.view || 'board');
+  if (!back?.view || back.view === 'board') go({ view: prefs.tab === 'agent' ? 'agent' : 'human' });
+  else setView(back.view);
   if (back?.taskId && (back.view || 'board') === 'board' && (state.tasks || []).some(t => t.id === back.taskId)) selectTask(back.taskId);
 }
 
@@ -851,8 +860,8 @@ async function answerSessionGate(s, decision, choice) {
 function openGateInReview(s) {
   const w = s?.waiting;
   if (!w) return;
-  if (!state.resident || BASE === `/b/${w.slug}`) goToGate(w.id);
-  else location.href = `/b/${w.slug}/?token=${enc(TOKEN)}#gate/${w.id}`;
+  // The review queue reads every board, so the gate is there whichever board it is on.
+  goToGate(w.id);
 }
 
 /* ── The panel over a session that is not running ── */

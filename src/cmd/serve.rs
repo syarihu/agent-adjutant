@@ -628,20 +628,178 @@ fn addresses() -> Vec<Address> {
     slugs.iter().filter_map(|slug| address_of(slug)).collect()
 }
 
-/// The board list as `/api/boards` and `adj server status` give it.
+/// What a worker's record says about the task it is on, for `board_counts`.
+struct WorkerSeen {
+    task: Option<String>,
+    phase: Option<String>,
+}
+
+/// The worker record in `worktree`, if there is one. The task is read the way `worker_task`
+/// reads it, minus the saved-session fallback: a record is all the page's join looks at.
+fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
+    let record = messaging::read_json(&messaging::worker_record_path(Path::new(worktree)))?;
+    let text = |key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    Some(WorkerSeen {
+        task: text("task"),
+        phase: text("phase"),
+    })
+}
+
+/// How many things wait on the person and how many workers are at work on one board, from its
+/// records alone — no `ps`, no git, no tmux — so the sidebar can ask every board at once.
+///
+/// This mirrors `humanColOf` in `src/ui/core.js` and the board's own "waiting" and "workers"
+/// counts; keep the two in step. A task waits when it has an open gate, or when its pull
+/// request is the person's ball: a Jules task with a pull request, or a worker task whose
+/// record says phase `pr` (or has no record while the task itself says `pr`). A gate whose
+/// task is not on the board waits too. Workers at work are the dispatched and `pr` tasks that
+/// do not wait. The page's Jules check also looks at the session's live state, which only the
+/// board's own poll has, so a Jules task that is still working counts as waiting here.
+fn board_counts(
+    tasks: &[task::Task],
+    gates: &[gate::Gate],
+    worker: impl Fn(&str) -> Option<WorkerSeen>,
+) -> (usize, usize) {
+    let mut waiting = 0;
+    let mut working = 0;
+    for t in tasks {
+        let waits = if gates
+            .iter()
+            .any(|g| g.task.as_deref() == Some(t.id.as_str()))
+        {
+            true
+        } else if matches!(t.status, task::Status::Done | task::Status::Cancelled) {
+            false
+        } else if t.jules_session.is_some() && t.pr.is_some() {
+            true
+        } else if t.pr.is_some() {
+            let seen = t
+                .worktree
+                .as_deref()
+                .and_then(&worker)
+                .filter(|w| w.task.as_deref().is_none_or(|id| id == t.id));
+            match seen {
+                Some(w) => w.phase.as_deref() == Some("pr"),
+                None => t.status == task::Status::Pr,
+            }
+        } else {
+            false
+        };
+        if waits {
+            waiting += 1;
+        } else if matches!(t.status, task::Status::Dispatched | task::Status::Pr) {
+            working += 1;
+        }
+    }
+    waiting += gates
+        .iter()
+        .filter(|g| {
+            g.task
+                .as_deref()
+                .is_none_or(|id| !tasks.iter().any(|t| t.id == id))
+        })
+        .count();
+    (waiting, working)
+}
+
+/// The board list as `/api/boards` and `adj server status` give it. The counts are read from
+/// each board's records (see `board_counts`), so one `ps` and one `git worktree list` per
+/// repository serve every board.
 fn boards_json(port: u16, token: &str) -> Vec<Value> {
-    addresses()
-        .into_iter()
+    let addresses = addresses();
+    let table = messaging::ProcessTable::snapshot();
+    let state_dir = messaging::state_dir();
+    // Workers per parent-task hub, counted by the hub their record reports to. Only asked of
+    // a repository that has a parent-task hub listed.
+    let mut children: HashMap<String, usize> = HashMap::new();
+    let mut seen_mains: Vec<&str> = Vec::new();
+    // Repositories whose worktree listing failed: their workers are unknown, so none of their
+    // parent hubs may be called finished.
+    let mut unlisted: Vec<&str> = Vec::new();
+    for a in addresses.iter().filter(|a| a.hub.is_some()) {
+        if seen_mains.contains(&a.main.as_str()) {
+            continue;
+        }
+        seen_mains.push(&a.main);
+        let listed = crate::repo::linked_worktrees(&a.main).unwrap_or_else(|_| {
+            unlisted.push(&a.main);
+            Vec::new()
+        });
+        for w in listed {
+            if let Some(key) = messaging::worker_hub_key(Path::new(&w)) {
+                *children
+                    .entry(crate::repo::slug_for(&a.nwo, Some(&key)))
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+    addresses
+        .iter()
         .map(|a| {
-            let present = crate::repo::hub_name(&a.nwo, a.hub.as_deref())
-                .map(|name| messaging::hub_status(&a.slug, &name).present)
-                .unwrap_or(false);
+            let status = crate::repo::hub_name(&a.nwo, a.hub.as_deref())
+                .ok()
+                .map(|name| messaging::hub_status_with(&table, &a.slug, &name));
+            let present = status.as_ref().is_some_and(|s| s.present);
+            let tasks = task::list(&task::dir(&state_dir, &a.slug));
+            let mut gates = gate::list(&gate::dir(&state_dir, &a.slug));
+            let (waiting, working) = board_counts(&tasks, &gates, worker_seen);
+            gates.sort_by(|x, y| x.opened_at.cmp(&y.opened_at));
+            let gates: Vec<Value> = gates
+                .iter()
+                .map(|g| {
+                    json!({
+                        "id": g.id,
+                        "kind": g.kind,
+                        "title": g.title,
+                        "openedAt": g.opened_at,
+                        "task": g.task,
+                        "worktree": g.worktree,
+                    })
+                })
+                .collect();
+            // When the hub is not there, when it was last seen alive: the session it would
+            // resume says which heartbeat is its own.
+            let last_alive = if present {
+                None
+            } else {
+                messaging::hub_session(&a.slug)
+                    .and_then(|saved| messaging::hub_last_alive(&a.slug, &saved.session_id))
+            };
+            let finished = a.hub.is_some()
+                && !present
+                && !unlisted.contains(&a.main.as_str())
+                && children.get(&a.slug).copied().unwrap_or(0) == 0
+                && waiting == 0
+                // A queued or backlog task has no worker or gate yet but is still to be done; a hub with
+                // no task at all has not been used yet, and is still there to start.
+                && !tasks.is_empty()
+                && tasks
+                    .iter()
+                    .all(|t| matches!(t.status, task::Status::Done | task::Status::Cancelled));
             json!({
                 "slug": a.slug,
                 "nwo": a.nwo,
                 "hub": a.hub,
                 "url": resident_board_url(port, &a.slug, token),
                 "hubPresent": present,
+                "hubId": match &a.hub {
+                    Some(key) => format!("hub-{}", key.trim()),
+                    None => "hub".to_string(),
+                },
+                "hubStale": status.as_ref().is_some_and(|s| s.stale),
+                "hubStartedAt": status.as_ref().and_then(|s| s.started_at.clone()),
+                "hubLastAlive": last_alive,
+                "title": a.hub.as_ref().and_then(|_| super::hub_title::cached_title(&a.slug)),
+                "waiting": waiting,
+                "working": working,
+                "gates": gates,
+                "finished": finished,
             })
         })
         .collect()
@@ -836,7 +994,7 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         return route(&server, &inner, out);
     }
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/" | "/index.html") => http::html(out, &index_page(resident)),
+        ("GET", path) if is_page_path(path) => http::html(out, UI_HTML),
         ("GET", "/api/boards") => http::json(
             out,
             200,
@@ -844,53 +1002,6 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         ),
         _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
     }
-}
-
-fn html_escaped(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// The list of boards, for `/`. Plain HTML with no script: it is a list of links.
-fn index_page(resident: &Resident) -> String {
-    let boards = boards_json(resident.port, &resident.token);
-    let items: String = boards
-        .iter()
-        .map(|b| {
-            let slug = b["slug"].as_str().unwrap_or_default();
-            let nwo = b["nwo"].as_str().unwrap_or_default();
-            let name = match b["hub"].as_str() {
-                Some(key) => format!("{nwo}（{key}）"),
-                None => nwo.to_string(),
-            };
-            let state = if b["hubPresent"].as_bool().unwrap_or(false) {
-                "hub 稼働中"
-            } else {
-                "hub 停止中"
-            };
-            format!(
-                "<li><a href=\"/b/{slug}/?token={}\">{}</a> <span class=\"state\">{state}</span></li>\n",
-                resident.token,
-                html_escaped(&name)
-            )
-        })
-        .collect();
-    let body = if items.is_empty() {
-        "<p>まだボードがありません。リポジトリで adj server start か adj hub を実行してください。</p>"
-            .to_string()
-    } else {
-        format!("<ul>\n{items}</ul>")
-    };
-    format!(
-        "<!DOCTYPE html>\n<html lang=\"ja\">\n<head>\n<meta charset=\"utf-8\">\n\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>adj ボード一覧</title>\n\
-         <style>body{{font-family:system-ui,sans-serif;margin:2rem auto;max-width:40rem;padding:0 1rem;line-height:1.7}}\
-         li{{margin:.4rem 0}}.state{{color:#666;font-size:.85em;margin-left:.5em}}</style>\n\
-         </head>\n<body>\n<h1>ボード</h1>\n{body}\n</body>\n</html>\n"
-    )
 }
 
 /// A relative `ADJUTANT_STATE_DIR`, made absolute against where this was started, so that
@@ -1313,10 +1424,20 @@ fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
     route(server, &req, &mut stream)
 }
 
+/// The paths that are the page itself. One document serves them all, and the page reads its
+/// own address to know which view to draw.
+fn is_page_path(path: &str) -> bool {
+    matches!(path, "/" | "/index.html" | "/review")
+}
+
 fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/" | "/index.html") => http::html(out, UI_HTML),
-        ("GET", "/api/state") => http::json(out, 200, &state(server).to_string()),
+        ("GET", path) if is_page_path(path) => http::html(out, UI_HTML),
+        ("GET", "/api/state") => http::json(
+            out,
+            200,
+            &state(server, req.param("sessions") != Some("0")).to_string(),
+        ),
         ("GET", path) if vendor_asset(path, server.resident).is_some() => {
             let (kind, body) = vendor_asset(path, server.resident).unwrap_or_default();
             http::respond(out, 200, kind, body.as_bytes())
@@ -1488,7 +1609,9 @@ fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
         .collect()
 }
 
-fn state(server: &Server) -> Value {
+/// `with_sessions` false leaves `sessions` empty: the page that merges several boards has no
+/// use for them, and listing them is the dearest part of a poll.
+fn state(server: &Server, with_sessions: bool) -> Value {
     // Before the gates are read: a gate whose worker has moved on is closed here rather than
     // by a timer, since nothing in the server polls on one.
     let _ = super::gate::close_resumed(&server.ctx);
@@ -1582,18 +1705,22 @@ fn state(server: &Server) -> Value {
         workers_data.push((status, branch));
     }
 
-    let sessions = sessions_of(
-        server,
-        &settings,
-        &hubs,
-        &linked_paths,
-        Listing {
-            processes: &processes,
-            main_branch,
-        },
-        None,
-        |index, _| workers_data[index].clone(),
-    );
+    let sessions = if with_sessions {
+        sessions_of(
+            server,
+            &settings,
+            &hubs,
+            &linked_paths,
+            Listing {
+                processes: &processes,
+                main_branch,
+            },
+            None,
+            |index, _| workers_data[index].clone(),
+        )
+    } else {
+        Vec::new()
+    };
 
     let pending: Vec<Value> = messaging::list(&repo.slug)
         .iter()
@@ -2808,7 +2935,7 @@ mod tests {
         // The script uses what `terminal.js` and `actions.js` define, and `main.js` calls it.
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
         assert!(at("function mountSessionTerminal") < at("function sessionState"));
-        assert!(at("function sessionState") < at("openPendingSession)"));
+        assert!(at("function sessionState") < at("setInterval(refresh, 2000)"));
     }
 
     #[test]
@@ -2858,6 +2985,7 @@ mod tests {
             "function pageHub",
             "+ boardTitle()",
             "— adj`",
+            "'すべて — adj'",
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
@@ -2881,7 +3009,7 @@ mod tests {
         // only after both are defined.
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
         assert!(at("function timelineHtml") < at("function renderSessionSidebar"));
-        assert!(at("function renderSessionSidebar") < at("openPendingSession)"));
+        assert!(at("function renderSessionSidebar") < at("setInterval(refresh, 2000)"));
     }
 
     #[test]
@@ -2904,7 +3032,7 @@ mod tests {
         // is defined after it and before `main.js` starts polling.
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
         assert!(at("function renderSessionSidebar") < at("function sessionPendingRows"));
-        assert!(at("function sessionPendingRows") < at("openPendingSession)"));
+        assert!(at("function sessionPendingRows") < at("setInterval(refresh, 2000)"));
     }
 
     #[test]
@@ -3158,6 +3286,115 @@ mod tests {
             "openedAt": "20260922T010000Z",
         }))
         .unwrap()
+    }
+
+    fn counts(tasks: &[task::Task], gates: &[gate::Gate], phase: Option<&str>) -> (usize, usize) {
+        board_counts(tasks, gates, |_| {
+            phase.map(|p| WorkerSeen {
+                task: None,
+                phase: Some(p.to_string()),
+            })
+        })
+    }
+
+    fn on_pr(id: &str, status: task::Status) -> task::Task {
+        let mut t = a_task(id, status);
+        t.pr = Some("https://example.com/pull/1".to_string());
+        t.worktree = Some("/tmp/wt".to_string());
+        t
+    }
+
+    #[test]
+    fn a_gate_on_a_task_makes_it_wait_and_not_work() {
+        let t = a_task("t1", task::Status::Dispatched);
+        assert_eq!(
+            counts(&[t], &[a_gate("g", gate::Kind::Plan, "t1")], None),
+            (1, 0)
+        );
+    }
+
+    #[test]
+    fn a_gate_with_no_task_on_the_board_waits_by_itself() {
+        let t = a_task("t1", task::Status::Queued);
+        let mut loose = a_gate("g1", gate::Kind::Question, "t1");
+        loose.task = None;
+        let unknown = a_gate("g2", gate::Kind::Question, "gone");
+        assert_eq!(counts(&[t], &[loose, unknown], None), (2, 0));
+    }
+
+    #[test]
+    fn a_pull_request_waits_on_a_person_only_in_the_phase_that_hands_it_over() {
+        let t = on_pr("t1", task::Status::Pr);
+        assert_eq!(counts(std::slice::from_ref(&t), &[], Some("pr")), (1, 0));
+        assert_eq!(
+            counts(std::slice::from_ref(&t), &[], Some("pr-bots")),
+            (0, 1)
+        );
+        // No worker record: the task's own status says whose ball it is.
+        assert_eq!(counts(&[t], &[], None), (1, 0));
+        let dispatched = on_pr("t2", task::Status::Dispatched);
+        assert_eq!(counts(&[dispatched], &[], None), (0, 1));
+    }
+
+    #[test]
+    fn a_record_naming_another_task_is_no_record() {
+        let t = on_pr("t1", task::Status::Pr);
+        let (waiting, working) = board_counts(&[t], &[], |_| {
+            Some(WorkerSeen {
+                task: Some("other".to_string()),
+                phase: Some("pr-bots".to_string()),
+            })
+        });
+        assert_eq!((waiting, working), (1, 0));
+    }
+
+    #[test]
+    fn dispatched_tasks_work_and_finished_ones_do_neither() {
+        let tasks = [
+            a_task("t1", task::Status::Dispatched),
+            a_task("t2", task::Status::Done),
+            a_task("t3", task::Status::Cancelled),
+            a_task("t4", task::Status::Backlog),
+            on_pr("t5", task::Status::Done),
+        ];
+        assert_eq!(counts(&tasks, &[], None), (0, 1));
+    }
+
+    #[test]
+    fn a_jules_task_with_a_pull_request_waits() {
+        let mut t = on_pr("t1", task::Status::Pr);
+        t.jules_session = Some("s1".to_string());
+        assert_eq!(counts(&[t], &[], Some("pr-bots")), (1, 0));
+    }
+
+    #[test]
+    fn the_page_paths_are_the_page_and_nothing_under_them() {
+        for path in ["/", "/index.html", "/review"] {
+            assert!(is_page_path(path), "{path}");
+        }
+        for path in ["/api/state", "/api/boards", "/review/x", "/b/x/"] {
+            assert!(!is_page_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn the_sidebar_lists_boards_and_has_no_hub_footer() {
+        for piece in [
+            "id=\"board-rows\"",
+            "function renderBoardRows",
+            "function parseUrl",
+            "function urlOf",
+            "history.pushState",
+            "popstate",
+            "function mergeStates",
+            "id=\"f-board\"",
+            "'?token='",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        for piece in ["id=\"hub-rows\"", "自律 hub", "function renderHubRows"] {
+            assert!(!UI_HTML.contains(piece), "{piece}");
+        }
     }
 
     #[test]
@@ -3677,7 +3914,7 @@ mod tests {
         let settings = settings_now(&server);
 
         // What the page is sent, which is the whole list.
-        let listed = state(&server)["sessions"].as_array().unwrap().clone();
+        let listed = state(&server, true)["sessions"].as_array().unwrap().clone();
         let ids: Vec<&str> = listed.iter().map(|s| s["id"].as_str().unwrap()).collect();
         let digest = |rel: &str| crate::repo::short_digest(root.join(rel).to_str().unwrap());
         for expected in [
