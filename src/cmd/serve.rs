@@ -2281,15 +2281,18 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
-/// `/api/hubs/<id>/<action>` as its id and action, for the two actions there are. The id is
-/// one path segment, percent-decoded — the page sends it through `encodeURIComponent`, and a
-/// key may hold a `/`, a space or a letter that is not ASCII. The raw segment is checked for a
-/// `/` first, so an encoded one names an id and a bare one is another route. An encoding that
-/// is not UTF-8 is an error for the caller to say, not a different route.
+/// `/api/hubs/<id>/<action>` as its id and action, for the four actions there are (start, stop,
+/// close and reset). The id is one path segment, percent-decoded — the page sends it through
+/// `encodeURIComponent`, and a key may hold a `/`, a space or a letter that is not ASCII. The
+/// raw segment is checked for a `/` first, so an encoded one names an id and a bare one is
+/// another route. An encoding that is not UTF-8 is an error for the caller to say, not a
+/// different route.
 fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
     let (raw, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
-    (!raw.is_empty() && !raw.contains('/') && matches!(action, "start" | "stop" | "close"))
-        .then(|| (decode_segment(raw), action))
+    (!raw.is_empty()
+        && !raw.contains('/')
+        && matches!(action, "start" | "stop" | "close" | "reset"))
+    .then(|| (decode_segment(raw), action))
 }
 
 /// `/api/sessions/<id>/terminal` as the session id, percent-decoded as `hub_route` does. Only
@@ -2438,8 +2441,45 @@ pub(super) fn hub_start_of(input: &Value) -> Result<super::HubStart, String> {
     }
 }
 
-/// Start, stop or close one of the repository's hubs from the board. `id` is the `hubs[].id` the
-/// page was given, so the page can only name a hub this repository was found to have.
+/// The context that starts `hub`: addressed by its key, refused when a parent hub's key is not
+/// known (it could only be started as some other hub).
+fn hub_start_context(
+    server: &Server,
+    hub: &crate::session::RepoHub,
+    settings: crate::config::Settings,
+) -> Result<super::Context, String> {
+    if hub.parent && hub.key.is_none() {
+        return Err(
+            "the key of this hub is not known; start it with adj hub --hub <key>".to_string(),
+        );
+    }
+    Ok(super::Context {
+        repo: server.ctx.repo.clone().addressed(hub.key.as_deref())?,
+        resolved: server.ctx.resolved.clone(),
+        settings,
+    })
+}
+
+/// The context that stops `hub`. Addressed by the slug the hub was listed under: a hub whose
+/// key cannot be told can still be stopped, and nothing here needs the key for it.
+fn hub_stop_context(
+    server: &Server,
+    hub: &crate::session::RepoHub,
+    settings: crate::config::Settings,
+) -> super::Context {
+    let mut stopping = server.ctx.repo.clone();
+    stopping.slug = hub.slug.clone();
+    stopping.hub_name = hub.name.clone();
+    super::Context {
+        repo: stopping,
+        resolved: server.ctx.resolved.clone(),
+        settings,
+    }
+}
+
+/// Start, stop, close or reset one of the repository's hubs from the board. `id` is the
+/// `hubs[].id` the page was given, so the page can only name a hub this repository was found to
+/// have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
     let (id, action) = hub_route(path).ok_or("no such route")?;
     let id = id?;
@@ -2457,17 +2497,7 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
     match action {
         "start" => {
             let start = hub_start_of(&input)?;
-            if hub.parent && hub.key.is_none() {
-                return Err(
-                    "the key of this hub is not known; start it with adj hub --hub <key>"
-                        .to_string(),
-                );
-            }
-            let ctx = super::Context {
-                repo: repo.clone().addressed(hub.key.as_deref())?,
-                resolved: server.ctx.resolved.clone(),
-                settings,
-            };
+            let ctx = hub_start_context(server, &hub, settings)?;
             match super::start_hub(&ctx, start)? {
                 super::TabOutcome::Opened(done) => {
                     Ok(json!({ "started": true, "description": done.description }))
@@ -2477,23 +2507,45 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                 }
             }
         }
+        "reset" => {
+            // Everything start would refuse is refused before the hub is stopped: a reset that
+            // could not start again would only have taken the hub down.
+            if !super::hub_startable(&settings.terminal) {
+                return Err(
+                    "starting a hub from the board needs terminal.preset \"tmux\"".to_string(),
+                );
+            }
+            let start_ctx = hub_start_context(server, &hub, settings.clone())?;
+            let was_running = super::stop_hub(&hub_stop_context(server, &hub, settings))?;
+            match super::start_hub(&start_ctx, super::HubStart::New) {
+                Ok(super::TabOutcome::Opened(done)) => Ok(json!({
+                    "reset": true,
+                    "wasRunning": was_running,
+                    "started": true,
+                    "description": done.description,
+                })),
+                // Nothing was stopped and a hub is up: it is not a new conversation, and the
+                // answer must not say it is.
+                Ok(super::TabOutcome::AlreadyRunning(status)) => Ok(json!({
+                    "reset": was_running,
+                    "wasRunning": was_running,
+                    "alreadyRunning": true,
+                    "pid": status.pid,
+                })),
+                Err(e) if was_running => Err(format!(
+                    "stopped {}, but could not start it again: {e}",
+                    hub.name
+                )),
+                Err(e) => Err(e),
+            }
+        }
         "stop" | "close" => {
             let closing = action == "close";
             if closing {
                 super::closable_check(repo, &hub)?;
             }
-            // Addressed by the slug the hub was listed under: a hub whose key cannot be told
-            // can still be stopped, and nothing here needs the key for it.
-            let mut stopping = repo.clone();
-            stopping.slug = hub.slug.clone();
-            stopping.hub_name = hub.name.clone();
-            let ctx = super::Context {
-                repo: stopping,
-                resolved: server.ctx.resolved.clone(),
-                settings,
-            };
             // A hub that will not stop is not closed: nothing is forgotten until it is gone.
-            let was_running = super::stop_hub(&ctx)?;
+            let was_running = super::stop_hub(&hub_stop_context(server, &hub, settings))?;
             if closing {
                 // `stop_hub` cleared a record naming the process it stopped; what is left
                 // names none, unless a hub registered in the meantime, which stays.
@@ -2687,6 +2739,9 @@ mod tests {
             "function answerSessionGate",
             "function renderSessionActions",
             "function renderSessionGate",
+            "hub-reset",
+            "function hubReset",
+            "id=\"hub-stop-icon\"",
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
@@ -2923,6 +2978,10 @@ mod tests {
         assert_eq!(
             route("/api/hubs/hub-wid-957/close"),
             Some(("hub-wid-957".into(), "close"))
+        );
+        assert_eq!(
+            route("/api/hubs/hub-wid-957/reset"),
+            Some(("hub-wid-957".into(), "reset"))
         );
         assert_eq!(route("/api/hubs/a+b/start"), Some(("a+b".into(), "start")));
         // An encoding that is wrong is the caller's mistake to be told, not another route.

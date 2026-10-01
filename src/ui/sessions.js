@@ -598,16 +598,22 @@ async function sessAct(key, label, fn) {
   }
 }
 
+/* Why the board cannot start `h` (and so cannot reset it), or '' when it can. */
+const hubStartWhy = h => h.parent && !h.key ? 'キーが分からないため起動できません。adj hub --hub <キー> で起動してください'
+  : !state.hubStart?.available ? 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます' : '';
+
 /* What the board can do about a hub, by the same rule as its row in the hub list: a parent-task
    hub that no checkout reports to any more is closed, whether or not it runs. */
 function hubActionOf(s) {
   const h = (state.hubs || []).find(x => x.id === s.id);
   if (!h) return null;
   const present = !!(s.present ?? h.state?.present);
-  if (h.parent && !h.children) return { act: 'hub-close', icon: 'close', label: 'hub を閉じる', title: 'この hub を止めて一覧から外します。タスク・gate・受信箱の記録は残ります' };
-  if (present) return { act: 'hub-stop', icon: 'stop', label: 'hub を止める', title: 'hub が動いている tmux のペインを閉じます' };
-  const why = h.parent && !h.key ? 'キーが分からないため起動できません。adj hub --hub <キー> で起動してください'
-    : !state.hubStart?.available ? 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます' : '';
+  // A reset started from the rail leaves these two doing nothing until it is over.
+  const resetting = hubResetting.has(h.id);
+  const starting = hubStartingNow(h);
+  if (h.parent && !h.children) return { act: 'hub-close', icon: 'close', label: 'hub を閉じる', disabled: starting, title: resetting ? 'hub をリセットしています' : starting ? 'hub を起動しています' : 'この hub を止めて一覧から外します。タスク・gate・受信箱の記録は残ります' };
+  if (present) return { act: 'hub-stop', icon: 'stop', label: 'hub を止める', disabled: resetting, title: resetting ? 'hub をリセットしています' : 'hub が動いている tmux のペインを閉じます' };
+  const why = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
   return { act: 'hub-start', icon: 'play_arrow', label: 'hub を起動', title: why || 'tmux の新しいウィンドウで adj hub を実行します', disabled: !!why };
 }
 
@@ -622,6 +628,11 @@ function sessionButtons(s) {
   if (s.kind === 'hub') {
     const hub = hubActionOf(s);
     if (hub) bar.push(hub);
+    const h = (state.hubs || []).find(x => x.id === s.id);
+    if (h) {
+      const why = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
+      menu.push({ act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: why || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）', disabled: !!why });
+    }
   }
   if (boardTerminalReady(s)) {
     const open = state.sessionOpen;
@@ -677,6 +688,7 @@ function runSessionAction(act, s) {
         await refresh();
       });
     case 'hub-start':
+      if ((state.hubs || []).some(x => x.id === s.id && hubStartingNow(x))) return showSessNotice('hub を起動しています');
       return sessAct('hub-start', `hub を起動 (${key})`, async () => {
         const data = await api(`/api/hubs/${id}/start`, { method: 'POST', body: '{}' });
         const text = data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました';
@@ -685,6 +697,8 @@ function runSessionAction(act, s) {
         sessView.reconnectWhenReady = s.id;
         await refresh();
       });
+    case 'hub-reset':
+      return openHubStopDialog(s.id, 'reset');
     case 'hub-stop':
     case 'hub-close':
       return openHubStopDialog(s.id, act === 'hub-stop' ? 'stop' : 'close');
@@ -851,8 +865,17 @@ function overHtml(s) {
   const button = b => actionButtonHtml(b, { busy: sessBusy.size > 0 });
   if (s.kind === 'hub') {
     const hub = hubActionOf(s);
-    return `<div class="sess-over-head">${st === 'ended' ? 'この hub は役目を終えています' : 'hub は止まっています'}</div>` +
-      (hub ? `<div class="sess-over-buttons">${button(hub)}</div>` : '');
+    const h = (state.hubs || []).find(x => x.id === s.id);
+    const starting = !!h && hubStartingNow(h);
+    // A stopped hub can be started on a new conversation too, whether it is offered to be
+    // started or (a parent hub nobody reports to) to be closed.
+    const canFresh = !!h && (hub?.act === 'hub-start' || (hub?.act === 'hub-close' && !!h.key));
+    const freshWhy = !h ? '' : hubStartWhy(h) || (starting ? 'hub を起動しています' : '');
+    const fresh = canFresh
+      ? button({ act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: freshWhy || 'hub をリセット：今の会話を引き継がず、新しい会話で hub を起動します（adj hub --new）', disabled: !!freshWhy }) : '';
+    const head = st === 'ended' ? 'この hub は役目を終えています' : starting ? 'hub を起動しています' : 'hub は止まっています';
+    return `<div class="sess-over-head">${head}</div>` +
+      (hub ? `<div class="sess-over-buttons">${button(hub)}${fresh}</div>` : '');
   }
   const shot = sessView.screens[s.id];
   let last;

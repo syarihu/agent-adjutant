@@ -169,6 +169,12 @@ adj hub --resume --hub ALPHA-233  # a parent task's hub — the identifier is ne
 adj worker --resume               # in a worktree: the worker that was working there
 ```
 
+The board's 「hub をリセット」 (a button on the hub's row, and in the menu above the terminal in the
+Sessions view) does what `--new` does: after a confirmation it stops the hub if it runs and starts
+it again on a new conversation. The old conversation is not deleted, but it is not resumed either,
+and from then on `adj hub --resume` reaches the new one (with a runner that records no session id
+there is nothing to resume). The inbox, the task and gate records and the running workers stay as they are.
+
 A fresh start through a runner that takes `{sessionId}` (the default ones do, as
 `--session-id {sessionId}`) makes up a session id, hands it to the agent and saves it. A
 resume reuses the id that was saved rather than making a new one. A fresh start through a
@@ -453,13 +459,14 @@ that acted last decides.
 
 The bar above the terminal carries the actions for the selected session: resume a stopped
 worker, close a running one, start or stop a hub, open the session in your own terminal, and,
-under the menu, open the worktree in your IDE, copy its path and clean it up. Cleaning up removes
+under the menu, reset a hub (start it again on a new conversation), open the worktree in your IDE,
+copy its path and clean it up. Cleaning up removes
 the worktree and its local branch (never the remote one) and refuses when work would be lost
 (uncommitted or untracked files, commits no remote has); forcing it means typing the worktree's
 name back. A session that waits on a gate shows a banner with the gate's question and, for a plan,
 a question, a result or a dispatch, the buttons to answer it there; the answer goes to the board
 of the hub that opened the gate. A session that is not running shows a panel over the terminal
-with what the page last saw of it and a button to resume it, or to start the hub.
+with what the page last saw of it and a button to resume it, or to start the hub (also on a new conversation, with 「hub をリセット」).
 
 To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
 does it:
@@ -681,6 +688,14 @@ parent-task key, as `adjutant hub --hub KEY` does, before anything points at it 
 `/api/hubs/<id>/start` route needs a hub the board already lists). The answer is `{started,
 description, hub: {id, slug}}`, or `{alreadyRunning, pid, hub}`. The hub appears in `hubs[]`
 once its `adjutant hub` has written its record.
+
+`POST /api/hubs/<id>/reset` (resident server only) stops the hub if it runs and starts it again as
+`adj hub --tab --new [--hub KEY]` does, so the new hub opens a new conversation. Everything start
+would refuse (no `terminal.preset: "tmux"`, a parent-task hub whose key is not known) is refused
+before anything is stopped. The answer is `{reset, wasRunning, started, description}`, or
+`{reset, wasRunning, alreadyRunning, pid}`; when nothing was running to stop and a hub came up
+in the meantime, `reset` is `false`, because nothing was reset. When the hub was stopped but could not be started
+again, the answer is a 400 whose message says it was stopped.
 
 ### The Sessions sidebar
 

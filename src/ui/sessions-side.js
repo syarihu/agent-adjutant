@@ -236,7 +236,8 @@ function sideChildButton(t, b) {
   const stopped = !!h && !h.state?.present;
   const why = !stopped ? ''
     : h.parent && !h.key ? 'キーが分からないため起動できません。adj hub --hub <キー> で起動してください'
-      : !state.hubStart?.available ? 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます' : '';
+      : !state.hubStart?.available ? 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます'
+        : hubStartingNow(h) ? 'hub を起動しています' : '';
   const off = why ? ` disabled title="${esc(why)}"` : '';
   if (t.status === 'backlog') return sideBtn('child-hand', '着手を依頼…', ` data-id="${esc(t.id)}"${off}`);
   if (t.status === 'queued') {
