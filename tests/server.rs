@@ -263,6 +263,112 @@ fn stopping_the_resident_leaves_no_board() {
     assert!(again.contains("not running"), "{again}");
 }
 
+fn alive(pid: u64) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+fn restarting_the_resident_replaces_the_process_on_the_same_port() {
+    let fixture = Fixture::new(QUIET);
+    let _stop = Detached(&fixture);
+    fixture.ok(&["server", "start", "--no-open", "--port", "0"]);
+    let before = fixture.json(&["server", "status", "--json"]);
+    let old = before["pid"].as_u64().unwrap();
+
+    let said = fixture.ok(&["server", "restart"]);
+    assert!(said.contains(&format!("stopped pid {old}")), "{said}");
+    assert!(said.contains("restarted (pid"), "{said}");
+
+    let after = fixture.json(&["server", "status", "--json"]);
+    assert_eq!(after["running"], true, "{after}");
+    assert_ne!(after["pid"].as_u64().unwrap(), old, "{after}");
+    assert_eq!(after["port"], before["port"], "{after}");
+    assert!(!alive(old), "pid {old} is still running");
+}
+
+#[test]
+fn restarting_with_nothing_running_starts_one() {
+    let fixture = Fixture::new(QUIET);
+    let _stop = Detached(&fixture);
+
+    let said = fixture.ok(&["server", "restart", "--port", "0"]);
+    assert!(said.contains("was not running"), "{said}");
+    assert!(said.contains("serving on http://127.0.0.1:"), "{said}");
+    assert_eq!(
+        fixture.json(&["server", "status", "--json"])["running"],
+        true
+    );
+}
+
+#[test]
+fn restarting_on_port_zero_does_not_call_the_port_taken() {
+    let fixture = Fixture::new(QUIET);
+    let _stop = Detached(&fixture);
+    fixture.ok(&["server", "start", "--no-open", "--port", "0"]);
+
+    let said = fixture.ok(&["server", "restart", "--port", "0"]);
+    assert!(!said.contains("was taken"), "{said}");
+    assert_eq!(
+        fixture.json(&["server", "status", "--json"])["running"],
+        true
+    );
+}
+
+#[test]
+fn restart_port_overrides_the_one_the_server_had() {
+    let fixture = Fixture::new(QUIET);
+    let _stop = Detached(&fixture);
+    fixture.ok(&["server", "start", "--no-open", "--port", "0"]);
+    let old_port = fixture.json(&["server", "status", "--json"])["port"]
+        .as_u64()
+        .unwrap();
+
+    // Free when asked about, and the server is the only one racing for it.
+    let free = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    assert_ne!(u64::from(free), old_port);
+    fixture.ok(&["server", "restart", "--port", &free.to_string()]);
+    let after = fixture.json(&["server", "status", "--json"]);
+    assert_eq!(after["port"], free, "{after}");
+}
+
+#[test]
+fn a_record_of_a_process_that_is_gone_reads_as_not_running_to_restart() {
+    let fixture = Fixture::new(QUIET);
+    let _stop = Detached(&fixture);
+    std::fs::create_dir_all(&fixture.state).unwrap();
+    // This test's own pid with a start time it never had: the record names no live process.
+    std::fs::write(
+        fixture.state.join("server.json"),
+        serde_json::json!({
+            "pid": std::process::id(),
+            "psStarted": "Thu Jan  1 00:00:00 1970",
+            "port": 1,
+            "startedAt": "1970-01-01T00:00:00Z",
+            "version": "0",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let said = fixture.ok(&["server", "restart", "--port", "0"]);
+    assert!(said.contains("was not running"), "{said}");
+    let after = fixture.json(&["server", "status", "--json"]);
+    assert_eq!(after["running"], true, "{after}");
+    assert_ne!(
+        after["pid"].as_u64().unwrap(),
+        u64::from(std::process::id())
+    );
+}
+
 /// A `tmux` that writes down what it was asked, answers `list-panes` from a file, and closes
 /// a pane by killing the process the test names. Nothing here reaches a real tmux server.
 struct FakeTmux {

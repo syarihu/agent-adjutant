@@ -34,7 +34,7 @@ Cargo の場合:
 ```bash
 cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
 # またはローカルチェックアウトから:
-#   cargo install --path .
+#   cargo install --path .    （`make install` でも可。`make restart` は `adj server` の再起動、`make reinstall` は両方を行います）
 # または cargo install を使わない場合:
 #   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
 ```
@@ -278,6 +278,10 @@ security add-generic-password -s jules-api -a "$USER" -w
 - **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）で tmux セッションの状態確認や操作を直接行えます。
   - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: `--agent claude` / `agy` ではペインを先に読みます。既定の `generic` は画面を見ずに入力します。
 - **環境変数**: `$ADJUTANT_TMUX_SESSION`（既定のセッション名 `"adjutant"` を上書き）および `$ADJUTANT_TMUX_SOCKET`（`tmux -L <socket>` でソケットを指定）に対応しています。
+
+### 常駐サーバーの操作
+
+`adj server start` はリポジトリごとの hub とは別に、全リポジトリのボードを 1 プロセスで配る常駐サーバーを起動します（既定は `127.0.0.1:4577`、使われていれば空きポートに回ります）。`adj server status` で稼働状況を確認し（`--json` あり、止まっていれば exit 1）、`adj server stop` で止めます。`adj server restart` は止めて、最大 5 秒待ってから同じポートで起動し直します（`--port` で変更、`--open` でボードを開く）。動いていなければ起動します。hub と worker には触れず、開いているボードのタブは、ポートが同じなら自動で再接続します。再起動後のサーバーは restart を実行したバイナリなので、`make reinstall`（`cargo install --path .` のあとに restart）でインストールした新しい版に入れ替わります。`make install` と `make restart` はそれぞれ片方だけを行います。launchd の `KeepAlive` 配下では `adj server restart` を使わないでください。launchd 自身の再起動と競合し、監視外のサーバーがもう 1 つ残ることがあります。代わりに `launchctl kickstart -k gui/$(id -u)/adj.server` を使います。
 
 ### ボードから端末を開く
 

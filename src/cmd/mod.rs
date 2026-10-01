@@ -39,7 +39,7 @@ pub use jules::{
 pub use review_engine::run as review_engine;
 pub use serve::{
     DEFAULT_PORT, HubBoard, board_json, dashboards_running as board_running, resident_running,
-    serve, serve_for_hub, server_start, server_status, server_stop,
+    serve, serve_for_hub, server_restart, server_start, server_status, server_stop,
 };
 pub use task::{
     AddArgs, UpdateArgs, add as task_add, fetch_issue_cmd as task_fetch_issue_cmd,
