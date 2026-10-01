@@ -318,11 +318,16 @@ async function refresh(force = false) {
     // the board is redrawn for it once a minute. Its one box to type into, the instruction in
     // the side sheet, is kept across a redraw (renderHandForm).
     // A session's last activity is compared as the whole minutes it has been idle, which is as
-    // fine as the page shows it: the timestamp itself moves on nearly every poll.
+    // fine as the page shows it: the timestamp itself moves on nearly every poll. The views
+    // that do not show it leave it out, so a minute turning over does not redraw them (and
+    // cut a comment being typed there); a view switch draws its view afresh.
+    // Clamped at 0: tmux's activity can be a second later than the poll's clock, and -1 against 0
+    // between two polls would redraw for nothing.
     const { now, ...rest } = next;
     if (rest.sessions) {
-      rest.sessions = rest.sessions.map(s => s.lastActivityAt == null ? s
-        : { ...s, lastActivityAt: Math.floor((now - s.lastActivityAt) / 60) });
+      const shows = view === 'board' || view === 'sessions';
+      rest.sessions = rest.sessions.map(({ lastActivityAt, ...s }) => !shows || lastActivityAt == null ? s
+        : { ...s, lastActivityAt: Math.max(0, Math.floor((now - lastActivityAt) / 60)) });
     }
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
