@@ -335,6 +335,10 @@ async function refresh(force = false) {
     if (!force && nextJson === lastStateJson && !clockOnly) return;
     lastStateJson = nextJson;
     lastMinute = minute;
+    // A hub that was not running and is now: it has finished starting, whatever the page
+    // started it for. Only a fresh state says so, never a redraw of an old one.
+    const was = new Set((state.hubs || []).filter(h => h.state?.present).map(h => h.id));
+    for (const h of next.hubs || []) if (h.state?.present && !was.has(h.id)) clearHubStarting(h);
     state = next;
     if (window.__from) return;
     render();

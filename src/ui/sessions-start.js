@@ -76,6 +76,24 @@ const HUB_STARTING_MS = 15000;
 /* ── The + menu ── */
 let repoHubStartedAt = null;
 
+/* Whether `h` was started a moment ago and has not written its record yet: it is coming up,
+   not stopped. Read from the same markers a start from the + menu sets, and true for a hub
+   whose reset is in flight (`hubResetting`: ids). */
+const hubResetting = new Set();
+function hubStartingNow(h) {
+  if (hubResetting.has(h.id)) return true;
+  const at = h.parent ? (h.key ? hubKeyStartedAt[h.key] : null) : repoHubStartedAt;
+  return !h.state?.present && at != null && Date.now() - at < HUB_STARTING_MS;
+}
+/* Drops the starting markers of `h`. Called when a fresh state shows the hub coming up or a
+   stop or close of it succeeded, so that a hub stopped again a moment later can be started
+   at once; `hubStartingNow` itself only reads. */
+function clearHubStarting(h) {
+  if (!h.parent) repoHubStartedAt = null;
+  else if (h.key) delete hubKeyStartedAt[h.key];
+  for (const p of sessView.starts) if (p.hubId === h.id) p.hubStartedAt = null;
+}
+
 function closeAddMenu() {
   sessEl('sess-add-menu').hidden = true;
   sessEl('sess-add').setAttribute('aria-expanded', 'false');
@@ -85,7 +103,7 @@ function renderAddMenu() {
   const repo = (state.hubs || []).find(h => !h.parent);
   const canStart = !!state.hubStart?.available;
   // A second press right after the first would open a second window.
-  const starting = repoHubStartedAt != null && Date.now() - repoHubStartedAt < HUB_STARTING_MS;
+  const starting = !!repo && hubStartingNow(repo) || repoHubStartedAt != null && Date.now() - repoHubStartedAt < HUB_STARTING_MS;
   const items = [
     {
       act: 'add-repo-hub', icon: 'play_arrow', label: 'リポジトリの hub を起動',
@@ -135,6 +153,7 @@ function showStartedHub(id) {
 function startRepoHub() {
   const repo = (state.hubs || []).find(h => !h.parent);
   if (!repo) return;
+  if (hubStartingNow(repo)) return showSessNotice('hub を起動しています');
   return sessAct('add-hub', 'リポジトリの hub を起動', async () => {
     const data = await api(`/api/hubs/${enc(repo.id)}/start`, { method: 'POST', body: '{}' });
     const text = data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました';
@@ -168,6 +187,8 @@ async function submitHubKey(e) {
   if (hubKeyStartedAt[key] != null && Date.now() - hubKeyStartedAt[key] < HUB_STARTING_MS) {
     return showDlgError('hubkey-error', `親タスク ${key} の hub を起動しています`);
   }
+  const named = (state.hubs || []).find(x => x.key === key);
+  if (named && hubStartingNow(named)) return showDlgError('hubkey-error', `親タスク ${key} の hub を起動しています`);
   const opening = dialogOpening.hubkey;
   hubKeyBusy = true;
   sessEl('hubkey-submit').disabled = true;
@@ -226,6 +247,7 @@ function syncStartDialog() {
   const hubNote = sessEl('start-hub-note');
   setText(hubNote, !h ? '依頼できる hub がありません'
     : h.state?.present ? 'hub は動いています。依頼はすぐ届きます'
+      : hubStartingNow(h) ? 'hub を起動しています。起動してから依頼してください'
       : state.resident && state.hubStart?.available ? 'hub が止まっているため、依頼を送ったあとで起動します'
         : `hub が止まっていて、ボードからは起動できません（${NO_START}）。依頼は受信箱で、hub が起動するのを待ちます`);
 
@@ -249,7 +271,8 @@ function syncStartDialog() {
     : full ? `worker の枠が空いていません（稼働 ${state.workerSlots.busy} / 上限 ${state.workerSlots.max}）。どれかが終わってから依頼してください` : '';
   slots.hidden = !why;
   setText(slots, why);
-  sessEl('start-submit').disabled = !!problem || full || startDlg.busy || !h || !state.sessionStart?.agent;
+  // A request now would start the hub a second time, resuming the conversation a reset left.
+  sessEl('start-submit').disabled = !!problem || full || startDlg.busy || !h || !state.sessionStart?.agent || (!!h && hubStartingNow(h));
 }
 
 sessEl('start-instruction').addEventListener('input', () => {
@@ -360,7 +383,7 @@ function pendingRow(h, name, key, p, at, now) {
   const base = { key, hubId: h.id, name, canStart: !startWhy, startWhy, busy: sessBusy.has(`pend-${key}`) };
   if (!present && p?.hubStartError) return { ...base, kind: 'stopped', text: `hub を起動できませんでした: ${p.hubStartError}`, alert: true };
   // Started a moment ago and its record not written yet: it is coming up, not stopped.
-  if (!present && p?.hubStartedAt != null && now - p.hubStartedAt < HUB_STARTING_MS) {
+  if (!present && (hubStartingNow(h) || p?.hubStartedAt != null && now - p.hubStartedAt < HUB_STARTING_MS)) {
     return { ...base, kind: 'stopped', text: 'hub を起動中…', canStart: false, startWhy: 'hub を起動しています' };
   }
   if (!present) return { ...base, kind: 'stopped', text: 'hub が止まっています…' };
@@ -438,6 +461,7 @@ sessEl('sess-tree').addEventListener('click', e => {
 function retryHubStart(row) {
   const h = (state.hubs || []).find(x => x.id === row.hubId);
   if (!h) return;
+  if (hubStartingNow(h)) return showSessNotice('hub を起動しています');
   const tracked = () => {
     let p = sessView.starts.find(x => x.hubId === row.hubId && x.name === row.name);
     if (!p) {
@@ -467,10 +491,21 @@ function retryHubStart(row) {
 
 // The give-up and the hub's answer are times, not state changes: nothing else would redraw the
 // tree for them while the page sits still.
+let startingSig = '';
 setInterval(() => {
+  // A starting marker runs out with the clock: what it disabled is drawn again when the set
+  // of hubs that count as starting changes, and not on every tick.
+  const sig = JSON.stringify([[...hubResetting], (state.hubs || []).filter(hubStartingNow).map(h => h.id),
+    sessView.starts.map(p => p.hubStartedAt != null && Date.now() - p.hubStartedAt < HUB_STARTING_MS)]);
+  if (sig !== startingSig) {
+    startingSig = sig;
+    renderHubRows();
+    if (view === 'sessions') renderSessionsView();
+  }
   if (view !== 'sessions') return;
   if (sessView.starts.length) renderSessionTree();
   syncStartDialog();
+  syncLinkDialog();
 }, 2000);
 
 /* ── Giving a session with no task a task ── */
@@ -581,7 +616,7 @@ function linkMoveNote() {
     if (target.parent) parts.push(`親タスク ${short(target)} の子タスクとして作ります`);
     if (sessEl('link-file-issue').checked && stopped) {
       parts.push(state.resident && state.hubStart?.available
-        ? 'hub が止まっているため、起票の依頼と同時に起動します'
+        ? hubStartingNow(target) ? 'hub を起動しています。起動してから送ってください' : 'hub が止まっているため、起票の依頼と同時に起動します'
         : 'hub が止まっています。起動するまで Issue は起票されません');
     }
   } else if (!cur || target.id !== cur.id) {
@@ -603,7 +638,9 @@ function syncLinkDialog() {
   const noteEl = sessEl('link-move-note');
   noteEl.hidden = !text;
   setText(noteEl, text);
-  sessEl('link-submit').disabled = linkDlg.busy;
+  // The same as the start dialog: a hub that is coming up is not started again by a request.
+  const target = mode === 'new' && sessEl('link-file-issue').checked ? linkTarget() : null;
+  sessEl('link-submit').disabled = linkDlg.busy || (!!target && hubStartingNow(target));
 }
 
 for (const r of document.querySelectorAll('input[name=link-mode]')) r.addEventListener('change', syncLinkDialog);

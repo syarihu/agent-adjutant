@@ -761,6 +761,185 @@ fn hub_ids(resident: &Resident) -> Vec<String> {
         .collect()
 }
 
+/// A running repository hub, as `adj hub` leaves it: its record and a pane in the fake tmux.
+fn running_repo_hub(fixture: &Fixture, tmux: &FakeTmux, sleeper: u32) -> PathBuf {
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": sleeper,
+            "psStarted": ps_started(sleeper),
+            "hubName": HUB,
+            "cwd": fixture.repo.to_str().unwrap(),
+            "nameInCommand": false,
+            "terminal": {"backend": "tmux", "socket": "scratch", "pane": "%3"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &tmux.panes,
+        format!("%3\t{sleeper}\t/dev/ttys999\t@1\tadjutant-test\t1\tmain\n"),
+    )
+    .unwrap();
+    record
+}
+
+#[test]
+fn hub_reset_stops_the_running_hub_and_starts_a_new_conversation() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    // The conversation the old hub had: the server must leave it where it is.
+    let saved = fixture.state.join("sessions").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    let saved_text = serde_json::json!({
+        "sessionId": "0b7e6a52-0000-4000-8000-000000000002",
+        "nwo": "acme/widget",
+        "hubName": HUB,
+    })
+    .to_string();
+    std::fs::write(&saved, &saved_text).unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["reset"], true, "{body}");
+    assert_eq!(answer["wasRunning"], true, "{body}");
+    assert_eq!(answer["started"], true, "{body}");
+
+    let log = tmux.logged();
+    let kill = log
+        .lines()
+        .position(|l| l.contains("-L scratch kill-pane -t %3"))
+        .unwrap_or_else(|| panic!("no pane was closed: {log}"));
+    let open = log
+        .lines()
+        .position(|l| l.contains("new-window") && l.contains("--new"))
+        .unwrap_or_else(|| panic!("no new conversation was opened: {log}"));
+    assert!(kill < open, "{log}");
+    let window = log.lines().nth(open).unwrap();
+    assert!(window.contains(" hub"), "{window}");
+    assert!(window.contains("--new"), "{window}");
+    assert!(!window.contains("--hub="), "{window}");
+    assert!(!record.exists(), "the old record was left behind");
+    assert_eq!(ps_started(sleeper.0), "", "the hub is still running");
+    assert_eq!(std::fs::read_to_string(&saved).unwrap(), saved_text);
+}
+
+#[test]
+fn hub_reset_of_a_stopped_hub_starts_it_fresh() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["reset"], true, "{body}");
+    assert_eq!(answer["wasRunning"], false, "{body}");
+    assert_eq!(answer["started"], true, "{body}");
+    let log = tmux.logged();
+    assert!(!log.contains("kill-pane"), "{log}");
+    let window = log
+        .lines()
+        .find(|l| l.contains("new-window"))
+        .unwrap_or_else(|| panic!("no window was opened: {log}"));
+    assert!(window.contains("--new"), "{window}");
+}
+
+#[test]
+fn hub_reset_of_a_parent_hub_names_its_key() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let (record, _board) = running_parent_hub(&fixture, &tmux, sleeper.0);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/reset"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["wasRunning"], true, "{body}");
+    assert_eq!(answer["started"], true, "{body}");
+    let log = tmux.logged();
+    assert!(log.contains("-L scratch kill-pane -t %3"), "{log}");
+    let window = log
+        .lines()
+        .find(|l| l.contains("new-window"))
+        .unwrap_or_else(|| panic!("no window was opened: {log}"));
+    assert!(window.contains(&format!("--hub={FEATURE}")), "{window}");
+    assert!(window.contains("--new"), "{window}");
+    assert!(!record.exists(), "the old record was left behind");
+    // What the hub knew is untouched.
+    assert_eq!(
+        std::fs::read_to_string(
+            fixture
+                .state
+                .join("tasks")
+                .join(FEATURE_SLUG)
+                .join("task-1.json")
+        )
+        .unwrap(),
+        "{}"
+    );
+    assert!(
+        fixture
+            .state
+            .join("sessions")
+            .join(format!("{FEATURE_SLUG}.json"))
+            .exists()
+    );
+}
+
+#[test]
+fn hub_reset_says_so_when_the_hub_was_stopped_but_could_not_start() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("stopped"), "{body}");
+    assert!(body.contains("could not start it again"), "{body}");
+    assert!(tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+    assert!(!record.exists(), "the old record was left behind");
+}
+
+#[test]
+fn hub_reset_is_refused_before_anything_is_stopped() {
+    // Not the tmux preset: starting is refused, so nothing may be stopped for it. The fake
+    // tmux is wired and the record names a tmux pane, so a missing guard would close it.
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config_with(&fixture, |config| {
+        config["terminal"] = serde_json::json!({"preset": "iterm2"});
+    });
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
+    assert_eq!(status, 400, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        answer["error"], "starting a hub from the board needs terminal.preset \"tmux\"",
+        "{body}"
+    );
+    assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+    assert!(record.exists());
+    assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
+}
+
 #[test]
 fn closing_a_parent_hub_with_no_workers_stops_it_and_takes_it_off_the_list() {
     let fixture = Fixture::new(QUIET);
