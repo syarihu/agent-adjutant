@@ -436,9 +436,9 @@ state directory that serves the board of every repository on this machine, each 
 `/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
 boards in place: the sidebar lists a row per repository, with its parent-task hubs under it
 (each row shows whether its hub runs, what waits on you and how many workers are at work),
-and "すべて" reads every board at once. `/review` is the review queue of every board. Each
-screen has an address that carries the board and the view, so back and forward and a pasted
-link land on the same screen. It detaches
+and "すべて" reads every board at once. `/review` is one review queue for every board: the list
+on the left, the item on the right (see below). Each screen has an address that carries the board
+and the view, so back and forward and a pasted link land on the same screen. It detaches
 (its output goes to `server.log` in the state directory); `--foreground` keeps it in the
 terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
 and any free port when it is not; `--port 0` asks for any. A second `adj server start` says
@@ -492,6 +492,22 @@ to its icon rail, and on a narrow window the panel floats over the board. Moving
 changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
 The open task and tab are in the address (`task=<id>`, `pane=term`), so back and forward and a
 pasted link open the same task and tab.
+
+**The review queue.** `/review` (要対応レビュー in the sidebar) lists every gate waiting on you, across
+all boards, and opens the first one on its own. The list is grouped by board in the sidebar's
+order (a repository, then its parent-task hubs), the longest-waiting first, with each group's
+header pinned while the list scrolls. The right side has two tabs. 判断 is one column: the task's
+Issue and PR, what is waiting and why, what the kind of gate needs read (the plan or question, the
+diff and findings, or the verify checks), 経過をすべて見る to the task's full view, and the buttons the
+gate's options name, with the comment box. ターミナル opens the session the gate waits on in place (the
+worker, or the hub for the gates it opens); 「ターミナルで話す」 switches to it, and switching tabs keeps
+the connection. Only the board of the item shown is asked for its sessions, and only while that
+tab is open. After an answer the next waiting item is shown (the checkbox 「処理したら次へ」, saved in the
+browser, turns that off); the answered item stays in the list, dimmed, under 処理済み until the page
+is reloaded, and leaves the counts and the 人 board at once. 前へ / 次へ go through what is still
+waiting. The item is in the address (`/review?item=<board>/<id>`): choosing one in the list or
+with 前へ / 次へ is a step in the history, and the move after an answer replaces the entry, so 戻る does
+not step back through answered items.
 
 **A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
 the right of the board's title (for the board being viewed), a terminal icon that appears when you
@@ -870,10 +886,11 @@ command), the checks left for a person and how to run it. 経過 lists, in time 
 gates that waited, the records that did not and what people answered; the worker's phase is
 kept only as the one it is in now, so it closes the list. A gate waiting on a person is
 answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
-notification and the レビュー tab all open it there, and a gate with no task on the board opens
-in the review view instead — and the 要対応 queue is shown beside the task only while
-the task is on it. The answered gates come from `GET /api/tasks/<id>/history`, read when the
-view opens rather than on every poll, since the archive only grows.
+notification all open it there, and a gate with no task on the board opens in the review view
+instead. 要対応レビュー in the sidebar opens the review queue, not the task's view — and the 要対応
+queue is shown beside the task only while the task is on it. The answered gates come from `GET
+/api/tasks/<id>/history`, read when the view opens rather than on every poll, since the archive
+only grows.
 
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.

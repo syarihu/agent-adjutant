@@ -1007,19 +1007,17 @@ function judgeGate(gateId) {
   else goToGate(gateId);
 }
 
-/* The レビュー tab: the first gate in the queue, where it is answered; the review view when the
-   queue is empty, which says so. With several boards the queue is the oldest gate of any of them. */
+/* The レビュー tab: the review view, one queue across every board. Without an item it picks the
+   first one waiting on its own. */
 function goToQueue() {
   // Already on the queue: stay on the one being read, and on whatever is typed for it.
   if (view === 'review') return;
-  if (multiBoard) {
-    const first = everyGate().sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || ''))[0];
-    if (first) return onBoard(first._slug, () => judgeGate(first.id));
-    return go({ view: 'review' });
-  }
-  const first = (state.gates || [])[0];
-  if (first) judgeGate(first.id);
-  else setView('review');
+  // Not the item last read in another view: the queue's first is.
+  focused = null;
+  reviewPane = 'judge';
+  if (multiBoard) return go({ view: 'review' });
+  setView('review');
+  renderReview();
 }
 
 /* The review comments of the task the panel is open on, once a person asked for them.
@@ -1512,53 +1510,60 @@ function hubDetailHtml(h, s) {
 /* The terminal lives in #tp-term-host from its first mount until the task changes or the panel
    closes. 詳細 only hides the pane around it, so the socket survives; the bar and the note
    over it are the parts that are drawn again. */
-function syncPanelTerminal(subject, s, pane) {
+function syncPanelTerminal(subject, s, pane) { syncTermSlot(panelTerm, subject, s, pane); }
+function disposePanelTerminal() { disposeTermSlot(panelTerm); }
+
+/* A slot is one terminal's place: where it mounts (`host`), what to draw again when it ends
+   (`redraw`) and which board's path it connects through (`base`). The task panel has one and the
+   review view another, and both keep the socket across a redraw the same way. */
+function syncTermSlot(slot, subject, s, pane) {
   // Another task's (or hub's) socket is not carried over; a fresh one is asked for after
   // 再開 or 再接続.
-  if (panelTerm.taskId !== subject || (panelTerm.term && s && s.id !== panelTerm.sessionId)
-      || (panelTerm.reconnect && boardTerminalReady(s))) disposePanelTerminal();
-  panelTerm.taskId = subject;
-  if (pane !== 'term' || panelTerm.term || !boardTerminalReady(s)) return;
+  if (slot.taskId !== subject || (slot.term && s && s.id !== slot.sessionId)
+      || (slot.reconnect && boardTerminalReady(s))) disposeTermSlot(slot);
+  slot.taskId = subject;
+  if (pane !== 'term' || slot.term || !boardTerminalReady(s)) return;
   // One session, one terminal: the セッション tab lets go of it.
   const heldBySessions = sessView.selectedId === s.id;
   if (heldBySessions) detachSessionTerminal();
-  panelTerm.sessionId = s.id;
-  panelTerm.ended = null;
-  const handle = mountSessionTerminal(tp('tp-term-host'), {
+  slot.sessionId = s.id;
+  slot.ended = null;
+  const handle = mountSessionTerminal(slot.host(), {
     sessionId: s.id,
+    base: slot.base(),
     onEnd: code => {
-      if (panelTerm.term !== handle) return;
-      panelTerm.ended = code;
+      if (slot.term !== handle) return;
+      slot.ended = code;
       keepScreen({ sessionId: s.id, term: handle });
-      renderTaskPanel();
+      slot.redraw();
     },
   });
-  panelTerm.term = handle;
+  slot.term = handle;
   // The sessions tab says where its terminal went.
   if (heldBySessions && view === 'sessions') renderSessionsView();
 }
 
-function disposePanelTerminal() {
-  const { term, sessionId } = panelTerm;
+function disposeTermSlot(slot) {
+  const { term, sessionId } = slot;
   if (term) {
     keepScreen({ sessionId, term });
     term.dispose();
   }
-  Object.assign(panelTerm, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
-  // The sessions tab may mount the session again, now that the panel has let go of it.
+  Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
+  // The sessions tab may mount the session again, now that the slot has let go of it.
   if (term && view === 'sessions') renderSessionsView();
 }
 
-function termBarHtml(s) {
+function termBarHtml(s, slot = panelTerm, actions = true) {
   if (!s || !hasSession(s)) return '';
   const st = sessionState(s);
   const last = s.present ? lastOutputText(s) : null;
-  const again = panelTerm.term && panelTerm.ended != null && boardTerminalReady(s);
+  const again = slot.term && slot.ended != null && boardTerminalReady(s);
   return `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(STATE_LABEL[st])}</span>`
     + (last ? `<span class="tp-muted">最後の出力: ${esc(last)}</span>` : '')
     + `<span class="tp-bar-gap"></span>`
     + (again ? '<button type="button" class="btn-m3-tonal sess-act" data-tp-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>' : '')
-    + sessionButtons(s).bar.map(b => actionButtonHtml(b)).join('');
+    + (actions ? sessionButtons(s).bar.map(b => actionButtonHtml(b)).join('') : '');
 }
 
 /* Over the host while there is no terminal in it: why not, and the last screen if this page saw

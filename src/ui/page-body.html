@@ -122,7 +122,27 @@
         </section>
       </div>
     </div>
-    <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
+    <!-- Only the parts named below are drawn again; the terminal host and its parents never are, so the
+         socket survives a switch between 判断 and ターミナル. -->
+    <div id="review">
+      <div class="review-inbox-pane rail">
+        <div class="review-inbox-header">
+          <span class="material-symbols-outlined" aria-hidden="true">inbox</span>
+          <span>要対応 (<span id="rv-count">0</span>)</span>
+        </div>
+        <div class="review-inbox-list"></div>
+      </div>
+      <div class="review-detail-pane pane">
+        <div class="rv-head" id="rv-head"></div>
+        <div class="tp-tabs rv-tabs" id="rv-tabs" role="tablist"></div>
+        <div class="rv-judge" id="rv-judge" role="tabpanel"></div>
+        <div class="tp-pane tp-term rv-term" id="rv-term" role="tabpanel" hidden>
+          <div class="tp-term-bar" id="rv-term-bar"></div>
+          <div class="tp-term-host" id="rv-term-host"></div>
+          <div class="tp-term-ph" id="rv-term-ph" hidden></div>
+        </div>
+      </div>
+    </div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
     <div id="sessions-view" role="tabpanel">
       <!-- Above the list and the terminal alike, so a notice is seen whether or not a session is open. -->

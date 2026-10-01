@@ -51,6 +51,8 @@ function setView(v) {
 
   if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
   if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
+  // The review view's terminal is not kept behind another view.
+  if (prev === 'review' && v !== 'review') disposeTermSlot(reviewTerm);
 
   // Navigation rail active states
   const navReview = document.getElementById('nav-review');
@@ -78,7 +80,7 @@ function setView(v) {
       renderTitle();
     } else if (v === 'review') {
       pageTitle.textContent = '要対応レビュー';
-      pageSub.textContent = '人間の判断・承認を待っている Gate 一覧';
+      pageSub.textContent = '全ボードの判断待ち。左で選んで、右で答える';
     } else if (v === 'task') {
       pageTitle.textContent = 'タスク詳細';
       pageSub.textContent = '個別タスクの全工程記録と実行タイムライン';

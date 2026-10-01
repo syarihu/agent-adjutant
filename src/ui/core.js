@@ -15,7 +15,11 @@ let selectedTaskId = null;   // what the panel is open on: a task id, or a hub a
 let panelPop = false;        // the panel is popped out: never saved, so a reload comes back to its side
 // The panel's terminal, kept while its task (or hub) is open: moving the panel or switching to 詳細 must
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
-const panelTerm = { taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
+const panelTerm = { host: () => document.getElementById('tp-term-host'), redraw: () => renderTaskPanel(), base: () => BASE,
+  taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
+// The review view's: one terminal for the item on screen, kept across 判断 and ターミナル.
+const reviewTerm = { host: () => document.getElementById('rv-term-host'), redraw: () => renderReviewTerm(),
+  base: () => baseOf(reviewCurrent()), taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
 
 /* A hub opens in the task panel as `hub:<id>`, where a task opens as its id: in `selectedTaskId`
    and in the address's `task=`. */
@@ -31,8 +35,9 @@ const PREF_KEY = 'adj-board-split';
 // sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
 // sessionsSide is the detail sidebar's choice, kept only where the window has room for it;
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
-// panelSide and panelWidth are where the task panel sits (left or right) and how wide it is.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[], panelSide:'left', panelWidth:520 },
+// panelSide and panelWidth are where the task panel sits (left or right) and how wide it is;
+// reviewNext is whether answering in the review view moves on to the next item.
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[], panelSide:'left', panelWidth:520, reviewNext:true },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 if (prefs.panelSide !== 'right') prefs.panelSide = 'left';
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
@@ -297,6 +302,8 @@ let pendingTask = null;          // opened once the board's first state is in
 let boardJob = null;             // { slug, fn }: run once that board has loaded
 const boardStates = {};          // 「すべて」: each board's last state, by slug
 const baseOf = x => x?._base || BASE;
+/* The board a review item is on: the part of its ref before the `/`. */
+const slugOfRef = ref => { const i = String(ref || '').indexOf('/'); return i > 0 ? ref.slice(0, i) : null; };
 const scopeAll = () => multiBoard && nav.board === 'all';
 
 function parseUrl(loc = location) {
@@ -345,6 +352,7 @@ function switchBoard() {
   lastMinute = null;
   if (!multiBoard) seenGateIds = null;
   if (typeof detachSessionTerminal === 'function') detachSessionTerminal();
+  disposeTermSlot(reviewTerm);
   sessView.selectedId = null;
   sessView.last = null;
   sessView.pending = null;
@@ -563,6 +571,14 @@ async function fetchBoards() {
   boardsFetchedAt = Date.now();
   try {
     boards = await boardApi('', '/api/boards');
+    // A list that was on its way when a gate was answered still has it: ids are claimed fresh,
+    // so a ref answered in this page is never a new gate.
+    for (const b of boards) {
+      const gone = (b.gates || []).filter(g => reviewDone.has(`${b.slug}/${g.id}`));
+      if (!gone.length) continue;
+      b.gates = b.gates.filter(g => !gone.includes(g));
+      b.waiting = Math.max(0, (b.waiting || 0) - gone.length);
+    }
     checkNewGates(everyGate());
     renderBoardRows();
     renderTitle();
@@ -615,11 +631,14 @@ async function refreshAllBoards(force) {
     if (epoch !== navEpoch) return;
     const listed = readBoards();
     const carriers = new Set(nav.view === 'sessions' ? sessionCarriers(listed).map(b => b.slug) : []);
+    // The review queue's terminal tab needs the sessions of the one board whose item is shown.
+    const rvSlug = nav.view === 'review' && reviewPane === 'term' ? slugOfRef(focused) : null;
     let changed = force;
     let now = 0;
     for (const b of listed) {
       try {
-        const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state?lines=1' : '/api/state?sessions=0');
+        const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state?lines=1'
+          : b.slug === rvSlug ? '/api/state' : '/api/state?sessions=0');
         if (epoch !== navEpoch) return;
         const { now: at, ...rest } = next;
         now = Math.max(now, at || 0);
@@ -642,7 +661,7 @@ async function refreshAllBoards(force) {
     const minute = Math.floor(now / 60);
     if (!changed && minute === allMinute) return;
     allMinute = minute;
-    state = mergeStates(listed, now, carriers);
+    state = mergeStates(listed, now, carriers, rvSlug);
     allRound = true;
     if (window.__from) return;
     render();
@@ -662,7 +681,7 @@ async function refreshAllBoards(force) {
    sessions are the carrier boards' (see sessionCarriers), tagged the same way, since a hub's
    id is only its own repository's: the repository hub of every repository is `hub`. Sessions
    are there only while the セッション tab asks for them. The inbox is left empty. */
-function mergeStates(listed, now, carriers = new Set()) {
+function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
   const parts = listed.filter(b => boardStates[b.slug]).map(b => ({ slug: b.slug, data: boardStates[b.slug].data }));
   const carried = sessionCarriers(listed).map(b => b.slug).filter(slug => boardStates[slug]);
   const tag = (list, slug) => (list || []).map(x => ({ ...x, _slug: slug, _base: `/b/${slug}` }));
@@ -682,11 +701,12 @@ function mergeStates(listed, now, carriers = new Set()) {
     repo: '',
     resident: true,
     tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
-    gates: parts.flatMap(p => tag(p.data.gates, p.slug)),
+    gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !reviewDone.has(gateRef(g))),
     workers,
     // Each repository's carrier board, in the order the tab lists them.
     carriers: carried.map(slug => ({ slug, nwo: nwoOf(slug) })),
-    sessions: carried.filter(slug => carriers.has(slug)).flatMap(slug => tag(boardStates[slug].data.sessions, slug)),
+    sessions: [...carried.filter(slug => carriers.has(slug)), ...(rvSlug && !carriers.has(rvSlug) && boardStates[rvSlug] ? [rvSlug] : [])]
+      .flatMap(slug => tag(boardStates[slug].data.sessions, slug)),
     hubs: carried.flatMap(slug => tag(boardStates[slug].data.hubs, slug)),
     pending: [],
     now,
@@ -697,6 +717,8 @@ function mergeStates(listed, now, carriers = new Set()) {
     sessionsRead: carried.some(slug => carriers.has(slug)),
     // Whether it asked at all: asked and not read is a failure, not a wait.
     sessionsAsked: carriers.size > 0,
+    // The board whose sessions were read for the review view's terminal.
+    reviewSessionsOf: rvSlug && boardStates[rvSlug] ? rvSlug : null,
     // What the tab's buttons ask of the server is the same for every board of it.
     boardTerminal: lead.boardTerminal,
     hubStart: lead.hubStart,
@@ -755,6 +777,8 @@ async function refresh(force = false) {
     // started it for. Only a fresh state says so, never a redraw of an old one.
     const was = new Set((state.hubs || []).filter(h => h.state?.present).map(h => h.id));
     for (const h of next.hubs || []) if (h.state?.present && !was.has(h.id)) clearHubStarting(h);
+    // Same for a state that was on its way (see fetchBoards).
+    if ((next.gates || []).some(g => reviewDone.has(gateRef(g)))) next.gates = next.gates.filter(g => !reviewDone.has(gateRef(g)));
     state = next;
     if (window.__from) return;
     render();

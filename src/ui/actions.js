@@ -182,6 +182,21 @@ function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiti
     ${start}${term}${toggle}</div>`;
 }
 
+/* Boards as the sidebar lists them: repositories by name, each with its own board and then its
+   parent-task hubs by name. The review queue groups its items the same way. */
+function repoGroups(list) {
+  const repos = [];
+  for (const b of list) {
+    let group = repos.find(r => r.nwo === b.nwo);
+    if (!group) repos.push(group = { nwo: b.nwo, repo: null, children: [] });
+    if (b.hub) group.children.push(b); else group.repo = b;
+  }
+  repos.sort((a, b) => a.nwo.localeCompare(b.nwo));
+  for (const r of repos) r.children.sort((a, b) => (a.hub || '').localeCompare(b.hub || ''));
+  return repos;
+}
+const orderedBoards = list => repoGroups(list).flatMap(r => [...(r.repo ? [r.repo] : []), ...r.children]);
+
 function renderBoardRows() {
   const box = document.getElementById('board-rows');
   const sub = document.getElementById('boards-sub');
@@ -193,14 +208,7 @@ function renderBoardRows() {
   if (!box) return;
   // A parent-task hub that is finished is out of the list, unless it is the one being read.
   const shown = boards.filter(b => !b.finished || nav.board === b.slug);
-  const repos = [];
-  for (const b of shown) {
-    let group = repos.find(r => r.nwo === b.nwo);
-    if (!group) repos.push(group = { nwo: b.nwo, repo: null, children: [] });
-    if (b.hub) group.children.push(b); else group.repo = b;
-  }
-  repos.sort((a, b) => a.nwo.localeCompare(b.nwo));
-  for (const r of repos) r.children.sort((a, b) => (a.hub || '').localeCompare(b.hub || ''));
+  const repos = repoGroups(shown);
   const live = boards.filter(b => !b.finished);
   const total = live.reduce((n, b) => n + (b.waiting || 0), 0);
   const working = live.reduce((n, b) => n + (b.working || 0), 0);

@@ -59,10 +59,20 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         "id=\"btn-hub\"",
         "data-hub-term",
         "hubterm-btn",
+        // The review view is one queue: its list, the frame around the terminal's host, and the
+        // switch for moving on after an answer.
+        "id=\"rv-judge\"",
+        "id=\"rv-term-host\"",
+        "rv-group-head",
+        "data-rv-refs",
+        "data-rv-next",
+        "処理したら次へ",
     ] {
         assert!(page.contains(piece), "{piece}");
     }
     assert!(!page.contains("id=\"nav-sessions\""));
+    // 要対応レビュー opens the queue, not the first gate's task.
+    assert!(page.contains("id=\"nav-review\" title=\"要対応レビュー\" onclick=\"goToQueue()\""));
     // 着手を促す is the hub panel's, not the title bar's.
     assert!(!page.contains("id=\"btn-nudge\""));
 
