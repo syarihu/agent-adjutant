@@ -56,10 +56,15 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         "data-tab=\"sessions\"",
         "1つずつ",
         "id=\"task-panel\"",
+        "id=\"btn-hub\"",
+        "data-hub-term",
+        "hubterm-btn",
     ] {
         assert!(page.contains(piece), "{piece}");
     }
     assert!(!page.contains("id=\"nav-sessions\""));
+    // 着手を促す is the hub panel's, not the title bar's.
+    assert!(!page.contains("id=\"btn-nudge\""));
 
     let (status, list) = resident.get("/api/boards");
     assert_eq!(status, 200);
@@ -296,6 +301,13 @@ fn the_board_list_counts_what_waits_and_who_works() {
     write_gate_file(&fixture, SLUG, "g-open", "verify", &fixture.repo);
     let on_pr = made_task(&resident, serde_json::json!({"title": "A pull request"}));
     let working = made_task(&resident, serde_json::json!({"title": "At work"}));
+    let queued = made_task(&resident, serde_json::json!({"title": "In line"}));
+    patch_task(
+        &fixture,
+        SLUG,
+        queued["id"].as_str().unwrap(),
+        serde_json::json!({"status": "queued"}),
+    );
     patch_task(
         &fixture,
         SLUG,
@@ -313,6 +325,7 @@ fn the_board_list_counts_what_waits_and_who_works() {
     // The gate has no task on the board, and the pull request has no worker to say otherwise.
     assert_eq!(board["waiting"], 2, "{board}");
     assert_eq!(board["working"], 1, "{board}");
+    assert_eq!(board["queued"], 1, "{board}");
     assert_eq!(board["gates"].as_array().unwrap().len(), 1, "{board}");
     assert_eq!(board["gates"][0]["kind"], "verify", "{board}");
     assert!(board["gates"][0]["worktree"].is_string(), "{board}");

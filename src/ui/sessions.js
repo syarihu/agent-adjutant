@@ -527,8 +527,9 @@ function groupButton(g) {
     const why = hubStartWhy(g.hub) || (starting ? 'hub を起動しています' : '');
     return { act: 'hub-start', icon: 'play_arrow', label: 'hub を起動', why, title: why || 'tmux の新しいウィンドウで adj hub を実行します' };
   }
+  // A hub outside tmux has no terminal to open, but its panel still shows what it handles.
   const ready = !!g.hubSession && boardTerminalReady(g.hubSession);
-  return { act: 'hub-open', icon: 'terminal', label: 'hub', why: ready ? '' : 'tmux の外で動いている hub は、ボードから端末を開けません', title: ready ? 'hub のターミナルを開く' : 'tmux の外で動いている hub は、ボードから端末を開けません' };
+  return { act: 'hub-open', icon: 'terminal', label: 'hub', why: '', title: ready ? 'hub のターミナルを開く' : 'hub を開く（tmux の外で動いているため、端末は開けません）' };
 }
 
 /* A hub's header: stuck to the top of the list while its sessions scroll under it. */
@@ -542,7 +543,7 @@ function groupHeadHtml(g) {
     <span class="sess-head-name">${g.tag ? `<span class="key">${esc(g.tag)}</span>` : ''}${esc(g.text)}</span>
     <span class="m3-pill ${pillCls}">${esc(pillText)}</span>
     <span class="sess-head-count">${count}</span>
-    ${btn ? `<button type="button" class="btn-m3-tonal sess-head-btn" data-hub-act="${btn.act}"${btn.why ? ' disabled' : ''} title="${esc(btn.title)}"><span class="material-symbols-outlined" aria-hidden="true">${btn.icon}</span><span class="lbl">${esc(btn.label)}</span></button>` : ''}
+    ${btn ? `<button type="button" class="btn-m3-tonal sess-head-btn" data-hub-act="${btn.act}"${btn.act === 'hub-open' ? ` data-hub-ref="${esc(HUB_REF + g.id)}"` : ''}${btn.why ? ' disabled' : ''} title="${esc(btn.title)}"><span class="material-symbols-outlined" aria-hidden="true">${btn.icon}</span><span class="lbl">${esc(btn.label)}</span></button>` : ''}
   </header>`;
 }
 
@@ -685,8 +686,9 @@ function patchSessionList(root, groups, rows) {
 
 function applySessionSelection() {
   // The row of the session the task panel is open on is the one in use, as the selected one is.
-  const task = selectedTaskId && !scopeAll() ? taskById(selectedTaskId) : null;
+  const task = selectedTaskId && !isHubRef(selectedTaskId) && !scopeAll() ? taskById(selectedTaskId) : null;
   const inPanel = task ? sessionOfTask(task)?.id : null;
+  markHubButtons();
   for (const row of document.querySelectorAll('#sess-groups .sess-row[data-sref]')) {
     if (!scopeAll() && (row.dataset.sref === sessView.selectedId || row.dataset.sref === inPanel)) row.setAttribute('aria-current', 'true');
     else row.removeAttribute('aria-current');
@@ -1208,6 +1210,13 @@ function startGroupHub(g) {
   return hubStartAt(`/b/${slug}`, g.hub.id, g.hub.key, row).then(() => refresh(true));
 }
 
+/* A hub's terminal is the task panel's, over the list; 「すべて」 shows the hub's board first. */
+function openGroupHub(g) {
+  const ref = HUB_REF + g.id;
+  if (!scopeAll()) return openTaskPanel(ref, 'term');
+  go({ board: hubBoardOf(g)?.slug || g.slug, view: 'sessions', task: ref, pane: 'term' });
+}
+
 sessEl('sess-groups').addEventListener('click', e => {
   const act = e.target.closest('[data-hub-act]');
   if (act) {
@@ -1215,7 +1224,7 @@ sessEl('sess-groups').addEventListener('click', e => {
     const g = sessionGroups().find(x => x.gid === act.closest('.sess-group')?.dataset.gid);
     if (!g) return;
     if (act.dataset.hubAct === 'hub-start') return startGroupHub(g);
-    return g.hubSession && openSessionRef(sessionRef(g.hubSession));
+    return openGroupHub(g);
   }
   const row = e.target.closest('[data-sref]');
   if (row) openSessionRef(row.dataset.sref);

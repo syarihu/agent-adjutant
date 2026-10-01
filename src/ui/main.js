@@ -119,10 +119,10 @@ function toggleBottomSheet() {
   if (handleBar) handleBar.setAttribute('aria-expanded', String(isOpen));
 }
 
-async function refreshAll() {
+async function refreshAll(base = BASE) {
   const line = 'adj refresh';
   try {
-    await api('/api/refresh', { method: 'POST' });
+    await boardApi(base, '/api/refresh', { method: 'POST' });
     note(line, false, '外部同期を完了しました');
     await refresh(true);
   } catch (e) { note(`${line} → ${e.message}`, true); }

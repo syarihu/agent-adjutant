@@ -11,11 +11,21 @@ const emptyState = () => ({ tasks: [], workers: [], pending: [], gates: [] });
 let state = emptyState();
 let view = 'board';
 let log = [];
-let selectedTaskId = null;   // the task the panel is open on
+let selectedTaskId = null;   // what the panel is open on: a task id, or a hub as HUB_REF + its id
 let panelPop = false;        // the panel is popped out: never saved, so a reload comes back to its side
-// The panel's terminal, kept while its task is open: moving the panel or switching to 詳細 must
+// The panel's terminal, kept while its task (or hub) is open: moving the panel or switching to 詳細 must
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
 const panelTerm = { taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
+
+/* A hub opens in the task panel as `hub:<id>`, where a task opens as its id: in `selectedTaskId`
+   and in the address's `task=`. */
+const HUB_REF = 'hub:';
+const isHubRef = id => typeof id === 'string' && id.startsWith(HUB_REF);
+const hubIdOfRef = id => id.slice(HUB_REF.length);
+const hubOfRef = (id, data = state) => isHubRef(id) ? (data.hubs || []).find(h => h.id === hubIdOfRef(id)) || null : null;
+/* The hub's own session; a hub with none is only as alive as its record says. */
+const hubSessionOf = h => (state.sessions || []).find(s => s.kind === 'hub' && s.id === h.id)
+  || { kind: 'hub', id: h.id, present: !!h.state?.present };
 
 const PREF_KEY = 'adj-board-split';
 // sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
@@ -272,6 +282,7 @@ const api = (path, options) => boardApi(BASE, path, options);
    Navigation state lives in the address, so back/forward and a pasted link land on the same
    screen without a reload; what is only a preference (layout, folded repositories) does not.
      /b/<slug>/?view=agent&task=<id>&pane=term             one board
+     /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
      /b/<slug>/?view=sessions&session=<id>                 its sessions, one of them open
      /                                                     すべて, every board
      /review?item=<id>                                     要対応レビュー, every board
@@ -423,7 +434,8 @@ function drawScreen(boardChanged) {
 function applyPendingTask(final = false) {
   if (!pendingTask || (view !== 'board' && view !== 'sessions')) return;
   const id = pendingTask;
-  if (!(state.tasks || []).some(t => t.id === id)) {
+  const there = isHubRef(id) ? !!hubOfRef(id) : (state.tasks || []).some(t => t.id === id);
+  if (!there) {
     if (final) pendingTask = null;
     return;
   }
@@ -555,6 +567,8 @@ async function fetchBoards() {
     renderBoardRows();
     renderTitle();
     renderGateCount();
+    // The hub panel reads the list for its origin, address and counts.
+    redrawHubPanel();
   } catch {
     // The list is a convenience; the board polls keep reporting a server that is gone.
   } finally {

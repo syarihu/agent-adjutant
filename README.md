@@ -462,8 +462,8 @@ board's title (人 / エージェント / セッション) include a セッシ�
 each with its workers: a repository's board lists its own hub and then its parent-task hubs
 (indented), a parent-task board only its own hub, and 「すべて」 every repository's. A hub's header
 sticks to the top while its sessions scroll, and shows the hub's state, how many sessions it has and
-how many wait for input, with a 「hub」 button that opens the hub's terminal (or 「hub を起動」
-when it is stopped). A worker's row shows 入力待ち / 稼働 / 停止 (a finished one is dimmed 終了),
+how many wait for input, with a 「hub」 button that opens the hub in the task panel's ターミナル tab (see below; or
+「hub を起動」 when it is stopped). A worker's row shows 入力待ち / 稼働 / 停止 (a finished one is dimmed 終了),
 its title and when it last wrote; rows waiting for input come first, and worktrees with no
 session are folded at the bottom of their hub's group. Pressing a row opens that session's tmux
 window beside the list (`?view=sessions&session=<id>`), where you can read it and type to it;
@@ -492,6 +492,18 @@ to its icon rail, and on a narrow window the panel floats over the board. Moving
 changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
 The open task and tab are in the address (`task=<id>`, `pane=term`), so back and forward and a
 pasted link open the same task and tab.
+
+**A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
+the right of the board's title (for the board being viewed), a terminal icon that appears when you
+hover a board's row in the sidebar (not in the icon rail, which has the title button instead), and
+the 「hub」 button on a hub's header in the セッション tab. It opens on ターミナル, the hub's own
+session. 詳細 shows the hub's state, the workers at work, what waits on you, the queue and the
+inbox (the newest few of each, with 「ほか N 件」; a queued task opens its own panel), and holds the
+hub's actions: 着手を促す (start the next queued task if a worker slot is free; it has left the title bar and lives here),
+再同期, 止める (or 閉じる for a finished parent-task hub) and 「hub をリセット…」. A stopped hub's
+ターミナル tab is disabled, and 詳細 offers 「hub を起動」; so is the tab of a hub that runs outside
+tmux, whose 詳細 still works. A hub of another board opens in place with its own numbers and a
+「ボードへ」 button. The hub is in the address as `task=hub:<id>`.
 
 The bar above the terminal carries the actions for the selected session: resume a stopped
 worker, close a running one, start or stop a hub, open the session in your own terminal, and,

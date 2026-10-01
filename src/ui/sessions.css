@@ -34,6 +34,7 @@
 .sess-head-btn { display:inline-flex; align-items:center; gap:4px; padding:3px 12px; font-size:12px; }
 .sess-head-btn .material-symbols-outlined { font-size:16px; }
 .sess-head-btn:disabled { opacity:.5; cursor:not-allowed; }
+.sess-head-btn.on { background:var(--md-sys-color-secondary-container); color:var(--md-sys-color-on-secondary-container); }
 .sess-body { padding:4px 0 0; }
 .sess-group.child { margin-left:8px; }
 .sess-group.child .sess-body { margin-left:8px; padding-left:14px; border-left:2px solid var(--md-sys-color-outline-variant); }

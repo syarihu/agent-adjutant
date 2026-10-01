@@ -170,14 +170,16 @@ function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiti
   const sub = st.stopped ? st.text : (b.hub ? '親タスク hub' : `${(b.nwo || '').split('/')[0]} · リポジトリ hub`);
   const start = st.stopped
     ? `<button type="button" class="start-btn" data-start-slug="${esc(b.slug)}" title="hub を起動します" ${rowStartingNow(b) ? 'disabled' : ''}>起動</button>` : '';
+  const term = st.stopped ? ''
+    : `<button type="button" class="hubterm-btn" data-hub-term="${esc(b.slug)}" title="この hub を開く" aria-label="この hub を開く"><span class="material-symbols-outlined" aria-hidden="true">terminal</span></button>`;
   const toggle = chevron
     ? `<button type="button" class="repo-toggle" data-fold="${esc(b.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : '';
-  return `<div class="board-row ${child ? 'child' : 'repo'}${st.stopped ? ' stopped' : ''}" role="link" tabindex="0" data-board="${esc(b.slug)}"${current ? ' aria-current="page"' : ''} title="${esc(boardName(b))}">
+  return `<div class="board-row ${child ? 'child' : 'repo'}${st.stopped ? ' stopped' : ' live'}" role="link" tabindex="0" data-board="${esc(b.slug)}"${current ? ' aria-current="page"' : ''} title="${esc(boardName(b))}">
     <span class="avatar" aria-hidden="true">${esc(initialsOf(b))}<span class="mini-badge">${own || ''}</span></span>
     <span class="hub-dot ${st.tone}" title="${esc(st.stopped ? '停止中' : '稼働中')}"></span>
     <span class="txt"><span class="name">${esc(boardName(b))}</span><span class="sub">${esc(sub)}</span></span>
     <span class="counts"><span class="rail-badge${waiting ? '' : ' zero'}" title="あなたの確認待ち">${waiting}</span><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span>
-    ${start}${toggle}</div>`;
+    ${start}${term}${toggle}</div>`;
 }
 
 function renderBoardRows() {
@@ -239,6 +241,13 @@ function renderBoardRows() {
 }
 
 document.getElementById('board-rows').addEventListener('click', e => {
+  const term = e.target.closest('button[data-hub-term]');
+  if (term) {
+    e.stopPropagation();
+    const b = boards.find(x => x.slug === term.dataset.hubTerm);
+    if (b) openHubPanelOf(b);
+    return;
+  }
   const start = e.target.closest('button[data-start-slug]');
   if (start) {
     e.stopPropagation();
@@ -273,14 +282,42 @@ function openBoard(slug) {
   go({ board: slug, view: keep, task: null, item: null });
 }
 
+/* A board's hub in the task panel, on its terminal: in place when this page's state lists the
+   hub, else on the board it belongs to, where the address opens it after the first poll. */
+function openHubPanelOf(b) {
+  const ref = HUB_REF + b.hubId;
+  const listed = !scopeAll() && nav.view !== 'review' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
+  if (listed) return openTaskPanel(ref, 'term');
+  go({ board: b.slug, view: nav.view === 'review' ? 'human' : nav.view, task: ref, pane: 'term' });
+}
+
+/* The hub of the board on screen, which the title's 「hub」 button opens. */
+const ownHubId = () => selectedBoard()?.hubId || pageHub()?.id || 'hub';
+
+/* The hub panel draws from client-side markers (starting, resetting) as well as from state, which
+   change without a poll. */
+function redrawHubPanel() { if (isHubRef(selectedTaskId)) renderTaskPanel(); }
+
+function openOwnHub() { openTaskPanel(HUB_REF + ownHubId(), 'term'); }
+
+/* The buttons that open a hub's panel are lit while it is open. */
+function markHubButtons() {
+  const btn = document.getElementById('btn-hub');
+  if (btn) btn.classList.toggle('on', !!selectedTaskId && selectedTaskId === HUB_REF + ownHubId());
+  for (const el of document.querySelectorAll('#sess-groups .sess-head-btn[data-hub-ref]')) {
+    el.classList.toggle('on', !!selectedTaskId && el.dataset.hubRef === selectedTaskId);
+  }
+}
+
 /* The name and state the top bar gives the screen. Only a board's own screen has its name in
    the title; the other views keep the title `setView` gave them and add the path to it. */
 function renderTitle() {
   // The hub's own buttons have no board to act on in 「すべて」 and the review queue.
-  for (const id of ['btn-nudge', 'btn-resync']) {
-    const el = document.getElementById(id);
-    if (el) el.hidden = scopeAll();
-  }
+  const resync = document.getElementById('btn-resync');
+  if (resync) resync.hidden = scopeAll();
+  const hubBtn = document.getElementById('btn-hub');
+  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review' || view === 'task';
+  markHubButtons();
   const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + (b.waiting || 0), 0) : waitingIn();
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
   const crumbs = document.getElementById('crumbs');
@@ -325,6 +362,7 @@ async function hubStartAt(base, hubId, key, row = null) {
     note(line, false, data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました');
     await refreshBoards();
     renderBoardRows();
+    redrawHubPanel();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
   }
@@ -405,6 +443,7 @@ async function hubReset(id) {
     // return can leave the hub marked.
     hubResetting.add(id);
     renderBoardRows();
+    redrawHubPanel();
     if (inSessions) showSessNotice('hub をリセットしています…');
     try {
       const data = await run();
@@ -425,6 +464,7 @@ async function hubReset(id) {
       hubResetting.delete(id);
       // `refresh` draws nothing when the state is unchanged, so the buttons are redrawn here.
       renderBoardRows();
+      redrawHubPanel();
       if (inSessions) renderSessionsView();
     }
   };
@@ -440,6 +480,7 @@ async function hubStop(id) {
   try {
     const data = await api(`/api/hubs/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' });
     clearHubStarting(h);
+    redrawHubPanel();
     note(line, false, data.wasRunning ? 'hub を止めました' : 'hub はすでに止まっていました（記録を片付けました）');
     await refresh();
   } catch (e) {
@@ -457,6 +498,7 @@ async function hubClose(id) {
   try {
     const data = await api(`/api/hubs/${encodeURIComponent(id)}/close`, { method: 'POST', body: '{}' });
     clearHubStarting(h);
+    redrawHubPanel();
     const unread = data.unread ? `（未読 ${data.unread} 件は残っています）` : '';
     note(line, false, `hub を閉じました${unread}`);
     await refresh();
@@ -591,10 +633,10 @@ async function update(id, body, line, why, target = null) {
   }
 }
 
-async function nudgeHub() {
+async function nudgeHub(base = BASE) {
   const line = "adj send --kind next --from dashboard --subject 'start the next queued task if a worker slot is free'";
   try {
-    const data = await api('/api/hub/next', { method: 'POST' });
+    const data = await boardApi(base, '/api/hub/next', { method: 'POST' });
     note(line, false, '枠が空いていれば待ちの先頭を着手' + handedNote(data.handed));
     await refresh();
   } catch (e) {

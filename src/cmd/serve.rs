@@ -713,7 +713,8 @@ fn board_counts(
     (waiting, working)
 }
 
-/// The board list as `/api/boards` and `adj server status` give it. The counts are read from
+/// The board list as `/api/boards` and `adj server status` give it. The counts (waiting,
+/// working, and queued: tasks still to be started) are read from
 /// each board's records (see `board_counts`), so one `ps` and one `git worktree list` per
 /// repository serve every board.
 fn boards_json(port: u16, token: &str) -> Vec<Value> {
@@ -754,6 +755,10 @@ fn boards_json(port: u16, token: &str) -> Vec<Value> {
             let tasks = task::list(&task::dir(&state_dir, &a.slug));
             let mut gates = gate::list(&gate::dir(&state_dir, &a.slug));
             let (waiting, working) = board_counts(&tasks, &gates, worker_seen);
+            let queued = tasks
+                .iter()
+                .filter(|t| t.status == task::Status::Queued)
+                .count();
             gates.sort_by(|x, y| x.opened_at.cmp(&y.opened_at));
             let gates: Vec<Value> = gates
                 .iter()
@@ -803,6 +808,7 @@ fn boards_json(port: u16, token: &str) -> Vec<Value> {
                 "title": a.hub.as_ref().and_then(|_| super::hub_title::cached_title(&a.slug)),
                 "waiting": waiting,
                 "working": working,
+                "queued": queued,
                 "gates": gates,
                 "finished": finished,
             })

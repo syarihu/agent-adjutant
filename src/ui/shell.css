@@ -413,6 +413,27 @@ main { flex: 1; overflow: hidden; position: relative; }
 .board-row.stopped:focus-within .start-btn { display: inline-flex; }
 .board-row.stopped:hover .counts .rail-count,
 .board-row.stopped:focus-within .counts .rail-count { display: none; }
+/* A running hub's row offers its terminal, in the place a stopped one offers 起動. */
+.board-row .hubterm-btn {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+}
+.board-row .hubterm-btn .material-symbols-outlined { font-size: 18px; }
+.board-row .hubterm-btn:hover { background: var(--md-sys-color-surface-container-highest); }
+.board-row.live:hover .hubterm-btn,
+.board-row.live:focus-within .hubterm-btn { display: inline-flex; }
+.board-row.live:hover .counts .rail-count,
+.board-row.live:focus-within .counts .rail-count { display: none; }
 .origin-chip {
   display: inline-flex;
   align-items: center;
@@ -471,6 +492,7 @@ body.rail-icons .board-row .avatar { display: flex; }
 body.rail-icons .board-row .avatar .mini-badge:not(:empty) { display: block; }
 body.rail-icons .board-row.stopped:hover .start-btn,
 body.rail-icons .board-row.stopped:focus-within .start-btn { display: none; }
+body.rail-icons .board-row .hubterm-btn { display: none !important; }
 /* The rail has no fold toggle, so every hub shows. */
 body.rail-icons .repo-group.collapsed .board-row.child { display: flex; }
 body.rail-icons .rail-tools { flex-direction: column; gap: 4px; }
@@ -522,4 +544,5 @@ body.panel-pop #task-panel {
 
 .rail-item[hidden] { display: none; }
 .single-board .rail-boards-label, .single-board #board-rows { display: none; }
-#btn-nudge[hidden], #btn-resync[hidden] { display: none; }
+#btn-hub[hidden], #btn-resync[hidden] { display: none; }
+#btn-hub.on { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }

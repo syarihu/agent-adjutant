@@ -1198,10 +1198,11 @@ function setPanelPart(part, el, html) {
 function renderTaskPanel() {
   const panel = tp('task-panel');
   if (!panel) return;
-  const task = selectedTaskId ? taskById(selectedTaskId) : null;
-  // A card the board no longer lists takes the panel with it.
-  if (selectedTaskId && !task) return dismissTaskPanel();
-  const shown = !!task && (view === 'board' || view === 'sessions');
+  const hub = hubOfRef(selectedTaskId);
+  const task = selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
+  // A card the board no longer lists, or a hub that left its list, takes the panel with it.
+  if (selectedTaskId && !task && !hub) return dismissTaskPanel();
+  const shown = !!(task || hub) && (view === 'board' || view === 'sessions');
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop);
@@ -1212,18 +1213,19 @@ function renderTaskPanel() {
   applyRailMode();
   // The list marks the session the panel is open on.
   if (view === 'sessions') applySessionSelection();
+  markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
-  if (!task) return renderHandForm(null);
+  if (!task && !hub) return renderHandForm(null);
   // In the task view the panel waits, with its terminal, for the board to come back.
   if (!shown) return;
 
-  const colId = columnOf(task);
-  const gate = openGate(task);
-  const s = sessionOfTask(task);
-  const pane = paneOf(task);
+  const colId = task ? columnOf(task) : null;
+  const gate = task ? openGate(task) : null;
+  const s = hub ? hubSessionOf(hub) : sessionOfTask(task);
+  const pane = hub ? hubPaneOf(hub, s) : paneOf(task);
 
-  setPanelPart('head', tp('tp-head'), panelHeadHtml(task));
-  setPanelPart('tabs', tp('tp-tabs'), panelTabsHtml(task, gate, s, pane));
+  setPanelPart('head', tp('tp-head'), hub ? hubPanelHeadHtml(hub, s) : panelHeadHtml(task));
+  setPanelPart('tabs', tp('tp-tabs'), hub ? hubPanelTabsHtml(hub, s, pane) : panelTabsHtml(task, gate, s, pane));
 
   // Shown before the terminal is mounted: a hidden host has no size to fit to.
   const reveal = pane === 'term' && tp('tp-term').hidden;
@@ -1231,11 +1233,11 @@ function renderTaskPanel() {
   tp('tp-term').hidden = pane !== 'term';
   // Another task starts at the top, not where the last one was scrolled to: set once the pane
   // is shown, since a hidden one has no scroll to set.
-  if (pane === 'detail' && panelScrolledFor !== task.id) {
-    panelScrolledFor = task.id;
+  if (pane === 'detail' && panelScrolledFor !== selectedTaskId) {
+    panelScrolledFor = selectedTaskId;
     tp('tp-detail').scrollTop = 0;
   }
-  syncPanelTerminal(task, s, pane);
+  syncPanelTerminal(selectedTaskId, s, pane);
   setPanelPart('bar', tp('tp-term-bar'), termBarHtml(s));
   const ph = tp('tp-term-ph');
   ph.hidden = !!panelTerm.term;
@@ -1246,9 +1248,9 @@ function renderTaskPanel() {
     panelTerm.term.focus();
   }
 
-  setPanelPart('gate', tp('tp-gate'), panelGateHtml(task, gate));
-  setPanelPart('rest', tp('tp-rest'), panelRestHtml(task, colId));
-  renderHandForm(colId === 'backlog' ? task : null);
+  setPanelPart('gate', tp('tp-gate'), hub ? '' : panelGateHtml(task, gate));
+  setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : panelRestHtml(task, colId));
+  renderHandForm(!hub && colId === 'backlog' ? task : null);
 }
 
 function panelHeadHtml(task) {
@@ -1260,8 +1262,6 @@ function panelHeadHtml(task) {
     : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
   const b = selectedBoard();
   const origin = b ? boardName(b) : (state.repo || '').split('/').pop();
-  const place = (where, icon, label, on) =>
-    `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
   return `
     <div class="tp-head-main">
       <div class="tp-badges">
@@ -1271,8 +1271,15 @@ function panelHeadHtml(task) {
       </div>
       <h2 class="tp-title">${esc(task.title)}</h2>
     </div>
-    <div class="tp-head-btns">
-      <button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>
+    ${panelBtnsHtml('<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>')}`;
+}
+
+/* The head's buttons, which are the same for a task and a hub: `jump` is the one of its own. */
+function panelBtnsHtml(jump) {
+  const place = (where, icon, label, on) =>
+    `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+  return `<div class="tp-head-btns">
+      ${jump}
       ${place('left', 'left_panel_open', '左に置く', prefs.panelSide === 'left' && !panelPop)}
       ${place('right', 'right_panel_open', '右に置く', prefs.panelSide === 'right' && !panelPop)}
       ${place('pop', 'open_in_new', 'ポップアウト', panelPop)}
@@ -1280,13 +1287,15 @@ function panelHeadHtml(task) {
     </div>`;
 }
 
+/* `off` is why the tab cannot be used (its tooltip), or falsy. */
+const panelTab = (pane, id, label, extra, off) =>
+  `<button type="button" role="tab" id="tp-tab-${id}" class="tp-tab${pane === id ? ' on' : ''}" data-pane="${id}" aria-selected="${pane === id}" aria-controls="${id === 'term' ? 'tp-term' : 'tp-detail'}"${off ? ` disabled title="${esc(off)}"` : ''}>${label}${extra}</button>`;
+
 function panelTabsHtml(task, gate, s, pane) {
   const usable = hasSession(s) && !!state.boardTerminal?.available;
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
-  const tab = (id, label, extra, disabled) =>
-    `<button type="button" role="tab" id="tp-tab-${id}" class="tp-tab${pane === id ? ' on' : ''}" data-pane="${id}" aria-selected="${pane === id}" aria-controls="${id === 'term' ? 'tp-term' : 'tp-detail'}"${disabled ? ` disabled title="${hint}"` : ''}>${label}${extra}</button>`;
-  return tab('detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', false)
-    + tab('term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>' : '', !usable);
+  return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '')
+    + panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>' : '', !usable && hint);
 }
 
 /* ── 詳細 ── */
@@ -1393,15 +1402,122 @@ function panelRestHtml(task, colId) {
   return h;
 }
 
+/* ── A hub in the panel ──────────────────────────────────────────────────────────────────────
+   `selectedTaskId` is `hub:<id>`, and the panel draws the same parts: the hub's session is the
+   terminal, and 詳細 is what the hub is handling and what can be done to it. */
+/* The page's own hub is the one its state counts; another board's hub is counted by its row in
+   the board list. */
+const hubOther = h => { const own = pageHub(); return !!own && own.id !== h.id; };
+const hubRowOf = h => (multiBoard ? boards.find(b => b.slug === h.slug) : null) || null;
+/* Where the hub's own requests go: its board's route when it is not the page's. */
+const hubBaseOf = h => multiBoard && hubOther(h) ? `/b/${h.slug}` : BASE;
+
+/* Why the hub's terminal cannot be opened, as [the tab's hint, its tooltip]; null when it can. */
+function hubTermWhy(h, s) {
+  if (!s.present) return hubStartingNow(h) ? ['起動中', 'hub を起動しています'] : ['hub 停止中', 'hub が止まっています'];
+  if (!state.boardTerminal?.available) return ['端末はボードから開けません', '端末はボードから開けません'];
+  if (!boardTerminalReady(s)) return ['tmux の外', 'tmux の外で動いている hub は、ボードから端末を開けません'];
+  return null;
+}
+const hubPaneOf = (h, s) => nav.pane === 'term' && !hubTermWhy(h, s) ? 'term' : 'detail';
+
+function hubPanelHeadHtml(h, s) {
+  const row = hubRowOf(h);
+  const since = sinceLabel(row?.hubLastAlive);
+  const [pillText, pillCls] = hubStartingNow(h) ? ['起動しています…', 'pill-neutral']
+    : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
+    : s.waiting ? ['入力待ち', 'pill-warn']
+    : ['稼働中', 'pill-good'];
+  const origin = row ? boardName(row) : repoName();
+  const nwo = row?.nwo || state.repo || '';
+  const title = h.parent ? `親タスク hub — ${[h.key, h.title].filter(Boolean).join(' ') || '（キー不明）'}`
+    : `リポジトリ hub — ${nwo}`;
+  const jump = multiBoard && hubOther(h)
+    ? '<button type="button" class="btn-m3-text tp-jump" data-tp-board title="この hub のボードを開く">ボードへ</button>' : '';
+  return `
+    <div class="tp-head-main">
+      <div class="tp-badges">
+        <span class="tp-key" title="${esc(h.id)}">hub</span>
+        ${origin ? `<span class="origin-chip" title="${esc(nwo)}"><span class="material-symbols-outlined" aria-hidden="true">${h.parent ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
+        <span class="m3-pill ${pillCls}">${esc(pillText)}</span>
+      </div>
+      <h2 class="tp-title">${esc(title)}</h2>
+    </div>
+    ${panelBtnsHtml(jump)}`;
+}
+
+function hubPanelTabsHtml(h, s, pane) {
+  const why = hubTermWhy(h, s);
+  return panelTab(pane, 'detail', '詳細', '', '')
+    + panelTab(pane, 'term', 'ターミナル', why ? `<span class="tp-tab-hint">${esc(why[0])}</span>` : s.waiting ? '<span class="tp-wait">入力待ち</span>' : '', why && why[1]);
+}
+
+const HUB_LIST_MAX = 5;
+const hubListMore = n => n > 0 ? `<div class="tp-muted">ほか ${n} 件</div>` : '';
+
+function hubDetailHtml(h, s) {
+  const other = hubOther(h);
+  const row = hubRowOf(h);
+  const startWhy = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
+  let html = '';
+  if (!s.present) {
+    const since = sinceLabel(row?.hubLastAlive);
+    html += `<div class="m3-card-attention-box">
+      <div class="tp-gate-head"><span class="material-symbols-outlined" style="font-size:16px;">stop_circle</span><span>hub は${since ? `${esc(since)}から` : ''}止まっています。起動するとここでターミナルを開けます。</span></div>
+      <div class="tp-gate-actions"><button type="button" class="btn-m3-primary" data-tp-hub="start"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'tmux の新しいウィンドウで adj hub を実行します')}"><span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span><span>hub を起動</span></button></div>
+    </div>`;
+  }
+
+  // The page's own board is read from its state; another board's from its row in the list.
+  const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
+  const queued = other ? row?.queued : line.length;
+  const counts = [];
+  if (!other && state.workerSlots) counts.push(kv('worker', `${state.workerSlots.busy} / ${state.workerSlots.max} 稼働`));
+  else if (other && row) counts.push(kv('作業中', `${row.working || 0} 件`));
+  if (!other) counts.push(kv('あなたの確認待ち', `${waitingIn()} 件`));
+  else if (row) counts.push(kv('あなたの確認待ち', `${row.waiting || 0} 件`));
+  if (queued != null) counts.push(kv('待ちキュー', `${queued} 件`));
+  counts.push(kv('受信箱', `${h.inboxCount || 0} 件`));
+  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${counts.join('')}</div></div>`;
+
+  // Only the page's own board has its tasks to name; another board's are read on its own page.
+  if (!other) {
+    html += `<div class="m3-filled-card">${secTitle('待ちキュー')}${line.length
+      ? `<ul class="sess-side-list">${line.slice(0, HUB_LIST_MAX).map(t => `<li><button type="button" class="linkish" data-tp-task="${esc(t.id)}">${esc(t.title)}</button><span class="who">${esc(t.id)}</span></li>`).join('')}</ul>${hubListMore(line.length - HUB_LIST_MAX)}`
+      : '<div class="tp-muted">待ちはありません</div>'}</div>`;
+  }
+
+  // Newest first, as the hub reports them: `inboxCount` is the whole of it.
+  const inbox = (h.inbox || []).slice(0, HUB_LIST_MAX);
+  html += `<div class="m3-filled-card">${secTitle('受信箱')}${inbox.length
+    ? `<ul class="sess-side-list">${inbox.map(m => `<li><div>${esc(m.subject || m.name)}</div><div class="who">${esc([m.kind, m.from, m.at ? when(m.at) : ''].filter(Boolean).join(' ・ '))}</div></li>`).join('')}</ul>${hubListMore((h.inboxCount || 0) - inbox.length)}`
+    : '<div class="tp-muted">受信箱は空です</div>'}</div>`;
+
+  // A stopped hub's start is the banner's.
+  const act = hubActionOf(s);
+  const own = act && act.act !== 'hub-start'
+    ? `<button type="button" class="btn-m3-tonal" data-tp-hub="${act.act.slice(4)}"${act.disabled ? ' disabled' : ''} title="${esc(act.title)}"><span class="material-symbols-outlined" style="font-size:16px;">${act.icon}</span><span>${esc(act.label)}</span></button>` : '';
+  html += `<div class="m3-filled-card">${secTitle('操作')}
+    <div class="tp-gate-actions">
+      <button type="button" class="btn-m3-tonal" data-tp-hub="next" title="adj send --kind next (着手を促す)"><span class="material-symbols-outlined" style="font-size:16px;">bolt</span><span>着手を促す</span></button>
+      <button type="button" class="btn-m3-tonal" data-tp-hub="sync" title="再同期 (adj refresh)"><span class="material-symbols-outlined" style="font-size:16px;">refresh</span><span>再同期</span></button>
+      ${own}
+    </div>
+    <button type="button" class="btn-m3-text tp-reset" data-tp-hub="reset"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）')}">hub をリセット…</button>
+  </div>`;
+  return html;
+}
+
 /* ── ターミナル ── */
 /* The terminal lives in #tp-term-host from its first mount until the task changes or the panel
    closes. 詳細 only hides the pane around it, so the socket survives; the bar and the note
    over it are the parts that are drawn again. */
-function syncPanelTerminal(task, s, pane) {
-  // Another task's socket is not carried over; a fresh one is asked for after 再開 or 再接続.
-  if (panelTerm.taskId !== task.id || (panelTerm.term && s && s.id !== panelTerm.sessionId)
+function syncPanelTerminal(subject, s, pane) {
+  // Another task's (or hub's) socket is not carried over; a fresh one is asked for after
+  // 再開 or 再接続.
+  if (panelTerm.taskId !== subject || (panelTerm.term && s && s.id !== panelTerm.sessionId)
       || (panelTerm.reconnect && boardTerminalReady(s))) disposePanelTerminal();
-  panelTerm.taskId = task.id;
+  panelTerm.taskId = subject;
   if (pane !== 'term' || panelTerm.term || !boardTerminalReady(s)) return;
   // One session, one terminal: the セッション tab lets go of it.
   const heldBySessions = sessView.selectedId === s.id;
@@ -1467,8 +1583,9 @@ function termPlaceholderHtml(s) {
 
 /* Events are heard on the panel itself: its parts are drawn again, it is not. */
 tp('task-panel').addEventListener('click', e => {
-  const task = taskById(selectedTaskId);
-  if (!task) return;
+  const hub = hubOfRef(selectedTaskId);
+  const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
+  if (!task && !hub) return;
   const hit = sel => e.target.closest(sel);
   let b;
   if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
@@ -1478,6 +1595,7 @@ tp('task-panel').addEventListener('click', e => {
     return closeTaskPanel();
   }
   if ((b = hit('[data-tp-place]'))) return placePanel(b.dataset.tpPlace);
+  if (hub) return hubPanelClick(e, hub);
   if (hit('[data-tp-jump]')) {
     // A popped-out panel is over the card: it goes back to its side first.
     panelPop = false;
@@ -1509,6 +1627,39 @@ tp('task-panel').addEventListener('click', e => {
     renderTaskPanel();
   }
 });
+/* The hub's own buttons. The terminal bar's are the session's (`runSessionAction`), as for a task. */
+function hubPanelClick(e, h) {
+  const hit = sel => e.target.closest(sel);
+  let b;
+  if ((b = hit('[data-tp-hub]'))) {
+    if (b.disabled) return;
+    switch (b.dataset.tpHub) {
+      case 'next': return nudgeHub(hubBaseOf(h));
+      case 'sync': return refreshAll(hubBaseOf(h));
+      case 'start': return hubStart(h.id);
+      case 'stop': return openHubStopDialog(h.id, 'stop');
+      case 'close': return openHubStopDialog(h.id, 'close');
+      case 'reset': return openHubStopDialog(h.id, 'reset');
+    }
+    return;
+  }
+  if ((b = hit('[data-tp-task]'))) return openTaskPanel(b.dataset.tpTask);
+  if (hit('[data-tp-board]')) {
+    // The hub's board, with the hub still in the panel on the tab it was on.
+    panelPop = false;
+    return go({ board: h.slug, task: selectedTaskId, pane: nav.pane });
+  }
+  if ((b = hit('[data-sess-act]'))) {
+    if (b.disabled) return;
+    // A hub started or resumed from here is connected to once its window exists (syncPanelTerminal).
+    if (b.dataset.sessAct === 'resume' || b.dataset.sessAct === 'hub-start') panelTerm.reconnect = true;
+    return runSessionAction(b.dataset.sessAct, hubSessionOf(h));
+  }
+  if (hit('[data-tp-reconnect]')) {
+    panelTerm.reconnect = true;
+    renderTaskPanel();
+  }
+}
 tp('task-panel').addEventListener('change', e => {
   const b = e.target.closest('[data-relay-pick]');
   if (!b) return;
