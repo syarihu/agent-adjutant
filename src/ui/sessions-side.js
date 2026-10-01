@@ -448,9 +448,7 @@ function sideTaskOf(s) {
 function openSideTask(b, task, tab) {
   const open = () => {
     if (tab) return openTask(task.id, tab);
-    setView('board');
-    // selectTask toggles: a card already open would be closed by the click that asks for it.
-    if (selectedTaskId !== task.id) selectTask(task.id);
+    openTaskPanel(task.id);
   };
   // Another board is switched to in place, and the task opened once its state is in.
   if (b.own) return open();

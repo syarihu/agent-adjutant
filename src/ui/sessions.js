@@ -329,6 +329,12 @@ function selectSession(id) {
 function openSessionRef(ref) {
   const s = (state.sessions || []).find(x => sessionRef(x) === ref);
   if (!s) return;
+  // A worker of a task on the board is talked to in the task panel, over the list.
+  const ofBoard = t => t.id === s.task && (!scopeAll() || t._slug === s._slug);
+  if (s.kind === 'worker' && s.task && (state.tasks || []).some(ofBoard)) {
+    return go({ ...(scopeAll() ? { board: s._slug } : {}), view: 'sessions', session: null, task: s.task, pane: 'term' },
+      { replace: !scopeAll() && s.task === nav.task });
+  }
   if (!scopeAll()) return selectSession(s.id);
   const hub = (state.hubs || []).find(h => h._slug === s._slug && h.id === hubOfSession(s));
   const slug = hub?.slug && boards.some(b => b.slug === hub.slug) ? hub.slug : s._slug;
@@ -444,7 +450,8 @@ function mountSelected() {
   const s = currentSession();
   // A terminal that ended, or whose session went away, stays on screen with its last lines;
   // it is replaced only by choosing a row, never by the poll.
-  if (id && !sessView.mounted && s && boardTerminalReady(s)) {
+  // The task panel holds a session's terminal while it is open on its task: not a second one.
+  if (id && !sessView.mounted && s && boardTerminalReady(s) && panelTerm.sessionId !== id) {
     const rec = { sessionId: id, term: null, ended: null };
     sessView.mounted = rec;
     rec.term = mountSessionTerminal(sessEl('sess-term-host'), {
@@ -686,8 +693,11 @@ function patchSessionList(root, groups, rows) {
 }
 
 function applySessionSelection() {
+  // The row of the session the task panel is open on is the one in use, as the selected one is.
+  const task = selectedTaskId && !scopeAll() ? taskById(selectedTaskId) : null;
+  const inPanel = task ? sessionOfTask(task)?.id : null;
   for (const row of document.querySelectorAll('#sess-groups .sess-row[data-sref]')) {
-    if (!scopeAll() && row.dataset.sref === sessView.selectedId) row.setAttribute('aria-current', 'true');
+    if (!scopeAll() && (row.dataset.sref === sessView.selectedId || row.dataset.sref === inPanel)) row.setAttribute('aria-current', 'true');
     else row.removeAttribute('aria-current');
   }
 }
