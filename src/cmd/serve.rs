@@ -9,6 +9,7 @@
 //! It holds no clock. Nothing here polls a tracker or wakes on a timer: a request arrives
 //! because a person clicked, and that is the only thing that moves.
 
+use std::collections::HashMap;
 use std::io::{BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ use serde_json::{Value, json};
 use crate::gate;
 use crate::http::{self, Request};
 use crate::messaging;
+use crate::repo::Worktree;
 use crate::runner;
 use crate::session;
 use crate::task;
@@ -39,6 +41,7 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/task-view.css"),
     include_str!("../ui/console-and-dialog.css"),
     include_str!("../ui/terminal.css"),
+    include_str!("../ui/sessions.css"),
     include_str!("../ui/page-body.html"),
     include_str!("../ui/core.js"),
     include_str!("../ui/terminal.js"),
@@ -46,6 +49,9 @@ const UI_HTML: &str = concat!(
     include_str!("../ui/actions.js"),
     include_str!("../ui/review.js"),
     include_str!("../ui/task-view.js"),
+    include_str!("../ui/sessions.js"),
+    include_str!("../ui/sessions-side.js"),
+    include_str!("../ui/sessions-start.js"),
     include_str!("../ui/main.js"),
     include_str!("../ui/page-end.html"),
 );
@@ -1233,6 +1239,12 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/findings") => {
             reply(out, review_findings(server, path))
         }
+        ("GET", path) if session_route_for(path, "git").is_some() => {
+            let result = session_route_for(path, "git")
+                .unwrap_or_else(|| Err("no such route".to_string()))
+                .and_then(|id| session_git(server, &id));
+            reply(out, result)
+        }
         ("POST", "/api/tasks") => reply(out, create_task(server, &req.body)),
         ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/relay") => {
             reply(out, relay_findings(server, path, &req.body))
@@ -1245,12 +1257,32 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         }
         ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
         ("POST", "/api/sessions") => reply(out, super::session::start_request(server, &req.body)),
-        ("POST", path) if link_route(path).is_some() => {
-            let result = link_route(path)
+        ("POST", path) if session_route_for(path, "link").is_some() => {
+            let result = session_route_for(path, "link")
                 .unwrap_or_else(|| Err("no such route".to_string()))
                 .and_then(|id| super::session::link(server, &id, &req.body));
             reply(out, result)
         }
+        // Only on the resident's boards, like the hub actions below: reopening a session,
+        // opening a terminal and removing a worktree reach outside the repository's own
+        // records, and a board a hub serves lives and dies with that hub.
+        ("POST", path)
+            if server.resident
+                && session_route(path)
+                    .is_some_and(|(_, action)| matches!(action, "resume" | "open" | "cleanup")) =>
+        {
+            let (id, action) = session_route(path).unwrap_or((Err("no such route".into()), ""));
+            let result = id.and_then(|id| match action {
+                "resume" => super::board_actions::resume(server, &id, &req.body),
+                "open" => super::board_actions::open(server, &id),
+                _ => super::board_actions::cleanup(server, &id, &req.body),
+            });
+            reply(out, result)
+        }
+        ("POST", "/api/hubs") if server.resident => reply(
+            out,
+            super::board_actions::start_parent_hub(server, &req.body),
+        ),
         // Only on the resident's boards: starting and stopping a hub reaches outside the
         // repository's own records, and a board a hub serves lives and dies with that hub.
         ("POST", path) if server.resident && hub_route(path).is_some() => {
@@ -1286,7 +1318,7 @@ fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result
 fn session_terminal(
     record: Option<&Value>,
     terminal_settings: &crate::config::TerminalSettings,
-    tmux_panes: &[crate::terminal::TmuxPane],
+    views: &mut HashMap<PathBuf, TmuxView>,
     pid: Option<u32>,
 ) -> session::SessionTerminal {
     if let Some(recorded) = record
@@ -1296,9 +1328,12 @@ fn session_terminal(
         return recorded;
     }
     let tmux = terminal_settings.spawn.is_none() && terminal_settings.is_tmux();
-    let pane = pid
-        .filter(|_| tmux)
-        .and_then(|p| crate::terminal::find_matching_pane(tmux_panes, Some(p), None));
+    // Asked of tmux only here: a session whose record says where it runs needs no look at the
+    // settings' own server.
+    let pane = pid.filter(|_| tmux).and_then(|p| {
+        let view = tmux_view(views, terminal_settings.tmux_socket());
+        crate::terminal::find_matching_pane(&view.panes, Some(p), None)
+    });
     session::SessionTerminal {
         backend: crate::terminal::backend_name(terminal_settings).to_string(),
         socket: terminal_settings
@@ -1362,7 +1397,6 @@ fn state(server: &Server) -> Value {
     // by a timer, since nothing in the server polls on one.
     let _ = super::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
-    let hub = messaging::hub_status(&repo.slug, &repo.hub_name);
     let tasks = with_records(
         task::list(&super::task::dir(&server.ctx)),
         gate::list(&super::gate::records_dir(&server.ctx)),
@@ -1387,20 +1421,44 @@ fn state(server: &Server) -> Value {
         .filter_map(|t| t["jules"]["session"].as_str().map(str::to_string))
         .collect();
     server.jules.keep_only(&shown);
-    // Counted as `adj work` counts, main checkout included, though it is not listed below.
-    let mut busy = usize::from(messaging::holds_worker_slot(Path::new(&repo.main), now));
+    // One `git worktree list` and one `ps` serve every question below, so what a poll costs
+    // does not grow with the number of worktrees. The `ps` is only run if a record names a pid.
+    let processes = messaging::ProcessTable::snapshot();
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
-    let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
-    let mut workers_data = Vec::with_capacity(linked_paths.len());
-    let mut workers: Vec<Value> = Vec::with_capacity(linked_paths.len());
-    for path in &linked_paths {
-        let status = messaging::worker_status(Path::new(path));
+    let listed = crate::repo::worktrees(&repo.main).unwrap_or_default();
+    let (main_branch, linked) = split_main(&repo.main, listed);
+    let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
+    // Counted as `adj work` counts, main checkout included, though it is not listed below.
+    let mut busy = usize::from(messaging::holds_worker_slot_with(
+        &processes,
+        Path::new(&repo.main),
+        now,
+    ));
+    let hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    // The repository's own hub is one of `hubs`; asked separately only if it is not there.
+    let hub = hubs
+        .iter()
+        .find(|h| h.slug == repo.slug)
+        .map(|h| h.state.clone())
+        .unwrap_or_else(|| {
+            let status = messaging::hub_status_with(&processes, &repo.slug, &repo.hub_name);
+            session::RepoHubState {
+                present: status.present,
+                stale: status.stale,
+                pid: status.pid,
+                started_at: status.started_at,
+            }
+        });
+    let mut workers_data = Vec::with_capacity(linked.len());
+    let mut workers: Vec<Value> = Vec::with_capacity(linked.len());
+    for Worktree { path, branch } in &linked {
+        let status = messaging::worker_status_with(&processes, Path::new(path));
         // A present worker holds a slot without asking `ps` again; the rest are asked
         // the way `adj work` asks, so the header and the refusal cannot disagree.
-        if status.present || messaging::holds_worker_slot(Path::new(path), now) {
+        if status.present || messaging::holds_worker_slot_with(&processes, Path::new(path), now) {
             busy += 1;
         }
-        let branch = branch_of(path);
+        let branch = branch.clone();
         let name = Path::new(path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string());
@@ -1421,9 +1479,18 @@ fn state(server: &Server) -> Value {
         workers_data.push((status, branch));
     }
 
-    let hubs = messaging::all_repo_hubs(repo);
-
-    let sessions = sessions_of(server, &settings, &hubs, &linked_paths, workers_data);
+    let sessions = sessions_of(
+        server,
+        &settings,
+        &hubs,
+        &linked_paths,
+        Listing {
+            processes: &processes,
+            main_branch,
+        },
+        None,
+        |index, _| workers_data[index].clone(),
+    );
 
     let pending: Vec<Value> = messaging::list(&repo.slug)
         .iter()
@@ -1458,6 +1525,24 @@ fn state(server: &Server) -> Value {
         // server, on a machine that has tmux. Which sessions is for the page to read from
         // `sessions[].terminal` and `present`.
         "boardTerminal": { "available": server.resident && server.tmux.is_some() },
+        // Whether the board can open a session in the person's own terminal, and through what:
+        // `terminal.attach` when it is set, iTerm2 where that is installed.
+        "sessionOpen": super::board_actions::open_state(server, &settings),
+        // Whether the board can resume a stopped worker, so the page offers it only where it
+        // can work, and says why not where it cannot.
+        "sessionResume": super::board_actions::resume_state(&settings),
+        // The command line a hub runs, as configured: the server sends the template with its
+        // placeholders in place, and the Sessions sidebar fills in only `{name}` to show it.
+        "hubRunner": settings
+            .hub_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_HUB_RUNNER),
+        // The agent a session started from the board runs, which is the only one its dialog offers.
+        "sessionStart": {
+            "agent": runner::agent_from_runner(
+                settings.agent_runner.as_deref().unwrap_or(runner::DEFAULT_AGENT_RUNNER),
+            ),
+        },
         "sessions": sessions,
         "tasks": tasks,
         "workers": workers,
@@ -1479,21 +1564,249 @@ fn state(server: &Server) -> Value {
     })
 }
 
-/// The sessions this board lists, hubs first and then the workers of `linked_paths` (with what
-/// was already asked of each), as the page reads them and as a board terminal resolves an id.
+/// A tmux socket as a lookup key: the path of the server it names, so that no setting, a bare
+/// name and the path a record kept for the same server are one key and one pair of `list-*`
+/// calls. The directory is resolved when it can be, because `/tmp` is `/private/tmp` on a Mac.
+fn socket_key(socket: Option<&str>) -> PathBuf {
+    #[cfg(unix)]
+    let uid = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let uid = 0;
+    socket_key_in(
+        socket,
+        std::env::var("TMUX").ok().as_deref(),
+        std::env::var("TMUX_TMPDIR").ok().as_deref(),
+        uid,
+    )
+}
+
+/// `socket_key` with the environment it reads handed in.
+fn socket_key_in(
+    socket: Option<&str>,
+    tmux_env: Option<&str>,
+    tmpdir: Option<&str>,
+    uid: u32,
+) -> PathBuf {
+    let path = crate::terminal::tmux_socket_path(socket, tmux_env, tmpdir, uid);
+    match (
+        path.parent().and_then(|dir| dir.canonicalize().ok()),
+        path.file_name(),
+    ) {
+        (Some(dir), Some(leaf)) => dir.join(leaf),
+        _ => path,
+    }
+}
+
+/// What one tmux server said about its panes and clients in one poll.
+struct TmuxView {
+    panes: Vec<crate::terminal::TmuxPane>,
+    /// Clients attached to each window, by window id.
+    attached: HashMap<String, u32>,
+}
+
+impl TmuxView {
+    fn look(socket: Option<&str>) -> Self {
+        let panes = crate::terminal::list_tmux_panes(socket).unwrap_or_default();
+        let clients = crate::terminal::list_tmux_clients(socket);
+        let attached = crate::terminal::attached_counts(&panes, &clients);
+        TmuxView { panes, attached }
+    }
+}
+
+/// What the tmux server on `socket` says, asked the first time it is needed and kept after.
+/// The first spelling of a server's socket is the one tmux is run with.
+fn tmux_view<'a>(views: &'a mut HashMap<PathBuf, TmuxView>, socket: Option<&str>) -> &'a TmuxView {
+    views
+        .entry(socket_key(socket))
+        .or_insert_with(|| TmuxView::look(socket))
+}
+
+/// When a session's tmux window last had activity and how many clients are on it, from the
+/// server its own record names — which is not always the settings' one. Both `None` for a
+/// session that is not in tmux or whose window is not there.
+fn tmux_activity(
+    views: &mut HashMap<PathBuf, TmuxView>,
+    terminal: &session::SessionTerminal,
+) -> (Option<i64>, Option<u32>) {
+    let Some(window) = terminal
+        .window
+        .as_deref()
+        .filter(|_| terminal.backend == "tmux")
+    else {
+        return (None, None);
+    };
+    let view = tmux_view(views, terminal.socket.as_deref());
+    let Some(pane) = view.panes.iter().find(|p| p.window_id == window) else {
+        return (None, None);
+    };
+    (pane.window_activity, view.attached.get(window).copied())
+}
+
+fn session_waiting(
+    hub: &session::RepoHub,
+    open: &[&gate::Gate],
+) -> Option<session::SessionWaiting> {
+    let first = open.first()?;
+    Some(session::SessionWaiting {
+        id: first.id.clone(),
+        kind: first.kind.as_str().to_string(),
+        hub: hub.id.clone(),
+        slug: hub.slug.clone(),
+        title: Some(first.title.clone()).filter(|t| !t.is_empty()),
+        opened_at: first.opened_at.clone(),
+        count: open.len(),
+        options: if first.options.is_empty() {
+            first.kind.default_options()
+        } else {
+            first.options.clone()
+        },
+        choices: first
+            .choices
+            .iter()
+            .map(|c| session::WaitingChoice {
+                id: c.id.clone(),
+                label: c.label.clone(),
+            })
+            .collect(),
+        focus: first
+            .focus
+            .as_deref()
+            .map(|f| cut_chars(f, WAITING_FOCUS_CHARS))
+            .filter(|f| !f.is_empty()),
+    })
+}
+
+/// How much of a gate's focus the Sessions banner carries.
+const WAITING_FOCUS_CHARS: usize = 400;
+
+/// `text` cut to at most `max` characters, on a character boundary, with an ellipsis when cut.
+fn cut_chars(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", text[..end].trim_end()),
+        None => text.to_string(),
+    }
+}
+
+/// One hub's open gates, and what could show their workers moved on, read once per poll.
+struct HubGates {
+    open: Vec<gate::Gate>,
+    signals: Vec<gate::Gate>,
+}
+
+impl HubGates {
+    fn read(state_dir: &Path, slug: &str) -> Self {
+        let dir = gate::dir(state_dir, slug);
+        let open = gate::list(&dir);
+        // Left unread when nothing waits on a worker: the archives only grow.
+        let signals = if open.iter().any(|g| g.wait && !g.answered_by_hub()) {
+            gate::resume_signals(
+                &open,
+                &dir,
+                &gate::records_dir(state_dir, slug),
+                &gate::answered_dir(state_dir, slug),
+            )
+        } else {
+            Vec::new()
+        };
+        HubGates { open, signals }
+    }
+}
+
+/// The gates of the hubs a poll reaches, each hub's read the first time one of its sessions
+/// asks.
+struct GateCache {
+    state_dir: PathBuf,
+    read: HashMap<String, HubGates>,
+}
+
+impl GateCache {
+    fn of(&mut self, slug: &str) -> &HubGates {
+        self.read
+            .entry(slug.to_string())
+            .or_insert_with(|| HubGates::read(&self.state_dir, slug))
+    }
+}
+
+/// The gate a worker is waiting to have answered: the oldest still open in its hub's gate
+/// directory that it opened from `worktree` and has not moved on from. "Moved on" is judged as
+/// `close_resumed` judges it, from the same signals, but only reads: a hub's directory is
+/// closed by that hub's board.
+fn waiting_worker(
+    hub: &session::RepoHub,
+    gates: &HubGates,
+    worktree: &str,
+    started: Option<&str>,
+    phase_at: Option<i64>,
+) -> Option<session::SessionWaiting> {
+    let phase_at = phase_at.map(messaging::utc_stamp);
+    let open: Vec<&gate::Gate> = gates
+        .open
+        .iter()
+        .filter(|g| g.worktree == worktree && g.wait && !g.answered_by_hub())
+        .filter(|g| {
+            let later = gates
+                .signals
+                .iter()
+                .filter(|s| s.worktree == g.worktree && s.id != g.id && s.opened_at > g.opened_at)
+                .map(|s| s.opened_at.as_str())
+                .min();
+            gate::resumed_at(g, started, phase_at.as_deref(), later).is_none()
+        })
+        .collect();
+    session_waiting(hub, &open)
+}
+
+/// What a hub is waiting on: the gates it opened for a person to answer.
+fn waiting_hub(hub: &session::RepoHub, gates: &[gate::Gate]) -> Option<session::SessionWaiting> {
+    let open: Vec<&gate::Gate> = gates
+        .iter()
+        .filter(|g| g.wait && g.answered_by_hub())
+        .collect();
+    session_waiting(hub, &open)
+}
+
+/// What one poll has already asked of the system, so `sessions_of` does not ask again: the
+/// process table, and the branch the main checkout's listing entry names.
+struct Listing<'a> {
+    processes: &'a messaging::ProcessTable,
+    main_branch: Option<String>,
+}
+
+/// The sessions this board lists, hubs first and then the workers of `linked_paths`, as the
+/// page reads them and as a board terminal resolves an id. `worker_data` is asked for a
+/// worker's status and branch by its place in `linked_paths`.
+///
+/// With `only`, the one session of that id: the others are skipped before anything is read or
+/// run for them, so that the one and the whole list are the same code and cannot drift.
 fn sessions_of(
     server: &Server,
     settings: &crate::config::Settings,
     hubs: &[session::RepoHub],
     linked_paths: &[String],
-    workers_data: Vec<(messaging::WorkerStatus, Option<String>)>,
+    listing: Listing<'_>,
+    only: Option<&str>,
+    mut worker_data: impl FnMut(usize, &str) -> (messaging::WorkerStatus, Option<String>),
 ) -> Vec<session::Session> {
     let repo = &server.ctx.repo;
     let terminal_settings = &settings.terminal;
-    let tmux_panes = if terminal_settings.spawn.is_none() && terminal_settings.is_tmux() {
-        crate::terminal::list_tmux_panes(terminal_settings.tmux_socket()).unwrap_or_default()
-    } else {
-        Vec::new()
+    let skipped = |id: &str| only.is_some_and(|wanted| wanted != id);
+    // What tmux says, asked once per socket per poll and only for a socket a listed session
+    // needs: its record's own, or the settings' when the record says none.
+    let mut views: HashMap<PathBuf, TmuxView> = HashMap::new();
+    // Read once per poll, for the hubs of the sessions listed, so a worker under a parent-task
+    // hub shows its gate on the repository board too. Read-only — closing a resumed gate stays
+    // with the board that owns the hub's directory.
+    let mut gates = GateCache {
+        state_dir: messaging::state_dir(),
+        read: HashMap::new(),
+    };
+    let worker_waiting = |gates: &mut GateCache,
+                          hub_id: &str,
+                          worktree: &str,
+                          started: Option<&str>,
+                          phase_at: Option<i64>| {
+        let hub = hubs.iter().find(|h| h.id == hub_id)?;
+        waiting_worker(hub, gates.of(&hub.slug), worktree, started, phase_at)
     };
 
     let hub_agent = runner::agent_from_runner(
@@ -1509,14 +1822,19 @@ fn sessions_of(
             .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
     );
 
-    let main_branch = branch_of(&repo.main);
+    let Listing {
+        processes,
+        main_branch,
+    } = listing;
+    let main_branch = || main_branch.clone();
     let mut sessions: Vec<session::Session> = Vec::new();
 
     // 1. Hub sessions from hubs
-    for h in hubs {
+    for h in hubs.iter().filter(|h| !skipped(&h.id)) {
         let record = messaging::read_json(&messaging::hub_record_path(&h.slug));
         let terminal =
-            session_terminal(record.as_ref(), terminal_settings, &tmux_panes, h.state.pid);
+            session_terminal(record.as_ref(), terminal_settings, &mut views, h.state.pid);
+        let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
 
         sessions.push(session::Session {
             id: h.id.clone(),
@@ -1527,7 +1845,7 @@ fn sessions_of(
             hub: None,
             key: h.key.clone(),
             worktree: repo.main.clone(),
-            branch: main_branch.clone(),
+            branch: main_branch(),
             task: None,
             title: Some(h.name.clone()),
             present: h.state.present,
@@ -1536,6 +1854,10 @@ fn sessions_of(
             started_at: h.state.started_at.clone(),
             phase: None,
             phase_at: None,
+            phases: Vec::new(),
+            last_activity_at,
+            attached,
+            waiting: waiting_hub(h, &gates.of(&h.slug).open),
         });
     }
 
@@ -1546,7 +1868,11 @@ fn sessions_of(
         .is_some()
         || messaging::worker_session(Path::new(&repo.main)).is_some();
     let worker_ids = worker_session_ids(linked_paths, main_listed);
-    for ((path, id), (status, branch)) in linked_paths.iter().zip(worker_ids).zip(workers_data) {
+    for (index, (path, id)) in linked_paths.iter().zip(worker_ids).enumerate() {
+        if skipped(&id) {
+            continue;
+        }
+        let (status, branch) = worker_data(index, path);
         let wt_path = Path::new(path);
         let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
@@ -1561,8 +1887,16 @@ fn sessions_of(
         let terminal = session_terminal(
             record_json.as_ref(),
             terminal_settings,
-            &tmux_panes,
+            &mut views,
             status.pid,
+        );
+        let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        let waiting = worker_waiting(
+            &mut gates,
+            &parent_hub,
+            path,
+            started_at.as_deref(),
+            status.phase_at,
         );
 
         let saved_title = saved_session.and_then(|s| s.title);
@@ -1588,13 +1922,20 @@ fn sessions_of(
             started_at,
             phase: status.phase,
             phase_at: status.phase_at,
+            phases: status.phases,
+            last_activity_at,
+            attached,
+            waiting,
         });
     }
 
     // Also check worker in main checkout if one exists
     let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
+    if skipped("worker-main") {
+        return sessions;
+    }
     if let Some(record_json) = messaging::read_json(&main_record_path) {
-        let status = messaging::worker_status(Path::new(&repo.main));
+        let status = messaging::worker_status_with(processes, Path::new(&repo.main));
         let parent_hub = parent_hub_id(
             repo,
             hubs,
@@ -1608,8 +1949,16 @@ fn sessions_of(
         let terminal = session_terminal(
             Some(&record_json),
             terminal_settings,
-            &tmux_panes,
+            &mut views,
             status.pid,
+        );
+        let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        let waiting = worker_waiting(
+            &mut gates,
+            &parent_hub,
+            &repo.main,
+            started_at.as_deref(),
+            status.phase_at,
         );
 
         let task_id = record_json
@@ -1626,7 +1975,7 @@ fn sessions_of(
             hub: Some(parent_hub),
             key: None,
             worktree: repo.main.clone(),
-            branch: main_branch.clone(),
+            branch: main_branch(),
             task: task_id,
             title: status.title,
             present: status.present,
@@ -1635,10 +1984,16 @@ fn sessions_of(
             started_at,
             phase: status.phase,
             phase_at: status.phase_at,
+            phases: status.phases,
+            last_activity_at,
+            attached,
+            waiting,
         });
     } else if let Some(saved) = messaging::worker_session(Path::new(&repo.main)) {
         let parent_hub = parent_hub_id(repo, hubs, saved.hub.as_deref());
-        let terminal = session_terminal(None, terminal_settings, &tmux_panes, None);
+        let terminal = session_terminal(None, terminal_settings, &mut views, None);
+        let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
+        let waiting = worker_waiting(&mut gates, &parent_hub, &repo.main, None, None);
 
         sessions.push(session::Session {
             id: "worker-main".to_string(),
@@ -1649,7 +2004,7 @@ fn sessions_of(
             hub: Some(parent_hub),
             key: None,
             worktree: repo.main.clone(),
-            branch: main_branch,
+            branch: main_branch(),
             task: saved.task,
             title: saved.title,
             present: false,
@@ -1658,29 +2013,73 @@ fn sessions_of(
             started_at: None,
             phase: None,
             phase_at: None,
+            phases: Vec::new(),
+            last_activity_at,
+            attached,
+            waiting,
         });
     }
     sessions
 }
 
-/// The sessions of this board, asked for on their own: what the board terminal resolves a
-/// session id against, so that the page never names a socket or a window.
-pub(super) fn board_sessions(
+/// The session `id` of this board, resolved without listing the others: no `ps` or `git` for
+/// another worktree, no gates of another hub. Equal to its entry in the list `state` carries.
+pub(super) fn board_session(
     server: &Server,
     settings: &crate::config::Settings,
-) -> Vec<session::Session> {
+    id: &str,
+) -> Option<session::Session> {
     let repo = &server.ctx.repo;
-    let hubs = messaging::all_repo_hubs(repo);
-    let linked_paths = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
-    let workers_data = linked_paths
-        .iter()
-        .map(|path| (messaging::worker_status(Path::new(path)), branch_of(path)))
-        .collect();
-    sessions_of(server, settings, &hubs, &linked_paths, workers_data)
+    let listed = crate::repo::worktrees(&repo.main).unwrap_or_default();
+    let (main_branch, linked) = split_main(&repo.main, listed);
+    let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
+    // A `ps` for each of the few it is asked about, not the whole process table.
+    let processes = messaging::ProcessTable::each();
+    let hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    sessions_of(
+        server,
+        settings,
+        &hubs,
+        &linked_paths,
+        Listing {
+            processes: &processes,
+            main_branch,
+        },
+        Some(id),
+        |index, path| {
+            (
+                messaging::worker_status_with(&processes, Path::new(path)),
+                linked[index].branch.clone(),
+            )
+        },
+    )
+    .into_iter()
+    .next()
+}
+
+/// The main checkout's branch and the linked worktrees, out of one listing. The branch is
+/// asked of git when the listing does not name the main checkout at all.
+fn split_main(main: &str, listed: Vec<Worktree>) -> (Option<String>, Vec<Worktree>) {
+    let mut main_branch = None;
+    let mut found_main = false;
+    let mut linked = Vec::with_capacity(listed.len());
+    for worktree in listed {
+        if Path::new(&worktree.path) == Path::new(main) {
+            found_main = true;
+            main_branch = worktree.branch;
+        } else {
+            linked.push(worktree);
+        }
+    }
+    if !found_main {
+        main_branch = branch_of(main);
+    }
+    (main_branch, linked)
 }
 
 /// The tasks as the board reads them, each live one with what its worker recorded without
-/// stopping (`records`, oldest first) and the plan a person approved (`approvedPlan`, whose
+/// stopping (`records`, oldest first, each with its diff's byte length as `diffSize` in place
+/// of the diff) and the plan a person approved (`approvedPlan`, whose
 /// `answeredAt` is when).
 ///
 /// Joined here rather than written onto the task record: a record belongs to the gate
@@ -1707,7 +2106,20 @@ fn with_records(
                     .filter(|g| g.kind == gate::Kind::Plan)
                     .filter(|g| matches!(g.decision.as_deref(), Some("approve" | "choice")))
                     .max_by(|a, b| a.answered_at.cmp(&b.answered_at));
-                value["records"] = json!(records);
+                // Without their diffs, which are most of what a poll weighs: the page reads
+                // one from the task's history when it shows it, and `diffSize` says it is there.
+                value["records"] = records
+                    .into_iter()
+                    .map(|r| {
+                        let mut record = json!(r);
+                        if let Some(diff) = record.as_object_mut().and_then(|f| f.remove("diff"))
+                            && let Some(diff) = diff.as_str()
+                        {
+                            record["diffSize"] = json!(diff.len());
+                        }
+                        record
+                    })
+                    .collect();
                 value["approvedPlan"] = json!(plan);
             }
             Some(value)
@@ -1850,10 +2262,82 @@ fn terminal_route(path: &str) -> Option<Result<String, String>> {
     (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
 }
 
-/// `/api/sessions/<id>/link` as the session id, percent-decoded as `terminal_route` does.
-fn link_route(path: &str) -> Option<Result<String, String>> {
-    let raw = path.strip_prefix("/api/sessions/")?.strip_suffix("/link")?;
-    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
+/// `/api/sessions/<id>/<action>` as the session id, percent-decoded as `terminal_route` does,
+/// and the action, for the five there are besides the terminal (which is a WebSocket and
+/// answered before routing). Which of them a board serves is for `route` to say.
+fn session_route(path: &str) -> Option<(Result<String, String>, &str)> {
+    let (raw, action) = path.strip_prefix("/api/sessions/")?.split_once('/')?;
+    (!raw.is_empty()
+        && !raw.contains('/')
+        && matches!(action, "link" | "git" | "resume" | "open" | "cleanup"))
+    .then(|| (decode_segment(raw), action))
+}
+
+/// The session id in `path` when it is the route of `action` and no other.
+fn session_route_for(path: &str, action: &str) -> Option<Result<String, String>> {
+    session_route(path)
+        .filter(|(_, found)| *found == action)
+        .map(|(id, _)| id)
+}
+
+/// How long the git check of one session may take in all. A worktree on a slow disk or a
+/// network mount must not hold a connection thread indefinitely.
+const GIT_CHECK_SECS: u64 = 10;
+
+/// The session `id` of this board, from the board's own records.
+pub(super) fn find_session(
+    server: &Server,
+    settings: &crate::config::Settings,
+    id: &str,
+) -> Result<session::Session, String> {
+    board_session(server, settings, id).ok_or_else(|| format!("no such session: {id}"))
+}
+
+/// The slug of the hub the worker in `worktree` reports to, from its own record: the same one
+/// `parent_hub_id` and the hub listing arrive at, without listing the hubs.
+fn worker_hub_slug(repo: &crate::repo::RepoInfo, worktree: &Path) -> String {
+    match messaging::worker_hub_key(worktree) {
+        Some(key) => crate::repo::slug_for(&repo.nwo, Some(&key)),
+        None => match &repo.hub {
+            Some(_) => repo
+                .clone()
+                .addressed(None)
+                .map(|default| default.slug)
+                .unwrap_or_else(|_| repo.slug.clone()),
+            None => repo.slug.clone(),
+        },
+    }
+}
+
+/// What one session's worktree holds that no remote has, `None` when the directory is gone.
+/// The path comes from the board's own record of the session, never from the request.
+pub(super) fn git_state_of(
+    server: &Server,
+    session: &session::Session,
+) -> Result<Option<crate::repo::GitState>, String> {
+    // The task's own base, when it has one: work meant for a release branch is not merged
+    // because it is in the default branch.
+    let base = session.task.as_deref().and_then(|task_id| {
+        let slug = worker_hub_slug(&server.ctx.repo, Path::new(&session.worktree));
+        task::load(&task::dir(&messaging::state_dir(), &slug), task_id)
+            .ok()?
+            .base
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_CHECK_SECS);
+    crate::repo::worktree_git_state(Path::new(&session.worktree), base.as_deref(), deadline)
+}
+
+/// What one session's worktree holds that no remote has, asked when a person looks rather than
+/// on every poll.
+fn session_git(server: &Server, id: &str) -> Result<Value, String> {
+    let settings = settings_now(server);
+    let session = find_session(server, &settings, id)?;
+    match git_state_of(server, &session)? {
+        Some(state) => {
+            serde_json::to_value(state).map_err(|e| format!("cannot describe the worktree: {e}"))
+        }
+        None => Err(format!("{} does not exist", session.worktree)),
+    }
 }
 
 /// The scripts and styles the board terminal loads, as `(content type, body)`. Only the
@@ -1904,6 +2388,16 @@ fn decode_segment(raw: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|_| format!("the id is not valid UTF-8: {raw}"))
 }
 
+/// How a hub is to be started, from the `start` a request names: `auto` when it names none.
+pub(super) fn hub_start_of(input: &Value) -> Result<super::HubStart, String> {
+    match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
+        "auto" => Ok(super::HubStart::Auto),
+        "resume" => Ok(super::HubStart::Resume),
+        "new" => Ok(super::HubStart::New),
+        other => Err(format!("no such start: {other}")),
+    }
+}
+
 /// Start, stop or close one of the repository's hubs from the board. `id` is the `hubs[].id` the
 /// page was given, so the page can only name a hub this repository was found to have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
@@ -1922,12 +2416,7 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
     let settings = settings_now(server);
     match action {
         "start" => {
-            let start = match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
-                "auto" => super::HubStart::Auto,
-                "resume" => super::HubStart::Resume,
-                "new" => super::HubStart::New,
-                other => return Err(format!("no such start: {other}")),
-            };
+            let start = hub_start_of(&input)?;
             if hub.parent && hub.key.is_none() {
                 return Err(
                     "the key of this hub is not known; start it with adj hub --hub <key>"
@@ -2120,6 +2609,111 @@ mod tests {
         assert!(at("</style>") < at("<body>"));
         assert!(at("<script>") < at("</script>"));
         assert!(at("</script>") < at("</body>"));
+    }
+
+    #[test]
+    fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
+        for piece in [
+            "id=\"sessions-view\"",
+            "id=\"nav-sessions\"",
+            "#session/",
+            "function boardOfSession",
+            "mountSessionTerminal(",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        for gone in [
+            "term-overlay",
+            "openTerminalOverlay",
+            "closeTerminalOverlay",
+        ] {
+            assert!(!UI_HTML.contains(gone), "{gone}");
+        }
+        // The script uses what `terminal.js` and `actions.js` define, and `main.js` calls it.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("function mountSessionTerminal") < at("function sessionState"));
+        assert!(at("function sessionState") < at("openPendingSession)"));
+    }
+
+    #[test]
+    fn the_sessions_view_has_actions_and_a_gate_banner() {
+        for piece in [
+            "id=\"sess-actions\"",
+            "id=\"sess-menu\"",
+            "id=\"sess-gate\"",
+            "id=\"sess-notice\"",
+            "id=\"sess-over\"",
+            "id=\"cleanup-dialog\"",
+            "function answerSessionGate",
+            "function renderSessionActions",
+            "function renderSessionGate",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+    }
+
+    #[test]
+    fn the_sessions_view_patches_its_tree_and_lets_the_terminal_go_first() {
+        for piece in [
+            "function patchSessionTree",
+            "data-gid=",
+            "function holdSideForSelection",
+            "function releaseSide",
+            "onReady: () => releaseSide(id)",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        // A row's own words are what a redraw follows, not the selected session's task.
+        assert!(!UI_HTML.contains("JSON.stringify([s.task, s.phase"));
+    }
+
+    #[test]
+    fn the_sessions_view_has_a_sidebar_for_the_selected_session() {
+        for piece in [
+            "id=\"sess-side\"",
+            "id=\"sess-side-toggle\"",
+            "id=\"sess-side-close\"",
+            "id=\"sess-side-body\"",
+            "function renderSessionSidebar",
+            "function boardApi",
+            "function sideBoard",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        // The sidebar draws with the timeline of `task-view.js`, and `main.js` starts polling
+        // only after both are defined.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("function timelineHtml") < at("function renderSessionSidebar"));
+        assert!(at("function renderSessionSidebar") < at("openPendingSession)"));
+    }
+
+    #[test]
+    fn the_sessions_view_can_start_and_link_sessions() {
+        for piece in [
+            "id=\"sess-add\"",
+            "aria-haspopup=\"menu\"",
+            "id=\"sess-add-menu\"",
+            "id=\"hubkey-dialog\"",
+            "id=\"start-dialog\"",
+            "id=\"link-dialog\"",
+            "function proposeName",
+            "function worktreeNameProblem",
+            "function sessionPendingRows",
+            "function openLinkDialog",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        // The script that draws the tree calls into the one that knows the pending rows, which
+        // is defined after it and before `main.js` starts polling.
+        let at = |piece: &str| UI_HTML.find(piece).unwrap();
+        assert!(at("function renderSessionSidebar") < at("function sessionPendingRows"));
+        assert!(at("function sessionPendingRows") < at("openPendingSession)"));
+    }
+
+    #[test]
+    fn a_long_focus_is_cut_on_a_character_boundary() {
+        assert_eq!(cut_chars("短い", 400), "短い");
+        assert_eq!(cut_chars("あいうえお", 3), "あいう…");
     }
 
     fn request(method: &str, path: &str, headers: &[(&str, &str)]) -> Request {
@@ -2393,8 +2987,32 @@ mod tests {
             .map(|g| g["id"].as_str().unwrap())
             .collect();
         assert_eq!(ids, ["r1"]);
+        assert!(tasks[0]["records"][0].get("diff").is_none());
+        assert!(tasks[0]["records"][0].get("diffSize").is_none());
         assert_eq!(tasks[0]["approvedPlan"]["id"], "p-new");
         assert_eq!(tasks[0]["approvedPlan"]["answeredAt"], "20260922T040000Z");
+    }
+
+    #[test]
+    fn a_record_carries_the_size_of_its_diff_and_not_the_diff() {
+        let mut record = a_gate("r1", gate::Kind::Diff, "t1");
+        record.wait = false;
+        record.diff = Some("diff --git a/ü b/ü\n+é\n".to_string());
+        let size = record.diff.as_ref().unwrap().len();
+        let tasks = with_records(
+            vec![a_task("t1", task::Status::Dispatched)],
+            vec![record.clone()],
+            Vec::new(),
+        );
+        let carried = &tasks[0]["records"][0];
+        assert!(carried.get("diff").is_none(), "{carried}");
+        assert_eq!(carried["diffSize"], size);
+        // The history is where the diff is read from, whole.
+        let history = history_of("t1", Vec::new(), vec![record]);
+        assert_eq!(
+            history["records"][0]["diff"].as_str().map(str::len),
+            Some(size)
+        );
     }
 
     #[test]
@@ -2685,27 +3303,41 @@ mod tests {
     }
 
     #[test]
-    fn a_link_route_names_a_session_id() {
-        fn id(path: &str) -> Option<String> {
-            link_route(path).map(|id| id.unwrap())
+    fn a_session_route_names_a_session_id_and_an_action() {
+        fn id(path: &str, action: &str) -> Option<String> {
+            session_route_for(path, action).map(|id| id.unwrap())
         }
-        assert_eq!(id("/api/sessions/worker-x/link"), Some("worker-x".into()));
-        // As `encodeURIComponent` sends an id with a slash or a space in it.
-        assert_eq!(
-            id("/api/sessions/worker-a%2Fb%20c/link"),
-            Some("worker-a/b c".into())
-        );
-        assert!(link_route("/api/sessions/%FF/link").is_some_and(|id| id.is_err()));
-        for other in [
-            "/api/sessions",
-            "/api/sessions//link",
-            "/api/sessions/a/b/link",
-            "/api/sessions/worker-x/terminal",
-            "/api/sessions/worker-x/link/x",
-            "/api/tasks/x/link",
-        ] {
-            assert!(link_route(other).is_none(), "{other}");
+        for action in ["link", "git", "resume", "open", "cleanup"] {
+            assert_eq!(
+                id(&format!("/api/sessions/worker-x/{action}"), action),
+                Some("worker-x".into()),
+                "{action}"
+            );
+            // As `encodeURIComponent` sends an id with a slash or a space in it.
+            assert_eq!(
+                id(&format!("/api/sessions/worker-a%2Fb%20c/{action}"), action),
+                Some("worker-a/b c".into()),
+                "{action}"
+            );
+            assert!(
+                session_route_for(&format!("/api/sessions/%FF/{action}"), action)
+                    .is_some_and(|id| id.is_err()),
+                "{action}"
+            );
+            for other in [
+                "/api/sessions".to_string(),
+                format!("/api/sessions//{action}"),
+                format!("/api/sessions/a/b/{action}"),
+                format!("/api/sessions/worker-x/{action}/x"),
+                format!("/api/tasks/x/{action}"),
+            ] {
+                assert!(session_route(&other).is_none(), "{other}");
+            }
         }
+        // An action is not another's route, and the terminal is not one of these.
+        assert!(session_route_for("/api/sessions/worker-x/git", "link").is_none());
+        assert!(session_route("/api/sessions/worker-x/terminal").is_none());
+        assert!(session_route("/api/sessions/worker-x/remove").is_none());
     }
 
     #[test]
@@ -2732,5 +3364,145 @@ mod tests {
     #[test]
     fn the_page_does_not_carry_the_terminal_library() {
         assert!(!UI_HTML.contains("Permission is hereby granted"));
+    }
+
+    /// One session asked for on its own is the entry the whole list holds for it, for every
+    /// shape of id: the two can only differ if a field is gathered in one path and not the other.
+    #[test]
+    fn one_session_is_the_entry_the_whole_list_holds() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let main = root.join("repo");
+        std::fs::create_dir_all(&main).unwrap();
+        crate::testing::init_repo(&main, "main");
+        let git = |args: &[&str]| {
+            let mut full = vec!["-c", "user.name=t", "-c", "user.email=t@example.com"];
+            full.extend_from_slice(args);
+            let out = crate::repo::git(&full, Some(&main)).unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["commit", "--allow-empty", "-q", "-m", "first"]);
+        // Two worktrees called `foo` and one called `main` are the ids that carry a digest.
+        let worktrees = ["a/foo", "b/foo", "bar", "c/main"];
+        for (n, rel) in worktrees.iter().enumerate() {
+            let path = root.join(rel);
+            git(&[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &format!("b{n}"),
+                path.to_str().unwrap(),
+            ]);
+        }
+        let record = |worktree: &Path, body: Value| {
+            let path = messaging::worker_record_path(worktree);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body.to_string()).unwrap();
+        };
+        let me = std::process::id();
+        // A recorded tmux window on a socket no server answers on: read through the lazy view,
+        // which finds no window there.
+        record(
+            &root.join("bar"),
+            json!({"pid": me, "title": "bar work", "task": "WID-2", "hub": "WID-1",
+                   "startedAt": "2026-01-01T00:00:00Z",
+                   "terminal": {"backend": "tmux", "socket": "adj-unit-none", "session": "s",
+                                "window": "@1", "pane": "%1"}}),
+        );
+        record(
+            &root.join("a/foo"),
+            json!({"pid": 4294967295u64, "task": "WID-3"}),
+        );
+        record(
+            &main,
+            json!({"pid": me, "task": "WID-4", "title": "on main"}),
+        );
+        // A hub record for the parent-task hub, and a gate it has open for `bar`.
+        let hub_slug = crate::repo::slug_for("acme/widget", Some("WID-1"));
+        let hub_record = messaging::hub_record_path(&hub_slug);
+        std::fs::create_dir_all(hub_record.parent().unwrap()).unwrap();
+        std::fs::write(
+            &hub_record,
+            json!({"pid": me, "cwd": main, "hub": "WID-1", "startedAt": "2026-01-01T00:00:00Z"})
+                .to_string(),
+        )
+        .unwrap();
+        let gates = messaging::state_dir().join("gates").join(&hub_slug);
+        std::fs::create_dir_all(&gates).unwrap();
+        std::fs::write(
+            gates.join("g1.json"),
+            json!({"id": "g1", "kind": "question", "worktree": root.join("bar"),
+                   "title": "which", "openedAt": "20991231T000000Z", "wait": true})
+            .to_string(),
+        )
+        .unwrap();
+
+        let repo = crate::repo::RepoInfo {
+            main: main.to_string_lossy().to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        let server = Server {
+            ctx: super::super::context_of(repo).unwrap(),
+            token: String::new(),
+            port: 0,
+            resident: false,
+            jules: Arc::default(),
+            tmux: None,
+            terminals: Arc::default(),
+        };
+        let settings = settings_now(&server);
+
+        // What the page is sent, which is the whole list.
+        let listed = state(&server)["sessions"].as_array().unwrap().clone();
+        let ids: Vec<&str> = listed.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        let digest = |rel: &str| crate::repo::short_digest(root.join(rel).to_str().unwrap());
+        for expected in [
+            "hub".to_string(),
+            "hub-WID-1".to_string(),
+            "worker-bar".to_string(),
+            "worker-main".to_string(),
+            format!("worker-foo-{}", digest("a/foo")),
+            format!("worker-foo-{}", digest("b/foo")),
+            format!("worker-main-{}", digest("c/main")),
+        ] {
+            assert!(
+                ids.contains(&expected.as_str()),
+                "{expected} not in {ids:?}"
+            );
+        }
+        for session in &listed {
+            let id = session["id"].as_str().unwrap();
+            let one = board_session(&server, &settings, id).unwrap();
+            assert_eq!(&serde_json::to_value(&one).unwrap(), session, "{id}");
+        }
+        let waiting = |id: &str| listed.iter().find(|s| s["id"] == id).unwrap()["waiting"].clone();
+        assert_eq!(waiting("worker-bar")["id"], "g1", "{listed:?}");
+        assert_eq!(waiting("hub-WID-1"), Value::Null);
+        assert_eq!(board_session(&server, &settings, "worker-nope"), None);
+        assert_eq!(board_session(&server, &settings, "hub-nope"), None);
+    }
+
+    #[test]
+    fn one_tmux_server_is_one_key_however_a_session_names_its_socket() {
+        // A directory that is not there, so nothing is resolved and nothing is read from the
+        // environment: the keys are what the spellings alone make of them.
+        let key = |socket| socket_key_in(socket, None, Some("/nonexistent-tmux-dir"), 501);
+        let default_path = key(None).to_string_lossy().to_string();
+        assert_eq!(default_path, "/nonexistent-tmux-dir/tmux-501/default");
+        assert_eq!(key(Some(&default_path)), key(None));
+        assert_eq!(key(Some("  ")), key(None));
+        assert_eq!(key(Some("default")), key(None));
+        assert_ne!(key(Some("another")), key(None));
     }
 }

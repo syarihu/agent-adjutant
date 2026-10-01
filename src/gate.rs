@@ -397,6 +397,35 @@ pub fn resumed_at(
     }
 }
 
+/// The gates that can show a worker in `open` (one hub's open gates, from `dir`) moved on to
+/// something else: `open` itself, and what `records` and `answered` hold that was written since
+/// the earliest waiting gate was opened. Only reads, so a board can ask it about a hub
+/// directory that is not its own.
+///
+/// A gate already answered on the board still shows the worker got as far as opening it. The
+/// archive only grows, so it is not parsed whole: a file older than the earliest waiting gate
+/// cannot be a signal. A little slack for coarse file times; the mtime only prunes, and
+/// `resumed_at` and the caller's filter decide.
+pub fn resume_signals(open: &[Gate], dir: &Path, records: &Path, answered: &Path) -> Vec<Gate> {
+    let since = open
+        .iter()
+        .filter(|g| g.wait && !g.answered_by_hub())
+        .filter_map(|g| {
+            std::fs::metadata(path_of(dir, &g.id))
+                .and_then(|m| m.modified())
+                .ok()
+        })
+        .min()
+        .map(|t| t - std::time::Duration::from_secs(2))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    open.iter()
+        .cloned()
+        .chain(list_modified_since(records, since))
+        .chain(list_modified_since(answered, since))
+        .filter(|g| !g.answered_by_hub())
+        .collect()
+}
+
 impl Gate {
     /// Whether a person decided this on the board: it has a decision, and that decision is
     /// not one of the two ways a gate is closed without the board's answer.

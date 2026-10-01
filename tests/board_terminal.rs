@@ -347,6 +347,80 @@ fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_sessio
 }
 
 #[test]
+fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
+    let Some(tmux) = IsolatedTmux::new("board-one") else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let layout = tmux.lay_out();
+    let fixture = Fixture::new(&config(&tmux));
+    let pid = std::process::id();
+    // Three worktrees, each with a record; only the first runs in the window the board opens.
+    for (name, worker_pid) in [("spy-target", pid), ("spy-other-a", 1), ("spy-other-b", 2)] {
+        let worktree = fixture.repo.parent().unwrap().join(name);
+        let out = Command::new("git")
+            .hermetic()
+            .args(["worktree", "add", "-q", "-b", name])
+            .arg(&worktree)
+            .current_dir(&fixture.repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let mut record = serde_json::json!({
+            "pid": worker_pid,
+            "psStarted": ps_started(worker_pid),
+            "title": name,
+        });
+        if worker_pid == pid {
+            record["terminal"] = serde_json::json!({
+                "backend": "tmux",
+                "socket": layout.socket_path,
+                "session": layout.session,
+                "window": layout.target_window,
+                "pane": "%1",
+            });
+        }
+        std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+        std::fs::write(
+            worktree.join(".claude").join("adjutant-worker.json"),
+            record.to_string(),
+        )
+        .unwrap();
+    }
+    let spy = Spy::new(fixture._dir.path());
+    let resident = Resident::start_with(&fixture, &[("PATH", &spy.path())]);
+    spy.clear();
+
+    let path = terminal_path(&resident, "worker-spy-target", "cols=100&rows=30");
+    let (head, mut ws) = handshake(resident.port, &path, Some(&own_origin(&resident)));
+    assert_eq!(status_of(&head), 101, "{head}");
+    let mut seen = String::new();
+    read_until(&mut ws, &mut seen, "ADJ_MARK");
+
+    let calls = spy.calls();
+    let asked = |needle: &str| calls.iter().filter(|c| c.contains(needle)).count();
+    assert!(
+        !calls.iter().any(|c| c.contains("spy-other")),
+        "another worktree was asked about: {calls:?}"
+    );
+    // The branch comes out of the worktree listing, not from a `git branch` of its own, and
+    // the listing is read once for the session, besides the one that locates the repository.
+    assert_eq!(asked("branch --show-current"), 0, "{calls:?}");
+    assert_eq!(asked("worktree list"), 2, "{calls:?}");
+    let ps: Vec<&String> = calls.iter().filter(|c| c.starts_with("ps ")).collect();
+    assert!(!ps.is_empty(), "{calls:?}");
+    assert!(
+        ps.iter().all(|c| c.ends_with(&format!("-p {pid}"))),
+        "{calls:?}"
+    );
+    // The target's own window is looked at, and only its server is listed.
+    assert_eq!(asked("list-panes"), 1, "{calls:?}");
+    assert!(asked("display-message") >= 1, "{calls:?}");
+    assert_eq!(asked("new-session"), 1, "{calls:?}");
+    assert_eq!(asked("attach-session"), 1, "{calls:?}");
+}
+
+#[test]
 fn a_handshake_is_refused_unless_it_comes_from_the_board_itself() {
     let Some(tmux) = IsolatedTmux::new("board-auth") else {
         eprintln!("tmux not available, skipping test");

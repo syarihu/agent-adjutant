@@ -28,26 +28,39 @@ function backToBoard() {
    which is when it can have changed. */
 const histories = {};
 const historyFailed = new Set();
-function historyOf(task) {
-  const key = `${task.gateAnsweredAt || ''}|${openGate(task)?.id || ''}|${task.status}`;
-  let entry = histories[task.id];
+/* A task of another board (the Sessions sidebar reads those) is kept under its board's path,
+   since task ids are only unique within a board; the ones of this page keep the bare id. */
+const historyKey = (task, base) => base === BASE ? task.id : `${base}|${task.id}`;
+function historyOf(task, base = BASE, data = state) {
+  // The polled records leave their diffs out and say how big each is, so a record that was
+  // written or rewritten since shows as a different key here and its diff is read again.
+  const sizes = (task.records || []).map(r => `${r.id}:${r.diffSize ?? ''}`).join(',');
+  const key = `${task.gateAnsweredAt || ''}|${openGate(task, data)?.id || ''}|${task.status}|${sizes}`;
+  const hk = historyKey(task, base);
+  let entry = histories[hk];
+  // After a failure the entry waits out `retryAt`: every poll redraws, and each would ask again.
+  if (entry && entry.key !== key && entry.retryAt > Date.now() && entry.failedKey === key) return entry;
   if (!entry || entry.key !== key) {
-    entry = histories[task.id] = { key, answered: entry?.answered || [], records: entry?.records || [], loaded: !!entry?.loaded };
+    entry = histories[hk] = { key, answered: entry?.answered || [], records: entry?.records || [], loaded: !!entry?.loaded };
     const mine = entry;
-    api(`/api/tasks/${encodeURIComponent(task.id)}/history`).then(data => {
-      if (histories[task.id] !== mine) return;
+    boardApi(base, `/api/tasks/${encodeURIComponent(task.id)}/history`).then(data => {
+      if (histories[hk] !== mine) return;
       mine.answered = data.answered || [];
       mine.records = data.records || [];
       mine.loaded = true;
-      historyFailed.delete(task.id);
+      historyFailed.delete(hk);
       redrawHistoryOf(task.id);
     }).catch(e => {
       // Asked for again on the next redraw, keeping what was read before on screen meanwhile.
-      if (histories[task.id] === mine) mine.key = null;
+      if (histories[hk] === mine) {
+        mine.key = null;
+        mine.failedKey = key;
+        mine.retryAt = Date.now() + 30000;
+      }
       // Said once per run of failures, so the retries below do not push the log of what was
       // done off the footer.
-      if (!historyFailed.has(task.id)) note(`経過を取得できませんでした: ${e.message}`, true);
-      historyFailed.add(task.id);
+      if (!historyFailed.has(hk)) note(`経過を取得できませんでした: ${e.message}`, true);
+      historyFailed.add(hk);
       // Nothing else redraws a quiet board, so the view asks again itself — while no comment
       // is being typed, since a redraw would cut an IME composition short.
       setTimeout(() => redrawHistoryOf(task.id), 30000);
@@ -61,18 +74,33 @@ function historyOf(task) {
 function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
   if (view === 'board' && selectedTaskId === id) renderDrawer();
+  if (view === 'sessions') renderSessionSidebar();
+  // A record's diff arrives with the history, and nothing else redraws a quiet board.
+  // Only the record on screen, and held while a comment is being typed there.
+  if (view === 'review' && recordById(focused)?.task === id) redrawReview();
 }
+
+/* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the
+   same record. Without it yet (still loading) the record is returned as it is, and
+   `diffPending` says to show that rather than "no diff". */
+function withDiff(record, task, base = BASE, data = state) {
+  if (!record || record.diff != null || !record.diffSize || !task) return record;
+  const kept = historyOf(task, base, data).records.find(r => r.id === record.id);
+  return kept?.diff != null ? { ...record, diff: kept.diff } : record;
+}
+const diffPending = g => !!g.diffSize && g.diff == null;
+const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読み込み中…</div></div>`;
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
    task's records come from /api/state, which is polled, so a send-back shows at once. */
-function gatesOf(task) {
-  const h = historyOf(task);
+function gatesOf(task, data = state, base = BASE) {
+  const h = historyOf(task, base, data);
   const byId = new Map();
   const add = g => g && byId.set(g.id, g);
   h.answered.forEach(add);
   add(task.approvedPlan);
-  (task.records || h.records).forEach(add);
-  (state.gates || []).filter(g => g.task === task.id).forEach(add);
+  (task.records || h.records).forEach(r => add(task.records ? withDiff(r, task, base, data) : r));
+  (data.gates || []).filter(g => g.task === task.id).forEach(add);
   // Same-second ties go by the sequence at the end of the id, as `recordsOf` orders them, so
   // the latest of a kind is the one claimed last.
   return [...byId.values()].sort((a, b) =>
@@ -300,6 +328,7 @@ function reviewTab(task, all) {
   }
   if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  else if (diffPending(g)) h += DIFF_LOADING;
   return h + (waiting ? '' : actHtml(g));
 }
 
@@ -331,11 +360,12 @@ function gateDetailHtml(g, all) {
   if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.decided) h += `<div class="panel"><h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>`;
   if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  else if (diffPending(g)) h += DIFF_LOADING;
   return h + actHtml(g);
 }
 
 /* In time order: what waited on a person, what was only recorded, and what people did. */
-function historyEventsOf(task, all) {
+function historyEventsOf(task, all, waiting = isWaiting) {
   const events = [];
   const push = (stamp, html, gateId) => events.push({ at: stampSecs(stamp) ?? 0, stamp, html, gateId });
   push(task.createdAt, `<div>タスクを作成</div><div class="who">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '')} · ${esc(STOP_AT[task.stopAt || 'plan'] || '')}</div>`);
@@ -345,7 +375,7 @@ function historyEventsOf(task, all) {
     const title = `<button type="button" class="linkish" data-open="${esc(g.id)}">${esc(g.title)}</button>`;
     const why = stopWhy(g).length ? `<div class="who"${stopBad(g) ? ' style="color:var(--critical)"' : ''}>止めた理由: ${esc(stopWhy(g).join(' / '))}</div>` : '';
     const opened = g.wait === false ? 'worker が記録して、止まらずに進んだ'
-      : isWaiting(g) ? 'worker が人を待っている' : 'worker が人を待った';
+      : waiting(g) ? 'worker が人を待っている' : 'worker が人を待った';
     let extra = '';
     if (g.kind === 'diff' || g.kind === 'verify') {
       const [text, tone] = recordSummary(g);
@@ -368,10 +398,11 @@ function historyEventsOf(task, all) {
    entries, for the side sheet, where a long history would push the actions out of reach. The
    worker's phase is not kept as a history — only the one it is in now — so it closes the
    list rather than running through it. */
-function timelineHtml(task, all, limit = Infinity) {
-  const events = historyEventsOf(task, all);
+function timelineHtml(task, all, limit = Infinity, data = state, base = BASE) {
+  // The waiting gates are those of the board the task is on, not of this page's.
+  const events = historyEventsOf(task, all, data === state ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));
   const shown = events.slice(-limit);
-  const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task) : null;
+  const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task, data) : null;
   let h = '';
   if (shown.length < events.length) h += `<div class="source">古い ${events.length - shown.length} 件は省いている</div>`;
   h += `<ol class="timeline">` + shown.map(e =>
@@ -382,7 +413,7 @@ function timelineHtml(task, all, limit = Infinity) {
       `${mins != null ? `（${minutesLabel(mins)}前から）` : ''}</div></div></li>`;
   }
   h += `</ol>`;
-  if (!histories[task.id]?.loaded) h += `<div class="source">回答済みのものを読み込んでいる…</div>`;
+  if (!histories[historyKey(task, base)]?.loaded) h += `<div class="source">回答済みのものを読み込んでいる…</div>`;
   return h;
 }
 

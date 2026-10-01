@@ -279,6 +279,7 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `terminal.socket` | — | none (when `preset` is `"tmux"`, overridden by `$ADJUTANT_TMUX_SOCKET`) |
 | `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 (or tmux detached window with `preset: "tmux"`) |
 | `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 (or tmux window/pane selection with `preset: "tmux"`) |
+| `terminal.attach` | `{socket}` `{session}` `{window}` | iTerm2 with `tmux -CC attach`, on a Mac that has iTerm2 (opening a session from the board; otherwise the board refuses and names this key) |
 | `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 (or tmux window kill with `preset: "tmux"`) |
 | | | *`false` closes no tabs: `adjutant close` then exits 1 and clears nothing* |
 | `terminal.title` | `{title}` | OSC escape written to this process's tty (or `tmux rename-window` with `preset: "tmux"`) |
@@ -440,12 +441,25 @@ learns where a repository is from the hubs that start in it and from `adj config
 none of these has seen is added by running `adj server start` inside it. Without a resident
 server, everything is as described above.
 
-**A session's terminal in the board.** On the resident server's boards, a card, its side sheet
-and a hub's row in the rail have a button that opens the session's tmux window in the page,
-where you can read it and type to it. It is offered only for a session that runs in tmux
-(`terminal.preset: "tmux"`) and is alive. Closing it only detaches: the window and the agent
-in it keep running. The board attaches as a client of its own, so the window's size follows
-tmux's `window-size` option, which is `latest` by default: the client that acted last decides.
+**A session's terminal in the board.** On the resident server's boards, the rail has a セッション
+view: a tree of the repository's hub and the parent-task hubs with their workers, and the
+selected session's tmux window beside it, where you can read it and type to it. A card, its side
+sheet and a hub's row in the rail have a button that opens the view with that session selected,
+with a link back to where you were. A terminal is offered only for a session that runs in tmux
+(`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
+detaches: the window and the agent in it keep running. The board attaches as a client of its own,
+so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
+that acted last decides.
+
+The bar above the terminal carries the actions for the selected session: resume a stopped
+worker, close a running one, start or stop a hub, open the session in your own terminal, and,
+under the menu, open the worktree in your IDE, copy its path and clean it up. Cleaning up removes
+the worktree and its local branch (never the remote one) and refuses when work would be lost
+(uncommitted or untracked files, commits no remote has); forcing it means typing the worktree's
+name back. A session that waits on a gate shows a banner with the gate's question and, for a plan,
+a question, a result or a dispatch, the buttons to answer it there; the answer goes to the board
+of the hub that opened the gate. A session that is not running shows a panel over the terminal
+with what the page last saw of it and a button to resume it, or to start the hub.
 
 To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
 does it:
@@ -529,26 +543,185 @@ the issue leaves the record as it was and prints why; other trackers' URLs are l
 
 ### Sessions without a task
 
-A worker normally starts from a task, and the board joins a task to its worker by worktree,
-so a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
-`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Only
-`instruction` is required. The hub defaults to this board's own; the name is checked as a
-task's is, and taken from the instruction when it is left out; `agent`, when given, has to be
-the one `agentRunner` starts. The request is a `session` message in that hub's inbox, and the
-hub starts its tab if it is not running and the resident server can. Nothing is queued for a
-free worker slot, so the request is refused when none is free. The hub creates the worktree
-under the first free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with
-the instruction in its brief; no task record is made.
+A worker normally starts from a task, and the board joins a task to its worker by worktree, so
+a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
+`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Every field is
+optional. The hub defaults to this board's own; the name is checked as a task's is, and left
+out it is the first four ASCII words of the instruction, lowercased and joined with `-`, or
+`session-YYYYMMDD-HHMM` (UTC; the Sessions view proposes the same in local time) when there are
+none; with no instruction the worker greets the person in its tab and waits (`## Instruction`
+reads `-` in the message); `agent`, when given, has to be the one `agentRunner` starts
+(`state.sessionStart.agent`). The reply adds `hub` (the `hubs[].id` that took it) and `message`
+(the inbox file name, as in `hubs[].inbox[].name`) to `{handed, hubStarted, worktreeName,
+hubStartError?}`. The request is a `session` message in that hub's inbox, and the hub starts
+its tab if it is not running and the resident server can. Nothing is queued for a free worker
+slot, so the request is refused when none is free. The hub creates the worktree under the first
+free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with the instruction in
+its brief; no task record is made.
 
 `POST /api/sessions/<id>/link` gives that session a task afterwards: `{"task": "<id>"}` for an
 existing one or `{"newTask": {…}}` with the fields `POST /api/tasks` takes, and an optional
-`hub`. The hub the session belongs to follows the task: the one whose task directory holds it,
-so a task on a parent-task hub's board moves the worker to that hub, a repository-board task
-moves it back to the repository's, and a new task made under a parent-task hub is a child of
-that parent. The task becomes `dispatched` (or stays `pr`) with the worktree, the worker's
-record gets the task and, if it has none, the `implement` phase, and the worker is told in its
-outbox (`[linked <id>]`) and woken, as for a question. A session that has not started, one that has ended (no worker running), one that already has a different
-task, a finished task, a Jules task and one another running worker holds are refused.
+`hub`. `newTask.kind: "file-and-start"` also asks the hub to file an issue for the new task: a
+`file-issue` message goes to the hub the task landed on, and the reply adds `fileIssue`
+(`{handed, message}`, as for a session request) and `hubStarted` / `hubStartError` for a
+stopped hub the resident server tried to start, or `fileIssueError` when the hub could not be
+told, which does not undo the link and tells the worker `[issue <id>] not filed`.
+`file-and-start` with an existing `task` is refused. The hub the session belongs to follows the
+task: the one whose task directory holds it, so a task on a parent-task hub's board moves the
+worker to that hub, a repository-board task moves it back to the repository's, and a new task
+made under a parent-task hub is a child of that parent. The task becomes `dispatched` (or stays
+`pr`) with the worktree, the worker's record gets the task and, if it has none, the `implement`
+phase, and the worker is told in its outbox (`[linked <id>]`) and woken, as for a question. An
+optional `phase` (one of the eight `adjutant phase` takes) sets the phase instead, and is
+entered even when the record already has one; a value outside the list is refused before
+anything is written. A session that has not started, one that has ended (no worker running),
+one that already has a different task, a finished task, a Jules task and one another running
+worker holds are refused.
+
+### Telling sessions apart
+
+`GET /api/state` says more about each `sessions[]` entry than what it is, so that two sessions
+can be told apart without opening either. All of it is read on the same two-second poll from
+what is already at hand: one `tmux list-panes` and one `tmux list-clients` per tmux socket, and
+the gate directories.
+
+- `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
+  out when the session is not in tmux or its window is not listed.
+- `attached`: how many clients are attached to that window, not counting the board's own
+  browser terminals (`adjboard-*`); a terminal the board opened for a person (`adjterm-*`) is a person and counts. A control-mode client (iTerm2's `-CC`) counts on every
+  window of its session, a plain one on the window it is looking at. `0` when nobody is; left
+  out when the window is not listed.
+- `waiting`: the oldest open gate the session waits on, `{id, kind, hub, slug, title,
+  openedAt, count}` with `hub` a `hubs[].id` and `count` how many it waits on in all. A worker's
+  is read from the gate directory of the hub it reports to, so the repository's board also
+  shows the gates of workers under a parent-task hub; a gate whose worker has moved on is left
+  out, though only the board that owns the directory closes it. A hub's is the gates it opened
+  for a person.
+- `phases`: every phase the worker said, oldest first, as `[phase, epoch seconds]`. Kept in the
+  worker's record (the latest 64), and kept when the worker is started again for the same task
+  while its record is still there; a record removed by stop or cleanup starts fresh. An older
+  record without `phases` reads as its current phase only. `phase` and `phaseAt` remain the
+  current one.
+
+`hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
+`name`, `subject`, `kind`, `from`, `worktree` and `at` (a UTC stamp). `inboxCount` stays the
+number waiting in all.
+
+`GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
+`branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
+`deletions` against HEAD; `untracked` counts entries, so a wholly new directory counts once, and
+the lines of untracked files are not in `insertions`; the files adjutant itself writes under `.claude/` — `adjutant-*` and
+`task-brief.md` — are not counted), `upstream` (as configured), `unpushed` (`count`, the newest
+20 `commits`, and what they were counted `against`) and `merged` (`base`, `ref`, `merged`, and
+a `reason` when it could not be told). Unpushed commits are counted against the upstream only
+when it is the branch's own counterpart (same branch name); otherwise, and when there is no
+upstream, against every remote (`HEAD --not --remotes`). A worktree made from `origin/main`
+has `origin/main` as its upstream, and counting against that would say nothing once its work
+is merged. The base is the task's own when it has one, otherwise the remote's default branch
+(`origin/HEAD`, then `main`, then `master`, remote-tracking before local). Nothing is fetched, so
+`unpushed` and `merged` are as of the last fetch; a squash or rebase merge is not seen as
+merged, because the commits it left in the base are not the ones in the worktree. The whole
+check has a 10-second deadline, and a worktree that is gone is refused. An unknown session id
+is a 400, as for `link`.
+
+### Acting on a session
+
+Four more routes act on a session or a hub. They are served only by the resident server: a
+board a hub serves answers 404 for them, since they reach outside the repository's own records.
+Refusals are a 400 with `{"error": …}`, like every other action.
+
+`POST /api/sessions/<id>/resume` reopens a worker that is not running, as `adjutant work
+--resume` would: a tab that runs `adjutant worker --resume` on its worktree. Only a worker with
+a saved conversation, that is not running or starting, and only under `terminal.preset:
+"tmux"` and no `terminal.spawn` of your own, as for starting a hub. It is refused for an agent other than Claude unless
+`agentResumeRunner` is set (with `{sessionId}` in it), because the built-in line only reopens a
+Claude conversation. The worker is told no hub: it goes back to the one it was last linked to,
+which its saved session remembers. It counts against `maxWorkers`, and a full machine is
+refused with that reason. The answer is `{resumed, description, hub, hubRunning}`, with `hub` a
+`hubs[].id`.
+
+`POST /api/sessions/<id>/open` shows a session that runs in tmux in the person's own terminal.
+It makes a session of its own in the tmux group of the original (`adjterm-<pid>-<n>`), showing
+that window, so the other clients' current windows do not move, and hands it to
+`terminal.attach`: `{socket}` is the tmux socket arguments (`-L name`, `-S path` or nothing),
+`{session}` and `{window}` are quoted. The command has to return at once; one that stays in the
+foreground holds the request until the terminal closes. Where `terminal.attach` is not set the
+default is a new iTerm2 window running `tmux -CC attach`, on a Mac that has iTerm2 installed;
+control mode (`-CC`) is used only there. Anywhere else the board refuses and names the key.
+With the default opener on tmux 3.4 or later the session goes when its last client leaves. A
+session opened through a custom `terminal.attach`, or on an older tmux, is not destroyed on
+detach; the next sweep removes it, and the sweep runs on every open and on every board terminal.
+The sweep takes only sessions nobody is attached to and older than 30 seconds, so an attach
+that has not connected within 30 seconds may be swept from under it. If the command
+fails, the session made for it is removed again. `state.sessionOpen` says in advance:
+`{available, terminal}`, with `terminal` `"terminal.attach"`, `"iTerm2"` or null. Answer:
+`{opened, description, session, window}`.
+
+`POST /api/sessions/<id>/cleanup` removes a worker's worktree and its local branch, closing the
+session first if it is running. It is the board's own check, from the same look as `GET
+/api/sessions/<id>/git`, so it does not need the hub to be running. A worktree that holds
+uncommitted changes, untracked files or commits no remote has, or one whose check failed or
+timed out, is not removed (the check runs again once the session is closed, in case the worker committed meanwhile). Ignored files (build output, local env files) are not in the reasons and go with the worktree: the answer is a 200 `{removed: false, reasons: [{kind, detail}],
+git}`, with `kind` `uncommitted`, `untracked`, `unpushed` or `git`. It is a 200 because the page
+keeps only the message of an error, and the reasons are what a person decides on. To remove it
+anyway, send `{"force": true, "confirm": "<the worktree's directory name>"}`; `force` without
+the name typed back is a 400. Some things are refused whatever is sent: the main checkout, a
+hub, a session that is starting, one whose worker could not be stopped, a worktree a queued task
+is waiting in, and one a Jules plan is being written in. The remote branch is never touched.
+After the worktree is gone: the local branch is deleted (unlike the hub, which deletes only a merged or empty one) (a failure is reported and does not undo
+anything); the repository's `onWorktreeRemove` commands run in the main checkout with `{worktree}`
+and `{name}`, as when the hub cleans up, and each result is listed; and the `dispatched` or `pr`
+tasks of that worktree become `done`. The worker's record lives inside the worktree, so the
+session leaves the board with it. The answer is `{removed, forced, closed, branch: {name,
+deleted, error?}, tasks, hooks}`. The hub's own cleanup is unchanged; when it later meets a
+request for a worktree the board has removed, it removes nothing.
+
+`POST /api/hubs` with `{"key": "WID-957", "start": "auto"|"resume"|"new"}` starts the hub for a
+parent-task key, as `adjutant hub --hub KEY` does, before anything points at it (the
+`/api/hubs/<id>/start` route needs a hub the board already lists). The answer is `{started,
+description, hub: {id, slug}}`, or `{alreadyRunning, pid, hub}`. The hub appears in `hubs[]`
+once its `adjutant hub` has written its record.
+
+### The Sessions sidebar
+
+The Sessions view has a right sidebar for the selected session, shown or hidden as a whole.
+For a worker with a task it shows the task (key and issue link, parent, where the card sits on
+the two boards), the latest five entries of what was asked and answered with a link to the
+full history, the phase timeline with times, the done-when and stop-at settings, the PR link
+and its state from the record, the branch, base and worktree with its git state, the children
+of the same parent (a backlog child is handed over from the sidebar, starting its hub first
+when it is stopped; for a queued child the sidebar can start its hub, or ask a running hub to
+take the head of the queue), the note, and the cached issue body cut to six lines with its refetch. For a
+hub it shows the inbox, the workers it started, a parent-task hub's children and the command it
+runs; for a session with no task or a worktree with no session, what it is and its git state.
+The task, gates and history of a session under a parent-task hub are read from that hub's own
+board. The git state is read when a session is selected, when its phase or branch changes and
+on the refresh button, never on a timer. From 1400px up the choice to show the sidebar is kept
+per browser; below that it starts hidden and floats over the terminal. `state.hubRunner` is the
+hub's command template as configured, sent with its placeholders in place; the sidebar fills in
+only `{name}` and shows the rest as they are. It is shown on the board as configured, so keep
+secrets out of it.
+
+### Starting and linking from the Sessions view
+
+The `+` at the top of the session tree stays in the 64px rail and opens a menu: start the
+repository's hub (off while it runs), start a parent task's hub by key, and start a session
+with no task. The start dialog picks the hub (a stopped one is started after the request is
+sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
+from it (a dated one is in local time, where the server's own fallback is UTC) until the name
+field is edited. A name git refuses is marked and cannot be sent; a name already in use is only
+noted, since the hub picks the final one. Only the agent `agentRunner` starts can be chosen,
+and the button is off while no worker slot is free. A refused request keeps the dialog and its
+text open with the reason. Until the hub has started the session the tree shows a row for it
+under its hub, derived from the hub's inbox so it survives a reload: waiting, hub stopped (with
+a start button, or why it could not start), or, when the hub took the request and started
+nothing for about 15 seconds, could not start.
+
+On a session with no task the sidebar offers 「タスクにする…」 (title, body, done-when,
+whether to have an issue filed, the current phase) and 「既存のタスクに紐づける…」 (a task
+from any hub's board that is unfinished, not Jules', not a postscript and has no running
+worker, and the phase). The dialog says beforehand when linking moves the session to another
+hub, and when that hub is stopped.
 
 ### Gates
 

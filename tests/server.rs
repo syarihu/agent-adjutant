@@ -46,7 +46,10 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
     // The page itself is the board's, and its calls are relative to where it was opened.
     let (status, page) = resident.get(&format!("/b/{SLUG}/"));
     assert_eq!(status, 200);
-    assert!(page.contains("BASE + path"), "the page does not use BASE");
+    assert!(
+        page.contains("boardApi(BASE, path"),
+        "the page does not use BASE"
+    );
 
     let (status, list) = resident.get("/api/boards");
     assert_eq!(status, 200);
@@ -247,6 +250,9 @@ struct FakeTmux {
     bin: PathBuf,
     log: PathBuf,
     panes: PathBuf,
+    clients: PathBuf,
+    /// What `display-message` answers: where a window lives, as `session<TAB>group`.
+    home: PathBuf,
 }
 
 impl FakeTmux {
@@ -260,8 +266,12 @@ impl FakeTmux {
             "#!/bin/sh\n\
              echo \"$@\" >> \"$FAKE_TMUX_LOG\"\n\
              case \"$*\" in\n\
+             -V) echo \"tmux 3.4\" ;;\n\
+             *new-window*) [ -f \"$FAKE_TMUX_LOG.failnew\" ] && { echo \"no space for a new window\" >&2; exit 1; } ;;\n\
+             *display-message*) cat \"$FAKE_TMUX_HOME\" ;;\n\
              *list-panes*) cat \"$FAKE_TMUX_PANES\" ;;\n\
-             *kill-pane*) [ -n \"$FAKE_TMUX_KILL\" ] && kill \"$FAKE_TMUX_KILL\" ;;\n\
+             *list-clients*) cat \"$FAKE_TMUX_CLIENTS\" ;;\n\
+             *kill-pane*|*kill-window*) [ -f \"$FAKE_TMUX_LOG.onkill\" ] && sh \"$FAKE_TMUX_LOG.onkill\"; [ -n \"$FAKE_TMUX_KILL\" ] && kill \"$FAKE_TMUX_KILL\" ;;\n\
              esac\n\
              exit 0\n",
         )
@@ -270,10 +280,16 @@ impl FakeTmux {
         std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
         let panes = root.join("panes.txt");
         std::fs::write(&panes, "").unwrap();
+        let clients = root.join("clients.txt");
+        std::fs::write(&clients, "").unwrap();
+        let home = root.join("home.txt");
+        std::fs::write(&home, "").unwrap();
         FakeTmux {
             bin,
             log: root.join("tmux.log"),
             panes,
+            clients,
+            home,
         }
     }
 
@@ -291,22 +307,26 @@ impl FakeTmux {
 }
 
 fn write_tmux_config(fixture: &Fixture) {
-    std::fs::write(
-        &fixture.config,
-        serde_json::json!({
-            "notification": "true",
-            "terminal": {"preset": "tmux", "session": "adjutant-test", "socket": "scratch"},
-            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"}},
-        })
-        .to_string(),
-    )
-    .unwrap();
+    write_tmux_config_with(fixture, |_| {});
+}
+
+/// The tmux config, with whatever else the test needs put into it before it is written.
+fn write_tmux_config_with(fixture: &Fixture, change: impl FnOnce(&mut serde_json::Value)) {
+    let mut config = serde_json::json!({
+        "notification": "true",
+        "terminal": {"preset": "tmux", "session": "adjutant-test", "socket": "scratch"},
+        "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"}},
+    });
+    change(&mut config);
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
 }
 
 fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> Resident {
     let path = tmux.path();
     let log = tmux.log.to_string_lossy().to_string();
     let panes = tmux.panes.to_string_lossy().to_string();
+    let clients = tmux.clients.to_string_lossy().to_string();
+    let home = tmux.home.to_string_lossy().to_string();
     let kill = kill.map(|pid| pid.to_string()).unwrap_or_default();
     Resident::start_with(
         fixture,
@@ -314,6 +334,8 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
             ("PATH", &path),
             ("FAKE_TMUX_LOG", &log),
             ("FAKE_TMUX_PANES", &panes),
+            ("FAKE_TMUX_CLIENTS", &clients),
+            ("FAKE_TMUX_HOME", &home),
             ("FAKE_TMUX_KILL", &kill),
         ],
     )
@@ -1058,6 +1080,118 @@ fn children_of(state: &serde_json::Value, hub: &str) -> u64 {
 }
 
 #[test]
+fn the_state_names_the_command_a_hub_runs() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+
+    // Unset, it is the built-in line, with its placeholders still in it.
+    let runner = state_of(&resident)["hubRunner"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        runner.contains("{name}") && runner.contains("{sessionId}"),
+        "{runner}"
+    );
+    drop(resident);
+
+    // Set, it is what was written, and the `{name}` is left for the page to fill in.
+    write_tmux_config_with(&fixture, |c| {
+        c["hubRunner"] = serde_json::json!("my-agent {name}");
+    });
+    let resident = Resident::start(&fixture);
+    assert_eq!(state_of(&resident)["hubRunner"], "my-agent {name}");
+}
+
+#[test]
+fn a_parent_hubs_board_gives_the_sidebar_its_tasks_and_history() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let (status, body) = resident.post(
+        &format!("/b/{FEATURE_SLUG}/api/tasks"),
+        &serde_json::json!({"title": "A child of the feature"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The task is on that hub's board and not on the repository's.
+    let listed = |path: &str| -> Vec<String> {
+        let (status, body) = resident.get(path);
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(listed(&format!("/b/{FEATURE_SLUG}/api/state")).contains(&id));
+    assert!(!listed(&format!("/b/{SLUG}/api/state")).contains(&id));
+
+    // Its history is read from the same board, which is where the page asks for it.
+    let (status, body) = resident.get(&format!("/b/{FEATURE_SLUG}/api/tasks/{id}/history"));
+    assert_eq!(status, 200, "{body}");
+    let history: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(history["answered"].is_array(), "{history}");
+    assert!(history["records"].is_array(), "{history}");
+}
+
+#[test]
+fn the_polled_state_carries_no_diffs_and_the_history_still_does() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/tasks"),
+        &serde_json::json!({"title": "Has a diff"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let diff = "diff --git a/f b/f\n+one\n";
+    let records = fixture.state.join("gates").join(SLUG).join("records");
+    std::fs::create_dir_all(&records).unwrap();
+    std::fs::write(
+        records.join("20260922T041233Z-diff-record.json"),
+        serde_json::json!({
+            "id": "20260922T041233Z-diff-record",
+            "kind": "diff",
+            "task": id,
+            "worktree": fixture.repo.to_str().unwrap(),
+            "title": "round one",
+            "wait": false,
+            "openedAt": "20260922T041233Z",
+            "diff": diff,
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let state = state_of(&resident);
+    let task = state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap();
+    let record = &task["records"][0];
+    assert_eq!(record["id"], "20260922T041233Z-diff-record", "{task}");
+    assert!(record.get("diff").is_none(), "{record}");
+    assert_eq!(record["diffSize"], diff.len(), "{record}");
+
+    let (status, body) = resident.get(&format!("/b/{SLUG}/api/tasks/{id}/history"));
+    assert_eq!(status, 200, "{body}");
+    let history: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(history["records"][0]["diff"], diff, "{history}");
+}
+
+#[test]
 fn a_session_request_lands_in_the_chosen_hubs_inbox_with_its_instruction() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);
@@ -1090,9 +1224,60 @@ fn a_session_request_lands_in_the_chosen_hubs_inbox_with_its_instruction() {
     );
     assert_eq!(status, 200, "{body}");
     assert!(
-        body.contains("\"worktreeName\":\"look-at-the-flaky-upload-test\""),
+        body.contains("\"worktreeName\":\"look-at-the-flaky\""),
         "{body}"
     );
+
+    // The reply says which hub took it and under what file name the hub will find it.
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hub"], "hub", "{body}");
+    let inbox = state_of(&resident)["hubs"][0]["inbox"].clone();
+    let names: Vec<&str> = inbox
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&answer["message"].as_str().unwrap()),
+        "{names:?} {body}"
+    );
+}
+
+#[test]
+fn a_session_request_with_no_instruction_gets_a_dated_name_and_says_so() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&sessions_url(""), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let name = answer["worktreeName"].as_str().unwrap();
+    let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+    let rest = name.strip_prefix("session-").expect(name);
+    let (day, time) = rest.split_once('-').expect(name);
+    assert!(digits(day, 8) && digits(time, 4), "{name}");
+
+    let pending = fixture.json(&["pending", "--json"]);
+    let read = fixture.ok(&[
+        "pending",
+        "--read",
+        pending["messages"][0]["name"].as_str().unwrap(),
+    ]);
+    assert!(read.contains("## Instruction\n-\n"), "{read}");
+}
+
+#[test]
+fn a_session_started_from_the_board_names_the_agent_its_runner_is_set_to() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    assert_eq!(state_of(&resident)["sessionStart"]["agent"], "claude");
+    drop(resident);
+
+    write_tmux_config_with(&fixture, |c| {
+        c["agentRunner"] = serde_json::json!("codex exec {prompt}");
+    });
+    let resident = Resident::start(&fixture);
+    assert_eq!(state_of(&resident)["sessionStart"]["agent"], "codex");
 }
 
 #[test]
@@ -1105,6 +1290,8 @@ fn a_session_request_for_a_parent_hub_goes_to_that_hubs_inbox() {
         &serde_json::json!({"instruction": "Sketch it", "hub": "hub-wid-957"}).to_string(),
     );
     assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hub"], "hub-wid-957", "{body}");
     let parent = fixture.json(&["pending", "--json", "--hub", FEATURE]);
     assert_eq!(parent["count"], 1, "{parent}");
     assert_eq!(parent["messages"][0]["kind"], "session");
@@ -1112,7 +1299,7 @@ fn a_session_request_for_a_parent_hub_goes_to_that_hubs_inbox() {
 }
 
 #[test]
-fn a_session_request_with_a_bad_name_no_instruction_or_another_agent_is_refused() {
+fn a_session_request_with_a_bad_name_another_agent_or_a_non_text_instruction_is_refused() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);
     for (input, wanted) in [
@@ -1124,8 +1311,8 @@ fn a_session_request_with_a_bad_name_no_instruction_or_another_agent_is_refused(
             serde_json::json!({"instruction": "x", "worktreeName": "-flag"}),
             "branch",
         ),
-        (serde_json::json!({"worktreeName": "ok"}), "instruction"),
         (serde_json::json!({"instruction": 5}), "instruction"),
+        (serde_json::json!({"instruction": " - "}), "no instruction"),
         (
             serde_json::json!({"instruction": "x", "agent": ["claude"]}),
             "agent",
@@ -1134,7 +1321,6 @@ fn a_session_request_with_a_bad_name_no_instruction_or_another_agent_is_refused(
             serde_json::json!({"instruction": "x", "worktreeName": 7}),
             "worktreeName",
         ),
-        (serde_json::json!({"instruction": "   "}), "instruction"),
         (
             serde_json::json!({"instruction": "x", "agent": "codex"}),
             "only claude",
@@ -1290,6 +1476,238 @@ fn linking_a_new_task_on_a_parent_hubs_board_moves_the_worker_to_that_hub() {
         .find(|s| s["id"] == "worker-try-retry")
         .unwrap();
     assert_eq!(session["hub"], "hub-wid-957", "{session}");
+}
+
+/// The messages of `kind` waiting for the hub at `hub_args` (`[]` for the repository's).
+fn messages_of_kind(fixture: &Fixture, hub: &[&str], kind: &str) -> Vec<serde_json::Value> {
+    let mut args = vec!["pending", "--json"];
+    args.extend_from_slice(hub);
+    fixture.json(&args)["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == kind)
+        .cloned()
+        .collect()
+}
+
+/// Makes the fake tmux refuse to open a window, which is how a hub fails to start.
+fn tmux_refuses_windows(tmux: &FakeTmux) {
+    std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
+}
+
+#[test]
+fn a_session_request_starts_a_stopped_hub_after_the_message_is_in_its_inbox() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let (status, body) = resident.post(
+        &sessions_url(""),
+        &serde_json::json!({"instruction": "Look around"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hubStarted"], true, "{body}");
+    assert!(answer.get("hubStartError").is_none(), "{body}");
+    assert!(tmux.logged().contains("new-window"), "{}", tmux.logged());
+    assert_eq!(messages_of_kind(&fixture, &[], "session").len(), 1);
+}
+
+#[test]
+fn a_hub_that_cannot_start_leaves_the_session_request_queued_and_says_why() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    tmux_refuses_windows(&tmux);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let (status, body) = resident.post(
+        &sessions_url(""),
+        &serde_json::json!({"instruction": "Look around"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["hubStarted"], false, "{body}");
+    assert!(
+        answer["hubStartError"]
+            .as_str()
+            .is_some_and(|e| !e.is_empty()),
+        "{body}"
+    );
+    assert!(answer["message"].is_string(), "{body}");
+    assert_eq!(messages_of_kind(&fixture, &[], "session").len(), 1);
+}
+
+#[test]
+fn a_file_issue_request_starts_a_stopped_target_hub_and_reports_when_it_cannot() {
+    for refuse in [false, true] {
+        let fixture = Fixture::new(QUIET);
+        write_tmux_config(&fixture);
+        listed_parent_hub(&fixture);
+        let tmux = FakeTmux::new(&fixture);
+        if refuse {
+            tmux_refuses_windows(&tmux);
+        }
+        let running = Sleeper::start();
+        let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+        let resident = resident_with_tmux(&fixture, &tmux, None);
+        let (status, body) = resident.post(
+            &sessions_url("/worker-try-retry/link"),
+            &serde_json::json!({
+                "newTask": {"title": "Needs an issue", "kind": "file-and-start"},
+                "hub": "hub-wid-957",
+            })
+            .to_string(),
+        );
+        assert_eq!(status, 200, "{body}");
+        let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // The link stands either way; only what the hub was told differs.
+        assert_eq!(worker_record(&worktree)["hub"], FEATURE);
+        assert_eq!(
+            messages_of_kind(&fixture, &["--hub", FEATURE], "file-issue").len(),
+            1
+        );
+        assert_eq!(answer["fileIssue"]["handed"]["present"], false, "{body}");
+        if refuse {
+            assert_eq!(answer["hubStarted"], false, "{body}");
+            assert!(answer["hubStartError"].is_string(), "{body}");
+        } else {
+            assert_eq!(answer["hubStarted"], true, "{body}");
+            assert!(answer.get("hubStartError").is_none(), "{body}");
+        }
+    }
+}
+
+#[test]
+fn linking_a_new_task_that_needs_an_issue_asks_the_hub_to_file_it() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let plain = session_worktree(&fixture, "plain", None, None, running.0);
+    let resident = Resident::start(&fixture);
+
+    // Without the ask, the hub hears nothing.
+    let (status, body) = resident.post(
+        &sessions_url("/worker-plain/link"),
+        &serde_json::json!({"newTask": {"title": "No issue"}, "hub": "hub-wid-957"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(messages_of_kind(&fixture, &["--hub", FEATURE], "file-issue").is_empty());
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&body)
+            .unwrap()
+            .get("fileIssue")
+            .is_none()
+    );
+    let outbox = std::fs::read_to_string(plain.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("none will be filed"), "{outbox}");
+
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({
+            "newTask": {"title": "Needs an issue", "kind": "file-and-start"},
+            "hub": "hub-wid-957",
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let id = answer["task"]["id"].as_str().unwrap();
+    assert_eq!(answer["fileIssue"]["handed"]["present"], false, "{body}");
+    assert!(answer.get("fileIssueError").is_none(), "{body}");
+
+    let found = messages_of_kind(&fixture, &["--hub", FEATURE], "file-issue");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["from"], "dashboard");
+    assert_eq!(found[0]["subject"], format!("[file {id}] Needs an issue"));
+    let read = fixture.ok(&[
+        "pending",
+        "--hub",
+        FEATURE,
+        "--read",
+        found[0]["name"].as_str().unwrap(),
+    ]);
+    assert!(read.contains(id), "{read}");
+    assert!(read.contains("file and start"), "{read}");
+    assert!(
+        read.contains(&format!("## Worker running in {}", worktree.display())),
+        "{read}"
+    );
+    // Nothing went to the repository's hub.
+    assert!(messages_of_kind(&fixture, &[], "file-issue").is_empty());
+
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("files the issue"), "{outbox}");
+}
+
+#[test]
+fn a_hub_that_cannot_be_told_to_file_an_issue_leaves_the_link_and_tells_the_worker() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    // A file where the hub's inbox directory would be: nothing can be delivered there.
+    let inbox = fixture.state.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::write(inbox.join(FEATURE_SLUG), "").unwrap();
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({
+            "newTask": {"title": "Needs an issue", "kind": "file-and-start"},
+            "hub": "hub-wid-957",
+        })
+        .to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(answer["fileIssueError"].is_string(), "{body}");
+    assert!(answer.get("fileIssue").is_none(), "{body}");
+    assert_eq!(worker_record(&worktree)["hub"], FEATURE);
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("not filed"), "{outbox}");
+}
+
+#[test]
+fn linking_an_existing_file_and_start_task_files_nothing_again() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let resident = Resident::start(&fixture);
+    let task = made_task(
+        &resident,
+        serde_json::json!({"title": "Filed already", "kind": "file-and-start", "status": "backlog"}),
+    );
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({"task": task["id"]}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(answer.get("fileIssue").is_none(), "{body}");
+    assert!(messages_of_kind(&fixture, &[], "file-issue").is_empty());
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(!outbox.contains("files the issue"), "{outbox}");
+}
+
+#[test]
+fn linking_an_existing_task_is_refused_when_asked_to_file_an_issue_for_it() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let resident = Resident::start(&fixture);
+    let task = made_task(&resident, serde_json::json!({"title": "Already there"}));
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({"task": task["id"], "kind": "file-and-start"}).to_string(),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("file-and-start"), "{body}");
+    assert!(worker_record(&worktree).get("task").is_none());
 }
 
 #[test]
@@ -1460,4 +1878,1239 @@ fn a_link_is_refused_for_a_hub_a_session_not_started_a_finished_task_or_one_held
         .unwrap();
     assert_eq!(free_now["status"], "backlog");
     assert!(free_now["worktree"].is_null(), "{free_now}");
+}
+
+// ── what the board tells sessions apart by ───────────────────────────
+
+fn session_of<'a>(state: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    state["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id)
+        .unwrap_or_else(|| panic!("no session {id} in {state}"))
+}
+
+/// Say in a worker's record where it runs, as `adj work` does when it starts one.
+fn place_worker(worktree: &Path, window: &str) {
+    let path = worktree.join(".claude").join("adjutant-worker.json");
+    let mut record = worker_record(worktree);
+    record["terminal"] =
+        serde_json::json!({"backend": "tmux", "socket": "scratch", "window": window});
+    std::fs::write(path, record.to_string()).unwrap();
+}
+
+#[test]
+fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let one = session_worktree(&fixture, "one", None, None, running.0);
+    let two = session_worktree(&fixture, "two", None, None, running.0);
+    let elsewhere = session_worktree(&fixture, "elsewhere", None, None, running.0);
+    place_worker(&one, "@5");
+    place_worker(&two, "@6");
+    place_worker(&elsewhere, "@9");
+    std::fs::write(
+        &tmux.panes,
+        "%5\t1\t/dev/ttys005\t@5\tadjutant-test\t1\tone\t1790000000\n\
+         %5\t1\t/dev/ttys005\t@5\tadjboard-1-1\t1\tone\t1790000000\n\
+         %6\t2\t/dev/ttys006\t@6\tadjutant-test\t2\ttwo\t1790000100\n",
+    )
+    .unwrap();
+    // The board's own session, a client looking at @5, and iTerm2's control client, which
+    // has every window of its session open.
+    std::fs::write(
+        &tmux.clients,
+        "adjboard-1-1\t0\t@5\nadjutant-test\t0\t@5\nadjutant-test\t1\t@6\n",
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let state = state_of(&resident);
+    let one = session_of(&state, "worker-one");
+    assert_eq!(one["lastActivityAt"], 1_790_000_000, "{one}");
+    assert_eq!(one["attached"], 2, "{one}");
+    let two = session_of(&state, "worker-two");
+    assert_eq!(two["lastActivityAt"], 1_790_000_100, "{two}");
+    assert_eq!(two["attached"], 1, "{two}");
+    // A window tmux does not list says nothing rather than zero.
+    let gone = session_of(&state, "worker-elsewhere");
+    assert!(gone.get("lastActivityAt").is_none(), "{gone}");
+    assert!(gone.get("attached").is_none(), "{gone}");
+
+    // A tmux with nothing to say about clients leaves the rest of the poll as it was.
+    std::fs::write(&tmux.clients, "").unwrap();
+    let quiet = state_of(&resident);
+    assert_eq!(session_of(&quiet, "worker-one")["attached"], 0);
+    assert_eq!(
+        session_of(&quiet, "worker-one")["lastActivityAt"],
+        1_790_000_000
+    );
+}
+
+fn write_gate_file(fixture: &Fixture, slug: &str, id: &str, kind: &str, worktree: &Path) {
+    write_gate_file_with(fixture, slug, id, kind, worktree, serde_json::json!({}));
+}
+
+/// A gate file with more fields than the bare ones, merged in from `extra`.
+fn write_gate_file_with(
+    fixture: &Fixture,
+    slug: &str,
+    id: &str,
+    kind: &str,
+    worktree: &Path,
+    extra: serde_json::Value,
+) {
+    let dir = fixture.state.join("gates").join(slug);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut gate = serde_json::json!({
+        "id": id,
+        "kind": kind,
+        "worktree": worktree.to_str().unwrap(),
+        "title": "どちらにするか",
+        "openedAt": "20260922T041233Z",
+    });
+    for (key, value) in extra.as_object().unwrap() {
+        gate[key] = value.clone();
+    }
+    std::fs::write(dir.join(format!("{id}.json")), gate.to_string()).unwrap();
+}
+
+#[test]
+fn a_session_shows_the_gate_it_waits_on_even_from_a_parent_hubs_directory() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let parent = session_worktree(&fixture, "under-parent", Some(FEATURE), None, 1);
+    let moved = session_worktree(&fixture, "moved-on", Some(FEATURE), None, 1);
+    let own = session_worktree(&fixture, "own-hub", None, None, 1);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-parent", "question", &parent);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-moved", "question", &moved);
+    write_gate_file(&fixture, SLUG, "g-own", "question", &own);
+    write_gate_file(&fixture, SLUG, "g-dispatch", "dispatch", &fixture.repo);
+    let choosing = session_worktree(&fixture, "choosing", Some(FEATURE), None, 1);
+    write_gate_file_with(
+        &fixture,
+        FEATURE_SLUG,
+        "g-choose",
+        "plan",
+        &choosing,
+        serde_json::json!({
+            "focus": "あ".repeat(500),
+            "choices": [
+                {"id": "a", "label": "A 案", "recommended": true},
+                {"id": "b", "label": "B 案"},
+            ],
+        }),
+    );
+    // This one's worker went on to another phase after opening the gate.
+    let mut record = worker_record(&moved);
+    record["phaseAt"] = serde_json::json!(LATER_SECS);
+    std::fs::write(
+        moved.join(".claude").join("adjutant-worker.json"),
+        record.to_string(),
+    )
+    .unwrap();
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let waiting = &session_of(&state, "worker-under-parent")["waiting"];
+    assert_eq!(waiting["id"], "g-parent", "{waiting}");
+    assert_eq!(waiting["kind"], "question");
+    assert_eq!(waiting["hub"], format!("hub-{FEATURE}"));
+    assert_eq!(waiting["slug"], FEATURE_SLUG);
+    assert_eq!(waiting["openedAt"], "20260922T041233Z");
+    assert_eq!(waiting["count"], 1);
+    // A gate that names no options gets its kind's own, so the page needs no table of them.
+    assert_eq!(waiting["options"], serde_json::json!(["answer"]));
+    assert!(waiting.get("choices").is_none() && waiting.get("focus").is_none());
+    let choosing = &session_of(&state, "worker-choosing")["waiting"];
+    assert_eq!(choosing["choices"][1]["label"], "B 案", "{choosing}");
+    assert_eq!(choosing["options"][0], "approve");
+    let focus = choosing["focus"].as_str().unwrap();
+    assert_eq!(focus.chars().count(), 401, "{focus}");
+    assert!(focus.ends_with('…'));
+    assert_eq!(
+        session_of(&state, "worker-own-hub")["waiting"]["hub"],
+        "hub"
+    );
+    assert!(
+        session_of(&state, "worker-moved-on")
+            .get("waiting")
+            .is_none()
+    );
+    // Read only: the parent hub's own board is the one that closes its gate.
+    assert!(
+        fixture
+            .state
+            .join("gates")
+            .join(FEATURE_SLUG)
+            .join("g-moved.json")
+            .exists()
+    );
+    // What the repository hub opened for a person is what the hub is waiting on.
+    assert_eq!(session_of(&state, "hub")["waiting"]["id"], "g-dispatch");
+}
+
+#[test]
+fn a_hub_lists_its_inbox_newest_first_with_a_cap_and_the_full_count() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let inbox = fixture.state.join("inbox").join(SLUG);
+    std::fs::create_dir_all(&inbox).unwrap();
+    for i in 0..23 {
+        let at = format!("20260922T04{i:02}00Z");
+        std::fs::write(
+            inbox.join(format!("{at}-report.md")),
+            format!("---\nfrom: w{i}\nkind: report\nsubject: s{i}\nat: {at}\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    let state = state_of(&resident);
+    let hub = &state["hubs"][0];
+    assert_eq!(hub["inboxCount"], 23);
+    let items = hub["inbox"].as_array().unwrap();
+    assert_eq!(items.len(), 20);
+    assert_eq!(items[0]["subject"], "s22");
+    assert_eq!(items[0]["from"], "w22");
+    assert_eq!(items[0]["kind"], "report");
+    assert_eq!(items[0]["at"], "20260922T042200Z");
+    assert_eq!(items[19]["subject"], "s3");
+}
+
+#[test]
+fn a_session_keeps_every_phase_its_worker_said() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let worktree = fixture.repo.clone();
+    write_worker(&worktree, "20260922T040000Z", None);
+    // Written the way a worker running a version before the history was kept left it.
+    let mut record = worker_record(&worktree);
+    record["phaseAt"] = serde_json::json!(1_790_000_000);
+    std::fs::write(
+        worktree.join(".claude").join("adjutant-worker.json"),
+        record.to_string(),
+    )
+    .unwrap();
+    for phase in ["verify", "pr"] {
+        let out = fixture
+            .command(["phase", "--set", phase])
+            .current_dir(&worktree)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let state = state_of(&resident);
+    let phases = session_of(&state, "worker-main")["phases"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let names: Vec<&str> = phases.iter().map(|p| p[0].as_str().unwrap()).collect();
+    assert_eq!(names, ["implement", "verify", "pr"], "{phases:?}");
+    assert_eq!(phases[0][1], 1_790_000_000);
+    assert_eq!(session_of(&state, "worker-main")["phase"], "pr");
+}
+
+#[test]
+fn the_git_route_reports_a_dirty_worktree_and_refuses_a_session_it_does_not_know() {
+    let fixture = Fixture::new(QUIET);
+    let worktree = session_worktree(&fixture, "dirty", None, None, 1);
+    std::fs::write(worktree.join("scratch.txt"), "untracked\n").unwrap();
+    std::fs::write(worktree.join("kept.txt"), "one\ntwo\n").unwrap();
+    for args in [
+        vec!["add", "kept.txt"],
+        vec!["commit", "-q", "-m", "keep two lines"],
+    ] {
+        let out = Command::new("git")
+            .hermetic()
+            .args(&args)
+            .current_dir(&worktree)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    std::fs::write(worktree.join("kept.txt"), "one\nTWO\nthree\n").unwrap();
+    let resident = Resident::start(&fixture);
+
+    let (status, body) = resident.get(&sessions_url("/worker-dirty/git"));
+    assert_eq!(status, 200, "{body}");
+    let git: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(git["branch"], "dirty", "{body}");
+    assert_eq!(git["uncommitted"]["files"], 1, "{body}");
+    // The worker's own records in `.claude` are not work.
+    assert_eq!(git["uncommitted"]["untracked"], 1, "{body}");
+    assert_eq!(git["uncommitted"]["insertions"], 2, "{body}");
+    assert_eq!(git["uncommitted"]["deletions"], 1, "{body}");
+    // No remote here, so both commits are ones nobody else has.
+    assert_eq!(git["unpushed"]["count"], 2, "{body}");
+    assert_eq!(git["unpushed"]["commits"][0]["subject"], "keep two lines");
+
+    let (status, body) = resident.get(&sessions_url("/worker-nobody/git"));
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no such session"), "{body}");
+}
+
+#[test]
+fn the_git_route_looks_at_its_own_worktree_and_no_other() {
+    let fixture = Fixture::new(QUIET);
+    let mine = Sleeper::start();
+    session_worktree(&fixture, "spy-target", None, Some("WID-7"), mine.0);
+    session_worktree(&fixture, "spy-other-a", None, None, 1);
+    session_worktree(&fixture, "spy-other-b", None, None, 2);
+    let spy = Spy::new(fixture._dir.path());
+    let resident = Resident::start_with(&fixture, &[("PATH", &spy.path())]);
+    // The first request to a board has the server find its checkout, which lists the
+    // worktrees once; what is counted below is the route itself.
+    resident.get(&sessions_url("/worker-nobody-at-all/nothing"));
+    spy.clear();
+
+    let (status, body) = resident.get(&sessions_url("/worker-spy-target/git"));
+    assert_eq!(status, 200, "{body}");
+
+    let calls = spy.calls();
+    assert!(
+        calls.iter().any(|c| c.contains("spy-target")),
+        "the target was never looked at: {calls:?}"
+    );
+    // The branch is read from the worktree listing, so no `git branch` is run for it.
+    let branches = calls.iter().filter(|c| c.contains("branch --show-current"));
+    assert_eq!(branches.count(), 0, "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.contains("spy-other")),
+        "another worktree was asked about: {calls:?}"
+    );
+    // Once, for the session and for the hub of its task together.
+    let listings = calls.iter().filter(|c| c.contains("worktree list"));
+    assert_eq!(listings.count(), 1, "{calls:?}");
+    // One `ps`, for the worker the session names: the others' pids are not asked about.
+    let asked: Vec<&String> = calls.iter().filter(|c| c.starts_with("ps ")).collect();
+    assert!(!asked.is_empty(), "{calls:?}");
+    assert!(
+        asked.iter().all(|c| c.ends_with(&format!("-p {}", mine.0))),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_record_written_after_a_gate_shows_its_worker_moved_on_from_a_parent_hubs_board() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let recorder = session_worktree(&fixture, "recorder", Some(FEATURE), None, 1);
+    let answered = session_worktree(&fixture, "answered", Some(FEATURE), None, 1);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-rec", "question", &recorder);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-ans", "question", &answered);
+    let later = |dir: &str, id: &str, wait: bool, worktree: &Path| {
+        let dir = fixture.state.join("gates").join(FEATURE_SLUG).join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{id}.json")),
+            serde_json::json!({
+                "id": id,
+                "kind": "verify",
+                "worktree": worktree.to_str().unwrap(),
+                "title": "later",
+                "wait": wait,
+                "openedAt": "20260922T042000Z",
+            })
+            .to_string(),
+        )
+        .unwrap();
+    };
+    // A record the worker wrote without stopping, and a later gate that was answered since.
+    later("records", "r-1", false, &recorder);
+    later("answered", "g-next", true, &answered);
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    assert!(
+        session_of(&state, "worker-recorder")
+            .get("waiting")
+            .is_none()
+    );
+    assert!(
+        session_of(&state, "worker-answered")
+            .get("waiting")
+            .is_none()
+    );
+}
+
+// ── what the board does with a session: resume, open, clean up, start a hub ──
+
+/// The pid of a process that has come and gone: a session whose worker ended. Pid 1 is not one
+/// (it is running, and its record would match).
+fn dead_pid() -> u32 {
+    let mut child = Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    pid
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .hermetic()
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// Make the worktree look pushed: a remote-tracking ref at its HEAD, as a fetch would leave, so
+/// that nothing in it counts as unpushed and no network is needed.
+fn pushed(worktree: &Path, name: &str) {
+    git_in(
+        worktree,
+        &["update-ref", &format!("refs/remotes/origin/{name}"), "HEAD"],
+    );
+}
+
+fn reply_of(status_and_body: (u16, String), expected: u16) -> serde_json::Value {
+    let (status, body) = status_and_body;
+    assert_eq!(status, expected, "{body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+fn resume_config(fixture: &Fixture) {
+    write_tmux_config(fixture);
+    listed_parent_hub(fixture);
+}
+
+#[test]
+fn resuming_is_refused_without_the_tmux_preset_for_a_running_session_a_hub_or_no_conversation() {
+    let fixture = Fixture::new(QUIET);
+    let ended = session_worktree(&fixture, "ended", None, None, dead_pid());
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&sessions_url("/worker-ended/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("tmux"), "{body}");
+
+    write_tmux_config(&fixture);
+    let running = Sleeper::start();
+    session_worktree(&fixture, "busy", None, None, running.0);
+    let (status, body) = resident.post(&sessions_url("/worker-busy/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("running"), "{body}");
+
+    let (status, body) = resident.post(&sessions_url("/hub/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("only a worker"), "{body}");
+
+    let (status, body) = resident.post(&sessions_url("/worker-nobody/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no such session"), "{body}");
+
+    std::fs::remove_file(ended.join(".claude").join("adjutant-session.json")).unwrap();
+    let (status, body) = resident.post(&sessions_url("/worker-ended/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no saved worker session"), "{body}");
+}
+
+#[test]
+fn the_state_says_whether_a_session_can_be_resumed_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let refused = state_of(&resident);
+    assert_eq!(refused["sessionResume"]["available"], false, "{refused}");
+    assert!(
+        refused["sessionResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("tmux"),
+        "{refused}"
+    );
+
+    write_tmux_config(&fixture);
+    let ready = state_of(&resident);
+    assert_eq!(ready["sessionResume"]["available"], true, "{ready}");
+    assert!(ready["sessionResume"]["reason"].is_null(), "{ready}");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["agentRunner"] = serde_json::json!("gemini {prompt}");
+    });
+    let other = state_of(&resident);
+    assert_eq!(other["sessionResume"]["available"], false, "{other}");
+    assert!(
+        other["sessionResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("agentResumeRunner"),
+        "{other}"
+    );
+
+    // A resume runner that cannot be told the conversation would only fail when pressed.
+    write_tmux_config_with(&fixture, |config| {
+        config["agentResumeRunner"] = serde_json::json!("claude --continue");
+    });
+    let blind = state_of(&resident);
+    assert_eq!(blind["sessionResume"]["available"], false, "{blind}");
+    assert!(
+        blind["sessionResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("agentResumeRunner has no {sessionId}"),
+        "{blind}"
+    );
+}
+
+#[test]
+fn a_gate_a_parent_hub_worker_waits_on_is_answered_through_that_hubs_board() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let worktree = session_worktree(&fixture, "under-parent", Some(FEATURE), None, 1);
+    write_gate_file(&fixture, FEATURE_SLUG, "g-q", "question", &worktree);
+    let resident = Resident::start(&fixture);
+    let before = state_of(&resident);
+    assert_eq!(
+        session_of(&before, "worker-under-parent")["waiting"]["slug"],
+        FEATURE_SLUG
+    );
+
+    // The board the page is on has no such gate, which is why the page posts by `waiting.slug`.
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/gates/g-q"),
+        r#"{"decision":"answer","comment":"A で"}"#,
+    );
+    assert_eq!(status, 400, "{body}");
+    let gates = fixture.state.join("gates").join(FEATURE_SLUG);
+    assert!(gates.join("g-q.json").exists());
+
+    let (status, body) = resident.post(
+        &format!("/b/{FEATURE_SLUG}/api/gates/g-q"),
+        r#"{"decision":"answer","comment":"A で"}"#,
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(!gates.join("g-q.json").exists());
+    let outbox =
+        std::fs::read_to_string(worktree.join(".claude").join("adjutant-outbox.md")).unwrap();
+    assert!(outbox.contains("A で"), "{outbox}");
+    let after = state_of(&resident);
+    assert!(
+        session_of(&after, "worker-under-parent")
+            .get("waiting")
+            .is_none(),
+        "{after}"
+    );
+}
+
+#[test]
+fn resuming_is_refused_for_a_resume_runner_that_cannot_be_told_the_conversation() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config_with(&fixture, |config| {
+        config["agentResumeRunner"] = serde_json::json!("claude --continue");
+    });
+    session_worktree(&fixture, "ended", None, None, dead_pid());
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&sessions_url("/worker-ended/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("sessionId"), "{body}");
+
+    // Another agent without a resume runner of its own has nothing that reopens its conversation.
+    write_tmux_config_with(&fixture, |config| {
+        config["agentRunner"] = serde_json::json!("gemini {prompt}");
+    });
+    let (status, body) = resident.post(&sessions_url("/worker-ended/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("gemini has no agentResumeRunner"), "{body}");
+}
+
+#[test]
+fn resuming_opens_a_tab_that_reopens_the_worker_under_its_own_hub() {
+    let fixture = Fixture::new(QUIET);
+    resume_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let worktree = session_worktree(&fixture, "ended", Some(FEATURE), None, dead_pid());
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let answer = reply_of(
+        resident.post(&sessions_url("/worker-ended/resume"), "{}"),
+        200,
+    );
+    assert_eq!(answer["resumed"], true, "{answer}");
+    assert_eq!(answer["hub"], format!("hub-{FEATURE}"), "{answer}");
+    assert_eq!(answer["hubRunning"], false, "{answer}");
+
+    let log = tmux.logged();
+    let window = log
+        .lines()
+        .find(|l| l.contains("new-window"))
+        .unwrap_or_else(|| panic!("no window was opened: {log}"));
+    assert!(
+        window.contains(&format!(
+            "worker --resume --worktree {}",
+            worktree.display()
+        )),
+        "{window}"
+    );
+    // Told nothing of a hub: the saved session says which one it goes back to.
+    assert!(!window.contains("--hub="), "{window}");
+    assert!(
+        worktree
+            .join(".claude")
+            .join("adjutant-worker-starting.json")
+            .exists(),
+        "the slot was not marked"
+    );
+
+    // It is starting now, and a second click is not a second worker.
+    let (status, body) = resident.post(&sessions_url("/worker-ended/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("starting"), "{body}");
+}
+
+/// A hub's own board, which none of the actions a resident serves are routes on.
+#[test]
+fn the_session_actions_and_starting_a_hub_are_not_routes_on_a_hub_s_own_board() {
+    let fixture = Fixture::new(QUIET);
+    session_worktree(&fixture, "ended", None, None, dead_pid());
+    let mut board = fixture
+        .command(["serve", "--port", "0", "--no-open"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::io::BufReader::new(board.stdout.as_mut().unwrap())
+        .read_line(&mut said)
+        .unwrap();
+    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
+    let (host, query) = url
+        .strip_prefix("http://")
+        .unwrap()
+        .split_once('/')
+        .unwrap();
+    let port: u16 = host.rsplit(':').next().unwrap().parse().unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+
+    let answers: Vec<(u16, String)> = [
+        "/api/sessions/worker-ended/resume",
+        "/api/sessions/worker-ended/open",
+        "/api/sessions/worker-ended/cleanup",
+        "/api/hubs",
+    ]
+    .iter()
+    .map(|path| post(port, token, path, r#"{"key":"wid-957"}"#))
+    .collect();
+    board.kill().unwrap();
+    board.wait().unwrap();
+
+    for (status, body) in answers {
+        assert_eq!(status, 404, "{body}");
+        assert!(body.contains("no such route"), "{body}");
+    }
+    assert!(fixture.repo.parent().unwrap().join("ended").is_dir());
+}
+
+fn attach_config(fixture: &Fixture, attach: &str) {
+    write_tmux_config_with(fixture, |config| {
+        config["terminal"]["attach"] = serde_json::json!(attach);
+    });
+}
+
+#[test]
+fn opening_a_session_makes_a_grouped_session_and_hands_it_to_the_attach_template() {
+    let fixture = Fixture::new(QUIET);
+    let told = fixture._dir.path().join("attach.txt");
+    attach_config(
+        &fixture,
+        &format!(
+            "echo {{socket}} {{session}} {{window}} >> {}",
+            told.display()
+        ),
+    );
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(&tmux.home, "adjutant-test\n").unwrap();
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    place_worker(&worktree, "@5");
+    session_worktree(&fixture, "ended", None, None, dead_pid());
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let state = state_of(&resident);
+    assert_eq!(state["sessionOpen"]["available"], true, "{state}");
+    assert_eq!(
+        state["sessionOpen"]["terminal"], "terminal.attach",
+        "{state}"
+    );
+
+    let answer = reply_of(resident.post(&sessions_url("/worker-live/open"), "{}"), 200);
+    assert_eq!(answer["opened"], true, "{answer}");
+    assert_eq!(answer["window"], "@5", "{answer}");
+    let name = answer["session"].as_str().unwrap();
+    assert!(name.starts_with("adjterm-"), "{name}");
+
+    let log = tmux.logged();
+    assert!(
+        log.contains(&format!(
+            "-L scratch new-session -d -s {name} -t adjutant-test"
+        )),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!("-L scratch select-window -t ={name}:@5")),
+        "{log}"
+    );
+    assert!(
+        log.contains("list-sessions"),
+        "the leftovers were not swept: {log}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&told).unwrap().trim(),
+        format!("-L scratch {name} @5")
+    );
+
+    // A session that is not running has no window to show.
+    let (status, body) = resident.post(&sessions_url("/worker-ended/open"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("not running in a tmux window"), "{body}");
+    let (status, body) = resident.post(&sessions_url("/worker-nobody/open"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no such session"), "{body}");
+}
+
+#[test]
+fn a_session_made_for_an_attach_that_failed_is_taken_down_again() {
+    let fixture = Fixture::new(QUIET);
+    attach_config(&fixture, "false");
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(&tmux.home, "adjutant-test\n").unwrap();
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    place_worker(&worktree, "@5");
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let (status, body) = resident.post(&sessions_url("/worker-live/open"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("terminal.attach failed"), "{body}");
+    let log = tmux.logged();
+    let name = log
+        .split_whitespace()
+        .find(|w| w.starts_with("adjterm-"))
+        .unwrap_or_else(|| panic!("no session was made: {log}"));
+    assert!(
+        log.contains(&format!("-L scratch kill-session -t ={name}")),
+        "{log}"
+    );
+}
+
+#[test]
+fn opening_a_session_without_an_attach_template_says_which_key_is_missing() {
+    // Where iTerm2 is installed the built-in opener is the answer and there is nothing to refuse.
+    if cfg!(target_os = "macos") && Path::new("/Applications/iTerm.app").exists() {
+        return;
+    }
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(&tmux.home, "adjutant-test\n").unwrap();
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    place_worker(&worktree, "@5");
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    assert_eq!(
+        state_of(&resident)["sessionOpen"]["available"],
+        false,
+        "no terminal to open it in"
+    );
+    let (status, body) = resident.post(&sessions_url("/worker-live/open"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("terminal.attach is not set"), "{body}");
+    assert!(!tmux.logged().contains("new-session"), "{}", tmux.logged());
+}
+
+fn hook_log(fixture: &Fixture) -> PathBuf {
+    fixture._dir.path().join("hooks.txt")
+}
+
+fn cleanup_config(fixture: &Fixture) {
+    let log = hook_log(fixture);
+    write_tmux_config_with(fixture, |config| {
+        config["repos"]["acme/widget"]["onWorktreeRemove"] =
+            serde_json::json!([format!("echo {{worktree}} {{name}} >> {}", log.display())]);
+    });
+}
+
+fn cleanup_url(name: &str) -> String {
+    sessions_url(&format!("/worker-{name}/cleanup"))
+}
+
+fn session_ids(resident: &Resident) -> Vec<String> {
+    state_of(resident)["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn cleanup_lists_what_would_be_lost_and_removes_nothing() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let worktree = session_worktree(&fixture, "dirty", None, None, dead_pid());
+    std::fs::write(worktree.join("scratch.txt"), "untracked\n").unwrap();
+    let resident = Resident::start(&fixture);
+
+    let answer = reply_of(resident.post(&cleanup_url("dirty"), "{}"), 200);
+    assert_eq!(answer["removed"], false, "{answer}");
+    let kinds: Vec<&str> = answer["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["kind"].as_str().unwrap())
+        .collect();
+    // No remote here, so the commit it was made from is one nobody else has either.
+    assert_eq!(kinds, ["untracked", "unpushed"], "{answer}");
+    assert_eq!(answer["git"]["branch"], "dirty", "{answer}");
+    assert!(worktree.is_dir());
+    assert!(session_ids(&resident).contains(&"worker-dirty".to_string()));
+    assert!(!hook_log(&fixture).exists());
+}
+
+#[test]
+fn cleanup_removes_a_finished_worktree_its_local_branch_and_finishes_its_task() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let resident = Resident::start(&fixture);
+    // Written by a worker that has started, in a repository that does not ignore `.claude`, so
+    // git sees them as untracked files of its own.
+    let task = made_task(
+        &resident,
+        serde_json::json!({"title": "Retry the upload", "status": "dispatched", "handOver": false}),
+    );
+    let task_id = task["id"].as_str().unwrap();
+    let worktree = session_worktree(&fixture, "done-one", None, Some(task_id), dead_pid());
+    std::fs::write(worktree.join(".claude").join("task-brief.md"), "brief\n").unwrap();
+    pushed(&worktree, "done-one");
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/tasks/{task_id}"),
+        &serde_json::json!({"worktree": worktree.to_str().unwrap(), "handOver": false}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(session_ids(&resident).contains(&"worker-done-one".to_string()));
+
+    let answer = reply_of(resident.post(&cleanup_url("done-one"), "{}"), 200);
+    assert_eq!(answer["removed"], true, "{answer}");
+    assert_eq!(answer["forced"], false, "{answer}");
+    assert_eq!(answer["closed"], false, "{answer}");
+    assert_eq!(answer["branch"]["name"], "done-one", "{answer}");
+    assert_eq!(answer["branch"]["deleted"], true, "{answer}");
+    assert_eq!(answer["tasks"], serde_json::json!([task_id]), "{answer}");
+    assert_eq!(answer["hooks"][0]["ok"], true, "{answer}");
+
+    assert!(!worktree.exists(), "the worktree is still there");
+    assert!(
+        git_in(&fixture.repo, &["branch", "--list", "done-one"])
+            .trim()
+            .is_empty()
+    );
+    // The remote's side is never touched.
+    git_in(
+        &fixture.repo,
+        &["show-ref", "--verify", "refs/remotes/origin/done-one"],
+    );
+    let hooks = std::fs::read_to_string(hook_log(&fixture)).unwrap();
+    assert_eq!(
+        hooks.trim(),
+        format!("{} done-one", worktree.display()),
+        "{hooks}"
+    );
+    let state = state_of(&resident);
+    let stored = state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == task_id)
+        .unwrap();
+    assert_eq!(stored["status"], "done", "{stored}");
+    // The worker's record was inside the worktree, so nothing of the session is left to show.
+    assert!(
+        !session_ids(&resident).contains(&"worker-done-one".to_string()),
+        "{state}"
+    );
+}
+
+#[test]
+fn cleanup_of_a_running_session_closes_it_first() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    pushed(&worktree, "live");
+    std::fs::write(
+        &tmux.panes,
+        format!(
+            "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tlive\n",
+            running.0
+        ),
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+
+    let answer = reply_of(resident.post(&cleanup_url("live"), "{}"), 200);
+    assert_eq!(answer["removed"], true, "{answer}");
+    assert_eq!(answer["closed"], true, "{answer}");
+    assert!(
+        tmux.logged().contains("-L scratch kill-window -t @1"),
+        "{}",
+        tmux.logged()
+    );
+    assert!(!worktree.exists());
+    assert_eq!(ps_started(running.0), "", "the worker is still running");
+}
+
+#[test]
+fn cleanup_keeps_a_session_whose_worker_would_not_stop() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "stubborn", None, None, running.0);
+    pushed(&worktree, "stubborn");
+    std::fs::write(
+        &tmux.panes,
+        format!(
+            "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tstubborn\n",
+            running.0
+        ),
+    )
+    .unwrap();
+    // Nothing kills the process, as a terminal waiting for an answer would not.
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let (status, body) = resident.post(&cleanup_url("stubborn"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("could not be closed"), "{body}");
+    assert!(worktree.is_dir());
+}
+
+#[test]
+fn a_forced_cleanup_needs_the_worktree_s_name_typed_back() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let worktree = session_worktree(&fixture, "risky", None, None, dead_pid());
+    std::fs::write(worktree.join("scratch.txt"), "untracked\n").unwrap();
+    std::fs::write(worktree.join("kept.txt"), "one\n").unwrap();
+    git_in(&worktree, &["add", "kept.txt"]);
+    let resident = Resident::start(&fixture);
+
+    for body in [
+        r#"{"force":true}"#,
+        r#"{"force":true,"confirm":"other"}"#,
+        r#"{"force":"yes","confirm":"risky"}"#,
+    ] {
+        let (status, answer) = resident.post(&cleanup_url("risky"), body);
+        assert_eq!(status, 400, "{body}: {answer}");
+        assert!(worktree.is_dir(), "{body}");
+    }
+    // The name alone forces nothing.
+    let answer = reply_of(
+        resident.post(&cleanup_url("risky"), r#"{"confirm":"risky"}"#),
+        200,
+    );
+    assert_eq!(answer["removed"], false, "{answer}");
+
+    let answer = reply_of(
+        resident.post(&cleanup_url("risky"), r#"{"force":true,"confirm":"risky"}"#),
+        200,
+    );
+    assert_eq!(answer["removed"], true, "{answer}");
+    assert_eq!(answer["forced"], true, "{answer}");
+    assert!(!worktree.exists());
+    assert!(!session_ids(&resident).contains(&"worker-risky".to_string()));
+}
+
+#[test]
+fn cleanup_refuses_the_main_checkout_a_hub_and_a_worktree_a_queued_task_waits_in() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    // The main checkout is a session of its own once a worker has been there.
+    std::fs::create_dir_all(fixture.repo.join(".claude")).unwrap();
+    std::fs::write(
+        fixture.repo.join(".claude").join("adjutant-session.json"),
+        r#"{"sessionId":"sid-main"}"#,
+    )
+    .unwrap();
+    let waiting = session_worktree(&fixture, "waiting", None, None, dead_pid());
+    pushed(&waiting, "waiting");
+    let resident = Resident::start(&fixture);
+    made_task(
+        &resident,
+        serde_json::json!({
+            "title": "Wait for a slot",
+            "status": "queued",
+            "worktree": waiting.to_str().unwrap(),
+            "handOver": false,
+        }),
+    );
+
+    let (status, body) = resident.post(&sessions_url("/worker-main/cleanup"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("main checkout"), "{body}");
+    let (status, body) = resident.post(&sessions_url("/hub/cleanup"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("only a worker"), "{body}");
+    let (status, body) = resident.post(&sessions_url("/worker-nobody/cleanup"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no such session"), "{body}");
+
+    // Forcing does not get past it: the queue would start a worker in the ground removed.
+    let (status, body) = resident.post(
+        &cleanup_url("waiting"),
+        r#"{"force":true,"confirm":"waiting"}"#,
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("queued task"), "{body}");
+    assert!(waiting.is_dir());
+}
+
+#[test]
+fn a_parent_hub_can_be_started_for_a_key_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let answer = reply_of(
+        resident.post(&format!("/b/{SLUG}/api/hubs"), r#"{"key":" wid-957 "}"#),
+        200,
+    );
+    assert_eq!(answer["started"], true, "{answer}");
+    assert_eq!(answer["hub"]["id"], "hub-wid-957", "{answer}");
+    assert_eq!(answer["hub"]["slug"], FEATURE_SLUG, "{answer}");
+    let log = tmux.logged();
+    let window = log
+        .lines()
+        .find(|l| l.contains("new-window"))
+        .unwrap_or_else(|| panic!("no window was opened: {log}"));
+    assert!(window.contains("--hub=wid-957"), "{window}");
+
+    for body in [
+        "{}",
+        r#"{"key":"  "}"#,
+        r#"{"key":3}"#,
+        r#"{"key":"a","start":"x"}"#,
+    ] {
+        let (status, answer) = resident.post(&format!("/b/{SLUG}/api/hubs"), body);
+        assert_eq!(status, 400, "{body}: {answer}");
+    }
+}
+
+#[test]
+fn starting_a_parent_hub_needs_the_tmux_preset() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs"), r#"{"key":"wid-957"}"#);
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("tmux"), "{body}");
+}
+
+#[test]
+fn linking_can_name_the_phase_the_session_is_in() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let resident = Resident::start(&fixture);
+    let task = made_task(&resident, serde_json::json!({"title": "Retry the upload"}));
+    let id = task["id"].as_str().unwrap();
+
+    // Refused before anything is written.
+    let (status, body) = resident.post(
+        &sessions_url("/worker-try-retry/link"),
+        &serde_json::json!({"task": id, "phase": "nope"}).to_string(),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no such phase: nope"), "{body}");
+    assert!(body.contains("self-review"), "{body}");
+    let stored = state_of(&resident)["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap()
+        .clone();
+    assert_eq!(stored["status"], "backlog", "{stored}");
+    assert!(worker_record(&worktree).get("task").is_none());
+
+    reply_of(
+        resident.post(
+            &sessions_url("/worker-try-retry/link"),
+            &serde_json::json!({"task": id, "phase": "plan"}).to_string(),
+        ),
+        200,
+    );
+    let record = worker_record(&worktree);
+    assert_eq!(record["task"], id);
+    assert_eq!(record["phase"], "plan");
+    let phases = record["phases"].as_array().unwrap();
+    assert_eq!(phases.last().unwrap()[0], "plan", "{record}");
+}
+
+#[test]
+fn cleanup_looks_again_after_closing_and_keeps_what_the_worker_committed_meanwhile() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "busy-one", None, None, running.0);
+    pushed(&worktree, "busy-one");
+    std::fs::write(
+        &tmux.panes,
+        format!(
+            "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tbusy\n",
+            running.0
+        ),
+    )
+    .unwrap();
+    // The worker gets a last commit in as its window is closed.
+    std::fs::write(
+        format!("{}.onkill", tmux.log.display()),
+        format!(
+            "cd {} && echo x > late.txt && git add late.txt && git commit -q -m late\n",
+            worktree.display()
+        ),
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+
+    let answer = reply_of(resident.post(&cleanup_url("busy-one"), "{}"), 200);
+    assert_eq!(answer["removed"], false, "{answer}");
+    assert_eq!(answer["closed"], true, "{answer}");
+    assert_eq!(answer["reasons"][0]["kind"], "unpushed", "{answer}");
+    assert!(worktree.is_dir());
+    assert!(
+        !git_in(&fixture.repo, &["branch", "--list", "busy-one"])
+            .trim()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_removal_that_fails_leaves_the_session_as_it_was() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let worktree = session_worktree(&fixture, "locked-one", None, None, dead_pid());
+    pushed(&worktree, "locked-one");
+    std::fs::write(worktree.join(".claude").join("task-brief.md"), "brief\n").unwrap();
+    git_in(
+        &fixture.repo,
+        &["worktree", "lock", worktree.to_str().unwrap()],
+    );
+    let resident = Resident::start(&fixture);
+
+    let (status, body) = resident.post(&cleanup_url("locked-one"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(worktree.is_dir());
+    // Moved aside for the second try and put back when it failed too. The worker's record was
+    // never touched: a worker that is gone is not closed, and closing would have cleared it.
+    assert_eq!(worker_record(&worktree)["title"], "locked-one");
+    assert_eq!(
+        std::fs::read_to_string(worktree.join(".claude").join("task-brief.md")).unwrap(),
+        "brief\n"
+    );
+    assert_eq!(saved_session(&worktree)["sessionId"], "sid-1");
+    assert!(session_ids(&resident).contains(&"worker-locked-one".to_string()));
+    let left: Vec<_> = std::fs::read_dir(&fixture.state)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("cleanup-"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    // The marker that held off new workers is gone with the attempt.
+    assert!(!removing_marker(&fixture, &worktree).exists());
+}
+
+/// Where the marker saying a worktree is being removed is kept.
+fn removing_marker(fixture: &Fixture, worktree: &Path) -> PathBuf {
+    let name: String = std::fs::canonicalize(worktree)
+        .unwrap()
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    fixture
+        .repo
+        .join(".claude")
+        .join("adjutant-removing")
+        .join(format!("{name}.json"))
+}
+
+#[test]
+fn nothing_starts_in_a_worktree_that_is_being_removed_or_already_starting() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let worktree = session_worktree(&fixture, "going", None, None, dead_pid());
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let marker = removing_marker(&fixture, &worktree);
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        &marker,
+        serde_json::json!({"pid": std::process::id(), "at": now}).to_string(),
+    )
+    .unwrap();
+    let (status, body) = resident.post(&sessions_url("/worker-going/resume"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("being removed"), "{body}");
+    let out = fixture.cmd(&["work", "--resume", "--worktree", worktree.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("being removed"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!tmux.logged().contains("new-window"), "{}", tmux.logged());
+
+    // A marker from a removal that died long ago holds nothing.
+    std::fs::write(
+        &marker,
+        serde_json::json!({"pid": 1, "at": now - 3600}).to_string(),
+    )
+    .unwrap();
+    reply_of(
+        resident.post(&sessions_url("/worker-going/resume"), "{}"),
+        200,
+    );
+    // And the worktree is now marked as starting, which turns the next start away too.
+    let out = fixture.cmd(&["work", "--resume", "--worktree", worktree.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("already starting"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_worktree_git_cannot_read_is_a_reason_of_its_own() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let worktree = session_worktree(&fixture, "broken", None, None, dead_pid());
+    std::fs::write(worktree.join(".git"), "gitdir: /nonexistent/place\n").unwrap();
+    let resident = Resident::start(&fixture);
+
+    let answer = reply_of(resident.post(&cleanup_url("broken"), "{}"), 200);
+    assert_eq!(answer["removed"], false, "{answer}");
+    assert_eq!(answer["reasons"][0]["kind"], "git", "{answer}");
+    assert!(answer["git"].is_null(), "{answer}");
+    assert!(worktree.is_dir());
 }

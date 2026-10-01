@@ -398,7 +398,9 @@ function renderReview() {
 
   // A record is shown here too, opened from a card or the drawer. It is not in the rail, which
   // is what waits on a person, and a record does not.
-  const g = gates.find(x => x.id === focused) || recordById(focused) || gates[0];
+  let g = gates.find(x => x.id === focused) || recordById(focused) || gates[0];
+  // A polled record has no diff of its own; its task's history has it.
+  if (g && g.wait === false) g = withDiff(g, (state.tasks || []).find(t => t.id === g.task));
   if (!g) {
     pane.innerHTML = `
       <div class="empty-state" style="padding:80px 20px;text-align:center;">
@@ -569,6 +571,8 @@ function renderReview() {
         <h3><span class="material-symbols-outlined" style="font-size:18px;">difference</span><span>コード差分 (Diff)</span></h3>
         <div class="diff">${renderDiff(g.diff)}</div>
       </div>`;
+    } else if (diffPending(g)) {
+      h += `<div class="empty-state" style="padding:40px;text-align:center;">差分を読み込み中…</div>`;
     } else if (!g.findings?.length && !g.reviewRounds?.length) {
       h += `<div class="empty-state" style="padding:40px;text-align:center;">この Gate に記録されたコード差分はありません。</div>`;
     }

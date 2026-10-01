@@ -41,10 +41,16 @@
     </div>
 
     <div class="rail-divider"></div>
-    <button class="rail-item" id="nav-review" onclick="goToQueue()">
+    <button class="rail-item" id="nav-review" title="要対応レビュー" onclick="goToQueue()">
       <span class="material-symbols-outlined">mark_chat_unread</span>
       <span>要対応レビュー</span>
       <span class="rail-badge" id="gate-count">0</span>
+    </button>
+    <button type="button" class="rail-item" id="nav-sessions" title="セッション" hidden onclick="openSessionsView()">
+      <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+      <span>セッション</span>
+      <span class="rail-count zero" id="sessions-count" title="動いているセッション">0</span>
+      <span class="rail-dot" id="sessions-dot" title="止まった hub / worker があります" hidden></span>
     </button>
   </div>
 
@@ -136,6 +142,65 @@
     </div>
     <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
+    <div id="sessions-view">
+      <aside class="sess-rail" aria-label="セッションの一覧">
+        <div class="sess-rail-head">
+          <button type="button" class="tool-btn" id="sess-collapse" data-sess-collapse aria-expanded="true"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span></button>
+          <div class="sess-add-wrap">
+            <button type="button" class="tool-btn" id="sess-add" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-add-menu" title="hub やセッションを追加" aria-label="hub やセッションを追加"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
+            <div class="sess-menu" id="sess-add-menu" role="menu" aria-labelledby="sess-add" hidden></div>
+          </div>
+          <div class="sess-filters">
+            <button type="button" class="m3-filter-chip" data-sess-filter="all">すべて</button>
+            <button type="button" class="m3-filter-chip" data-sess-filter="attention">要対応</button>
+            <button type="button" class="m3-filter-chip" data-sess-filter="running">稼働中</button>
+          </div>
+        </div>
+        <div class="sess-scroll">
+          <div class="sess-tree" id="sess-tree"></div>
+          <details class="sess-orphans" id="sess-orphans" hidden>
+            <summary><span class="material-symbols-outlined" aria-hidden="true">folder_off</span><span class="sess-orphans-text">セッションのない worktree（<span id="sess-orphans-count">0</span>）</span></summary>
+            <div id="sess-orphans-list"></div>
+          </details>
+        </div>
+      </aside>
+      <section class="sess-main">
+        <div class="sess-context" id="sess-context" hidden>
+          <button type="button" class="btn-m3-tonal sess-back" id="sess-back" hidden></button>
+          <span class="sess-key" id="sess-key"></span>
+          <span class="sess-title" id="sess-title"></span>
+          <span class="m3-pill" id="sess-state"></span>
+          <span class="sess-meta" id="sess-hub"></span>
+          <span class="sess-meta" id="sess-last"></span>
+          <button type="button" class="btn-m3-tonal sess-reconnect" id="sess-reconnect" hidden>再接続</button>
+          <div class="sess-actions" id="sess-actions"></div>
+          <div class="sess-menu-wrap">
+            <button type="button" class="tool-btn" id="sess-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-menu" title="そのほかの操作" aria-label="そのほかの操作" hidden><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
+            <div class="sess-menu" id="sess-menu" role="menu" hidden></div>
+          </div>
+          <button type="button" class="tool-btn" id="sess-side-toggle" aria-controls="sess-side" aria-expanded="false" aria-label="詳細を表示" title="詳細を表示"><span class="material-symbols-outlined" aria-hidden="true">right_panel_open</span></button>
+        </div>
+        <div class="sess-notice" id="sess-notice" hidden></div>
+        <section class="sess-gate" id="sess-gate" aria-label="確認待ちの gate" hidden></section>
+        <div class="sess-stage">
+          <div class="sess-term-host" id="sess-term-host" hidden></div>
+          <div class="sess-placeholder" id="sess-placeholder"></div>
+          <div class="sess-over" id="sess-over" hidden></div>
+        </div>
+        <div class="sess-strip">
+          <span id="sess-strip-where"></span>
+          <span id="sess-strip-attach"></span>
+          <span class="sess-strip-note">切り替えても離れてもセッションは止まりません（切り離すだけです）</span>
+        </div>
+      </section>
+      <aside class="sess-side" id="sess-side" aria-label="選んだセッションの詳細" hidden>
+        <div class="sess-side-head">
+          <span class="sess-side-title">詳細</span>
+          <button type="button" class="tool-btn" id="sess-side-close" aria-label="詳細を閉じる" title="詳細を閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+        </div>
+        <div class="sess-side-body" id="sess-side-body"></div>
+      </aside>
+    </div>
   </main>
 
   <footer id="m3-bottom-sheet">
@@ -155,18 +220,6 @@
       <ol id="log" style="list-style:none;display:flex;flex-direction:column;gap:4px;"></ol>
     </div>
   </footer>
-</div>
-
-<div id="term-overlay" class="adj-terminal-overlay" role="region" aria-label="セッションの端末" hidden>
-  <div class="term-panel">
-    <div class="term-head">
-      <span class="term-title"></span>
-      <span class="term-where"></span>
-      <span class="term-note">閉じてもセッションは止まりません（切り離すだけです）</span>
-      <button type="button" class="btn-m3-tonal" id="term-close" style="padding:4px 12px;font-size:12px;">閉じる</button>
-    </div>
-    <div class="term-host"></div>
-  </div>
 </div>
 
 <dialog id="form">
@@ -258,6 +311,7 @@
     </div>
     <div class="body">
       <div id="handover-task-title" style="font-size:13.5px;font-weight:600;color:var(--md-sys-color-on-surface);background:var(--md-sys-color-surface-container);padding:10px 14px;border-radius:var(--md-shape-corner-sm);line-height:1.4;"></div>
+      <p id="handover-hub-note" hidden>hub が止まっているため、先に起動します</p>
       <label class="field">
         <span>エージェントへの申し送り（指示）</span>
         <textarea id="handover-instruction" placeholder="着手にあたってエージェントに伝えたい前提条件や追加指示があれば入力（空欄でも渡せます）..." rows="4"></textarea>
@@ -269,6 +323,124 @@
       <button type="submit" class="btn-m3-primary" id="handover-submit-btn">
         <span class="material-symbols-outlined" style="font-size:16px;">send</span>
         <span>キューに渡す</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="hubkey-dialog" aria-labelledby="hubkey-title">
+  <form method="dialog" id="hubkey-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">account_tree</span>
+        <span id="hubkey-title">親タスクの hub を起動</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="hubkey-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <label class="field"><span>親タスクのキー</span>
+        <input type="text" id="hubkey-key" autocomplete="off" spellcheck="false" placeholder="ALPHA-233" aria-describedby="hubkey-help">
+        <span class="note" id="hubkey-help">adj hub --hub &lt;キー&gt; と同じ。その親タスクの hub が tmux の新しいウィンドウで起動します</span></label>
+      <p id="hubkey-error" class="dlg-error" role="alert" hidden></p>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="hubkey-dialog">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="hubkey-submit">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">play_arrow</span>
+        <span>起動</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="start-dialog" aria-labelledby="start-title">
+  <form method="dialog" id="start-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">terminal</span>
+        <span id="start-title">タスクなしのセッションを始める</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="start-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <label class="field"><span>hub</span>
+        <select id="start-hub" aria-describedby="start-hub-note"></select>
+        <span class="note" id="start-hub-note" aria-live="polite"></span></label>
+      <label class="field"><span>最初の指示（省略できます）</span>
+        <textarea id="start-instruction" rows="4" placeholder="空欄なら、worker はあいさつして指示を待ちます"></textarea>
+        <span class="note">⌘+Enter / Ctrl+Enter で依頼</span></label>
+      <label class="field"><span>worktree 名</span>
+        <input type="text" id="start-name" autocomplete="off" spellcheck="false" aria-describedby="start-name-note">
+        <span class="note" id="start-name-note" aria-live="polite"></span></label>
+      <label class="field"><span>エージェント</span>
+        <select id="start-agent" aria-describedby="start-agent-note"></select>
+        <span class="note" id="start-agent-note">worker ランナー（agentRunner）の設定にあるエージェントだけ選べます</span></label>
+      <p id="start-slots" class="dlg-note" role="status" hidden></p>
+      <p id="start-error" class="dlg-error" role="alert" hidden></p>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="start-dialog">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="start-submit">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">send</span>
+        <span>hub に依頼する</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="link-dialog" aria-labelledby="link-title">
+  <form method="dialog" id="link-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">link</span>
+        <span id="link-title">セッションをタスクにする</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="link-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <div id="link-session" class="dlg-target"></div>
+      <fieldset>
+        <legend>紐づけ方</legend>
+        <div class="radios">
+          <label><input type="radio" name="link-mode" value="new" checked>新しいタスクにする</label>
+          <label><input type="radio" name="link-mode" value="existing">既存のタスクに紐づける</label>
+        </div>
+      </fieldset>
+      <div id="link-new">
+        <label class="field"><span>タイトル</span>
+          <input type="text" id="link-title-input" autocomplete="off" placeholder="省略時は内容の1行目"></label>
+        <label class="field"><span>内容</span>
+          <textarea id="link-body" rows="4" placeholder="このセッションで何をしているか"></textarea></label>
+        <label class="field"><span>完了条件</span>
+          <select id="link-done-when">
+            <option value="report-only">調査のみ(報告して終わり)</option>
+            <option value="verify">動作確認まで</option>
+            <option value="pr" selected>PR 作成まで</option>
+            <option value="review">レビュー対応まで</option>
+          </select></label>
+        <label class="check"><input type="checkbox" id="link-file-issue">hub に Issue を起票してもらう</label>
+      </div>
+      <div id="link-existing" hidden>
+        <label class="field"><span>タスク</span>
+          <select id="link-task" size="6" aria-describedby="link-task-note"></select>
+          <span class="note" id="link-task-note" aria-live="polite"></span></label>
+      </div>
+      <label class="field"><span>いまのフェーズ</span>
+        <select id="link-phase"></select></label>
+      <p id="link-move-note" class="dlg-note" role="status" hidden></p>
+      <p id="link-error" class="dlg-error" role="alert" hidden></p>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="link-dialog">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="link-submit">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">link</span>
+        <span>紐づける</span>
       </button>
     </div>
   </form>
@@ -362,6 +534,42 @@
       <button type="submit" value="close" class="btn-m3-danger">
         <span class="material-symbols-outlined" style="font-size:16px;">close</span>
         <span>タブを閉じる</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="cleanup-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-error);">delete_sweep</span>
+        <span>worktree を片付ける</span>
+      </div>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル" aria-label="キャンセル">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body close-help">
+      <div class="target">
+        <div id="cleanup-name" class="name"></div>
+        <code id="cleanup-path" class="path"></code>
+      </div>
+      <p>worktree とローカルのブランチを削除します。リモートのブランチには触りません。未コミットの変更・追跡されていないファイル・push されていないコミットがあるときは、失われるので削除を断ります。</p>
+      <ul id="cleanup-facts" class="cleanup-facts"></ul>
+      <p id="cleanup-error" class="cleanup-error" role="alert" hidden></p>
+      <details id="cleanup-force" class="cleanup-force">
+        <summary>それでも削除する</summary>
+        <p id="cleanup-force-help">失われる作業ごと削除します。確認のため、worktree の名前（<b id="cleanup-force-name"></b>）を入力してください。</p>
+        <input id="cleanup-confirm" type="text" aria-labelledby="cleanup-force-help" autocomplete="off" spellcheck="false">
+        <div><button type="button" class="btn-m3-danger" id="cleanup-force-run" disabled>強制して削除</button></div>
+      </details>
+    </div>
+    <div class="foot">
+      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
+      <button type="button" class="btn-m3-danger" id="cleanup-run">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">delete_sweep</span>
+        <span>片付ける</span>
       </button>
     </div>
   </form>

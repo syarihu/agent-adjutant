@@ -14,6 +14,7 @@
 //! so `present: false` is information for the sender, not an error.
 
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -455,6 +456,88 @@ pub fn ps_started(pid: u32) -> Option<String> {
     ps_field(pid, "lstart").filter(|s| !s.is_empty())
 }
 
+/// Where a check for "when did this pid start" gets its answer: one `ps` per pid, or one `ps`
+/// for the whole process table, asked the first time it is needed and kept after.
+///
+/// The table is for a caller that checks many records in one go, such as the board's poll,
+/// where one `ps` per worker made the cost grow with the number of worktrees.
+///
+/// A `ps -A` that cannot be run or exits non-zero reads as "cannot tell" for every pid, on
+/// purpose: a failure of the whole table says nothing about one pid. The per-pid call reads a
+/// silent non-zero exit as "no such process", which is how `ps -p` answers for a pid that is gone.
+pub struct ProcessTable {
+    all: bool,
+    snapshot: std::cell::OnceCell<Option<HashMap<u32, String>>>,
+}
+
+impl ProcessTable {
+    /// Asks `ps` about each pid on its own.
+    pub fn each() -> Self {
+        ProcessTable {
+            all: false,
+            snapshot: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Asks `ps` once, and only when a pid is first looked up.
+    pub fn snapshot() -> Self {
+        ProcessTable {
+            all: true,
+            snapshot: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn lstart(&self, pid: u32) -> Answer {
+        if !self.all {
+            return ps_answer(pid, "lstart");
+        }
+        match self.snapshot.get_or_init(process_starts) {
+            // `ps` could not be run: the answer the single call gives for every pid.
+            None => Answer::CannotTell,
+            Some(starts) => match starts.get(&pid) {
+                Some(started) => Answer::Said(started.clone()),
+                None => Answer::NoSuchProcess,
+            },
+        }
+    }
+
+    fn started(&self, pid: u32) -> Option<String> {
+        match self.lstart(pid) {
+            Answer::Said(value) => Some(value).filter(|s| !s.is_empty()),
+            _ => None,
+        }
+    }
+}
+
+/// Every process's start time, from one `ps`. `None` when `ps` cannot be run or fails, which
+/// the single-pid call reads as "cannot tell" as well.
+fn process_starts() -> Option<HashMap<u32, String>> {
+    let out = Command::new("ps")
+        .args(["-A", "-o", "pid=,lstart="])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| parse_process_starts(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The pid and start time of each line of `ps -A -o pid=,lstart=`.
+///
+/// The start time is the rest of the line, trimmed: it holds spaces of its own, and a
+/// localized day name can be multi-byte. Trimmed because that is what the single-pid call's
+/// answer is, and the two are compared to the same recorded string.
+fn parse_process_starts(output: &str) -> HashMap<u32, String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            let pid = line[..digits].parse().ok()?;
+            Some((pid, line[digits..].trim().to_string()))
+        })
+        .collect()
+}
+
 /// Whether this process is `pid` or runs somewhere below it: how a command run by an agent
 /// tells that it was run by that agent, whatever shells sit between them.
 pub fn is_self_or_descendant_of(pid: u32) -> bool {
@@ -487,8 +570,17 @@ fn parent_of(pid: u32) -> Option<u32> {
 /// somewhere `exec` discards (`env NAME={name} agent …`) produced a live hub that read as
 /// absent forever, and the check bought nothing the start time had not already ruled out.
 fn process_matches(pid: u32, expect_in_command: Option<&str>, started: Option<&str>) -> bool {
+    process_matches_with(&ProcessTable::each(), pid, expect_in_command, started)
+}
+
+fn process_matches_with(
+    table: &ProcessTable,
+    pid: u32,
+    expect_in_command: Option<&str>,
+    started: Option<&str>,
+) -> bool {
     match started {
-        Some(started) => ps_started(pid).as_deref() == Some(started),
+        Some(started) => table.started(pid).as_deref() == Some(started),
         None => match expect_in_command {
             Some(name) => ps_field(pid, "command").is_some_and(|c| c.contains(name)),
             None => ps_field(pid, "command").is_some(),
@@ -497,6 +589,11 @@ fn process_matches(pid: u32, expect_in_command: Option<&str>, started: Option<&s
 }
 
 pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
+    hub_status_with(&ProcessTable::each(), slug, hub_name)
+}
+
+/// `hub_status`, asking `table` when the hub's process started.
+pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubStatus {
     let mut status = HubStatus {
         slug: slug.to_string(),
         hub_name: hub_name.to_string(),
@@ -537,7 +634,7 @@ pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
         .unwrap_or(hub_name);
     let expect = named.then_some(recorded_name);
     match status.pid {
-        Some(pid) if process_matches(pid, expect, ps_started) => status.present = true,
+        Some(pid) if process_matches_with(table, pid, expect, ps_started) => status.present = true,
         _ => status.stale = true,
     }
     status
@@ -564,6 +661,9 @@ pub fn worker_task(worktree: &Path) -> Option<String> {
     }
 }
 
+/// How many waiting messages `hubs[].inbox` lists, newest first. The count is the whole inbox.
+const INBOX_LISTED: usize = 20;
+
 /// All hubs belonging to `repo`, repository hub first, followed by any parent-task hubs.
 ///
 /// A parent-task hub is listed while something points at it: a hub record, or a checkout
@@ -571,7 +671,26 @@ pub fn worker_task(worktree: &Path) -> Option<String> {
 /// one hub). A saved hub session alone does not list it, so a stopped hub whose last
 /// checkout is gone leaves the list; its session stays for `--resume`.
 pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHub> {
-    use crate::session::{RepoHub, RepoHubState};
+    let worktrees = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
+    all_repo_hubs_among(repo, &worktrees)
+}
+
+/// `all_repo_hubs` for a caller that has already listed the linked worktrees of `repo`, so that
+/// git is not asked for them a second time.
+pub fn all_repo_hubs_among(
+    repo: &crate::repo::RepoInfo,
+    worktrees: &[String],
+) -> Vec<crate::session::RepoHub> {
+    all_repo_hubs_among_with(&ProcessTable::each(), repo, worktrees)
+}
+
+/// `all_repo_hubs_among`, asking `table` when each hub's process started.
+pub fn all_repo_hubs_among_with(
+    table: &ProcessTable,
+    repo: &crate::repo::RepoInfo,
+    worktrees: &[String],
+) -> Vec<crate::session::RepoHub> {
+    use crate::session::{InboxItem, RepoHub, RepoHubState};
     use std::collections::HashMap;
 
     let (default_slug, default_hub_name) = match &repo.hub {
@@ -642,9 +761,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
     // that the saved session's, which is what keeps counting after the worker has ended.
     let mut children: HashMap<String, usize> = HashMap::new();
     let mut checkouts = vec![repo.main.clone()];
-    if let Ok(worktrees) = crate::repo::linked_worktrees(&repo.main) {
-        checkouts.extend(worktrees);
-    }
+    checkouts.extend(worktrees.iter().cloned());
     for wt in checkouts {
         let Some(hub_key) = worker_hub_key(Path::new(&wt)) else {
             continue;
@@ -689,8 +806,23 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                     .and_then(|session| session.hub)
                     .or_else(|| crate::repo::hub_key_from_slug(&repo.nwo, &slug));
             }
-            let status = hub_status(&slug, &hub_name);
-            let inbox_count = list(&slug).len();
+            let status = hub_status_with(table, &slug, &hub_name);
+            let entries = list(&slug);
+            let inbox_count = entries.len();
+            // `list` is oldest first, so the newest are at the end.
+            let inbox = entries
+                .into_iter()
+                .rev()
+                .take(INBOX_LISTED)
+                .map(|entry| InboxItem {
+                    name: entry.name,
+                    subject: entry.subject,
+                    kind: entry.kind,
+                    from: entry.from,
+                    worktree: entry.worktree,
+                    at: entry.at,
+                })
+                .collect();
             let id = match &key {
                 Some(k) => format!("hub-{}", k.trim()),
                 None if slug == default_slug => "hub".to_string(),
@@ -710,6 +842,7 @@ pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHu
                     started_at: status.started_at,
                 },
                 inbox_count,
+                inbox,
                 children,
             }
         })
@@ -937,6 +1070,40 @@ pub struct WorkerStatus {
     /// What the worker last said it was doing (`adj phase --set`), and since when.
     pub phase: Option<String>,
     pub phase_at: Option<i64>,
+    /// Every phase entered, oldest first, as `(phase, epoch seconds)`.
+    pub phases: Vec<(String, i64)>,
+}
+
+/// How many entries a record's `phases` keeps. A worker that says a phase on every step of a
+/// long task would otherwise grow a file the board reads every two seconds.
+const PHASES_KEPT: usize = 64;
+
+/// The history a record has: its `phases`, or the one entry its `phase` and `phaseAt` make
+/// for a record written before it kept a history.
+fn recorded_phases(fields: &serde_json::Map<String, Value>) -> Vec<Value> {
+    if let Some(phases) = fields.get("phases").and_then(Value::as_array) {
+        return phases.clone();
+    }
+    match (
+        fields.get("phase").and_then(Value::as_str),
+        fields.get("phaseAt").and_then(Value::as_i64),
+    ) {
+        (Some(phase), Some(at)) => vec![json!([phase, at])],
+        _ => Vec::new(),
+    }
+}
+
+/// Enter `phase` at `at` in the record's fields: the current phase, and one more entry in the
+/// history — even for a phase already said, because the time it was said again is a fact too.
+fn append_phase(fields: &mut serde_json::Map<String, Value>, phase: &str, at: i64) {
+    let mut phases = recorded_phases(fields);
+    phases.push(json!([phase, at]));
+    if phases.len() > PHASES_KEPT {
+        phases.drain(..phases.len() - PHASES_KEPT);
+    }
+    fields.insert("phase".to_string(), json!(phase));
+    fields.insert("phaseAt".to_string(), json!(at));
+    fields.insert("phases".to_string(), Value::Array(phases));
 }
 
 /// The steps a worker says it is in. A fixed list so the board can show them in order and a
@@ -975,8 +1142,7 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
     let fields = record
         .as_object_mut()
         .ok_or_else(|| format!("cannot read the worker record at {}", path.display()))?;
-    fields.insert("phase".to_string(), json!(phase));
-    fields.insert("phaseAt".to_string(), json!(now_secs()));
+    append_phase(fields, phase, now_secs());
     write_json(&path, &record)
 }
 
@@ -986,11 +1152,18 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
 /// are what say it is still the same worker, and only the answers to "which task" and "which
 /// hub" change. `hub` is `None` for the repository's own hub, which a record says by having
 /// no key. A worker linked to a task is at work on it, so a record with no phase yet gets
-/// `implement` — the card needs one to show, and nothing else has said otherwise.
+/// `implement` — the card needs one to show, and nothing else has said otherwise. A `phase`
+/// the caller names is entered whatever the record says: the person linking a session knows
+/// where it stands, and an earlier phase must not decide for them.
 ///
 /// The saved session is rewritten too, because `all_repo_hubs` counts a hub's children from
 /// both, and one that kept naming the old hub would keep it from closing.
-pub fn relink_worker(worktree: &Path, hub: Option<&str>, task: &str) -> Result<(), String> {
+pub fn relink_worker(
+    worktree: &Path,
+    hub: Option<&str>,
+    task: &str,
+    phase: Option<&str>,
+) -> Result<(), String> {
     let path = worker_record_path(worktree);
     let Some(mut record) = read_json(&path) else {
         return Err(format!("no worker is registered in {}", worktree.display()));
@@ -1003,9 +1176,12 @@ pub fn relink_worker(worktree: &Path, hub: Option<&str>, task: &str) -> Result<(
         Some(hub) => fields.insert("hub".to_string(), json!(hub)),
         None => fields.remove("hub"),
     };
-    if fields.get("phase").and_then(Value::as_str).is_none() {
-        fields.insert("phase".to_string(), json!("implement"));
-        fields.insert("phaseAt".to_string(), json!(now_secs()));
+    match phase {
+        Some(phase) => append_phase(fields, phase, now_secs()),
+        None if fields.get("phase").and_then(Value::as_str).is_none() => {
+            append_phase(fields, "implement", now_secs());
+        }
+        None => {}
     }
     // The saved session first and the record last: the record is what the board and the
     // worker read, so a failure in the second write must not leave it naming a task the
@@ -1051,6 +1227,18 @@ pub fn register_worker(
         "startedAt": utc_stamp(now_secs()),
         "psStarted": ps_started(std::process::id()),
     });
+    // A worker started again in the same worktree for the same task keeps the timeline of the
+    // run before it, though not its current phase: that belongs to the run that said it. A
+    // worktree reused for another task starts a timeline of its own.
+    let carried = read_json(&path)
+        .filter(|old| old.get("task").and_then(Value::as_str).map(str::to_string) == said(task))
+        .and_then(|old| old.as_object().map(recorded_phases))
+        .unwrap_or_default();
+    if !carried.is_empty()
+        && let Some(fields) = record.as_object_mut()
+    {
+        fields.insert("phases".to_string(), Value::Array(carried));
+    }
     if let Some(hub) = said(hub)
         && let Some(fields) = record.as_object_mut()
     {
@@ -1116,8 +1304,13 @@ pub fn unmark_worker_starting(worktree: &Path) -> Result<(), String> {
 /// only delays a dispatch, and not for long — a pid that is no longer running is `Gone`
 /// whatever else the record lacks.
 pub fn holds_worker_slot(worktree: &Path, now: i64) -> bool {
+    holds_worker_slot_with(&ProcessTable::each(), worktree, now)
+}
+
+/// `holds_worker_slot`, asking `table` when the worker's process started.
+pub fn holds_worker_slot_with(table: &ProcessTable, worktree: &Path, now: i64) -> bool {
     let registered = match read_worker(worktree) {
-        WorkerRecord::Named(worker) => worker_liveness(&worker) != Liveness::Gone,
+        WorkerRecord::Named(worker) => worker_liveness_with(table, &worker) != Liveness::Gone,
         // Neither names a process that could be running.
         WorkerRecord::Absent | WorkerRecord::Unreadable => false,
     };
@@ -1132,6 +1325,74 @@ pub fn is_starting(worktree: &Path, now: i64) -> bool {
         // Bounded below as well: a clock set back after the dispatch would otherwise hold
         // the slot for as long as it was moved.
         .is_some_and(|at| (0..STARTING_GRACE_SECS).contains(&(now - at)))
+}
+
+/// How long a "being removed" marker is believed when the process that wrote it cannot be
+/// shown to be running. One that can be is believed for as long as it runs.
+const REMOVING_SECS: i64 = 300;
+
+/// Where the marker saying `worktree` is being removed is kept: in the main checkout, outside
+/// the worktree that is about to go.
+///
+/// The worktree is resolved through its parent directory, so the answer is the same while the
+/// directory exists and after it is gone; resolving the path itself would give a symlinked
+/// `/tmp` or `/var` one spelling before and another after.
+fn removing_marker_path(main: &Path, worktree: &Path) -> PathBuf {
+    let resolved = match (worktree.parent(), worktree.file_name()) {
+        (Some(parent), Some(leaf)) => parent
+            .canonicalize()
+            .map(|parent| parent.join(leaf))
+            .unwrap_or_else(|_| worktree.to_path_buf()),
+        _ => worktree.to_path_buf(),
+    };
+    let name: String = resolved
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    main.join(".claude")
+        .join("adjutant-removing")
+        .join(format!("{name}.json"))
+}
+
+/// The marker saying a worktree is being removed, removed again when this goes out of scope,
+/// whichever way that happens.
+pub struct RemovingMark(PathBuf);
+
+impl Drop for RemovingMark {
+    fn drop(&mut self) {
+        let _ = remove_if_present(&self.0);
+    }
+}
+
+/// Say that `worktree` is being removed, so that nothing starts a worker in it meanwhile.
+/// Written under the dispatch lock, with the process and the time.
+pub fn mark_worktree_removing(main: &Path, worktree: &Path) -> Result<RemovingMark, String> {
+    let path = removing_marker_path(main, worktree);
+    let pid = std::process::id();
+    write_json(
+        &path,
+        &json!({ "pid": pid, "psStarted": ps_started(pid), "at": now_secs() }),
+    )?;
+    Ok(RemovingMark(path))
+}
+
+/// Whether a removal of `worktree` is under way: the process that wrote the marker is still
+/// running, or the marker is recent enough that it may be.
+pub fn is_being_removed(main: &Path, worktree: &Path) -> bool {
+    let Some(marker) = read_json(&removing_marker_path(main, worktree)) else {
+        return false;
+    };
+    let alive = marker
+        .get("pid")
+        .and_then(Value::as_u64)
+        .zip(marker.get("psStarted").and_then(Value::as_str))
+        .is_some_and(|(pid, started)| process_matches(pid as u32, None, Some(started)));
+    let recent = marker
+        .get("at")
+        .and_then(Value::as_i64)
+        .is_some_and(|at| (0..REMOVING_SECS).contains(&(now_secs() - at)));
+    alive || recent
 }
 
 /// How long a dispatch waits for another to finish counting before it gives up.
@@ -1199,6 +1460,11 @@ pub fn busy_worktrees(worktrees: &[String], except: Option<&Path>) -> Vec<String
 }
 
 pub fn worker_status(worktree: &Path) -> WorkerStatus {
+    worker_status_with(&ProcessTable::each(), worktree)
+}
+
+/// `worker_status`, asking `table` when the worker's process started.
+pub fn worker_status_with(table: &ProcessTable, worktree: &Path) -> WorkerStatus {
     let mut status = WorkerStatus {
         worktree: worktree.to_string_lossy().to_string(),
         present: false,
@@ -1207,6 +1473,7 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         stale: false,
         phase: None,
         phase_at: None,
+        phases: Vec::new(),
     };
     let Some(record) = read_json(&worker_record_path(worktree)) else {
         return status;
@@ -1226,12 +1493,21 @@ pub fn worker_status(worktree: &Path) -> WorkerStatus {
         .and_then(Value::as_str)
         .map(str::to_string);
     status.phase_at = record.get("phaseAt").and_then(Value::as_i64);
+    if let Some(fields) = record.as_object() {
+        status.phases = recorded_phases(fields)
+            .iter()
+            .filter_map(|entry| {
+                let pair = entry.as_array()?;
+                Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_i64()?))
+            })
+            .collect();
+    }
     // A worker's command line carries nothing distinctive — it is whatever agent the config
     // names — so the start time is the only anchor available here, and with none the
     // question narrows to whether that pid is there at all.
     let ps_started = recorded_anchor(&record);
     match status.pid {
-        Some(pid) if process_matches(pid, None, ps_started) => status.present = true,
+        Some(pid) if process_matches_with(table, pid, None, ps_started) => status.present = true,
         _ => status.stale = true,
     }
     status
@@ -1326,7 +1602,12 @@ pub fn read_worker(worktree: &Path) -> WorkerRecord {
 /// into "nobody there", which is the safe reading when being wrong costs a message that
 /// waits in a file until somebody reads it. Here it is the unsafe one.
 pub fn worker_liveness(worker: &WorkerIdentity) -> Liveness {
-    match ps_answer(worker.pid, "lstart") {
+    worker_liveness_with(&ProcessTable::each(), worker)
+}
+
+/// `worker_liveness`, asking `table` when the worker's process started.
+pub fn worker_liveness_with(table: &ProcessTable, worker: &WorkerIdentity) -> Liveness {
+    match table.lstart(worker.pid) {
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match &worker.started {
@@ -1781,6 +2062,20 @@ pub struct Entry {
     /// them.
     pub worktree: Option<String>,
     pub kind: String,
+    /// When it was sent: the `at` header, or the stamp its file name starts with for a
+    /// message that has none. `None` when neither reads as a stamp.
+    pub at: Option<String>,
+}
+
+/// The leading `YYYYMMDDTHHMMSSZ` of an inbox file name.
+fn stamp_of_name(name: &str) -> Option<String> {
+    let stamp = name.get(..16)?;
+    let shaped = stamp.bytes().enumerate().all(|(i, b)| match i {
+        8 => b == b'T',
+        15 => b == b'Z',
+        _ => b.is_ascii_digit(),
+    });
+    shaped.then(|| stamp.to_string())
 }
 
 pub fn list(slug: &str) -> Vec<Entry> {
@@ -1808,6 +2103,9 @@ pub fn list(slug: &str) -> Vec<Entry> {
                 from: header("from"),
                 worktree: header_value(&text, "worktree").filter(|path| !path.is_empty()),
                 kind: header("kind"),
+                at: header_value(&text, "at")
+                    .filter(|at| !at.is_empty())
+                    .or_else(|| stamp_of_name(&name)),
                 name,
             }
         })
@@ -2213,6 +2511,35 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn process_starts_keep_the_whole_start_time_and_skip_what_is_not_a_process_line() {
+        let output = "    1 Mon Sep 30 10:43:37 2026\n\
+            12345 水  9/30 10:43:37 2026\n\
+             \n\
+            garbage line\n\
+            777\n";
+        let starts = parse_process_starts(output);
+        assert_eq!(
+            starts.get(&1).map(String::as_str),
+            Some("Mon Sep 30 10:43:37 2026")
+        );
+        assert_eq!(
+            starts.get(&12345).map(String::as_str),
+            Some("水  9/30 10:43:37 2026")
+        );
+        assert_eq!(starts.get(&777).map(String::as_str), Some(""));
+        assert_eq!(starts.len(), 3);
+        assert!(parse_process_starts("").is_empty());
+    }
+
+    #[test]
+    fn the_process_snapshot_agrees_with_asking_ps_about_one_pid() {
+        let pid = std::process::id();
+        let table = ProcessTable::snapshot();
+        assert_eq!(table.started(pid), ps_started(pid));
+        assert!(ProcessTable::each().started(pid).is_some());
     }
 
     #[test]
@@ -2730,7 +3057,7 @@ mod tests {
         let before = read_json(&worker_record_path(worktree)).unwrap();
         save_worker_session(worktree, "try-retry", None, None, "sid-1").unwrap();
 
-        relink_worker(worktree, Some("WID-957"), "task-1").unwrap();
+        relink_worker(worktree, Some("WID-957"), "task-1", None).unwrap();
         let after = read_json(&worker_record_path(worktree)).unwrap();
         for key in ["pid", "psStarted", "startedAt", "title"] {
             assert_eq!(after[key], before[key], "{key}");
@@ -2746,12 +3073,21 @@ mod tests {
 
         // Back to the repository's own hub: no key at all, and a phase already there stays.
         set_worker_phase(worktree, "verify").unwrap();
-        relink_worker(worktree, None, "task-2").unwrap();
+        relink_worker(worktree, None, "task-2", None).unwrap();
         let after = read_json(&worker_record_path(worktree)).unwrap();
         assert!(after.get("hub").is_none());
         assert_eq!(after["phase"], "verify");
         assert_eq!(after["task"], "task-2");
         assert_eq!(worker_session(worktree).unwrap().hub, None);
+
+        // A phase named by the caller is entered even when the record already has one.
+        relink_worker(worktree, None, "task-2", Some("plan")).unwrap();
+        let after = read_json(&worker_record_path(worktree)).unwrap();
+        assert_eq!(after["phase"], "plan");
+        assert_eq!(
+            after["phases"].as_array().unwrap().last().unwrap()[0],
+            "plan"
+        );
     }
 
     /// Which hub an invocation is addressing, and the order the three answers are asked in.
@@ -3542,6 +3878,89 @@ mod tests {
     }
 
     #[test]
+    fn every_phase_said_is_kept_in_order_and_carried_to_a_restarted_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        set_worker_phase(worktree, "plan").unwrap();
+        set_worker_phase(worktree, "plan").unwrap();
+        set_worker_phase(worktree, "verify").unwrap();
+        fn names(status: &WorkerStatus) -> Vec<&str> {
+            status.phases.iter().map(|(p, _)| p.as_str()).collect()
+        }
+        let status = worker_status(worktree);
+        assert_eq!(names(&status), ["plan", "plan", "verify"]);
+        assert_eq!(status.phases[2].1, status.phase_at.unwrap());
+
+        // Restarted: the current phase is gone, the timeline is not.
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        let status = worker_status(worktree);
+        assert_eq!(status.phase, None);
+        assert_eq!(names(&status), ["plan", "plan", "verify"]);
+
+        // The same worktree taken for another task does not inherit the first one's timeline.
+        register_worker(worktree, "WID-957", None, Some("task-2"), None).unwrap();
+        assert!(worker_status(worktree).phases.is_empty());
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        assert!(worker_status(worktree).phases.is_empty());
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        set_worker_phase(worktree, "plan").unwrap();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        assert_eq!(names(&worker_status(worktree)), ["plan"]);
+
+        // A record from before the history was kept starts it from the phase it has.
+        let path = worker_record_path(worktree);
+        let mut record = read_json(&path).unwrap();
+        let fields = record.as_object_mut().unwrap();
+        fields.remove("phases");
+        fields.insert("phase".into(), json!("pr"));
+        fields.insert("phaseAt".into(), json!(1_700_000_000));
+        write_json(&path, &record).unwrap();
+        assert_eq!(
+            worker_status(worktree).phases,
+            [("pr".to_string(), 1_700_000_000)]
+        );
+        set_worker_phase(worktree, "review").unwrap();
+        assert_eq!(names(&worker_status(worktree)), ["pr", "review"]);
+    }
+
+    #[test]
+    fn the_phase_history_drops_its_oldest_entries_past_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path();
+        register_worker(worktree, "WID-957", None, None, None).unwrap();
+        for i in 0..PHASES_KEPT + 6 {
+            set_worker_phase(worktree, PHASES[i % 2]).unwrap();
+        }
+        let phases = worker_status(worktree).phases;
+        assert_eq!(phases.len(), PHASES_KEPT);
+        assert_eq!(phases.last().unwrap().0, PHASES[(PHASES_KEPT + 5) % 2]);
+    }
+
+    #[test]
+    fn an_inbox_lists_the_newest_first_with_when_each_was_sent() {
+        let _sandbox = Sandbox::empty();
+        let slug = "acme-widget";
+        let dir = inbox_dir(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+        write(
+            "20260101T000001Z-report.md",
+            "---\nfrom: a\nkind: report\nsubject: first\nat: 20260101T000001Z\n---\n\nb\n",
+        );
+        // No `at` header: the file name says when.
+        write(
+            "20260101T000002Z-question.md",
+            "---\nfrom: b\nkind: question\nsubject: second\n---\n\nb\n",
+        );
+        write("odd-name.md", "---\nfrom: c\nsubject: third\n---\n\nb\n");
+        let entries = list(slug);
+        assert_eq!(entries[0].at.as_deref(), Some("20260101T000001Z"));
+        assert_eq!(entries[1].at.as_deref(), Some("20260101T000002Z"));
+        assert_eq!(entries[2].at, None);
+    }
+
+    #[test]
     fn a_phase_is_written_into_the_workers_own_record_and_a_typo_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let worktree = dir.path();
@@ -4037,5 +4456,27 @@ mod tests {
                 .get("terminal")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_removing_mark_is_found_by_the_spelling_it_was_made_with_and_after_the_directory_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(real.join("wt")).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let mark = mark_worktree_removing(&main, &real.join("wt")).unwrap();
+        // Another spelling of the same directory finds it, while it is there and once it is not.
+        assert!(is_being_removed(&main, &link.join("wt")));
+        std::fs::remove_dir(real.join("wt")).unwrap();
+        assert!(is_being_removed(&main, &link.join("wt")));
+        assert!(is_being_removed(&main, &real.join("wt")));
+
+        drop(mark);
+        assert!(!is_being_removed(&main, &link.join("wt")));
+        assert!(!is_being_removed(&main, &real.join("wt")));
     }
 }
