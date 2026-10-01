@@ -25,8 +25,8 @@ const PREF_KEY = 'adj-board-split';
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[], panelSide:'left', panelWidth:520 },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 if (prefs.panelSide !== 'right') prefs.panelSide = 'left';
-// Narrower than the board needs room for: at least 320px of it is left, beside the icon rail.
-prefs.panelWidth = !(prefs.panelWidth >= 320) ? 520 : Math.min(prefs.panelWidth, Math.max(320, innerWidth - 72 - 320));
+// Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
+if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 function applyLayout() {
@@ -333,11 +333,12 @@ function switchBoard() {
   lastStateJson = '';
   lastMinute = null;
   if (!multiBoard) seenGateIds = null;
-  hideTaskPanelState();
   if (typeof detachSessionTerminal === 'function') detachSessionTerminal();
   sessView.selectedId = null;
   sessView.last = null;
   sessView.pending = null;
+  // After the sessions tab let go: the panel's terminal going away redraws that tab.
+  hideTaskPanelState();
   boardJob = null;
   // Caches keyed by a bare task id belong to the board being left.
   for (const cache of [histories, openReplies]) for (const k of Object.keys(cache)) delete cache[k];

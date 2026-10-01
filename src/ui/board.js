@@ -1138,6 +1138,7 @@ function hideTaskPanelState() {
   pendingTask = null;
   panelPop = false;
   selectedTaskId = null;
+  panelScrolledFor = null;
   disposePanelTerminal();
   markSelectedCards();
   renderTaskPanel();
@@ -1202,11 +1203,6 @@ function renderTaskPanel() {
   if (selectedTaskId && !task) return dismissTaskPanel();
   const shown = !!task && (view === 'board' || view === 'sessions');
   const cls = document.body.classList;
-  // Another task starts at the top, not where the last one was scrolled to.
-  if (shown && panelScrolledFor !== task.id) {
-    panelScrolledFor = task.id;
-    tp('tp-detail').scrollTop = 0;
-  }
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop);
   cls.toggle('panel-open', shown);
@@ -1233,6 +1229,12 @@ function renderTaskPanel() {
   const reveal = pane === 'term' && tp('tp-term').hidden;
   tp('tp-detail').hidden = pane === 'term';
   tp('tp-term').hidden = pane !== 'term';
+  // Another task starts at the top, not where the last one was scrolled to: set once the pane
+  // is shown, since a hidden one has no scroll to set.
+  if (pane === 'detail' && panelScrolledFor !== task.id) {
+    panelScrolledFor = task.id;
+    tp('tp-detail').scrollTop = 0;
+  }
   syncPanelTerminal(task, s, pane);
   setPanelPart('bar', tp('tp-term-bar'), termBarHtml(s));
   const ph = tp('tp-term-ph');
