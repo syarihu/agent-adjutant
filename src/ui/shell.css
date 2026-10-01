@@ -496,7 +496,7 @@ body.rail-icons .rail-tools { flex-direction: column; gap: 4px; }
 #app-main { order: 2; }
 body.panel-right #task-panel { order: 3; border-right: 0; border-left: 1px solid var(--md-sys-color-outline-variant); }
 .tp-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 2; }
-body.panel-right .tp-resize { right: auto; left: -4px; }
+body.panel-right:not(.panel-pop) .tp-resize { right: auto; left: -4px; }
 .tp-resize:hover, body.tp-dragging .tp-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
 body.tp-dragging { user-select: none; cursor: col-resize; }
 body.panel-pop .tp-resize { display: none; }
@@ -516,7 +516,7 @@ body.panel-pop #task-panel {
 /* On a narrow window the panel floats over the board, from either side. */
 @media (max-width: 720px) {
   #task-panel { max-width: none; position: fixed; top: 0; bottom: 0; left: 72px; width: calc(100% - 100px); z-index: 25; box-shadow: var(--md-elevation-4); }
-  body.panel-right #task-panel { left: auto; right: 0; width: 88%; }
+  body.panel-right:not(.panel-pop) #task-panel { left: auto; right: 0; width: 88%; }
   .tp-resize { display: none; }
 }
 

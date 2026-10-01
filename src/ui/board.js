@@ -1518,7 +1518,21 @@ tp('task-panel').addEventListener('change', e => {
 // Clicking outside a popped-out panel puts it back; it stays open.
 tp('tp-scrim').addEventListener('click', () => { panelPop = false; renderTaskPanel(); });
 
-/* The width is dragged from the edge that faces the page, saved when the pointer is let go. */
+/* The width is dragged from the edge that faces the page, saved when the pointer is let go;
+   the arrow keys move it a step at a time. */
+function setPanelWidth(raw) {
+  const rail = tp('nav-rail').offsetWidth;
+  prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
+  document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
+}
+tp('tp-resize').addEventListener('keydown', e => {
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop || matchMedia('(max-width: 720px)').matches) return;
+  e.preventDefault();
+  // The panel grows away from its side: toward the right on the left, toward the left on the right.
+  const grow = (e.key === 'ArrowRight') === (prefs.panelSide !== 'right');
+  setPanelWidth(tp('task-panel').offsetWidth + (grow ? 24 : -24));
+  savePrefs();
+});
 tp('tp-resize').addEventListener('pointerdown', e => {
   if (panelPop || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();
@@ -1527,9 +1541,7 @@ tp('tp-resize').addEventListener('pointerdown', e => {
   document.body.classList.add('tp-dragging');
   const move = ev => {
     const rail = tp('nav-rail').offsetWidth;
-    const raw = prefs.panelSide === 'right' ? innerWidth - ev.clientX : ev.clientX - rail;
-    prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
-    document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
+    setPanelWidth(prefs.panelSide === 'right' ? innerWidth - ev.clientX : ev.clientX - rail);
   };
   const end = () => {
     handle.removeEventListener('pointermove', move);

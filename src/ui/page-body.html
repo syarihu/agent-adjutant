@@ -46,7 +46,7 @@
      left or right is a class on body (CSS order), so the terminal inside it keeps its socket.
      Only the parts around #tp-term-host are redrawn; the host and its ancestors are not. -->
 <section id="task-panel" aria-label="タスクのパネル" hidden>
-  <div class="tp-resize" id="tp-resize" title="ドラッグで幅を変える"></div>
+  <div class="tp-resize" id="tp-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="パネルの幅" title="ドラッグで幅を変える（矢印キーでも変えられます）"></div>
   <header class="tp-head" id="tp-head"></header>
   <div class="tp-tabs" role="tablist" id="tp-tabs"></div>
   <div class="tp-pane" id="tp-detail" role="tabpanel">
