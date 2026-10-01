@@ -111,6 +111,8 @@
 }
 .gh-pr.open   { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
 .gh-pr.merged { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+/* Closed and not yet checked are outlined, so neither passes for a draft. */
+.gh-pr.closed, .gh-pr.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant); }
 .gh-pr:hover { filter: brightness(.96); }
 .gh-block { display: flex; flex-direction: column; gap: 6px; }
 .gh-row {

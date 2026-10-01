@@ -245,21 +245,27 @@ function prNoteOf(task) {
   }
   return parts.join(' · ');
 }
+/* The number of a PR record, which is a URL or, when written by hand, a bare "123" or "#123". */
+const prRefNumber = pr => (httpUrl(pr) ? prNumberOf(pr) : /\d+/.exec(pr || '')?.[1] || '');
 /* Issue number and PR number for a card's header; each opens on GitHub. */
 function ghChipsHtml(task) {
   const issueUrl = httpUrl(task.issueUrl);
   const prUrl = httpUrl(task.pr);
   const issueNumber = issueUrl ? issueNumberOf(issueUrl) : '';
-  const prNumber = prUrl ? prNumberOf(prUrl) : '';
+  const prNumber = prRefNumber(task.pr);
   const issue = issueNumber
     ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
           <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
           <span>${esc(issueNumber)}</span>
         </a>`
     : '';
+  // A PR that is not a link is still a PR: shown, but not clickable.
+  const prLabel = `<span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span><span>${prNumber ? `#${esc(prNumber)}` : esc(task.pr)}</span>`;
+  const prTitle = esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}`);
+  const prClass = `gh-pr ${esc(prStateOf(task) || 'unknown')}`;
   const pr = prUrl
-    ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="gh-pr ${esc(prStateOf(task) || 'unknown')}" title="${esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}`)}"><span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span>${prNumber ? `<span>#${esc(prNumber)}</span>` : ''}</a>`
-    : '';
+    ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="${prClass}" title="${prTitle}">${prLabel}</a>`
+    : task.pr ? `<span class="${prClass}" title="${prTitle}">${prLabel}</span>` : '';
   return issue + pr;
 }
 /* The Issue and the PR as rows for the top of 詳細 and 判断: number and title, and for the PR
@@ -274,10 +280,13 @@ function ghRowsHtml(task) {
     const n = issueNumberOf(issueUrl);
     h += `<a class="gh-row" href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">tag</span><span class="gh-kind">Issue</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.issueSnapshot?.title ?? task.title)}</span>${out}</a>`;
   }
-  if (prUrl) {
-    const n = prNumberOf(prUrl);
+  if (task.pr) {
+    const n = prRefNumber(task.pr);
     const [, cls] = prStateInfo(task);
-    h += `<a class="gh-row" href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.prStatus?.title ?? task.title)}</span><span class="m3-pill ${cls}">${esc(prNoteOf(task))}</span>${out}</a>`;
+    const body = `<span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.prStatus?.title ?? (n ? task.title : task.pr))}</span><span class="m3-pill ${cls}">${esc(prNoteOf(task))}</span>`;
+    h += prUrl
+      ? `<a class="gh-row" href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer">${body}${out}</a>`
+      : `<div class="gh-row">${body}</div>`;
   } else {
     h += '<div class="gh-row gh-none"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span><span class="gh-title">PR はまだありません</span></div>';
   }

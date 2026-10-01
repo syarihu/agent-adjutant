@@ -8,9 +8,22 @@ use common::*;
 const PULL: &str = "https://github.com/acme/widget/pull";
 
 /// What `gh pr view --json state,isDraft,title,reviewDecision,statusCheckRollup` prints.
-fn pr_json(state: &str) -> String {
+///
+/// GitHub's upper-case values are passed in rather than written into the JSON: a bare
+/// upper-case string after a colon reads as a tracker key to the guard over everything that
+/// ships. `checks` are (status, conclusion) pairs of check runs.
+fn pr_json(state: &str, draft: bool, review: &str, checks: &[(&str, &str)]) -> String {
+    let runs: Vec<String> = checks
+        .iter()
+        .map(|(status, conclusion)| {
+            format!(
+                r#"{{"__typename":"CheckRun","status":"{status}","conclusion":"{conclusion}"}}"#
+            )
+        })
+        .collect();
     format!(
-        r#"{{"state":"{state}","isDraft":false,"title":"A pull request","reviewDecision":"","statusCheckRollup":[]}}"#
+        r#"{{"state":"{state}","isDraft":{draft},"title":"A pull request","reviewDecision":"{review}","statusCheckRollup":[{}]}}"#,
+        runs.join(",")
     )
 }
 
@@ -37,9 +50,9 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
              *) echo 'GraphQL: Could not resolve to a PullRequest' >&2; exit 1 ;;\n\
              esac\n",
             asked = shell_quoted(&asked.to_string_lossy()),
-            merged = pr_json("MERGED"),
-            open = pr_json("OPEN"),
-            closed = pr_json("CLOSED"),
+            merged = pr_json("MERGED", false, "", &[]),
+            open = pr_json("OPEN", false, "", &[]),
+            closed = pr_json("CLOSED", false, "", &[]),
         ),
     )
     .unwrap();
@@ -293,27 +306,19 @@ fn the_tool_does_what_the_command_does() {
     assert_eq!(status_of(&fixture, &open), "pr");
 }
 
-/// A `gh` that answers every pull request with a draft whose checks are one passing, one
-/// failing, and whose review is still required.
-fn stub_gh_draft(fixture: &Fixture) -> String {
+/// A `gh` that answers every pull request with `answer`, read from a file so that an answer
+/// longer than a pipe holds is no trouble to write.
+fn stub_gh_answering(fixture: &Fixture, answer: &str) -> String {
     let stubs = fixture.repo.join("stub-bin");
     std::fs::create_dir_all(&stubs).unwrap();
+    let said = fixture.repo.join("gh-answer");
+    std::fs::write(&said, answer).unwrap();
     let gh = stubs.join("gh");
-    // Values go in through placeholders: a bare upper-case string after a colon reads as a
-    // tracker key to the guard over everything that ships.
-    let run = |conclusion: &str| {
-        format!(
-            r#"{{"status":"{}","conclusion":"{conclusion}"}}"#,
-            "COMPLETED"
-        )
-    };
-    let (open, review) = ("OPEN", "REVIEW_REQUIRED");
-    let answer = format!(
-        r#"{{"state":"{open}","isDraft":true,"title":"Wire the thing","reviewDecision":"{review}","statusCheckRollup":[{},{}]}}"#,
-        run("SUCCESS"),
-        run("FAILURE"),
-    );
-    std::fs::write(&gh, format!("#!/bin/sh\necho '{answer}'\n")).unwrap();
+    std::fs::write(
+        &gh,
+        format!("#!/bin/sh\ncat {}\n", shell_quoted(&said.to_string_lossy())),
+    )
+    .unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
     format!(
@@ -338,7 +343,15 @@ fn record_file(fixture: &Fixture, id: &str) -> PathBuf {
 fn a_refresh_keeps_what_github_says_on_the_record_and_writes_only_when_it_changes() {
     let fixture = Fixture::new(QUIET);
     let id = task_with_pr(&fixture, "draft", "pr", &format!("{PULL}/9"));
-    let path = stub_gh_draft(&fixture);
+    let path = stub_gh_answering(
+        &fixture,
+        &pr_json(
+            "OPEN",
+            true,
+            "REVIEW_REQUIRED",
+            &[("COMPLETED", "SUCCESS"), ("COMPLETED", "FAILURE")],
+        ),
+    );
     let refresh = || {
         let out = fixture
             .command(["task", "refresh", "--json"])
@@ -360,7 +373,7 @@ fn a_refresh_keeps_what_github_says_on_the_record_and_writes_only_when_it_change
         shown["prStatus"],
         serde_json::json!({
             "state": "draft",
-            "title": "Wire the thing",
+            "title": "A pull request",
             "review": "required",
             "ci": { "pass": 1, "fail": 1, "pending": 0 },
         }),
@@ -394,4 +407,73 @@ fn a_merged_pr_is_kept_as_merged_when_its_record_moves_to_done() {
     let shown = fixture.json(&["task", "show", "--id", &id]);
     assert_eq!(shown["status"], "done");
     assert_eq!(shown["prStatus"]["state"], "merged", "{shown}");
+}
+
+/// A PR with hundreds of checks prints more than a pipe holds. `gh` blocks writing it until
+/// somebody reads, so a refresh that waited for it to exit first would time out and never
+/// move the merged PR's record.
+#[test]
+fn a_pr_with_hundreds_of_checks_is_still_read() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "big", "pr", &format!("{PULL}/1"));
+    let checks: Vec<(&str, &str)> = (0..2000)
+        .map(|i| {
+            if i % 100 == 0 {
+                ("COMPLETED", "FAILURE")
+            } else {
+                ("COMPLETED", "SUCCESS")
+            }
+        })
+        .collect();
+    let answer = pr_json("MERGED", false, "APPROVED", &checks);
+    assert!(answer.len() > 100_000, "{}", answer.len());
+    let path = stub_gh_answering(&fixture, &answer);
+    let out = fixture
+        .command(["task", "refresh"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["status"], "done", "{shown}");
+    assert_eq!(shown["prStatus"]["ci"]["fail"], 20, "{shown}");
+    assert_eq!(shown["prStatus"]["ci"]["pass"], 1980, "{shown}");
+}
+
+/// What was read about one PR does not describe the next one.
+#[test]
+fn pointing_a_record_at_another_pr_forgets_what_was_read_about_the_old_one() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "moved", "pr", &format!("{PULL}/9"));
+    let path = stub_gh_answering(&fixture, &pr_json("OPEN", true, "", &[]));
+    fixture
+        .command(["task", "refresh"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(
+        fixture.json(&["task", "show", "--id", &id])["prStatus"]["state"],
+        "draft"
+    );
+    // The same PR again keeps it; another one drops it.
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--pr",
+        &format!("{PULL}/9"),
+        "--no-hand-over",
+    ]);
+    assert!(fixture.json(&["task", "show", "--id", &id])["prStatus"].is_object());
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--pr",
+        &format!("{PULL}/10"),
+        "--no-hand-over",
+    ]);
+    assert!(fixture.json(&["task", "show", "--id", &id])["prStatus"].is_null());
 }

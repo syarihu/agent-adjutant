@@ -298,6 +298,8 @@ pub fn update_checked(
     if task.pr != pr_before {
         task.announced.clear();
         task.relay_rounds = 0;
+        // Likewise what the last refresh read: it described the old PR.
+        task.pr_status = None;
     }
     // Only a worktree given in this update: one already stored was resolved when it was
     // given, against the directory of the command that gave it, and re-resolving it here
@@ -483,17 +485,32 @@ fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> (PrState,
         Ok(child) => child,
         Err(e) => return unreadable(format!("cannot run gh: {e}")),
     };
-    // Polled rather than waited on: what `gh` prints here is one small JSON object or an
-    // error line, far short of filling a pipe, so it can sit unread until the process is done.
-    loop {
+    // Both pipes are drained while `gh` runs: the checks of a PR make the answer long enough
+    // to fill a pipe, and a `gh` blocked writing never exits, so waiting first would turn a
+    // PR with many checks into a timeout. Polled rather than waited on, so the deadline holds.
+    fn drain<R: std::io::Read + Send + 'static>(
+        pipe: Option<R>,
+    ) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    }
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = (stdout.join(), stderr.join());
                 return unreadable(format!(
                     "gh did not answer within the {}s a refresh allows",
                     GH_TIMEOUT.as_secs()
@@ -502,23 +519,23 @@ fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> (PrState,
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = (stdout.join(), stderr.join());
                 return unreadable(format!("cannot wait for gh: {e}"));
             }
         }
-    }
-    let out = match child.wait_with_output() {
-        Ok(out) => out,
-        Err(e) => return unreadable(format!("cannot read gh: {e}")),
     };
-    if !out.status.success() {
-        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let (Ok(stdout), Ok(stderr)) = (stdout.join(), stderr.join()) else {
+        return unreadable("cannot read gh: the reader panicked".to_string());
+    };
+    if !status.success() {
+        let said = String::from_utf8_lossy(&stderr).trim().to_string();
         return unreadable(if said.is_empty() {
-            format!("gh exited with {}", out.status)
+            format!("gh exited with {status}")
         } else {
             said
         });
     }
-    parse_pr_view(&String::from_utf8_lossy(&out.stdout))
+    parse_pr_view(&String::from_utf8_lossy(&stdout))
 }
 
 /// How long reading one issue may take. A person is waiting on the command or the click, and
@@ -1277,10 +1294,22 @@ mod tests {
         }
     }
 
-    fn view(state: &str, draft: bool, review: &str, rollup: &str) -> String {
+    // GitHub's upper-case enum values are passed in rather than written into the JSON, so
+    // that no fixture holds a bare upper-case string after a colon: the guard over everything
+    // that ships reads one as a tracker key.
+    fn view(state: &str, draft: bool, review: Option<&str>, rollup: &str) -> String {
+        let review = review.map_or("null".to_string(), |r| format!("\"{r}\""));
         format!(
-            r#"{{"state":"{state}","isDraft":{draft},"title":"Add a thing","reviewDecision":"{review}","statusCheckRollup":{rollup}}}"#
+            r#"{{"state":"{state}","isDraft":{draft},"title":"Add a thing","reviewDecision":{review},"statusCheckRollup":{rollup}}}"#
         )
+    }
+
+    fn run(status: &str, conclusion: &str) -> String {
+        format!(r#"{{"__typename":"CheckRun","status":"{status}","conclusion":"{conclusion}"}}"#)
+    }
+
+    fn context(state: &str) -> String {
+        format!(r#"{{"__typename":"StatusContext","state":"{state}"}}"#)
     }
 
     fn summary(stdout: &str) -> (PrState, PrStatus) {
@@ -1290,13 +1319,6 @@ mod tests {
 
     #[test]
     fn a_pr_view_is_read_into_a_state_and_a_summary() {
-        let run = |status: &str, conclusion: &str| {
-            format!(
-                r#"{{"__typename":"CheckRun","status":"{status}","conclusion":"{conclusion}"}}"#
-            )
-        };
-        let context =
-            |state: &str| format!(r#"{{"__typename":"StatusContext","state":"{state}"}}"#);
         let rollup = format!(
             "[{}]",
             [
@@ -1310,7 +1332,7 @@ mod tests {
             ]
             .join(",")
         );
-        let (state, got) = summary(&view("OPEN", false, "APPROVED", &rollup));
+        let (state, got) = summary(&view("OPEN", false, Some("APPROVED"), &rollup));
         assert_eq!(state, PrState::Open);
         assert_eq!(got.state, "open");
         assert_eq!(got.title, "Add a thing");
@@ -1327,18 +1349,18 @@ mod tests {
 
     #[test]
     fn a_draft_is_an_open_pr_marked_so_and_only_while_open() {
-        let (state, got) = summary(&view("OPEN", true, "REVIEW_REQUIRED", "[]"));
+        let (state, got) = summary(&view("OPEN", true, Some("REVIEW_REQUIRED"), "[]"));
         assert_eq!((state, got.state.as_str()), (PrState::Open, "draft"));
         assert_eq!(got.review, "required");
-        let (state, got) = summary(&view("MERGED", true, "", "[]"));
+        let (state, got) = summary(&view("MERGED", true, Some(""), "[]"));
         assert_eq!((state, got.state.as_str()), (PrState::Merged, "merged"));
     }
 
     #[test]
     fn a_merged_or_closed_pr_and_the_reviews_gh_names() {
-        let (state, got) = summary(&view("MERGED", false, "APPROVED", "[]"));
+        let (state, got) = summary(&view("MERGED", false, Some("APPROVED"), "[]"));
         assert_eq!((state, got.state.as_str()), (PrState::Merged, "merged"));
-        let (state, got) = summary(&view("CLOSED", false, "CHANGES_REQUESTED", "[]"));
+        let (state, got) = summary(&view("CLOSED", false, Some("CHANGES_REQUESTED"), "[]"));
         assert_eq!((state, got.state.as_str()), (PrState::Closed, "closed"));
         assert_eq!(got.review, "changes");
     }
@@ -1347,36 +1369,30 @@ mod tests {
     fn no_checks_and_no_review_decision_are_counted_as_none() {
         for rollup in ["[]", "null"] {
             for review in ["", "SOMETHING_NEW"] {
-                let (_, got) = summary(&view("OPEN", false, review, rollup));
+                let (_, got) = summary(&view("OPEN", false, Some(review), rollup));
                 assert_eq!(got.ci, CheckCounts::default(), "{rollup}");
                 assert_eq!(got.review, "none", "{review:?}");
             }
         }
         // `gh` prints null for a PR nobody has been asked to review.
-        let open = "OPEN";
-        let (_, got) = summary(&format!(
-            r#"{{"state":"{open}","isDraft":false,"title":"t","reviewDecision":null,"statusCheckRollup":[]}}"#
-        ));
+        let (_, got) = summary(&view("OPEN", false, None, "[]"));
         assert_eq!(got.review, "none");
     }
 
     #[test]
     fn an_unfinished_run_is_pending_whatever_its_conclusion_says() {
-        let run = |status: &str, conclusion: &str| {
-            format!(r#"{{"status":"{status}","conclusion":"{conclusion}"}}"#)
-        };
         let rollup = format!(
             "[{},{}]",
             run("QUEUED", "SUCCESS"),
             run("COMPLETED", "TIMED_OUT")
         );
-        let (_, got) = summary(&view("OPEN", false, "", &rollup));
+        let (_, got) = summary(&view("OPEN", false, Some(""), &rollup));
         assert_eq!((got.ci.pass, got.ci.fail, got.ci.pending), (0, 1, 1));
     }
 
     #[test]
     fn an_answer_that_is_not_a_pr_view_is_not_guessed_at() {
-        let draft = view("DRAFT", false, "", "[]");
+        let draft = view("DRAFT", false, Some(""), "[]");
         for odd in [
             "",
             "OPEN\n",
