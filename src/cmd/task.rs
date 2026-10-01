@@ -501,6 +501,8 @@ fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> (PrState,
     }
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
+    // On the kill paths below the readers are dropped, not joined: a process `gh` started may
+    // still hold the pipe open, and waiting for it would hold the refresh past its deadline.
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -510,7 +512,6 @@ fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> (PrState,
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = (stdout.join(), stderr.join());
                 return unreadable(format!(
                     "gh did not answer within the {}s a refresh allows",
                     GH_TIMEOUT.as_secs()
@@ -519,7 +520,6 @@ fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> (PrState,
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = (stdout.join(), stderr.join());
                 return unreadable(format!("cannot wait for gh: {e}"));
             }
         }

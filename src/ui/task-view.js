@@ -221,7 +221,11 @@ function prNumberOf(url) {
    PR comes from the record's `prStatus`, which the PR refresh writes: the page never asks
    GitHub, so a PR that has not been refreshed yet is shown as not yet checked. */
 function prStateOf(task) {
-  return task.prStatus?.state || (task.status === 'done' && task.pr ? 'merged' : null);
+  const stored = task.prStatus?.state;
+  // A finished task is no longer refreshed, so a stored open or draft would never change.
+  if (task.status === 'done') return task.pr ? 'merged' : null;
+  if (task.status === 'cancelled') return stored === 'merged' || stored === 'closed' ? stored : null;
+  return stored || null;
 }
 const PR_STATES = {
   open: ['オープン', 'pill-good'],
@@ -246,7 +250,7 @@ function prNoteOf(task) {
   return parts.join(' · ');
 }
 /* The number of a PR record, which is a URL or, when written by hand, a bare "123" or "#123". */
-const prRefNumber = pr => (httpUrl(pr) ? prNumberOf(pr) : /\d+/.exec(pr || '')?.[1] || '');
+const prRefNumber = pr => (httpUrl(pr) ? prNumberOf(pr) : /^#?(\d+)$/.exec(pr || '')?.[1] || '');
 /* Issue number and PR number for a card's header; each opens on GitHub. */
 function ghChipsHtml(task) {
   const issueUrl = httpUrl(task.issueUrl);
