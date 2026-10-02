@@ -151,7 +151,12 @@ fn prompt_get(params: &Value) -> Result<Value, String> {
         .filter(|s| !s.is_empty())
         .map(config::expand_home);
     let runner = resolve_runner_for(worktree.as_deref(), name);
-    let agent = prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
+    let runner_agent = runner.as_deref().map(crate::runner::agent_from_runner);
+    let agent = prompts::resolve_agent(
+        explicit_agent,
+        client_name().as_deref(),
+        runner_agent.as_deref(),
+    );
     Ok(json!({
         "description": prompts::description(prompt),
         "messages": [{
@@ -597,8 +602,12 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .filter(|s| !s.is_empty())
                 .map(config::expand_home);
             let runner = resolve_runner_for(worktree.as_deref(), name);
-            let agent =
-                prompts::resolve_agent(explicit_agent, client_name().as_deref(), runner.as_deref());
+            let runner_agent = runner.as_deref().map(crate::runner::agent_from_runner);
+            let agent = prompts::resolve_agent(
+                explicit_agent,
+                client_name().as_deref(),
+                runner_agent.as_deref(),
+            );
             Ok(json!({
                 "name": prompt.name,
                 "agent": agent.as_str(),
@@ -1394,7 +1403,10 @@ mod tests {
             prompts::resolve_agent(
                 None,
                 None,
-                runner_for_procedure(&settings, "adj-hub").as_deref()
+                runner_for_procedure(&settings, "adj-hub")
+                    .as_deref()
+                    .map(crate::runner::agent_from_runner)
+                    .as_deref()
             ),
             prompts::Agent::Claude
         );
@@ -1402,10 +1414,35 @@ mod tests {
             prompts::resolve_agent(
                 None,
                 None,
-                runner_for_procedure(&settings, "adj-worker").as_deref()
+                runner_for_procedure(&settings, "adj-worker")
+                    .as_deref()
+                    .map(crate::runner::agent_from_runner)
+                    .as_deref()
             ),
             prompts::Agent::Agy
         );
+    }
+
+    #[test]
+    fn runner_commands_resolve_to_the_agent_that_starts() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let resolve = |r: &str| {
+            prompts::resolve_agent(None, None, Some(&crate::runner::agent_from_runner(r)))
+        };
+        for r in [
+            "env FOO=1 agy -i {prompt}",
+            "agy",
+            "/opt/bin/agy -i {prompt}",
+            "env A='x y' agy -i {prompt}",
+        ] {
+            assert_eq!(resolve(r), prompts::Agent::Agy, "{r}");
+        }
+        for r in [
+            "claude --session-id {sessionId}",
+            "env CLAUDE_CONFIG_DIR=/x claude",
+        ] {
+            assert_eq!(resolve(r), prompts::Agent::Claude, "{r}");
+        }
     }
 
     #[test]

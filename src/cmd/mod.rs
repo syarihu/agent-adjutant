@@ -2402,7 +2402,8 @@ pub fn skill(name: &str, arguments: &str, agent: Option<&str>) -> Result<(), Str
         )
     })?;
     let runner = crate::mcp::resolve_runner_for(None, name);
-    let resolved_agent = crate::prompts::resolve_agent(agent, None, runner.as_deref());
+    let runner_agent = runner.as_deref().map(crate::runner::agent_from_runner);
+    let resolved_agent = crate::prompts::resolve_agent(agent, None, runner_agent.as_deref());
     print!(
         "{}",
         crate::prompts::render_for(prompt, arguments, resolved_agent)
