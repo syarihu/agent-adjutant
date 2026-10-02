@@ -375,7 +375,7 @@
 }
 .card[draggable="true"] { cursor: grab; }
 .card.dragging { opacity: .4; }
-.card.ghost { border-style: dashed; box-shadow: none; background: transparent; cursor: default; }
+.card.session-card { border-left: 3px dashed var(--md-sys-color-outline-variant); }
 
 .card-header-row {
   display: flex;
