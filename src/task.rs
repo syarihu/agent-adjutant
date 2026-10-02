@@ -751,12 +751,24 @@ pub fn claim_id(dir: &Path, stamp: &str, title: &str) -> Result<String, String> 
 /// Written whole each time rather than patched: every caller already holds the struct it
 /// wants on disk, and a partial write is how two writers end up with a record neither of
 /// them would recognise.
+///
+/// Written beside the record and renamed over it, because the resident server's PR poll
+/// writes records while `adj task show` and the board read them: a plain write truncates
+/// first, and a reader in between sees an empty file. The temporary name does not end in
+/// `.json`, so `list` never picks it up.
 pub fn save(dir: &Path, task: &Task) -> Result<PathBuf, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let path = path_of(dir, &task.id);
     let json = serde_json::to_string_pretty(task).map_err(|e| e.to_string())?;
-    std::fs::write(&path, format!("{json}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{}.{}-{seq}.tmp", task.id, std::process::id()));
+    let written =
+        std::fs::write(&tmp, format!("{json}\n")).and_then(|()| std::fs::rename(&tmp, &path));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("cannot write {}: {e}", path.display()));
+    }
     Ok(path)
 }
 
