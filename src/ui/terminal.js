@@ -1,6 +1,6 @@
 /* A tmux session's terminal, inside any container. The component only assumes the container
-   has a size of its own: it fills it and follows it. The board's セッション view and the task
-   panel mount it; a page of its own for a session can mount the same. xterm.js is served by the
+   has a size of its own: it fills it and follows it. The task panel and the review view mount
+   it; a page of its own for a session can mount the same. xterm.js is served by the
    resident server and loaded on first use. */
 let xtermLoading = null;
 function loadXterm(base = BASE) {
@@ -33,10 +33,9 @@ function terminalEndText(code, reason) {
   return TERMINAL_ENDS[code] || `接続が閉じました（${code}）`;
 }
 
-/* `onReady` is called once, when the first output has arrived: the point from which the
-   terminal is on screen and whatever else the page reads can go ahead. `base` is the board's
-   path; a view across boards, where `BASE` is empty, names the board of the session. */
-function mountSessionTerminal(container, { sessionId, onEnd, onReady, base = BASE } = {}) {
+/* `base` is the board's path; a view across boards, where `BASE` is empty, names the board of
+   the session. */
+function mountSessionTerminal(container, { sessionId, onEnd, base = BASE } = {}) {
   container.classList.add('adj-terminal');
   let term = null;
   let fit = null;
@@ -44,7 +43,6 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady, base = BAS
   let observer = null;
   let frame = 0;
   let disposed = false;
-  let ready = false;
   const encoder = new TextEncoder();
 
   const scheduleFit = () => {
@@ -85,27 +83,7 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady, base = BAS
     const open = () => ws && ws.readyState === WebSocket.OPEN;
     // A resize while connecting was not sent; the size now is what the PTY should have.
     ws.onopen = () => ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    ws.onmessage = e => {
-      const first = !ready;
-      ready = true;
-      // Once xterm has drawn the first frame: `write` calls back when the data is parsed and
-      // `onRender` fires inside xterm's animation frame, before the browser paints, so the
-      // page waits one more turn. Kept from the socket: a page that fails to draw its sidebar
-      // must not lose the output or end the handler. A frame that draws nothing leaves the
-      // page to its own fallback.
-      const done = () => {
-        if (!first || disposed) return;
-        const drawn = term.onRender(() => {
-          drawn.dispose();
-          setTimeout(() => {
-            if (disposed) return;
-            try { onReady?.(); } catch (err) { console.error(err); }
-          }, 0);
-        });
-      };
-      if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data), done);
-      else done();
-    };
+    ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
     ws.onclose = e => {
       if (disposed) return;
       line(terminalEndText(e.code, e.reason));
@@ -161,6 +139,10 @@ const sessionOfTask = task => task && !scopeAll() && (state.sessions || []).find
   // The worktree stands in only for a session with no task of its own: one that belongs to
   // another task is not this card's, even where a worktree was reused.
   s.kind === 'worker' && (s.task ? s.task === task.id : !!task.worktree && s.worktree === task.worktree));
+/* The task a worker belongs to on this board, by the same rule: its own `task`, else the worktree
+   a task names. */
+const taskOfSession = s => !!s && s.kind === 'worker' && (state.tasks || []).find(t =>
+  (!scopeAll() || t._slug === s._slug) && (s.task ? t.id === s.task : !!t.worktree && t.worktree === s.worktree)) || null;
 const readySessionOfTask = task => {
   const s = sessionOfTask(task);
   return boardTerminalReady(s) ? s : null;

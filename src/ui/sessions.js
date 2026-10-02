@@ -1,6 +1,6 @@
-/* The セッション tab of a board: its hubs, each with its sessions, in a list; the selected
-   one's terminal fills the rest beside it. The first half is pure (it reads `state` and
-   returns); the second draws and drives the terminal. */
+/* The セッション tab of a board: its hubs, each with its sessions, in a list. A session opens in
+   the task panel, as a task does (board.js). The first half is pure (it reads `state` and
+   returns); the second draws the list and drives what can be done to a session. */
 
 /* A worker whose tmux window has been quiet this long reads as idle (seconds; window_activity
    is the only clock there is, so this is a guess at what "quiet" means). */
@@ -69,7 +69,7 @@ function restingState(s, data = state) {
   return s.conversation ? 'ended' : 'none';
 }
 
-/* What a row and the context bar call a session: the hub's name, or the worktree's directory. */
+/* What a row and the panel's head call a session: the hub's name, or the worktree's directory. */
 function sessionKey(s, data = state) {
   if (s.kind === 'hub') {
     const h = (data.hubs || []).find(x => x.id === s.id);
@@ -78,7 +78,7 @@ function sessionKey(s, data = state) {
   return (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
 }
 
-/* What a row and the context bar title a session with: `title` is the repository's name for its
+/* What a row and the panel's head title a session with: `title` is the repository's name for its
    hub, the parent task's title for a parent-task hub and the task's title for a worker, empty
    while it is not known; `key` is what sits beside it (the hub's key, the worktree's name).
    `ask` lets a worker's task be asked of its own board, which the rows never do themselves. */
@@ -235,39 +235,16 @@ function renderSessionsTab() {
 
 /* ── The view ── */
 const sessView = {
-  selectedId: null,
-  last: null,        // the selected session as last listed, kept after it drops off the list
-  mounted: null,     // { sessionId, term, ended }
   pending: false,    // the address names this tab; opened once the first poll says whether a terminal exists
   listStructure: '', // what the list was last built from (renderSessionList)
   listRows: new Map(), // each row's own signature, by `row:<ref>` and `head:<group id>`
   starts: [],        // sessions this page asked a hub for and has not seen start (sessions-start.js)
   dismissed: [],     // pending rows closed on this page, by key
-  boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles and the sidebar
-  sideNarrowOpen: false, // the sidebar below 1400px: floats over the terminal, never saved
-  sideSig: '',
-  sideHold: null,    // { id, released, timer }: the selected session's sidebar waits for its terminal (sessions-side.js)
-  git: null,         // { id, at, data, error, loading }: the selected worktree's git state, for the sidebar
+  boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles
+  git: null,         // { id, at, data, error, loading }: the panel's session's git state (sessions-side.js)
   screens: {},       // session id -> { lines, at }: the last lines this page saw of its terminal
-  reconnectWhenReady: null, // a session just resumed or started: connect once its window exists
-  gateError: null,   // { id, text } shown in the gate banner
-  gateDraft: null,   // { id, text }: a comment typed in the banner, kept across redraws
-  actionsSig: '',
-  gateSig: '',
-  overSig: '',
-  overShown: null,
 };
 const sessEl = id => document.getElementById(id);
-const currentSession = () => (state.sessions || []).find(s => s.id === sessView.selectedId) || null;
-
-function detachSessionTerminal() {
-  const m = sessView.mounted;
-  if (!m) return;
-  sessView.mounted = null;
-  keepScreen(m);
-  // Closing the socket only detaches; the session keeps running.
-  m.term.dispose();
-}
 
 /* The tmux pane is gone once the agent exits, so what the person last saw of it exists only in
    this page: kept, for the panel over a session that is not running. */
@@ -277,22 +254,13 @@ function keepScreen(rec) {
 }
 
 function leaveSessionsView() {
-  detachSessionTerminal();
-  document.body.classList.remove('sess-term-open');
-  applyRailMode();
   if (/^#sessions?(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
 }
 
-/* Draw the tab with `id` open (or none): what the address `session=` names. */
-function openSessionsView(id = null) {
+/* Draw the tab; what is open in the panel is the address's `task=`. */
+function openSessionsView() {
   if (!state.boardTerminal?.available) return;
-  if (view !== 'sessions') {
-    // Below 1400px the sidebar floats over the terminal, so it starts out of the way.
-    sessView.sideNarrowOpen = false;
-    setView('sessions');
-  }
-  showSession(id);
-  renderSessionContext();
+  if (view !== 'sessions') setView('sessions');
 }
 
 /* An address that arrived before the first poll had said whether this board has terminals. */
@@ -303,7 +271,7 @@ function openPendingSession() {
   if (state.boardTerminal === undefined) return;
   sessView.pending = false;
   if (state.boardTerminal?.available) {
-    openSessionsView(nav.session);
+    openSessionsView();
     // The poll that told us had no `lines=1`: ask again now that this tab is on screen.
     if (view === 'sessions') refresh(true);
   } else giveUpSessions();
@@ -313,15 +281,20 @@ function openPendingSession() {
    board that was last shown. */
 function giveUpSessions() {
   nav.view = prefs.tab === 'agent' ? 'agent' : 'human';
-  nav.session = null;
+  if (isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
   history.replaceState(null, '', urlOf());
   if (view !== 'board') setView('board'); else applyLayout();
+  if (isSessRef(selectedTaskId)) hideTaskPanelState();
 }
 
-/* Open the session `id` of this board beside the list: a step in the history. */
-function selectSession(id) {
-  if (!navApplying && (nav.view !== 'sessions' || nav.session !== id)) go({ view: 'sessions', session: id });
-  else showSession(id);
+/* What the task panel opens `session:<id>` as: a hub is the hub's, a worker whose task is on the
+   board is that task (`taskOfSession`), and any other session stays itself. Other refs are returned as they are. */
+function panelRefOf(id) {
+  const s = sessOfRef(id);
+  if (!s) return id;
+  if (s.kind === 'hub') return HUB_REF + s.id;
+  const t = taskOfSession(s);
+  return t ? t.id : id;
 }
 
 /* A row of the list. In 「すべて」 the session is another board's: that board is shown first. */
@@ -329,42 +302,22 @@ function openSessionRef(ref) {
   const s = (state.sessions || []).find(x => sessionRef(x) === ref);
   if (!s) return;
   // A worker of a task on the board is talked to in the task panel, over the list.
-  const ofBoard = t => t.id === s.task && (!scopeAll() || t._slug === s._slug);
-  if (s.kind === 'worker' && s.task && (state.tasks || []).some(ofBoard)) {
-    return go({ ...(scopeAll() ? { board: s._slug } : {}), view: 'sessions', session: null, task: s.task, pane: 'term' },
-      { replace: !scopeAll() && s.task === nav.task });
+  const owned = taskOfSession(s);
+  if (owned) {
+    return go({ ...(scopeAll() ? { board: s._slug } : {}), view: 'sessions', task: owned.id, pane: 'term' },
+      { replace: !scopeAll() && owned.id === nav.task });
   }
-  if (!scopeAll()) return selectSession(s.id);
-  const hub = (state.hubs || []).find(h => h._slug === s._slug && h.id === hubOfSession(s));
-  const slug = hub?.slug && boards.some(b => b.slug === hub.slug) ? hub.slug : s._slug;
-  go({ board: slug, view: 'sessions', session: s.id });
-}
-
-function showSession(id) {
-  const changed = sessView.selectedId !== id;
-  if (changed) {
-    sessView.last = null;
-    sessView.git = null;
-    sessView.reconnectWhenReady = null;
-    sessView.gateError = null;
-    showSessNotice('');
-    detachSessionTerminal();
-  } else if (id && sessView.mounted?.ended != null) {
-    // The same row again is the way to connect once more.
-    detachSessionTerminal();
+  // The hub's board, when this page knows it: where a worker's task is, whichever board this is.
+  const hub = scopeAll() ? (state.hubs || []).find(h => h._slug === s._slug && h.id === hubOfSession(s)) : boardOfSession(s).hub;
+  const known = hub?.slug && boards.some(b => b.slug === hub.slug) ? hub.slug : null;
+  // A worker whose task is on the board of another hub: that board shows it as a task.
+  if (!scopeAll() && s.kind === 'worker' && s.task && known && !boardOfSession(s).own) {
+    return go({ board: known, view: 'sessions', task: s.task, pane: 'term' });
   }
-  sessView.selectedId = id;
-  renderSessionsView();
-}
-
-function connectSelected() {
-  detachSessionTerminal();
-  renderSessionsView();
-}
-
-function returnFromSessions() {
-  // Through `go`, so that the address leaves the session as the screen does.
-  go({ session: null });
+  // A session with no task opens in the panel as itself, until it is linked to one.
+  const task = SESS_REF + s.id;
+  if (scopeAll()) return go({ board: known || s._slug, view: 'sessions', task, pane: 'term' });
+  go({ view: 'sessions', task, pane: hasSession(s) ? 'term' : 'detail' }, { replace: task === nav.task });
 }
 
 /* A worker's task title when the server did not give one. The task of another board is not in
@@ -379,101 +332,10 @@ function boardTaskTitle(s, ask) {
   if (b.own || !b.slug) return '';
   const known = sessView.boards[b.slug];
   if (!known) {
-    // While the selected session's terminal goes first, a sibling row of its hub waits too:
-    // its board is the one the sidebar is holding back.
-    const sel = currentSession();
-    const held = sideHeld(sessView.selectedId) && (s.id === sel?.id || (sel && hubOfSession(sel) === hubOfSession(s)));
-    if (ask && !held) loadSideBoard(b.slug, b.base, sideSignal(s));
+    if (ask) loadSideBoard(b.slug, b.base);
     return '';
   }
   return (known.data?.tasks || []).find(t => t.id === s.task)?.title || '';
-}
-
-function renderSessionContext() {
-  const id = sessView.selectedId;
-  const s = currentSession() || (id && sessView.last?.id === id ? sessView.last : null);
-  const gone = !!id && !currentSession() && sessView.last?.id === id;
-  sessEl('sess-context').hidden = !id;
-  sessEl('sess-back').hidden = !id;
-  sessEl('sess-back').textContent = '← セッションに戻る';
-  if (!id) return;
-  const label = s ? sessionLabel(s, true) : { tag: id, text: '' };
-  const keyEl = sessEl('sess-key');
-  keyEl.textContent = label.tag;
-  keyEl.hidden = !label.tag;
-  keyEl.title = s && s.kind !== 'hub' && s.branch ? `ブランチ: ${s.branch}` : '';
-  const titleEl = sessEl('sess-title');
-  titleEl.textContent = label.text;
-  titleEl.title = s ? sessionTip(s) : '';
-  const st = s && !gone ? sessionState(s) : null;
-  const pill = sessEl('sess-state');
-  pill.textContent = gone ? '一覧から消えました' : st ? STATE_LABEL[st] : 'セッションが見つかりません';
-  pill.className = 'm3-pill ' + (st ? STATE_PILL[st] : 'pill-neutral');
-  const hubEl = sessEl('sess-hub');
-  const b = s && s.kind !== 'hub' ? boardOfSession(s) : null;
-  hubEl.textContent = b ? (b.hub ? hubLabel(b.hub) : `${b.hubId}（一覧にありません）`) : '';
-  hubEl.hidden = !b;
-  const last = s && !gone ? lastOutputText(s) : null;
-  sessEl('sess-last').textContent = `最後の出力: ${last || '不明'}`;
-  const m = sessView.mounted;
-  sessEl('sess-reconnect').hidden = !(m && m.ended != null && s && !gone && boardTerminalReady(s));
-  const t = s?.terminal;
-  sessEl('sess-strip-where').textContent = t?.backend === 'tmux' ? `tmux ${t.session || ''}:${t.window || ''}` : '';
-  sessEl('sess-strip-attach').textContent = s?.attached == null ? ''
-    : s.attached > 0 ? `ほかに ${s.attached} 個の端末がアタッチしています` : 'ほかの端末はアタッチしていません';
-}
-
-/* Why the selected session has no terminal, or null when it has one. */
-function sessionPlaceholder(s) {
-  const id = sessView.selectedId;
-  if (!id) return 'セッションを選んでください';
-  if (!s) return sessView.last ? 'このセッションは一覧から消えました' : 'セッションが見つかりません';
-  const st = restingState(s);
-  if (st === 'none') return `セッションはありません。\n${s.worktree}${s.branch ? `（${s.branch}）` : ''}`;
-  if (st === 'stopped') return 'セッションは止まっています';
-  if (st === 'ended') return 'セッションは終了しています';
-  if (panelTerm.term && panelTerm.sessionId === id) return 'このセッションの端末はタスクのパネルで開いています';
-  if (!s.present) return 'このセッションは動いていません';
-  return 'このセッションの端末はボードから開けません（tmux で動いているセッションだけ開けます）';
-}
-
-function mountSelected() {
-  const id = sessView.selectedId;
-  const s = currentSession();
-  // A terminal that ended, or whose session went away, stays on screen with its last lines;
-  // it is replaced only by choosing a row, never by the poll.
-  // The task panel holds a session's terminal while it is open on its task: not a second one.
-  if (id && !sessView.mounted && s && boardTerminalReady(s) && panelTerm.sessionId !== id) {
-    const rec = { sessionId: id, term: null, ended: null };
-    sessView.mounted = rec;
-    rec.term = mountSessionTerminal(sessEl('sess-term-host'), {
-      sessionId: id,
-      onReady: () => releaseSide(id),
-      onEnd: code => {
-        // A terminal that never got a frame has nothing more to wait for either.
-        releaseSide(id);
-        rec.ended = code;
-        keepScreen(rec);
-        if (sessView.mounted === rec) renderSessionsView();
-      },
-    });
-  }
-  const shown = !!sessView.mounted;
-  sessEl('sess-term-host').hidden = !shown;
-  const ph = sessEl('sess-placeholder');
-  ph.hidden = shown;
-  // A session that is not running says so in the panel, which carries what to do about it.
-  const over = overHtml(s);
-  const html = shown ? over : `<div class="sess-ph-body"><div>${esc(over ? '' : sessionPlaceholder(s))}</div>${over ? `<div class="sess-over">${over}</div>` : ''}</div>`;
-  const overEl = sessEl('sess-over');
-  overEl.hidden = !shown || !over;
-  const target = shown ? overEl : ph;
-  if (sessView.overSig !== html || sessView.overShown !== shown) {
-    sessView.overSig = html;
-    sessView.overShown = shown;
-    (shown ? ph : overEl).innerHTML = '';
-    target.innerHTML = html;
-  }
 }
 
 /* A row's tooltip: the whole title, where the worktree is, the tab's own title when it says
@@ -686,12 +548,13 @@ function patchSessionList(root, groups, rows) {
 }
 
 function applySessionSelection() {
-  // The row of the session the task panel is open on is the one in use, as the selected one is.
-  const task = selectedTaskId && !isHubRef(selectedTaskId) && !scopeAll() ? taskById(selectedTaskId) : null;
-  const inPanel = task ? sessionOfTask(task)?.id : null;
+  // The row of the session the task panel is open on is the one in use: a task's worker, or
+  // the session itself while it has no task.
+  const task = selectedTaskId && !isHubRef(selectedTaskId) && !isSessRef(selectedTaskId) && !scopeAll() ? taskById(selectedTaskId) : null;
+  const inPanel = isSessRef(selectedTaskId) && !scopeAll() ? sessIdOfRef(selectedTaskId) : task ? sessionOfTask(task)?.id : null;
   markHubButtons();
   for (const row of document.querySelectorAll('#sess-groups .sess-row[data-sref]')) {
-    if (!scopeAll() && (row.dataset.sref === sessView.selectedId || row.dataset.sref === inPanel)) row.setAttribute('aria-current', 'true');
+    if (inPanel && row.dataset.sref === inPanel) row.setAttribute('aria-current', 'true');
     else row.removeAttribute('aria-current');
   }
 }
@@ -703,39 +566,15 @@ function renderSessionsView() {
     if (state.boardTerminal) giveUpSessions();
     return;
   }
-  const cur = currentSession();
-  if (cur) sessView.last = cur;
-
-  // Resumed or started from here: the window comes a moment after the request returns.
-  if (sessView.reconnectWhenReady && sessView.reconnectWhenReady === sessView.selectedId && boardTerminalReady(cur)) {
-    sessView.reconnectWhenReady = null;
-    // Detached first, which keeps the old run's screen; that screen must not be shown after a
-    // later stop, so it is dropped before the new run connects.
-    detachSessionTerminal();
-    delete sessView.screens[cur.id];
-    return renderSessionsView();
-  }
-  // With a session open the list narrows to a column beside it.
-  const open = !!sessView.selectedId;
-  sessEl('sessions-view').classList.toggle('term-open', open);
-  document.body.classList.toggle('sess-term-open', open);
-  applyRailMode();
   renderSessionList();
   applySessionSelection();
-  mountSelected();
-  holdSideForSelection(cur);
-  renderSessionContext();
-  renderSessionActions(cur);
-  renderSessionGate(cur);
-  renderSessionSidebar();
 }
 
-/* ── Actions on the selected session, and the gate it waits on ── */
+/* ── Actions on a session ── */
 const sessBusy = new Set(); // in-flight requests: a second press is ignored and buttons dim
 const enc = encodeURIComponent;
 
-/* One row in the flow of the page, between the context bar and the terminal: never laid over
-   the terminal, which refits to the height that is left. */
+/* One row in the flow of the page, above the list: never laid over the panel's terminal. */
 function showSessNotice(text, isError = false) {
   const el = sessEl('sess-notice');
   el.hidden = !text;
@@ -748,7 +587,7 @@ function showSessNotice(text, isError = false) {
 async function sessAct(key, label, fn) {
   if (sessBusy.has(key)) return;
   sessBusy.add(key);
-  renderSessionActions(currentSession());
+  renderTaskPanel();
   try {
     await fn();
   } catch (e) {
@@ -756,7 +595,7 @@ async function sessAct(key, label, fn) {
     showSessNotice(`${label}: ${e.message}`, true);
   } finally {
     sessBusy.delete(key);
-    renderSessionActions(currentSession());
+    renderTaskPanel();
   }
 }
 
@@ -849,23 +688,6 @@ const actionButtonHtml = (b, { menu = false, busy = false } = {}) =>
   `<button type="button"${menu ? ' role="menuitem"' : ` class="btn-m3-tonal sess-act"`} data-sess-act="${b.act}"${b.title ? ` title="${esc(b.title)}"` : ''}${b.disabled || busy ? ' disabled' : ''}>` +
   `<span class="material-symbols-outlined" aria-hidden="true">${b.icon}</span><span>${esc(b.label)}</span></button>`;
 
-function renderSessionActions(s) {
-  const busy = sessBusy.size > 0;
-  const { bar, menu } = s ? sessionButtons(s) : { bar: [], menu: [] };
-  const sig = JSON.stringify([s?.id, bar, menu, busy]);
-  if (sig === sessView.actionsSig) return;
-  sessView.actionsSig = sig;
-  sessEl('sess-actions').innerHTML = bar.map(b => actionButtonHtml(b, { busy })).join('');
-  sessEl('sess-menu').innerHTML = menu.map(b => actionButtonHtml(b, { menu: true, busy })).join('');
-  sessEl('sess-menu-btn').hidden = !menu.length;
-  if (!menu.length) closeSessMenu();
-}
-
-function closeSessMenu() {
-  sessEl('sess-menu').hidden = true;
-  sessEl('sess-menu-btn').setAttribute('aria-expanded', 'false');
-}
-
 function runSessionAction(act, s) {
   const key = sessionKey(s);
   const id = enc(s.id);
@@ -884,7 +706,6 @@ function runSessionAction(act, s) {
         const data = await api(`/api/sessions/${id}/resume`, { method: 'POST', body: '{}' });
         note(`セッションを再開 (${key})`, false, data.description);
         showSessNotice('再開しました' + (data.hubRunning === false ? '。hub は止まっています' : ''));
-        sessView.reconnectWhenReady = s.id;
         await refresh();
       });
     case 'hub-start':
@@ -894,7 +715,6 @@ function runSessionAction(act, s) {
         const text = data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました';
         note(`hub を起動 (${key})`, false, text);
         showSessNotice(text);
-        sessView.reconnectWhenReady = s.id;
         await refresh();
       });
     case 'restart':
@@ -981,7 +801,6 @@ async function sessRestart(s) {
       sessRestarting.set(mark, { ...was, at: Date.now() });
       note(label, false, data.description);
       showSessNotice('再起動しました' + (data.hubRunning === false ? '。hub は止まっています' : ''));
-      sessView.reconnectWhenReady = s.id;
       if (panelTerm.sessionId === s.id) panelTerm.reconnect = true;
       await refresh();
     } catch (e) {
@@ -997,188 +816,8 @@ async function sessRestart(s) {
   });
 }
 
-/* ── The gate a session waits on ── */
-const INLINE_GATES = ['plan', 'question', 'result', 'dispatch'];
-const NEEDS_COMMENT = ['changes', 'ask', 'answer'];
 const GATE_KIND_LABEL = { result: '結果の確認', issue: '起票の確認', relay: '連絡' };
 const gateKindLabel = kind => GATE_KIND_LABEL[kind] || humanLabel(kind);
-const DECISIONS = {
-  approve: ['承認', 'check', 'primary'],
-  changes: ['修正を指示', 'replay', 'tonal'],
-  reject: ['却下', 'cancel', 'text'],
-  ack: ['了解（閉じる）', 'check', 'primary'],
-  ask: ['追加で聞く', 'help', 'tonal'],
-  answer: ['これで返す', 'send', 'primary'],
-};
-/* A dispatch gate asks whether to start the task; the board's card says so in these words. */
-const DISPATCH_DECISIONS = { approve: ['着手する', 'play_arrow', 'primary'], reject: ['Backlog に戻す', 'undo', 'tonal'] };
-
-function gateButtonsHtml(w, busy) {
-  const btn = (attr, [label, icon, cls]) =>
-    `<button type="button" class="btn-m3-${cls} sess-act" ${attr}${busy ? ' disabled' : ''}><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><span>${esc(label)}</span></button>`;
-  if (w.choices?.length) {
-    // The choices, then what else the gate offers besides approving one of them.
-    const others = (w.options || []).filter(o => o !== 'approve' && (w.kind === 'dispatch' ? DISPATCH_DECISIONS : DECISIONS)[o]);
-    return w.choices.map(c => btn(`data-sess-gate="choice" data-choice="${esc(c.id)}"`, [c.label, 'check', 'primary'])).join('') +
-      others.map(o => btn(`data-sess-gate="${esc(o)}"`, (w.kind === 'dispatch' ? DISPATCH_DECISIONS : DECISIONS)[o])).join('');
-  }
-  const table = w.kind === 'dispatch' ? DISPATCH_DECISIONS : DECISIONS;
-  return (w.options || []).filter(o => table[o]).map(o => btn(`data-sess-gate="${esc(o)}"`, table[o])).join('');
-}
-
-/* Redrawn only when what it shows changed, and not while a comment is being typed: replacing
-   the box under the cursor cuts an IME composition short. `force` is for the banner's own
-   answer, which has to show its error. */
-function renderSessionGate(s, force = false) {
-  const box = sessEl('sess-gate');
-  const w = s?.waiting || null;
-  if (!w) {
-    box.hidden = true;
-    box.innerHTML = '';
-    delete box.dataset.gateId;
-    sessView.gateSig = '';
-    return;
-  }
-  const folded = !!prefs.sessionsGateFolded;
-  const error = sessView.gateError?.id === w.id ? sessView.gateError.text : '';
-  const busy = sessBusy.has('gate');
-  const since = stampSecs(w.openedAt);
-  const mins = since != null && state.now != null ? Math.max(0, Math.floor((state.now - since) / 60)) : null;
-  const sig = JSON.stringify([s.id, w.id, w.count, w.kind, folded, error, busy, mins]);
-  if (!force && sig === sessView.gateSig && !box.hidden) return;
-  const typing = box.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA';
-  if (typing && !force) return;
-  sessView.gateSig = sig;
-  const inline = INLINE_GATES.includes(w.kind) || !!w.choices?.length;
-  const draft = sessView.gateDraft?.id === w.id ? sessView.gateDraft.text : '';
-  const head = `<div class="sess-gate-head">
-      <span class="material-symbols-outlined" aria-hidden="true">help</span>
-      <span class="sess-gate-kind">${esc(gateKindLabel(w.kind))}</span>
-      <span class="sess-gate-title">${esc(w.title || '')}</span>
-      <span class="sess-gate-meta">${mins == null ? '' : esc(`${minutesLabel(mins)}待っています`)}${w.count > 1 ? esc(` ・ ほか ${w.count - 1} 件`) : ''}</span>
-      <button type="button" class="btn-m3-text sess-gate-fold" data-sess-gate-fold aria-expanded="${!folded}">${folded ? '開く' : '畳む'}</button>
-    </div>`;
-  box.hidden = false;
-  box.dataset.gateId = w.id;
-  box.classList.toggle('folded', folded);
-  if (folded) { box.innerHTML = head; return; }
-  box.innerHTML = head +
-    (w.focus ? `<p class="sess-gate-focus">${esc(w.focus)}</p>` : '') +
-    (inline ? `<textarea class="sess-gate-comment" aria-label="コメント" placeholder="コメント（修正の指示や質問はここに）">${esc(draft)}</textarea>` : '') +
-    (error ? `<p class="sess-gate-error" role="alert">${esc(error)}</p>` : '') +
-    `<div class="sess-gate-buttons">${inline ? gateButtonsHtml(w, busy) : ''}
-      <button type="button" class="btn-m3-tonal sess-act" data-sess-gate-open><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>レビュー画面で開く</span></button>
-    </div>
-    <div class="sess-gate-foot">ターミナルで答えても構いません。エージェントが再開すると、この確認待ちは「ターミナルで答えた」として閉じます</div>`;
-}
-
-/* The gate lives on the board of the hub that opened it, which is not always this page's. */
-async function answerSessionGate(s, decision, choice) {
-  const w = s?.waiting;
-  if (!w || sessBusy.has('gate')) return;
-  // The banner holds off redrawing while a comment is typed, so it can show an older gate than
-  // the session waits on now: an answer to that one must not land on this one.
-  const shown = sessEl('sess-gate').dataset.gateId;
-  if (shown && shown !== w.id) {
-    const typed = sessEl('sess-gate').querySelector('.sess-gate-comment')?.value;
-    if (typed) sessView.gateDraft = { id: w.id, text: typed };
-    sessView.gateError = { id: w.id, text: '確認待ちが変わりました。内容を確かめてから答えてください' };
-    renderSessionGate(s, true);
-    return;
-  }
-  const closing = decision === 'close';
-  const box = sessEl('sess-gate').querySelector('.sess-gate-comment');
-  const comment = (box ? box.value : sessView.gateDraft?.id === w.id ? sessView.gateDraft.text : '').trim();
-  const line = closing ? `adj gate close --id ${w.id}`
-    : `adj gate answer --id ${w.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
-  const fail = text => {
-    sessView.gateError = { id: w.id, text };
-    note(line, true, text);
-    renderSessionGate(currentSession(), true);
-    sessEl('sess-gate').querySelector('.sess-gate-comment')?.focus();
-  };
-  // Sending back or asking without saying what gives the worker nothing to act on.
-  if (NEEDS_COMMENT.includes(decision) && !comment) return fail('コメントに内容を書いてください');
-  sessBusy.add('gate');
-  sessView.gateError = null;
-  renderSessionGate(s, true);
-  try {
-    const base = state.resident ? `/b/${w.slug}` : BASE;
-    const res = await fetch(`${base}/api/gates/${enc(w.id)}`, {
-      method: 'POST',
-      headers: { 'X-Adjutant-Token': TOKEN, 'Content-Type': 'application/json' },
-      body: JSON.stringify(closing ? { decision, comment } : { decision, choice, comment }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status });
-    const toHub = s.kind === 'hub' || HUB_KINDS.includes(w.kind);
-    note(line, false, closing ? 'worker への通知なしでアーカイブしました' : toHub
-      ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
-      : `${(s.worktree || '').split('/').pop()} の outbox に追記` +
-        (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
-                                                               : ' → worker は停止中のため、回答は outbox で保持されます'));
-    sessView.gateDraft = null;
-    showSessNotice(closing ? '解決済みとして閉じました' : '回答を送りました');
-    await refresh();
-  } catch (e) {
-    sessBusy.delete('gate');
-    return fail(e.status === 404 || e.message === 'no such board' ? 'この hub のボードが見つかりません' : e.message);
-  }
-  sessBusy.delete('gate');
-  renderSessionGate(currentSession(), true);
-}
-
-function openGateInReview(s) {
-  const w = s?.waiting;
-  if (!w) return;
-  // The review queue reads every board, so the gate is there whichever board it is on.
-  goToGate(w.id, w.slug);
-}
-
-/* ── The panel over a session that is not running ── */
-function overHtml(s) {
-  if (!s) return '';
-  // Between the old process going and the new one writing its record: the one thing worth
-  // saying is that it is on its way.
-  if (s.kind === 'worker' && restartingNow(s) && !s.present) return '<div class="sess-over-head">セッションを再起動しています</div>';
-  const st = restingState(s);
-  if (st !== 'stopped' && st !== 'ended') return '';
-  const m = sessView.mounted;
-  if (m && m.ended == null) return '';
-  const button = b => actionButtonHtml(b, { busy: sessBusy.size > 0 });
-  if (s.kind === 'hub') {
-    const hub = hubActionOf(s);
-    const h = (state.hubs || []).find(x => x.id === s.id);
-    const starting = !!h && hubStartingNow(h);
-    // A stopped hub can be started on a new conversation too, whether it is offered to be
-    // started or (a parent hub nobody reports to) to be closed.
-    const canFresh = !!h && (hub?.act === 'hub-start' || (hub?.act === 'hub-close' && !!h.key));
-    const freshWhy = !h ? '' : hubStartWhy(h) || hubWaitWhy(h);
-    const fresh = canFresh
-      ? button({ act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: freshWhy || 'hub をリセット：今の会話を引き継がず、新しい会話で hub を起動します（adj hub --new）', disabled: !!freshWhy }) : '';
-    const head = st === 'ended' ? 'この hub は役目を終えています' : h && hubRestartPending(h) ? 'hub を再起動しています' : starting ? 'hub を起動しています' : 'hub は止まっています';
-    return `<div class="sess-over-head">${head}</div>` +
-      (hub ? `<div class="sess-over-buttons">${button(hub)}${fresh}</div>` : '');
-  }
-  const shot = sessView.screens[s.id];
-  let last;
-  // A terminal that ended is still on screen above the panel: a copy of its lines would only
-  // cover them.
-  if (m) {
-    last = '';
-  } else if (shot?.lines.length) {
-    const mins = state.now != null && shot.at != null ? Math.max(0, Math.floor((state.now - shot.at) / 60)) : null;
-    last = `<div class="sess-meta">このページで最後に見た画面${mins == null ? '' : `（${esc(minutesLabel(mins))}前）`}</div><pre class="sess-last-out">${esc(shot.lines.join('\n'))}</pre>`;
-  } else {
-    const phaseAt = s.phaseAt != null && state.now != null ? `（${minutesLabel(Math.max(0, Math.floor((state.now - s.phaseAt) / 60)))}前）` : '';
-    last = `<div class="sess-meta">最後の出力はこのページでは見ていません。${s.phase ? `フェーズ: ${esc(s.phase)}${esc(phaseAt)}。` : ''}最後の出力: ${esc(lastOutputText(s) || '不明')}</div>`;
-  }
-  let action;
-  if (canResume(s)) action = `<div class="sess-over-buttons">${button({ act: 'resume', icon: 'restart_alt', label: '再開', title: '保存された会話を tmux の新しいウィンドウで再開します' })}</div>`;
-  else if (!s.conversation) action = '<div class="sess-meta">保存された会話がないため再開できません</div>';
-  else action = `<div class="sess-meta">${esc(state.sessionResume?.reason || 'ボードからは再開できません')}</div>`;
-  return `<div class="sess-over-head">${st === 'ended' ? 'セッションは終了しています' : 'セッションは止まっています'}</div>${last}${action}`;
-}
 
 /* ── Clean up a worktree ── */
 let cleanupTarget = null;
@@ -1292,39 +931,6 @@ sessEl('cleanup-confirm').addEventListener('keydown', e => {
 });
 sessEl('cleanup-dialog').addEventListener('close', () => { cleanupTarget = null; });
 
-/* One listener for everything drawn into the main column: the bar, the menu, the banner, the
-   panel over the terminal. */
-document.querySelector('.sess-main').addEventListener('click', e => {
-  const s = currentSession();
-  if (e.target.closest('[data-sess-gate-fold]')) {
-    prefs.sessionsGateFolded = !prefs.sessionsGateFolded;
-    savePrefs();
-    return renderSessionGate(s, true);
-  }
-  if (e.target.closest('[data-sess-gate-open]')) return openGateInReview(s);
-  const gate = e.target.closest('[data-sess-gate]');
-  if (gate && !gate.disabled) {
-    const decision = gate.dataset.sessGate;
-    return answerSessionGate(s, decision, gate.dataset.choice);
-  }
-  const act = e.target.closest('[data-sess-act]');
-  if (act && !act.disabled && s) {
-    closeSessMenu();
-    runSessionAction(act.dataset.sessAct, s);
-  }
-});
-sessEl('sess-gate').addEventListener('input', e => {
-  const w = currentSession()?.waiting;
-  if (w && e.target.matches('.sess-gate-comment')) sessView.gateDraft = { id: w.id, text: e.target.value };
-});
-sessEl('sess-menu-btn').addEventListener('click', () => {
-  const menu = sessEl('sess-menu');
-  menu.hidden = !menu.hidden;
-  sessEl('sess-menu-btn').setAttribute('aria-expanded', String(!menu.hidden));
-});
-document.addEventListener('click', e => { if (!e.target.closest('.sess-menu-wrap')) closeSessMenu(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSessMenu(); });
-
 /* Start the hub of a group: from the board it is on, which for 「すべて」 is not this page's. */
 function startGroupHub(g) {
   if (!scopeAll()) return hubStart(g.id);
@@ -1364,7 +970,4 @@ sessEl('sess-groups').addEventListener('toggle', e => {
   prefs.sessionsFolded = [...set];
   savePrefs();
 }, true);
-// The notice sits above the list and the terminal both, outside the main column.
 sessEl('sess-notice').addEventListener('click', e => { if (e.target.closest('[data-sess-dismiss]')) showSessNotice(''); });
-sessEl('sess-back').addEventListener('click', returnFromSessions);
-sessEl('sess-reconnect').addEventListener('click', connectSelected);

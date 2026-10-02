@@ -67,7 +67,7 @@ function setView(v) {
     const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : null;
     if (want && nav.view !== want) {
       nav.view = want;
-      if (want !== 'sessions') nav.session = null;
+      if (want !== 'sessions' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
       history.replaceState(null, '', urlOf());
     }
   }
@@ -169,7 +169,10 @@ async function boot() {
   try { deepSessionId = deepSession && deepSession[1] ? decodeURIComponent(deepSession[1]) : null; } catch { deepSessionId = null; }
   Object.assign(nav, parseUrl(location));
   BASE = multiBoard && nav.board && nav.board !== 'all' ? `/b/${nav.board}` : '';
-  if (deepSession) { nav.view = 'sessions'; nav.session = nav.board === 'all' ? null : deepSessionId; }
+  if (deepSession) {
+    nav.view = 'sessions';
+    if (nav.board !== 'all' && deepSessionId) { nav.task = SESS_REF + deepSessionId; nav.pane = 'term'; }
+  }
   // A link made before the address named the review queue: carry its gate over.
   if (deep) { nav.view = 'review'; nav.item = (m => m ? `${m[1]}/${deep[1]}` : deep[1])(/^\/b\/([^/]+)/.exec(location.pathname)); if (multiBoard) nav.board = 'all'; }
   // The address in its own spelling, so a go() to the same screen does not push a twin.

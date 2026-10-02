@@ -1,19 +1,12 @@
-/* ── セッション tab: the board's hubs and their sessions in a list; a session opened beside it ── */
+/* ── セッション tab: the board's hubs and their sessions in a list; a session opens in the task panel ── */
 #sessions-view { display:none; height:100%; position:relative; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
 .sess-list {
   grid-column:1; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column;
   background:var(--md-sys-color-surface-container-low);
 }
 #sess-notice { grid-column:1 / -1; grid-row:1; }
-.sess-main { grid-column:2; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column; }
-/* The terminal and its sidebar come only with a session; until then the list has the page. */
-#sessions-view:not(.term-open) > .sess-main,
-#sessions-view:not(.term-open) > .sess-side { display:none; }
-#sessions-view.term-open { grid-template-columns:340px minmax(0,1fr) auto; }
-#sessions-view.term-open .sess-list { border-right:1px solid var(--md-sys-color-outline-variant); }
 .sess-list-head { padding:10px 18px 8px; color:var(--md-sys-color-primary); border-bottom:1px solid var(--md-sys-color-outline-variant); }
 .sess-list-head .pane-title { color:var(--md-sys-color-on-surface); }
-#sessions-view.term-open .sess-list-head .pane-sub { display:none; }
 .sess-list-scroll { flex:1; min-height:0; overflow-y:auto; padding:0 12px 16px; }
 
 /* A hub's header sticks to the top while its sessions scroll under it. */
@@ -38,10 +31,6 @@
 .sess-body { padding:4px 0 0; }
 .sess-group.child { margin-left:8px; }
 .sess-group.child .sess-body { margin-left:8px; padding-left:14px; border-left:2px solid var(--md-sys-color-outline-variant); }
-/* Beside a terminal the count goes, and what waits stays. */
-#sessions-view.term-open .sess-head-n, #sessions-view.term-open .sess-head-sep { display:none; }
-#sessions-view.term-open .sess-head-btn .lbl { display:none; }
-#sessions-view.term-open .sess-head-btn { padding:3px 6px; }
 
 .sess-row {
   display:flex; align-items:center; gap:10px; width:100%; min-width:0; text-align:left;
@@ -63,7 +52,6 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .sess-row-open { flex:none; font-size:11.5px; font-weight:700; color:var(--md-sys-color-primary); visibility:hidden; }
 button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-open { visibility:visible; }
 .sess-row.ended { opacity:.6; }
-#sessions-view.term-open .sess-row-last, #sessions-view.term-open .sess-row-open { display:none; }
 /* The row of a session asked for and not started yet (below) is drawn with these. */
 .sess-ico { flex:none; font-size:18px; }
 .sess-row-text { display:flex; flex-direction:column; min-width:0; }
@@ -76,38 +64,11 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 .sess-orphans summary .material-symbols-outlined { font-size:18px; }
 .sess-row.none .sess-row-title { font-family:var(--font-mono); font-weight:500; }
 
-.sess-context {
-  display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; padding:8px 14px;
-  border-bottom:1px solid var(--md-sys-color-outline-variant); font-size:12.5px; flex:none;
-}
-.sess-context[hidden], .sess-context [hidden] { display:none; }
-.sess-back, .sess-reconnect { padding:4px 12px; font-size:12px; }
-.sess-key { font-weight:800; font-family:var(--font-mono); max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sess-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sess-meta { color:var(--md-sys-color-on-surface-variant); font-size:11.5px; }
-.sess-stage { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
-.sess-term-host { flex:1; min-height:0; }
-.sess-term-host[hidden] { display:none; }
-.sess-placeholder {
-  flex:1; min-height:0; display:flex; align-items:center; justify-content:center; text-align:center;
-  padding:24px; white-space:pre-line; color:var(--md-sys-color-on-surface-variant); font-size:13px;
-}
-.sess-placeholder[hidden] { display:none; }
-.sess-ph-body { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; }
-.sess-strip {
-  flex:none; display:flex; flex-wrap:wrap; gap:4px 16px; padding:5px 14px; font-size:11px;
-  color:var(--md-sys-color-on-surface-variant); border-top:1px solid var(--md-sys-color-outline-variant);
-}
-#sess-strip-where { font-family:var(--font-mono); }
-.sess-strip-note { margin-left:auto; }
-
-/* The actions sit in the context bar and wrap onto a second line when it is narrow. */
-.sess-actions { display:flex; flex-wrap:wrap; gap:6px; margin-left:auto; }
-.sess-actions button, .sess-gate button, .sess-over button, .sess-menu button { font-size:12px; }
+/* The buttons of a session's actions (sessionButtons), and the menus that hold some. */
+.sess-menu button { font-size:12px; }
 .sess-act { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; }
 .sess-act .material-symbols-outlined { font-size:16px; }
 .sess-act:disabled { opacity:.5; cursor:not-allowed; }
-.sess-menu-wrap { position:relative; }
 .sess-menu {
   position:absolute; top:100%; right:0; z-index:20; min-width:200px; padding:6px;
   display:flex; flex-direction:column; gap:2px; margin-top:4px;
@@ -124,7 +85,7 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 .sess-menu button:disabled { opacity:.5; cursor:not-allowed; }
 .sess-menu .material-symbols-outlined { font-size:18px; }
 
-/* In the flow of the page, never over the terminal: the terminal refits to what is left. */
+/* In the flow of the page, above the list. */
 .sess-notice {
   flex:none; display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:12px;
   background:var(--md-sys-color-surface-container); color:var(--md-sys-color-on-surface);
@@ -134,41 +95,11 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 .sess-notice[hidden] { display:none; }
 .sess-notice-text { flex:1; min-width:0; overflow-wrap:anywhere; }
 
-.sess-gate {
-  flex:none; max-height:45vh; overflow-y:auto; padding:10px 14px; font-size:12.5px;
-  display:flex; flex-direction:column; gap:8px;
-  background:var(--md-sys-color-warning-container); color:var(--md-sys-color-on-warning-container);
-  border-bottom:1px solid var(--md-sys-color-outline-variant);
-}
-.sess-gate[hidden] { display:none; }
-.sess-gate-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.sess-gate-kind { font-weight:800; }
-.sess-gate-title { font-weight:600; min-width:0; overflow-wrap:anywhere; }
-.sess-gate-meta { font-size:11.5px; opacity:.85; }
-.sess-gate-fold { margin-left:auto; }
-.sess-gate-focus { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; }
-.sess-gate-comment { width:100%; min-height:56px; resize:vertical; font:inherit; box-sizing:border-box; }
-.sess-gate-buttons { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-.sess-gate-foot { font-size:11.5px; opacity:.85; }
-.sess-gate-error { color:var(--md-sys-color-error); font-weight:600; margin:0; }
-.sess-gate.folded { padding:6px 14px; }
-
-/* Anchored to the lower edge, so the last lines of a terminal that ended stay readable above. */
-.sess-over {
-  position:absolute; left:12px; right:12px; bottom:12px; max-height:45%; overflow-y:auto;
-  display:flex; flex-direction:column; gap:8px; padding:12px 14px; font-size:12.5px;
-  background:var(--md-sys-color-surface-container-high); color:var(--md-sys-color-on-surface);
-  border-radius:var(--md-shape-corner-md); box-shadow:var(--md-elevation-3);
-}
-.sess-over[hidden] { display:none; }
-.sess-over-head { font-weight:700; }
-.sess-over-buttons { display:flex; flex-wrap:wrap; gap:6px; }
 .sess-last-out {
   margin:0; padding:8px 10px; max-height:14em; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere;
   font:11.5px/1.5 var(--font-mono); text-align:left;
   background:var(--md-sys-color-surface-container); border-radius:var(--md-shape-corner-sm);
 }
-.sess-placeholder .sess-over { position:static; max-width:640px; width:100%; text-align:left; white-space:normal; }
 
 .cleanup-facts { margin:0; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
 .cleanup-facts li.warn { color:var(--md-sys-color-error); }
@@ -180,54 +111,15 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 .cleanup-force p { margin:8px 0 0; }
 .cleanup-force input { width:100%; box-sizing:border-box; padding:8px 10px; font:13px var(--font-mono); }
 
-/* The detail sidebar: a column of its own where there is room, floating over the terminal where
-   there is not (below). Its sections are always open. */
-.sess-side {
-  grid-column:3; grid-row:2; width:340px; min-height:0; display:flex; flex-direction:column;
-  background:var(--md-sys-color-surface-container-low);
-  border-left:1px solid var(--md-sys-color-outline-variant);
-}
-.sess-side[hidden] { display:none; }
-.sess-side-head { flex:none; display:flex; align-items:center; justify-content:space-between; padding:8px 10px 8px 14px; border-bottom:1px solid var(--md-sys-color-outline-variant); }
-.sess-side-title { font-weight:700; font-size:13px; }
-.sess-side-body { flex:1; min-height:0; overflow-y:auto; padding:4px 14px 16px; font-size:12.5px; }
-.sess-side-sec { padding:12px 0; border-bottom:1px solid var(--md-sys-color-outline-variant); }
-.sess-side-sec:last-child { border-bottom:0; }
-.sess-side-sec h3 { margin:0 0 8px; font-size:12px; font-weight:800; letter-spacing:.04em; color:var(--md-sys-color-primary); }
-.sess-side .kv { gap:4px 12px; font-size:12.5px; }
-.sess-side .source { margin-top:4px; }
-.sess-side .timeline li { grid-template-columns:84px 1fr; gap:10px; padding:6px 0; }
-.sess-side a { color:var(--md-sys-color-primary); overflow-wrap:anywhere; }
+/* A session with no task, in the panel's 詳細 (sessDetailHtml). */
+.sess-detail { display:flex; flex-direction:column; gap:12px; }
 .sess-side-btn { padding:2px 8px; font-size:12px; }
 .sess-side-actions { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin-top:6px; }
 .sess-side-facts { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:2px; }
 .sess-side-facts li.warn { color:var(--md-sys-color-error); }
 .sess-side-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
 .sess-side-list li { display:flex; flex-direction:column; align-items:flex-start; gap:2px; overflow-wrap:anywhere; }
-.sess-side-child { display:flex; flex-direction:column; gap:2px; }
-.sess-side-child .who, .sess-side-list .who { color:var(--md-sys-color-on-surface-variant); font-size:12px; }
-.sess-side-err { margin:8px 0 0; padding:6px 10px; border-radius:var(--md-shape-corner-sm); background:var(--md-sys-color-error-container); color:var(--md-sys-color-on-error-container); }
-.sess-side-pre { white-space:pre-wrap; overflow-wrap:anywhere; }
-.sess-side-issue {
-  margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere;
-  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; line-clamp:6; overflow:hidden;
-}
-#handover-hub-note { margin:0; font-size:12px; color:var(--md-sys-color-outline); }
-#handover-hub-note[hidden] { display:none; }
-
-/* Below 1400px the sidebar floats over the terminal rather than taking its width. */
-@media (max-width: 1399px) {
-  .sess-side {
-    grid-column:auto; position:absolute; inset:0 0 0 auto; z-index:31;
-    width:min(340px, calc(100% - 32px)); box-shadow:var(--md-elevation-4);
-  }
-}
-@media (max-width: 759px) {
-  #sessions-view.term-open { grid-template-columns:minmax(0,1fr); }
-  #sessions-view.term-open .sess-list { display:none; }
-  #sessions-view.term-open > .sess-main { grid-column:1; }
-  .sess-strip-note { margin-left:0; }
-}
+.sess-side-list .who { color:var(--md-sys-color-on-surface-variant); font-size:12px; }
 
 /* The + sits at the right end of the list's header; its menu opens leftwards from there. */
 .sess-add-wrap { position:relative; margin-left:auto; }

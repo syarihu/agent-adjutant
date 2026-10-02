@@ -1164,6 +1164,7 @@ function markSelectedCards() {
 /* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
 function showTaskPanel(id) {
   pendingTask = null;
+  if (selectedTaskId !== id) sessView.git = null;
   selectedTaskId = id;
   markSelectedCards();
   renderTaskPanel();
@@ -1173,6 +1174,7 @@ function showTaskPanel(id) {
    of the card that is open replaces the one it is on. */
 function openTaskPanel(id, pane = 'detail') {
   pendingTask = null;
+  if (selectedTaskId !== id) sessView.git = null;
   selectedTaskId = id;
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
@@ -1184,6 +1186,8 @@ function hideTaskPanelState() {
   panelPop = false;
   selectedTaskId = null;
   panelScrolledFor = null;
+  // Opened again, a session's git state is read again.
+  sessView.git = null;
   disposePanelTerminal();
   markSelectedCards();
   renderTaskPanel();
@@ -1216,18 +1220,17 @@ function placePanel(where) {
 const hasSession = s => !!s && sessionState(s) !== 'none';
 /* The tab shown: ターミナル only where there is a session, whatever the address says. */
 const paneOf = task => nav.pane === 'term' && hasSession(sessionOfTask(task)) ? 'term' : 'detail';
+/* The same for a session with no task, which is its own subject. */
+const sessPaneOf = s => nav.pane === 'term' && hasSession(s) ? 'term' : 'detail';
 
-/* The sidebar is the icon rail when the window is narrow, when a session's terminal takes the
-   width of the セッション tab, and while the panel sits on its left. */
+/* The sidebar is the icon rail when the window is narrow, and while the panel sits on its left. */
 const narrowRail = matchMedia('(max-width: 1024px)');
-const termRail = matchMedia('(max-width: 1199px)');
 function applyRailMode() {
   const cls = document.body.classList;
   const byPanel = cls.contains('panel-open') && !cls.contains('panel-right') && !cls.contains('panel-pop');
-  cls.toggle('rail-icons', narrowRail.matches || byPanel || (cls.contains('sess-term-open') && termRail.matches));
+  cls.toggle('rail-icons', narrowRail.matches || byPanel);
 }
 narrowRail.addEventListener('change', applyRailMode);
-termRail.addEventListener('change', applyRailMode);
 // Before the first poll has drawn anything, a narrow window already has its icon rail.
 applyRailMode();
 
@@ -1243,11 +1246,23 @@ function setPanelPart(part, el, html) {
 function renderTaskPanel() {
   const panel = tp('task-panel');
   if (!panel) return;
+  // A session that has been linked to a task since is shown as that task, and the address follows;
+  // its terminal is kept (syncTermSlot).
+  if (isSessRef(selectedTaskId)) {
+    const ref = panelRefOf(selectedTaskId);
+    if (ref !== selectedTaskId) {
+      if (nav.task === selectedTaskId) setNav({ task: ref });
+      selectedTaskId = ref;
+      markSelectedCards();
+    }
+  }
   const hub = hubOfRef(selectedTaskId);
   const task = selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
-  // A card the board no longer lists, or a hub that left its list, takes the panel with it.
-  if (selectedTaskId && !task && !hub) return dismissTaskPanel();
-  const shown = !!(task || hub) && (view === 'board' || view === 'sessions');
+  const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
+  // A card the board no longer lists, a hub that left its list, or a session that is gone takes
+  // the panel with it.
+  if (selectedTaskId && !task && !hub && !sess) return dismissTaskPanel();
+  const shown = !!(task || hub || sess) && (view === 'board' || view === 'sessions');
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop);
@@ -1260,17 +1275,17 @@ function renderTaskPanel() {
   if (view === 'sessions') applySessionSelection();
   markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
-  if (!task && !hub) return renderHandForm(null);
+  if (!task && !hub && !sess) return renderHandForm(null);
   // In the task view the panel waits, with its terminal, for the board to come back.
   if (!shown) return;
 
   const colId = task ? columnOf(task) : null;
   const gate = task ? openGate(task) : null;
-  const s = hub ? hubSessionOf(hub) : sessionOfTask(task);
-  const pane = hub ? hubPaneOf(hub, s) : paneOf(task);
+  const s = hub ? hubSessionOf(hub) : sess || sessionOfTask(task);
+  const pane = hub ? hubPaneOf(hub, s) : sess ? sessPaneOf(s) : paneOf(task);
 
-  setPanelPart('head', tp('tp-head'), hub ? hubPanelHeadHtml(hub, s) : panelHeadHtml(task));
-  setPanelPart('tabs', tp('tp-tabs'), hub ? hubPanelTabsHtml(hub, s, pane) : panelTabsHtml(task, gate, s, pane));
+  setPanelPart('head', tp('tp-head'), hub ? hubPanelHeadHtml(hub, s) : sess ? sessPanelHeadHtml(s) : panelHeadHtml(task));
+  setPanelPart('tabs', tp('tp-tabs'), hub ? hubPanelTabsHtml(hub, s, pane) : sess ? panelTabsHtml(null, s.waiting, s, pane) : panelTabsHtml(task, gate, s, pane));
 
   // Shown before the terminal is mounted: a hidden host has no size to fit to.
   const reveal = pane === 'term' && tp('tp-term').hidden;
@@ -1293,10 +1308,10 @@ function renderTaskPanel() {
     panelTerm.term.focus();
   }
 
-  setPanelPart('links', tp('tp-links'), hub ? '' : ghRowsHtml(task));
-  setPanelPart('gate', tp('tp-gate'), hub ? '' : panelGateHtml(task, gate));
-  setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : panelRestHtml(task, colId));
-  renderHandForm(!hub && colId === 'backlog' ? task : null);
+  setPanelPart('links', tp('tp-links'), hub || sess ? '' : ghRowsHtml(task));
+  setPanelPart('gate', tp('tp-gate'), hub || sess ? sessGateHtml(s) : panelGateHtml(task, gate));
+  setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : sess ? sessDetailHtml(s, pane) : panelRestHtml(task, colId));
+  renderHandForm(!hub && !sess && colId === 'backlog' ? task : null);
 }
 
 function panelHeadHtml(task) {
@@ -1558,6 +1573,28 @@ function hubDetailHtml(h, s) {
   return html;
 }
 
+/* ── A session with no task in the panel ────────────────────────────────────────────────────
+   `selectedTaskId` is `session:<id>`: the session is the terminal, and 詳細 is what the Sessions
+   list used to show beside it (sessDetailHtml). Once it is linked to a task the panel shows that. */
+function sessPanelHeadHtml(s) {
+  const st = sessionState(s);
+  const label = sessionLabel(s, true);
+  const b = boardOfSession(s);
+  const hubName = b.hub ? hubLabel(b.hub) : `${b.hubId}（一覧にありません）`;
+  const what = s.task ? 'タスクが見つからない' : 'タスクなし';
+  return `
+    <div class="tp-head-main">
+      <div class="tp-badges">
+        <span class="tp-key" title="${esc(s.id)}">${esc(label.tag || 'セッション')}</span>
+        ${hubName ? `<span class="origin-chip" title="${esc(hubName)}"><span class="material-symbols-outlined" aria-hidden="true">${b.hub?.parent ? 'account_tree' : 'folder'}</span><span>${esc(hubName)}</span></span>` : ''}
+        <span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(STATE_LABEL[st])}</span>
+        <span class="m3-pill pill-neutral">${esc(what)}</span>
+      </div>
+      <h2 class="tp-title" title="${esc(s.branch ? `ブランチ: ${s.branch}` : '')}">${esc(label.text)}</h2>
+    </div>
+    ${panelBtnsHtml('')}`;
+}
+
 /* ── ターミナル ── */
 /* The terminal lives in #tp-term-host from its first mount until the task changes or the panel
    closes. 詳細 only hides the pane around it, so the socket survives; the bar and the note
@@ -1570,14 +1607,13 @@ function disposePanelTerminal() { disposeTermSlot(panelTerm); }
    review view another, and both keep the socket across a redraw the same way. */
 function syncTermSlot(slot, subject, s, pane) {
   // Another task's (or hub's) socket is not carried over; a fresh one is asked for after
-  // 再開 or 再接続.
-  if (slot.taskId !== subject || (slot.term && s && s.id !== slot.sessionId)
+  // 再開 or 再接続. A session that was linked to a task keeps its own: only the subject's name
+  // changed.
+  const sameSession = !!slot.term && !!s && s.id === slot.sessionId;
+  if ((slot.taskId !== subject && !sameSession) || (slot.term && s && s.id !== slot.sessionId)
       || (slot.reconnect && boardTerminalReady(s))) disposeTermSlot(slot);
   slot.taskId = subject;
   if (pane !== 'term' || slot.term || !boardTerminalReady(s)) return;
-  // One session, one terminal: the セッション tab lets go of it.
-  const heldBySessions = sessView.selectedId === s.id;
-  if (heldBySessions) detachSessionTerminal();
   slot.sessionId = s.id;
   slot.ended = null;
   const handle = mountSessionTerminal(slot.host(), {
@@ -1591,8 +1627,6 @@ function syncTermSlot(slot, subject, s, pane) {
     },
   });
   slot.term = handle;
-  // The sessions tab says where its terminal went.
-  if (heldBySessions && view === 'sessions') renderSessionsView();
 }
 
 function disposeTermSlot(slot) {
@@ -1602,8 +1636,6 @@ function disposeTermSlot(slot) {
     term.dispose();
   }
   Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
-  // The sessions tab may mount the session again, now that the slot has let go of it.
-  if (term && view === 'sessions') renderSessionsView();
 }
 
 function termBarHtml(s, slot = panelTerm, actions = true) {
@@ -1644,7 +1676,8 @@ function termPlaceholderHtml(s) {
 tp('task-panel').addEventListener('click', e => {
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
-  if (!task && !hub) return;
+  const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
+  if (!task && !hub && !sess) return;
   const hit = sel => e.target.closest(sel);
   let b;
   if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
@@ -1655,6 +1688,7 @@ tp('task-panel').addEventListener('click', e => {
   }
   if ((b = hit('[data-tp-place]'))) return placePanel(b.dataset.tpPlace);
   if (hub) return hubPanelClick(e, hub);
+  if (sess) return sessPanelClick(e, sess);
   if (hit('[data-tp-jump]')) {
     // A popped-out panel is over the card: it goes back to its side first.
     panelPop = false;
@@ -1686,10 +1720,40 @@ tp('task-panel').addEventListener('click', e => {
     renderTaskPanel();
   }
 });
+/* A session with no task: its link and git buttons, its gate, and the terminal bar's (the
+   session's own `runSessionAction`, as for a task). */
+function sessPanelClick(e, s) {
+  const hit = sel => e.target.closest(sel);
+  let b;
+  if ((b = hit('[data-side-act]'))) {
+    if (b.disabled) return;
+    const act = b.dataset.sideAct;
+    if (act === 'git-refresh') {
+      ensureGit(s, true);
+      return renderTaskPanel();
+    }
+    if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
+    if (act === 'goto-board' && s.task) return go({ board: b.dataset.board, view: 'sessions', task: s.task, pane: 'term' });
+    return;
+  }
+  if (hit('[data-tp-sess-gate]') && s.waiting) return goToGate(s.waiting.id, s.waiting.slug);
+  if ((b = hit('[data-sess-act]'))) {
+    if (b.disabled) return;
+    // A session resumed from here is connected to once its window exists (syncPanelTerminal).
+    if (b.dataset.sessAct === 'resume') panelTerm.reconnect = true;
+    return runSessionAction(b.dataset.sessAct, s);
+  }
+  if (hit('[data-tp-reconnect]')) {
+    panelTerm.reconnect = true;
+    renderTaskPanel();
+  }
+}
 /* The hub's own buttons. The terminal bar's are the session's (`runSessionAction`), as for a task. */
 function hubPanelClick(e, h) {
   const hit = sel => e.target.closest(sel);
   let b;
+  const waiting = hubSessionOf(h).waiting;
+  if (hit('[data-tp-sess-gate]') && waiting) return goToGate(waiting.id, waiting.slug);
   if ((b = hit('[data-tp-hub]'))) {
     if (b.disabled) return;
     switch (b.dataset.tpHub) {

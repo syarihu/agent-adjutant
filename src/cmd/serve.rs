@@ -3281,7 +3281,7 @@ mod tests {
         for piece in [
             "id=\"sessions-view\"",
             "id=\"tab-sessions\"",
-            "&session=",
+            "SESS_REF = 'session:'",
             "function boardOfSession",
             "mountSessionTerminal(",
         ] {
@@ -3321,17 +3321,10 @@ mod tests {
     }
 
     #[test]
-    fn the_sessions_view_has_actions_and_a_gate_banner() {
+    fn the_sessions_view_keeps_its_session_actions_and_dialogs() {
         for piece in [
-            "id=\"sess-actions\"",
-            "id=\"sess-menu\"",
-            "id=\"sess-gate\"",
             "id=\"sess-notice\"",
-            "id=\"sess-over\"",
             "id=\"cleanup-dialog\"",
-            "function answerSessionGate",
-            "function renderSessionActions",
-            "function renderSessionGate",
             "hub-reset",
             "function hubReset",
             "id=\"hub-stop-icon\"",
@@ -3345,13 +3338,10 @@ mod tests {
     }
 
     #[test]
-    fn the_sessions_tab_patches_its_list_and_lets_the_terminal_go_first() {
+    fn the_sessions_tab_patches_its_list() {
         for piece in [
             "function patchSessionList",
             "data-gid=",
-            "function holdSideForSelection",
-            "function releaseSide",
-            "onReady: () => releaseSide(id)",
             "function sessionTitle",
             "function hubTitle",
             "sessionLabel(s, false, g.data), sessionTip(s, st, g.data)",
@@ -3379,23 +3369,37 @@ mod tests {
     }
 
     #[test]
-    fn the_sessions_view_has_a_sidebar_for_the_selected_session() {
+    fn a_session_with_no_task_opens_in_the_task_panel() {
         for piece in [
-            "id=\"sess-side\"",
-            "id=\"sess-side-toggle\"",
-            "id=\"sess-side-close\"",
-            "id=\"sess-side-body\"",
-            "function renderSessionSidebar",
+            "const SESS_REF = 'session:'",
+            "const sessOfRef",
+            "function panelRefOf",
+            "function sessDetailHtml",
+            "function sessPanelHeadHtml",
+            "タスクのないセッション",
+            "data-side-act=\"${act}\"",
+            "sideBtn('link-new'",
+            "const task = SESS_REF + s.id",
             "function boardApi",
-            "function sideBoard",
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
-        // The sidebar draws with the timeline of `task-view.js`, and `main.js` starts polling
-        // only after both are defined.
+        // The Sessions view has no terminal area or sidebar of its own any more.
+        for gone in [
+            "id=\"sess-term-host\"",
+            "id=\"sess-side\"",
+            "id=\"sess-context\"",
+            "function mountSelected",
+            "function renderSessionSidebar",
+            "sess-term-open",
+            "`&session=${",
+            "heldBySessions",
+        ] {
+            assert!(!UI_HTML.contains(gone), "{gone}");
+        }
+        // The panel's detail is defined before `main.js` starts polling.
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
-        assert!(at("function timelineHtml") < at("function renderSessionSidebar"));
-        assert!(at("function renderSessionSidebar") < at("setInterval(refresh, 2000)"));
+        assert!(at("function sessDetailHtml") < at("setInterval(refresh, 2000)"));
     }
 
     #[test]
@@ -3417,7 +3421,7 @@ mod tests {
         // The script that draws the tree calls into the one that knows the pending rows, which
         // is defined after it and before `main.js` starts polling.
         let at = |piece: &str| UI_HTML.find(piece).unwrap();
-        assert!(at("function renderSessionSidebar") < at("function sessionPendingRows"));
+        assert!(at("function sessDetailHtml") < at("function sessionPendingRows"));
         assert!(at("function sessionPendingRows") < at("setInterval(refresh, 2000)"));
     }
 
