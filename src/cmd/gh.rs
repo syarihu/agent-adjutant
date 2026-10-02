@@ -31,7 +31,8 @@ pub(super) fn run(dir: Option<&str>, args: &[&str], deadline: Instant) -> Result
     run_with_input(dir, args, None, deadline)
 }
 
-/// `run`, with `input` on `gh`'s stdin when given (and nothing, closed, when not).
+/// `run`, with `input` on `gh`'s stdin when given (and nothing, closed, when not). Also `Err`
+/// when a `gh` that exited cleanly did not take all of `input`.
 ///
 /// The bytes are written on a thread of their own: a body bigger than a pipe holds, to a `gh`
 /// that has stopped reading, must not keep the caller past its deadline.
@@ -66,14 +67,20 @@ pub(super) fn run_with_input(
         });
         rx
     }
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        // Dropped with the thread, so `gh` sees the end of the body. Not joined: on a kill the
-        // pipe breaks and the write ends by itself.
-        let input = input.to_vec();
-        std::thread::spawn(move || {
-            let _ = std::io::Write::write_all(&mut stdin, &input);
-        });
-    }
+    let written = match (input, child.stdin.take()) {
+        (Some(input), Some(mut stdin)) => {
+            // Dropped with the thread, so `gh` sees the end of the body. Not joined: on a kill
+            // the pipe breaks and the write ends by itself. How it went is read below, but only
+            // from a `gh` that said success: otherwise its own stderr is the better answer.
+            let input = input.to_vec();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(std::io::Write::write_all(&mut stdin, &input));
+            });
+            Some(rx)
+        }
+        _ => None,
+    };
     let out = drain(child.stdout.take());
     let err = drain(child.stderr.take());
     // The readers are never joined, on the kill paths or after a clean exit: a process `gh`
@@ -112,6 +119,18 @@ pub(super) fn run_with_input(
     };
     let out = collect(out)?;
     let err = collect(err)?;
+    if let Some(rx) = written.filter(|_| status.success()) {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(format!("cannot hand gh the input: {e}")),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Err("gh did not answer in time".to_string());
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("cannot hand gh the input: the writer stopped".to_string());
+            }
+        }
+    }
     Ok(GhRun {
         ok: status.success(),
         stdout: String::from_utf8_lossy(&out).into_owned(),
