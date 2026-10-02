@@ -124,10 +124,43 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
 /// Write a new record, and hand it over if it was created already queued.
 pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>), String> {
     let stamp = stamp();
-    let title = derive_title(input).ok_or("a task needs content or a title")?;
-    // Before the id is claimed: claiming writes a reservation, and a refusal after it would
-    // leave that behind.
+    // Before anything reaches `gh` or the id is claimed: claiming writes a reservation, and a
+    // refusal after it would leave that behind.
     check_typed_values(input)?;
+    // Likewise a record that will not deserialize: it is refused here, not after a wait on `gh`
+    // and a claimed id.
+    let mut probe = with_defaults(input, "probe", &stamp)?;
+    probe["title"] = json!("probe");
+    serde_json::from_value::<Task>(probe).map_err(|e| format!("bad task: {e}"))?;
+    // A request that names an issue and says nothing else is a request to hand that issue
+    // over: read it now so the card has its title from the start. What the person typed wins.
+    // Only for a task that starts an issue: any other kind with no content has nothing to go on.
+    let starts = string(input, "kind").is_none_or(|k| k == "start");
+    let url = string(input, "issueUrl").filter(|u| task::fetchable_issue(u));
+    let reads = starts && url.is_some() && string(input, "body").is_none();
+    let snapshot = match &url {
+        Some(url) if reads => match read_issue(&ctx.repo.main, url) {
+            Ok(read) => Some(read).filter(|s| !s.title.is_empty()),
+            Err(why) => {
+                eprintln!("could not read the issue: {why}");
+                None
+            }
+        },
+        _ => None,
+    };
+    let mut pending = false;
+    let title = if let Some(title) = derive_title(input) {
+        title
+    } else if let Some(snapshot) = &snapshot {
+        snapshot.title.clone()
+    } else if let Some(name) = url.as_deref().filter(|_| reads).and_then(task::issue_ref) {
+        // The issue could not be read: keep the record under a name that says which issue it
+        // is, and let the first successful read replace it.
+        pending = true;
+        name
+    } else {
+        return Err("a task needs content or a title".to_string());
+    };
     let id = task::claim_id(&dir(ctx), &stamp, &title)?;
     let mut defaults = with_defaults(input, &id, &stamp)?;
     defaults["title"] = json!(title);
@@ -140,6 +173,9 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
     task.worktree = task.worktree.as_deref().map(resolved_worktree);
     task.order = next_order(ctx);
+    // Set here and not through the input, which `with_defaults` strips of both.
+    task.issue_snapshot = snapshot;
+    task.title_pending = pending;
 
     // Written before the message is sent, and never the other way round: the record is what
     // the hub checks when it is about to act, so a message that arrived first would name a
@@ -633,7 +669,11 @@ pub(super) fn known_title(slugs: &[String], url: &str) -> Option<String> {
         if let Some(snapshot) = t.issue_snapshot.as_ref().filter(|s| s.url == url) {
             return Some(snapshot.title.clone()).filter(|t| !t.is_empty());
         }
-        if fallback.is_none() && t.issue_url.as_deref() == Some(url) && !t.title.is_empty() {
+        if fallback.is_none()
+            && !t.title_pending
+            && t.issue_url.as_deref() == Some(url)
+            && !t.title.is_empty()
+        {
             fallback = Some(t.title.clone());
         }
     }
@@ -656,6 +696,11 @@ pub fn fetch_issue(ctx: &Context, id: &str) -> Result<Task, String> {
     let mut now = task::load(&dir, id)?;
     if task::issue_to_fetch(&now) != Some(url.as_str()) {
         return Err("the task's issue changed while it was being read".to_string());
+    }
+    // A title made from the URL gives way to the issue's own on the first read.
+    if now.title_pending && !snapshot.title.is_empty() {
+        now.title = snapshot.title.clone();
+        now.title_pending = false;
     }
     now.issue_snapshot = Some(snapshot);
     now.updated_at = stamp();
@@ -860,6 +905,8 @@ fn with_defaults(input: &Value, id: &str, stamp: &str) -> Result<Value, String> 
     fields.remove("issueSnapshot");
     // Likewise the PR summary: only a refresh read it from GitHub.
     fields.remove("prStatus");
+    // And the title's flag: only `create` knows that the issue could not be read.
+    fields.remove("titlePending");
     fields.insert("createdAt".to_string(), json!(stamp));
     fields.insert("updatedAt".to_string(), json!(stamp));
     fields.entry("kind").or_insert(json!("start"));

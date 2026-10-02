@@ -241,9 +241,9 @@
       <label class="field" id="f-board" hidden><span>作り先</span>
         <select name="board"></select></label>
       <label class="field"><span>内容</span>
-        <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力"></textarea></label>
+        <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力(Issue URL を入れるなら空でもよい)"></textarea></label>
       <label class="field" id="f-issue"><span>Issue URL</span>
-        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233"></label>
+        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233" oninput="syncForm()" onchange="syncForm()"></label>
       <details class="more">
         <summary>詳細(省略可)</summary>
         <div class="grid">

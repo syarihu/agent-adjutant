@@ -3599,6 +3599,7 @@ mod tests {
             instruction: None,
             gate_answered_at: None,
             issue_snapshot: None,
+            title_pending: false,
             pr_status: None,
             created_at: "20260922T000000Z".to_string(),
             updated_at: "20260922T000000Z".to_string(),

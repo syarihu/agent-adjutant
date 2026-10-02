@@ -1911,6 +1911,8 @@ worker's `report`; only the two ends differ.**
   brief is written, and the handover note goes into the planning sub-agent's brief instead.
   **There is nobody to ask back either** — the requester is a browser, not a session, and
   `adjutant_tell` has no address. If something is missing, write it in Step 5's `--note` and leave it.
+- **If the request says the title is not read yet (`## Title`), run `adj task fetch-issue --id
+  {task_id}` before writing the brief** and use the title it prints: the issue could not be read when it was handed over.
 - **If `## Start` says "ask before starting", open a `dispatch` gate before starting the worker.** The
   one who asked is someone in front of the board, so ask on the board too:
 
