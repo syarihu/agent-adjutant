@@ -1595,9 +1595,11 @@ function termBarHtml(s, slot = panelTerm, actions = true) {
   const st = sessionState(s);
   const last = s.present ? lastOutputText(s) : null;
   const again = slot.term && slot.ended != null && boardTerminalReady(s);
+  const reset = actions ? hubResetButton(s) : null;
   return `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(STATE_LABEL[st])}</span>`
     + (last ? `<span class="tp-muted">最後の出力: ${esc(last)}</span>` : '')
     + `<span class="tp-bar-gap"></span>`
+    + (reset ? actionButtonHtml(reset) : '')
     + (again ? '<button type="button" class="btn-m3-tonal sess-act" data-tp-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>' : '')
     + (actions ? sessionButtons(s).bar.map(b => actionButtonHtml(b)).join('') : '');
 }

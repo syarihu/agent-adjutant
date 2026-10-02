@@ -3259,6 +3259,26 @@ mod tests {
     }
 
     #[test]
+    fn the_hub_terminal_bar_leads_with_the_reset() {
+        assert!(UI_HTML.contains("function hubResetButton"));
+        let helper = UI_HTML.split("function hubResetButton").nth(1).unwrap();
+        let helper = &helper[..helper.find("\nfunction ").unwrap()];
+        assert!(helper.contains("s.kind === 'hub'"));
+        assert!(helper.contains("hubStartWhy(h) || hubWaitWhy(h)"));
+        let buttons = UI_HTML.split("function sessionButtons").nth(1).unwrap();
+        let buttons = &buttons[..buttons.find("\n}\n").unwrap()];
+        assert!(buttons.contains("hubResetButton(s)"));
+        let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
+        let bar = &bar[..bar.find("\n}\n").unwrap()];
+        let gap = bar.find("tp-bar-gap").unwrap();
+        assert!(bar.contains("actions ? hubResetButton(s) : null"));
+        let reset = bar.find("actionButtonHtml(reset)").unwrap();
+        let again = bar.find("data-tp-reconnect").unwrap();
+        let acts = bar.find("sessionButtons(s).bar").unwrap();
+        assert!(gap < reset && reset < again && again < acts);
+    }
+
+    #[test]
     fn the_sessions_view_has_actions_and_a_gate_banner() {
         for piece in [
             "id=\"sess-actions\"",

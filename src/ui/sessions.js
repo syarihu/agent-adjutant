@@ -809,6 +809,15 @@ function restartWhy(s) {
 const canRestart = s => (s.kind === 'hub' || (s.kind === 'worker' && !!s.worktree)) && !!(s.present || restartingNow(s));
 const linkedWorktree = s => s.kind === 'worker' && !!s.worktree && s.worktree !== state.main;
 
+/* The hub reset as a button entry, shared by the actions menu and the bar above a hub's terminal so
+   both carry the same label, tooltip and disabled reason. */
+function hubResetButton(s) {
+  const h = s.kind === 'hub' && (state.hubs || []).find(x => x.id === s.id);
+  if (!h) return null;
+  const why = hubStartWhy(h) || hubWaitWhy(h);
+  return { act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: why || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）', disabled: !!why };
+}
+
 function sessionButtons(s) {
   const bar = [];
   const menu = [];
@@ -821,11 +830,8 @@ function sessionButtons(s) {
   if (s.kind === 'hub') {
     const hub = hubActionOf(s);
     if (hub) bar.push(hub);
-    const h = (state.hubs || []).find(x => x.id === s.id);
-    if (h) {
-      const why = hubStartWhy(h) || hubWaitWhy(h);
-      menu.push({ act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: why || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）', disabled: !!why });
-    }
+    const reset = hubResetButton(s);
+    if (reset) menu.push(reset);
   }
   if (boardTerminalReady(s)) {
     const open = state.sessionOpen;
