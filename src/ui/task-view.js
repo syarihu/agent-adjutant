@@ -76,7 +76,6 @@ function historyOf(task, base = baseOf(task), data = state) {
 function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
   if ((view === 'board' || view === 'sessions') && selectedTaskId === id) renderTaskPanel();
-  if (view === 'sessions') renderSessionSidebar();
   // A record's diff arrives with the history, and nothing else redraws a quiet board.
   // Only the record on screen, and held while a comment is being typed there.
   if (view === 'review' && recordByRef(focused)?.task === id) redrawReview();

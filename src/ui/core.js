@@ -11,7 +11,7 @@ const emptyState = () => ({ tasks: [], workers: [], pending: [], gates: [] });
 let state = emptyState();
 let view = 'board';
 let log = [];
-let selectedTaskId = null;   // what the panel is open on: a task id, or a hub as HUB_REF + its id
+let selectedTaskId = null;   // what the panel is open on: a task id, a hub as HUB_REF + its id, or a session with no task as SESS_REF + its id
 let panelPop = false;        // the panel is popped out: never saved, so a reload comes back to its side
 // The panel's terminal, kept while its task (or hub) is open: moving the panel or switching to 詳細 must
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
@@ -22,7 +22,8 @@ const reviewTerm = { host: () => document.getElementById('rv-term-host'), redraw
   base: () => baseOf(reviewCurrent()), taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
 
 /* A hub opens in the task panel as `hub:<id>`, where a task opens as its id: in `selectedTaskId`
-   and in the address's `task=`. */
+   and in the address's `task=`. A session with no task opens the same way, as `session:<id>`, until
+   it is linked to one: then the panel shows the task. */
 const HUB_REF = 'hub:';
 const isHubRef = id => typeof id === 'string' && id.startsWith(HUB_REF);
 const hubIdOfRef = id => id.slice(HUB_REF.length);
@@ -30,14 +31,17 @@ const hubOfRef = (id, data = state) => isHubRef(id) ? (data.hubs || []).find(h =
 /* The hub's own session; a hub with none is only as alive as its record says. */
 const hubSessionOf = h => (state.sessions || []).find(s => s.kind === 'hub' && s.id === h.id)
   || { kind: 'hub', id: h.id, present: !!h.state?.present };
+const SESS_REF = 'session:';
+const isSessRef = id => typeof id === 'string' && id.startsWith(SESS_REF);
+const sessIdOfRef = id => id.slice(SESS_REF.length);
+const sessOfRef = (id, data = state) => isSessRef(id) ? (data.sessions || []).find(s => s.id === sessIdOfRef(id)) || null : null;
 
 const PREF_KEY = 'adj-board-split';
 // sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
-// sessionsSide is the detail sidebar's choice, kept only where the window has room for it;
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
 // panelSide and panelWidth are where the task panel sits (left or right) and how wide it is;
 // reviewNext is whether answering in the review view moves on to the next item.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], sessionsSide:'open', boardsFolded:[], panelSide:'left', panelWidth:520, reviewNext:true },
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], boardsFolded:[], panelSide:'left', panelWidth:520, reviewNext:true },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 if (prefs.panelSide !== 'right') prefs.panelSide = 'left';
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
@@ -87,9 +91,9 @@ window.showBoard = function(board) {
   // another tab nothing was on screen to choose between, and the layout is left as it was.
   if (prefs.layout === 'split' && view === 'board' && nav.view !== 'sessions') { prefs.layout = 'tabs'; savePrefs(); }
   // The address says which tab it is (and a board shown on its own page keeps it).
-  go({ view: board === 'agent' ? 'agent' : 'human', session: null });
+  go({ view: board === 'agent' ? 'agent' : 'human' });
 };
-window.showSessions = () => go({ view: 'sessions', session: null });
+window.showSessions = () => go({ view: 'sessions' });
 document.querySelector('.view-tabs').addEventListener('click', e => {
   const tab = e.target.closest('.view-tab[data-tab]');
   if (!tab) return;
@@ -291,12 +295,12 @@ const api = (path, options) => boardApi(BASE, path, options);
    screen without a reload; what is only a preference (layout, folded repositories) does not.
      /b/<slug>/?view=agent&task=<id>&pane=term             one board
      /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
-     /b/<slug>/?view=sessions&session=<id>                 its sessions, one of them open
+     /b/<slug>/?view=sessions&task=session:<id>&pane=term  its sessions, one with no task in the panel
      /                                                     すべて, every board
      /review?item=<id>                                     要対応レビュー, every board
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. */
-const nav = { board: null, view: 'human', task: null, pane: 'detail', item: null, session: null };
+const nav = { board: null, view: 'human', task: null, pane: 'detail', item: null };
 let boards = [];                 // /api/boards: the sidebar's rows
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
@@ -311,7 +315,7 @@ const scopeAll = () => multiBoard && nav.board === 'all';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
-  const out = { board: null, view: 'human', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item'), session: null };
+  const out = { board: null, view: 'human', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item') };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   if (loc.pathname === '/review') {
     out.board = multiBoard ? 'all' : null;
@@ -321,8 +325,12 @@ function parseUrl(loc = location) {
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   const v = q.get('view');
   if (v === 'agent' || v === 'sessions') out.view = v;
-  // A session id is only its repository's, so 「すべて」 has none to name.
-  if (out.view === 'sessions' && out.board !== 'all') out.session = q.get('session');
+  // `session=<id>`, from before a session opened in the panel: it is `task=session:<id>` now.
+  const oldSession = q.get('session');
+  if (out.view === 'sessions' && out.board !== 'all' && oldSession && !out.task) {
+    out.task = SESS_REF + oldSession;
+    out.pane = 'term';
+  }
   // The task panel opens on a board of its own; 「すべて」 switches to the card's board first.
   if (out.board === 'all') out.task = null;
   return out;
@@ -332,7 +340,6 @@ function urlOf(n = nav) {
   const path = n.view === 'review' ? '/review' : n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
   if (n.view === 'agent' || n.view === 'sessions') url += `&view=${n.view}`;
-  if (n.session && n.view === 'sessions') url += `&session=${encodeURIComponent(n.session)}`;
   if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
   if (n.task && n.view !== 'review' && n.pane === 'term') url += '&pane=term';
   if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
@@ -345,7 +352,7 @@ function setNav(patch) {
   history.replaceState(null, '', urlOf());
 }
 
-const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item && a.session === b.session && a.pane === b.pane;
+const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item && a.pane === b.pane;
 
 /* Everything that pointed into the board being left. */
 function switchBoard() {
@@ -354,10 +361,7 @@ function switchBoard() {
   lastStateJson = '';
   lastMinute = null;
   if (!multiBoard) seenGateIds = null;
-  if (typeof detachSessionTerminal === 'function') detachSessionTerminal();
   disposeTermSlot(reviewTerm);
-  sessView.selectedId = null;
-  sessView.last = null;
   sessView.pending = null;
   // After the sessions tab let go: the panel's terminal going away redraws that tab.
   hideTaskPanelState();
@@ -380,8 +384,8 @@ function go(patch = {}, { replace = false } = {}) {
     if (!('item' in patch)) nav.item = null;
   }
   if (nav.view !== 'review') nav.item = null;
-  // A session is one of its board's: it does not follow a move to another board or view.
-  if (nav.view !== 'sessions' || (nav.board !== prev.board && !('session' in patch))) nav.session = null;
+  // A session with no task is shown over the セッション tab's list: it does not follow a move off it.
+  if (nav.view !== 'sessions' && !('task' in patch) && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
   if (nav.view === 'review' && multiBoard) nav.board = 'all';
   const boardChanged = nav.board !== prev.board;
   if (boardChanged) switchBoard();
@@ -393,8 +397,8 @@ function go(patch = {}, { replace = false } = {}) {
 }
 
 /* Only the task panel's card or tab changed: the screen under it is as it was, and drawing it
-   again would reconnect the terminal of the セッション tab. */
-const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.view && nav.session === prev.session
+   again would only rebuild the list under it. */
+const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.view
   && nav.item === prev.item && (nav.view === 'sessions' ? view === 'sessions' : nav.view !== 'review' && view === 'board');
 
 /* A move to or from the セッション tab changes what the next poll asks for (the sessions of
@@ -432,7 +436,7 @@ function drawScreen(boardChanged) {
         sessView.pending = true;
         if (view !== 'board') setView('board');
       } else if (!state.boardTerminal?.available) giveUpSessions();
-      else openSessionsView(nav.session);
+      else openSessionsView();
     } else {
       prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
       if (view !== 'board') setView('board'); else applyLayout();
@@ -444,8 +448,10 @@ function drawScreen(boardChanged) {
 /* `final` is a state the board really answered with: a task it does not list is not coming. */
 function applyPendingTask(final = false) {
   if (!pendingTask || (view !== 'board' && view !== 'sessions')) return;
-  const id = pendingTask;
-  const there = isHubRef(id) ? !!hubOfRef(id) : (state.tasks || []).some(t => t.id === id);
+  // A session that has been linked to a task (or is a hub) is opened as that: the address follows.
+  const id = panelRefOf(pendingTask);
+  if (id !== pendingTask) { pendingTask = id; setNav({ task: id }); }
+  const there = isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : (state.tasks || []).some(t => t.id === id);
   if (!there) {
     if (final) pendingTask = null;
     return;

@@ -1,5 +1,5 @@
 /* Starting hubs and sessions from the セッション view, and giving a session with no task a task:
-   the + menu, the three dialogs it and the sidebar open, and the rows the tree shows for a
+   the + menu, the dialogs it and the panel's 詳細 open, and the rows the tree shows for a
    session that has been asked for and not started yet. */
 
 const pad2 = n => String(n).padStart(2, '0');
@@ -144,7 +144,6 @@ function renderAddMenu() {
 }
 
 sessEl('sess-add').addEventListener('click', () => {
-  closeSessMenu();
   const menu = sessEl('sess-add-menu');
   if (menu.hidden) renderAddMenu();
   menu.hidden = !menu.hidden;
@@ -165,11 +164,11 @@ sessEl('sess-add-menu').addEventListener('click', e => {
   if (b.dataset.sessAct === 'add-session') return openStartDialog();
 });
 
-/* A hub that was just started has no session to show yet: select its row, and connect to it
-   once the window exists. */
+/* A hub that was just started has no session to show yet: open it in the panel, and connect to
+   it once the window exists. */
 function showStartedHub(id) {
-  selectSession(id);
-  sessView.reconnectWhenReady = id;
+  openTaskPanel(HUB_REF + id, 'term');
+  panelTerm.reconnect = true;
 }
 
 function startRepoHub() {
@@ -244,8 +243,9 @@ const slotsFull = () => { const w = state.workerSlots; return !!w && w.max != nu
 function openStartDialog() {
   dialogOpening.start++;
   const hubs = startableHubs();
-  const cur = currentSession();
-  const want = cur ? hubOfSession(cur) || repoHubId() : repoHubId();
+  // The hub or session in the panel is the one a new session most likely goes beside.
+  const cur = sessOfRef(selectedTaskId);
+  const want = cur ? hubOfSession(cur) || repoHubId() : hubOfRef(selectedTaskId)?.id || repoHubId();
   const sel = sessEl('start-hub');
   sel.innerHTML = hubs.map(h => `<option value="${esc(h.id)}">${esc(hubLabel(h))}</option>`).join('');
   sel.value = hubs.some(h => h.id === want) ? want : hubs[0]?.id || '';
@@ -320,7 +320,7 @@ async function submitStart(e) {
   const hub = sessEl('start-hub').value;
   const worktreeName = sessEl('start-name').value.trim();
   const before = (state.sessions || []).map(s => s.id);
-  const sel = sessView.selectedId;
+  const sel = selectedTaskId;
   const line = `adj send --kind session --from dashboard --subject 'start a session: ${worktreeName}'`;
   try {
     const data = await api('/api/sessions', {
@@ -388,7 +388,7 @@ function settleStarts() {
       // Its request may still be in the inbox for a moment: hidden, so it is not drawn twice.
       sessView.dismissed.push(`${p.hubId}/${p.message || p.name}`);
       // Only when the person has not moved on to another session since asking.
-      if (p.sel === sessView.selectedId) setTimeout(() => { if (view === 'sessions' && sessView.selectedId === p.sel) selectSession(found.id); }, 0);
+      if (p.sel === selectedTaskId) setTimeout(() => { if (view === 'sessions' && selectedTaskId === p.sel) openTaskPanel(SESS_REF + found.id, 'term'); }, 0);
       continue;
     }
     if (startInInbox(p)) p.goneAt = null;
@@ -463,7 +463,7 @@ sessEl('sess-groups').addEventListener('click', e => {
   const key = b.dataset.pend;
   const row = sessionPendingRows().find(r => r.key === key);
   if (!row) return;
-  if (b.dataset.pendAct === 'select-hub') return selectSession(row.hubId);
+  if (b.dataset.pendAct === 'select-hub') return openTaskPanel(HUB_REF + row.hubId, 'term');
   if (b.dataset.pendAct === 'dismiss') {
     sessView.dismissed.push(key);
     sessView.starts = sessView.starts.filter(p => `${p.hubId}/${p.message || p.name}` !== key);
@@ -481,7 +481,7 @@ function retryHubStart(row) {
   const tracked = () => {
     let p = sessView.starts.find(x => x.hubId === row.hubId && x.name === row.name);
     if (!p) {
-      p = { hubId: row.hubId, name: row.name, message: row.key.slice(row.hubId.length + 1), at: null, before: (state.sessions || []).map(s => s.id), sel: sessView.selectedId, hubStartError: null, goneAt: null, hubStartedAt: null };
+      p = { hubId: row.hubId, name: row.name, message: row.key.slice(row.hubId.length + 1), at: null, before: (state.sessions || []).map(s => s.id), sel: selectedTaskId, hubStartError: null, goneAt: null, hubStartedAt: null };
       sessView.starts.push(p);
     }
     return p;

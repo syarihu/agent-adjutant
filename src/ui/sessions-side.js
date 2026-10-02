@@ -1,82 +1,15 @@
-/* The right sidebar of the セッション view: what the selected session is working on, read from
-   the task behind it, the worktree under it and the hub above it. Shown or hidden as a whole.
-   It draws with what the board already has (the timeline of the task view, the hand-over of
-   the board), and reads the board of another hub when the session belongs to one. */
-
-/* Wide enough, the sidebar is a column of its own and the choice is kept; narrower, it floats
-   over the terminal, starts hidden and is never saved. */
-const narrowSide = matchMedia('(max-width: 1399px)');
-const sideVisible = () => narrowSide.matches ? sessView.sideNarrowOpen : prefs.sessionsSide !== 'closed';
-
-function toggleSide() {
-  if (narrowSide.matches) {
-    sessView.sideNarrowOpen = !sessView.sideNarrowOpen;
-  } else {
-    prefs.sessionsSide = sideVisible() ? 'closed' : 'open';
-    savePrefs();
-  }
-  renderSessionSidebar();
-}
-sessEl('sess-side-toggle').addEventListener('click', toggleSide);
-sessEl('sess-side-close').addEventListener('click', toggleSide);
-// A window resized across the line changes what "shown" means; a floating sidebar that
-// carried over would cover the terminal without anyone asking for it.
-narrowSide.addEventListener('change', () => {
-  sessView.sideNarrowOpen = false;
-  renderSessionSidebar();
-});
+/* What the task panel's 詳細 shows of a session with no task: what it is and what it can become,
+   and the branch, worktree and git state under it. A worker whose task is on the board is shown
+   as that task; a task of another hub's board is read from there only for its title. */
 
 /* ── The board a session's task is on ── */
 
-/* What changes a board's answer: it is read again when this does, and otherwise only by the
-   timer below. Of the hub's own signals and those of all its workers, not of the selected
-   session and its task alone, so that moving between the workers of one hub reads nothing. */
-const sideSignal = s => {
-  const hubId = hubOfSession(s);
-  const hub = (state.hubs || []).find(h => h.id === hubId);
-  const sessions = state.sessions || [];
-  return JSON.stringify([hub?.inboxCount, hub?.state?.present,
-    sessions.find(w => w.kind === 'hub' && w.id === hubId)?.waiting?.id,
-    sessions.filter(w => w.kind === 'worker' && w.hub === hubId)
-      .map(w => [w.id, w.task, w.phase, w.phaseAt, w.waiting?.id, w.present])]);
-};
-
-/* ── The terminal goes first ── */
-
-/* The git state and the other board are read once the terminal of a newly selected session has
-   shown its first output, or after this long: both run concurrently with the terminal's
-   connection and slow it. Without a terminal to wait for, nothing is held. */
-const SIDE_HOLD_MS = 1000;
-
-const sideHeld = id => sessView.sideHold?.id === id && !sessView.sideHold.released;
-
-function holdSideForSelection(cur) {
-  const id = sessView.selectedId;
-  let hold = sessView.sideHold;
-  if (!id) { clearTimeout(hold?.timer); sessView.sideHold = null; return; }
-  if (hold?.id !== id) {
-    clearTimeout(hold?.timer);
-    hold = sessView.sideHold = { id, released: false, timer: setTimeout(() => releaseSide(id), SIDE_HOLD_MS) };
-  }
-  if (!hold.released && cur && !sessView.mounted && !boardTerminalReady(cur)) hold.released = true;
-}
-
-function releaseSide(id) {
-  const hold = sessView.sideHold;
-  if (!hold || hold.id !== id || hold.released) return;
-  hold.released = true;
-  clearTimeout(hold.timer);
-  if (view !== 'sessions') return;
-  renderSessionContext();
-  renderSessionSidebar();
-}
-
 /* Another board's state, kept by slug. A second request made while one is out is dropped
    unless `force`, and an answer is used only if no newer request has been made since. */
-function loadSideBoard(slug, base, key, force = false) {
+function loadSideBoard(slug, base, force = false) {
   const prev = sessView.boards[slug];
   if (prev?.loading && !force) return;
-  const entry = sessView.boards[slug] = { data: prev?.data || null, at: prev?.at || null, key: key ?? prev?.key ?? null, loading: true, error: null };
+  const entry = sessView.boards[slug] = { data: prev?.data || null, at: prev?.at || null, loading: true, error: null };
   boardApi(base, '/api/state').then(data => {
     if (sessView.boards[slug] !== entry) return;
     Object.assign(entry, { data, at: Date.now(), loading: false });
@@ -84,48 +17,24 @@ function loadSideBoard(slug, base, key, force = false) {
     if (sessView.boards[slug] !== entry) return;
     Object.assign(entry, { loading: false, error: e.message === '404' || e.message === 'no such board' ? 'この hub のボードが見つかりません' : e.message });
   }).then(() => {
-    if (view !== 'sessions') return;
-    renderSessionContext();
-    renderSessionSidebar();
+    renderSessionsView();
+    renderTaskPanel();
   });
 }
 
 /* After an action on another board: its state read again at once. */
 function refetchSideBoard(base) {
   if (base === BASE) return;
-  const slug = base.replace(/^\/b\//, '');
-  const s = currentSession();
-  loadSideBoard(slug, base, s ? sideSignal(s) : null, true);
+  loadSideBoard(base.replace(/^\/b\//, ''), base, true);
 }
-
-/* The board of the selected session, as the sidebar reads it: this page's own state, or the
-   last answer of the other board (null while it is still out, or when it failed). */
-function sideBoard(s) {
-  const b = boardOfSession(s);
-  if (b.own || !b.slug) return { data: state, base: BASE, own: true, hub: b.hub, hubId: b.hubId, slug: b.slug };
-  const entry = sessView.boards[b.slug];
-  return { data: entry?.data || null, base: b.base, own: false, hub: b.hub, hubId: b.hubId, slug: b.slug, error: entry?.error || null };
-}
-
-/* Only a session that has a task, or a parent-task hub, shows anything from its board. */
-const sideNeedsBoard = (s, b) => s.kind === 'hub' ? !!b.hub?.parent : !!s.task;
-
-// Another board changes without this page's state changing, so the selected session's board is
-// read on a timer too, while the sidebar is on screen.
-setInterval(() => {
-  if (view !== 'sessions' || !sideVisible()) return;
-  const s = currentSession();
-  if (!s) return;
-  const b = boardOfSession(s);
-  if (!b.own && b.slug && sideNeedsBoard(s, b) && !sideHeld(s.id)) loadSideBoard(b.slug, b.base, sideSignal(s));
-}, 10000);
 
 /* ── The worktree's git state ── */
 
 const gitSig = s => JSON.stringify([s.id, s.phase, s.phaseAt, s.present, s.branch]);
 
-/* Read on selection, and again when the session moves on (a phase, a stop, another branch),
-   never on a timer: the check runs git in the worktree. Said again by the 更新 button. */
+/* Read when a session's 詳細 is shown, and again when the session moves on (a phase, a stop,
+   another branch), never on a timer: the check runs git in the worktree. Said again by the 更新
+   button. */
 function ensureGit(s, force = false) {
   if (!s.worktree || s.kind === 'hub') return;
   const sig = gitSig(s);
@@ -140,20 +49,13 @@ function ensureGit(s, force = false) {
     if (sessView.git !== mine) return;
     Object.assign(mine, { error: e.message, loading: false });
   }).then(() => {
-    if (sessView.git === mine) renderSessionSidebar();
+    if (sessView.git === mine && selectedTaskId === SESS_REF + s.id) renderTaskPanel();
   });
-}
-
-/* `M/D HH:MM` for epoch seconds, in the reader's own time. */
-function clock(secs) {
-  const d = new Date(secs * 1000);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function gitFactsHtml(s) {
   const g = sessView.git;
-  // Not asked yet because the terminal is going first: said so rather than left blank.
-  if (!g || g.id !== s.id) return sideHeld(s.id) ? '<ul class="sess-side-facts"><li>確認しています…</li></ul>' : '';
+  if (!g || g.id !== s.id) return '';
   let body;
   if (g.error && !g.data) {
     body = `<li class="warn">${esc(`git の状態を確認できませんでした: ${g.error}`)}</li>`;
@@ -182,336 +84,63 @@ function gitFactsHtml(s) {
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
 }
 
-/* ── Pieces ── */
+/* ── 詳細 of a session with no task ── */
 
-const sideSection = (title, inner) => `<section class="sess-side-sec"><h3>${esc(title)}</h3>${inner}</section>`;
-const sideRows = rows => `<dl class="kv">${rows.filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>`;
-const sideNote = text => `<div class="source">${esc(text)}</div>`;
-const sideMono = t => `<span class="mono2">${esc(t)}</span>`;
-const sideLink = (url, text) => httpUrl(url)
-  ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text);
+const sideNote = text => `<div class="tp-muted">${esc(text)}</div>`;
 const sideBtn = (act, label, attrs = '') =>
   `<button type="button" class="btn-m3-text sess-side-btn" data-side-act="${act}"${attrs}>${esc(label)}</button>`;
 
-const SIDE_STATUS_LABEL = { backlog: 'Backlog', queued: '待ち' };
-
-/* Where a card sits: the status column while it has not started, else who holds the ball. */
-function sideColumns(t, data) {
-  const human = humanColOf(t, data);
-  const agent = SIDE_STATUS_LABEL[t.status] || agentLabel(agentColOf(t, data));
-  return { agent, human: human ? humanLabel(human) : null };
-}
-
-/* What the PR is waiting for, from the record alone (no call to GitHub). */
-function sidePrState(task, s) {
-  if (task.status === 'done') return '完了';
-  if (task.status === 'cancelled') return '取り消し';
-  if (s.phase === 'pr') return 'レビュー待ち';
-  if (s.phase === 'pr-bots') return 'bot待ち';
-  if (s.phase === 'review') return 'レビュー対応中';
-  return 'PR あり';
-}
-
-/* The session's phases with the time spent in each, the current one last. */
-function sidePhasesHtml(s) {
-  const list = s.phases?.length ? s.phases : s.phase && s.phaseAt != null ? [[s.phase, s.phaseAt]] : [];
-  if (!list.length) return '';
-  const rows = list.map(([phase, at], i) => {
-    const last = i === list.length - 1;
-    const end = last ? state.now : list[i + 1][1];
-    // A worker that is gone has no "until now" to count to.
-    const mins = end != null && (!last || s.present) ? Math.max(0, Math.floor((end - at) / 60)) : null;
-    return `<li><span class="at">${esc(clock(at))}</span><div class="what"><div>${esc(PHASE_LABEL[phase] || phase)}` +
-      `${mins == null ? '' : `<span class="who"> ${esc(minutesLabel(mins))}${last ? '（いま）' : ''}</span>`}</div></div></li>`;
-  });
-  return `<ol class="timeline">${rows.join('')}</ol>`;
-}
-
-/* A task of a board's own starts on a button when nothing is working on it. `hub` is the hub
-   of that board; its absence leaves the queue alone. */
-function sideChildButton(t, b) {
-  if (t.status === 'done' || t.status === 'cancelled' || workerOf(t, b.data)) return '';
-  const h = b.hub;
-  // The same refusals as the hub's own row: a hub that runs needs no start.
-  const stopped = !!h && !h.state?.present;
-  const why = !stopped ? ''
-    : h.parent && !h.key ? 'キーが分からないため起動できません。adj hub --hub <キー> で起動してください'
-      : !state.hubStart?.available ? 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます'
-        : hubStartingNow(h) ? 'hub を起動しています' : '';
-  const off = why ? ` disabled title="${esc(why)}"` : '';
-  if (t.status === 'backlog') return sideBtn('child-hand', '着手を依頼…', ` data-id="${esc(t.id)}"${off}`);
-  if (t.status === 'queued') {
-    if (stopped) return sideBtn('child-start-hub', 'hub を起動', ` data-id="${esc(t.id)}"${off}`);
-    return sideBtn('child-nudge', '待ちの先頭を着手', ` data-id="${esc(t.id)}" title="hub に、worker の枠が空いていれば待ちの先頭のタスクを着手するよう頼みます（この子とは限りません）"`);
-  }
-  return '';
-}
-
-function sideChildrenHtml(tasks, b) {
-  if (!tasks.length) return sideNote('子タスクはありません');
-  return `<ul class="sess-side-list">${tasks.map(t => {
-    const col = sideColumns(t, b.data);
-    return `<li><div class="sess-side-child"><button type="button" class="linkish" data-side-act="child-card" data-id="${esc(t.id)}">${esc(t.title || t.id)}</button>` +
-      `<span class="who">${esc(col.agent)}${col.human ? ` ・ ${esc(col.human)}` : ''}</span></div>${sideChildButton(t, b)}</li>`;
-  }).join('')}</ul>`;
-}
-
-function sideTaskHtml(s, task, b) {
-  const { data, base } = b;
-  const cols = sideColumns(task, data);
-  const issueKey = task.issue || (task.issueUrl ? `#${issueNumberOf(task.issueUrl)}` : '');
-  const parent = task.parent ? sideLink(task.parent, task.parent)
-    : b.hub?.parent ? esc(`親タスク ${hubShortName(b.hub)}`) : '';
-  let h = sideSection('タスク', sideRows([
-    ['タイトル', esc(task.title || task.id)],
-    issueKey ? ['Issue', sideLink(task.issueUrl, String(issueKey))] : ['タスク ID', sideMono(task.id)],
-    parent ? ['親タスク', parent] : null,
-    ['エージェント側', esc(cols.agent)],
-    ['人側', esc(cols.human || '—')],
-  ]) + `<div class="sess-side-actions">${sideBtn('card', 'カードを開く')}</div>`);
-
-  const all = gatesOf(task, data, base);
-  h += sideSection('確認と回答', timelineHtml(task, all, 5, data, base) +
-    `<div class="sess-side-actions">${sideBtn('history', '経過をすべて見る →')}</div>`);
-
-  const phases = sidePhasesHtml(s);
-  h += sideSection('フェーズ', (phases || sideNote('まだフェーズの記録はありません')) + sideRows([
-    ['完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')],
-    ['止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)],
-  ]));
-
-  if (task.pr) {
-    const n = prNumberOf(task.pr);
-    h += sideSection('PR', sideRows([['PR', sideLink(task.pr, n ? `#${n}` : 'PR を開く')], ['状態', esc(sidePrState(task, s))]]));
-  }
-
-  const git = sessView.git?.id === s.id ? sessView.git.data : null;
-  h += sideSection('ブランチと worktree', sideRows([
-    ['ブランチ', (s.branch || task.branch) ? sideMono(s.branch || task.branch) : '—'],
-    ['ベース', sideMono(git?.merged?.base || task.base || '既定のベース')],
-    (s.worktree || task.worktree) ? ['worktree', sideMono(s.worktree || task.worktree)] : null,
-  ]) + gitFactsHtml(s));
-
-  h += sideSection('子タスク', sideChildrenHtml(sideChildTasks(task, b), b));
-
-  if (task.note) h += sideSection('ノート', `<div class="sess-side-pre">${esc(task.note)}</div>`);
-
-  const snap = task.issueSnapshot;
-  const issueRef = task.issueUrl || task.issue;
-  if (snap) {
-    h += sideSection('Issue の本文', `<div><b>${esc(snap.title)}</b></div>` +
-      (snap.body ? `<div class="sess-side-issue">${esc(snap.body)}</div>` : sideNote('本文なし')) +
-      `<div class="sess-side-actions">${httpUrl(snap.url) ? `<a href="${esc(snap.url)}" target="_blank" rel="noopener noreferrer">Issue で続きを読む</a>` : ''}` +
-      `${sideBtn('fetch-issue', '再取得')}</div>` +
-      sideNote(`${when(snap.fetchedAt)}（${ago(snap.fetchedAt)}）に取得${snap.truncated ? '。先頭のみ保存' : ''}`));
-  } else if (isGithubIssue(issueRef)) {
-    h += sideSection('Issue の本文', sideNote('まだ取得していません') + `<div class="sess-side-actions">${sideBtn('fetch-issue', '本文を取得')}</div>`);
-  }
-  return h;
-}
-
-/* The tasks that share a parent with this one: every other task on a parent-task hub's board,
-   and on any board those naming the same parent. */
-function sideChildTasks(task, b) {
-  const tasks = b.data?.tasks || [];
-  return tasks.filter(t => t.id !== task.id && (b.hub?.parent || (task.parent && t.parent === task.parent)));
-}
-
-function sideTmuxText(s) {
-  const t = s.terminal;
-  return t?.backend === 'tmux' ? `${t.session || ''}:${t.window || ''}` : '';
-}
-
-function sideHubHtml(s, h, b) {
-  let html = '';
-  if (h) {
-    const inbox = h.inbox || [];
-    const rows = inbox.map(m => `<li><div>${esc(m.subject || m.name)}</div>` +
-      `<div class="who">${esc([m.kind, m.from, m.at ? when(m.at) : ''].filter(Boolean).join(' ・ '))}</div></li>`).join('');
-    const more = h.inboxCount > inbox.length ? sideNote(`ほか ${h.inboxCount - inbox.length} 件`) : '';
-    html += sideSection('受信箱', rows ? `<ul class="sess-side-list">${rows}</ul>${more}` : sideNote('受信箱は空です'));
-    const workers = (state.sessions || []).filter(w => w.kind === 'worker' && w.hub === h.id);
-    html += sideSection('起動した worker', workers.length
-      ? `<ul class="sess-side-list">${workers.map(w => `<li><button type="button" class="linkish" data-sid="${esc(w.id)}">${esc(sessionKey(w))}</button>` +
-        `<span class="who">${esc(STATE_LABEL[sessionState(w)])}</span></li>`).join('')}</ul>`
-      : sideNote('この hub が起動した worker はありません'));
-    if (h.parent) {
-      html += sideSection('子タスク', b.data ? sideChildrenHtml(b.data.tasks || [], b)
-        : sideNote(b.error || '読み込んでいます…'));
-    }
-  } else {
-    html += sideSection('hub', sideNote('この hub の記録は一覧にありません'));
-  }
-  const name = h?.name || '';
-  const runner = (state.hubRunner || '').replaceAll('{name}', name);
-  html += sideSection('実行コマンド', sideRows([
-    ['起動', sideMono(h?.parent && h.key ? `adj hub --hub ${h.key}` : 'adj hub')],
-    ['ランナー', runner ? sideMono(runner) : '—'],
-    ['エージェント', s.agent ? esc(s.agent) : null],
-    sideTmuxText(s) ? ['tmux', sideMono(sideTmuxText(s))] : null,
-  ]));
-  return html;
-}
-
-function sideBranchHtml(s) {
-  return sideSection('ブランチと worktree', sideRows([
-    ['ブランチ', s.branch ? sideMono(s.branch) : '—'],
-    s.worktree ? ['worktree', sideMono(s.worktree)] : null,
-  ]) + gitFactsHtml(s));
-}
-
 /* A session with no task, a worktree with no session, or a task this board does not have:
    what it is, and what it can become. */
-function sideBareHtml(s, st, b, missing) {
+function sessDetailHtml(s, pane) {
+  // Only while 詳細 is on screen: the check runs git in the worktree.
+  if (pane === 'detail') ensureGit(s);
+  const st = sessionState(s);
+  const b = boardOfSession(s);
   let what;
-  if (missing) what = 'タスク ID はこのボードに見つかりません';
+  if (s.task) what = !b.own && b.slug ? 'このタスクは別の hub のボードにあります' : 'タスク ID はこのボードに見つかりません';
   else if (st === 'none') what = 'セッションのない worktree';
   else what = 'タスクのないセッション';
-  const linkable = !missing && st !== 'none';
+  const linkable = !s.task && st !== 'none';
+  // A task of another hub's board is shown there, as openSessionRef does.
+  const elsewhere = s.task && !b.own && b.slug && boards.some(x => x.slug === b.slug) ? b.slug : null;
   // Linking writes the task and tells the worker, which a session that is not running cannot read.
   const off = s.present ? '' : ' disabled title="セッションが動いていないため、タスクにも既存のタスクへの紐づけもできません"';
-  let html = sideSection('このセッション', sideNote(what) + (!linkable ? '' :
+  const jump = !elsewhere ? '' :
+    `<div class="sess-side-actions">${sideBtn('goto-board', 'そのボードで開く', ` data-board="${esc(elsewhere)}"`)}</div>`;
+  const link = !linkable ? '' :
     sideNote(b.hub?.parent
       ? `タスクにすると親タスク ${hubShortName(b.hub)} の子として、その hub のボードに作られます`
       : 'タスクにするとリポジトリのボードに作られます') +
-    `<div class="sess-side-actions">${sideBtn('link-new', 'タスクにする…', off)}${sideBtn('link-existing', '既存のタスクに紐づける…', off)}</div>`));
-  return html + sideBranchHtml(s);
+    `<div class="sess-side-actions">${sideBtn('link-new', 'タスクにする…', off)}${sideBtn('link-existing', '既存のタスクに紐づける…', off)}</div>`;
+  // What the Sessions view's menu held: the worktree's own actions (the bar's are over the terminal).
+  const busy = sessBusy.size > 0;
+  const acts = sessionButtons(s).menu.map(m => actionButtonHtml(m, { busy })).join('');
+  return `<div class="sess-detail">
+    <div class="m3-filled-card">${secTitle('このセッション')}${sideNote(what)}${jump}${link}</div>
+    <div class="m3-filled-card">${secTitle('ブランチと worktree')}
+      <div class="tp-kvs">${monoKv('ブランチ', s.branch || '—')}${s.worktree ? monoKv('worktree', s.worktree.split('/').pop(), s.worktree) : ''}</div>
+      ${gitFactsHtml(s)}
+      ${acts ? `<div class="tp-gate-actions">${acts}</div>` : ''}
+    </div>
+  </div>`;
 }
 
-/* ── Drawing ── */
-
-/* Redrawn only when the markup differs, so a load that changed nothing (the timer's) leaves
-   a text selection or a click in progress alone; the signature is the markup itself, so every
-   input of it counts. */
-function renderSessionSidebar() {
-  if (view !== 'sessions') return;
-  const side = sessEl('sess-side');
-  const body = sessEl('sess-side-body');
-  const visible = sideVisible();
-  const toggle = sessEl('sess-side-toggle');
-  toggle.setAttribute('aria-expanded', String(visible));
-  const label = visible ? '詳細を隠す' : '詳細を表示';
-  toggle.title = label;
-  toggle.setAttribute('aria-label', label);
-  toggle.querySelector('.material-symbols-outlined').textContent = visible ? 'right_panel_close' : 'right_panel_open';
-  side.hidden = !visible;
-  if (!visible) { sessView.sideSig = ''; return; }
-
-  const id = sessView.selectedId;
-  const s = currentSession() || (id && sessView.last?.id === id ? sessView.last : null);
-  let html;
-  if (!id) {
-    html = sideNote('左の一覧からセッションを選んでください');
-  } else if (!s) {
-    html = sideNote('セッションが見つかりません');
-  } else {
-    // A session that dropped off the list has no worktree record to ask about any more.
-    if (currentSession() && !sideHeld(s.id)) ensureGit(s);
-    const b = sideBoard(s);
-    if (!b.own && b.slug && sideNeedsBoard(s, b) && !sideHeld(s.id)) {
-      // Read again when the session's own signals moved since it was last read.
-      const entry = sessView.boards[b.slug];
-      if (!entry || (!entry.loading && entry.key !== sideSignal(s))) loadSideBoard(b.slug, b.base, sideSignal(s));
-    }
-    const st = sessionState(s);
-    const task = s.task && b.data ? (b.data.tasks || []).find(t => t.id === s.task) : null;
-    if (s.kind === 'hub') {
-      html = sideHubHtml(s, b.hub, b);
-    } else if (s.task && !b.data) {
-      html = sideNote(b.error || '読み込んでいます…') + sideBranchHtml(s);
-    } else if (task) {
-      html = sideTaskHtml(s, task, b);
-    } else {
-      html = sideBareHtml(s, st, b, !!s.task);
-    }
-    // The last answer is kept on screen when a reload fails; it says so, rather than passing
-    // for current.
-    if (b.data && b.error && !b.own) html = `<div class="sess-side-err" role="alert">${esc(`更新できませんでした: ${b.error}`)}</div>` + html;
-  }
-  const sig = JSON.stringify([id, html]);
-  if (sig === sessView.sideSig) return;
-  sessView.sideSig = sig;
-  const top = body.scrollTop;
-  body.innerHTML = html;
-  body.scrollTop = top;
+/* The gate the session waits on is judged on its own screen, as a task's is. */
+function sessGateHtml(s) {
+  const w = s.waiting;
+  if (!w) return '';
+  const since = stampSecs(w.openedAt);
+  const mins = since != null && state.now != null ? Math.max(0, Math.floor((state.now - since) / 60)) : null;
+  return `<div class="m3-card-attention-box">
+      <div class="tp-gate-head">
+        <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
+        <span>【${esc(gateKindLabel(w.kind))}】確認待ち</span>
+        ${mins == null ? '' : `<span class="tp-gate-wait">${esc(minutesLabel(mins))}待ち</span>`}
+      </div>
+      ${w.title ? `<div style="font-size:12.5px;">${esc(w.title)}</div>` : ''}
+      <div class="tp-gate-actions">
+        <button type="button" class="btn-m3-primary" data-tp-sess-gate><span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span><span>判定画面を開く</span></button>
+      </div>
+    </div>`;
 }
-
-/* ── Acting ── */
-
-/* The session's task and its board, as the sidebar drew them. */
-function sideTaskOf(s) {
-  const b = sideBoard(s);
-  const task = s.task && b.data ? (b.data.tasks || []).find(t => t.id === s.task) : null;
-  return { b, task };
-}
-
-function openSideTask(b, task, tab) {
-  const open = () => {
-    if (tab) return openTask(task.id, tab);
-    openTaskPanel(task.id);
-  };
-  // Another board is switched to in place, and the task opened once its state is in.
-  if (b.own) return open();
-  onBoard(b.slug, open);
-}
-
-function sideChildAction(act, id, s) {
-  const hubSide = sideBoard(s);
-  const t = (hubSide.data?.tasks || []).find(x => x.id === id);
-  if (!t) return;
-  if (act === 'child-card') return openSideTask(hubSide, t);
-  if (act === 'child-hand') {
-    const h = hubSide.hub;
-    return openHandoverDialog(id, null, {
-      tasks: hubSide.data.tasks, base: hubSide.base, hubId: hubSide.hubId, hubSlug: hubSide.slug, startHub: !!h && !h.state?.present,
-    });
-  }
-  if (act === 'child-start-hub') {
-    const h = hubSide.hub;
-    if (!h) return;
-    return sessAct('side-hub', `hub を起動 (${hubShortName(h)})`, async () => {
-      await hubStart(h.id);
-      refetchSideBoard(hubSide.base);
-    });
-  }
-  if (act === 'child-nudge') {
-    const line = "adj send --kind next --from dashboard --subject 'start the next queued task if a worker slot is free'";
-    return sessAct('side-nudge', '待ちの先頭を着手', async () => {
-      const data = await boardApi(hubSide.base, '/api/hub/next', { method: 'POST' });
-      note(line, false, '枠が空いていれば待ちの先頭を着手' + handedNote(data.handed));
-      await refresh();
-      refetchSideBoard(hubSide.base);
-    });
-  }
-}
-
-sessEl('sess-side').addEventListener('click', e => {
-  const sid = e.target.closest('[data-sid]');
-  if (sid) return selectSession(sid.dataset.sid);
-  const open = e.target.closest('[data-open]');
-  const btn = e.target.closest('[data-side-act]');
-  const s = currentSession();
-  if (!s) return;
-  if (open) {
-    const { b, task } = sideTaskOf(s);
-    const g = task && gatesOf(task, b.data, b.base).find(x => x.id === open.dataset.open);
-    if (!g) return;
-    const tab = TAB_OF_KIND[g.kind] || 'history';
-    if (b.own) return openTask(task.id, tab, g.id);
-    return openSideTask(b, task, tab);
-  }
-  if (!btn || btn.disabled) return;
-  const act = btn.dataset.sideAct;
-  if (act === 'git-refresh') {
-    ensureGit(s, true);
-    return renderSessionSidebar();
-  }
-  if (act.startsWith('child-')) return sideChildAction(act, btn.dataset.id, s);
-  if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
-  const { b, task } = sideTaskOf(s);
-  if (!task) return;
-  if (act === 'card') return openSideTask(b, task);
-  if (act === 'history') return openSideTask(b, task, 'history');
-  // The click landed on this sidebar, but `fetchIssue` dims the button that was pressed.
-  if (act === 'fetch-issue') return fetchIssue(task.id, { currentTarget: btn }, b.base);
-});
