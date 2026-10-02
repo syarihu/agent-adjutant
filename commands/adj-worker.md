@@ -379,8 +379,7 @@ review is in (or you gave up) and you start working through the comments.
    as `pr` (`adj phase --set pr`) while waiting for the next review round.
    **Do not end a turn in `pr-bots`.** It says you are the one waiting for the bots, so the card
    stays on the agents' side (unless the PR itself is the person's turn) and is never flagged, even
-   once your tab is closed. Left behind,
-   a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
+   once your tab is closed. Left behind, a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
    bots, set `pr`.
 
 ## 7. When you find a bug outside the task
