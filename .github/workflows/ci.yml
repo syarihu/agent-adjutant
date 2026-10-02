@@ -16,14 +16,5 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Layering
-        run: ./scripts/check-layering.sh
-
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo test
+      - name: Check
+        run: make check
