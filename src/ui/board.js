@@ -2,6 +2,27 @@
 const PHASE_LABEL = { plan:'計画', implement:'実装', 'self-review':'セルフレビュー', verify:'動作確認',
                       pr:'PR', 'pr-bots':'bot待ち', review:'レビュー対応', report:'報告' };
 const minutesLabel = mins => mins < 1 ? '1分未満' : mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.floor(mins / 60)}時間` : `${Math.floor(mins / 1440)}日`;
+/* Minutes since something → 「たった今」「4分前」「2時間前」「3日前」. Floors, like minutesLabel. */
+const agoLabel = mins => mins < 1 ? 'たった今' : `${minutesLabel(mins)}前`;
+
+/* What each gate decision is called on a button, wherever it is drawn. A kind overrides only
+   where the decision means something different for it. */
+const DECISION_LABEL = { approve:'承認する', changes:'差し戻す', reject:'見送る', ack:'了解', ask:'追加で聞く', answer:'答える' };
+const DECISION_LABEL_OF_KIND = {
+  dispatch: { approve:'着手する' },
+  issue:    { approve:'着手する' },
+  verify:   { approve:'確認した', changes:'直してほしい' },
+};
+const decisionLabel = (decision, kind) =>
+  DECISION_LABEL_OF_KIND[kind]?.[decision] || DECISION_LABEL[decision] || decision;
+/* The decision a board button's `data-act` ends up sending: act() remaps these by kind. */
+const sentDecision = (action, kind) =>
+  action === 'approve' ? (kind === 'result' ? 'ack' : 'approve')
+  : action === 'start' ? 'approve'
+  : action === 'shelve' ? 'reject'
+  : action === 'reject' && (kind === 'verify' || kind === 'diff') ? 'changes'
+  : action;
+const actLabel = (action, kind) => decisionLabel(sentDecision(action, kind), kind);
 
 /* Minutes since the worker entered its phase, by the server's clock so a laptop that slept
    does not make every card look stuck. */
@@ -286,6 +307,7 @@ async function act(action, id, choice) {
         break;
       }
       case 'send-reject': {
+        // Keep sentDecision in step: the button labels name what this sends.
         const decision = gate?.kind === 'verify' || gate?.kind === 'diff' ? 'changes' : 'reject';
         if (gate) {
           await submitAnswer(decision, undefined, gateRef(gate), reply || '差し戻し');
@@ -349,11 +371,8 @@ function humanActions(task, col, gate) {
     const ph = open === 'answer' ? '回答を入力してください...'
              : open === 'ask' ? '追加で聞きたい内容を入力してください...'
              : open === 'changes' ? '修正指示や指摘を入力してください...'
-             : '差し戻す理由を入力してください...';
-    const sendLabel = open === 'answer' ? '回答する'
-                    : open === 'ask' ? '追加で聞く'
-                    : open === 'changes' ? '修正を指示'
-                    : '差し戻す';
+             : '理由を入力してください...';
+    const sendLabel = !gate && open === 'changes' ? '指摘をメモ' : actLabel(open, gate?.kind);
     return `
       <div class="hcard-reply">
         <textarea data-reply="${esc(task.id)}" placeholder="${esc(ph)}"></textarea>
@@ -371,38 +390,38 @@ function humanActions(task, col, gate) {
   if (col === 'dispatch') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="start" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">play_arrow</span><span>着手する</span>
+        <span class="material-symbols-outlined">play_arrow</span><span>${esc(actLabel('start', gate?.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="shelve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">undo</span><span>Backlog に戻す</span>
+        <span class="material-symbols-outlined">undo</span><span>${gate ? esc(actLabel('shelve', gate.kind)) : 'Backlog に戻す'}</span>
       </button>
     `;
   } else if (col === 'plan') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">check</span><span>承認する</span>
+        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate?.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">reply</span><span>差し戻す</span>
+        <span class="material-symbols-outlined">reply</span><span>${esc(actLabel('reject', gate?.kind))}</span>
       </button>
     `;
   } else if (col === 'diff') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">check</span><span>承認して PR へ</span>
+        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate?.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">reply</span><span>修正を指示</span>
+        <span class="material-symbols-outlined">reply</span><span>${esc(actLabel('reject', gate?.kind))}</span>
       </button>
     `;
   } else if (col === 'verify') {
     const isResult = gate?.kind === 'result';
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">check</span><span>${isResult ? '了解' : '確認した'}</span>
+        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate?.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${isResult ? '追加で聞く' : '直してほしい'}</span>
+        <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${esc(actLabel(isResult ? 'ask' : 'reject', gate?.kind))}</span>
       </button>
     `;
   } else if (col === 'prreview') {
@@ -417,7 +436,7 @@ function humanActions(task, col, gate) {
   } else if (col === 'question') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">chat</span><span>回答する</span>
+        <span class="material-symbols-outlined">chat</span><span>${esc(actLabel('answer', gate?.kind))}</span>
       </button>
       ${readySessionOfTask(task) ? `<button type="button" class="btn-m3-tonal" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}">
         <span class="material-symbols-outlined">terminal</span><span>ターミナルで答える</span>
@@ -440,11 +459,8 @@ function humanGateActions(gate, col) {
     const ph = open === 'answer' ? '回答を入力してください...'
              : open === 'ask' ? '追加で聞きたい内容を入力してください...'
              : open === 'changes' ? '修正指示や指摘を入力してください...'
-             : '差し戻す理由を入力してください...';
-    const sendLabel = open === 'answer' ? '回答する'
-                    : open === 'ask' ? '追加で聞く'
-                    : open === 'changes' ? '修正を指示'
-                    : '差し戻す';
+             : '理由を入力してください...';
+    const sendLabel = actLabel(open, gate.kind);
     return `
       <div class="hcard-reply">
         <textarea data-reply="${esc(gateRef(gate))}" placeholder="${esc(ph)}"></textarea>
@@ -462,35 +478,35 @@ function humanGateActions(gate, col) {
   if (col === 'dispatch') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">play_arrow</span><span>着手する</span>
+        <span class="material-symbols-outlined">play_arrow</span><span>${esc(actLabel('approve', gate.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">undo</span><span>Backlog に戻す</span>
+        <span class="material-symbols-outlined">undo</span><span>${esc(actLabel('reject', gate.kind))}</span>
       </button>
     `;
   } else if (col === 'plan' || col === 'diff') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">check</span><span>承認する</span>
+        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">reply</span><span>差し戻す</span>
+        <span class="material-symbols-outlined">reply</span><span>${esc(actLabel('reject', gate.kind))}</span>
       </button>
     `;
   } else if (col === 'verify') {
     const isResult = gate.kind === 'result';
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">check</span><span>${isResult ? '了解' : '確認した'}</span>
+        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate.kind))}</span>
       </button>
       <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${isResult ? '追加で聞く' : '直してほしい'}</span>
+        <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${esc(actLabel(isResult ? 'ask' : 'reject', gate.kind))}</span>
       </button>
     `;
   } else if (col === 'question') {
     buttons = `
       <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">chat</span><span>回答する</span>
+        <span class="material-symbols-outlined">chat</span><span>${esc(actLabel('answer', gate.kind))}</span>
       </button>
     `;
   }
@@ -1373,13 +1389,11 @@ function panelGateHtml(task, gate) {
   const col = gateHumanCol(gate.kind);
   const why = gate.problem || gate.why || '';
   const reasons = stopWhy(gate);
-  const quick = col === 'dispatch' ? [['start', '着手する', 'play_arrow']]
-    : col === 'plan' ? [['approve', '承認', 'check']]
-    : col === 'diff' ? [['approve', '承認して PR へ', 'check']]
-    : col === 'verify' ? [['approve', gate.kind === 'result' ? '了解' : '確認した', 'check']]
+  const quick = col === 'dispatch' ? [['start', 'play_arrow']]
+    : col === 'plan' || col === 'diff' || col === 'verify' ? [['approve', 'check']]
     : [];
-  const btn = ([action, text, icon]) =>
-    `<button type="button" class="btn-m3-primary" data-tp-act="${action}"><span class="material-symbols-outlined" style="font-size:16px;">${icon}</span><span>${text}</span></button>`;
+  const btn = ([action, icon]) =>
+    `<button type="button" class="btn-m3-primary" data-tp-act="${action}"><span class="material-symbols-outlined" style="font-size:16px;">${icon}</span><span>${esc(actLabel(action, gate.kind))}</span></button>`;
   return `
     <div class="m3-card-attention-box">
       <div class="tp-gate-head">
@@ -1411,7 +1425,7 @@ function panelRestHtml(task, colId) {
 
   h += `<div class="m3-filled-card">${secTitle('工程')}
     <ol class="tp-steps">${STEPS.map(([, text], i) => `<li class="${i < now ? 'done' : i === now ? 'now' : ''}">${esc(text)}</li>`).join('')}</ol>
-    ${worker?.phase ? `<div class="tp-line">worker は${esc(PHASE_LABEL[worker.phase] || worker.phase)}${worker.present ? '' : '（停止）'}${mins != null ? `（${esc(minutesLabel(mins))}前から）` : ''}</div>` : ''}
+    ${worker?.phase ? `<div class="tp-line">worker は${esc(PHASE_LABEL[worker.phase] || worker.phase)}${worker.present ? '' : '（停止）'}${mins != null ? `（${esc(agoLabel(mins))}から）` : ''}</div>` : ''}
     <div class="tp-kvs">
       ${kv('完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—'))}
       ${kv('止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—'))}
@@ -1668,7 +1682,7 @@ function termPlaceholderHtml(s) {
   const resume = canResume(s) ? '' : !s.present && s.kind === 'worker'
     ? `<div class="tp-muted">${esc(!s.conversation ? '保存された会話がないため再開できません' : state.sessionResume?.reason || 'ボードからは再開できません')}</div>` : '';
   return `<div class="tp-ph-head">${esc(head)}</div>`
-    + (shot?.lines.length ? `<div class="tp-muted">このページで最後に見た画面${mins == null ? '' : `（${esc(minutesLabel(mins))}前）`}</div><pre class="sess-last-out">${esc(shot.lines.join('\n'))}</pre>` : '')
+    + (shot?.lines.length ? `<div class="tp-muted">このページで最後に見た画面${mins == null ? '' : `（${esc(agoLabel(mins))}）`}</div><pre class="sess-last-out">${esc(shot.lines.join('\n'))}</pre>` : '')
     + resume;
 }
 
