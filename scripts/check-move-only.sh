@@ -48,7 +48,9 @@ cleanup() {
   rm -rf "$tmp"
   git worktree prune >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # One record per file and side: `side<TAB>path<NUL>contents<NUL>`.
 for f in $files; do
@@ -83,17 +85,20 @@ if ! perl -0 -e '
     my $in_use = 0;
     my $tests_indent;    # set while inside `mod tests {`: the indent of its closing brace
     for my $line (split /\n/, $src, -1) {
-      if ($in_use) { $in_use = 0 if $line =~ /;\s*$/; next; }
-      if (defined $tests_indent && $line =~ /^\Q$tests_indent\E\}\s*$/) {
+      # A trailing `// ...` must not hide the `;` or brace that ends the line. Only the
+      # tests on `$code` look at it; the line itself is kept whole.
+      (my $code = $line) =~ s{\s*//.*$}{};
+      if ($in_use) { $in_use = 0 if $code =~ /;\s*$/; next; }
+      if (defined $tests_indent && $code =~ /^\Q$tests_indent\E\}\s*$/) {
         undef $tests_indent;
         next;
       }
       next if $line =~ m{^\s*//!};
-      next if $line =~ /^\s*#\[cfg\(test\)\]\s*$/;
-      next if $line =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;/;
-      if ($line =~ /^(\s*)mod\s+tests\s*\{\s*$/) { $tests_indent = $1; next; }
-      if ($line =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?use\s/) {
-        $in_use = 1 unless $line =~ /;\s*$/;
+      next if $code =~ /^\s*#\[cfg\(test\)\]\s*$/;
+      next if $code =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;/;
+      if ($code =~ /^(\s*)mod\s+tests\s*\{\s*$/) { $tests_indent = $1; next; }
+      if ($code =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?use\s/) {
+        $in_use = 1 unless $code =~ /;\s*$/;
         next;
       }
       push @out, $line;
@@ -147,6 +152,8 @@ fi
 # first one's output, is taken as fresh and skipped. The base's directory sits inside HEAD's
 # so its dependencies stay cached between runs.
 target=${CARGO_TARGET_DIR:-$PWD/target}
+mkdir -p "$target"
+target=$(cd "$target" && pwd)
 count_tests() {
   if ! (cd "$1" && CARGO_TARGET_DIR=$2 cargo test --quiet -- --list) >"$tmp/list" 2>"$tmp/err"; then
     cat "$tmp/err" >&2

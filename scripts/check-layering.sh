@@ -96,11 +96,12 @@ modules_on_disk() {
 # that is its whole job.
 is_shim() {
   awk '
-    in_use { if ($0 ~ /;[[:space:]]*$/) in_use = 0; next }
+    { code = $0; sub(/[[:space:]]*\/\/.*$/, "", code) }
+    in_use { if (code ~ /;[[:space:]]*$/) in_use = 0; next }
     /^[[:space:]]*$/ { next }
     /^[[:space:]]*\/\/!/ { next }
     /^[[:space:]]*pub(\([^)]*\))?[[:space:]]+use[[:space:]]/ {
-      if ($0 !~ /;[[:space:]]*$/) in_use = 1
+      if (code !~ /;[[:space:]]*$/) in_use = 1
       next
     }
     { bad = 1; exit }
@@ -112,14 +113,16 @@ is_shim() {
 # comment is skipped before lines are numbered; a trailing `// ...` is kept, because cutting
 # at `//` would cut string literals such as URLs and could hide a reference after one.
 # `crate::{` and `crate::Upper` (the crate root) print the name `{root}`.
-# With SUPER=1 (a file whose `super` is the crate root), `super::NAME` counts as well when
-# NAME is a module of the crate; other `super::` paths name items of the file's own module.
+# DEPTH is how many `super::` reach the crate root from the file (1 for src/NAME.rs and
+# src/NAME/mod.rs, 2 for src/NAME/foo.rs, ...): that many `super::` count as `crate::`, so
+# `super::NAME` names a module of the crate when NAME is one; fewer name items of the file's
+# own module and are not references.
 references() {
-  awk -v sup="$2" -v mods=" $3 " '
+  awk -v depth="$2" -v mods=" $3 " '
     /^[[:space:]]*\/\// { next }
     {
       rest = $0
-      while (match(rest, /(^|[^A-Za-z0-9_])(crate|super)::[A-Za-z0-9_{]?[a-z0-9_]*/)) {
+      while (match(rest, /(^|[^A-Za-z0-9_])(crate::|(super::)+)[A-Za-z0-9_{]?[a-z0-9_]*/)) {
         m = substr(rest, RSTART, RLENGTH)
         rest = substr(rest, RSTART + RLENGTH)
         if (m !~ /^(crate|super)/) m = substr(m, 2)
@@ -127,9 +130,10 @@ references() {
           name = substr(m, 8)
           if (name == "" || name ~ /^[A-Z{]/) name = "{root}"
           print NR "\t" name
-        } else if (sup == 1) {
-          name = substr(m, 8)
-          if (name != "" && index(mods, " " name " ") > 0) print NR "\t" name
+        } else {
+          k = 0
+          while (substr(m, 1, 7) == "super::") { k++; m = substr(m, 8) }
+          if (k == depth && m != "" && index(mods, " " m " ") > 0) print NR "\t" m
         }
       }
     }
@@ -179,11 +183,15 @@ for name in $on_disk; do
     if is_shim "$file"; then
       continue
     fi
-    # `super` is the crate root in src/NAME.rs and src/NAME/mod.rs.
-    case "$file" in
-      "src/$name.rs" | "src/$name/mod.rs") sup=1 ;;
-      *) sup=0 ;;
-    esac
+    # The `super::`s that reach the crate root: one per path component of the file's module.
+    rel=${file#src/}
+    rel=${rel%.rs}
+    rel=${rel%/mod}
+    sup=1
+    while [ "$rel" != "${rel#*/}" ]; do
+      rel=${rel#*/}
+      sup=$((sup + 1))
+    done
     hits=""
     while IFS="$(printf '\t')" read -r line target; do
       [ -z "$line" ] && continue
