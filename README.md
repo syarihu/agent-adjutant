@@ -169,9 +169,10 @@ adj hub --resume --hub ALPHA-233  # a parent task's hub — the identifier is ne
 adj worker --resume               # in a worktree: the worker that was working there
 ```
 
-The board's 「hub をリセット」 (a button on the hub's row, and in the menu above the terminal in the
-セッション tab) does what `--new` does: after a confirmation it stops the hub if it runs and starts
-it again on a new conversation. The old conversation is not deleted, but it is not resumed either,
+The board's 「hub をリセット」 (a button on the hub's row, in the menu above the terminal in the
+セッション tab, and the first button of the bar above a hub's terminal in the task panel) does
+what `--new` does: after a confirmation it stops the hub if it runs and starts it again on a new
+conversation. The old conversation is not deleted, but it is not resumed either,
 and from then on `adj hub --resume` reaches the new one (with a runner that records no session id
 there is nothing to resume). The inbox, the task and gate records and the running workers stay as they are.
 
@@ -528,8 +529,9 @@ tmux, whose 詳細 still works. A hub of another board opens in place with its o
 
 The bar above the terminal carries the actions for the selected session: resume a stopped
 worker, restart a running hub or worker on its same conversation, close a running worker, start or stop a hub, open the session in your own terminal, and,
-under the menu, reset a hub (start it again on a new conversation), open the worktree in your IDE,
-copy its path and clean it up. Cleaning up removes
+under the menu, reset a hub (start it again on a new conversation; above a hub's terminal in the
+task panel it is also the first button of the bar), open the worktree in your IDE, copy its path
+and clean it up. Cleaning up removes
 the worktree and its local branch (never the remote one) and refuses when work would be lost
 (uncommitted or untracked files, commits no remote has); forcing it means typing the worktree's
 name back. A session that waits on a gate shows a banner with the gate's question and, for a plan,
