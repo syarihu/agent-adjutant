@@ -244,7 +244,7 @@ function openStartDialog() {
   dialogOpening.start++;
   const hubs = startableHubs();
   // The hub or session in the panel is the one a new session most likely goes beside.
-  const cur = sessOfRef(selectedTaskId);
+  const cur = sessOfRef(selectedTaskId) || sessionOfTask(taskById(selectedTaskId));
   const want = cur ? hubOfSession(cur) || repoHubId() : hubOfRef(selectedTaskId)?.id || repoHubId();
   const sel = sessEl('start-hub');
   sel.innerHTML = hubs.map(h => `<option value="${esc(h.id)}">${esc(hubLabel(h))}</option>`).join('');
