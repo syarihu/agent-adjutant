@@ -8,10 +8,11 @@
 //! routes. The session a request names is looked up in the board's own records, and the
 //! worktree, socket and window come from there and never from the request.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -133,14 +134,7 @@ pub(super) fn hub_resume_refusal(settings: &crate::config::Settings) -> Option<S
     {
         return Some(refusal);
     }
-    if settings.hub_runner.is_some() && settings.hub_resume_runner.is_none() {
-        return Some(
-            "hubRunner is your own and hubResumeRunner is not set, so the built-in runner \
-             would reopen the session instead of yours"
-                .to_string(),
-        );
-    }
-    None
+    super::own_hub_runner_refusal(settings)
 }
 
 /// What `state` says about resuming a hub: `available`, and the reason when it is not.
@@ -149,31 +143,79 @@ pub(super) fn hub_resume_state(settings: &crate::config::Settings) -> Value {
     json!({ "available": refusal.is_none(), "reason": refusal })
 }
 
-/// The hubs and worktrees being restarted right now, so that a second request for the same one
-/// is refused instead of stopping what the first has just started.
-static RESTARTING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+/// How long a hub's restart keeps refusing another one after it has answered. The answer comes
+/// when the tmux window is open, a moment before the new `adj hub` has registered, and a second
+/// restart in between would stop the new hub or open a stray window beside it. The page's
+/// `RESTART_MS` is the same length: it shows 「再起動しています…」 for as long.
+const RESTART_HOLD: Duration = Duration::from_secs(45);
 
-/// Holds `key` in `RESTARTING` until dropped, on every way out of the restart.
-pub(super) struct Restarting(String);
+enum Slot {
+    InFlight,
+    /// Answered at this moment, with the new process possibly not up yet.
+    Held(Instant),
+}
+
+/// The hubs and worktrees being restarted, by key. What it guarantees: while a restart of a key
+/// runs, or for `RESTART_HOLD` after a hub's restart answered with a window opened, another
+/// restart of that key is refused. It does not look at the process table, so a hub that is up
+/// sooner is still held until the time is over; a restart that failed releases at once.
+static RESTARTING: Mutex<Option<HashMap<String, Slot>>> = Mutex::new(None);
+
+/// Holds `key` in `RESTARTING` while it lives, and on every way out of the restart lets go,
+/// unless `hold` turned the claim into the timed hold.
+pub(super) struct Restarting {
+    key: String,
+    held: bool,
+}
 
 impl Restarting {
     pub(super) fn claim(key: &str, what: &str) -> Result<Restarting, String> {
+        Self::claim_at(key, what, Instant::now())
+    }
+
+    /// `claim`, with the time it is made at handed in so that the hold can be tested.
+    fn claim_at(key: &str, what: &str, now: Instant) -> Result<Restarting, String> {
         let mut held = RESTARTING.lock().unwrap_or_else(|e| e.into_inner());
-        if !held
-            .get_or_insert_with(HashSet::new)
-            .insert(key.to_string())
-        {
-            return Err(format!("{what} is already restarting"));
+        let map = held.get_or_insert_with(HashMap::new);
+        match map.get(key) {
+            Some(Slot::InFlight) => return Err(format!("{what} is already restarting")),
+            Some(Slot::Held(at)) if now.saturating_duration_since(*at) < RESTART_HOLD => {
+                return Err(format!(
+                    "{what} was restarted a moment ago and is coming up"
+                ));
+            }
+            _ => {}
         }
-        Ok(Restarting(key.to_string()))
+        map.insert(key.to_string(), Slot::InFlight);
+        Ok(Restarting {
+            key: key.to_string(),
+            held: false,
+        })
+    }
+
+    /// The restart answered with a new process on its way: keep refusing for `RESTART_HOLD`
+    /// instead of letting go.
+    pub(super) fn hold(self) {
+        self.hold_at(Instant::now());
+    }
+
+    fn hold_at(mut self, now: Instant) {
+        let mut held = RESTARTING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(map) = held.as_mut() {
+            map.insert(self.key.clone(), Slot::Held(now));
+        }
+        self.held = true;
     }
 }
 
 impl Drop for Restarting {
     fn drop(&mut self) {
+        if self.held {
+            return;
+        }
         let mut held = RESTARTING.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(held) = held.as_mut() {
-            held.remove(&self.0);
+        if let Some(map) = held.as_mut() {
+            map.remove(&self.key);
         }
     }
 }
@@ -814,7 +856,8 @@ pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, St
 
 #[cfg(test)]
 mod tests {
-    use super::Restarting;
+    use super::{RESTART_HOLD, Restarting};
+    use std::time::Instant;
 
     #[test]
     fn a_second_restart_of_the_same_target_is_refused_until_the_first_is_over() {
@@ -826,5 +869,17 @@ mod tests {
         assert!(other.is_ok());
         drop(first);
         assert!(Restarting::claim("guard-test/a", "the session").is_ok());
+    }
+
+    #[test]
+    fn a_held_restart_refuses_another_until_the_hold_is_over() {
+        let at = Instant::now();
+        Restarting::claim_at("guard-test/held", "the hub", at)
+            .unwrap()
+            .hold_at(at);
+        let soon = Restarting::claim_at("guard-test/held", "the hub", at + RESTART_HOLD / 2);
+        assert!(soon.err().unwrap().contains("coming up"));
+        let later = Restarting::claim_at("guard-test/held", "the hub", at + RESTART_HOLD);
+        assert!(later.is_ok());
     }
 }

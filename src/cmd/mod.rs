@@ -1502,14 +1502,20 @@ fn asked_session(
 pub(super) fn hub_resume_check(ctx: &Context) -> Result<messaging::SavedSession, String> {
     let saved = saved_hub_session(ctx)?;
     resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
-    if ctx.settings.hub_runner.is_some() && ctx.settings.hub_resume_runner.is_none() {
-        return Err(
-            "hubRunner is your own and hubResumeRunner is not set, so the built-in runner \
-             would reopen the session instead of yours"
-                .to_string(),
-        );
+    if let Some(refusal) = own_hub_runner_refusal(&ctx.settings) {
+        return Err(refusal);
     }
     Ok(saved)
+}
+
+/// Why a hub started by a runner of the person's own cannot be reopened by the built-in one:
+/// `hubRunner` is set and `hubResumeRunner` is not. `None` when that is not the case.
+pub(super) fn own_hub_runner_refusal(settings: &config::Settings) -> Option<String> {
+    (settings.hub_runner.is_some() && settings.hub_resume_runner.is_none()).then(|| {
+        "hubRunner is your own and hubResumeRunner is not set, so the built-in runner \
+         would reopen the session instead of yours"
+            .to_string()
+    })
 }
 
 fn print_performed(done: &terminal::Performed, dry_run: bool) {
@@ -1978,7 +1984,7 @@ fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
     // A hub started by a runner of its own would be reopened by the built-in one — without
     // whatever that runner added, or as another agent entirely. Asked for outright, that is
     // the person's call and `--resume` makes it; uninvited, it is not.
-    if ctx.settings.hub_runner.is_some() && ctx.settings.hub_resume_runner.is_none() {
+    if own_hub_runner_refusal(&ctx.settings).is_some() {
         eprintln!(
             "adjutant: not resuming the last session: hubRunner is your own and hubResumeRunner \
              is not set, so the built-in one would reopen it"

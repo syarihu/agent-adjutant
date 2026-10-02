@@ -2938,22 +2938,25 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
             // Everything the start would refuse is refused before the hub is stopped, the
             // saved conversation included: a restart that cannot reopen it has only taken the
             // hub down. The saved session file is not touched; `--resume` reads it as it is.
-            if !super::hub_startable(&settings.terminal) {
-                return Err(
-                    "starting a hub from the board needs terminal.preset \"tmux\"".to_string(),
-                );
+            if let Some(refusal) = super::board_actions::hub_resume_refusal(&settings) {
+                return Err(refusal);
             }
             let start_ctx = hub_start_context(server, &hub, settings.clone())?;
             super::hub_resume_check(&start_ctx)?;
-            let _restarting = super::board_actions::Restarting::claim(&hub.slug, &hub.name)?;
+            let restarting = super::board_actions::Restarting::claim(&hub.slug, &hub.name)?;
             let was_running = super::stop_hub(&hub_stop_context(server, &hub, settings))?;
             match super::start_hub(&start_ctx, super::HubStart::Resume) {
-                Ok(super::TabOutcome::Opened(done)) => Ok(json!({
-                    "restarted": true,
-                    "wasRunning": was_running,
-                    "started": true,
-                    "description": done.description,
-                })),
+                Ok(super::TabOutcome::Opened(done)) => {
+                    // The window is open but the new hub has not registered yet: another
+                    // restart now would stop it or open a second window beside it.
+                    restarting.hold();
+                    Ok(json!({
+                        "restarted": true,
+                        "wasRunning": was_running,
+                        "started": true,
+                        "description": done.description,
+                    }))
+                }
                 // As for a reset: a hub is up that this request did not start, so the
                 // answer must not say it was restarted.
                 Ok(super::TabOutcome::AlreadyRunning(status)) => Ok(json!({
