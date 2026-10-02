@@ -173,6 +173,19 @@ function gateHumanCol(kind) {
   }
 }
 
+/* Whether a task's PR is the person's ball: the twin of `task::pr_waits_on_person` in
+   src/task.rs, which says why. `w` is the task's worker record, if there is one. `prTurn` is
+   derived by the server from what the last PR read kept on the record. */
+function prWaitsOnPerson(t, w) {
+  if (!t.pr || t.status === 'done' || t.status === 'cancelled') return false;
+  // A worker still in another phase is at work, so the card stays on the agent board.
+  if (w && w.phase !== 'pr' && w.phase !== 'pr-bots') return false;
+  if (['changes', 'merge', 'ci-failed', 'closed'].includes(t.prTurn)) return true;
+  if (['checks', 'other-reviewer', 'merged'].includes(t.prTurn)) return false;
+  // A draft, a PR nobody was asked to review, one not read yet: as before the turn was known.
+  return w ? w.phase === 'pr' : t.status === 'pr';
+}
+
 /* The Rust `board_counts` (src/cmd/serve.rs) counts what waits from the same rules, for the
    sidebar's board rows. Change one and change the other. */
 function humanColOf(t, data = state) {
@@ -188,16 +201,8 @@ function humanColOf(t, data = state) {
     }
   }
 
-  // Local worker tasks. Only a PR handed to human reviewers (`pr`) waits on a person; one
-  // waiting on review bots (`pr-bots`) leaves a person nothing to do.
-  const w = workerOf(t, data);
-  if (t.pr) {
-    if (w) {
-      if (w.phase === 'pr') return 'prreview';
-    } else if (t.status === 'pr') {
-      return 'prreview';
-    }
-  }
+  // Local worker tasks: whose turn the PR is, then the worker's phase (see `prWaitsOnPerson`).
+  if (prWaitsOnPerson(t, workerOf(t, data))) return 'prreview';
   return null;
 }
 

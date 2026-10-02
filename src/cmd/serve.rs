@@ -6,8 +6,10 @@
 //! state that until now could only be read one `adj` invocation at a time, and a place to
 //! put the questions a worker used to have to ask into a tab nobody was watching.
 //!
-//! It holds no clock. Nothing here polls a tracker or wakes on a timer: a request arrives
-//! because a person clicked, and that is the only thing that moves.
+//! It holds one clock, and only in the resident server: the poll that keeps the cards' pull
+//! requests up to date (`pr_poll`). A board served by itself, or by a hub, has none: there a
+//! request arrives because a person clicked, and that is the only thing that moves. `/api/state`
+//! never asks GitHub on either, since the page polls it every couple of seconds.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, IsTerminal, Read, Write};
@@ -105,6 +107,9 @@ pub(super) struct Server {
     pub(super) tmux: Option<(u32, u32)>,
     /// How many board terminals are open across every board, which is what is capped.
     pub(super) terminals: Arc<AtomicUsize>,
+    /// The resident server's PR poll, whose health the page shows. `None` on a board that is
+    /// served by itself: nothing polls there, and the page says nothing about it.
+    pr_poll: Option<Arc<super::PrPoll>>,
 }
 
 pub fn serve(
@@ -211,6 +216,7 @@ impl Board {
                 last_lines: Arc::default(),
                 tmux: None,
                 terminals: Arc::default(),
+                pr_poll: None,
             }),
             listener,
             recorded,
@@ -661,9 +667,9 @@ fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
 ///
 /// This mirrors `humanColOf` in `src/ui/core.js` and the board's own "waiting" and "workers"
 /// counts; keep the two in step. A task waits when it has an open gate, or when its pull
-/// request is the person's ball: a Jules task with a pull request, or a worker task whose
-/// record says phase `pr` (or has no record while the task itself says `pr`). A gate whose
-/// task is not on the board waits too. Workers at work are the dispatched and `pr` tasks that
+/// request is the person's ball: a Jules task with a pull request, or a worker task for which
+/// `task::pr_waits_on_person` says so (the state of its PR, then its worker's phase). A gate
+/// whose task is not on the board waits too. Workers at work are the dispatched and `pr` tasks that
 /// do not wait. The page's Jules check also looks at the session's live state, which only the
 /// board's own poll has, so a Jules task that is still working counts as waiting here.
 fn board_counts(
@@ -683,18 +689,19 @@ fn board_counts(
             false
         } else if t.jules_session.is_some() && t.pr.is_some() {
             true
-        } else if t.pr.is_some() {
-            let seen = t
-                .worktree
-                .as_deref()
-                .and_then(&worker)
-                .filter(|w| w.task.as_deref().is_none_or(|id| id == t.id));
-            match seen {
-                Some(w) => w.phase.as_deref() == Some("pr"),
-                None => t.status == task::Status::Pr,
-            }
         } else {
-            false
+            // Only a task with a PR has a worker record that matters here.
+            let seen =
+                t.pr.as_ref()
+                    .and(t.worktree.as_deref())
+                    .and_then(&worker)
+                    .filter(|w| w.task.as_deref().is_none_or(|id| id == t.id));
+            task::pr_waits_on_person(
+                t.status,
+                t.pr.is_some(),
+                t.pr_status.as_ref(),
+                seen.as_ref().map(|w| w.phase.as_deref()),
+            )
         };
         if waits {
             waiting += 1;
@@ -886,6 +893,8 @@ struct Resident {
     tmux: Option<(u32, u32)>,
     /// Open board terminals, over all boards.
     terminals: Arc<AtomicUsize>,
+    /// The poll that keeps the cards' pull requests up to date, over all boards.
+    pr_poll: Arc<super::PrPoll>,
 }
 
 impl Resident {
@@ -929,6 +938,7 @@ impl Resident {
                 last_lines: Arc::default(),
                 tmux: self.tmux,
                 terminals: Arc::clone(&self.terminals),
+                pr_poll: Some(Arc::clone(&self.pr_poll)),
             });
             let mut boards = self.boards.lock().ok()?;
             // Asked again under the lock: what was built is only put in place while it is still
@@ -1229,7 +1239,31 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
         boards: Mutex::default(),
         tmux: board_terminal_tmux(),
         terminals: Arc::default(),
+        pr_poll: Arc::default(),
     });
+    {
+        let resident = Arc::clone(&resident);
+        let poll = Arc::clone(&resident.pr_poll);
+        std::thread::spawn(move || {
+            poll.run(|| {
+                // Only a board with a card on a PR is opened for it: opening one asks git where
+                // the checkout is, which is not worth doing every round for a board with nothing
+                // to look after.
+                let state_dir = messaging::state_dir();
+                addresses()
+                    .iter()
+                    .filter(|a| {
+                        task::list(&task::dir(&state_dir, &a.slug)).iter().any(|t| {
+                            t.pr.is_some()
+                                && !matches!(t.status, task::Status::Done | task::Status::Cancelled)
+                        })
+                    })
+                    .filter_map(|a| resident.board(&a.slug))
+                    .map(|server| server.ctx.clone())
+                    .collect()
+            });
+        });
+    }
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -1771,6 +1805,10 @@ fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
         // Whether the resident server serves this board, which is also what tells the page
         // it lives under a path of its own.
         "resident": server.resident,
+        // Whether the PR poll is running and whether it is failing, for the one line the page
+        // shows when it is. `null` where nothing polls. Read from memory: this is polled every
+        // couple of seconds and must not reach GitHub.
+        "prPoll": server.pr_poll.as_ref().map(|p| p.health_json()),
         // Whether the board may start a hub: only where the settings mean a tmux window.
         "hubStart": { "available": super::hub_startable(&settings.terminal) },
         // Whether the board can open a terminal on a session that runs in tmux: the resident
@@ -2552,6 +2590,9 @@ fn with_records(
                     })
                     .collect();
                 value["approvedPlan"] = json!(plan);
+                // Whose turn the PR is, from what the last read kept on the record. Derived
+                // here, on every poll, so the rule can change without rewriting a record.
+                value["prTurn"] = json!(t.pr_status.as_ref().and_then(task::pr_turn));
             }
             Some(value)
         })
@@ -3684,6 +3725,56 @@ mod tests {
         assert_eq!(counts(&[dispatched], &[], None), (0, 1));
     }
 
+    /// A card with a PR the last refresh read: `review` and the counts of checks that are
+    /// failing and pending, under whichever phase the worker is in.
+    fn read_pr(state: &str, review: &str, fail: u32, pending: u32) -> task::Task {
+        let mut t = on_pr("t1", task::Status::Pr);
+        t.pr_status = Some(task::PrStatus {
+            state: state.to_string(),
+            title: String::new(),
+            review: review.to_string(),
+            ci: task::CheckCounts {
+                pass: 1,
+                fail,
+                pending,
+            },
+        });
+        t
+    }
+
+    #[test]
+    fn a_pull_request_waits_when_it_is_the_persons_turn_and_works_when_it_is_not() {
+        // Changes asked for, approved, a failed check, closed without merging: the person's.
+        for t in [
+            read_pr("open", "changes", 0, 0),
+            read_pr("open", "approved", 0, 0),
+            read_pr("open", "none", 1, 0),
+            read_pr("closed", "none", 0, 0),
+        ] {
+            let status = t.pr_status.clone();
+            assert_eq!(counts(&[t], &[], Some("pr")), (1, 0), "{status:?}");
+        }
+        // Another reviewer's, still running checks, or merged: not the person's.
+        for t in [
+            read_pr("open", "required", 0, 0),
+            read_pr("open", "none", 0, 2),
+            read_pr("merged", "approved", 0, 0),
+        ] {
+            let status = t.pr_status.clone();
+            assert_eq!(counts(&[t], &[], Some("pr")), (0, 1), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn the_persons_turn_outranks_the_bots_phase_but_not_a_worker_still_at_work() {
+        let changes = read_pr("open", "changes", 0, 0);
+        assert_eq!(
+            counts(std::slice::from_ref(&changes), &[], Some("pr-bots")),
+            (1, 0)
+        );
+        assert_eq!(counts(&[changes], &[], Some("review")), (0, 1));
+    }
+
     #[test]
     fn a_record_naming_another_task_is_no_record() {
         let t = on_pr("t1", task::Status::Pr);
@@ -3713,6 +3804,23 @@ mod tests {
         let mut t = on_pr("t1", task::Status::Pr);
         t.jules_session = Some("s1".to_string());
         assert_eq!(counts(&[t], &[], Some("pr-bots")), (1, 0));
+    }
+
+    #[test]
+    fn the_page_places_a_pr_by_its_turn_and_says_when_the_poll_has_stopped() {
+        for piece in [
+            "function prWaitsOnPerson",
+            "if (prWaitsOnPerson(t, workerOf(t, data))) return 'prreview';",
+            "'other-reviewer': ['レビュー待ち（他の人）'",
+            "changes: ['修正の依頼あり'",
+            "merge: ['マージ待ち'",
+            "'ci-failed': ['CI 失敗'",
+            "closed: ['閉じられた'",
+            "PR の自動確認が止まっています",
+            "title=\"PR の状態を読み直す\"",
+        ] {
+            assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+        }
     }
 
     #[test]
@@ -4259,6 +4367,7 @@ mod tests {
             last_lines: Arc::default(),
             tmux: None,
             terminals: Arc::default(),
+            pr_poll: None,
         };
         let settings = settings_now(&server);
 

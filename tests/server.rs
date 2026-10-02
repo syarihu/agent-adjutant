@@ -4286,7 +4286,8 @@ fn an_issue_that_could_not_be_read_is_not_asked_for_again_on_the_next_poll() {
     std::fs::write(fixture.repo.join("gh-fail"), "").unwrap();
     let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
     // Wait for the one read to have happened, so a slow machine does not pass with none.
-    for _ in 0..100 {
+    // Generous: the read starts on a thread of its own, and a loaded machine is slow to run it.
+    for _ in 0..300 {
         if !gh_asked(&asked).is_empty() {
             break;
         }
@@ -4296,4 +4297,305 @@ fn an_issue_that_could_not_be_read_is_not_asked_for_again_on_the_next_poll() {
     poll_feature_title(&resident, 10);
     assert!(feature_title(&resident).is_null());
     assert_eq!(gh_asked(&asked).len(), 1, "{:?}", gh_asked(&asked));
+}
+
+// ── the pull requests the resident keeps up to date ──
+
+const POLLED_PR: &str = "https://github.com/acme/widget/pull/7";
+
+/// A card at `pr`, pointing at `url`, made before the server starts: the poll looks at the
+/// records when it begins, and a card added later waits for its next round.
+fn card_on_pr(fixture: &Fixture, url: &str) -> String {
+    let added = fixture.json(&["task", "add", "--title", "A card", "--body", "b", "--json"]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--status",
+        "pr",
+        "--pr",
+        url,
+        "--no-hand-over",
+    ]);
+    id
+}
+
+/// What `gh api graphql` prints for PR 7. GitHub's upper-case values are passed in rather than
+/// written into the JSON: a bare upper-case string after a colon reads as a tracker key to the
+/// guard over everything that ships.
+fn graphql_of_pr(state: &str, decision: &str) -> String {
+    format!(
+        r#"{{"data":{{"p0":{{"pullRequest":{{"state":"{state}","isDraft":false,"title":"A pull request","reviewDecision":"{decision}","reviewRequests":{{"totalCount":0}},"commits":{{"nodes":[]}}}}}}}}}}"#
+    )
+}
+
+/// A `gh` for the poll. Notifications answer 200 with `Last-Modified: Thu, 01 Jan 2026 00:00:00 GMT` and one thread, the
+/// PR 7, the first time and 304 (which `gh` exits 1 on) while asked with `If-Modified-Since`,
+/// until a file `changed` exists: then one 200, with `Last-Modified: Thu, 01 Jan 2026 00:00:05 GMT`, and the file is
+/// taken away. GraphQL answers with `gh-graphql`. Every call is written down in `gh-calls`,
+/// whole, so a test can see what was sent.
+fn stub_gh_for_polling(fixture: &Fixture, interval: u64) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let stubs = fixture.repo.join("stub-bin");
+    std::fs::create_dir_all(&stubs).unwrap();
+    let dir = fixture.repo.to_string_lossy().to_string();
+    let script = r#"#!/bin/sh
+D=@DIR@
+echo "$*" >> "$D/gh-calls"
+if [ "$1 $2" = "api graphql" ]; then
+  echo graphql >> "$D/gh-kinds"
+  cat "$D/gh-graphql"
+  exit 0
+fi
+echo notifications >> "$D/gh-kinds"
+case "$*" in
+  *If-Modified-Since*)
+    if [ -e "$D/changed" ]; then
+      rm "$D/changed"
+      printf 'HTTP/2.0 200 OK\r\nLast-Modified: Thu, 01 Jan 2026 00:00:05 GMT\r\nX-Poll-Interval: @INTERVAL@\r\n\r\n'
+      printf '[{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/acme/widget/pulls/7"},"repository":{"full_name":"acme/widget"}}]'
+      exit 0
+    fi
+    printf 'HTTP/2.0 304 Not Modified\r\nX-Poll-Interval: @INTERVAL@\r\n\r\n'
+    exit 1
+    ;;
+esac
+printf 'HTTP/2.0 200 OK\r\nLast-Modified: Thu, 01 Jan 2026 00:00:00 GMT\r\nX-Poll-Interval: @INTERVAL@\r\n\r\n'
+printf '[{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/acme/widget/pulls/7"},"repository":{"full_name":"acme/widget"}}]'
+"#
+    .replace("@DIR@", &shell_quoted(&dir))
+    .replace("@INTERVAL@", &interval.to_string());
+    let gh = stubs.join("gh");
+    std::fs::write(&gh, script).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        fixture.repo.join("gh-graphql"),
+        graphql_of_pr("OPEN", "APPROVED"),
+    )
+    .unwrap();
+    format!(
+        "{}:{}",
+        stubs.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+/// How many times the stub `gh` was run for `kind`: `notifications` or `graphql`.
+fn gh_ran(fixture: &Fixture, kind: &str) -> usize {
+    std::fs::read_to_string(fixture.repo.join("gh-kinds"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| *line == kind)
+        .count()
+}
+
+/// Polls until `done` holds, or panics after about ten seconds with what was last seen.
+fn wait_until<T: std::fmt::Debug>(what: &str, mut seen: impl FnMut() -> (bool, T)) -> T {
+    let mut last = None;
+    for _ in 0..100 {
+        let (done, value) = seen();
+        if done {
+            return value;
+        }
+        last = Some(value);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("{what}: last saw {last:?}");
+}
+
+fn turn_of(resident: &Resident, id: &str) -> serde_json::Value {
+    state_of(resident)["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap_or_else(|| panic!("no task {id}"))["prTurn"]
+        .clone()
+}
+
+#[test]
+fn a_card_follows_its_pr_without_anybody_asking() {
+    let fixture = Fixture::new(QUIET);
+    let id = card_on_pr(&fixture, POLLED_PR);
+    let path = stub_gh_for_polling(&fixture, 1);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    // The first round reads the PR: approved, so it is the person's to merge.
+    wait_until("the PR was read and kept", || {
+        let shown = fixture.json(&["task", "show", "--id", &id]);
+        (shown["prStatus"]["review"] == "approved", shown)
+    });
+    assert_eq!(turn_of(&resident, &id), "merge");
+    assert_eq!(board_of(&resident, SLUG)["waiting"], 1);
+    assert_eq!(gh_ran(&fixture, "graphql"), 1);
+
+    // Nothing is said to have changed, so the PR is not read again, even though GitHub would
+    // now answer differently.
+    std::fs::write(
+        fixture.repo.join("gh-graphql"),
+        graphql_of_pr("MERGED", "APPROVED"),
+    )
+    .unwrap();
+    let rounds = gh_ran(&fixture, "notifications");
+    wait_until("another round asked for news", || {
+        let now = gh_ran(&fixture, "notifications");
+        (now >= rounds + 2, now)
+    });
+    assert_eq!(gh_ran(&fixture, "graphql"), 1);
+    assert_eq!(fixture.json(&["task", "show", "--id", &id])["status"], "pr");
+
+    // A notification for the PR: it is read, and being merged it is done.
+    std::fs::write(fixture.repo.join("changed"), "").unwrap();
+    wait_until("the merged PR was moved to done", || {
+        let shown = fixture.json(&["task", "show", "--id", &id]);
+        (shown["status"] == "done", shown)
+    });
+    assert_eq!(gh_ran(&fixture, "graphql"), 2);
+    assert_eq!(board_of(&resident, SLUG)["waiting"], 0);
+
+    // Only ever read: nothing is marked as read, nor written to in any other way.
+    let calls = std::fs::read_to_string(fixture.repo.join("gh-calls")).unwrap();
+    for sent in calls.lines() {
+        for write in ["PATCH", "PUT", "POST", "DELETE", "--method", "-X"] {
+            assert!(!sent.contains(write), "{write} in {sent}");
+        }
+    }
+    // And the second round sent back what the first one was told, asking only for the threads
+    // changed since, so a page of old read ones is not taken for news.
+    assert!(
+        calls.lines().any(
+            |c| c.contains("If-Modified-Since: Thu, 01 Jan 2026 00:00:00 GMT")
+                && c.contains("participating=true")
+                && c.contains("since=2026-01-01T00:00:00Z")
+        ),
+        "{calls}"
+    );
+    // The first round had no stamp, so it asked for no `since`.
+    let first = calls.lines().next().unwrap();
+    assert!(!first.contains("since="), "{first}");
+}
+
+#[test]
+fn the_board_poll_never_reaches_github_and_a_long_interval_is_kept() {
+    let fixture = Fixture::new(QUIET);
+    let id = card_on_pr(&fixture, POLLED_PR);
+    let path = stub_gh_for_polling(&fixture, 3600);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    wait_until("the PR was read", || {
+        let shown = fixture.json(&["task", "show", "--id", &id]);
+        (shown["prStatus"].is_object(), shown)
+    });
+    let before = std::fs::read_to_string(fixture.repo.join("gh-calls")).unwrap();
+    for _ in 0..10 {
+        let _ = state_of(&resident);
+        let _ = boards_of(&resident);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let after = std::fs::read_to_string(fixture.repo.join("gh-calls")).unwrap();
+    assert_eq!(before, after, "something asked GitHub again");
+    assert!(state_of(&resident)["prPoll"]["error"].is_null());
+    assert_eq!(state_of(&resident)["prPoll"]["active"], true);
+}
+
+#[test]
+fn with_no_pr_on_a_card_github_is_never_asked() {
+    let fixture = Fixture::new(QUIET);
+    // A card whose PR is on another host is not polled either.
+    card_on_pr(&fixture, "https://example.com/acme/widget/pull/7");
+    let path = stub_gh_for_polling(&fixture, 1);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert!(!fixture.repo.join("gh-calls").exists());
+    assert!(state_of(&resident)["prPoll"]["error"].is_null());
+}
+
+#[test]
+fn a_poll_that_cannot_run_says_so_and_leaves_the_card_where_it_was() {
+    let fixture = Fixture::new(QUIET);
+    let id = card_on_pr(&fixture, POLLED_PR);
+    // Only what the server needs besides `gh`: `git`, in a directory of its own.
+    let git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let git = PathBuf::from(String::from_utf8_lossy(&git.stdout).trim());
+    let only_git = fixture.repo.join("git-only-bin");
+    std::fs::create_dir_all(&only_git).unwrap();
+    std::os::unix::fs::symlink(&git, only_git.join("git")).unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", only_git.to_str().unwrap())]);
+    let error = wait_until("the poll reported its failure", || {
+        let error = state_of(&resident)["prPoll"]["error"].clone();
+        (error.is_string(), error)
+    });
+    assert!(error.as_str().unwrap().contains("gh"), "{error}");
+    // Nothing was read, so the card is placed as it was before there was a poll.
+    assert!(turn_of(&resident, &id).is_null());
+    assert_eq!(board_of(&resident, SLUG)["waiting"], 1);
+}
+
+#[test]
+fn a_pr_that_cannot_be_found_is_not_the_poll_failing() {
+    let fixture = Fixture::new(QUIET);
+    card_on_pr(&fixture, POLLED_PR);
+    let path = stub_gh_for_polling(&fixture, 1);
+    let missing = r#"{"data":{"p0":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["p0","pullRequest"],"message":"Could not resolve to a PullRequest with the number of 7."}]}"#;
+    std::fs::write(fixture.repo.join("gh-graphql"), missing).unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    wait_until("the PR was asked about", || {
+        let ran = gh_ran(&fixture, "graphql");
+        (ran >= 1, ran)
+    });
+    // Let the round finish and a few more go by.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert!(state_of(&resident)["prPoll"]["error"].is_null());
+}
+
+#[test]
+fn a_read_that_could_not_be_made_is_the_poll_failing_and_does_not_advance() {
+    let fixture = Fixture::new(QUIET);
+    let id = card_on_pr(&fixture, POLLED_PR);
+    let path = stub_gh_for_polling(&fixture, 1);
+    let limited =
+        r#"{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}"#;
+    std::fs::write(fixture.repo.join("gh-graphql"), limited).unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    let error = wait_until("the poll reported the failure", || {
+        let error = state_of(&resident)["prPoll"]["error"].clone();
+        (error.is_string(), error)
+    });
+    assert!(error.as_str().unwrap().contains("rate limit"), "{error}");
+    assert!(turn_of(&resident, &id).is_null());
+    // The stamp was not advanced, so the news comes again: no round was sent `If-Modified-Since`.
+    let calls = std::fs::read_to_string(fixture.repo.join("gh-calls")).unwrap();
+    assert!(!calls.contains("If-Modified-Since"), "{calls}");
+}
+
+#[test]
+fn a_card_whose_first_read_failed_is_read_again_and_gets_its_state() {
+    let fixture = Fixture::new(QUIET);
+    let id = card_on_pr(&fixture, POLLED_PR);
+    let path = stub_gh_for_polling(&fixture, 1);
+    let unavailable = r#"{"data":{"p0":null},"errors":[{"type":"SERVICE_UNAVAILABLE","path":["p0"],"message":"Something went wrong"}]}"#;
+    std::fs::write(fixture.repo.join("gh-graphql"), unavailable).unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    wait_until("the failed read was reported", || {
+        let error = state_of(&resident)["prPoll"]["error"].clone();
+        (error.is_string(), error)
+    });
+    assert!(fixture.json(&["task", "show", "--id", &id])["prStatus"].is_null());
+    std::fs::write(
+        fixture.repo.join("gh-graphql"),
+        graphql_of_pr("OPEN", "APPROVED"),
+    )
+    .unwrap();
+    wait_until("the card got its state", || {
+        let shown = fixture.json(&["task", "show", "--id", &id]);
+        (shown["prStatus"]["review"] == "approved", shown)
+    });
+    wait_until("the warning went away", || {
+        let error = state_of(&resident)["prPoll"]["error"].clone();
+        (error.is_null(), error)
+    });
 }

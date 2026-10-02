@@ -206,6 +206,11 @@ function sideColumns(t, data) {
 function sidePrState(task, s) {
   if (task.status === 'done') return '完了';
   if (task.status === 'cancelled') return '取り消し';
+  // Whose turn the PR is, where the server read it, so this agrees with the card.
+  // Only where the card agrees: on the person's column, or with the worker handed over. While
+  // the worker is fixing, the phase says so, as the card does.
+  const handedOver = humanColOf(task) || s.phase === 'pr' || s.phase === 'pr-bots';
+  if (handedOver && typeof PR_TURN !== 'undefined' && task.prTurn !== 'draft' && PR_TURN[task.prTurn]) return PR_TURN[task.prTurn][0];
   if (s.phase === 'pr') return 'レビュー待ち';
   if (s.phase === 'pr-bots') return 'bot待ち';
   if (s.phase === 'review') return 'レビュー対応中';

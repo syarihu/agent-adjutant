@@ -362,9 +362,197 @@ pub struct PrStatus {
     /// `open`, `draft`, `merged` or `closed`.
     pub state: String,
     pub title: String,
-    /// `approved`, `changes`, `required` or `none`.
+    /// `approved`, `changes`, `required` (a review is still owed, whether GitHub says so or
+    /// someone has been asked) or `none`.
     pub review: String,
     pub ci: CheckCounts,
+}
+
+/// A pull request as GitHub names it. Owner and repository are kept in lower case, which is
+/// how GitHub itself compares them, so two spellings of one PR are one key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PrRef {
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
+}
+
+impl PrRef {
+    /// `owner/repo`, the name a notification gives a repository by.
+    pub fn nwo(&self) -> String {
+        format!("{}/{}", self.owner, self.repo)
+    }
+}
+
+/// Owner and repository names as GitHub allows them. Checked because they travel to `gh` as
+/// values, and a name that starts with `-` would be read as a flag.
+fn is_name(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with('-')
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+fn is_number(text: &str) -> Option<u64> {
+    (!text.is_empty() && text.chars().all(|c| c.is_ascii_digit()))
+        .then(|| text.parse().ok())
+        .flatten()
+}
+
+fn pr_ref_of(host: &str, owner: &str, repo: &str, number: &str) -> Option<PrRef> {
+    let host_ok = !host.is_empty()
+        && !host.starts_with('-')
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
+    (host_ok && is_name(owner) && is_name(repo)).then_some(())?;
+    Some(PrRef {
+        host: host.to_ascii_lowercase(),
+        owner: owner.to_ascii_lowercase(),
+        repo: repo.to_ascii_lowercase(),
+        number: is_number(number)?,
+    })
+}
+
+/// The pull request a record's `pr` names: `https://HOST/OWNER/REPO/pull/N`, with whatever
+/// follows the number (`/files`, a query, a fragment) ignored, or a bare `N` / `#N` when the
+/// repository the board belongs to is known (`default`: the host its origin is on, and its
+/// `owner/repo`). Anything else is not guessed at, and a value that starts with `-` is
+/// refused before it can reach `gh`.
+pub fn pr_ref(pr: &str, default: Option<(&str, &str)>) -> Option<PrRef> {
+    let pr = pr.trim();
+    if pr.starts_with('-') {
+        return None;
+    }
+    if let Some(rest) = pr
+        .strip_prefix("https://")
+        .or_else(|| pr.strip_prefix("http://"))
+    {
+        let rest = rest.split(['?', '#']).next().unwrap_or("");
+        let (host, path) = rest.split_once('/')?;
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() < 4 || parts[2] != "pull" {
+            return None;
+        }
+        return pr_ref_of(host, parts[0], parts[1], parts[3]);
+    }
+    let number = pr.strip_prefix('#').unwrap_or(pr);
+    let (host, nwo) = default?;
+    let (owner, repo) = nwo.split_once('/')?;
+    pr_ref_of(host, owner, repo, number)
+}
+
+/// The pull request an API URL of a notification's subject names:
+/// `https://api.github.com/repos/O/R/pulls/N`, or `https://HOST/api/v3/repos/O/R/pulls/N` on
+/// an enterprise host.
+pub fn pr_ref_from_api(url: &str) -> Option<PrRef> {
+    let rest = url.strip_prefix("https://")?;
+    let (host, path) = rest.split_once('/')?;
+    let (host, path) = if host == "api.github.com" {
+        ("github.com", path)
+    } else {
+        (host, path.strip_prefix("api/v3/")?)
+    };
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() != 5 || parts[0] != "repos" || parts[3] != "pulls" {
+        return None;
+    }
+    pr_ref_of(host, parts[1], parts[2], parts[4])
+}
+
+/// Whose turn a pull request is, read from what GitHub said about it. Derived on every read
+/// and never stored: the record keeps the facts (`PrStatus`) and the rule can change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PrTurn {
+    /// Still being prepared.
+    Draft,
+    /// Ready, and nobody has been asked or has answered: today's rule decides.
+    Unrequested,
+    /// Ready, and another reviewer has been asked and has not decided.
+    OtherReviewer,
+    /// Waiting on review bots or CI.
+    Checks,
+    /// A reviewer asked for changes.
+    Changes,
+    /// Approved: only the merge is left.
+    Merge,
+    CiFailed,
+    Merged,
+    /// Closed without being merged.
+    Closed,
+}
+
+impl PrTurn {
+    /// Whether the person is the one to act: they answer a review, merge, look at a failure,
+    /// or decide what a closed PR means.
+    pub fn persons(self) -> bool {
+        matches!(
+            self,
+            PrTurn::Changes | PrTurn::Merge | PrTurn::CiFailed | PrTurn::Closed
+        )
+    }
+}
+
+/// The turn a summary stands for. A failed check outranks one still running, and a request
+/// for changes outranks both: what the person can act on now comes first.
+pub fn pr_turn(status: &PrStatus) -> Option<PrTurn> {
+    match status.state.as_str() {
+        "merged" => return Some(PrTurn::Merged),
+        "closed" => return Some(PrTurn::Closed),
+        "draft" => return Some(PrTurn::Draft),
+        "open" => {}
+        _ => return None,
+    }
+    Some(if status.review == "changes" {
+        PrTurn::Changes
+    } else if status.ci.fail > 0 {
+        PrTurn::CiFailed
+    } else if status.ci.pending > 0 {
+        PrTurn::Checks
+    } else if status.review == "approved" {
+        PrTurn::Merge
+    } else if status.review == "required" {
+        PrTurn::OtherReviewer
+    } else {
+        PrTurn::Unrequested
+    })
+}
+
+/// Whether a task's pull request is the person's ball: the one rule the board's column and
+/// the sidebar's count both follow, and which `humanColOf` in `src/ui/core.js` mirrors.
+///
+/// `phase` is what the task's worker record says: `None` when there is no record, `Some(None)`
+/// when there is one with no phase. A worker still in a phase other than `pr` / `pr-bots` is
+/// at work, so the card stays on the agent board. Otherwise a turn that is the person's puts
+/// it in their column, even while the worker's phase says `pr-bots`; a turn that is somebody
+/// else's, or nobody's, keeps it out; and a PR whose turn says nothing (a draft, one nobody
+/// was asked to review, one not read yet) is decided the way it was before the turn was
+/// known: by the phase, or by the status when there is no record.
+pub fn pr_waits_on_person(
+    status: Status,
+    has_pr: bool,
+    pr_status: Option<&PrStatus>,
+    phase: Option<Option<&str>>,
+) -> bool {
+    if !has_pr || matches!(status, Status::Done | Status::Cancelled) {
+        return false;
+    }
+    if let Some(phase) = phase
+        && !matches!(phase, Some("pr" | "pr-bots"))
+    {
+        return false;
+    }
+    match pr_status.and_then(pr_turn) {
+        Some(turn) if turn.persons() => true,
+        Some(PrTurn::Checks | PrTurn::OtherReviewer | PrTurn::Merged) => false,
+        _ => match phase {
+            Some(phase) => phase == Some("pr"),
+            None => status == Status::Pr,
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1183,5 +1371,199 @@ mod tests {
         let value = serde_json::to_value(sample()).unwrap();
         let task: Task = serde_json::from_value(value).unwrap();
         assert_eq!(task.instruction, None);
+    }
+
+    fn at(owner: &str, repo: &str, number: u64) -> PrRef {
+        PrRef {
+            host: "github.com".to_string(),
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            number,
+        }
+    }
+
+    #[test]
+    fn a_pr_url_is_read_whatever_follows_the_number() {
+        for url in [
+            "https://github.com/acme/widget/pull/12",
+            "https://github.com/acme/widget/pull/12/",
+            "https://github.com/acme/widget/pull/12/files",
+            "https://github.com/acme/widget/pull/12?diff=split",
+            "https://github.com/acme/widget/pull/12#issuecomment-1",
+            "https://GitHub.com/Acme/Widget/pull/12",
+        ] {
+            assert_eq!(pr_ref(url, None), Some(at("acme", "widget", 12)), "{url}");
+        }
+        let enterprise = pr_ref("https://git.example.com/acme/widget/pull/3", None).unwrap();
+        assert_eq!(enterprise.host, "git.example.com");
+        assert_eq!(enterprise.nwo(), "acme/widget");
+    }
+
+    #[test]
+    fn a_bare_number_needs_the_repository_to_be_known() {
+        let here = Some(("github.com", "acme/widget"));
+        assert_eq!(pr_ref("12", here), Some(at("acme", "widget", 12)));
+        assert_eq!(pr_ref("#12", here), Some(at("acme", "widget", 12)));
+        assert_eq!(pr_ref("12", None), None);
+        assert_eq!(pr_ref("#12", None), None);
+        // A directory name is not a repository.
+        assert_eq!(pr_ref("12", Some(("github.com", "widget"))), None);
+        // It is read on the host the repository's origin is on, not on github.com.
+        let enterprise = pr_ref("12", Some(("git.example.com", "acme/widget"))).unwrap();
+        assert_eq!(enterprise.host, "git.example.com");
+    }
+
+    #[test]
+    fn what_is_not_a_pull_request_is_not_guessed_at() {
+        for odd in [
+            "",
+            "-x",
+            "--web",
+            "-1",
+            "https://github.com/acme/widget/issues/12",
+            "https://github.com/acme/widget/pull/",
+            "https://github.com/acme/widget/pull/x",
+            "https://github.com/acme/pull/12",
+            "https://github.com/-acme/widget/pull/12",
+            "ftp://github.com/acme/widget/pull/12",
+            "https://github.com/acme/widget?x=/pull/12",
+            "twelve",
+        ] {
+            assert_eq!(
+                pr_ref(odd, Some(("github.com", "acme/widget"))),
+                None,
+                "{odd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_notification_names_its_pull_request_by_an_api_url() {
+        assert_eq!(
+            pr_ref_from_api("https://api.github.com/repos/acme/widget/pulls/7"),
+            Some(at("acme", "widget", 7))
+        );
+        let enterprise =
+            pr_ref_from_api("https://git.example.com/api/v3/repos/acme/widget/pulls/7").unwrap();
+        assert_eq!(
+            (enterprise.host.as_str(), enterprise.number),
+            ("git.example.com", 7)
+        );
+        for odd in [
+            "https://api.github.com/repos/acme/widget/issues/7",
+            "https://api.github.com/repos/acme/widget/pulls/x",
+            "https://git.example.com/repos/acme/widget/pulls/7",
+            "https://github.com/acme/widget/pull/7",
+            "",
+        ] {
+            assert_eq!(pr_ref_from_api(odd), None, "{odd:?}");
+        }
+    }
+
+    fn pr(state: &str, review: &str, fail: u32, pending: u32) -> PrStatus {
+        PrStatus {
+            state: state.to_string(),
+            title: String::new(),
+            review: review.to_string(),
+            ci: CheckCounts {
+                pass: 1,
+                fail,
+                pending,
+            },
+        }
+    }
+
+    #[test]
+    fn a_turn_is_read_from_the_state_the_review_and_the_checks() {
+        let turn = |s: PrStatus| pr_turn(&s);
+        assert_eq!(turn(pr("draft", "none", 0, 0)), Some(PrTurn::Draft));
+        assert_eq!(turn(pr("open", "none", 0, 0)), Some(PrTurn::Unrequested));
+        assert_eq!(
+            turn(pr("open", "required", 0, 0)),
+            Some(PrTurn::OtherReviewer)
+        );
+        assert_eq!(turn(pr("open", "required", 0, 2)), Some(PrTurn::Checks));
+        assert_eq!(turn(pr("open", "changes", 0, 0)), Some(PrTurn::Changes));
+        assert_eq!(turn(pr("open", "approved", 0, 0)), Some(PrTurn::Merge));
+        assert_eq!(turn(pr("open", "none", 1, 0)), Some(PrTurn::CiFailed));
+        assert_eq!(turn(pr("merged", "approved", 0, 0)), Some(PrTurn::Merged));
+        assert_eq!(turn(pr("closed", "none", 0, 0)), Some(PrTurn::Closed));
+        assert_eq!(turn(pr("something-new", "none", 0, 0)), None);
+    }
+
+    #[test]
+    fn what_the_person_can_act_on_comes_first() {
+        let turn = |s: PrStatus| pr_turn(&s);
+        assert_eq!(turn(pr("open", "changes", 0, 3)), Some(PrTurn::Changes));
+        assert_eq!(turn(pr("open", "changes", 1, 0)), Some(PrTurn::Changes));
+        assert_eq!(turn(pr("open", "approved", 0, 3)), Some(PrTurn::Checks));
+        assert_eq!(turn(pr("open", "approved", 1, 3)), Some(PrTurn::CiFailed));
+        // A draft is not asked about its reviews or its checks.
+        assert_eq!(turn(pr("draft", "approved", 1, 1)), Some(PrTurn::Draft));
+    }
+
+    #[test]
+    fn a_turn_serializes_as_a_word() {
+        assert_eq!(
+            serde_json::to_value(PrTurn::OtherReviewer).unwrap(),
+            serde_json::json!("other-reviewer")
+        );
+        assert_eq!(
+            serde_json::to_value(PrTurn::CiFailed).unwrap(),
+            serde_json::json!("ci-failed")
+        );
+    }
+
+    #[test]
+    fn a_pr_waits_on_a_person_by_its_turn_and_then_by_the_worker_phase() {
+        let waits = |status: &PrStatus, phase: Option<Option<&str>>| {
+            pr_waits_on_person(Status::Pr, true, Some(status), phase)
+        };
+        let changes = pr("open", "changes", 0, 0);
+        let approved = pr("open", "approved", 0, 0);
+        let failed = pr("open", "none", 1, 0);
+        let closed = pr("closed", "none", 0, 0);
+        for person in [&changes, &approved, &failed, &closed] {
+            for phase in [None, Some(Some("pr")), Some(Some("pr-bots")), Some(None)] {
+                // A worker with no phase is not handing over anything.
+                let expected = phase != Some(None);
+                assert_eq!(waits(person, phase), expected, "{person:?} {phase:?}");
+            }
+            // The worker is still at work: it stays on the agent board.
+            assert!(!waits(person, Some(Some("review"))), "{person:?}");
+            assert!(!waits(person, Some(Some("implement"))), "{person:?}");
+        }
+        for other in [
+            pr("open", "required", 0, 0),
+            pr("open", "none", 0, 2),
+            pr("merged", "approved", 0, 0),
+        ] {
+            for phase in [None, Some(Some("pr")), Some(Some("pr-bots"))] {
+                assert!(!waits(&other, phase), "{other:?} {phase:?}");
+            }
+        }
+        // A draft, or a PR nobody was asked to review, is decided as it was before.
+        for undecided in [pr("draft", "none", 0, 0), pr("open", "none", 0, 0)] {
+            assert!(waits(&undecided, Some(Some("pr"))));
+            assert!(!waits(&undecided, Some(Some("pr-bots"))));
+            assert!(waits(&undecided, None));
+        }
+        assert!(pr_waits_on_person(Status::Pr, true, None, Some(Some("pr"))));
+        assert!(!pr_waits_on_person(
+            Status::Pr,
+            true,
+            None,
+            Some(Some("pr-bots"))
+        ));
+        assert!(!pr_waits_on_person(Status::Dispatched, true, None, None));
+    }
+
+    #[test]
+    fn nothing_waits_on_a_person_without_a_pr_or_after_the_task_ended() {
+        let closed = pr("closed", "none", 0, 0);
+        assert!(!pr_waits_on_person(Status::Pr, false, Some(&closed), None));
+        for status in [Status::Done, Status::Cancelled] {
+            assert!(!pr_waits_on_person(status, true, Some(&closed), None));
+        }
     }
 }
