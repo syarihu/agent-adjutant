@@ -540,7 +540,7 @@ function humanCard(task, col) {
       </span>
     </div>
     ${originChip(task)}
-    <div class="title">${esc(task.title)}</div>
+    <div class="title">${esc(task.title)}${titlePendingPill(task)}</div>
     ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : (why ? `<div class="why">${esc(why)}</div>` : '')}
     ${humanActions(task, col, gate)}
     <div class="hcard-foot">
@@ -637,7 +637,7 @@ function agentCard(task) {
 
   // 2. Title
   h += originChip(task);
-  h += `<div class="title">${esc(task.title)}</div>`;
+  h += `<div class="title">${esc(task.title)}${titlePendingPill(task)}</div>`;
 
   // 3. Worker Status (or Jules)
   if (live && task.jules) {
@@ -1251,7 +1251,7 @@ function panelHeadHtml(task) {
         ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
         ${pill}
       </div>
-      <h2 class="tp-title">${esc(task.title)}</h2>
+      <h2 class="tp-title">${esc(task.title)}${titlePendingPill(task)}</h2>
     </div>
     ${panelBtnsHtml('<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>')}`;
 }

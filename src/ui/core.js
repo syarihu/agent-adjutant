@@ -263,6 +263,9 @@ const ALLOWED = { backlog:['queued'], queued:['backlog','queued'] };
 const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Shown after a title made from the issue URL, until the issue has been read.
+const titlePendingPill = task => task.titlePending
+  ? '<span class="m3-pill pill-neutral" style="margin-left:6px;" title="Issue をまだ読めていません">タイトル未取得</span>' : '';
 
 /* Missing before the first poll, when no button has been drawn yet: read as configured so a
    state without the key never dims them. */

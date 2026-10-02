@@ -326,3 +326,109 @@ fn a_started_task_whose_issue_moves_is_read_again() {
     }
     assert_eq!(asked(&log), [format!("{ISSUE}/1"), format!("{ISSUE}/2")]);
 }
+
+fn post_task(resident: &Resident, body: &str) -> (u16, serde_json::Value) {
+    let (status, text) = resident.post(&format!("/b/{SLUG}/api/tasks"), body);
+    let value = serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
+    (status, value)
+}
+
+#[test]
+fn an_issue_url_alone_is_read_when_the_request_is_made() {
+    let fixture = Fixture::new(QUIET);
+    let (path, log) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    let (status, made) = post_task(&resident, &format!(r#"{{"issueUrl":"{ISSUE}/1"}}"#));
+    assert_eq!(status, 200, "{made}");
+    let task = &made["task"];
+    assert_eq!(task["title"], "T", "{made}");
+    assert_eq!(task["issueSnapshot"]["body"], "B", "{made}");
+    assert!(task.get("titlePending").is_none(), "{made}");
+    assert!(task.get("body").is_none(), "{made}");
+    assert_eq!(asked(&log), [format!("{ISSUE}/1")]);
+
+    // What the person typed wins, and the issue is still read.
+    let (status, made) = post_task(
+        &resident,
+        &format!(r#"{{"title":"mine","issueUrl":"{ISSUE}/1"}}"#),
+    );
+    assert_eq!(status, 200, "{made}");
+    assert_eq!(made["task"]["title"], "mine", "{made}");
+    assert_eq!(made["task"]["issueSnapshot"]["title"], "T", "{made}");
+    assert_eq!(asked(&log).len(), 2);
+
+    // A typed body means no read at all.
+    let (status, made) = post_task(
+        &resident,
+        &format!(r#"{{"body":"first line\nmore","issueUrl":"{ISSUE}/1"}}"#),
+    );
+    assert_eq!(status, 200, "{made}");
+    assert_eq!(made["task"]["title"], "first line", "{made}");
+    assert!(made["task"].get("issueSnapshot").is_none(), "{made}");
+    assert_eq!(asked(&log).len(), 2, "a typed body still asked gh");
+}
+
+#[test]
+fn an_unreadable_issue_keeps_the_record_under_its_name_until_it_is_read() {
+    let fixture = Fixture::new(QUIET);
+    let (path, log) = stub_gh(&fixture);
+    std::fs::write(fixture.repo.join("gh-fail"), "").unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    let (status, made) = post_task(&resident, &format!(r#"{{"issueUrl":"{ISSUE}/1"}}"#));
+    assert_eq!(status, 200, "{made}");
+    assert_eq!(made["task"]["title"], "acme/widget#1", "{made}");
+    assert_eq!(made["task"]["titlePending"], true, "{made}");
+    assert!(made["task"].get("issueSnapshot").is_none(), "{made}");
+    let id = made["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(asked(&log).len(), 1);
+
+    std::fs::remove_file(fixture.repo.join("gh-fail")).unwrap();
+    // A read from the board's button is enough, without starting the task.
+    let (status, read) = resident.post(&format!("/b/{SLUG}/api/tasks/{id}/issue"), "");
+    assert_eq!(status, 200, "{read}");
+    let read: serde_json::Value = serde_json::from_str(&read).unwrap();
+    assert_eq!(read["task"]["title"], "T", "{read}");
+    assert!(read["task"].get("titlePending").is_none(), "{read}");
+    assert_eq!(shown(&fixture, &id)["title"], "T");
+
+    // And the start path, for a record that was not read before it.
+    std::fs::write(fixture.repo.join("gh-fail"), "").unwrap();
+    let (_, made) = post_task(&resident, &format!(r#"{{"issueUrl":"{ISSUE}/1"}}"#));
+    let id = made["task"]["id"].as_str().unwrap().to_string();
+    std::fs::remove_file(fixture.repo.join("gh-fail")).unwrap();
+    assert!(start(&fixture, &path, &id, "dispatched").status.success());
+    let task = shown(&fixture, &id);
+    assert_eq!(task["title"], "T", "{task}");
+    assert!(task.get("titlePending").is_none(), "{task}");
+    assert_eq!(task["issueSnapshot"]["body"], "B", "{task}");
+}
+
+#[test]
+fn a_request_without_content_or_a_readable_issue_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let (path, log) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    let (status, made) = post_task(&resident, "{}");
+    assert_eq!(status, 400, "{made}");
+    let other = r#"{"issueUrl":"https://linear.app/x/issue/ABC-1"}"#;
+    let (status, made) = post_task(&resident, other);
+    assert_eq!(status, 400, "{made}");
+    assert!(asked(&log).is_empty(), "gh was asked");
+
+    // Only a task that starts an issue is made from the issue alone.
+    let investigate = format!(r#"{{"kind":"investigate","issueUrl":"{ISSUE}/1"}}"#);
+    let (status, made) = post_task(&resident, &investigate);
+    assert_eq!(status, 400, "{made}");
+    assert!(asked(&log).is_empty(), "gh was asked");
+
+    // The flag is the server's to set.
+    let forged = r#"{"title":"t","body":"b","titlePending":true}"#;
+    let (status, made) = post_task(&resident, forged);
+    assert_eq!(status, 200, "{made}");
+    assert!(made["task"].get("titlePending").is_none(), "{made}");
+    let id = made["task"]["id"].as_str().unwrap();
+    assert!(shown(&fixture, id).get("titlePending").is_none());
+}

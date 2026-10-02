@@ -222,28 +222,36 @@ pub const ISSUE_BODY_CAP: usize = 16 * 1024;
 /// `/<owner>/<repo>/issues/<number>`, on github.com or an enterprise host alike. Other
 /// trackers, and pull request URLs, are left alone rather than guessed at.
 pub fn fetchable_issue(url: &str) -> bool {
-    let Some(rest) = url
+    issue_parts(url).is_some()
+}
+
+/// `owner/repo#N` for an issue `fetchable_issue` accepts: the name a task made from the issue
+/// carries until the issue's own title has been read.
+pub fn issue_ref(url: &str) -> Option<String> {
+    let (owner, repo, number) = issue_parts(url)?;
+    Some(format!("{owner}/{repo}#{number}"))
+}
+
+/// The owner, repository and number of an issue URL `fetchable_issue` accepts.
+fn issue_parts(url: &str) -> Option<(&str, &str, &str)> {
+    let rest = url
         .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    else {
-        return false;
-    };
+        .or_else(|| url.strip_prefix("http://"))?;
     // Cut at the first `?` or `#` before looking at the path, so a '/' inside a query or
     // fragment can never pass for one in the path.
     let rest = rest.split(['?', '#']).next().unwrap_or("");
-    let Some((host, path)) = rest.split_once('/') else {
-        return false;
-    };
+    let (host, path) = rest.split_once('/')?;
     // One trailing slash after the number is the same issue.
     let path = path.strip_suffix('/').unwrap_or(path);
     let parts: Vec<&str> = path.split('/').collect();
-    !host.is_empty()
+    let ok = !host.is_empty()
         && parts.len() == 4
         && !parts[0].is_empty()
         && !parts[1].is_empty()
         && parts[2] == "issues"
         && !parts[3].is_empty()
-        && parts[3].chars().all(|c| c.is_ascii_digit())
+        && parts[3].chars().all(|c| c.is_ascii_digit());
+    ok.then(|| (parts[0], parts[1], parts[3]))
 }
 
 /// The issue a parent-task key names, from the config's `issueKeys` (`owner/repo` -> key): the
@@ -427,6 +435,10 @@ pub struct Task {
     /// only by a fetch, never taken from a caller's JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_snapshot: Option<IssueSnapshot>,
+    /// The title was made from the issue URL (`owner/repo#N`) because the issue could not be
+    /// read when the task was created. The first successful read replaces it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub title_pending: bool,
     /// The pull request as the last refresh read it; see `PrStatus`. Written only by a
     /// refresh, never taken from a caller's JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -620,6 +632,9 @@ pub fn render_request(task: &Task) -> String {
             "ask before starting"
         }
     ));
+    if task.title_pending {
+        out.push_str("## Title         not read yet (the issue could not be read; the title is its reference)\n");
+    }
     out.push_str("\n## Body\n\n");
     out.push_str(task.body.trim_end());
     out.push('\n');
@@ -673,6 +688,7 @@ mod tests {
                 instruction: None,
                 gate_answered_at: None,
                 issue_snapshot: None,
+                title_pending: false,
                 pr_status: None,
                 created_at: stamp.to_string(),
                 updated_at: stamp.to_string(),
@@ -751,6 +767,20 @@ mod tests {
         ] {
             assert!(!fetchable_issue(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn an_issue_ref_names_owner_repo_and_number() {
+        assert_eq!(
+            issue_ref("https://github.com/a/b/issues/12#issuecomment-1").as_deref(),
+            Some("a/b#12")
+        );
+        assert_eq!(
+            issue_ref("https://ghe.example.com/a/b/issues/7/").as_deref(),
+            Some("a/b#7")
+        );
+        assert_eq!(issue_ref("https://github.com/a/b/pull/12"), None);
+        assert_eq!(issue_ref("https://linear.app/x/issue/ABC-1"), None);
     }
 
     #[test]
@@ -1068,6 +1098,14 @@ mod tests {
             body.contains("The retry does not seem to take effect"),
             "{body}"
         );
+    }
+
+    #[test]
+    fn a_title_not_read_yet_is_said_in_the_request() {
+        let mut task = sample();
+        assert!(!render_request(&task).contains("## Title"));
+        task.title_pending = true;
+        assert!(render_request(&task).contains("## Title         not read yet"));
     }
 
     /// Absent fields are written as `-` rather than left out: the hub reads this as prose,

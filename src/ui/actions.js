@@ -772,6 +772,10 @@ function syncForm() {
   const kind = document.querySelector('input[name=kind]:checked').value;
   document.getElementById('f-issue').classList.toggle('hidden', kind !== 'start');
   document.getElementById('f-wtname').classList.toggle('hidden', kind === 'start');
+  // An Issue URL alone is enough to hand an issue over: the server reads its title and body.
+  const issueUrl = document.querySelector('#f-issue input[name=issueUrl]').value.trim();
+  const isIssue = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/issues\/\d+\/?(?:[?#].*)?$/.test(issueUrl);
+  document.querySelector('textarea[name=body]').required = !(kind === 'start' && isIssue);
 }
 
 async function submitForm(e) {
@@ -800,8 +804,10 @@ async function submitForm(e) {
   try {
     const into = scopeAll() ? `/b/${f.get('board')}` : BASE;
     const data = await boardApi(into, '/api/tasks', { method:'POST', body: JSON.stringify(body) });
-    note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));
+    note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed) +
+      (data.task?.titlePending ? '。Issue を読めませんでした。タイトルは着手時に取得します' : ''));
     e.target.reset();
+    syncForm();
     await refresh(true);
   } catch (err) {
     note(`${line} → ${err.message}`, true);
