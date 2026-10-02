@@ -3360,6 +3360,24 @@ mod tests {
     }
 
     #[test]
+    fn a_session_with_no_task_is_a_card_on_the_agent_board() {
+        for piece in [
+            "function sessionCard",
+            "data-sess-link=",
+            "data-sess-open=",
+            "タスクなし",
+            "lastOutputText(s)",
+            "+ bareIn.length;",
+            "!displayItems.length && !bareIn.length",
+        ] {
+            assert!(UI_HTML.contains(piece), "{piece}");
+        }
+        for gone in ["function ghostEl", ".card.ghost"] {
+            assert!(!UI_HTML.contains(gone), "{gone}");
+        }
+    }
+
+    #[test]
     fn a_long_focus_is_cut_on_a_character_boundary() {
         assert_eq!(cut_chars("短い", 400), "短い");
         assert_eq!(cut_chars("あいうえお", 3), "あいう…");

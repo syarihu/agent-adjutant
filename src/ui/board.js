@@ -766,6 +766,59 @@ function agentCard(task) {
   return el;
 }
 
+/* A session started with no task: it has no record to show gates or a phase for, so the card
+   says what it is and offers what it can become (#178). `s` is its session, which the 「すべて」
+   view does not always carry. */
+function sessionCard(w) {
+  const s = (state.sessions || []).find(x => x.kind === 'worker' && x.worktree === w.worktree && (!w._slug || x._slug === w._slug)) || null;
+  const el = document.createElement('div');
+  el.className = 'card session-card';
+  el.dataset.worktree = w.worktree;
+  if (w._slug) el.dataset.slug = w._slug;
+
+  const missing = !!w.task && !(state.tasks || []).some(t => t.id === w.task && (!w._slug || t._slug === w._slug));
+  const what = missing ? 'タスク ID はこのボードに見つかりません' : 'タスクのレコードがないセッション';
+  const folder = (w.worktree || '').split('/').filter(Boolean).pop() || w.name || '';
+  const name = s ? sessionKey(s) : folder;
+  const icon = n => `<span class="material-symbols-outlined" style="font-size:14px;">${n}</span>`;
+
+  let h = `<div class="card-header-row"><span class="m3-pill pill-neutral" title="${esc(what)}">${icon('link_off')}<span>${missing ? 'タスクが見つからない' : 'タスクなし'}</span></span></div>
+    <div class="title" title="${esc(w.branch || '')}">${esc(name)}</div>`;
+
+  const st = s ? sessionState(s) : null;
+  const last = s ? lastOutputText(s) : null;
+  h += `<div class="card-worker-status">
+    ${st ? `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>`
+         : `<span class="m3-pill ${w.present ? 'pill-good' : 'pill-neutral'}">${w.present ? '稼働' : '停止'}</span>`}
+    ${last ? `<span>最後の出力 ${esc(last)}</span>` : ''}
+  </div>`;
+
+  // Linking writes the task and tells the worker, which a session that is not running cannot read.
+  const off = s && !s.present ? ' disabled title="セッションが動いていないため、タスクにも既存のタスクへの紐づけもできません"' : '';
+  const link = (mode, label) => `<button type="button" class="m3-icon-button" data-sess-link="${mode}" data-sref="${esc(sessionRef(s))}"${off}><span>${label}</span></button>`;
+  h += `<div class="card-footer-row">
+    <div class="card-meta-slug" title="${esc(w.worktree || '')}"><span class="material-symbols-outlined" style="font-size:13px;">folder_open</span><span>${esc(folder)}</span></div>
+    <div class="card-button-row">
+      ${s && boardTerminalReady(s) ? `<button type="button" class="m3-icon-button" title="内蔵ターミナルをセッションの画面で開く" data-sess-open="${esc(sessionRef(s))}">${icon('terminal')}<span>ターミナル</span></button>` : ''}
+      ${s && !missing ? link('new', 'タスクにする…') + link('existing', '紐づける…') : ''}
+      ${w.worktree ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(w.worktree)}">${icon('code')}<span>IDE</span></button>` : ''}
+    </div>
+  </div>`;
+
+  el.innerHTML = h;
+  // Without a terminal the Sessions view is not available and would bounce back.
+  const opens = !!s && boardTerminalReady(s);
+  // 「すべて」 carries no sessions: the board's own page does, with the buttons.
+  const lands = !s && !!w._slug;
+  if (!opens && !lands) el.style.cursor = 'default';
+  el.onclick = (e) => {
+    if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('a')) return;
+    if (opens) onBoard(w._slug, () => openSessionRef(sessionRef(s)));
+    else if (lands) onBoard(w._slug, () => {});
+  };
+  return el;
+}
+
 let boardHeld = false;
 /* Draws the columns afresh across both Human board and Agent board. */
 function renderColumns(force = false) {
@@ -867,7 +920,18 @@ function renderColumns(force = false) {
   // Render Agent Board
   if (ab) {
     ab.innerHTML = '';
+    // A session with no task has no phase to place it by, so it sits with the work that is
+    // under way; a column that does not draw these cards sends them to 実装 so none vanishes.
+    const known = new Set((state.tasks || []).map(t => t.worktree).filter(Boolean));
+    // A worker that names a task of the board belongs to that task's card, which finds its session by `s.task`.
+    const ofBoard = w => w.task && (state.tasks || []).some(t => t.id === w.task && (!w._slug || t._slug === w._slug));
+    const bare = (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w));
+    const bareCol = w => {
+      const c = AGENT_COL_OF_PHASE[w.phase];
+      return c && c !== 'before' && c !== 'done' ? c : 'implement';
+    };
     for (const def of AGENT_COLUMNS) {
+      const bareIn = def.id === 'before' || def.id === 'done' ? [] : bare.filter(w => bareCol(w) === def.id);
       const items = (state.tasks || []).filter(t => agentColOf(t) === def.id);
       const isNarrow = def.id === 'before' || def.id === 'done';
       let older = [];
@@ -878,7 +942,7 @@ function renderColumns(force = false) {
         if (!showOlderDone) displayItems = items.filter(t => updatedMs(t) >= cutoff);
       }
 
-      const totalCount = def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length;
+      const totalCount = (def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length) + bareIn.length;
       const isEmpty = totalCount === 0;
       const col = document.createElement('section');
       col.className = 'col' + (isNarrow ? ' narrow' : '') + (isEmpty ? ' empty' : '');
@@ -918,18 +982,12 @@ function renderColumns(force = false) {
         for (const t of backlog) cards.appendChild(agentCard(t));
       } else {
         displayItems.sort((a, b) => (!!humanColOf(a) - !!humanColOf(b)) || (b.phaseAt || updatedMs(b) || 0) - (a.phaseAt || updatedMs(a) || 0));
-        if (!displayItems.length) {
+        if (!displayItems.length && !bareIn.length) {
           cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
         } else {
           for (const t of displayItems) cards.appendChild(agentCard(t));
         }
-
-        if (def.id === 'implement') {
-          const known = new Set((state.tasks || []).map(t => t.worktree).filter(Boolean));
-          for (const w of (state.workers || []).filter(w => w.present && !known.has(w.worktree))) {
-            cards.appendChild(ghostEl(w));
-          }
-        }
+        for (const w of bareIn) cards.appendChild(sessionCard(w));
 
         if (older.length && def.id === 'done') {
           cards.insertAdjacentHTML('beforeend',
@@ -957,16 +1015,6 @@ function renderColumns(force = false) {
   document.querySelectorAll('textarea[data-reply]').forEach(a => {
     if (drafts[a.dataset.reply] != null) a.value = drafts[a.dataset.reply];
   });
-}
-
-function ghostEl(worker) {
-  const el = document.createElement('div');
-  el.className = 'card ghost';
-  el.innerHTML = `<div class="title">${esc(worker.title || worker.name)}</div>
-    <div class="meta"><span>${esc(worker.branch || '')}</span>
-      <span class="state warn"><span>◷</span>タスクレコードなし</span></div>
-    <div class="mono">${esc(worker.worktree)}</div>`;
-  return el;
 }
 
 /* A gate is named by its board and id in the review queue, which reads several boards: two of
@@ -1790,6 +1838,22 @@ document.addEventListener('click', e => {
   if (di) {
     e.stopPropagation();
     return worktreeAct('ide', di.dataset.ide, false, slugOf(di));
+  }
+  const so = e.target.closest('[data-sess-open]');
+  if (so) {
+    e.stopPropagation();
+    return onBoard(slugOf(so), () => openSessionRef(so.dataset.sessOpen));
+  }
+  const sl = e.target.closest('[data-sess-link]');
+  if (sl) {
+    e.stopPropagation();
+    // The dialog posts to the page's board, so it opens once the session's board is current.
+    // The id lookup is safe: the all view's card carries data-slug, and onBoard has made that board current.
+    return onBoard(slugOf(sl), () => {
+      const id = sl.dataset.sref.split('/').pop();
+      const s = (state.sessions || []).find(x => x.id === id);
+      if (s) openLinkDialog(s, sl.dataset.sessLink);
+    });
   }
   const dt = e.target.closest('[data-term-session]');
   if (dt) {
