@@ -593,8 +593,9 @@ stopped, or has sat in one step for `stuckAfterMinutes` — a badge rather than 
 card keeps the column that says how far it got. Time counts only while the ball is the
 worker's: a card waiting on a gate or on its pull request's reviewers is not flagged for it,
 and once the pull request is open a closed worker tab is not flagged either. A pull request
-waiting on review bots (`pr-bots`) stays in the agents' column with no waiting badge; whether
-one waits on a person otherwise depends on the PR itself (below).
+waiting on review bots (`pr-bots`) stays in the agents' column with no waiting badge, but only
+while the PR is not the person's turn: a PR with changes requested, an approval, failing CI or a
+close sends it to the person's column even then (below).
 Done cards fold away after a day; the records stay.
 
 Every worker has a record, whichever way its task came in. A task the hub starts from a
@@ -621,7 +622,10 @@ that PR, and the state is kept on the record (`prStatus`). Whose turn it is is w
 A worker that is still in a phase other than `pr` or `pr-bots` keeps its card on the agents'
 board whatever the PR says. A PR whose turn says nothing (a draft, one nobody was asked to
 review, one not read yet) is placed as before: in the human column when the worker's phase is
-`pr`, or, with no worker record, when the task's status is `pr`.
+`pr`, or, with no worker record, when the task's status is `pr`. A Jules task with a PR, once
+Jules is not working, follows the same turn: the person's turn puts it in the human column,
+another reviewer's, the bots' or a merge takes it off, and a PR whose turn says nothing sits in
+the human column as before.
 
 The resident server keeps this up to date by itself, with no setting to turn on. It asks
 `GET /notifications?participating=true&all=true` with `If-Modified-Since` (and `since`, so the

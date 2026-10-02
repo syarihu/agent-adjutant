@@ -521,6 +521,19 @@ pub fn pr_turn(status: &PrStatus) -> Option<PrTurn> {
     })
 }
 
+/// Whether a Jules task's pull request is the person's ball, once Jules is not working on it
+/// (which only the board's own poll knows, so this is asked after that). The same turn as
+/// `pr_waits_on_person`, with no worker phase to consult: the person's turn waits; another
+/// reviewer's, the bots' or a merge does not; a turn that says nothing (a draft, one nobody was
+/// asked, one not read yet) waits as it always did. `humanColOf` in `src/ui/core.js` mirrors it.
+pub fn jules_pr_waits_on_person(pr_status: Option<&PrStatus>) -> bool {
+    match pr_status.and_then(pr_turn) {
+        Some(turn) if turn.persons() => true,
+        Some(PrTurn::Checks | PrTurn::OtherReviewer | PrTurn::Merged) => false,
+        _ => true,
+    }
+}
+
 /// Whether a task's pull request is the person's ball: the one rule the board's column and
 /// the sidebar's count both follow, and which `humanColOf` in `src/ui/core.js` mirrors.
 ///
@@ -1556,6 +1569,28 @@ mod tests {
             Some(Some("pr-bots"))
         ));
         assert!(!pr_waits_on_person(Status::Dispatched, true, None, None));
+    }
+
+    #[test]
+    fn a_jules_pr_follows_the_turn_and_waits_when_the_turn_says_nothing() {
+        for waits in [
+            pr("open", "changes", 0, 0),
+            pr("open", "approved", 0, 0),
+            pr("open", "none", 1, 0),
+            pr("closed", "none", 0, 0),
+            pr("draft", "none", 0, 0),
+            pr("open", "none", 0, 0),
+        ] {
+            assert!(jules_pr_waits_on_person(Some(&waits)), "{waits:?}");
+        }
+        for off in [
+            pr("open", "required", 0, 0),
+            pr("open", "none", 0, 2),
+            pr("merged", "approved", 0, 0),
+        ] {
+            assert!(!jules_pr_waits_on_person(Some(&off)), "{off:?}");
+        }
+        assert!(jules_pr_waits_on_person(None));
     }
 
     #[test]

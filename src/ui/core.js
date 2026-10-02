@@ -194,9 +194,11 @@ function humanColOf(t, data = state) {
   if (g) return gateHumanCol(g.kind);
   if (t.status === 'done' || t.status === 'cancelled') return null;
 
-  // Jules tasks
+  // Jules tasks: once Jules is not working, the PR's turn (twin of
+  // `task::jules_pr_waits_on_person`). A turn that says nothing keeps today's column.
   if (t.julesSession && t.pr) {
     if (!t.jules?.working && t.jules?.state !== 'FAILED') {
+      if (['checks', 'other-reviewer', 'merged'].includes(t.prTurn)) return null;
       return 'prreview';
     }
   }
@@ -718,6 +720,8 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
     hubs: carried.flatMap(slug => tag(boardStates[slug].data.hubs, slug)),
     pending: [],
     now,
+    // One poll serves every board, so any board's word is the poll's: one that is failing first.
+    prPoll: parts.map(p => p.data.prPoll).find(p => p?.error) || parts.map(p => p.data.prPoll).find(Boolean) || null,
     ideConfigured: first.ideConfigured,
     stuckAfterMinutes: first.stuckAfterMinutes,
     configPath: first.configPath,

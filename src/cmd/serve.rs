@@ -667,8 +667,9 @@ fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
 ///
 /// This mirrors `humanColOf` in `src/ui/core.js` and the board's own "waiting" and "workers"
 /// counts; keep the two in step. A task waits when it has an open gate, or when its pull
-/// request is the person's ball: a Jules task with a pull request, or a worker task for which
-/// `task::pr_waits_on_person` says so (the state of its PR, then its worker's phase). A gate
+/// request is the person's ball: a Jules task with a pull request for which
+/// `task::jules_pr_waits_on_person` says so, or a worker task for which `task::pr_waits_on_person`
+/// says so (the state of its PR, then its worker's phase). A gate
 /// whose task is not on the board waits too. Workers at work are the dispatched and `pr` tasks that
 /// do not wait. The page's Jules check also looks at the session's live state, which only the
 /// board's own poll has, so a Jules task that is still working counts as waiting here.
@@ -688,7 +689,7 @@ fn board_counts(
         } else if matches!(t.status, task::Status::Done | task::Status::Cancelled) {
             false
         } else if t.jules_session.is_some() && t.pr.is_some() {
-            true
+            task::jules_pr_waits_on_person(t.pr_status.as_ref())
         } else {
             // Only a task with a PR has a worker record that matters here.
             let seen =
@@ -3804,6 +3805,29 @@ mod tests {
         let mut t = on_pr("t1", task::Status::Pr);
         t.jules_session = Some("s1".to_string());
         assert_eq!(counts(&[t], &[], Some("pr-bots")), (1, 0));
+    }
+
+    #[test]
+    fn a_jules_task_follows_its_prs_turn_and_waits_when_the_turn_says_nothing() {
+        let jules = |mut t: task::Task| {
+            t.jules_session = Some("s1".to_string());
+            t
+        };
+        for t in [
+            read_pr("open", "changes", 0, 0),
+            read_pr("open", "approved", 0, 0),
+            read_pr("closed", "none", 0, 0),
+            read_pr("open", "none", 0, 0),
+        ] {
+            assert_eq!(counts(&[jules(t)], &[], None), (1, 0));
+        }
+        for t in [
+            read_pr("open", "required", 0, 0),
+            read_pr("open", "none", 0, 2),
+            read_pr("merged", "approved", 0, 0),
+        ] {
+            assert_eq!(counts(&[jules(t)], &[], None), (0, 1));
+        }
     }
 
     #[test]
