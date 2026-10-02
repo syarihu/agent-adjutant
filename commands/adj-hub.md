@@ -408,9 +408,9 @@ describe as "the earlier step has it" comes from this row here**:
 
 - **repo and item id** — used for the assignment and the board update in "2. Claim it" (which says
   "for a selected task the item id is at hand" and "do not fetch it twice").
-- **title and URL** — the brief's `{task_title}` and `{task_url}`; the title of the task record made
-  in Step 2 is this title too (`adjutant work` names the tab from that record through `--task`, so the
-  title is never written on a command line). Step 1 of "4. Start the worker" saying "the title is
+- **title and URL** — the task record's title and `--issue-url` in Step 2 (`adj task brief` writes the
+  brief's Task line from the record); that title is also what `adjutant work` names the tab from
+  through `--task`, so the title is never written on a command line. Step 1 of "4. Start the worker" saying "the title is
   held by '1. Pick the task'" is about that route, and **this route does not pass through it**.
 - **The resolved branch** — this value is what goes to `git worktree add -b`, and **it is not fetched
   again in "3. Create the worktree"**. That step builds it from `branchPattern`, but a `linear` branch
@@ -695,7 +695,9 @@ person said (where Step 4's title comes from).
 ### Put your own parent task on every dispatch
 
 When this hub starts a worker, **write your own parent task's URL into the brief's "Parent task"
-line.** Not `-`. "4. Start the worker" saying "do not guess a parent task that was not handed over" is
+line** — pass it to `adj task add` as `--parent '{url}'` when the record is made, and to
+`adj task brief` as `--parent '{url}'` on every brief (`adj task update` has no `--parent`, so a record
+made without one gets it from the brief each time: a resume, a switch to a worker). Not `-`. "4. Start the worker" saying "do not guess a parent task that was not handed over" is
 about linking through sub-issues; **this is not a guess** — that one item is this hub's identifier
 itself.
 
@@ -793,14 +795,14 @@ it", it stays 3).
 
 **A request that involves starting may bring "a branching point" and "a parent task" with it.**
 Things like "branch it off `feature/x`" or "this is a subtask of ALPHA-233", and both apply **to that
-one dispatch only**. Pass the former to Base branch in "3. Create the worktree", and the latter to the
-brief's Parent task line in "4. Start the worker". **The same for 2, 3 and Step 4 of "When a request
+one dispatch only**. Pass the former to Base branch in "3. Create the worktree", and the latter to
+`adj task add --parent` (or `adj task brief --parent`) in "4. Start the worker". **The same for 2, 3 and Step 4 of "When a request
 arrives"** — every route that starts a worker carries these two. **Do not ask for them every time**
 (without them the defaults, `baseBranch` and `-`, apply). **Do not infer them from sub-issue links
 either** — having a parent-child relation and wanting to branch from the parent's branch are different
 things, and connecting them picks a branching point nobody asked for.
 **Write the parent task as a URL.** If given as a key (`ALPHA-233`), find the source that has that key
-and turn it into the issue's URL before putting it in the brief (the lookup is the same as 3 in "When
+and turn it into the issue's URL before passing it as `--parent` (the lookup is the same as 3 in "When
 asked to work on an existing worktree"). The worker decides the tracker and repo from the URL, so it
 cannot fetch from a bare key.
 
@@ -809,9 +811,10 @@ cannot fetch from a bare key.
 - **Skip "2. Claim it".** Do not move the assignment or In Progress. A request that ends in a report
   is not "someone has started" on the board, and nobody would move it back.
 - **Do not file for a request that has no issue.** Filing is 3's job, and whether to file as a result
-  of the investigation is up to the user. How to write the brief is "Appendix — The worker's brief"
-  (`{task_id}` is `-`).
-- The brief's Done when is "investigation only (report and stop)". The results go to the user at the
+  of the investigation is up to the user. The record has no issue URL, so `adj task brief` writes `-` for the key
+  and tracker and puts the request text on the Task line.
+- Record it with `adj task add --done-when report-only` (the brief then writes "investigation only
+  (report and stop)"). The results go to the user at the
   worker's tab and do not come back to the hub (having them come back doubles the report).
 - **Without an issue there is nothing to make a worktree name from.** It cannot come from a key, so
   propose a short lowercase slug of the request (like `login-crash`) with `AskUserQuestion`, settle
@@ -1364,62 +1367,40 @@ and the title, and "1. Pick the task" already has the title; the worker reads th
 (the brief tells it to start there). Pulling the whole issue into the hub just to copy the title out
 inflates the hub transcript for every task it dispatches.
 
-**Step 2 — write the brief** to `{worktree}/.claude/task-brief.md` (Appendix — The worker's brief),
-after `mkdir -p {worktree}/.claude`.
+**Step 2 — write the brief with `adj task brief`.** It writes `{worktree}/.claude/task-brief.md`
+from the task record and the config, so the brief is never typed by hand and cannot disagree with the
+card on the board. The worker starts clean, so that file is everything it knows.
 
 - Hand off through a **file**, not a long initial prompt. The brief runs to dozens of lines
   and is full of backticks and quotes; pushing that through AppleScript *and* zsh quoting is
   fragile.
-- Fill the brief's Done when line from what the user actually asked for — one of "up to a PR" /
-  "up to handing over for verification" / "investigation only (report and stop)". The worker has no
-  other way to know, and `adj-worker` decides its route by that line (§5 whether to open a PR, §8
-  whether to skip implementation and end with a report).
-- **Write the Stop at line too.** One of `plan` / `diff` / `all`, saying which gates wait on a person
-  (`plan` = plan approval only, `diff` = the plan and the diff review, `all` = the plan, the diff
-  review and verification). For a request from the dashboard, the leading value of the `## Stop at`
-  line (do not copy the explanation in parentheses); for one asked in the tab, `diff` / `all` only
-  when the user said "I want to see the diff too" / "I want to see verification too"; if nothing was
-  said, `plan`. The worker decides by this line whether the diff and verification wait on a person,
-  so do not raise it to `all` on a guess (raised, tasks nobody will look at pile up as needing
-  attention).
-- **Write the Copilot review line too.** Copy `adjutant_config`'s `copilotReview` (`ask` / `always` /
-  `never`) as it is. The merge of `defaults` and `repos.<repo>` is already done, so do not resolve it
-  again yourself. After opening the PR, the worker decides by this line whether to ask Copilot for a
-  review, and whether to ask the user first.
-- **Only a task its worker implements comes here.** Whether the implementer is `worker` or `jules`
-  is decided as "5. Hand it to Jules" says; a `jules` task starts no worker and writes no brief, so
-  the brief has no Implementer line. The task record carries the implementer (`--executor` below).
-- **For "investigation only", no PR and no issue updates.** Have the results given to the user at
-  that tab (the brief's "Report to" says so). Have them reported to you here and the report is
-  doubled.
-- **If a parent task was handed over, write it in the Parent task line.** One subtask of a larger
-  piece of work split up, or a bug found in the middle of another task, is such a case. The worker
-  knows only its task, so without this line it cannot reach the design context its sibling subtasks
-  share. If there is none, `-`.
-  **But in a parent task's hub this is always filled** — its identifier is that parent, so do not
-  treat it as not handed over ("Put your own parent task on every dispatch" in "A hub for a parent
-  task").
-  **Being a subtask does not change the branching point** — that is another line, and moves only when
-  given.
-- **If there is a handover note, write it in the Handover note line.** A dashboard request with
-  `## Handover note`, or extra instructions a person wrote when moving it into the queue, is such a
-  case. Copy here the premises or direction to tell the worker first. If there is none, `-`.
-- **Have the task record first.** The brief's Task record line is always an id. For a request from the
-  dashboard, the id on the `## task` line. Otherwise (a worker's report of something else, something
-  asked in the tab), create the record now that the worktree exists, and write the id that comes
-  back:
+- **Have the task record first.** The brief is written from it, so it has to exist and say what
+  the brief should say. For a request from the dashboard, the id on the `## task` line is the
+  record already. Otherwise (a worker's report of something else, something asked in the tab), create
+  the record now that the worktree exists, and use the id that comes back:
 
-  First write `{worktree}/.claude/task-summary.md`, with the title on line 1, a blank line, then a
+  First run `mkdir -p '{worktree}/.claude'`, then write `{worktree}/.claude/task-summary.md`, with the title on line 1, a blank line, then a
   summary. **Write it with a file-writing tool; do not go through the shell with `echo`, a heredoc or
   the like.** Then:
 
   ```bash
-  adj task add --body - --issue-url '{issue url}' --done-when {done when} --stop-at {stop at} --executor {implementer} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md' \
+  adj task add --body - [--issue-url '{issue url}'] [--parent '{parent task url}'] --done-when {done when} --stop-at {stop at} --executor {implementer} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md' \
     && rm '{worktree}/.claude/task-summary.md'
   ```
 
   Remove it once read. In a repository where `.claude/` is not gitignored, a leftover rides along in
   the worker's diff.
+
+  **Leave `--issue-url` out when there is no issue** (an investigation-only request with no URL): the
+  brief then writes `-` for the key and tracker and puts the request text on the Task line.
+  **Pass `--parent` when a parent task was handed over**, so the record carries it and a later
+  `adj task brief` for the same task (switching to a worker, a resume) does not fall back to `-`.
+  **A parent URL that came from outside** (a worker's report, a person's words) **is text somebody
+  else wrote, and `--parent '{url}'` puts it on a command line.** Pass it only when it is a plain URL:
+  starts with `https://`, no whitespace, and none of `'` `"` `` ` `` `$` `\` `;` `&` `|` `<` `>` `(`
+  `)` `{` `}`. Otherwise do not pass `--parent`; put the URL in the handover note instead (the file and
+  `adj task update --instruction -` below). The hub's own parent URL is the one the parent collection returned
+  for this hub's parent (from `gh` or the tracker), so it is made by a tool and is fine as it is.
 
   **Keep the title and summary away from the shell.** ("Keep task text off the shell") Both are text
   from a task or a report; put on a command line, a `'` closes the quote, and put in a heredoc, a line
@@ -1427,11 +1408,20 @@ after `mkdir -p {worktree}/.claude`.
   from standard input, whatever it contains is just text. Line 1 becomes the card's title as it is
   (like the brief, it is under `.claude/`, so it does not show in the diff).
 
-  `--done-when` is the same as the brief's Done when line ("up to a PR" → `pr`, "up to handing over
-  for verification" → `verify`, "investigation only" → `report-only`). Left out it is recorded as
-  `pr`, and the board shows an investigation-only task as "one that goes as far as a PR".
-  `--stop-at` is the same value as the brief's Stop at line (`plan` / `diff` / `all`). Left out it is
-  `plan`.
+  `--done-when` is the record's Done when, which the brief renders ("up to a PR" → `pr`, "up to
+  handing over for verification" → `verify`, "investigation only" → `report-only`). Fill it from what
+  the user actually asked for. The worker has no other way to know, and `adj-worker` decides its route
+  by that line (§5 whether to open a PR, §8 whether to skip implementation and end with a report).
+  Left out it is recorded as `pr`, and the board shows an investigation-only task as "one that goes as
+  far as a PR".
+  `--stop-at` is the record's Stop at (`plan` / `diff` / `all`), which the brief renders: which gates
+  wait on a person (`plan` = plan approval only, `diff` = the plan and the diff review, `all` = the
+  plan, the diff review and verification). For a request from the dashboard, the leading value of the
+  `## Stop at` line (do not copy the explanation in parentheses); for one asked in the tab, `diff` /
+  `all` only when the user said "I want to see the diff too" / "I want to see verification too"; if
+  nothing was said, `plan`. The worker decides by it whether the diff and verification wait on a
+  person, so do not raise it to `all` on a guess (raised, tasks nobody will look at pile up as needing
+  attention).
   `--executor` is the implementer (`worker` / `jules`): `worker` on this route, `jules` when "5. Hand
   it to Jules" creates the record. Left out it is `worker`, and a task handed to Jules is recorded as
   the worker's: the board then waits on a worker that is never started, and `adj jules start` refuses
@@ -1441,15 +1431,85 @@ after `mkdir -p {worktree}/.claude`.
   board. Without a record, a worker cannot tie the gates it opens to a card, and cannot move it to
   "in review" when it opens a PR. `--waiting-in` sends nothing to the inbox (it would be sent to the
   hub itself).
+- **If there is a handover note and it is not on the record yet, put it there.** A dashboard request
+  with `## Handover note` already has it on the record (`instruction`); extra instructions a person
+  wrote in the tab do not. Copy here the premises or direction to tell the worker first. Write it to
+  `{worktree}/.claude/task-handover.md` with a file-writing tool, then:
+
+  ```bash
+  adj task update --id {task_id} --instruction - < '{worktree}/.claude/task-handover.md' \
+    && rm '{worktree}/.claude/task-handover.md'
+  ```
+
+  With none, leave it: the brief writes `-`.
+
+Then write the brief:
+
+```bash
+adj task brief --id {task_id} --worktree '{worktree}' --base '{base}' [--parent '{parent task url}'] --json
+```
+
+It prints the path it wrote, and it overwrites a brief left there by an earlier start. Where each line
+comes from:
+
+- **Task**: the record's title and issue URL, and the tracker and key read from that URL through the
+  config's `issueKeys` and `taskSources`. The worker decides by the tracker which tool to read the
+  ticket with, so it is never left out. When the command says it cannot tell the tracker and key of
+  a URL, pass `--key '{key}'` and `--tracker` (one of `github` / `github-project` / `jira` / `linear`)
+  from what you know of the task. Pass only a key of the shape `ABC-123` (letters, then `-` and
+  digits); the command refuses anything else.
+- **Task record, Done when, Stop at, Handover note**: the record's own id, Done when, Stop at and
+  `instruction`. After the record is made only the Handover note (`adj task update --instruction`) and
+  the Task URL (`--issue`, which fills it when the record was made without `--issue-url`) can be
+  changed; Done when, Stop at and Parent are set in `adj task add`.
+  Change one that can be, and write the brief again.
+- **Copilot review and Verify commands**: the config's `copilotReview` and `verify`, already merged
+  from `defaults` and `repos.<repo>`. Do not resolve them again yourself. After opening the PR, the
+  worker decides by the Copilot review line whether to ask Copilot for a review, and whether to ask the
+  user first.
+- **Workspace**: the branch the worktree is on.
+- **Base branch**: `--base`, the commit-ish given to `git worktree add` in "3. Create the worktree"
+  (with its `origin/`). Pass `-` only when handing over an existing worktree whose base is not known;
+  the worker then asks.
+- **Parent task**: the `adj task brief --parent` flag wins; without it the record's own (`adj task
+  add --parent` above), else `-`. A dashboard record already carries its parent, so normally it is not
+  passed here. **If a parent task was handed over, put it on the record** when it is made with
+  `adj task add --parent` (`adj task update` has no `--parent`); for an existing record without one,
+  pass `adj task brief --parent` on every brief (a resume, a switch to a worker). A parent given as a
+  key is turned into its URL first ("Write the parent task as a URL" in "When a person talks to
+  you"). A dashboard record's `parent` may itself be a key, and `adj task brief` refuses a key: find
+  its URL by the same lookup and pass `--parent '{url}'`. One subtask of a larger piece of work split up, or a bug found in the middle
+  of another task, is such a case. The worker knows only its task, so without this line it cannot
+  reach the design context its sibling subtasks share.
+  **But in a parent task's hub this is always filled** — its identifier is that parent, so do not
+  treat it as not handed over ("Put your own parent task on every dispatch" in "A hub for a parent
+  task").
+  **Being a subtask does not change the branching point** — that is another line, and moves only when
+  given.
+- **Only a task its worker implements comes here.** Whether the implementer is `worker` or `jules`
+  is decided as "5. Hand it to Jules" says; `adj task brief` refuses a `jules` record, which starts no
+  worker and has no brief, so the brief has no Implementer line. The task record carries the
+  implementer (`--executor` above).
+- **For "investigation only", no PR and no issue updates.** Have the results given to the user at
+  that tab (the brief's "Report to" says so). Have them reported to you here and the report is
+  doubled. With no issue the record has no URL, and the brief puts the request text on the Task line.
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
-  it is; if it is not, write the brief outside the worktree instead — and then **change the
-  path in Step 3's prompt to match**, because that prompt names `.claude/task-brief.md`
-  literally.
+  it is; if it is not, pass `--out '<a path outside the worktree>'` and **change the path in Step 3's
+  prompt to match**, because that prompt names `.claude/task-brief.md` literally.
+
+The brief does not copy the procedure; it points to `adj-worker` by name. That keeps one authority,
+and the procedure is embedded in this binary, so every worker in every directory reads the same
+version. **Do not point with a slash command** — whoever reads the brief is not necessarily Claude
+Code, and an agent that cannot resolve slash notation like `/adj-worker` never reaches the procedure.
+Pointed to by name, it can be fetched with `adjutant_skill` or `adj skill adj-worker`. **This rule
+applies to this file itself** — when one procedure mentions another, it writes `adj-worker` by name.
+(Even in Claude Code, `/adj-worker` does not resolve. Procedures served over MCP are named
+`/mcp__adjutant__adj-worker`.)
 
 **Step 3 — spawn the worker tab.** One command completes the handover. There is nothing to poll
 afterwards.
 
-**Set the record to `dispatched` before starting it** (`{task_id}` is Step 2's Task record line).
+**Set the record to `dispatched` before starting it** (`{task_id}` is the id of the record made in Step 2).
 `--note ''` clears any note left from waiting for a slot:
 
 ```bash
@@ -1631,12 +1691,23 @@ from that plan instead of planning again:
    the worktree" (decide it again the same way; the same conventions give the same name).
 2. Run the config's `postCreate`, as "3. Create the worktree" says.
 3. `adj task update --id {task_id} --executor worker`.
-4. Write the brief as Step 2 of "4. Start the worker" says. In its Handover note, **after `approve`**
-   write "The plan was approved on the board: `.claude/jules-plan.md`. Implement from it; do not plan
+4. Put the handover note on the record, then write the brief as Step 2 of "4. Start the worker" says.
+   For the note, **after `approve`** write "The plan was approved on the board: `.claude/jules-plan.md`. Implement from it; do not plan
    again."; **after `changes`** the plan was not approved, so write "A plan written for Jules is at
    `.claude/jules-plan.md`; it was not approved. Plan from it, and have the plan approved as usual."
-   Then the person's comment, if any. Delete `{worktree}/.claude/jules-gate.json` (only the gate
-   needed it). In a repository where `.claude/` is not gitignored, move the plan to where the brief
+   Then the person's comment, if any. `adj task update --instruction -` **replaces** the record's
+   instruction, so read the current one first (`adj task show --id {task_id}`, the `instruction`
+   field) and write `{worktree}/.claude/task-handover.md` with a file-writing tool as the existing
+   note, then these sentences, so nothing a person wrote earlier is dropped. Then:
+
+   ```bash
+   adj task update --id {task_id} --instruction - < '{worktree}/.claude/task-handover.md' \
+     && rm '{worktree}/.claude/task-handover.md'
+   adj task brief --id {task_id} --worktree '{worktree}' --base '{base}' [--parent '{parent task url}'] --json
+   ```
+
+   The brief writes it as the Handover note. Delete
+   `{worktree}/.claude/jules-gate.json` (only the gate needed it). In a repository where `.claude/` is not gitignored, move the plan to where the brief
    goes (outside the worktree) and name that path instead, or it rides along in the worker's diff.
 5. Step 3 of "4. Start the worker" (`adjutant work`, including waiting for a slot on exit code 3).
 
@@ -1857,7 +1928,7 @@ nothing** (the default is file only). Go on to Step 4 only when starting is **ex
 **Only requests that explicitly ask to start come here.** Do not send a request whose `Scope` is empty
 here. **The explicit request is brought by the caller**; "When asked to split it" comes here after
 getting it for that one item with a question.
-The brief's "Done when" has a default ("up to a PR" when not given), but that is the default for **how
+The record's `--done-when` has a default ("up to a PR" when not given), but that is the default for **how
 far to go once starting is decided**, **not a default for whether to start**. Mixing the two up grows a
 tab and a worktree for a report that only asked for filing.
 
@@ -1871,11 +1942,12 @@ Run the moves of "Starting a task" above as they are. **Do not copy them here.**
   `jira` has no item id. Assign and transition directly with the key of the ticket filed.
 - **3. Create the worktree** — make the key by passing the repo it was filed into through
   `issueKeys`. For `jira`, the issue key returned at filing is the key as it is.
-- **4. Start the worker** (or **5. Hand it to Jules**, when the requester asked for Jules) — the brief's "Done when" is the scope the requester gave; if none, "up to a
-  PR". The brief's "Task" is the issue just filed, and **its title is the one used for filing** (Step 1
+- **4. Start the worker** (or **5. Hand it to Jules**, when the requester asked for Jules) — `adj task add --done-when …` is the scope the requester gave; if none, `pr` ("up to a
+  PR"). `--issue-url` is the issue just filed, and **its title is the one used for filing** (Step 1
   of "4. Start the worker" saying "the title is held by '1. Pick the task'" is about that route).
-  **"Parent task" is the report's "Parent task" as it is, or, if that is `-`, the Found in task's**
-  URL — the worker does not know the context it was found in, so that URL is its only clue. The
+  **`--parent` is the report's "Parent task" as it is, or, if that is `-`, the Found in task's**
+  URL (a plain URL only: "Step 2" of "4. Start the worker" says what to do with one that is not) —
+  the worker does not know the context it was found in, so that URL is its only clue. The
   report's parent task is copied as it is because the filed issue is a sibling under that parent.
   Fill it with Found in and the next worker cannot reach the design context its siblings share.
 
@@ -1905,8 +1977,12 @@ worker's `report`; only the two ends differ.**
 - **Skip Step 1 (read; ask back if something is missing).** The kind, Done when, Stop at, the
   branching point, the parent task, the worktree name and whether to start without asking were asked
   by the form before it was handed over. The body's `##` lines are those answers themselves.
-  If there is a `## Handover note`, copy it into the "Handover note" line of Step 2's brief
-  (`{worktree}/.claude/task-brief.md`). If the record's `executor` is `jules` (the body's
+  If the `## Parent task` is a key, find its URL ("Write the parent task as a URL" in "When a person
+  talks to you") and pass `adj task brief --parent '{url}'`: the brief refuses a key.
+  A `## Handover note` is already the record's `instruction`, and `adj task brief` writes it as the
+  brief's Handover note (`{worktree}/.claude/task-brief.md`): do not copy it by hand. For a request
+  whose issue is filed here, run `adj task update --id {task_id} --issue '{issue url}'` before Step 2 of
+  "4. Start the worker", so the brief's Task line has its URL. If the record's `executor` is `jules` (the body's
   `## Implementer` line says so too), take "5. Hand it to Jules" in place of "4. Start the worker": no
   brief is written, and the handover note goes into the planning sub-agent's brief instead.
   **There is nobody to ask back either** — the requester is a browser, not a session, and
@@ -1946,7 +2022,7 @@ worker's `report`; only the two ends differ.**
   the task record with `adj task update` instead. That is what shows on the board:
 
   ```bash
-  adj task update --id {task_id} --issue {issue url}   # status was set to dispatched in Step 3
+  adj task update --id {task_id} --issue '{issue url}'   # unless already done before Step 2 of 4
   adj task update --id {task_id} --note - < '{main}/.claude/task-note-{task_id}.md' \
     && rm '{main}/.claude/task-note-{task_id}.md'   # when it could not be started
   ```
@@ -1992,11 +2068,20 @@ made or picked there and the session is told; that is not the hub's step.
    ("Base branch", the config's `baseBranch`). Then run the config's `postCreate` commands.
    The name is already checked for a safe charset where it came in, so it may be put on a command line;
    the instruction may not.
-2. **Write the brief** to `{worktree}/.claude/task-brief.md` after `mkdir -p {worktree}/.claude`, with
-   a file-writing tool, from Appendix — The session's brief. **The instruction goes into the file, never
-   onto a command line** ("Keep task text off the shell"). For an instruction of `-`, write this in
-   its place: `No instruction yet. Greet the person in this tab, say you are ready, and wait for what
-   they want.`
+2. **Write the brief.** Write the instruction verbatim (or `-`, when there is none) to
+   `{path}/.claude/session-instruction.md` with a file-writing tool, after `mkdir -p {path}/.claude`.
+   **The instruction goes into a file, never onto a command line** ("Keep task text off the shell").
+   Then:
+
+   ```bash
+   adj task brief --worktree '{path}' --base '{base}' --instruction - < '{path}/.claude/session-instruction.md' \
+     && rm '{path}/.claude/session-instruction.md'
+   ```
+
+   This writes `{path}/.claude/task-brief.md`: the worker's brief with the task lines empty and the
+   instruction last. For an instruction of `-`, it writes "No instruction yet. Greet the person in
+   this tab, say you are ready, and wait for what they want." in its place. `{base}` is the branching
+   point of step 1.
 3. **Start the worker:**
 
    ```bash
@@ -2302,7 +2387,12 @@ The hub does not go into worktrees, so all that can be done here is **handing ov
    one and a different task under the same number comes back **without any error**.
 4. What to do, with `AskUserQuestion`:
    - **A) Start a worker and hand over the work (Recommended)** — the same procedure as "4. Start the
-     worker". The brief's "Task" is that worktree's task, and "Done when" is the user's instruction.
+     worker". A record is made for that worktree's task (`adj task add --issue-url` of that task,
+     `--done-when` from the user's instruction), and `adj task brief --base -` (or the base, when it is
+     known) follows. A detached worktree is refused by `adj task brief` (the brief names a branch):
+     switch to or create its branch first, or tell the person. Build the issue URL from the key and
+     the source found in step 3, and pass `--issue-url '{url}'` only when it can be built; without it
+     the brief's Task line carries no ticket.
      If there is already a tab with a worker running, **do not start another**; send the extra
      instructions with `adjutant_tell` (the same as Step 5). Whether it is running is told by the
      `present` that comes back.
@@ -2481,6 +2571,8 @@ as standard input to an option that accepts `-`. Remove the file once read:
 | A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
 | A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
 | Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
+| A handover note put on a task's record | `adj task update --instruction -` | `{worktree}/.claude/task-handover.md` |
+| The instruction of a session with no task | `adj task brief --instruction -` | `{path}/.claude/session-instruction.md` |
 | The hub's tab title | `adjutant title --title -` | `{main}/.claude/tab-title-{hub name}.txt` |
 
 `{main}` is the absolute path of the main checkout the hub stands in. The task id or hub name goes into
@@ -2490,7 +2582,8 @@ forgotten file shows up in the diff, so always type it through to `&& rm` on one
 
 A worker's tab name is taken from the record with `adjutant work --task {task_id}`, so it needs no
 file. Values made by git or this tool — paths, ids, branch names — may go on the command line as
-before (the worktree names and issue URLs that come in from the board are checked when accepted).
+before (the worktree names and the issue and parent task URLs that come in from the board are checked when
+accepted).
 
 ## Appendix — tab title
 
@@ -2527,8 +2620,8 @@ carrying it over.
 notification). So both on startup and when asked for "list", the hub can start waiting by sending it
 and ending the turn.
 
-As with the worker's brief, do not copy the procedure; point to the `adj-hub` procedure by name, to
-keep one authority.
+As with the worker's brief (`adj task brief`), do not copy the procedure; point to the `adj-hub`
+procedure by name, to keep one authority.
 
 ```
 Collect the data for the task hub's dashboard. **Read only. Change nothing.**
@@ -2616,8 +2709,8 @@ Put both of these in the report:
 1. A table for people — the parent task on one line (with the title and URL you fetched), and under it
    the subtasks one per line (showing state and PR)
 2. Rows for machines — first the parent task on one line: `parent | {parent key} | {title} | {URL}`.
-   The hub puts this URL on the "Parent task" line of the worker's brief, so drop it and that line
-   stays empty.
+   The hub passes this URL as `--parent` (`adj task add` / `adj task brief`), so drop it and that
+   line stays empty.
    Then the subtasks one per line, `|`-separated, in this order:
    {identifier} | {KEY-number} | {project item id or -} | {status} | {assignee or -} |
    {resolved branch} | {title} | {URL} |
@@ -2650,8 +2743,9 @@ If there are no subtasks at all, write "none" and return. **Do not work out how 
 
 Handed to the sub-agent in Step 2 of "5. Hand it to Jules". Fill in the placeholders. `{task_id}`,
 `{task_title}`, `{tracker}`, `{task_url}`, `{parent_task}`, `{base_branch}` and `{instruction}` are
-what the worker's brief would carry ("Appendix — The worker's brief"); `{verify}` is the config's
-`verify`. **`{task_record}` is the record's id** from Step 1 — not the tracker's key in `{task_id}`.
+the tracker's key, the record's title, the source's `type`, the issue URL, the parent task's URL or `-`,
+the base decided in "3. Create the worktree", and the record's handover note or `-`; `{verify}` is
+the config's `verify`. **`{record_id}` is the record's id** from Step 1 — not the tracker's key in `{task_id}`.
 The hub reads the task back out of the gate's answer by that id, so a key there leaves the approval
 with no task to hand over.
 
@@ -2701,7 +2795,7 @@ Write two files, with a file-writing tool (not a heredoc: they carry text taken 
    {
      "kind": "plan",
      "openedBy": "hub",
-     "task": "{task_record}",
+     "task": "{record_id}",
      "worktree": "{worktree}",
      "title": "Design review: <what the task is, in one line>",
      "problem": "<what is wrong now, one to three sentences>",
@@ -2722,126 +2816,6 @@ does not fit Jules).
 
 If you are sent a comment afterwards, revise both files as it says, add one to `rounds`, and report
 the same way.
-```
-
-## Appendix — The worker's brief
-
-Written out to `{worktree}/.claude/task-brief.md` in "4. Start the worker". Fill in the placeholders.
-The worker starts clean, so **this file is everything the worker knows**.
-
-`{tracker}` is the `type` of that task's source (`github` / `github-project` / `jira` / `linear`) as it
-is. The worker decides by it which tool to read the ticket with, so **do not drop it** — left to guess
-from the URL, it goes to fetch a Jira ticket with `gh issue view` and comes back empty.
-
-**`{task_record}` is always an id that exists.** For a request from the dashboard, the id on the
-`## task` line; for a request a person made directly in the tab or one filed from a worker's report,
-the id of the record made in Step 2 of "4. Start the worker". **Do not fill it by guessing** — a worker
-handed an id that does not exist cannot tie the gates it opens to any card on the board, and cannot
-move the card to "in review" when it opens a PR.
-
-**For a request with no issue (investigation only), set `{task_id}` and `{tracker}` to `-`.** Instead
-of `{task_url}`, put the user's request text as it is in "Task". Make up the shape of a URL with no
-ticket behind it and the worker goes to fetch it and comes back empty. **Do not file it here** ("4.
-Investigate only" in "When a person talks to you").
-
-```
-You are the one working in this worktree. You are not the hub (the side that hands tasks out).
-
-- Task: {task_id} "{task_title}" ({tracker})
-  {task_url}
-- Workspace: the current cwd is that worktree (branch {branch})
-- Base branch: {base_branch}
-- Parent task: {parent_task}
-  (the URL of the task this one belongs under; `-` if there is none)
-- Task record: {task_record}
-  (the id of the board's card: the id on the `## task` line for a request from the dashboard, and
-  otherwise the id of the record made in Step 2. Put it in `task` when opening a gate and it is tied to
-  the card on the board. Once you open a PR, move the card on with
-  `adj task update --id {task_record} --status pr --pr <URL>`)
-- Done when: {up to a PR / up to handing over for verification / investigation only (report and stop)}
-  (what the hub was asked by the user, as it is. Unless it is "up to a PR", do not open a PR. For
-  "investigation only", do not implement, commit, or file or update an issue)
-- Stop at: {plan / diff / all}
-  (which gates wait on a person. `plan` is plan approval only, `diff` the plan and the diff review,
-  `all` the plan, the diff review and verification)
-- Handover note: {instruction}
-  (the handover note or extra instructions given from the dashboard; `-` if there are none)
-- Copilot review: {copilot_review}
-  (whether to ask Copilot for a review after opening the PR. `ask` asks every time, `always` requests
-  it without asking, `never` does not request it and does not ask)
-- Report to: **the user at this tab**. Do not send results to the hub — the hub only hands work out,
-  and has nowhere to pass on what it receives. You send the hub only these two things on your own:
-  (a) a bug **outside this task**, through the `adj-report` procedure, and (b) a request to clean up
-  once the work is done.
-  (Answering when the hub asks with `[question {id}]` is neither of these, and is fine to do)
-- Verify commands: {verify}
-  (the config's `verify` is an array. List it as bullet points as it is, not packed into one line)
-
-Important overrides. If you remember the hub's procedure, the following take precedence:
-
-1. Do not use `isolation: worktree`. It digs yet another worktree.
-   Work directly in the current cwd.
-2. Do not use `EnterWorktree`. You are already inside.
-3. Neither `git -C <worktree_path>` nor an absolute worktree path is needed. Plain `git` and relative
-   paths are fine.
-4. The reviewers' (sub-agents' / codex's) working directory is the current cwd too.
-5. Do not try to hand the implementation back to the hub. The hub only hands work out. Do everything
-   up to the final report yourself, and **give that report to the user at this tab** ("Report to"
-   above; do not send it on to the hub).
-6. If you find "a bug unrelated to the current task" while working, **do not fix it yourself**.
-   A diff with unrelated fixes mixed in can be neither reviewed nor reverted.
-   Hand it to the hub following the `adj skill adj-report` procedure (or `adjutant_skill`
-   `name=adj-report`), and go back to your task.
-
-**First run `adj skill adj-worker` (or `adjutant_skill` `name=adj-worker`) and follow the procedure it
-prints.** Everything is written there. Do not read only the brief and go your own way.
-
-Start by reading the task's body and comments.
-```
-
-The brief does not copy the procedure; it points to `adj-worker` by name. That keeps one authority, and
-the procedure is embedded in this binary, so every worker in every directory reads the same version.
-**Do not point with a slash command** — whoever reads the brief is not necessarily Claude Code, and an
-agent that cannot resolve slash notation like `/adj-worker` never reaches the procedure. Pointed to by
-name, it can be fetched with `adjutant_skill` or `adj skill adj-worker`. **This rule applies to this
-file itself** — when one procedure mentions another, it writes `adj-worker` by name.
-(Even in Claude Code, `/adj-worker` does not resolve. Procedures served over MCP are named
-`/mcp__adjutant__adj-worker`.)
-
-## Appendix — The session's brief
-
-Written out to `{worktree}/.claude/task-brief.md` in "A session request from the dashboard". It is
-the worker's brief with the task lines empty and the person's instruction in their place, so the
-worker still finds the same file where the default start prompt sends it. **Do not fill a task in by
-guessing**: there is none, and a worker handed an id that does not exist ties its gates to no card.
-
-```
-You are the one working in this worktree. You are not the hub (the side that hands tasks out).
-
-- Task: -
-- Workspace: the current cwd is that worktree (branch {branch})
-- Base branch: {base_branch}
-- Parent task: -
-- Task record: -
-- Done when: as the instruction says
-- Report to: **the user at this tab**.
-
-This session has no task. Do what the instruction says, with the person in this tab. The gates, the
-card and the PR steps of `adj-worker` apply only once a task is linked to this session: until then
-there is no record to open a gate for or to move to "in review". Check `adjutant_outbox` after each
-step and before you answer the person — a message headed `[linked {id}]` means the person has linked
-this session to a task, and `adj skill adj-worker` says what to do from there.
-
-Important overrides. If you remember the hub's procedure, the following take precedence:
-
-1. Do not use `isolation: worktree` or `EnterWorktree`. You are already inside; work in the current cwd.
-2. Neither `git -C <worktree_path>` nor an absolute worktree path is needed.
-3. If you find "a bug unrelated to what you were asked" while working, **do not fix it yourself**.
-   Hand it to the hub following the `adj skill adj-report` procedure, and go back to what you were doing.
-
-## Instruction
-
-{the instruction, verbatim}
 ```
 
 ## Do not

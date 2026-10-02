@@ -40,6 +40,19 @@ pub enum DoneWhen {
     Review,
 }
 
+impl DoneWhen {
+    /// How the request and the brief say it. The worker branches on the first three
+    /// phrases, so the brief maps `Review` to `Pr` before asking.
+    pub fn as_prose(self) -> &'static str {
+        match self {
+            DoneWhen::ReportOnly => "investigation only (report and stop)",
+            DoneWhen::Verify => "up to handing over for verification",
+            DoneWhen::Pr => "up to a PR",
+            DoneWhen::Review => "up to handling review",
+        }
+    }
+}
+
 /// Which gates wait on a person. The rest are kept as records the worker leaves and carries
 /// on past. Chosen by whoever hands the task over, because whether anybody wants to look at
 /// the diff or the check depends on the task, and the worker has no way to tell.
@@ -582,15 +595,7 @@ pub fn render_request(task: &Task) -> String {
             Kind::TellWorker => "more instructions for an existing worktree",
         }
     ));
-    out.push_str(&format!(
-        "## Done when     {}\n",
-        match task.done_when {
-            DoneWhen::ReportOnly => "investigation only (report and stop)",
-            DoneWhen::Verify => "up to handing over for verification",
-            DoneWhen::Pr => "up to a PR",
-            DoneWhen::Review => "up to handling review",
-        }
-    ));
+    out.push_str(&format!("## Done when     {}\n", task.done_when.as_prose()));
     // The value itself goes first: the hub passes it on as `--stop-at` and into the brief,
     // and the gloss is for whoever reads the message.
     out.push_str(&format!(
@@ -1095,6 +1100,23 @@ mod tests {
             "{}",
             render_request(&task)
         );
+    }
+
+    /// The brief and the request say it in these words, and the worker matches on them.
+    #[test]
+    fn done_when_prose_is_what_the_request_says() {
+        let mut task = sample();
+        for done_when in [
+            DoneWhen::ReportOnly,
+            DoneWhen::Verify,
+            DoneWhen::Pr,
+            DoneWhen::Review,
+        ] {
+            task.done_when = done_when;
+            let line = format!("## Done when     {}\n", done_when.as_prose());
+            assert!(render_request(&task).contains(&line));
+        }
+        assert_eq!(DoneWhen::Pr.as_prose(), "up to a PR");
     }
 
     /// A record written before the field existed stopped at the plan, and still does.

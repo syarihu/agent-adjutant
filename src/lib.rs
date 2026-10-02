@@ -8,6 +8,7 @@
 //! `adj`), so the same code is one build rather than two, and the integration tests can
 //! drive it directly.
 
+mod brief;
 mod cmd;
 mod config;
 mod gate;
@@ -909,6 +910,40 @@ enum TaskAction {
         #[arg(long)]
         json: bool,
     },
+    /// Write the worker's .claude/task-brief.md from the task record and the config (no --id: a
+    /// task-less session's brief)
+    Brief {
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long)]
+        hub: Option<String>,
+        /// The task the worker is for. Without it, a session with no task
+        #[arg(long)]
+        id: Option<String>,
+        /// The worktree the worker works in
+        #[arg(long, value_name = "PATH")]
+        worktree: String,
+        /// What the branch was cut from, as `git worktree add` took it (- when not known)
+        #[arg(long, value_name = "COMMIT-ISH")]
+        base: String,
+        /// The tracker's key, when it cannot be read from the issue URL
+        #[arg(long, requires = "id")]
+        key: Option<String>,
+        /// github | github-project | jira | linear, when it cannot be read from the issue URL
+        #[arg(long, requires = "id")]
+        tracker: Option<String>,
+        /// The parent task's URL (the record's own, when this is left out)
+        #[arg(long, requires = "id")]
+        parent: Option<String>,
+        /// What the person asked of a session with no task (- reads stdin)
+        #[arg(long, required_unless_present = "id", conflicts_with = "id")]
+        instruction: Option<String>,
+        /// Write here instead of {worktree}/.claude/task-brief.md
+        #[arg(long, value_name = "PATH")]
+        out: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn resolve_wake_flag(wake: bool, no_wake: bool) -> Option<bool> {
@@ -1292,6 +1327,31 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
             instruction: instruction.as_deref(),
             auto_start: *auto_start,
             no_hand_over: *no_hand_over,
+            json: *json,
+        }),
+        TaskAction::Brief {
+            repo,
+            hub,
+            id,
+            worktree,
+            base,
+            key,
+            tracker,
+            parent,
+            instruction,
+            out,
+            json,
+        } => cmd::task_brief(&cmd::BriefArgs {
+            repo: repo.as_deref(),
+            hub: hub.as_deref(),
+            id: id.as_deref(),
+            worktree,
+            base,
+            key: key.as_deref(),
+            tracker: tracker.as_deref(),
+            parent: parent.as_deref(),
+            instruction: instruction.as_deref(),
+            out: out.as_deref(),
             json: *json,
         }),
     }

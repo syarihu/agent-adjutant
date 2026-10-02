@@ -271,13 +271,8 @@ mod tests {
             "the base is checked after the review is requested"
         );
 
-        // Both sides spell the label the same way. Renaming it in the hub's brief template
-        // without telling the worker is what left the line unread in the first place.
-        let hub = find("adj-hub").unwrap().raw_content;
-        assert!(
-            hub.contains("- Base branch: {base_branch}"),
-            "the brief template no longer writes the line the worker is told to read"
-        );
+        // The writer's side of the label is held by the label tests in `cmd::task`, which
+        // may see both the brief and this procedure.
     }
 
     /// Whether to request a Copilot review is decided by the brief's line, which the hub fills
@@ -311,11 +306,7 @@ mod tests {
             "the Copilot branch is not between the base check and the request"
         );
 
-        let hub = find("adj-hub").unwrap().raw_content;
-        assert!(
-            hub.contains("- Copilot review: {copilot_review}"),
-            "the brief template no longer writes the line the worker is told to read"
-        );
+        // The writer's side of the label is held by the label tests in `cmd::task`.
     }
 
     /// A `gh pr create` with nothing to base it on is the defect itself, not just one
@@ -421,11 +412,7 @@ mod tests {
     /// re-derives from one subtask the design the siblings already settled.
     #[test]
     fn the_parent_task_line_is_written_by_the_hub_and_read_by_the_worker() {
-        let hub = find("adj-hub").unwrap().raw_content;
-        assert!(
-            hub.contains("- Parent task: {parent_task}"),
-            "the brief template has no slot for the parent task"
-        );
+        // The writer's side of the label is held by the label tests in `cmd::task`.
         let plan = section(find("adj-worker").unwrap().raw_content, "## 1. ");
         let flowed: String = flow(&plan);
         assert!(
@@ -457,11 +444,11 @@ mod tests {
     #[test]
     fn the_task_record_the_hub_creates_carries_the_implementer() {
         let hub = find("adj-hub").unwrap().raw_content;
-        // A worker is started only for a task it implements, so its brief has nothing to say
-        // about who implements.
+        // The brief is written by `adj task brief` now, so there is no template left in the
+        // procedure for an implementer line to sit in.
         assert!(
-            !section(hub, "## Appendix — The worker's brief").contains("- Implementer:"),
-            "the brief still carries an implementer line"
+            !hub.contains("## Appendix — The worker's brief"),
+            "the hub still carries a brief template"
         );
         let start = step(hub, "### 4. ");
         // The flag has to be inside the command, not in the prose that explains it — the
@@ -538,14 +525,9 @@ mod tests {
             "the report does not say what to write when there is no parent: {compose}"
         );
 
-        // Both sides spell the labels the same way, in both directions: the hub writes the
-        // brief line the report reads, and reads the report heading the report writes.
-        // Renaming one end without the other is what left the base-branch line unread.
+        // The brief's side of the labels is held by the label tests in `cmd::task`; this
+        // side is the report heading the hub reads.
         let hub = find("adj-hub").unwrap().raw_content;
-        assert!(
-            hub.contains("- Parent task: {parent_task}"),
-            "the brief template no longer writes the line the report is told to forward"
-        );
         // A report whose parent is `-` is complete, not short of a field. Without this the
         // hub asks back on every report that is not a subtask — and the reporter is told to
         // answer nothing but `[question]`, so that round trip lands in the middle of its task.
@@ -622,7 +604,7 @@ mod tests {
         // siblings already settled — the same loss, one hop further down.
         let dispatch: String = flow(&step(hub, "### Step 4 — Start it"));
         assert!(
-            dispatch.contains("\"Parent task\" is the report's \"Parent task\" as it is"),
+            dispatch.contains("`--parent` is the report's \"Parent task\" as it is"),
             "the new brief does not carry the parent the report reported"
         );
         assert!(
@@ -1575,7 +1557,7 @@ mod tests {
     ///
     /// The handoff named two of the eleven columns — repository and item id — and a route
     /// that carries only what it names drops the rest. Three of the dropped ones are read
-    /// further down: the brief's `{task_title}` and `{task_url}`, which this route cannot
+    /// further down: the record's title and `--issue-url`, which this route cannot
     /// get from "1. Pick the task" because it deliberately skips that fetch; and the resolved
     /// branch, without which "3. Create the worktree" rebuilds one from `branchPattern` — a
     /// shape Linear's branches do not come in. The worktree path is the fourth: a child
@@ -1590,10 +1572,10 @@ mod tests {
             flowed.contains("Carry the machine row whole"),
             "the handoff still carries a hand-picked subset of the row: {startup}"
         );
-        // The brief's two placeholders, named here because this is the only route that has
-        // to fill them from the row.
+        // The record's title and issue URL, named here because this is the only route that has
+        // to fill them from the row; the brief's Task line is written from the record.
         assert!(
-            flowed.contains("`{task_title}` and `{task_url}`"),
+            flowed.contains("the task record's title and `--issue-url`"),
             "the title and URL the brief requires are not carried: {startup}"
         );
         // The branch. Re-deriving it is the specific failure, so the ban has to be on the
@@ -1623,10 +1605,10 @@ mod tests {
         );
 
         // The readers have to still be asking for what is now carried, on both ends.
-        let worker = section(raw, "## Appendix — The worker's brief");
+        let start = step(raw, "### 4. ");
         assert!(
-            worker.contains("{task_title}") && worker.contains("{task_url}"),
-            "the brief no longer reads the title and URL this route carries: {worker}"
+            start.contains("--issue-url '{issue url}'"),
+            "the record no longer takes the URL this route carries: {start}"
         );
         let brief = section(
             raw,
@@ -1640,6 +1622,49 @@ mod tests {
         assert!(
             brief_flowed.contains("{worktree path or -}"),
             "the collector's row has no worktree column to carry: {brief}"
+        );
+    }
+
+    /// The hub writes the brief with `adj task brief`, not from a template of its own.
+    ///
+    /// A template left in the procedure is a second writer for the same file: the hub fills it
+    /// by hand and the labels drift from the ones the command writes and the worker reads.
+    #[test]
+    fn the_hub_writes_the_brief_with_adj_task_brief() {
+        let raw = find("adj-hub").unwrap().raw_content;
+        assert!(!raw.contains("## Appendix — The worker's brief"));
+        assert!(!raw.contains("## Appendix — The session's brief"));
+        // Not even a reference to them: a pointer at a deleted section is a dead end.
+        assert!(!raw.contains("Appendix — The worker's brief"));
+        assert!(!raw.contains("Appendix — The session's brief"));
+        assert!(!raw.contains("{task_record}"));
+        let start: String = flow(&step(raw, "### 4. "));
+        assert!(
+            start.contains("adj task brief --id {task_id} --worktree '{worktree}' --base '{base}'"),
+            "the start step does not write the brief with the command: {start}"
+        );
+        // The parent goes to both: the record carries it, and a re-brief passes it again.
+        for command in ["adj task add --body -", "adj task brief --id"] {
+            let raw_step = step(raw, "### 4. ");
+            let at = raw_step
+                .find(command)
+                .expect("the start step lacks the command");
+            let tail = &raw_step[at..];
+            let line = &tail[..tail.find('\n').unwrap_or(tail.len())];
+            assert!(
+                line.contains("--parent '{parent task url}'"),
+                "`{command}` does not take the parent task: {line}"
+            );
+        }
+        let session: String = flow(&step(raw, "### A session request from the dashboard"));
+        assert!(
+            session.contains("adj task brief --worktree '{path}' --base '{base}' --instruction -"),
+            "the session request does not write its brief with the command: {session}"
+        );
+        let switching: String = flow(&step(raw, "#### Switching to a worker"));
+        assert!(
+            switching.contains("--instruction -"),
+            "switching to a worker does not put the note on the record: {switching}"
         );
     }
 
