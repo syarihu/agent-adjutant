@@ -619,6 +619,15 @@ never polls a tracker: an issue edited afterwards is read again only when someon
 「再取得」 on the task or runs `adjutant task fetch-issue --id <id>`. A `gh` that cannot read
 the issue leaves the record as it was and prints why; other trackers' URLs are left alone.
 
+A request from the board's form that has a GitHub issue URL and no content of its own needs no
+text: the server reads the issue when it creates the record (the same read as `task fetch-issue`),
+and the card shows its title from the start. Text the person typed wins over the issue's. If the
+issue cannot be read, the record is kept anyway under the title `owner/repo#N` with
+`titlePending: true` (shown as 「タイトル未取得」), and the first successful read — at start, or
+`task fetch-issue` — replaces the title and clears the flag. A request with no URL, or with one that is not a GitHub issue URL
+(another tracker, a pull request), still needs content; a GitHub issue that `gh` cannot read
+does not count against it, and is kept with the pending title.
+
 ### Sessions without a task
 
 A worker normally starts from a task, and the board joins a task to its worker by worktree, so

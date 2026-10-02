@@ -584,7 +584,7 @@ function renderTaskView() {
         <span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span>
         <span>ボード</span>
       </button>
-      <h1 style="flex:1;min-width:0;font-size:20px;font-weight:800;color:var(--md-sys-color-on-surface);margin:0;line-height:1.35;">${esc(task.title)}</h1>
+      <h1 style="flex:1;min-width:0;font-size:20px;font-weight:800;color:var(--md-sys-color-on-surface);margin:0;line-height:1.35;">${esc(task.title)}${titlePendingPill(task)}</h1>
       ${httpUrl(task.issueUrl) ? `<a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="font-size:13px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(issueNumberOf(task.issueUrl))}</span><span class="material-symbols-outlined" style="font-size:16px;">open_in_new</span></a>` : ''}
     </div>
     <div class="row" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
