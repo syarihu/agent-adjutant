@@ -63,7 +63,8 @@ pub(super) fn check_worktree_name(name: &str) -> Result<(), String> {
 }
 
 /// Refuse the two values a person types on the board that the hub later puts on a command
-/// line: the worktree name becomes a path and a branch, and the issue URL is quoted as it is.
+/// line: the worktree name becomes a path and a branch, and the issue and parent task URLs are
+/// quoted as they are.
 /// Checked here, where they come in, rather than in every command the procedures write — an
 /// apostrophe in either would close the quote around it and run the rest as shell.
 fn check_typed_values(input: &Value) -> Result<(), String> {
@@ -93,32 +94,52 @@ fn check_typed_values(input: &Value) -> Result<(), String> {
             .ok_or_else(|| format!("no such executor: {executor} (worker or jules)"))?;
     }
     if let Some(url) = typed("issueUrl") {
-        let rest = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"));
-        // The host is what is left of the authority once a port is taken off. Checked as a
-        // name rather than as "some text before the path", which `https://:8080/` passed.
-        // A port, when there is one, is digits.
-        let authority = rest
-            .and_then(|r| r.split(['/', '?', '#']).next())
-            .unwrap_or("");
-        let (host, port) = match authority.split_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (authority, None),
-        };
-        let named = !host.is_empty()
-            && host
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
-            && port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
-        let plain = !url
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
-        if !named || !plain {
-            return Err(format!("not an issue URL: {url}"));
-        }
+        check_url(url, "an issue")?;
+    }
+    // The parent task is typed on the form too, and the procedure quotes it on a command line.
+    if let Some(parent) = typed("parent") {
+        check_parent(parent)?;
     }
     Ok(())
+}
+
+/// Refuse a URL that is not safe to put in quotes on a command line: not an http(s) address
+/// with a plausible host, or holding a character the shell would read.
+fn check_url(url: &str, what: &str) -> Result<(), String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    // The host is what is left of the authority once a port is taken off. Checked as a
+    // name rather than as "some text before the path", which `https://:8080/` passed.
+    // A port, when there is one, is digits.
+    let authority = rest
+        .and_then(|r| r.split(['/', '?', '#']).next())
+        .unwrap_or("");
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    let named = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+        && port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    let plain = !url
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || "'\"`$\\;&|<>(){}".contains(c));
+    if !named || !plain {
+        return Err(format!("not {what} URL: {url}"));
+    }
+    Ok(())
+}
+
+/// A parent task as the board takes it: a URL, or a key the hub turns into one before it
+/// writes the brief. Anything else is refused, since it is quoted on a command line.
+fn check_parent(parent: &str) -> Result<(), String> {
+    if crate::brief::is_key(parent) {
+        return Ok(());
+    }
+    check_url(parent, "a task")
 }
 
 /// Write a new record, and hand it over if it was created already queued.
@@ -1261,6 +1282,219 @@ fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<Delivered>) {
     }
 }
 
+/// What `adj task brief` is given.
+pub struct BriefArgs<'a> {
+    pub repo: Option<&'a str>,
+    pub hub: Option<&'a str>,
+    /// The task the worker is for. `None` writes the brief of a session with no task.
+    pub id: Option<&'a str>,
+    pub worktree: &'a str,
+    pub base: &'a str,
+    pub key: Option<&'a str>,
+    pub tracker: Option<&'a str>,
+    pub parent: Option<&'a str>,
+    pub instruction: Option<&'a str>,
+    pub out: Option<&'a str>,
+    pub json: bool,
+}
+
+/// The Done when the brief says. The worker branches on three phrases only, and a task that
+/// goes as far as handling review has opened its PR, so `Review` is written as the PR.
+fn brief_done_when(done_when: task::DoneWhen) -> &'static str {
+    match done_when {
+        task::DoneWhen::Review => task::DoneWhen::Pr.as_prose(),
+        other => other.as_prose(),
+    }
+}
+
+/// A flag value that says something: a blank one is the same as not given.
+fn given(value: Option<&str>) -> Option<&str> {
+    value.filter(|v| !v.trim().is_empty())
+}
+
+/// `adj task brief`: write the worker's `.claude/task-brief.md` from the record and the config.
+///
+/// The hub used to fill the brief in from a template by hand. Written here, the lines come
+/// from the record the board shows, so the two cannot disagree, and the one thing the hub
+/// has to get right is the record.
+pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
+    use crate::brief as text;
+
+    let ctx = super::context(args.repo, args.hub)?;
+    let worktree = resolved_worktree(args.worktree);
+    let worktree = std::path::Path::new(&worktree);
+    if !worktree.is_dir() {
+        return Err(format!("no such worktree: {}", worktree.display()));
+    }
+    // Read from the worktree rather than taken as an argument: it is the branch the worker
+    // will be on, and a typed one is a second answer to a question git already has.
+    let branch = crate::repo::git(&["symbolic-ref", "-q", "--short", "HEAD"], Some(worktree))
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "{} is not on a branch: the brief names the branch the worker works on",
+                worktree.display()
+            )
+        })?;
+    let config = ctx
+        .resolved
+        .config
+        .clone()
+        .unwrap_or_else(|| Value::Object(config::builtin_defaults()));
+    let base = args.base.trim();
+    if base.is_empty() {
+        return Err("--base is empty: pass the commit-ish the worktree was cut from, or -".into());
+    }
+
+    let rendered = match args.id {
+        Some(id) => {
+            let (key_arg, tracker_arg, parent_arg) =
+                (given(args.key), given(args.tracker), given(args.parent));
+            if let Some(parent) = parent_arg {
+                check_parent(parent)?;
+            }
+            // Written to a line the worker reads, and the hub puts it on a command line.
+            if let Some(key) = key_arg.filter(|key| *key != "-" && !text::is_key(key)) {
+                return Err(format!("not a tracker key: {key} (like ABC-123)"));
+            }
+            let record = task::load(&dir(&ctx), id)?;
+            if record.executor == task::Executor::Jules {
+                return Err(format!(
+                    "task {id} is handed to Jules: no worker is started, so no brief is written"
+                ));
+            }
+            // An empty URL is none: `--issue-url ''` stores one.
+            let nonblank = |url: &Option<String>| url.clone().filter(|url| !url.trim().is_empty());
+            let url = nonblank(&record.issue_url).or_else(|| nonblank(&record.issue));
+            let (key, tracker) = match (&url, key_arg, tracker_arg) {
+                (_, Some(key), Some(tracker)) => (key.to_string(), tracker.to_string()),
+                (None, key, tracker) => (
+                    key.unwrap_or("-").to_string(),
+                    tracker.unwrap_or("-").to_string(),
+                ),
+                (Some(url), key, tracker) => {
+                    let sources = config
+                        .get("taskSources")
+                        .and_then(Value::as_array)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default();
+                    let issue_keys = config
+                        .get("issueKeys")
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .unwrap_or_default();
+                    let (read_tracker, read_key) = text::tracker_and_key(url, sources, &issue_keys)
+                        .ok_or_else(|| {
+                            format!(
+                                "cannot tell the tracker and key of {url}: pass --key and --tracker"
+                            )
+                        })?;
+                    (
+                        key.map_or(read_key, str::to_string),
+                        tracker.map_or(read_tracker, str::to_string),
+                    )
+                }
+            };
+            if !["github", "github-project", "jira", "linear", "-"].contains(&tracker.as_str()) {
+                return Err(format!(
+                    "no such tracker: {tracker} (github, github-project, jira, linear or -)"
+                ));
+            }
+            let verify = config
+                .get("verify")
+                .and_then(Value::as_array)
+                .map(|commands| {
+                    commands
+                        .iter()
+                        .map(|c| c.as_str().map_or_else(|| c.to_string(), str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let parent = parent_arg
+                .map(str::to_string)
+                .or(record
+                    .parent
+                    .clone()
+                    .filter(|parent| !parent.trim().is_empty()))
+                .unwrap_or_else(|| "-".to_string());
+            // The worker fetches the parent from its URL; a bare key says nothing of the tracker.
+            // Checked again here because a record written before parents were checked on the way
+            // in may hold anything.
+            if parent != "-" {
+                if crate::brief::is_key(&parent) {
+                    return Err(format!(
+                        "the parent task is a key ({parent}): find its URL and pass --parent '<URL>'"
+                    ));
+                }
+                check_url(&parent, "a task")?;
+            }
+            text::render_task(&text::TaskBrief {
+                key,
+                title: record.title.clone(),
+                tracker,
+                url,
+                request: record.body.clone(),
+                branch: branch.clone(),
+                base: base.to_string(),
+                parent,
+                record: record.id.clone(),
+                done_when: brief_done_when(record.done_when).to_string(),
+                stop_at: record.stop_at.as_str().to_string(),
+                handover: record
+                    .instruction
+                    .clone()
+                    .filter(|note| !note.trim().is_empty())
+                    .unwrap_or_else(|| "-".to_string()),
+                copilot_review: config
+                    .get("copilotReview")
+                    .and_then(Value::as_str)
+                    .unwrap_or("ask")
+                    .to_string(),
+                verify,
+            })
+        }
+        None => {
+            let instruction = args
+                .instruction
+                .ok_or("a brief with no --id needs --instruction")?;
+            let instruction = super::dash_is_stdin(instruction)?;
+            let instruction = match instruction.trim() {
+                "" | "-" => text::NO_INSTRUCTION.to_string(),
+                _ => instruction,
+            };
+            text::render_session(&text::SessionBrief {
+                branch: branch.clone(),
+                base: base.to_string(),
+                instruction,
+            })
+        }
+    };
+
+    let path = match args.out {
+        Some(out) => config::expand_home(out),
+        None => worktree.join(".claude").join("task-brief.md"),
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    // Always written over: the brief is derived, and one left from an earlier start is the
+    // stale answer this exists to replace.
+    std::fs::write(&path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if args.json {
+        println!(
+            "{}",
+            json!({ "path": path, "task": args.id, "branch": branch })
+        );
+    } else {
+        println!("{}", path.display());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1274,6 +1508,98 @@ mod tests {
         let hub = hub.split_whitespace().collect::<Vec<_>>().join(" ");
         let written = format!("\"{} {{reason}}\"", task::COULD_NOT_START);
         assert!(hub.contains(&written), "adj-hub never writes {written}");
+    }
+
+    /// The procedures as one line of words, for text the file wraps.
+    fn flowed(name: &str) -> String {
+        let raw = crate::prompts::find(name).unwrap().raw_content;
+        raw.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// Workspace, Report to and Verify commands are not in `READ_BY_WORKER`: `adj-worker` does
+    /// not name them as brief lines to read.
+    ///
+    /// The worker finds the brief's lines by label. The writer lives in `brief` and the reader
+    /// is a procedure, so only a test that sees both can say a rename went to both.
+    #[test]
+    fn the_labels_the_brief_writes_are_the_ones_the_worker_reads() {
+        let worker = flowed("adj-worker");
+        for label in crate::brief::label::READ_BY_WORKER {
+            let quoted = format!("brief's \"{label}\"");
+            let bare = format!("brief's {label} ");
+            // `Task` is also the start of `Task record`, so its bare form proves nothing:
+            // only the quoted one counts for a label another label begins with.
+            let begins_another = crate::brief::label::TASK_BRIEF
+                .iter()
+                .any(|other| other.starts_with(&format!("{label} ")));
+            assert!(
+                worker.contains(&quoted) || (!begins_another && worker.contains(&bare)),
+                "adj-worker never reads the brief's {label} line"
+            );
+        }
+    }
+
+    /// `adj-report` copies two lines of the brief into what it forwards.
+    #[test]
+    fn the_report_forwards_lines_the_brief_writes() {
+        use crate::brief::label;
+        let report = flowed("adj-report");
+        let task = format!("the \"{}\" line of `.claude/task-brief.md`", label::TASK);
+        let parent = format!("brief's \"{}\"", label::PARENT_TASK);
+        assert!(report.contains(&task), "adj-report never reads {task}");
+        assert!(report.contains(&parent), "adj-report never reads {parent}");
+    }
+
+    /// The worker branches on these three phrases, so the brief must write one of them.
+    #[test]
+    fn the_done_when_the_brief_writes_is_one_the_worker_branches_on() {
+        let worker = flowed("adj-worker");
+        for done_when in [
+            task::DoneWhen::Pr,
+            task::DoneWhen::Verify,
+            task::DoneWhen::ReportOnly,
+        ] {
+            let phrase = format!("\"{}\"", done_when.as_prose());
+            assert!(worker.contains(&phrase), "adj-worker never reads {phrase}");
+        }
+    }
+
+    /// Who implements is on the record, not in the brief: a worker told it was handed to
+    /// Jules would act on a line the board never shows.
+    #[test]
+    fn the_brief_has_no_implementer_line() {
+        let written = crate::brief::render_task(&crate::brief::TaskBrief {
+            key: "WID-1".to_string(),
+            title: "t".to_string(),
+            tracker: "github".to_string(),
+            url: None,
+            request: String::new(),
+            branch: "b".to_string(),
+            base: "-".to_string(),
+            parent: "-".to_string(),
+            record: "r".to_string(),
+            done_when: "up to a PR".to_string(),
+            stop_at: "plan".to_string(),
+            handover: "-".to_string(),
+            copilot_review: "ask".to_string(),
+            verify: vec![],
+        });
+        assert!(!written.to_lowercase().contains("implementer"), "{written}");
+    }
+
+    #[test]
+    fn a_review_task_is_written_as_the_pr_the_worker_branches_on() {
+        use task::DoneWhen;
+        assert_eq!(brief_done_when(DoneWhen::Review), "up to a PR");
+        assert_eq!(brief_done_when(DoneWhen::Pr), "up to a PR");
+        assert_eq!(
+            brief_done_when(DoneWhen::Verify),
+            "up to handing over for verification"
+        );
+        assert_eq!(
+            brief_done_when(DoneWhen::ReportOnly),
+            "investigation only (report and stop)"
+        );
     }
 
     #[test]
@@ -1316,6 +1642,33 @@ mod tests {
         for bad in [json!({"stopAt": "verify"}), json!({"stopAt": 1})] {
             assert!(check_typed_values(&bad).is_err(), "{bad}");
         }
+    }
+
+    /// The parent task is typed on the form and quoted on a command line, so it is held to
+    /// the same rule as the issue URL.
+    #[test]
+    fn a_parent_task_url_that_could_close_a_quote_is_refused() {
+        let ok = json!({"parent": "https://github.com/acme/widget/issues/1"});
+        assert!(check_typed_values(&ok).is_ok());
+        // A key typed on the board is turned into its URL by the hub, not refused here.
+        assert!(check_typed_values(&json!({"parent": "ALPHA-233"})).is_ok());
+        assert!(check_typed_values(&json!({"parent": ""})).is_ok());
+        for bad in [
+            "https://x.test/a'; rm -rf ~; '",
+            "not a url",
+            "https://x.test/a b",
+            "ALPHA-233; rm",
+        ] {
+            let err = check_typed_values(&json!({ "parent": bad })).unwrap_err();
+            assert!(err.starts_with("not a task URL: "), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_parent_may_be_a_key_or_a_plain_url_and_nothing_else() {
+        assert!(check_parent("ABC-123").is_ok());
+        assert!(check_parent("https://example.test/browse/ABC-123").is_ok());
+        assert!(check_parent("ABC-123 && id").is_err());
     }
 
     #[test]

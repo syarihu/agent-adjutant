@@ -1198,7 +1198,7 @@ pub fn resolve_from_value(
         }
     }
 
-    // The hub copies this into the worker brief verbatim, and the worker falls back to asking
+    // `adj task brief` copies this into the worker brief verbatim, and the worker falls back to asking
     // on anything it does not recognise. Without a warning, a typo such as "alway" would
     // quietly keep the question coming while the person believes it is switched off.
     if let Some(value) = resolved.get("copilotReview")

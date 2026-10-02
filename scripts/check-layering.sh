@@ -12,7 +12,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # The bottom. Answers questions using nothing but the standard library and its own input.
-BOTTOM=(config repo template prompts http task gate session ws pty)
+BOTTOM=(config repo template prompts http task gate session ws pty brief)
 # The middle. May reach down, never sideways into a command and never up.
 MIDDLE=(terminal runner notify ide messaging jules)
 
