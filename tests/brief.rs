@@ -391,3 +391,33 @@ fn a_parent_that_is_a_bare_key_is_refused_until_it_is_a_url() {
         "{brief}"
     );
 }
+
+/// A record written before parents were checked on the way in may hold anything; the brief
+/// refuses it rather than writing it where the worker and adj-report read it.
+#[test]
+fn a_parent_left_unchecked_on_an_older_record_is_refused() {
+    let fixture = Fixture::new(QUIET);
+    let id = record(&fixture, &[]);
+    let path = fixture
+        .state
+        .join("tasks")
+        .join(SLUG)
+        .join(format!("{id}.json"));
+    let mut stored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    stored["parent"] = serde_json::json!("https://github.com/acme/widget/issues/7'; touch x");
+    std::fs::write(&path, stored.to_string()).unwrap();
+    let out = brief_of(&fixture, &id, &[]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not a task URL"),
+        "{out:?}"
+    );
+    let url = "https://github.com/acme/widget/issues/7";
+    assert!(brief_of(&fixture, &id, &["--parent", url]).status.success());
+    let brief = std::fs::read_to_string(fixture.repo.join(".claude/task-brief.md")).unwrap();
+    assert!(
+        brief.contains(&format!("- Parent task: {url}\n")),
+        "{brief}"
+    );
+}

@@ -1421,10 +1421,15 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
                     .filter(|parent| !parent.trim().is_empty()))
                 .unwrap_or_else(|| "-".to_string());
             // The worker fetches the parent from its URL; a bare key says nothing of the tracker.
-            if parent != "-" && !parent.starts_with("https://") && !parent.starts_with("http://") {
-                return Err(format!(
-                    "the parent task is a key ({parent}): find its URL and pass --parent '<URL>'"
-                ));
+            // Checked again here because a record written before parents were checked on the way
+            // in may hold anything.
+            if parent != "-" {
+                if crate::brief::is_key(&parent) {
+                    return Err(format!(
+                        "the parent task is a key ({parent}): find its URL and pass --parent '<URL>'"
+                    ));
+                }
+                check_url(&parent, "a task")?;
             }
             text::render_task(&text::TaskBrief {
                 key,
