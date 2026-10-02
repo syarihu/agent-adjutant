@@ -55,14 +55,16 @@ pub(super) fn run_with_input(
         command.current_dir(dir);
     }
     let mut child = command.spawn().map_err(|e| format!("cannot run gh: {e}"))?;
-    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             if let Some(mut pipe) = pipe {
                 let _ = pipe.read_to_end(&mut bytes);
             }
-            bytes
-        })
+            let _ = tx.send(bytes);
+        });
+        rx
     }
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
         // Dropped with the thread, so `gh` sees the end of the body. Not joined: on a kill the
@@ -74,8 +76,9 @@ pub(super) fn run_with_input(
     }
     let out = drain(child.stdout.take());
     let err = drain(child.stderr.take());
-    // On the kill paths the readers are dropped, not joined: a process `gh` started may still
-    // hold the pipe open, and waiting for it would hold the caller past its deadline.
+    // The readers are never joined, on the kill paths or after a clean exit: a process `gh`
+    // started may still hold a pipe open, and waiting for it would hold the caller past its
+    // deadline.
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -94,9 +97,21 @@ pub(super) fn run_with_input(
             }
         }
     };
-    let (Ok(out), Ok(err)) = (out.join(), err.join()) else {
-        return Err("cannot read gh: the reader panicked".to_string());
+    // A pipe still held open after a clean exit is waited out to the deadline and then reported
+    // as a timeout, though `gh` said success: what it printed cannot be taken as complete.
+    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| match rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    {
+        Ok(bytes) => Ok(bytes),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err("gh did not answer in time".to_string())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("cannot read gh: the reader panicked".to_string())
+        }
     };
+    let out = collect(out)?;
+    let err = collect(err)?;
     Ok(GhRun {
         ok: status.success(),
         stdout: String::from_utf8_lossy(&out).into_owned(),
