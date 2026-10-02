@@ -634,8 +634,8 @@ page holds only what changed after the last answer), waits the `X-Poll-Interval`
 changed reads only the PRs a card holds, all in one GraphQL query. A 304 costs nothing against
 the rate limit. Notifications are never marked as read: nothing here writes to GitHub. GitHub
 does not notify you of what you did yourself (a PR you merge, close or mark ready), and a
-CI run that passes sends nothing either, so every card with a state is also read again every
-five minutes. The first
+CI run that passes sends nothing either, so every card not yet merged (and one whose PR could not be
+read) is also read again every five minutes. The first
 round after the server starts, and a page of 50 changed threads, are taken to hold only part
 of the news, and every card is read. If GitHub cannot be reached, the cards stay where they were, the wait
 doubles up to 15 minutes, and the 「PRレビュー」 column header says 「PR の自動確認が止まっています」

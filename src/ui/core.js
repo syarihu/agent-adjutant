@@ -194,10 +194,12 @@ function humanColOf(t, data = state) {
   if (g) return gateHumanCol(g.kind);
   if (t.status === 'done' || t.status === 'cancelled') return null;
 
-  // Jules tasks: once Jules is not working, the PR's turn (twin of
-  // `task::jules_pr_waits_on_person`). A turn that says nothing keeps today's column.
+  // Jules tasks: while Jules is working the ball is with Jules, whatever the PR says; once it
+  // is not, the PR's turn (twin of `task::jules_pr_waits_on_person`). A turn that says nothing
+  // keeps today's column.
   if (t.julesSession && t.pr) {
-    if (!t.jules?.working && t.jules?.state !== 'FAILED') {
+    if (t.jules?.working) return null;
+    if (t.jules?.state !== 'FAILED') {
       if (['checks', 'other-reviewer', 'merged'].includes(t.prTurn)) return null;
       return 'prreview';
     }

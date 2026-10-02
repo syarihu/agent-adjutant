@@ -31,7 +31,7 @@ const DEFAULT_INTERVAL: u64 = 60;
 /// The longest the wait grows to while GitHub cannot be reached.
 const BACKOFF_CAP: u64 = 900;
 
-/// How often every card with a state on its record is read anyway. GitHub does not notify the
+/// How often every card not yet merged is read anyway, along with any whose PR could not be read. GitHub does not notify the
 /// person who did a thing, so a PR they merge, close or mark ready themselves sends nothing,
 /// and a CI run that passes sends none either: without this, such a card would stay where it
 /// is until the next refresh.
@@ -276,13 +276,15 @@ impl PrPoll {
                 (*interval, Some(last_modified.clone()))
             }
         };
+        // A card whose PR could not be read is tried again here too, rather than every round:
+        // one that is gone for good would otherwise cost a query a minute.
         if reread_due {
             read.extend((0..cards.len()).filter(|&i| {
                 cards[i]
                     .task
                     .pr_status
                     .as_ref()
-                    .is_some_and(|status| task::pr_turn(status) != Some(PrTurn::Merged))
+                    .is_none_or(|status| task::pr_turn(status) != Some(PrTurn::Merged))
             }));
         }
         let mut unread = None;
