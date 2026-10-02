@@ -6,14 +6,18 @@
 # A move takes items from one file to another and changes only what the move forces: `mod`
 # and `use` lines, visibility, and paths that point somewhere else from the new file. So
 # both sides of every touched `src/**.rs` file are reduced to the tokens that are left once
-# those are dropped, and the two multisets must be equal. Lines, indentation and wrapping do
-# not count, so rustfmt re-wrapping a moved item is fine.
+# those are dropped, cut into top-level items (up to the `}` that closes one, or a `;`), and
+# the two multisets of items must be equal. Each item keeps its tokens in order, so moving a
+# whole item anywhere is fine, while changing or reordering tokens within one is not. Lines,
+# indentation and wrapping do not count, so rustfmt re-wrapping a moved item is fine.
 #
 # It cannot see a reference retargeted to a same-named item elsewhere (`a::f` to `b::f`):
 # the paths are dropped. The compiler and the test count at the end cover that.
 #
-# Known gaps: only the committed HEAD is checked, not the working tree; the closing brace of
-# a `mod tests {` is found by its indent, so a differently indented one is missed.
+# Known gaps: only the committed HEAD is read, so a dirty src/ is refused; the closing brace
+# of a `mod tests {` is found by its indent, so a differently indented one is missed. Moving
+# items out of a non-test inline `mod x { }` or out of an `impl` block shows as a change: a
+# false failure, never a false pass. Braces inside string or char literals can do the same.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
@@ -27,7 +31,8 @@ if [ $# -ne 1 ]; then
 fi
 cd "$(git rev-parse --show-toplevel)"
 if [ -n "$(git status --porcelain -- src)" ]; then
-  echo "warning: uncommitted changes under src/ are not checked; only HEAD is" >&2
+  echo "commit or stash changes under src/ first: the tokens are read from HEAD and the tests are counted in the working tree" >&2
+  exit 1
 fi
 
 # Compare with where the branch left <base>, not with <base> itself: a <base> that moved on
@@ -113,8 +118,29 @@ if ! perl -0 -e '
     return $text =~ /[A-Za-z0-9_]+|\S/g;
   }
 
+  # Cuts tokens into top-level items: one ends at the `}` that brings the depth back to 0,
+  # or at a `;` at depth 0. What is left at the end is an item of its own.
+  sub items {
+    my @items;
+    my @cur;
+    my $depth = 0;
+    for my $t (@_) {
+      push @cur, $t;
+      if ($t eq "{") { $depth++ }
+      elsif ($t eq "}") { $depth-- if $depth > 0; }
+      if (($t eq "}" && $depth == 0) || ($t eq ";" && $depth == 0)) {
+        push @items, join " ", @cur;
+        @cur = ();
+      }
+    }
+    push @items, join " ", @cur if @cur;
+    return @items;
+  }
+
   my %count;    # token -> base minus head
   my %where;    # token -> side -> { file -> n }
+  my %icount;   # item -> base minus head
+  my %iwhere;   # item -> side -> { file -> n }
   local $/ = "\0";
   while (defined(my $head = <STDIN>)) {
     chomp $head;
@@ -122,13 +148,29 @@ if ! perl -0 -e '
     $src = "" unless defined $src;
     chomp $src;
     my ($side, $file) = split /\t/, $head, 2;
-    for my $t (normalize($file, $src)) {
+    my @tokens = normalize($file, $src);
+    for my $t (@tokens) {
       $count{$t} += $side eq "base" ? 1 : -1;
       $where{$t}{$side}{$file}++;
+    }
+    for my $i (items(@tokens)) {
+      $icount{$i} += $side eq "base" ? 1 : -1;
+      $iwhere{$i}{$side}{$file}++;
     }
   }
 
   my $bad = 0;
+  for my $i (sort keys %icount) {
+    my $n = $icount{$i};
+    next if $n == 0;
+    my $side = $n > 0 ? "base" : "head";
+    my $files = join ", ", map { "$_ ($iwhere{$i}{$side}{$_})" } sort keys %{ $iwhere{$i}{$side} };
+    my $shown = length $i > 150 ? substr($i, 0, 150) . "..." : $i;
+    printf "%s: %d x item in %s: %s\n", $side eq "base" ? "removed" : "added", abs $n, $files, $shown;
+    $bad = 1;
+  }
+  exit 0 unless $bad;
+  # The items differ; the token surplus below pinpoints what changed in them.
   for my $t (sort keys %count) {
     my $n = $count{$t};
     next if $n == 0;
@@ -137,11 +179,10 @@ if ! perl -0 -e '
     printf "%s: %d more `%s` than %s, in %s\n",
       $side eq "base" ? "removed" : "added", abs $n, $t,
       $side eq "base" ? "added" : "removed", $files;
-    $bad = 1;
   }
-  exit $bad;
+  exit 1;
 ' <"$tmp/records"; then
-  echo "not a move: the tokens above are on one side only" >&2
+  echo "not a move: the items above are on one side only" >&2
   exit 1
 fi
 
@@ -169,4 +210,4 @@ if [ "$base_tests" != "$head_tests" ]; then
   echo "not a move: $base_tests tests at the base, $head_tests at HEAD" >&2
   exit 1
 fi
-echo "move-only ok: same tokens in $(echo "$files" | wc -l | tr -d ' ') files, $head_tests tests on both sides"
+echo "move-only ok: same items in $(echo "$files" | wc -l | tr -d ' ') files, $head_tests tests on both sides"

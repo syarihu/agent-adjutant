@@ -116,7 +116,10 @@ is_shim() {
 # DEPTH is how many `super::` reach the crate root from the file (1 for src/NAME.rs and
 # src/NAME/mod.rs, 2 for src/NAME/foo.rs, ...): that many `super::` count as `crate::`, so
 # `super::NAME` names a module of the crate when NAME is one; fewer name items of the file's
-# own module and are not references.
+# own module and are not references. More than DEPTH can only come from an inline module such
+# as `mod tests`, where it reaches the root, so it counts too. Left over: inside an inline
+# module exactly DEPTH supers name the file's own module, flagged only if a crate-level
+# module has that name.
 references() {
   awk -v depth="$2" -v mods=" $3 " '
     /^[[:space:]]*\/\// { next }
@@ -133,7 +136,7 @@ references() {
         } else {
           k = 0
           while (substr(m, 1, 7) == "super::") { k++; m = substr(m, 8) }
-          if (k == depth && m != "" && index(mods, " " m " ") > 0) print NR "\t" m
+          if (k >= depth && m != "" && index(mods, " " m " ") > 0) print NR "\t" m
         }
       }
     }
