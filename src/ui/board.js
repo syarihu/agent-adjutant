@@ -97,6 +97,11 @@ async function worktreeAct(action, worktree, confirmed = false, slug = null) {
                  close: `adj close --worktree ${worktree}` }[action];
   // With no editor configured the server can only refuse, so say how to set one instead.
   if (action === 'ide' && !ideReady()) { openIdeDialog(); return; }
+  // Closing under a restart would race it: the restart closes this window itself.
+  if (action === 'close') {
+    const restarting = (state.sessions || []).find(x => x.kind === 'worker' && x.worktree === worktree && restartingNow(x));
+    if (restarting) return note(line, true, '再起動しています。終わってから操作してください');
+  }
   if (action === 'close' && !confirmed) { openCloseDialog(worktree); return; }
   try {
     const data = await boardApi(slug ? `/b/${slug}` : BASE, `/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
@@ -1399,7 +1404,8 @@ const hubPaneOf = (h, s) => nav.pane === 'term' && !hubTermWhy(h, s) ? 'term' : 
 function hubPanelHeadHtml(h, s) {
   const row = hubRowOf(h);
   const since = sinceLabel(row?.hubLastAlive);
-  const [pillText, pillCls] = hubStartingNow(h) ? ['起動しています…', 'pill-neutral']
+  const [pillText, pillCls] = hubRestartPending(h) ? ['再起動しています…', 'pill-neutral']
+    : hubStartingNow(h) ? ['起動しています…', 'pill-neutral']
     : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
     : s.waiting ? ['入力待ち', 'pill-warn']
     : ['稼働中', 'pill-good'];
@@ -1433,7 +1439,7 @@ const hubListMore = n => n > 0 ? `<div class="tp-muted">ほか ${n} 件</div>` :
 function hubDetailHtml(h, s) {
   const other = hubOther(h);
   const row = hubRowOf(h);
-  const startWhy = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
+  const startWhy = hubStartWhy(h) || hubWaitWhy(h);
   let html = '';
   if (!s.present) {
     const since = sinceLabel(row?.hubLastAlive);
@@ -1472,11 +1478,16 @@ function hubDetailHtml(h, s) {
   const act = hubActionOf(s);
   const own = act && act.act !== 'hub-start'
     ? `<button type="button" class="btn-m3-tonal" data-tp-hub="${act.act.slice(4)}"${act.disabled ? ' disabled' : ''} title="${esc(act.title)}"><span class="material-symbols-outlined" style="font-size:16px;">${act.icon}</span><span>${esc(act.label)}</span></button>` : '';
+  const restartBtn = canRestart(s) ? (() => {
+    const why = restartWhy(s);
+    return `<button type="button" class="btn-m3-tonal" data-tp-hub="restart"${why ? ' disabled' : ''} title="${esc(why || '今の会話のまま、止めて起動し直します（adj hub --resume）')}"><span class="material-symbols-outlined" style="font-size:16px;">autorenew</span><span>セッションを再起動…</span></button>`;
+  })() : '';
   html += `<div class="m3-filled-card">${secTitle('操作')}
     <div class="tp-gate-actions">
       <button type="button" class="btn-m3-tonal" data-tp-hub="next" title="adj send --kind next (着手を促す)"><span class="material-symbols-outlined" style="font-size:16px;">bolt</span><span>着手を促す</span></button>
       <button type="button" class="btn-m3-tonal" data-tp-hub="sync" title="再同期 (adj refresh)"><span class="material-symbols-outlined" style="font-size:16px;">refresh</span><span>再同期</span></button>
       ${own}
+      ${restartBtn}
     </div>
     <button type="button" class="btn-m3-text tp-reset" data-tp-hub="reset"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）')}">hub をリセット…</button>
   </div>`;
@@ -1622,6 +1633,7 @@ function hubPanelClick(e, h) {
       case 'stop': return openHubStopDialog(h.id, 'stop');
       case 'close': return openHubStopDialog(h.id, 'close');
       case 'reset': return openHubStopDialog(h.id, 'reset');
+      case 'restart': return openHubStopDialog(h.id, 'restart');
     }
     return;
   }

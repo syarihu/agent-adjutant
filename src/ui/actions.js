@@ -387,29 +387,38 @@ async function hubStart(id) {
 
 let hubStopTarget = null;
 let hubStopMode = 'stop';
-/* One dialog for all three: `mode` is 'stop' for a hub that keeps its place in the list,
-   'close' for a parent-task hub that leaves it, and 'reset' for one that is started again on
-   a new conversation. */
+/* One dialog for all four: `mode` is 'stop' for a hub that keeps its place in the list,
+   'close' for a parent-task hub that leaves it, 'reset' for one that is started again on
+   a new conversation, and 'restart' for one that is started again on the same one. */
 function openHubStopDialog(id, mode = 'stop') {
   const h = (state.hubs || []).find(x => x.id === id);
   if (!h) return;
-  if (hubResetting.has(id)) return note('hub をリセットしています。終わってから操作してください', true);
+  if (hubTurnover(h)) return note(`${hubTurnover(h)}。終わってから操作してください`, true);
   if (mode === 'close' && hubStartingNow(h)) return note('hub を起動しています。起動してから閉じてください', true);
   hubStopTarget = id;
   hubStopMode = mode;
   const closing = mode === 'close';
   const resetting = mode === 'reset';
+  const restarting = mode === 'restart';
   const running = h.state?.present;
-  const label = resetting ? 'hub をリセット' : closing ? 'hub を閉じる' : 'hub を止める';
+  const label = restarting ? 'セッションを再起動' : resetting ? 'hub をリセット' : closing ? 'hub を閉じる' : 'hub を止める';
   document.getElementById('hub-stop-heading').textContent = label;
   document.getElementById('hub-stop-confirm').textContent = label;
-  document.getElementById('hub-stop-icon').textContent = resetting ? 'fiber_new' : 'stop_circle';
-  document.getElementById('hub-stop-lead').textContent = resetting
+  document.getElementById('hub-stop-icon').textContent = restarting ? 'autorenew' : resetting ? 'fiber_new' : 'stop_circle';
+  // A restart is not a loss, so it does not wear the red of the others.
+  document.getElementById('hub-stop-submit').className = restarting ? 'btn-m3-primary' : 'btn-m3-danger';
+  const hubSession = (state.sessions || []).find(x => x.kind === 'hub' && x.id === h.id);
+  fillWarnings('hub-stop-warnings', restarting && hubSession ? restartWarnings(hubSession) : []);
+  document.getElementById('hub-stop-lead').textContent = restarting
+    ? `${h.name} を止めて、同じ会話で起動し直します（adj hub --resume${h.key ? ` --hub ${h.key}` : ''} と同じです）。`
+    : resetting
     ? `${h.name} を新しい会話で起動し直します（adj hub --new${h.key ? ` --hub ${h.key}` : ''} と同じです）。${running ? '動いている tmux のペインを閉じて hub を止めてから起動します。' : ''}`
     : closing
       ? `${h.name} を閉じます。${running ? '動いている tmux のペインを閉じて hub を止め、' : ''}一覧から外します。`
       : `${h.name} が動いている tmux のペインを閉じます。hub は止まります。`;
-  document.getElementById('hub-stop-note').textContent = resetting
+  document.getElementById('hub-stop-note').textContent = restarting
+    ? `受信箱・タスク・gate の記録と動いている worker はそのまま残ります。起動し直した hub は受信箱を読み直して続けます${h.inboxCount ? `（未読 ${h.inboxCount} 件）` : ''}。`
+    : resetting
     ? '今の会話は再開されません（会話そのものは消えませんが、このあと adj hub --resume で戻るのは新しい会話です。会話を記録しない runner では戻り先がなくなります）。受信箱・タスク・gate の記録と動いている worker はそのまま残り、新しい hub が起動時に受信箱を処理します。'
     : closing
       ? 'このハブを閉じて一覧から外します。タスク・gate・受信箱の記録は残り、同じキーで起動すると引き継ぎます。'
@@ -424,6 +433,7 @@ document.getElementById('hub-stop-dialog').addEventListener('close', e => {
   if (e.target.returnValue === 'stop' && id) {
     if (hubStopMode === 'close') hubClose(id);
     else if (hubStopMode === 'reset') hubReset(id);
+    else if (hubStopMode === 'restart') hubRestart(id);
     else hubStop(id);
   }
 });
@@ -434,7 +444,7 @@ document.getElementById('hub-stop-dialog').addEventListener('close', e => {
 async function hubReset(id) {
   const h = (state.hubs || []).find(x => x.id === id);
   if (!h) return;
-  if (hubResetting.has(id)) return note('hub をリセットしています。終わってから操作してください', true);
+  if (hubTurnover(h)) return note(`${hubTurnover(h)}。終わってから操作してください`, true);
   const line = `adj hub --tab --new${h.key ? ` --hub=${h.key}` : ''}`;
   const run = async () => {
     const data = await api(`/api/hubs/${encodeURIComponent(id)}/reset`, { method: 'POST', body: '{}' });
@@ -480,10 +490,53 @@ async function hubReset(id) {
   return body();
 }
 
+/* Stop the hub and start it again on the same conversation, as `adj hub --resume` does. Like
+   `hubReset`, the hub counts as starting from the request until the new process shows, so no
+   start button is offered that would open a second window. */
+async function hubRestart(id) {
+  const h = (state.hubs || []).find(x => x.id === id);
+  if (!h) return;
+  if (hubTurnover(h)) return note(`${hubTurnover(h)}。終わってから操作してください`, true);
+  const line = `adj hub --tab --resume${h.key ? ` --hub=${h.key}` : ''}`;
+  const inSessions = view === 'sessions';
+  const body = async () => {
+    // Set here and dropped only on failure: on success it stays until the new hub shows (see
+    // `restartPending`), because the answer comes when its window opens, not when it is up.
+    hubRestarting.set(id, { pid: h.state?.pid ?? null, at: Date.now() });
+    renderBoardRows();
+    redrawHubPanel();
+    if (inSessions) showSessNotice('hub を再起動しています…');
+    try {
+      const data = await api(`/api/hubs/${encodeURIComponent(id)}/restart`, { method: 'POST', body: '{}' });
+      if (data.restarted === false) hubRestarting.delete(id);
+      else hubRestarting.set(id, { pid: h.state?.pid ?? null, at: Date.now() });
+      const text = data.restarted === false
+        ? (data.wasRunning ? 'hub を止めましたが、別の起動が先に hub を立ち上げたため再起動にはなっていません' : 'hub はすでに動いているため、再起動しませんでした')
+        : '同じ会話で hub を再起動しました';
+      note(line, false, text);
+      if (inSessions) { showSessNotice(text); sessView.reconnectWhenReady = id; }
+      if (panelTerm.sessionId === id) panelTerm.reconnect = true;
+      await refresh();
+    } catch (e) {
+      hubRestarting.delete(id);
+      note(`${line} → ${e.message}`, true);
+      if (inSessions) showSessNotice(`セッションを再起動できませんでした: ${e.message}`, true);
+      // The hub may have been stopped before the start failed.
+      await refresh();
+    } finally {
+      renderBoardRows();
+      redrawHubPanel();
+      if (inSessions) renderSessionsView();
+    }
+  };
+  if (inSessions) return sessAct(`hub-restart-${id}`, 'セッションを再起動', body);
+  return body();
+}
+
 async function hubStop(id) {
   const h = (state.hubs || []).find(x => x.id === id);
   if (!h) return;
-  if (hubResetting.has(id)) return note('hub をリセットしています。終わってから操作してください', true);
+  if (hubTurnover(h)) return note(`${hubTurnover(h)}。終わってから操作してください`, true);
   const line = `tmux kill-pane (hub ${h.name})`;
   try {
     const data = await api(`/api/hubs/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' });
@@ -500,7 +553,7 @@ async function hubStop(id) {
 async function hubClose(id) {
   const h = (state.hubs || []).find(x => x.id === id);
   if (!h) return;
-  if (hubResetting.has(id)) return note('hub をリセットしています。終わってから操作してください', true);
+  if (hubTurnover(h)) return note(`${hubTurnover(h)}。終わってから操作してください`, true);
   if (hubStartingNow(h)) return note('hub を起動しています。起動してから閉じてください', true);
   const line = `adj hub-close (hub ${h.name})`;
   try {

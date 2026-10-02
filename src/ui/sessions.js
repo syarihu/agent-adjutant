@@ -7,20 +7,20 @@
 const IDLE_AFTER_SECS = 60;
 /* The phases at which a worker that is gone has finished rather than stopped (see stuckOf). */
 const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
-const STATE_ORDER = { waiting: 0, stopped: 1, idle: 2, working: 3, ended: 4, none: 5 };
+const STATE_ORDER = { waiting: 0, stopped: 1, restarting: 1, idle: 2, working: 3, ended: 4, none: 5 };
 const STATE_LABEL = {
   waiting: '確認待ち', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
-  pending: '起動を依頼中…',
+  pending: '起動を依頼中…', restarting: '再起動しています…',
 };
 const STATE_ICON = {
-  waiting: 'help', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top',
+  waiting: 'help', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
 };
 const STATE_PILL = {
-  waiting: 'pill-warn', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral',
+  waiting: 'pill-warn', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
 };
 /* A row's state in the few words it has room for. A quiet window is running too: it only has
    the neutral pill (STATE_PILL), so it is not taken for one that is writing. */
-const ROW_LABEL = { waiting: '入力待ち', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了' };
+const ROW_LABEL = { waiting: '入力待ち', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了', restarting: '再起動' };
 
 const hubOfSession = s => s.kind === 'hub' ? s.id : s.hub;
 
@@ -50,6 +50,7 @@ function sessionActivity(s, data = state) {
    record says a worker is gone but not why, so a worker that is gone at a phase where its work
    is done reads as ended, as its card does. */
 function sessionState(s, data = state) {
+  if (data === state && restartingNow(s)) return 'restarting';
   if (s.waiting) return 'waiting';
   return restingState(s, data);
 }
@@ -770,28 +771,59 @@ function hubActionOf(s) {
   if (!h) return null;
   const present = !!(s.present ?? h.state?.present);
   // A reset started from the rail leaves these two doing nothing until it is over.
-  const resetting = hubResetting.has(h.id);
+  const resetting = !!hubTurnover(h);
   const starting = hubStartingNow(h);
-  if (h.parent && !h.children) return { act: 'hub-close', icon: 'close', label: 'hub を閉じる', disabled: starting, title: resetting ? 'hub をリセットしています' : starting ? 'hub を起動しています' : 'この hub を止めて一覧から外します。タスク・gate・受信箱の記録は残ります' };
-  if (present) return { act: 'hub-stop', icon: 'stop', label: 'hub を止める', disabled: resetting, title: resetting ? 'hub をリセットしています' : 'hub が動いている tmux のペインを閉じます' };
-  const why = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
+  if (h.parent && !h.children) return { act: 'hub-close', icon: 'close', label: 'hub を閉じる', disabled: starting, title: hubTurnover(h) || (starting ? 'hub を起動しています' : 'この hub を止めて一覧から外します。タスク・gate・受信箱の記録は残ります') };
+  if (present) return { act: 'hub-stop', icon: 'stop', label: 'hub を止める', disabled: resetting, title: hubTurnover(h) || 'hub が動いている tmux のペインを閉じます' };
+  const why = hubStartWhy(h) || hubWaitWhy(h);
   return { act: 'hub-start', icon: 'play_arrow', label: 'hub を起動', title: why || 'tmux の新しいウィンドウで adj hub を実行します', disabled: !!why };
 }
 
-const canResume = s => s.kind === 'worker' && !s.present && !!s.conversation && !!state.sessionResume?.available;
+const canResume = s => s.kind === 'worker' && !s.present && !!s.conversation && !!state.sessionResume?.available && !restartingNow(s);
+
+/* A restart on this page is under way for `s`: from the request until the new process shows. */
+const restartKey = s => `${boardOfSession(s).slug}/${s.id}`;
+function restartingNow(s) {
+  if (s.kind === 'hub') {
+    const h = (state.hubs || []).find(x => x.id === s.id);
+    return !!h && hubRestartPending(h);
+  }
+  return restartPending(sessRestarting.get(restartKey(s)), s);
+}
+
+/* Why `s` cannot be restarted from the board, or '' when it can: the first of these that
+   holds, as 再開's. Only a running hub or worker is offered it, so the page asks `canRestart`
+   first. */
+function restartWhy(s) {
+  if (restartingNow(s)) return '再起動しています';
+  if (!s.conversation) return '保存された会話がないため再起動できません';
+  if (s.kind === 'hub') {
+    const h = (state.hubs || []).find(x => x.id === s.id);
+    if (h && hubResetting.has(h.id)) return 'hub をリセットしています';
+    if (!state.hubResume?.available) return state.hubResume?.reason || 'ボードからは再起動できません';
+    return h ? hubStartWhy(h) : '';
+  }
+  if (!state.sessionResume?.available) return state.sessionResume?.reason || 'ボードからは再起動できません';
+  return '';
+}
+const canRestart = s => (s.kind === 'hub' || (s.kind === 'worker' && !!s.worktree)) && !!(s.present || restartingNow(s));
 const linkedWorktree = s => s.kind === 'worker' && !!s.worktree && s.worktree !== state.main;
 
 function sessionButtons(s) {
   const bar = [];
   const menu = [];
   if (canResume(s)) bar.push({ act: 'resume', icon: 'restart_alt', label: '再開', title: '保存された会話を tmux の新しいウィンドウで再開します' });
-  if (s.kind === 'worker' && s.present && linkedWorktree(s)) bar.push({ act: 'close', icon: 'tab_close', label: 'セッションを閉じる', title: 'worker のタブを閉じます（worktree は残ります）' });
+  if (canRestart(s)) {
+    const why = restartWhy(s);
+    bar.push({ act: 'restart', icon: 'autorenew', label: 'セッションを再起動…', title: why || '今の会話のまま、止めて起動し直します。新しい Claude Code に切り替えたいときなどに使います', disabled: !!why });
+  }
+  if (s.kind === 'worker' && s.present && linkedWorktree(s)) bar.push({ act: 'close', icon: 'tab_close', label: 'セッションを閉じる', title: restartingNow(s) ? '再起動しています' : 'worker のタブを閉じます（worktree は残ります）', disabled: restartingNow(s) });
   if (s.kind === 'hub') {
     const hub = hubActionOf(s);
     if (hub) bar.push(hub);
     const h = (state.hubs || []).find(x => x.id === s.id);
     if (h) {
-      const why = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
+      const why = hubStartWhy(h) || hubWaitWhy(h);
       menu.push({ act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: why || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）', disabled: !!why });
     }
   }
@@ -803,7 +835,7 @@ function sessionButtons(s) {
   }
   if (linkedWorktree(s)) menu.push({ act: 'ide', icon: 'code', label: 'IDE で開く' });
   if (s.worktree) menu.push({ act: 'copy', icon: 'content_copy', label: 'パスをコピー' });
-  if (linkedWorktree(s)) menu.push({ act: 'cleanup', icon: 'delete_sweep', label: '片付ける…' });
+  if (linkedWorktree(s)) menu.push({ act: 'cleanup', icon: 'delete_sweep', label: '片付ける…', title: restartingNow(s) ? '再起動しています' : '', disabled: restartingNow(s) });
   return { bar, menu };
 }
 
@@ -839,6 +871,7 @@ function runSessionAction(act, s) {
         showSessNotice(data.description || '端末で開きました');
       });
     case 'close':
+      if (restartingNow(s)) return note('再起動しています。終わってから操作してください', true);
       return worktreeAct('close', s.worktree);
     case 'resume':
       return sessAct('resume', `セッションを再開 (${key})`, async () => {
@@ -858,6 +891,8 @@ function runSessionAction(act, s) {
         sessView.reconnectWhenReady = s.id;
         await refresh();
       });
+    case 'restart':
+      return s.kind === 'hub' ? openHubStopDialog(s.id, 'restart') : openRestartDialog(s);
     case 'hub-reset':
       return openHubStopDialog(s.id, 'reset');
     case 'hub-stop':
@@ -874,8 +909,86 @@ function runSessionAction(act, s) {
           showSessNotice(`パスをコピーできませんでした: ${e.message}`, true);
         });
     case 'cleanup':
+      if (restartingNow(s)) return note('再起動しています。終わってから操作してください', true);
       return openCleanupDialog(s);
   }
+}
+
+/* ── Restarting a running session on its conversation ── */
+/* What a restart would cut off, as sentences for the dialog. Unread inbox items are not here:
+   the new hub reads them again, so they are information, not a loss. */
+function restartWarnings(s) {
+  const out = [];
+  if (s.waiting) {
+    out.push(`確認待ち（${gateKindLabel(s.waiting.kind)}${s.waiting.title ? `: ${s.waiting.title}` : ''}）があります。gate は残り再起動後も答えられますが、待っている途中の処理は中断されます。`);
+  }
+  if (s.present && sessionActivity(s) === 'working') {
+    out.push(`直近 1 分以内に出力があり、作業の途中かもしれません${s.phase ? `（フェーズ: ${s.phase}）` : ''}。実行中のコマンドや書きかけの返答は中断されます。`);
+  }
+  return out;
+}
+
+function fillWarnings(id, items) {
+  const el = document.getElementById(id);
+  el.hidden = !items.length;
+  el.innerHTML = items.map(t => `<li class="warn">${esc(t)}</li>`).join('');
+}
+
+let restartTarget = null;
+function openRestartDialog(s) {
+  const why = restartWhy(s);
+  if (why) return note(`セッションを再起動できません: ${why}`, true);
+  restartTarget = s;
+  const name = (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
+  sessEl('sess-restart-lead').textContent = `${name} の worker を閉じて、同じ worktree で同じ会話を再開します（開き直す tmux のウィンドウでは adj worker --resume --worktree ${s.worktree} が動きます）。`;
+  fillWarnings('sess-restart-warnings', restartWarnings(s));
+  sessEl('sess-restart-note').textContent = 'worktree・outbox・gate の記録は残り、再開した worker は outbox を確認して続きから進めます。';
+  const dialog = sessEl('sess-restart-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+}
+sessEl('sess-restart-dialog').addEventListener('close', e => {
+  const s = restartTarget;
+  restartTarget = null;
+  if (e.target.returnValue === 'restart' && s) sessRestart(s);
+});
+
+/* Close the worker and open it again on the same conversation. The session counts as
+   restarting from the request until a process other than the old one shows (`restartPending`),
+   and for no longer than RESTART_MS; the buttons that would act on the old one stay held. */
+async function sessRestart(s) {
+  const key = sessionKey(s);
+  const label = `セッションを再起動 (${key})`;
+  const mark = restartKey(s);
+  if (restartingNow(s)) return note('再起動しています。終わってから操作してください', true);
+  return sessAct(`restart-${mark}`, label, async () => {
+    // The pid of what runs now, not of the session as it was when the dialog opened: the
+    // worker may have been restarted by hand in between, and the old pid would read as new.
+    const current = (state.sessions || []).find(x => x.id === s.id && x.kind === s.kind) || s;
+    const was = { pid: current.pid ?? null };
+    sessRestarting.set(mark, { ...was, at: Date.now() });
+    renderSessionsView();
+    renderTaskPanel();
+    showSessNotice('セッションを再起動しています…');
+    try {
+      const data = await api(`/api/sessions/${enc(s.id)}/restart`, { method: 'POST', body: '{}' });
+      sessRestarting.set(mark, { ...was, at: Date.now() });
+      note(label, false, data.description);
+      showSessNotice('再起動しました' + (data.hubRunning === false ? '。hub は止まっています' : ''));
+      sessView.reconnectWhenReady = s.id;
+      if (panelTerm.sessionId === s.id) panelTerm.reconnect = true;
+      await refresh();
+    } catch (e) {
+      sessRestarting.delete(mark);
+      showSessNotice(`セッションを再起動できませんでした: ${e.message}`, true);
+      note(`${label} → ${e.message}`, true);
+      // The window may have been closed before the start failed.
+      await refresh();
+    } finally {
+      renderSessionsView();
+      renderTaskPanel();
+    }
+  });
 }
 
 /* ── The gate a session waits on ── */
@@ -1019,6 +1132,9 @@ function openGateInReview(s) {
 /* ── The panel over a session that is not running ── */
 function overHtml(s) {
   if (!s) return '';
+  // Between the old process going and the new one writing its record: the one thing worth
+  // saying is that it is on its way.
+  if (s.kind === 'worker' && restartingNow(s) && !s.present) return '<div class="sess-over-head">セッションを再起動しています</div>';
   const st = restingState(s);
   if (st !== 'stopped' && st !== 'ended') return '';
   const m = sessView.mounted;
@@ -1031,10 +1147,10 @@ function overHtml(s) {
     // A stopped hub can be started on a new conversation too, whether it is offered to be
     // started or (a parent hub nobody reports to) to be closed.
     const canFresh = !!h && (hub?.act === 'hub-start' || (hub?.act === 'hub-close' && !!h.key));
-    const freshWhy = !h ? '' : hubStartWhy(h) || (starting ? 'hub を起動しています' : '');
+    const freshWhy = !h ? '' : hubStartWhy(h) || hubWaitWhy(h);
     const fresh = canFresh
       ? button({ act: 'hub-reset', icon: 'fiber_new', label: 'hub をリセット…', title: freshWhy || 'hub をリセット：今の会話を引き継がず、新しい会話で hub を起動します（adj hub --new）', disabled: !!freshWhy }) : '';
-    const head = st === 'ended' ? 'この hub は役目を終えています' : starting ? 'hub を起動しています' : 'hub は止まっています';
+    const head = st === 'ended' ? 'この hub は役目を終えています' : h && hubRestartPending(h) ? 'hub を再起動しています' : starting ? 'hub を起動しています' : 'hub は止まっています';
     return `<div class="sess-over-head">${head}</div>` +
       (hub ? `<div class="sess-over-buttons">${button(hub)}${fresh}</div>` : '');
   }
@@ -1081,6 +1197,7 @@ function cleanupFactsHtml(s, git) {
 }
 
 async function openCleanupDialog(s) {
+  if (restartingNow(s)) return note('再起動しています。終わってから操作してください', true);
   const name = (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
   cleanupTarget = { s, name };
   sessEl('cleanup-name').textContent = name;

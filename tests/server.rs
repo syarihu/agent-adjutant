@@ -1190,6 +1190,255 @@ fn hub_reset_is_refused_before_anything_is_stopped() {
     assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
 }
 
+/// The conversation a running hub had, saved where `adj hub --resume` reads it.
+fn saved_hub_conversation(fixture: &Fixture, slug: &str) -> (PathBuf, String) {
+    let saved = fixture.state.join("sessions").join(format!("{slug}.json"));
+    std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    let text = serde_json::json!({
+        "sessionId": "0b7e6a52-0000-4000-8000-000000000002",
+        "nwo": "acme/widget",
+        "hubName": HUB,
+    })
+    .to_string();
+    std::fs::write(&saved, &text).unwrap();
+    (saved, text)
+}
+
+#[test]
+fn hub_restart_stops_the_running_hub_and_resumes_its_conversation() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let (saved, saved_text) = saved_hub_conversation(&fixture, SLUG);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/restart"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["restarted"], true, "{body}");
+    assert_eq!(answer["wasRunning"], true, "{body}");
+    assert_eq!(answer["started"], true, "{body}");
+    assert!(answer["description"].is_string(), "{body}");
+
+    let log = tmux.logged();
+    let kill = log
+        .lines()
+        .position(|l| l.contains("-L scratch kill-pane -t %3"))
+        .unwrap_or_else(|| panic!("no pane was closed: {log}"));
+    let open = log
+        .lines()
+        .position(|l| l.contains("new-window") && l.contains("--resume"))
+        .unwrap_or_else(|| panic!("the conversation was not resumed: {log}"));
+    assert!(kill < open, "{log}");
+    let window = log.lines().nth(open).unwrap();
+    assert!(window.contains(" hub --resume"), "{window}");
+    assert!(!window.contains("--new"), "{window}");
+    assert!(!window.contains("--hub="), "{window}");
+    assert!(!record.exists(), "the old record was left behind");
+    assert_eq!(ps_started(sleeper.0), "", "the hub is still running");
+    assert_eq!(std::fs::read_to_string(&saved).unwrap(), saved_text);
+}
+
+#[test]
+fn hub_restart_of_a_parent_hub_names_its_key() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let (record, _board) = running_parent_hub(&fixture, &tmux, sleeper.0);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/restart"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(answer["wasRunning"], true, "{body}");
+    assert_eq!(answer["started"], true, "{body}");
+    let log = tmux.logged();
+    assert!(log.contains("-L scratch kill-pane -t %3"), "{log}");
+    let window = log
+        .lines()
+        .find(|l| l.contains("new-window"))
+        .unwrap_or_else(|| panic!("no window was opened: {log}"));
+    assert!(window.contains(&format!("--hub={FEATURE}")), "{window}");
+    assert!(window.contains("--resume"), "{window}");
+    assert!(!record.exists(), "the old record was left behind");
+    // The conversation it resumes is still the one it had.
+    assert!(
+        fixture
+            .state
+            .join("sessions")
+            .join(format!("{FEATURE_SLUG}.json"))
+            .exists()
+    );
+}
+
+#[test]
+fn hub_restart_is_refused_before_anything_is_stopped() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let restart = format!("/b/{SLUG}/api/hubs/hub/restart");
+    let refused = |expected: &str| {
+        let (status, body) = resident.post(&restart, "{}");
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains(expected), "{expected}: {body}");
+        assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+        assert!(record.exists());
+        assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
+    };
+
+    // Nothing saved to come back to.
+    refused("no saved session to resume");
+
+    // Everything below has a conversation, so each refusal is about the settings.
+    saved_hub_conversation(&fixture, SLUG);
+    write_tmux_config_with(&fixture, |config| {
+        config["terminal"] = serde_json::json!({"preset": "iterm2"});
+    });
+    refused("needs terminal.preset");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["hubResumeRunner"] = serde_json::json!("claude --continue");
+    });
+    refused("hubResumeRunner has no {sessionId}");
+
+    // A runner of the person's own would be replaced by the built-in one.
+    write_tmux_config_with(&fixture, |config| {
+        config["hubRunner"] = serde_json::json!("my-agent {prompt}");
+    });
+    refused("hubResumeRunner is not set");
+}
+
+#[test]
+fn hub_restart_of_a_parent_hub_with_an_unknown_key_stops_nothing() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    // A record that carries no key, under a name the key cannot be read back from.
+    let record = fixture.state.join("hubs").join("oddstem.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": sleeper.0,
+            "psStarted": ps_started(sleeper.0),
+            "hubName": "hub-oddstem",
+            "cwd": fixture.repo.to_str().unwrap(),
+            "terminal": {"backend": "tmux", "socket": "scratch", "pane": "%3"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &tmux.panes,
+        format!(
+            "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tmain\n",
+            sleeper.0
+        ),
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-oddstem/restart"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("key of this hub is not known"), "{body}");
+    assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+    assert!(record.exists());
+    assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
+}
+
+#[test]
+fn hub_restart_keeps_the_hub_that_will_not_stop() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let (saved, saved_text) = saved_hub_conversation(&fixture, SLUG);
+    // Nothing kills the process, as a hub waiting for an answer would not die.
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/restart"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("is still running"), "{body}");
+    assert!(
+        !tmux.logged().contains("new-window"),
+        "a second hub was started beside it: {}",
+        tmux.logged()
+    );
+    assert!(
+        record.exists(),
+        "the record of the hub that is still running was removed"
+    );
+    assert_eq!(std::fs::read_to_string(&saved).unwrap(), saved_text);
+}
+
+#[test]
+fn hub_restart_says_so_when_the_hub_was_stopped_but_could_not_start() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::start();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let (saved, saved_text) = saved_hub_conversation(&fixture, SLUG);
+    std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/restart"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("stopped"), "{body}");
+    assert!(body.contains("could not start it again"), "{body}");
+    assert!(tmux.logged().contains("kill-pane"), "{}", tmux.logged());
+    assert!(!record.exists(), "the old record was left behind");
+    // What `hub を起動` resumes from is still there.
+    assert_eq!(std::fs::read_to_string(&saved).unwrap(), saved_text);
+}
+
+#[test]
+fn the_state_says_whether_a_hub_can_be_resumed_from_the_board() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let refused = state_of(&resident);
+    assert_eq!(refused["hubResume"]["available"], false, "{refused}");
+    assert!(
+        refused["hubResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("tmux"),
+        "{refused}"
+    );
+
+    write_tmux_config(&fixture);
+    let ready = state_of(&resident);
+    assert_eq!(ready["hubResume"]["available"], true, "{ready}");
+    assert!(ready["hubResume"]["reason"].is_null(), "{ready}");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["hubResumeRunner"] = serde_json::json!("claude --continue");
+    });
+    let blind = state_of(&resident);
+    assert_eq!(blind["hubResume"]["available"], false, "{blind}");
+    assert!(
+        blind["hubResume"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("hubResumeRunner has no {sessionId}"),
+        "{blind}"
+    );
+
+    write_tmux_config_with(&fixture, |config| {
+        config["hubRunner"] = serde_json::json!("my-agent {prompt}");
+    });
+    let own = state_of(&resident);
+    assert_eq!(own["hubResume"]["available"], false, "{own}");
+}
+
 #[test]
 fn closing_a_parent_hub_with_no_workers_stops_it_and_takes_it_off_the_list() {
     let fixture = Fixture::new(QUIET);
@@ -3082,6 +3331,171 @@ fn resuming_opens_a_tab_that_reopens_the_worker_under_its_own_hub() {
     assert!(body.contains("starting"), "{body}");
 }
 
+/// The pane a running worker's window shows up as in the fake tmux.
+fn worker_pane(tmux: &FakeTmux, pid: u32, window: &str) {
+    std::fs::write(
+        &tmux.panes,
+        format!("%3\t{pid}\t/dev/ttys999\t@1\tadjutant-test\t1\t{window}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn restarting_a_worker_closes_its_window_and_resumes_it() {
+    let fixture = Fixture::new(QUIET);
+    resume_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", Some(FEATURE), None, running.0);
+    worker_pane(&tmux, running.0, "live");
+    let saved_before = saved_session(&worktree);
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+
+    let answer = reply_of(
+        resident.post(&sessions_url("/worker-live/restart"), "{}"),
+        200,
+    );
+    assert_eq!(answer["restarted"], true, "{answer}");
+    assert_eq!(answer["wasRunning"], true, "{answer}");
+    assert_eq!(answer["hub"], format!("hub-{FEATURE}"), "{answer}");
+    assert_eq!(answer["hubRunning"], false, "{answer}");
+
+    let log = tmux.logged();
+    let kill = log
+        .lines()
+        .position(|l| l.contains("-L scratch kill-window -t @1"))
+        .unwrap_or_else(|| panic!("no window was closed: {log}"));
+    let open = log
+        .lines()
+        .position(|l| l.contains("new-window"))
+        .unwrap_or_else(|| panic!("no window was opened: {log}"));
+    assert!(kill < open, "{log}");
+    assert!(
+        log.lines().nth(open).unwrap().contains(&format!(
+            "worker --resume --worktree {}",
+            worktree.display()
+        )),
+        "{log}"
+    );
+    assert_eq!(ps_started(running.0), "", "the worker is still running");
+    assert_eq!(saved_session(&worktree), saved_before);
+}
+
+#[test]
+fn a_worker_restart_is_refused_before_anything_is_closed() {
+    let fixture = Fixture::new(QUIET);
+    resume_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    worker_pane(&tmux, running.0, "live");
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+    let restart = sessions_url("/worker-live/restart");
+    let refused = |expected: &str| {
+        let (status, body) = resident.post(&restart, "{}");
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains(expected), "{expected}: {body}");
+        assert!(!tmux.logged().contains("kill-window"), "{}", tmux.logged());
+        assert!(worker_record(&worktree)["pid"].as_u64().is_some());
+        assert!(!ps_started(running.0).is_empty(), "the process was killed");
+    };
+
+    // It is starting: a second worker would be opened beside the one being opened.
+    let marker = worktree
+        .join(".claude")
+        .join("adjutant-worker-starting.json");
+    std::fs::write(
+        &marker,
+        serde_json::json!({"at": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()})
+        .to_string(),
+    )
+    .unwrap();
+    refused("starting");
+    std::fs::remove_file(&marker).unwrap();
+
+    write_tmux_config_with(&fixture, |config| {
+        config["terminal"]["close"] = serde_json::json!(false);
+    });
+    refused("terminal.close is off");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["agentResumeRunner"] = serde_json::json!("claude --continue");
+    });
+    refused("agentResumeRunner has no {sessionId}");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["agentRunner"] = serde_json::json!("gemini {prompt}");
+    });
+    refused("gemini has no agentResumeRunner");
+
+    write_tmux_config_with(&fixture, |config| {
+        config["terminal"] = serde_json::json!({"preset": "iterm2"});
+    });
+    refused("tmux");
+
+    write_tmux_config(&fixture);
+    std::fs::remove_file(worktree.join(".claude").join("adjutant-session.json")).unwrap();
+    refused("no saved worker session");
+
+    // Only a worker has a window to close and reopen.
+    let (status, body) = resident.post(&sessions_url("/hub/restart"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("only a worker"), "{body}");
+}
+
+#[test]
+fn a_worker_restart_keeps_a_worker_that_would_not_stop() {
+    let fixture = Fixture::new(QUIET);
+    resume_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "stubborn", None, None, running.0);
+    worker_pane(&tmux, running.0, "stubborn");
+    // Nothing kills the process, as a terminal waiting for an answer would not.
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let (status, body) = resident.post(&sessions_url("/worker-stubborn/restart"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("nothing was restarted"), "{body}");
+    assert!(!tmux.logged().contains("new-window"), "{}", tmux.logged());
+    assert!(worker_record(&worktree)["pid"].as_u64().is_some());
+    assert!(
+        session_ids(&resident).contains(&"worker-stubborn".to_string()),
+        "the session dropped out of the list"
+    );
+}
+
+#[test]
+fn a_worker_restart_that_cannot_start_again_keeps_the_session() {
+    let fixture = Fixture::new(QUIET);
+    resume_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let running = Sleeper::start();
+    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    worker_pane(&tmux, running.0, "live");
+    std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+
+    let (status, body) = resident.post(&sessions_url("/worker-live/restart"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body.contains("closed the session, but could not start it again"),
+        "{body}"
+    );
+    assert!(tmux.logged().contains("kill-window"), "{}", tmux.logged());
+    // Still listed with its conversation, so 再開 works.
+    let state = state_of(&resident);
+    assert_eq!(
+        session_of(&state, "worker-live")["conversation"],
+        "sid-1",
+        "{state}"
+    );
+    assert_eq!(saved_session(&worktree)["sessionId"], "sid-1");
+}
+
 /// A hub's own board, which none of the actions a resident serves are routes on.
 #[test]
 fn the_session_actions_and_starting_a_hub_are_not_routes_on_a_hub_s_own_board() {
@@ -3109,6 +3523,8 @@ fn the_session_actions_and_starting_a_hub_are_not_routes_on_a_hub_s_own_board() 
         "/api/sessions/worker-ended/resume",
         "/api/sessions/worker-ended/open",
         "/api/sessions/worker-ended/cleanup",
+        "/api/sessions/worker-ended/restart",
+        "/api/hubs/hub/restart",
         "/api/hubs",
     ]
     .iter()

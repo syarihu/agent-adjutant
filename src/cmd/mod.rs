@@ -1492,6 +1492,26 @@ fn asked_session(
     }
 }
 
+/// Everything a restart of the hub `ctx` addresses has to know can be resumed, checked before
+/// the hub is stopped: a restart that stops the hub and only then finds there is nothing to
+/// come back to has cost the person the session it was meant to keep.
+///
+/// Beyond what `--resume` itself refuses, a `hubRunner` of the person's own with no
+/// `hubResumeRunner` is refused too. Typed out, `--resume` is the person's call to have the
+/// built-in runner reopen it; a button that stops a running hub is not asking anyone.
+pub(super) fn hub_resume_check(ctx: &Context) -> Result<messaging::SavedSession, String> {
+    let saved = saved_hub_session(ctx)?;
+    resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
+    if ctx.settings.hub_runner.is_some() && ctx.settings.hub_resume_runner.is_none() {
+        return Err(
+            "hubRunner is your own and hubResumeRunner is not set, so the built-in runner \
+             would reopen the session instead of yours"
+                .to_string(),
+        );
+    }
+    Ok(saved)
+}
+
 fn print_performed(done: &terminal::Performed, dry_run: bool) {
     if dry_run {
         println!("{}", done.script);
