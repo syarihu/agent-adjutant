@@ -432,3 +432,23 @@ fn a_request_without_content_or_a_readable_issue_is_refused() {
     let id = made["task"]["id"].as_str().unwrap();
     assert!(shown(&fixture, id).get("titlePending").is_none());
 }
+
+#[test]
+fn a_record_that_cannot_be_read_back_is_refused_before_gh_and_before_an_id_is_claimed() {
+    let fixture = Fixture::new(QUIET);
+    let (path, log) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    let bad = format!(r#"{{"issueUrl":"{ISSUE}/1","doneWhen":"never"}}"#);
+    let (status, made) = post_task(&resident, &bad);
+    assert_eq!(status, 400, "{made}");
+    assert!(made.to_string().contains("bad task"), "{made}");
+    assert!(asked(&log).is_empty(), "gh was asked");
+    let left: Vec<_> = std::fs::read_dir(fixture.state.join("tasks"))
+        .into_iter()
+        .flatten()
+        .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
+        .map(|f| f.unwrap().path())
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+}

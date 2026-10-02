@@ -127,6 +127,11 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
     // Before anything reaches `gh` or the id is claimed: claiming writes a reservation, and a
     // refusal after it would leave that behind.
     check_typed_values(input)?;
+    // Likewise a record that will not deserialize: it is refused here, not after a wait on `gh`
+    // and a claimed id.
+    let mut probe = with_defaults(input, "probe", &stamp)?;
+    probe["title"] = json!("probe");
+    serde_json::from_value::<Task>(probe).map_err(|e| format!("bad task: {e}"))?;
     // A request that names an issue and says nothing else is a request to hand that issue
     // over: read it now so the card has its title from the start. What the person typed wins.
     // Only for a task that starts an issue: any other kind with no content has nothing to go on.
