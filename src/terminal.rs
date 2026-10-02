@@ -3169,9 +3169,9 @@ mod tests {
     #[test]
     fn tmux_spawn_script_generates_session_and_window() {
         let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help");
-        assert!(script.starts_with("tmux has-session -t =adjutant "));
+        assert!(script.starts_with("tmux has-session -t '=adjutant' "));
         assert!(script.contains("new-session -d -s adjutant -n main"));
-        assert!(script.contains("new-window -d -t =adjutant: -c /tmp -n task-1 'claude --help'"));
+        assert!(script.contains("new-window -d -t '=adjutant:' -c /tmp -n task-1 'claude --help'"));
 
         let socket_script =
             tmux_spawn_script(Some("custom-sock"), "sess", "/dir", "title", "echo hi");
@@ -3454,7 +3454,7 @@ mod tests {
         assert_eq!(
             script,
             "tmux -S /tmp/t/sock new-session -d -s adjboard-1-2 -t work && \
-             tmux -S /tmp/t/sock select-window -t =adjboard-1-2:@5"
+             tmux -S /tmp/t/sock select-window -t '=adjboard-1-2:@5'"
         );
         assert!(!script.contains("select-pane"), "{script}");
         assert!(!script.contains("window-size"), "{script}");
@@ -3476,11 +3476,11 @@ mod tests {
     fn the_watch_scripts_address_only_the_board_session() {
         assert_eq!(
             board_windows_script(Some("adj-test"), "adjboard-1-2"),
-            "tmux -L adj-test list-windows -t =adjboard-1-2 -F '#{window_id}'"
+            "tmux -L adj-test list-windows -t '=adjboard-1-2' -F '#{window_id}'"
         );
         assert_eq!(
             board_detach_script(Some("/tmp/t/sock"), "adjboard-1-2"),
-            "tmux -S /tmp/t/sock detach-client -s =adjboard-1-2"
+            "tmux -S /tmp/t/sock detach-client -s '=adjboard-1-2'"
         );
     }
 
@@ -3535,15 +3535,44 @@ mod tests {
     fn the_attach_line_is_control_mode_only_for_iterm_and_keeps_the_last_only_where_tmux_can() {
         assert_eq!(
             native_attach_line(Some("adj-test"), "adjterm-1-2", true, true),
-            "tmux -u -CC -L adj-test attach-session -t =adjterm-1-2 ';' set-option -t =adjterm-1-2: destroy-unattached keep-last"
+            "tmux -u -CC -L adj-test attach-session -t '=adjterm-1-2' ';' set-option -t '=adjterm-1-2:' destroy-unattached keep-last"
         );
         assert_eq!(
             native_attach_line(Some("/tmp/t/sock"), "adjterm-1-2", false, false),
-            "tmux -u -S /tmp/t/sock attach-session -t =adjterm-1-2"
+            "tmux -u -S /tmp/t/sock attach-session -t '=adjterm-1-2'"
         );
         assert_eq!(
             native_attach_line(None, "adjterm-1-2", false, true),
-            "tmux -u attach-session -t =adjterm-1-2 ';' set-option -t =adjterm-1-2: destroy-unattached keep-last"
+            "tmux -u attach-session -t '=adjterm-1-2' ';' set-option -t '=adjterm-1-2:' destroy-unattached keep-last"
+        );
+    }
+
+    #[test]
+    fn the_attach_line_reaches_tmux_intact_through_zsh() {
+        // zsh expands a bare word starting with `=` as a command-path lookup, so the session
+        // targets must arrive quoted. `tmux` is swapped for printf to show the argv it gets.
+        let line = native_attach_line(Some("adj-test"), "adjterm-1-2", true, true);
+        let line = line.replacen("tmux ", "printf '%s\\n' ", 1);
+        let out = match std::process::Command::new("zsh")
+            .args(["-f", "-c"])
+            .arg(&line)
+            .output()
+        {
+            Ok(out) => out,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("zsh not found; skipping");
+                return;
+            }
+            Err(e) => panic!("{e}"),
+        };
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "-u\n-CC\n-L\nadj-test\nattach-session\n-t\n=adjterm-1-2\n;\nset-option\n-t\n=adjterm-1-2:\ndestroy-unattached\nkeep-last\n"
         );
     }
 
@@ -3596,13 +3625,13 @@ mod tests {
         let script = board_release_script(Some("adj-test"), "adjboard-1-2");
         assert!(
             script.contains(
-                "tmux -L adj-test display-message -p -t =adjboard-1-2: '#{session_group_size}'"
+                "tmux -L adj-test display-message -p -t '=adjboard-1-2:' '#{session_group_size}'"
             ),
             "{script}"
         );
         assert!(script.contains("-gt 1"), "{script}");
         assert!(
-            script.contains("tmux -L adj-test kill-session -t =adjboard-1-2"),
+            script.contains("tmux -L adj-test kill-session -t '=adjboard-1-2'"),
             "{script}"
         );
         assert!(board_release_script(Some("/a/b"), "x").contains("tmux -S /a/b kill-session"));

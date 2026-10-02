@@ -20,8 +20,12 @@ pub enum Sub<'a> {
 
 /// POSIX single-quote quoting. `'` ends the literal, escapes itself outside it, and reopens —
 /// which is the one form that needs no knowledge of what the shell will do next.
+///
+/// A value starting with `=` is quoted too: zsh expands such a bare word as a command-path
+/// lookup (`=name` becomes the path of `name`, or an error), which POSIX sh does not.
 pub fn sh_quote(value: &str) -> String {
     if !value.is_empty()
+        && !value.starts_with('=')
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c))
@@ -135,6 +139,32 @@ mod tests {
                 .output()
                 .unwrap();
             assert_eq!(String::from_utf8_lossy(&out.stdout), value, "for {value:?}");
+        }
+    }
+
+    #[test]
+    fn a_leading_equals_sign_is_quoted() {
+        assert_eq!(sh_quote("=adjterm-1-2"), "'=adjterm-1-2'");
+        assert_eq!(sh_quote("=x:"), "'=x:'");
+        assert_eq!(sh_quote("a=b"), "a=b");
+    }
+
+    #[test]
+    fn a_leading_equals_sign_survives_zsh() {
+        for value in ["=adjterm-1-2", "=x:"] {
+            let out = match std::process::Command::new("zsh")
+                .args(["-f", "-c"])
+                .arg(format!("printf %s {}", sh_quote(value)))
+                .output()
+            {
+                Ok(out) => out,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("zsh not found; skipping");
+                    return;
+                }
+                Err(e) => panic!("{e}"),
+            };
+            assert_eq!(String::from_utf8_lossy(&out.stdout), value);
         }
     }
 
