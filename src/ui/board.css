@@ -284,6 +284,15 @@
 .col.empty .col-subtext {
   display: none;
 }
+/* Not a `col-subtext`: it is shown even when the column is empty, since a poll that has
+   stopped is the reason it would be. */
+.col-warn {
+  font-size: 10.5px;
+  color: var(--md-sys-color-error);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .col-btn-nudge {
   border: 1px solid var(--md-sys-color-outline-variant);
   background: var(--md-sys-color-surface-container-lowest);

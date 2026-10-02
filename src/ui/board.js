@@ -504,6 +504,15 @@ function humanGateActions(gate, col) {
   return `<div class="hcard-actions">${buttons}</div>`;
 }
 
+/* What a person is asked to do about a PR, by whose turn it is. A turn not listed is today's
+   plain 「GitHub でレビューしてください」. */
+const PR_TURN_WHY = {
+  changes: 'レビューで修正の依頼がありました。worker に直させるか自分で対応してください',
+  merge: '承認されました。マージしてください',
+  'ci-failed': 'CI が失敗しています',
+  closed: 'PR がマージされずに閉じられました。別の PR で続けるか、取り消すかを決めてください',
+};
+
 function humanCard(task, col) {
   const el = document.createElement('div');
   el.className = 'card hcard' + (selectedTaskId === task.id ? ' selected' : '');
@@ -523,7 +532,7 @@ function humanCard(task, col) {
     else if (stopWhy(gate).length) why = stopWhy(gate).join(' / ');
     else why = gate.title;
   } else if (col === 'prreview') {
-    why = 'worker は PR を出して待っています。GitHub でレビューしてください';
+    why = PR_TURN_WHY[task.prTurn] || 'worker は PR を出して待っています。GitHub でレビューしてください';
   }
 
   const w = workerOf(task);
@@ -534,6 +543,7 @@ function humanCard(task, col) {
     <div class="card-header-row">
       ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
       ${ghChipsHtml(task)}
+      ${col === 'prreview' ? prTurnPill(task) : ''}
       <span class="wait-time ${waitTone(mins)}" title="待たせている時間">
         <span class="material-symbols-outlined">schedule</span>
         <span>${minutesLabel(mins)}待ち</span>
@@ -666,6 +676,11 @@ function agentCard(task) {
   }
   if (!task.autoStart && task.status !== 'done') {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
+  }
+  // A PR that waits on somebody else, or on the bots, is off the person's board but is not the
+  // worker's to act on either; say whose it is.
+  if (!hcol && ['other-reviewer', 'checks'].includes(task.prTurn)) {
+    metaBadges.push(prTurnPill(task));
   }
   if (!httpUrl(task.pr) && live && worker?.phase === 'pr') {
     metaBadges.push('<span class="m3-pill pill-neutral"><span class="material-symbols-outlined" style="font-size:12px;">hourglass_top</span>PR 作成中</span>');
@@ -874,9 +889,10 @@ function renderColumns(force = false) {
               <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
               <span class="col-count-pill">${allItems.length}</span>
             </div>
-            ${def.id === 'prreview' && !scopeAll() ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
+            ${def.id === 'prreview' && !scopeAll() ? `<button type="button" class="col-btn-nudge" title="PR の状態を読み直す" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
           </div>
           ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
+          ${def.id === 'prreview' && state.prPoll?.error ? `<div class="col-warn" title="${esc(state.prPoll.error)}">PR の自動確認が止まっています: ${esc(state.prPoll.error)}</div>` : ''}
         </div>
       `;
       col.insertAdjacentHTML('afterbegin', headerHtml);

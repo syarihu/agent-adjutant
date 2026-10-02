@@ -17,8 +17,10 @@ use crate::terminal::{self, SpawnRequest};
 mod board_actions;
 mod board_terminal;
 mod gate;
+mod gh;
 mod hub_title;
 mod jules;
+mod pr_poll;
 mod review_engine;
 mod serve;
 mod session;
@@ -36,6 +38,7 @@ pub use jules::{
     Watch as JulesWatch, findings as jules_findings, findings_cmd as jules_findings_cmd,
     relay as jules_relay, relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
+pub use pr_poll::PrPoll;
 pub use review_engine::run as review_engine;
 pub use serve::{
     DEFAULT_PORT, HubBoard, board_json, dashboards_running as board_running, resident_running,

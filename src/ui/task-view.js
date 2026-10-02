@@ -233,19 +233,51 @@ const PR_STATES = {
   closed: ['クローズ', 'pill-neutral'],
   unknown: ['未確認', 'pill-neutral'],
 };
+/* Whose turn a PR is, as the server reads it from the record (`prTurn`). Where there is one,
+   it says more than the state alone: a PR waiting on somebody else's review is not the
+   person's, and a closed one needs a decision. */
+const PR_TURN = {
+  'other-reviewer': ['レビュー待ち（他の人）', 'pill-neutral'],
+  checks: ['bot・CI 待ち', 'pill-neutral'],
+  changes: ['修正の依頼あり', 'pill-warn'],
+  merge: ['マージ待ち', 'pill-good'],
+  'ci-failed': ['CI 失敗', 'pill-err'],
+  closed: ['閉じられた', 'pill-warn'],
+  merged: ['マージ済み', 'pill-purple'],
+  draft: ['下書き', 'pill-neutral'],
+};
 const prStateInfo = task => PR_STATES[prStateOf(task) || 'unknown'] || PR_STATES.unknown;
+const prPillClass = task => (PR_TURN[task.prTurn] || prStateInfo(task))[1];
+/* The turn as a pill, for a card that shows nothing else about the PR's state. A draft is
+   not one: it stays as it was, with no pill of its own. */
+const prTurnPill = task => PR_TURN[task.prTurn] && task.prTurn !== 'draft'
+  ? `<span class="m3-pill ${PR_TURN[task.prTurn][1]}">${esc(PR_TURN[task.prTurn][0])}</span>` : '';
+/* Said when the automatic check is failing, so a state that may be out of date says so. */
+const prStale = () => (state.prPoll?.error ? '（自動確認が止まっています）' : '');
 /* 「レビュー待ち · CI 通過」: the state, the review for an open PR, and the checks if it has any. */
+/* The checks of a PR in a word, or null when it has none. */
+function ciNoteOf(task) {
+  const ci = task.prStatus?.ci;
+  if (!ci || ci.pass + ci.fail + ci.pending === 0) return null;
+  return ci.fail > 0 ? `CI 失敗 ${ci.fail}` : ci.pending > 0 ? 'CI 実行中' : 'CI 通過';
+}
 function prNoteOf(task) {
+  const turn = PR_TURN[task.prTurn];
+  if (turn) {
+    // The turn says whose ball it is; the checks stay beside it where they add something.
+    if (['merged', 'closed', 'draft', 'checks'].includes(task.prTurn)) return turn[0];
+    const ci = ciNoteOf(task);
+    if (task.prTurn === 'ci-failed') return ci || turn[0];
+    return ci ? `${turn[0]} · ${ci}` : turn[0];
+  }
   const st = prStateOf(task);
   const [label] = prStateInfo(task);
   if (st === 'merged' || st === 'closed' || !st) return label;
   const parts = [];
   if (st === 'draft') parts.push(label);
   else parts.push({ approved: '承認済み', changes: '修正依頼' }[task.prStatus?.review] || 'レビュー待ち');
-  const ci = task.prStatus?.ci;
-  if (ci && ci.pass + ci.fail + ci.pending > 0) {
-    parts.push(ci.fail > 0 ? `CI 失敗 ${ci.fail}` : ci.pending > 0 ? 'CI 実行中' : 'CI 通過');
-  }
+  const ci = ciNoteOf(task);
+  if (ci) parts.push(ci);
   return parts.join(' · ');
 }
 /* The number of a PR record, which is a URL or, when written by hand, a bare "123" or "#123". */
@@ -264,7 +296,7 @@ function ghChipsHtml(task) {
     : '';
   // A PR that is not a link is still a PR: shown, but not clickable.
   const prLabel = `<span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span><span>${prNumber ? `#${esc(prNumber)}` : esc(task.pr)}</span>`;
-  const prTitle = esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}`);
+  const prTitle = esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}${prStale()}`);
   const prClass = `gh-pr ${esc(prStateOf(task) || 'unknown')}`;
   const pr = prUrl
     ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="${prClass}" title="${prTitle}">${prLabel}</a>`
@@ -285,8 +317,8 @@ function ghRowsHtml(task) {
   }
   if (task.pr) {
     const n = prRefNumber(task.pr);
-    const [, cls] = prStateInfo(task);
-    const body = `<span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.prStatus?.title ?? (n ? task.title : task.pr))}</span><span class="m3-pill ${cls}">${esc(prNoteOf(task))}</span>`;
+    const cls = prPillClass(task);
+    const body = `<span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.prStatus?.title ?? (n ? task.title : task.pr))}</span><span class="m3-pill ${cls}" title="${esc(prNoteOf(task) + prStale())}">${esc(prNoteOf(task))}</span>`;
     h += prUrl
       ? `<a class="gh-row" href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer">${body}${out}</a>`
       : `<div class="gh-row">${body}</div>`;

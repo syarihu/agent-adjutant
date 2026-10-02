@@ -486,8 +486,8 @@ gate and what can be done about it (one click for a decision that needs no comme
 for the rest), the phases, the records, the worktree and branch with 「IDE」, and the history with
 the instructions. A card carries the same two numbers in its header, each opening on GitHub, and
 the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
-read by the PR refresh (「PR確認」, `adjutant task refresh`), not by the page, so they are as new as
-the last refresh. ターミナル is the task's
+read by the resident server's PR poll and by the PR refresh (「PR確認」, `adjutant task refresh`),
+never by the page, so they are as new as the last read. ターミナル is the task's
 session in the built-in terminal, with a bar for resuming, closing or opening it in your own
 terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
 no session. A card's body opens 詳細; its 「ターミナル」 button, and 「ターミナルで答える」 on a
@@ -571,11 +571,12 @@ gui/$(id -u)/adj.server`. Do not use `adj server restart` under it either: it ra
 launchd's own respawn and can leave a second, unsupervised server; use `launchctl kickstart -k
 gui/$(id -u)/adj.server` instead.
 
-**It holds almost no clock.** Nothing polls a tracker and nothing wakes on a timer; a request
-arrives because a person clicked. The page asks for state every two seconds, and the one
-thing that answer reaches outside for is a task handed to Jules: its session is asked about
-at most once every 45 seconds, and only while the page is open and the card is in progress
-or in review (see [Handing a task to Jules](#handing-a-task-to-jules)).
+**It holds almost no clock.** A request arrives because a person clicked, and the page asks
+for state every two seconds. The one thing that answer reaches outside for is a task handed to
+Jules: its session is asked about at most once every 45 seconds, and only while the page is
+open and the card is in progress or in review (see [Handing a task to
+Jules](#handing-a-task-to-jules)). The one clock is the resident server's PR poll, described
+below under where a pull request's card sits; `/api/state` itself never asks GitHub.
 
 A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
 message that announces it: the message is read once and acked, and after that the hub would
@@ -594,8 +595,9 @@ stopped, or has sat in one step for `stuckAfterMinutes` — a badge rather than 
 card keeps the column that says how far it got. Time counts only while the ball is the
 worker's: a card waiting on a gate or on its pull request's reviewers is not flagged for it,
 and once the pull request is open a closed worker tab is not flagged either. A pull request
-waiting on review bots (`pr-bots`) stays in the agents' column with no waiting badge; only one
-handed to human reviewers (`pr`) waits on a person.
+waiting on review bots (`pr-bots`) stays in the agents' column with no waiting badge, but only
+while the PR is not the person's turn: a PR with changes requested, an approval, failing CI or a
+close sends it to the person's column even then (below).
 Done cards fold away after a day; the records stay.
 
 Every worker has a record, whichever way its task came in. A task the hub starts from a
@@ -605,12 +607,47 @@ it. The record then moves with the work: the worker sets `pr` when it opens its 
 and the hub sets `done` when it removes the worktree. A card the board shows as in progress is
 a worker that is actually running.
 
-A worktree can also go away without the hub, and then nothing would move a merged PR's card
-out of review. `adjutant task refresh` (the `adjutant_refresh` tool, or 「PR を確認」 on the
-board's review column) asks `gh` about the PR of every record that is not finished, and moves
+**Where a pull request's card sits.** A card with a `pr` is placed by what GitHub says about
+that PR, and the state is kept on the record (`prStatus`). Whose turn it is is worked out from it on every read and never stored:
+
+| The PR is | Whose turn | The card |
+| --- | --- | --- |
+| a draft | the worker | where it was |
+| ready, and another reviewer was asked | another reviewer | agents' column, 「レビュー待ち（他の人）」, no waiting badge |
+| waiting on review bots or CI | the bots | agents' column, 「bot・CI 待ち」, no waiting badge |
+| changes requested | you | PRレビュー, 「修正の依頼あり」 |
+| approved | you, to merge | PRレビュー, 「マージ待ち」 |
+| failing CI | you | PRレビュー, 「CI 失敗」 |
+| merged | nobody | done |
+| closed without merging | you, to decide | PRレビュー, 「閉じられた」; never cancelled by itself |
+
+A worker that is still in a phase other than `pr` or `pr-bots` keeps its card on the agents'
+board whatever the PR says. A PR whose turn says nothing (a draft, one nobody was asked to
+review, one not read yet) is placed as before: in the human column when the worker's phase is
+`pr`, or, with no worker record, when the task's status is `pr`. A Jules task with a PR, once
+Jules is not working, follows the same turn: the person's turn puts it in the human column,
+another reviewer's, the bots' or a merge takes it off, and a PR whose turn says nothing sits in
+the human column as before.
+
+The resident server keeps this up to date by itself, with no setting to turn on. It asks
+`GET /notifications?participating=true&all=true` with `If-Modified-Since` (and `since`, so the
+page holds only what changed after the last answer), waits the `X-Poll-Interval` GitHub asks for
+(60 seconds when it says nothing, and never more than an hour), and when something has
+changed reads only the PRs a card holds, all in one GraphQL query. A 304 costs nothing against
+the rate limit. Notifications are never marked as read: nothing here writes to GitHub. GitHub
+does not notify you of what you did yourself (a PR you merge, close or mark ready), and a
+CI run that passes sends nothing either, so every card not yet merged (and one whose PR could not be
+read) is also read again every five minutes. The first
+round after the server starts, and a page of 50 changed threads, are taken to hold only part
+of the news, and every card is read. If GitHub cannot be reached, the cards stay where they were, the wait
+doubles up to 15 minutes, and the 「PRレビュー」 column header says 「PR の自動確認が止まっています」
+with the reason. A board served by itself (`adjutant serve`) has no poll.
+
+`adjutant task refresh` (the `adjutant_refresh` tool, or 「PR確認」 on the board's review
+column) reads every record that is not finished with the same query, as a safety net, and moves
 the ones whose PR was merged to `done`. A PR that is open, closed without merging, or that `gh`
 cannot read is left alone and listed instead: a closed PR may have been replaced by another,
-and only a person knows. The hub runs it once when it starts; nothing runs it on a timer.
+and only a person knows. The hub runs it once when it starts.
 
 A record holds the task's own text, not the issue's. So that the board can show what the issue
 said, `adjutant task add` and `task update` read a GitHub issue (`gh issue view`) when they

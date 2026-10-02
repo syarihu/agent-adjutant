@@ -194,6 +194,33 @@ pub fn nwo_from_url(url: &str) -> Option<String> {
     }
 }
 
+/// The host a remote URL names, without a user or a port: `github.com` out of
+/// `git@github.com:o/r.git`, `https://github.com/o/r` and `ssh://git@github.com:22/o/r`.
+pub fn host_from_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    let after_scheme = url.split_once("://").map(|(_, rest)| rest);
+    let authority = match after_scheme {
+        Some(rest) => rest.split('/').next()?,
+        // scp-like: `user@host:path`
+        None => url.split_once(':')?.0,
+    };
+    let host = authority.rsplit('@').next()?;
+    let host = if after_scheme.is_some() {
+        host.split(':').next()?
+    } else {
+        host
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// The host origin points at, taken offline like `name_with_owner`.
+pub fn origin_host(main: &str) -> Option<String> {
+    let out = git(&["-C", main, "remote", "get-url", "origin"], None)
+        .ok()
+        .filter(|o| o.status.success())?;
+    host_from_url(String::from_utf8_lossy(&out.stdout).trim())
+}
+
 /// `owner/name` from origin, taken offline so a renamed directory cannot change it.
 ///
 /// Keeping the owner matters: `orgA/app` and `orgB/app` would otherwise share a hub name,
@@ -1135,6 +1162,24 @@ mod tests {
         ] {
             assert_eq!(nwo_from_url(url).as_deref(), Some("acme/widget"), "{url}");
         }
+    }
+
+    #[test]
+    fn the_host_of_a_remote_is_read_out_of_any_of_its_shapes() {
+        for (url, host) in [
+            ("git@github.com:acme/widget.git", "github.com"),
+            ("https://github.com/acme/widget", "github.com"),
+            (
+                "https://user@Git.Example.com:8443/acme/widget.git",
+                "git.example.com",
+            ),
+            ("ssh://git@github.com:22/acme/widget.git", "github.com"),
+            ("git://git.example.com/acme/widget", "git.example.com"),
+        ] {
+            assert_eq!(host_from_url(url).as_deref(), Some(host), "{url}");
+        }
+        assert_eq!(host_from_url(""), None);
+        assert_eq!(host_from_url("widget"), None);
     }
 
     #[test]

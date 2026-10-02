@@ -36,7 +36,7 @@ pub const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-pub const AMBIENT: [&str; 11] = [
+pub const AMBIENT: [&str; 16] = [
     "ADJUTANT_HUB",
     "ADJUTANT_STARTUP_DASHBOARD",
     // A hub's MCP server beats for the session this names; a test child that inherited it
@@ -57,6 +57,14 @@ pub const AMBIENT: [&str; 11] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
+    // The resident server polls GitHub on its own, so a test child that inherited a login would
+    // reach GitHub with the developer's account. These are how `gh` finds one; the fixture
+    // also points `GH_CONFIG_DIR` at an empty directory (see `Fixture::command`).
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GH_HOST",
 ];
 
 /// Strip `AMBIENT` from a child about to be run.
@@ -145,6 +153,9 @@ impl Fixture {
             .current_dir(&self.repo)
             .env("ADJUTANT_CONFIG", &self.config)
             .env("ADJUTANT_STATE_DIR", &self.state)
+            // Where `gh` keeps its login: an empty one has none, so a `gh` that a test did not
+            // stub finds no account to use rather than the developer's.
+            .env("GH_CONFIG_DIR", self._dir.path().join("gh-config"))
             .hermetic();
         command
     }
