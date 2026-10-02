@@ -64,11 +64,11 @@ fn tmux_work_dry_run_generates_tmux_spawn_command() {
         "--dry-run",
     ]);
     assert!(
-        out.contains("tmux has-session -t =adjutant-work-test "),
+        out.contains("tmux has-session -t '=adjutant-work-test' "),
         "{out}"
     );
     assert!(
-        out.contains("new-window -d -t =adjutant-work-test:"),
+        out.contains("new-window -d -t '=adjutant-work-test:'"),
         "{out}"
     );
     assert!(out.contains("-n WID-100"), "{out}");
