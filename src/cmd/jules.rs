@@ -211,6 +211,14 @@ pub fn github_login(main: &str) -> Option<String> {
 /// How long `github_login` waits for `gh`.
 const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// How long `findings` waits for `gh`: a paginated listing can be several requests, and a
+/// board connection thread waits on it.
+const FINDINGS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How long `relay` waits for `gh` to post: it holds the task's lock, and a board connection
+/// thread waits on it.
+const POST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// `adj jules findings`: the review comments that could be passed on.
 pub fn findings_cmd(
     repo: Option<&str>,
@@ -544,6 +552,8 @@ pub struct Finding {
 
 /// The review comments on the task's pull request from the repository's review bots, oldest
 /// first. Replies are left out: a thread is passed on by its first comment.
+///
+/// Given up on after `FINDINGS_TIMEOUT`, so a `gh` that hangs cannot hold a board request.
 pub fn findings(ctx: &super::Context, id: &str) -> Result<Vec<Finding>, String> {
     let task = task::load(&tasks::dir(ctx), id)?;
     let pr = task
@@ -555,25 +565,26 @@ pub fn findings(ctx: &super::Context, id: &str) -> Result<Vec<Finding>, String> 
     let number = pr_number(pr, &ctx.repo.nwo)
         .ok_or(format!("not a pull request of {}: {pr}", ctx.repo.nwo))?;
     let skip = not_findings_by(&ctx.repo.main)?;
-    let out = std::process::Command::new("gh")
-        .args([
+    let endpoint = format!("repos/{}/pulls/{number}/comments", ctx.repo.nwo);
+    let run = super::gh::run(
+        Some(&ctx.repo.main),
+        &[
             "api",
-            &format!("repos/{}/pulls/{number}/comments", ctx.repo.nwo),
+            &endpoint,
             "--paginate",
             "--jq",
             ".[] | {id, path, line, original_line, body, html_url, in_reply_to_id, user: .user.login}",
-        ])
-        .current_dir(&ctx.repo.main)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run gh: {e}"))?;
-    if !out.status.success() {
+        ],
+        std::time::Instant::now() + FINDINGS_TIMEOUT,
+    )
+    .map_err(|e| format!("gh could not list the review comments: {e}"))?;
+    if !run.ok {
         return Err(format!(
             "gh could not list the review comments: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
+            run.stderr
         ));
     }
-    let listed = String::from_utf8_lossy(&out.stdout);
+    let listed = run.stdout;
     Ok(parse_findings(&listed, &skip, &task.relayed))
 }
 
@@ -701,32 +712,23 @@ pub fn relay(
     }
     let body = relay_body(&picked, note);
     // On stdin: the text is the reviewers' and the person's, and neither belongs on a
-    // command line.
-    let mut child = std::process::Command::new("gh")
-        .args(["pr", "comment", &pr, "--body-file", "-"])
-        .current_dir(&ctx.repo.main)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run gh: {e}"))?;
-    {
-        use std::io::Write;
-        let mut stdin = child.stdin.take().ok_or("gh has no stdin")?;
-        stdin
-            .write_all(body.as_bytes())
-            .map_err(|e| format!("cannot hand gh the comment: {e}"))?;
+    // command line. Given up on after `POST_TIMEOUT`: the task lock is held, and a `gh` that
+    // hangs would hold it, and the board's request, for good.
+    let run = super::gh::run_with_input(
+        Some(&ctx.repo.main),
+        &["pr", "comment", &pr, "--body-file", "-"],
+        Some(body.as_bytes()),
+        std::time::Instant::now() + POST_TIMEOUT,
+    )
+    .map_err(|e| {
+        format!(
+            "gh could not post the comment: {e}; it may still have gone up, so check {pr} before passing these on again"
+        )
+    })?;
+    if !run.ok {
+        return Err(format!("gh could not post the comment: {}", run.stderr));
     }
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("cannot wait for gh: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "gh could not post the comment: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    let posted = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let posted = run.stdout.trim().to_string();
     // Written after the comment is up, so a failure to post leaves them choosable.
     let mut task = task::load(&tasks::dir(ctx), id)?;
     for (f, _) in &picked {

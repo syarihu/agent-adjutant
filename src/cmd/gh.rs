@@ -28,10 +28,27 @@ pub(super) struct GhRun {
 /// Both pipes are read while the process runs: an answer can be far longer than a pipe holds,
 /// and a `gh` blocked on a full pipe would look like a hang and be killed at the deadline.
 pub(super) fn run(dir: Option<&str>, args: &[&str], deadline: Instant) -> Result<GhRun, String> {
+    run_with_input(dir, args, None, deadline)
+}
+
+/// `run`, with `input` on `gh`'s stdin when given (and nothing, closed, when not).
+///
+/// The bytes are written on a thread of their own: a body bigger than a pipe holds, to a `gh`
+/// that has stopped reading, must not keep the caller past its deadline.
+pub(super) fn run_with_input(
+    dir: Option<&str>,
+    args: &[&str],
+    input: Option<&[u8]>,
+    deadline: Instant,
+) -> Result<GhRun, String> {
     let mut command = std::process::Command::new("gh");
     command
         .args(args)
-        .stdin(std::process::Stdio::null())
+        .stdin(if input.is_some() {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        })
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     if let Some(dir) = dir {
@@ -46,6 +63,14 @@ pub(super) fn run(dir: Option<&str>, args: &[&str], deadline: Instant) -> Result
             }
             bytes
         })
+    }
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Dropped with the thread, so `gh` sees the end of the body. Not joined: on a kill the
+        // pipe breaks and the write ends by itself.
+        let input = input.to_vec();
+        std::thread::spawn(move || {
+            let _ = std::io::Write::write_all(&mut stdin, &input);
+        });
     }
     let out = drain(child.stdout.take());
     let err = drain(child.stderr.take());

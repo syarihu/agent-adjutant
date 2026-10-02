@@ -1125,3 +1125,25 @@ fn a_board_that_listed_findings_sees_an_account_switched_since() {
     assert!(status.contains(" 200 "), "{status} {body}");
     assert!(posted.exists(), "the relay was refused on a stale account");
 }
+
+#[test]
+fn a_gh_that_hangs_on_the_listing_does_not_hold_the_board_request() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, _) = stub_gh(&fixture);
+    let gh = fixture.repo.join("stub-bin").join("gh");
+    let script = std::fs::read_to_string(&gh).unwrap().replace(
+        "'api repos/acme/widget/pulls/7/comments') cat ",
+        "'api repos/acme/widget/pulls/7/comments') exec sleep 60 ;; 'unused') cat ",
+    );
+    std::fs::write(&gh, script).unwrap();
+    let (mut board, url) = serve(&fixture, &path);
+
+    let started = std::time::Instant::now();
+    let (status, body) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
+    board.kill().unwrap();
+    board.wait().unwrap();
+    assert!(status.contains(" 400 "), "{status} {body}");
+    assert!(body.contains("did not answer in time"), "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
