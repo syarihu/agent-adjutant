@@ -2893,8 +2893,8 @@ mod tests {
         assert!(!slot.contains("adj task list --status queued"), "{slot}");
     }
 
-    /// A PR waiting on review bots is `pr-bots`, which the board keeps on the agents' side, and
-    /// only a PR handed to human reviewers is `pr`, which waits on a person.
+    /// A PR waiting on review bots is `pr-bots`, which the board keeps on the agents' side unless
+    /// the PR itself is the person's turn, and a PR handed to human reviewers is `pr`.
     #[test]
     fn a_pr_waits_on_bots_as_pr_bots_and_on_people_as_pr() {
         let raw = find("adj-worker").unwrap().raw_content;

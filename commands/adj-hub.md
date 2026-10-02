@@ -175,7 +175,7 @@ Issue all of the following **in a single tool block**. None of them waits on ano
 - `adjutant_refresh` — brings task records with a PR in line with the PR's state. Only tasks whose
   PR was merged become `done`; PRs that are open, closed without merging, or unreadable with `gh`
   are left alone and come back in a list. It keeps the card of a PR merged while the hub was down
-  from staying in review.
+  from staying in review. (The resident server also keeps these up to date while it runs.)
   **Call it only this once, at startup** (a person pressing 「PR を確認」 on the board runs the same)
 - `git rev-parse --show-toplevel` and `git branch --show-current`
 - `gh api user -q '.login'` (only for a repository that uses GitHub)

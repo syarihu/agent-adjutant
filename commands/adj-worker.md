@@ -20,7 +20,8 @@ in this procedure says what to tell them, not the words to use.
   is one of `plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` /
   `report`; each section says which one to set at its start. `pr-bots` and `pr` both mean the PR
   is open, and differ in who it waits on: `pr-bots` is review bots, which a person has nothing to
-  do for, so the card stays on the agents' side; `pr` is human reviewers, and the card waits on a
+  do for, so the card stays on the agents' side (unless the PR itself becomes the person's turn:
+  changes requested, approved, failing CI); `pr` is human reviewers, and the card waits on a
   person. `pr-bots` is only for while you are waiting for the bots: never end with the card left
   in it.
 - The current cwd is that worktree. Plain `git` and relative paths are fine. `git -C <absolute
@@ -377,8 +378,8 @@ review is in (or you gave up) and you start working through the comments.
    round starts), then offer to mark the PR ready for review (`gh pr ready <n>`). Keep the phase
    as `pr` (`adj phase --set pr`) while waiting for the next review round.
    **Do not end a turn in `pr-bots`.** It says you are the one waiting for the bots, so the card
-   stays on the agents' side and is never flagged, even once your tab is closed. Left behind,
-   a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
+   stays on the agents' side (unless the PR itself is the person's turn) and is never flagged, even
+   once your tab is closed. Left behind, a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
    bots, set `pr`.
 
 ## 7. When you find a bug outside the task

@@ -320,7 +320,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "adjutant_refresh",
-            "description": "Bring the task records up to date with their pull requests, the same as `adj task refresh`: every record with a `pr` that is not done or cancelled is looked up with `gh`, and the ones whose PR was merged are moved to done. A PR still open, closed without merging, or one `gh` cannot read is left alone and listed instead — say those to the person rather than deciding for them. A hub calls this once at startup.",
+            "description": "Bring the task records up to date with their pull requests, the same as `adj task refresh`: every record with a `pr` that is not done or cancelled is read with `gh` in one query, its state is kept on the record, and the ones whose PR was merged are moved to done. A PR still open, one `gh` cannot read, or one closed without merging is left alone and listed instead (a closed one is the person's to decide, never cancelled here) — say those to the person rather than deciding for them. Each entry says whose `turn` it is. A hub calls this once at startup.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "repo": repo_property(), "hub": hub_property(), "cwd": cwd_property() },

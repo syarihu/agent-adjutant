@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Context, Delivered};
 use crate::config;
 use crate::messaging::{self, Message};
-use crate::task::{self, CheckCounts, PrStatus, Status, Task};
+use crate::task::{self, PrRef, PrStatus, Status, Task};
 
 use std::path::PathBuf;
 
@@ -442,222 +442,27 @@ impl PrState {
     }
 }
 
-/// What `gh pr view --json state,isDraft,title,reviewDecision,statusCheckRollup` printed,
-/// as the state the refresh acts on and the summary the board shows. Anything that is not
-/// that JSON, or names a state this does not know, is not guessed at.
-fn parse_pr_view(stdout: &str) -> (PrState, Option<PrStatus>) {
-    let unreadable = |why: String| (PrState::Unreadable(why), None);
-    let value: Value = match serde_json::from_str(stdout) {
-        Ok(value) => value,
-        Err(e) => return unreadable(format!("cannot read gh's answer: {e}")),
-    };
-    let word = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or("");
-    let is_draft = value
-        .get("isDraft")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let (state, shown) = match word("state") {
-        "OPEN" => (PrState::Open, if is_draft { "draft" } else { "open" }),
-        "CLOSED" => (PrState::Closed, "closed"),
-        "MERGED" => (PrState::Merged, "merged"),
-        other => return unreadable(format!("gh answered {other:?}")),
-    };
-    let review = match word("reviewDecision") {
-        "APPROVED" => "approved",
-        "CHANGES_REQUESTED" => "changes",
-        "REVIEW_REQUIRED" => "required",
-        _ => "none",
-    };
-    let mut ci = CheckCounts::default();
-    for check in value
-        .get("statusCheckRollup")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let field = |key: &str| check.get(key).and_then(Value::as_str).unwrap_or("");
-        // A CheckRun is `status` plus, once finished, `conclusion`; a StatusContext has only
-        // `state`. A run that has not completed has no verdict yet, whatever `conclusion` says.
-        let verdict = if check.get("state").is_some() {
-            field("state")
-        } else if field("status") == "COMPLETED" {
-            field("conclusion")
-        } else {
-            ""
-        };
-        match verdict {
-            "SUCCESS" | "NEUTRAL" | "SKIPPED" => ci.pass += 1,
-            "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED"
-            | "STARTUP_FAILURE" => ci.fail += 1,
-            _ => ci.pending += 1,
-        }
-    }
-    let title: String = word("title").chars().take(task::ISSUE_TITLE_CAP).collect();
-    (
-        state,
-        Some(PrStatus {
-            state: shown.to_string(),
-            title,
-            review: review.to_string(),
-            ci,
-        }),
-    )
-}
-
 /// How long a whole refresh may spend waiting on `gh`. The hub asks in the block it starts
 /// with, and the MCP server answers one request at a time, so a `gh` that hangs — no network,
 /// a login prompt — would hold up every other answer in that block with it. One deadline for
 /// the lot rather than one per PR, so the wait does not grow with the number of records.
 const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// How many `gh` run at once. Enough that a few dozen records answer in a few round trips;
-/// few enough that GitHub does not read the burst as abuse and refuse some of them, which
-/// would come back as PRs nobody can read.
-const GH_AT_ONCE: usize = 8;
-
-/// Ask `gh` about one pull request: its state, and the summary the board shows.
-///
-/// From the main checkout, so a record that holds a bare number rather than a URL is read
-/// against this repository rather than whichever directory the caller happens to be in.
-fn ask_pr_state(main: &str, pr: &str, deadline: std::time::Instant) -> (PrState, Option<PrStatus>) {
-    let unreadable = |why: String| (PrState::Unreadable(why), None);
-    // A value that starts with '-' would reach `gh` as a flag.
-    if pr.starts_with('-') {
-        return unreadable(format!("not a pull request: {pr}"));
-    }
-    let mut child = match std::process::Command::new("gh")
-        .args([
-            "pr",
-            "view",
-            pr,
-            "--json",
-            "state,isDraft,title,reviewDecision,statusCheckRollup",
-        ])
-        .current_dir(main)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => return unreadable(format!("cannot run gh: {e}")),
-    };
-    // Both pipes are drained while `gh` runs: the checks of a PR make the answer long enough
-    // to fill a pipe, and a `gh` blocked writing never exits, so waiting first would turn a
-    // PR with many checks into a timeout. Polled rather than waited on, so the deadline holds.
-    fn drain<R: std::io::Read + Send + 'static>(
-        pipe: Option<R>,
-    ) -> std::thread::JoinHandle<Vec<u8>> {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            bytes
-        })
-    }
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
-    // On the kill paths below the readers are dropped, not joined: a process `gh` started may
-    // still hold the pipe open, and waiting for it would hold the refresh past its deadline.
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return unreadable(format!(
-                    "gh did not answer within the {}s a refresh allows",
-                    GH_TIMEOUT.as_secs()
-                ));
-            }
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return unreadable(format!("cannot wait for gh: {e}"));
-            }
-        }
-    };
-    let (Ok(stdout), Ok(stderr)) = (stdout.join(), stderr.join()) else {
-        return unreadable("cannot read gh: the reader panicked".to_string());
-    };
-    if !status.success() {
-        let said = String::from_utf8_lossy(&stderr).trim().to_string();
-        return unreadable(if said.is_empty() {
-            format!("gh exited with {status}")
-        } else {
-            said
-        });
-    }
-    parse_pr_view(&String::from_utf8_lossy(&stdout))
-}
-
 /// How long reading one issue may take. A person is waiting on the command or the click, and
 /// an issue is one request, so this is shorter than a whole refresh's allowance.
 const ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Run `gh` from `main` and return what it printed, or the reason it failed.
-///
-/// Unlike `ask_pr_state`, both pipes are read while the process runs: an issue body can be
-/// far longer than a pipe holds, and a `gh` blocked on a full pipe would look like a hang and
-/// be killed at the deadline.
 fn gh_output(main: &str, args: &[&str], deadline: std::time::Instant) -> Result<String, String> {
-    use std::io::Read;
-    let mut child = std::process::Command::new("gh")
-        .args(args)
-        .current_dir(main)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run gh: {e}"))?;
-    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            bytes
-        })
+    let run = super::gh::run(Some(main), args, deadline)?;
+    if run.ok {
+        return Ok(run.stdout);
     }
-    let out = drain(child.stdout.take());
-    let err = drain(child.stderr.take());
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Ok(None) => {
-                // Killing closes the pipes, which lets the readers finish.
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "gh did not answer within {}s",
-                    ISSUE_TIMEOUT.as_secs()
-                ));
-            }
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("cannot wait for gh: {e}"));
-            }
-        }
-    };
-    let out = out.join().unwrap_or_default();
-    let err = err.join().unwrap_or_default();
-    if !status.success() {
-        let said = String::from_utf8_lossy(&err).trim().to_string();
-        return Err(if said.is_empty() {
-            format!("gh exited with {status}")
-        } else {
-            said
-        });
-    }
-    Ok(String::from_utf8_lossy(&out).into_owned())
+    Err(if run.stderr.is_empty() {
+        "gh exited without succeeding".to_string()
+    } else {
+        run.stderr
+    })
 }
 
 /// Read one issue through `gh`, from the main checkout so a URL on another host is still
@@ -762,41 +567,87 @@ pub struct Checked {
     pub failed: Option<String>,
 }
 
+/// The records a refresh looks at: every one with a `pr` that is not finished.
+pub(super) fn candidates(ctx: &Context) -> Vec<Task> {
+    task::list(&dir(ctx))
+        .into_iter()
+        .filter(|t| !matches!(t.status, Status::Done | Status::Cancelled))
+        .filter(|t| t.pr.is_some())
+        .collect()
+}
+
+/// The pull request each record's `pr` names. A bare number is read against this repository,
+/// on the host its origin is on: only when both came from the remote, since a directory name
+/// is not a repository GitHub knows, and a number on a host this cannot name would be asked
+/// of the wrong one. Origin is asked once, and only if some record holds a bare number.
+pub(super) fn pr_refs(ctx: &Context, tasks: &[Task]) -> Vec<Option<PrRef>> {
+    let default = std::cell::OnceCell::new();
+    tasks
+        .iter()
+        .map(|t| {
+            let pr = t.pr.as_deref()?;
+            let default = default.get_or_init(|| {
+                (ctx.repo.nwo_source != "dirname")
+                    .then(|| crate::repo::origin_host(&ctx.repo.main))
+                    .flatten()
+            });
+            task::pr_ref(
+                pr,
+                default.as_deref().map(|host| (host, ctx.repo.nwo.as_str())),
+            )
+        })
+        .collect()
+}
+
+/// Why `pr` could not be read as a pull request, for a record whose `pr_refs` entry is `None`.
+pub(super) fn unreadable_pr(pr: &str) -> String {
+    if task::pr_ref(pr, Some(("github.com", "o/r"))).is_some() {
+        format!(
+            "a bare pull request number needs a remote on a known host to be read against: {pr}"
+        )
+    } else {
+        format!("not a pull request this can read: {pr}")
+    }
+}
+
 /// Bring the records up to date with their pull requests: every one that has a `pr` and is
-/// not finished is asked about, and the ones whose PR was merged are moved to `done`.
+/// not finished is asked about, all in one query, and the ones whose PR was merged are moved
+/// to `done`.
 ///
 /// Nothing else is changed. A PR still open is still in review; one closed without merging
 /// may have been replaced by another, which only a person knows; one `gh` cannot read is
 /// not evidence of anything. Those are returned for the caller to report.
 pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
-    let dir = dir(ctx);
-    let candidates: Vec<Task> = task::list(&dir)
-        .into_iter()
-        .filter(|t| !matches!(t.status, Status::Done | Status::Cancelled))
-        .filter(|t| t.pr.is_some())
-        .collect();
-    // A few at a time rather than one by one: each answer is a round trip to GitHub, and
-    // the board and the hub's first block both wait on the whole.
+    let candidates = candidates(ctx);
     let deadline = std::time::Instant::now() + GH_TIMEOUT;
-    let mut answers: Vec<(PrState, Option<PrStatus>)> = Vec::with_capacity(candidates.len());
-    for batch in candidates.chunks(GH_AT_ONCE) {
-        std::thread::scope(|scope| {
-            let asks: Vec<_> = batch
-                .iter()
-                .map(|t| {
-                    let pr = t.pr.as_deref().unwrap_or_default();
-                    let main = ctx.repo.main.as_str();
-                    scope.spawn(move || ask_pr_state(main, pr, deadline))
-                })
-                .collect();
-            answers.extend(asks.into_iter().map(|ask| {
-                ask.join().unwrap_or_else(|_| {
-                    (PrState::Unreadable("the check panicked".to_string()), None)
-                })
-            }));
-        });
-    }
+    let refs = pr_refs(ctx, &candidates);
+    let readable: Vec<PrRef> = refs.iter().flatten().cloned().collect();
+    let mut read = super::gh::read_prs(&readable, deadline).answers.into_iter();
+    let answers = candidates
+        .iter()
+        .zip(&refs)
+        .map(|(t, r)| match r {
+            Some(_) => read
+                .next()
+                .unwrap_or_else(|| (PrState::Unreadable("not read".to_string()), None)),
+            None => (
+                PrState::Unreadable(unreadable_pr(t.pr.as_deref().unwrap_or_default())),
+                None,
+            ),
+        })
+        .collect();
+    Ok(apply(ctx, candidates, answers))
+}
 
+/// Act on what GitHub said about `candidates`, one answer each: a merged PR moves its record
+/// to `done`, and any other answer is kept on the record when it differs from what is stored.
+/// A PR closed without merging is never cancelled here: the work may have gone on elsewhere.
+pub(super) fn apply(
+    ctx: &Context,
+    candidates: Vec<Task>,
+    answers: Vec<(PrState, Option<PrStatus>)>,
+) -> Vec<Checked> {
+    let dir = dir(ctx);
     let mut checked = Vec::new();
     for (task, (state, summary)) in candidates.into_iter().zip(answers) {
         if state != PrState::Merged {
@@ -844,7 +695,7 @@ pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
             },
         });
     }
-    Ok(checked)
+    checked
 }
 
 /// Keep what GitHub said about `task`'s PR on its record, if the record still points at that
@@ -882,6 +733,8 @@ pub fn refresh_json(checked: &[Checked]) -> Value {
             "pr": c.task.pr,
             "status": c.task.status.as_str(),
             "state": c.state.as_str(),
+            // Whose turn it is, read from the summary kept on the record; null until one was.
+            "turn": c.task.pr_status.as_ref().and_then(task::pr_turn),
         });
         if let PrState::Unreadable(why) = &c.state {
             out["error"] = json!(why);
@@ -1694,128 +1547,12 @@ mod tests {
         }
     }
 
-    // GitHub's upper-case enum values are passed in rather than written into the JSON, so
-    // that no fixture holds a bare upper-case string after a colon: the guard over everything
-    // that ships reads one as a tracker key.
-    fn view(state: &str, draft: bool, review: Option<&str>, rollup: &str) -> String {
-        let review = review.map_or("null".to_string(), |r| format!("\"{r}\""));
-        format!(
-            r#"{{"state":"{state}","isDraft":{draft},"title":"Add a thing","reviewDecision":{review},"statusCheckRollup":{rollup}}}"#
-        )
-    }
-
-    fn run(status: &str, conclusion: &str) -> String {
-        format!(r#"{{"__typename":"CheckRun","status":"{status}","conclusion":"{conclusion}"}}"#)
-    }
-
-    fn context(state: &str) -> String {
-        format!(r#"{{"__typename":"StatusContext","state":"{state}"}}"#)
-    }
-
-    fn summary(stdout: &str) -> (PrState, PrStatus) {
-        let (state, status) = parse_pr_view(stdout);
-        (state, status.expect("a summary"))
-    }
-
     #[test]
-    fn a_pr_view_is_read_into_a_state_and_a_summary() {
-        let rollup = format!(
-            "[{}]",
-            [
-                run("COMPLETED", "SUCCESS"),
-                run("COMPLETED", "SKIPPED"),
-                run("COMPLETED", "FAILURE"),
-                run("IN_PROGRESS", ""),
-                context("SUCCESS"),
-                context("ERROR"),
-                context("PENDING"),
-            ]
-            .join(",")
-        );
-        let (state, got) = summary(&view("OPEN", false, Some("APPROVED"), &rollup));
-        assert_eq!(state, PrState::Open);
-        assert_eq!(got.state, "open");
-        assert_eq!(got.title, "Add a thing");
-        assert_eq!(got.review, "approved");
-        assert_eq!(
-            got.ci,
-            CheckCounts {
-                pass: 3,
-                fail: 2,
-                pending: 2
-            }
-        );
-    }
-
-    #[test]
-    fn a_draft_is_an_open_pr_marked_so_and_only_while_open() {
-        let (state, got) = summary(&view("OPEN", true, Some("REVIEW_REQUIRED"), "[]"));
-        assert_eq!((state, got.state.as_str()), (PrState::Open, "draft"));
-        assert_eq!(got.review, "required");
-        let (state, got) = summary(&view("MERGED", true, Some(""), "[]"));
-        assert_eq!((state, got.state.as_str()), (PrState::Merged, "merged"));
-    }
-
-    #[test]
-    fn a_merged_or_closed_pr_and_the_reviews_gh_names() {
-        let (state, got) = summary(&view("MERGED", false, Some("APPROVED"), "[]"));
-        assert_eq!((state, got.state.as_str()), (PrState::Merged, "merged"));
-        let (state, got) = summary(&view("CLOSED", false, Some("CHANGES_REQUESTED"), "[]"));
-        assert_eq!((state, got.state.as_str()), (PrState::Closed, "closed"));
-        assert_eq!(got.review, "changes");
-    }
-
-    #[test]
-    fn no_checks_and_no_review_decision_are_counted_as_none() {
-        for rollup in ["[]", "null"] {
-            for review in ["", "SOMETHING_NEW"] {
-                let (_, got) = summary(&view("OPEN", false, Some(review), rollup));
-                assert_eq!(got.ci, CheckCounts::default(), "{rollup}");
-                assert_eq!(got.review, "none", "{review:?}");
-            }
-        }
-        // `gh` prints null for a PR nobody has been asked to review.
-        let (_, got) = summary(&view("OPEN", false, None, "[]"));
-        assert_eq!(got.review, "none");
-    }
-
-    #[test]
-    fn an_unfinished_run_is_pending_whatever_its_conclusion_says() {
-        let rollup = format!(
-            "[{},{}]",
-            run("QUEUED", "SUCCESS"),
-            run("COMPLETED", "TIMED_OUT")
-        );
-        let (_, got) = summary(&view("OPEN", false, Some(""), &rollup));
-        assert_eq!((got.ci.pass, got.ci.fail, got.ci.pending), (0, 1, 1));
-    }
-
-    #[test]
-    fn an_answer_that_is_not_a_pr_view_is_not_guessed_at() {
-        let draft = view("DRAFT", false, Some(""), "[]");
-        for odd in [
-            "",
-            "OPEN\n",
-            "not json",
-            "{}",
-            draft.as_str(),
-            r#"{"state":"merged"}"#,
-        ] {
-            let (state, status) = parse_pr_view(odd);
-            assert!(
-                matches!(state, PrState::Unreadable(_)) && status.is_none(),
-                "{odd:?} was read as a state"
-            );
-        }
-    }
-
-    /// A value that would reach `gh` as a flag is refused before `gh` is run at all.
-    #[test]
-    fn a_pr_that_looks_like_a_flag_is_not_handed_to_gh() {
-        assert!(matches!(
-            ask_pr_state(".", "--web", std::time::Instant::now()),
-            (PrState::Unreadable(why), None) if why.contains("--web")
-        ));
+    fn a_pr_that_cannot_be_read_says_whether_it_is_a_bare_number_or_not_a_pr() {
+        assert!(unreadable_pr("12").contains("bare pull request number"));
+        assert!(unreadable_pr("#12").contains("bare pull request number"));
+        assert!(unreadable_pr("--web").contains("not a pull request this can read"));
+        assert!(unreadable_pr("https://example.com/x").contains("not a pull request"));
     }
 
     /// A value that would reach `gh` as a flag is refused before `gh` is run at all.

@@ -7,55 +7,94 @@ use common::*;
 
 const PULL: &str = "https://github.com/acme/widget/pull";
 
-/// What `gh pr view --json state,isDraft,title,reviewDecision,statusCheckRollup` prints.
+/// One pull request as the refresh's GraphQL query answers it.
 ///
 /// GitHub's upper-case values are passed in rather than written into the JSON: a bare
 /// upper-case string after a colon reads as a tracker key to the guard over everything that
-/// ships. `checks` are (status, conclusion) pairs of check runs.
+/// ships. `checks` are (status, conclusion) pairs of check runs, counted by state the way the
+/// query asks for them; `review` is empty for no decision yet.
 fn pr_json(state: &str, draft: bool, review: &str, checks: &[(&str, &str)]) -> String {
-    let runs: Vec<String> = checks
+    let mut counts: std::collections::BTreeMap<&str, u32> = Default::default();
+    for (status, conclusion) in checks {
+        let state = if *status == "COMPLETED" {
+            conclusion
+        } else {
+            status
+        };
+        *counts.entry(state).or_default() += 1;
+    }
+    let runs: Vec<String> = counts
         .iter()
-        .map(|(status, conclusion)| {
-            format!(
-                r#"{{"__typename":"CheckRun","status":"{status}","conclusion":"{conclusion}"}}"#
-            )
-        })
+        .map(|(state, count)| format!(r#"{{"state":"{state}","count":{count}}}"#))
         .collect();
+    // Somebody is only waited on when GitHub says a review is required.
+    let asked = u32::from(review == "REVIEW_REQUIRED");
+    let review = if review.is_empty() {
+        "null".to_string()
+    } else {
+        format!("\"{review}\"")
+    };
     format!(
-        r#"{{"state":"{state}","isDraft":{draft},"title":"A pull request","reviewDecision":"{review}","statusCheckRollup":[{}]}}"#,
+        r#"{{"state":"{state}","isDraft":{draft},"title":"A pull request","reviewDecision":{review},"reviewRequests":{{"totalCount":{asked}}},"latestOpinionatedReviews":{{"nodes":[]}},"commits":{{"nodes":[{{"commit":{{"statusCheckRollup":{{"contexts":{{"checkRunCountsByState":[{}],"statusContextCountsByState":[]}}}}}}}}]}}}}"#,
         runs.join(",")
     )
 }
 
-/// A `gh` that knows four pull requests, and writes down every one it is asked about.
+/// What `gh api graphql` prints for one pull request, `p0`.
+fn answer_for(pr: &str) -> String {
+    format!(r#"{{"data":{{"p0":{{"pullRequest":{pr}}}}}}}"#)
+}
+
+/// A `gh` that knows four pull requests, and writes down the number of every one it is asked
+/// about, and every time it is run.
 ///
 /// 1 is merged, 2 is open, 3 was closed without merging, 5 is merged but its record is
 /// removed while `gh` is answering, and anything else fails the way `gh` does for a PR it
-/// cannot find.
+/// cannot find: an answer with the errors in it, and a non-zero exit.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
     std::fs::create_dir_all(&stubs).unwrap();
     let asked = fixture.repo.join("gh-asked");
+    let calls = fixture.repo.join("gh-calls");
     let gh = stubs.join("gh");
-    std::fs::write(
-        &gh,
-        format!(
-            "#!/bin/sh\n\
-             echo \"$3\" >> {asked}\n\
-             case \"$3\" in\n\
-             {PULL}/1) echo '{merged}' ;;\n\
-             {PULL}/2) echo '{open}' ;;\n\
-             {PULL}/3) echo '{closed}' ;;\n\
-             {PULL}/5) grep -l '/pull/5\"' \"$ADJUTANT_STATE_DIR\"/tasks/*/*.json | xargs rm; echo '{merged}' ;;\n\
-             *) echo 'GraphQL: Could not resolve to a PullRequest' >&2; exit 1 ;;\n\
-             esac\n",
-            asked = shell_quoted(&asked.to_string_lossy()),
-            merged = pr_json("MERGED", false, "", &[]),
-            open = pr_json("OPEN", false, "", &[]),
-            closed = pr_json("CLOSED", false, "", &[]),
-        ),
-    )
-    .unwrap();
+    // `-F pK=N` is how the query is given each pull request's number.
+    let script = r#"#!/bin/sh
+echo call >> @CALLS@
+data=''
+errors=''
+for a in "$@"; do
+  case "$a" in
+    p[0-9]*=*)
+      alias=${a%%=*}
+      n=${a#*=}
+      echo "$n" >> @ASKED@
+      case "$n" in
+        1) pr='@MERGED@' ;;
+        2) pr='@OPEN@' ;;
+        3) pr='@CLOSED@' ;;
+        5) grep -l '/pull/5"' "$ADJUTANT_STATE_DIR"/tasks/*/*.json | xargs rm; pr='@MERGED@' ;;
+        *) pr=null
+           errors="$errors{\"type\":\"NOT_FOUND\",\"path\":[\"$alias\",\"pullRequest\"],\"message\":\"Could not resolve to a PullRequest with the number of $n.\"}," ;;
+      esac
+      data="$data\"$alias\":{\"pullRequest\":$pr},"
+      ;;
+  esac
+done
+data=${data%,}
+errors=${errors%,}
+if [ -n "$errors" ]; then
+  echo "{\"data\":{$data},\"errors\":[$errors]}"
+  echo 'gh: Could not resolve to a PullRequest' >&2
+  exit 1
+fi
+echo "{\"data\":{$data}}"
+"#
+    .replace("@CALLS@", &shell_quoted(&calls.to_string_lossy()))
+    .replace("@ASKED@", &shell_quoted(&asked.to_string_lossy()))
+    .replace("@MERGED@", &pr_json("MERGED", false, "", &[]))
+    .replace("@OPEN@", &pr_json("OPEN", false, "", &[]))
+    .replace("@CLOSED@", &pr_json("CLOSED", false, "", &[]));
+    std::fs::write(&gh, script).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
     // Prepended rather than replacing: the binary still has to find the real `git`.
@@ -128,6 +167,9 @@ fn only_a_merged_pr_moves_its_task_to_done_and_the_rest_are_reported() {
     assert_eq!(done, expected, "{result}");
     assert_eq!(ids(&result["open"]), [open.as_str()], "{result}");
     assert_eq!(ids(&result["closed"]), [closed.as_str()], "{result}");
+    // Whose turn each is, for the caller to say; a closed PR is the person's to decide.
+    assert_eq!(result["closed"][0]["turn"], "closed", "{result}");
+    assert_eq!(result["open"][0]["turn"], "unrequested", "{result}");
     assert_eq!(ids(&result["unreadable"]), [missing.as_str()], "{result}");
     assert!(
         result["unreadable"][0]["error"]
@@ -144,9 +186,9 @@ fn only_a_merged_pr_moves_its_task_to_done_and_the_rest_are_reported() {
     }
 }
 
-/// More records than are asked about at once: each answer still lands on its own record.
+/// Many records in one query: each answer still lands on its own record.
 #[test]
-fn every_record_gets_its_own_answer_past_the_first_batch() {
+fn every_record_gets_its_own_answer_out_of_one_query() {
     let fixture = Fixture::new(QUIET);
     let prs = [1, 2, 3, 4];
     let made: Vec<(String, i32)> = (0..11)
@@ -164,6 +206,9 @@ fn every_record_gets_its_own_answer_past_the_first_batch() {
         .output()
         .unwrap();
     assert!(out.status.success());
+    // All of them in one query, however many there are.
+    let calls = std::fs::read_to_string(fixture.repo.join("gh-calls")).unwrap();
+    assert_eq!(calls.lines().count(), 1, "{calls}");
     let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     for (id, pr) in &made {
         let bucket = match pr {
@@ -306,13 +351,13 @@ fn the_tool_does_what_the_command_does() {
     assert_eq!(status_of(&fixture, &open), "pr");
 }
 
-/// A `gh` that answers every pull request with `answer`, read from a file so that an answer
+/// A `gh` that answers with `answer` as the pull request it is asked about, read from a file so that an answer
 /// longer than a pipe holds is no trouble to write.
 fn stub_gh_answering(fixture: &Fixture, answer: &str) -> String {
     let stubs = fixture.repo.join("stub-bin");
     std::fs::create_dir_all(&stubs).unwrap();
     let said = fixture.repo.join("gh-answer");
-    std::fs::write(&said, answer).unwrap();
+    std::fs::write(&said, answer_for(answer)).unwrap();
     let gh = stubs.join("gh");
     std::fs::write(
         &gh,
@@ -409,7 +454,7 @@ fn a_merged_pr_is_kept_as_merged_when_its_record_moves_to_done() {
     assert_eq!(shown["prStatus"]["state"], "merged", "{shown}");
 }
 
-/// A PR with hundreds of checks prints more than a pipe holds. `gh` blocks writing it until
+/// An answer longer than a pipe holds. `gh` blocks writing it until
 /// somebody reads, so a refresh that waited for it to exit first would time out and never
 /// move the merged PR's record.
 #[test]
@@ -425,7 +470,13 @@ fn a_pr_with_hundreds_of_checks_is_still_read() {
             }
         })
         .collect();
-    let answer = pr_json("MERGED", false, "APPROVED", &checks);
+    // Counted by state the way the query asks, the checks themselves are a few bytes; the
+    // rest of the weight is a field the query never asked for, so the answer still fills a pipe.
+    let mut answer = pr_json("MERGED", false, "APPROVED", &checks);
+    answer.insert_str(
+        answer.len() - 1,
+        &format!(r#","padding":"{}""#, "x".repeat(200_000)),
+    );
     assert!(answer.len() > 100_000, "{}", answer.len());
     let path = stub_gh_answering(&fixture, &answer);
     let out = fixture
@@ -476,4 +527,45 @@ fn pointing_a_record_at_another_pr_forgets_what_was_read_about_the_old_one() {
         "--no-hand-over",
     ]);
     assert!(fixture.json(&["task", "show", "--id", &id])["prStatus"].is_null());
+}
+
+/// A bare number is read on the host the repository's origin is on, not assumed to be
+/// github.com's.
+#[test]
+fn a_bare_pr_number_is_read_on_the_host_of_the_origin() {
+    let fixture = Fixture::new(QUIET);
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .hermetic()
+            .args(args)
+            .current_dir(&fixture.repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@git.example.com:acme/widget.git",
+    ]);
+    let id = task_with_pr(&fixture, "bare", "pr", "2");
+    let (path, _) = stub_gh(&fixture);
+    // The stub's own log knows the numbers; what it was told about the host is in its args.
+    let gh = fixture.repo.join("stub-bin").join("gh");
+    let script = std::fs::read_to_string(&gh).unwrap().replace(
+        "echo call >>",
+        "echo \"$*\" | sed -n 's/.*--hostname \\([^ ]*\\).*/\\1/p' >> \"$ADJUTANT_STATE_DIR/gh-hosts\"\necho call >>",
+    );
+    std::fs::write(&gh, script).unwrap();
+    let out = fixture
+        .command(["task", "refresh", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(ids(&result["open"]), [id.as_str()], "{result}");
+    let hosts = std::fs::read_to_string(fixture.state.join("gh-hosts")).unwrap();
+    assert_eq!(hosts.trim(), "git.example.com");
 }
