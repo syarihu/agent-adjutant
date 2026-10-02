@@ -170,7 +170,7 @@ adj worker --resume               # in a worktree: the worker that was working t
 ```
 
 The board's 「hub をリセット」 (a button on the hub's row, and in the menu above the terminal in the
-Sessions view) does what `--new` does: after a confirmation it stops the hub if it runs and starts
+セッション tab) does what `--new` does: after a confirmation it stops the hub if it runs and starts
 it again on a new conversation. The old conversation is not deleted, but it is not resumed either,
 and from then on `adj hub --resume` reaches the new one (with a runner that records no session id
 there is nothing to resume). The inbox, the task and gate records and the running workers stay as they are.
@@ -433,7 +433,12 @@ Nothing opens a browser.
 
 **One resident server for every repository.** `adj server start` runs a single server per
 state directory that serves the board of every repository on this machine, each at
-`/b/<slug>/`, whether or not a hub is running. `/` lists the boards it knows. It detaches
+`/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
+boards in place: the sidebar lists a row per repository, with its parent-task hubs under it
+(each row shows whether its hub runs, what waits on you and how many workers are at work),
+and "すべて" reads every board at once. `/review` is one review queue for every board: the list
+on the left, the item on the right (see below). Each screen has an address that carries the board
+and the view, so back and forward and a pasted link land on the same screen. It detaches
 (its output goes to `server.log` in the state directory); `--foreground` keeps it in the
 terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
 and any free port when it is not; `--port 0` asks for any. A second `adj server start` says
@@ -452,15 +457,74 @@ learns where a repository is from the hubs that start in it and from `adj config
 none of these has seen is added by running `adj server start` inside it. Without a resident
 server, everything is as described above.
 
-**A session's terminal in the board.** On the resident server's boards, the rail has a セッション
-view: a tree of the repository's hub and the parent-task hubs with their workers, and the
-selected session's tmux window beside it, where you can read it and type to it. A card, its side
-sheet and a hub's row in the rail have a button that opens the view with that session selected,
-with a link back to where you were. A terminal is offered only for a session that runs in tmux
+**A session's terminal in the board.** On the resident server's boards, the tabs under the
+board's title (人 / エージェント / セッション) include a セッション tab. It lists the board's hubs,
+each with its workers: a repository's board lists its own hub and then its parent-task hubs
+(indented), a parent-task board only its own hub, and 「すべて」 every repository's. A hub's header
+sticks to the top while its sessions scroll, and shows the hub's state, how many sessions it has and
+how many wait for input, with a 「hub」 button that opens the hub in the task panel's ターミナル tab (see below; or
+「hub を起動」 when it is stopped). A worker's row shows 入力待ち / 稼働 / 停止 (a finished one is dimmed 終了),
+its title and when it last wrote; rows waiting for input come first, and worktrees with no
+session are folded at the bottom of their hub's group. Pressing a row opens that session's tmux
+window beside the list (`?view=sessions&session=<id>`), where you can read it and type to it;
+in 「すべて」 it first switches to the hub's board. The tab asks the server for the sessions only
+while it is on screen, and in 「すべて」 of one board per repository. A worker's row whose task
+is on the board opens that task's panel on its ターミナル tab instead (see below). A terminal is
+offered only for a session that runs in tmux
 (`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
 detaches: the window and the agent in it keep running. The board attaches as a client of its own,
 so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
 that acted last decides.
+
+**The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
+another card shows that one instead. Its header has the task's key, the board it comes from, its
+state and its title, with 「カードへ」, three placement buttons and a close button. Inside are two
+tabs. 詳細 shows, from the top, the Issue and the PR (a row each, with its number and title; the PR
+also with its state, its CI and its review status, or a note that there is no PR yet), the open
+gate and what can be done about it (one click for a decision that needs no comment, 「判定画面を開く」
+for the rest), the phases, the records, the worktree and branch with 「IDE」, and the history with
+the instructions. A card carries the same two numbers in its header, each opening on GitHub, and
+the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
+read by the PR refresh (「PR確認」, `adjutant task refresh`), not by the page, so they are as new as
+the last refresh. ターミナル is the task's
+session in the built-in terminal, with a bar for resuming, closing or opening it in your own
+terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
+no session. A card's body opens 詳細; its 「ターミナル」 button, and 「ターミナルで答える」 on a
+question, open ターミナル. The panel sits on the left (the default) or the right of the page, or
+pops out as a large dialog that goes back to its side when closed or clicked away from. The side
+and the width are remembered by the browser; while the panel is on the left the sidebar shrinks
+to its icon rail, and on a narrow window the panel floats over the board. Moving the panel only
+changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
+The open task and tab are in the address (`task=<id>`, `pane=term`), so back and forward and a
+pasted link open the same task and tab.
+
+**The review queue.** `/review` (要対応レビュー in the sidebar) lists every gate waiting on you, across
+all boards, and opens the first one on its own. The list is grouped by board in the sidebar's
+order (a repository, then its parent-task hubs), the longest-waiting first, with each group's
+header pinned while the list scrolls. The right side has two tabs. 判断 is one column: the task's
+Issue and PR rows (as at the top of 詳細), what is waiting and why, what the kind of gate needs read (the plan or question, the
+diff and findings, or the verify checks), 経過をすべて見る to the task's full view, and the buttons the
+gate's options name, with the comment box. ターミナル opens the session the gate waits on in place (the
+worker, or the hub for the gates it opens); 「ターミナルで話す」 switches to it, and switching tabs keeps
+the connection. Only the board of the item shown is asked for its sessions, and only while that
+tab is open. After an answer the next waiting item is shown (the checkbox 「処理したら次へ」, saved in the
+browser, turns that off); the answered item stays in the list, dimmed, under 処理済み until the page
+is reloaded, and leaves the counts and the 人 board at once. 前へ / 次へ go through what is still
+waiting. The item is in the address (`/review?item=<board>/<id>`): choosing one in the list or
+with 前へ / 次へ is a step in the history, and the move after an answer replaces the entry, so 戻る does
+not step back through answered items.
+
+**A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
+the right of the board's title (for the board being viewed), a terminal icon that appears when you
+hover a board's row in the sidebar (not in the icon rail, which has the title button instead), and
+the 「hub」 button on a hub's header in the セッション tab. It opens on ターミナル, the hub's own
+session. 詳細 shows the hub's state, the workers at work, what waits on you, the queue and the
+inbox (the newest few of each, with 「ほか N 件」; a queued task opens its own panel), and holds the
+hub's actions: 着手を促す (start the next queued task if a worker slot is free; it has left the title bar and lives here),
+再同期, 止める (or 閉じる for a finished parent-task hub) and 「hub をリセット…」. A stopped hub's
+ターミナル tab is disabled, and 詳細 offers 「hub を起動」; so is the tab of a hub that runs outside
+tmux, whose 詳細 still works. A hub of another board opens in place with its own numbers and a
+「ボードへ」 button. The hub is in the address as `task=hub:<id>`.
 
 The bar above the terminal carries the actions for the selected session: resume a stopped
 worker, close a running one, start or stop a hub, open the session in your own terminal, and,
@@ -562,7 +626,7 @@ a worker with no task has no card. `POST /api/sessions` asks a hub to start one 
 `{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Every field is
 optional. The hub defaults to this board's own; the name is checked as a task's is, and left
 out it is the first four ASCII words of the instruction, lowercased and joined with `-`, or
-`session-YYYYMMDD-HHMM` (UTC; the Sessions view proposes the same in local time) when there are
+`session-YYYYMMDD-HHMM` (UTC; the セッション tab proposes the same in local time) when there are
 none; with no instruction the worker greets the person in its tab and waits (`## Instruction`
 reads `-` in the message); `agent`, when given, has to be the one `agentRunner` starts
 (`state.sessionStart.agent`). The reply adds `hub` (the `hubs[].id` that took it) and `message`
@@ -601,6 +665,12 @@ the gate directories.
 
 - `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
   out when the session is not in tmux or its window is not listed.
+- `lastLine` (only with `GET /api/state?lines=1`, which the セッション tab sends while it is on
+  screen): the last line the session's pane shows above its input box, cut to 200 characters. Read
+  with one `tmux capture-pane` per present tmux session, and only when the window has had activity
+  since the last read and that was at least 5 seconds ago, so a busy agent does not make the poll
+  dear. Left out for a session that is not in tmux, a pane with nothing written, and always with
+  `sessions=0`.
 - `attached`: how many clients are attached to that window, not counting the board's own
   browser terminals (`adjboard-*`); a terminal the board opened for a person (`adjterm-*`) is a person and counts. A control-mode client (iTerm2's `-CC`) counts on every
   window of its session, a plain one on the window it is looking at. `0` when nobody is; left
@@ -704,9 +774,9 @@ before anything is stopped. The answer is `{reset, wasRunning, started, descript
 reset did not start, `reset` is `false`, and `wasRunning` says whether one was stopped first. When the hub was stopped but could not be started
 again, the answer is a 400 whose message says it was stopped.
 
-### The Sessions sidebar
+### The sessions tab's sidebar
 
-The Sessions view has a right sidebar for the selected session, shown or hidden as a whole.
+The セッション tab has a right sidebar for the selected session, shown or hidden as a whole.
 For a worker with a task it shows the task (key and issue link, parent, where the card sits on
 the two boards), the latest five entries of what was asked and answered with a link to the
 full history, the phase timeline with times, the done-when and stop-at settings, the PR link
@@ -724,9 +794,9 @@ hub's command template as configured, sent with its placeholders in place; the s
 only `{name}` and shows the rest as they are. It is shown on the board as configured, so keep
 secrets out of it.
 
-### Starting and linking from the Sessions view
+### Starting and linking from the セッション tab
 
-The `+` at the top of the session tree stays in the 64px rail and opens a menu: start the
+The `+` at the right end of the list's header (off in 「すべて」) opens a menu: start the
 repository's hub (off while it runs), start a parent task's hub by key, and start a session
 with no task. The start dialog picks the hub (a stopped one is started after the request is
 sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
@@ -734,7 +804,7 @@ from it (a dated one is in local time, where the server's own fallback is UTC) u
 field is edited. A name git refuses is marked and cannot be sent; a name already in use is only
 noted, since the hub picks the final one. Only the agent `agentRunner` starts can be chosen,
 and the button is off while no worker slot is free. A refused request keeps the dialog and its
-text open with the reason. Until the hub has started the session the tree shows a row for it
+text open with the reason. Until the hub has started the session the list shows a row for it
 under its hub, derived from the hub's inbox so it survives a reload: waiting, hub stopped (with
 a start button, or why it could not start), or, when the hub took the request and started
 nothing for about 15 seconds, could not start.
@@ -804,13 +874,13 @@ the task's stop point covers it. A gate that waits says which of those fired in
 On the board, a card carries a chip for the latest review and check its worker recorded
 (`レビュー 3R ✓ 収束`, `verify ✓`, `手で見る 2件`; a failure is red and marked ✗), with a dot
 until the record has been opened. Which records have been opened is kept in the browser's
-localStorage: it is one reader's state, not the task's. The drawer lists each record with a
+localStorage: it is one reader's state, not the task's. The task panel lists each record with a
 short summary and a button that opens it in the task's full view, where it can be sent back
 with a comment — that answer goes to the worktree's outbox. A gate that stopped the worker
-says which rule stopped it, on the card, in the drawer and in the review view. The new-task
+says which rule stopped it, on the card, in the task panel and in the review view. The new-task
 form takes the stop point.
 
-The full view (`#task/<id>/<tab>`, or 全体を開く in the drawer) is where everything a task's
+The full view (`#task/<id>/<tab>`, or 経過をすべて見る in the task panel) is where everything a task's
 gates left can be read at any time, whether they stopped the worker or not. The way back,
 the title, the state and the tabs stay pinned at the top. 概要 has the problem and the goal
 with where each came from, the plan with when a person approved it (or that it is waiting),
@@ -820,11 +890,12 @@ commands (folded, a failure open, a pass that took a second run marked — `atte
 command), the checks left for a person and how to run it. 経過 lists, in time order, the
 gates that waited, the records that did not and what people answered; the worker's phase is
 kept only as the one it is in now, so it closes the list. A gate waiting on a person is
-answered in the tab it belongs to — the gate's tag on a card, 判定する in the drawer, a
-notification and the レビュー tab all open it there, and a gate with no task on the board opens
-in the review view instead — and the 要対応 queue is shown beside the task only while
-the task is on it. The answered gates come from `GET /api/tasks/<id>/history`, read when the
-view opens rather than on every poll, since the archive only grows.
+answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
+notification all open it there, and a gate with no task on the board opens in the review view
+instead. 要対応レビュー in the sidebar opens the review queue, not the task's view — and the 要対応
+queue is shown beside the task only while the task is on it. The answered gates come from `GET
+/api/tasks/<id>/history`, read when the view opens rather than on every poll, since the archive
+only grows.
 
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.
@@ -894,7 +965,7 @@ block and Jules' link back to the session are kept as they are.
 
 **Review comments are passed on by hand, in your name.** Jules answers the comments of the
 person who started it and keeps out of other bots' threads, so a review bot's findings do not
-reach it by themselves. The side sheet of a Jules task in review has 「レビュー指摘を Jules に
+reach it by themselves. The task panel of a Jules task in review has 「レビュー指摘を Jules に
 回す」: it lists the first comment of each thread by anyone but Jules and you — a review
 bot, Copilot and a colleague alike, since Jules answers none of them — and posts the ones you
 tick as one comment on the pull request through `gh`, which is signed in as you. It does not
@@ -918,7 +989,7 @@ only comment on lines the diff touched. It opens a `relay` gate with what would 
 for each, and what it left out and why. Approving it runs `adj jules relay --plan-file`, which
 posts them with each note under its finding; `changes` has the hub adjust and pass them on,
 and `reject` drops them. The board does this at most twice per pull request (`relayRounds` on
-the task); after that a reviewer and Jules are likely answering each other, and the side sheet's
+the task); after that a reviewer and Jules are likely answering each other, and the task panel's
 manual relay is the way.
 
 The Jules GitHub app has to be installed on the repository first; a repository Jules cannot

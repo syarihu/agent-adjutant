@@ -379,6 +379,7 @@
 
 .card-header-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -512,37 +513,56 @@
   100% { transform: scale(2.2); opacity: 0; }
 }
 
-/* ── M3 Side Sheet (Task Quick Drawer / Inspection) ── */
-#task-drawer {
-  flex: 0 0 400px;
-  width: 400px;
-  max-width: 90vw;
-  height: 100%;
-  overflow-y: auto;
-  background: var(--md-sys-color-surface-container-low);
-  border-left: 1px solid var(--md-sys-color-outline-variant);
-  box-shadow: var(--md-elevation-3);
-  display: flex;
-  flex-direction: column;
-  z-index: 30;
-}
-#task-drawer.hidden { display: none !important; }
-.sidesheet-header {
-  padding: 16px 20px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
-  background: var(--md-sys-color-surface-container);
-}
-.sidesheet-body {
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  flex: 1;
-  overflow-y: auto;
-}
+/* ── The task panel's parts (where it sits is shell.css) ── */
+.tp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 14px 16px 10px; background: var(--md-sys-color-surface-container); }
+.tp-head-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.tp-badges { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.tp-key { font-family: var(--font-mono); font-size: 11.5px; color: var(--md-sys-color-outline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+.tp-title { font-size: 15px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.tp-head-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.tp-jump { padding: 4px 8px; font-size: 12px; }
+.tp-head-btns .tool-btn.on { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.tp-tabs { display: flex; gap: 4px; padding: 0 12px; background: var(--md-sys-color-surface-container); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.tp-tab { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 13px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
+.tp-tab.on { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
+.tp-tab:disabled { opacity: .55; cursor: not-allowed; }
+.tp-tab-hint { font-size: 10.5px; font-weight: 600; }
+.tp-wait { background: var(--md-sys-color-warning); color: var(--md-sys-color-on-warning); font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: var(--md-shape-corner-full); }
+.tp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--md-sys-color-warning); }
+.tp-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
+.tp-pane[hidden] { display: none; }
+#tp-links:empty { display: none; }
+#tp-detail { padding: 16px; overflow-y: auto; }
+#tp-detail > div:empty { display: none; }
+#tp-rest { display: flex; flex-direction: column; gap: 14px; }
+.tp-term { position: relative; gap: 0; }
+.tp-term-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.tp-term-bar:empty { display: none; }
+.tp-bar-gap { flex: 1; }
+.tp-term-host { flex: 1; min-height: 0; min-width: 0; }
+.tp-term-ph { position: absolute; inset: 0; z-index: 1; padding: 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; overflow: auto; background: var(--md-sys-color-surface-container-low); }
+.tp-term-ph[hidden] { display: none; }
+.tp-ph-head { font-weight: 700; }
+.tp-muted { font-size: 11.5px; color: var(--md-sys-color-outline); overflow-wrap: anywhere; }
+.tp-sec-title { font-size: 11px; font-weight: 800; color: var(--md-sys-color-outline); text-transform: uppercase; margin-bottom: 8px; }
+.tp-gate-head { font-weight: 800; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.tp-gate-wait { margin-left: auto; font-size: 11.5px; font-weight: 600; }
+.tp-gate-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.tp-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.tp-steps li { font-size: 11.5px; font-weight: 700; padding: 2px 10px; border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-outline); }
+.tp-steps li + li::before { content: '→'; margin-right: 6px; font-weight: 400; }
+.tp-steps li.done { color: var(--md-sys-color-on-surface-variant); }
+.tp-steps li.now { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.tp-line { font-size: 12.5px; margin-bottom: 8px; }
+.tp-kvs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 12.5px; }
+.tp-kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tp-kv > span { color: var(--md-sys-color-outline); font-size: 11px; }
+.tp-kv code { font-family: var(--font-mono); font-size: 12px; word-break: break-all; }
+.tp-link { color: var(--md-sys-color-primary); font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.tp-record { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--md-sys-color-outline-variant); }
+.tp-ide { margin-top: 10px; padding: 6px 14px; font-size: 12px; }
+.tp-reset { margin-top: 8px; padding: 2px 6px; font-size: 11.5px; }
+.tp-text { font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ── Split Board Cards (Agent / Human) ── */
 .card.compact { padding: 7px 10px; gap: 4px; }
@@ -675,8 +695,11 @@
 }
 .agent-back:hover { text-decoration: underline; }
 .agent-back .material-symbols-outlined { font-size: 14px; }
+.hcard-foot-links { display: inline-flex; align-items: center; gap: 10px; }
+.hcard-foot > span:first-child { white-space: nowrap; }
 .hcard-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -713,12 +736,3 @@
   0%, 40% { box-shadow: 0 0 0 3px var(--md-sys-color-primary), var(--md-elevation-3); }
   100% { box-shadow: var(--md-elevation-1); }
 }
-
-.pane.flash-pane { animation: flash-pane 1.2s ease; }
-@keyframes flash-pane {
-  0%, 40% { box-shadow: inset 0 0 0 3px var(--md-sys-color-primary); }
-  100% { box-shadow: inset 0 0 0 0 transparent; }
-}
-
-
-

@@ -1,19 +1,19 @@
 /* A tmux session's terminal, inside any container. The component only assumes the container
-   has a size of its own: it fills it and follows it. The board's セッション view mounts it; a
-   page of its own for a session can mount the same. xterm.js is served by the resident server
-   and loaded on first use. */
+   has a size of its own: it fills it and follows it. The board's セッション view and the task
+   panel mount it; a page of its own for a session can mount the same. xterm.js is served by the
+   resident server and loaded on first use. */
 let xtermLoading = null;
-function loadXterm() {
+function loadXterm(base = BASE) {
   if (window.Terminal && window.FitAddon && window.Unicode11Addon) return Promise.resolve();
   if (xtermLoading) return xtermLoading;
   const token = encodeURIComponent(TOKEN);
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = `${BASE}/vendor/xterm.css?token=${token}`;
+  link.href = `${base}/vendor/xterm.css?token=${token}`;
   document.head.appendChild(link);
   xtermLoading = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = `${BASE}/vendor/xterm.js?token=${token}`;
+    script.src = `${base}/vendor/xterm.js?token=${token}`;
     script.onload = resolve;
     script.onerror = () => reject(new Error('xterm.js を読み込めませんでした'));
     document.head.appendChild(script);
@@ -34,8 +34,9 @@ function terminalEndText(code, reason) {
 }
 
 /* `onReady` is called once, when the first output has arrived: the point from which the
-   terminal is on screen and whatever else the page reads can go ahead. */
-function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
+   terminal is on screen and whatever else the page reads can go ahead. `base` is the board's
+   path; a view across boards, where `BASE` is empty, names the board of the session. */
+function mountSessionTerminal(container, { sessionId, onEnd, onReady, base = BASE } = {}) {
   container.classList.add('adj-terminal');
   let term = null;
   let fit = null;
@@ -58,7 +59,7 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
 
   (async () => {
     try {
-      await loadXterm();
+      await loadXterm(base);
     } catch (e) {
       if (!disposed) { container.textContent = e.message; onEnd?.(1006); }
       return;
@@ -79,7 +80,7 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
 
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const query = `token=${encodeURIComponent(TOKEN)}&cols=${term.cols}&rows=${term.rows}`;
-    ws = new WebSocket(`${scheme}//${location.host}${BASE}/api/sessions/${encodeURIComponent(sessionId)}/terminal?${query}`);
+    ws = new WebSocket(`${scheme}//${location.host}${base}/api/sessions/${encodeURIComponent(sessionId)}/terminal?${query}`);
     ws.binaryType = 'arraybuffer';
     const open = () => ws && ws.readyState === WebSocket.OPEN;
     // A resize while connecting was not sent; the size now is what the PTY should have.
@@ -156,7 +157,7 @@ function mountSessionTerminal(container, { sessionId, onEnd, onReady } = {}) {
    is alive in a tmux window. Where it cannot, there is no button at all. */
 const boardTerminalReady = s =>
   !!(state.boardTerminal?.available && s?.present && s.terminal?.backend === 'tmux' && s.terminal.window);
-const sessionOfTask = task => task && (state.sessions || []).find(s =>
+const sessionOfTask = task => task && !scopeAll() && (state.sessions || []).find(s =>
   // The worktree stands in only for a session with no task of its own: one that belongs to
   // another task is not this card's, even where a worktree was reused.
   s.kind === 'worker' && (s.task ? s.task === task.id : !!task.worktree && s.worktree === task.worktree));
@@ -164,8 +165,3 @@ const readySessionOfTask = task => {
   const s = sessionOfTask(task);
   return boardTerminalReady(s) ? s : null;
 };
-function openTaskTerminal(taskId) {
-  const task = (state.tasks || []).find(t => t.id === taskId);
-  const s = readySessionOfTask(task);
-  if (s) openSessionsView(s.id, { from: { view, taskId } });
-}

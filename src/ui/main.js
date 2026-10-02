@@ -5,7 +5,7 @@ document.addEventListener('keydown', e => {
     // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
     // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.
     if (e.isComposing || e.keyCode === 229) return;
-    // An open dialog takes Escape, whichever it is; the side sheet or task view behind it stays.
+    // An open dialog takes Escape, whichever it is; the task panel or task view behind it stays.
     const dialog = document.querySelector('dialog[open]');
     if (dialog) {
       if (dialog.id === 'handover-dialog') closeHandoverDialog();
@@ -19,8 +19,9 @@ document.addEventListener('keydown', e => {
       backToBoard();
       return;
     }
-    if (view === 'board' && selectedTaskId) {
-      closeDrawer();
+    if ((view === 'board' || view === 'sessions') && selectedTaskId) {
+      // A popped-out panel goes back to its side first; the next Escape closes it.
+      if (panelPop) { panelPop = false; renderTaskPanel(); } else closeTaskPanel();
       return;
     }
   }
@@ -29,6 +30,8 @@ document.addEventListener('keydown', e => {
 });
 
 function setView(v) {
+  // The review queue reads every board: on a server with several, it is a page of its own.
+  if (v === 'review' && multiBoard && !navApplying && !scopeAll()) return go({ view: 'review' });
   const prev = view;
   view = v;
   const boardView = document.getElementById('board-view');
@@ -47,8 +50,9 @@ function setView(v) {
   }
 
   if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
-  document.body.classList.toggle('view-sessions', v === 'sessions');
   if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
+  // The review view's terminal is not kept behind another view.
+  if (prev === 'review' && v !== 'review') disposeTermSlot(reviewTerm);
 
   // Navigation rail active states
   const navReview = document.getElementById('nav-review');
@@ -56,50 +60,52 @@ function setView(v) {
     if (v === 'review') navReview.setAttribute('aria-current', 'page');
     else navReview.removeAttribute('aria-current');
   }
-  const navSessions = document.getElementById('nav-sessions');
-  if (navSessions) {
-    if (v === 'sessions') navSessions.setAttribute('aria-current', 'page');
-    else navSessions.removeAttribute('aria-current');
-  }
   applyLayout();
 
-  // Top App Bar title updates
-  const pageTitle = document.getElementById('page-title');
-  const pageSub = document.getElementById('page-subtitle');
-  if (pageTitle && pageSub) {
-    if (v === 'board') {
-      pageTitle.textContent = 'タスクボード';
-      pageSub.textContent = 'エージェントの作業と、あなたの確認待ちを分けて表示';
-    } else if (v === 'review') {
-      pageTitle.textContent = '要対応レビュー';
-      pageSub.textContent = '人間の判断・承認を待っている Gate 一覧';
-    } else if (v === 'task') {
-      pageTitle.textContent = 'タスク詳細';
-      pageSub.textContent = '個別タスクの全工程記録と実行タイムライン';
-    } else if (v === 'sessions') {
-      pageTitle.textContent = 'セッション';
-      pageSub.textContent = 'hub と worker の端末をここで開く';
+  // The address follows the screen when something other than `go` moved it.
+  if (!navApplying) {
+    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : null;
+    if (want && nav.view !== want) {
+      nav.view = want;
+      if (want !== 'sessions') nav.session = null;
+      history.replaceState(null, '', urlOf());
     }
   }
 
+  // Top App Bar title updates. The board's own are drawn by renderTitle.
+  const pageTitle = document.getElementById('page-title');
+  const pageSub = document.getElementById('page-subtitle');
+  if (pageTitle && pageSub) {
+    if (v === 'board' || v === 'sessions') {
+      renderTitle();
+    } else if (v === 'review') {
+      pageTitle.textContent = '要対応レビュー';
+      pageSub.textContent = '全ボードの判断待ち。左で選んで、右で答える';
+    } else if (v === 'task') {
+      pageTitle.textContent = 'タスク詳細';
+      pageSub.textContent = '個別タスクの全工程記録と実行タイムライン';
+    }
+  }
+
+  renderTitle();
   // Filter chips are visible on board
   const filterChips = document.querySelector('.filter-chip-group');
   if (filterChips) filterChips.style.display = (v === 'board') ? 'flex' : 'none';
 
   if (v === 'task') {
     taskViewShown = null;
-    renderDrawer();
+    // Out of sight, not closed: the board comes back with the panel on the same card.
+    renderTaskPanel();
     renderTaskView();
   } else if (v === 'sessions') {
-    // The card that was open comes back through the link, not by staying selected.
-    closeDrawer();
-    renderSessionsRail();
+    renderSessionsTab();
     renderSessionsView();
+    renderTaskPanel();
   } else if (v !== 'board') {
-    closeDrawer();
+    dismissTaskPanel();
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-    if (!(state.gates || []).some(g => g.id === focused)) focused = null;
+    if (!(state.gates || []).some(g => gateRef(g) === focused)) focused = null;
     render();
   }
 }
@@ -115,10 +121,10 @@ function toggleBottomSheet() {
   if (handleBar) handleBar.setAttribute('aria-expanded', String(isOpen));
 }
 
-async function refreshAll() {
+async function refreshAll(base = BASE) {
   const line = 'adj refresh';
   try {
-    await api('/api/refresh', { method: 'POST' });
+    await boardApi(base, '/api/refresh', { method: 'POST' });
     note(line, false, '外部同期を完了しました');
     await refresh(true);
   } catch (e) { note(`${line} → ${e.message}`, true); }
@@ -132,24 +138,63 @@ function toggleTheme() {
 }
 
 note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
-// Opening #gate/<id> lands straight on that card in the review view.
-const deep = location.hash.match(/^#gate\/(.+)$/);
-// And #task/<id>/<tab> on one task's view.
-const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);
-// A malformed escape in a hand-edited link would throw here, before the polling below starts,
-// and leave a page that never loads: such a link opens the board instead.
-let deepTaskId = null;
-try { deepTaskId = deepTask && decodeURIComponent(deepTask[1]); } catch { deepTaskId = null; }
-// #session/<id> (or #sessions) on the セッション view. Whether a terminal exists is known only
-// once the first poll is in, so the board is shown meanwhile.
-const deepSession = location.hash.match(/^#sessions?(?:\/(.+))?$/);
-let deepSessionId = null;
-try { deepSessionId = deepSession && deepSession[1] ? decodeURIComponent(deepSession[1]) : null; } catch { deepSessionId = null; }
-if (deepSession) sessView.pending = { id: deepSessionId };
-if (deep) { focused = deep[1]; setView('review'); }
-else if (deepTaskId) openTask(deepTaskId, TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
-else { setView('board'); }
-refresh().then(openPendingSession);
-updateNotifyButton();
-// The server holds no clock, so the page carries one: it asks, nothing pushes.
-setInterval(refresh, 2000);
+
+/* Whether this server serves several boards: the resident answers the list of them, a board
+   served on its own does not know the route. */
+async function probeBoards() {
+  if (multiBoard) return fetchBoards();
+  try {
+    boards = await boardApi('', '/api/boards');
+    multiBoard = true;
+  } catch {
+    multiBoard = false;
+  }
+}
+
+async function boot() {
+  await probeBoards();
+  document.body.classList.toggle('single-board', !multiBoard);
+  // Opening #gate/<id> lands straight on that card in the review queue.
+  const deep = location.hash.match(/^#gate\/(.+)$/);
+  // And #task/<id>/<tab> on one task's view.
+  const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);
+  // A malformed escape in a hand-edited link would throw here, before the polling below starts,
+  // and leave a page that never loads: such a link opens the board instead.
+  let deepTaskId = null;
+  try { deepTaskId = deepTask && decodeURIComponent(deepTask[1]); } catch { deepTaskId = null; }
+  // #session/<id> (or #sessions), from before the address named it: the セッション tab. Whether a
+  // terminal exists is known only once the first poll is in, so the board is shown meanwhile.
+  const deepSession = location.hash.match(/^#sessions?(?:\/(.+))?$/);
+  let deepSessionId = null;
+  try { deepSessionId = deepSession && deepSession[1] ? decodeURIComponent(deepSession[1]) : null; } catch { deepSessionId = null; }
+  Object.assign(nav, parseUrl(location));
+  BASE = multiBoard && nav.board && nav.board !== 'all' ? `/b/${nav.board}` : '';
+  if (deepSession) { nav.view = 'sessions'; nav.session = nav.board === 'all' ? null : deepSessionId; }
+  // A link made before the address named the review queue: carry its gate over.
+  if (deep) { nav.view = 'review'; nav.item = (m => m ? `${m[1]}/${deep[1]}` : deep[1])(/^\/b\/([^/]+)/.exec(location.pathname)); if (multiBoard) nav.board = 'all'; }
+  // The address in its own spelling, so a go() to the same screen does not push a twin.
+  history.replaceState(null, '', urlOf() + (deep || deepSession ? '' : location.hash));
+  // The page's sections are shown or hidden by the first `setView`; the address has the say on
+  // which view that is, so it is not allowed to rewrite it.
+  navApplying = true;
+  setView('board');
+  navApplying = false;
+  if (deepTaskId) {
+    // The task's own view on the board the address names; the hash stays as it is.
+    nav.view = 'human';
+    const epoch = navEpoch;
+    refresh(true).then(() => {
+      // The person may have gone to another board while the first state was on its way.
+      if (epoch !== navEpoch) return;
+      openTask(deepTaskId, TASK_TABS.some(([id]) => id === deepTask[2]) ? deepTask[2] : 'overview');
+    });
+  } else {
+    // Draws the screen the address names and starts its first poll.
+    applyNav(true);
+  }
+  updateNotifyButton();
+  // The server holds no clock, so the page carries one: it asks, nothing pushes.
+  setInterval(refresh, 2000);
+  setInterval(refreshBoards, 10000);
+}
+boot();

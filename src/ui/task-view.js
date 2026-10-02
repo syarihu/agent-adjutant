@@ -14,16 +14,18 @@ let taskView = { id: null, tab: 'overview', pick: {} };
 
 function openTask(id, tab = 'overview', gateId = null) {
   taskView = { id, tab, pick: gateId ? { [tab]: gateId } : {} };
-  // Back on the board, the drawer is open on the task that was being read.
+  // Back on the board, the panel is open on the task that was being read.
   selectedTaskId = id;
   setView('task');
 }
 
 function backToBoard() {
-  setView('board');
+  // The card being read stays open on the board.
+  // The tab of another task's panel is not carried over to this one.
+  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', task: selectedTaskId, ...(selectedTaskId === nav.task ? {} : { pane: 'detail' }) });
 }
 
-/* What a task's gates left in the archive, read when its view or the side sheet opens
+/* What a task's gates left in the archive, read when its view or the task panel opens
    on it rather than on every poll: the archive only grows. Read again when a gate of the task has been answered since,
    which is when it can have changed. */
 const histories = {};
@@ -31,7 +33,7 @@ const historyFailed = new Set();
 /* A task of another board (the Sessions sidebar reads those) is kept under its board's path,
    since task ids are only unique within a board; the ones of this page keep the bare id. */
 const historyKey = (task, base) => base === BASE ? task.id : `${base}|${task.id}`;
-function historyOf(task, base = BASE, data = state) {
+function historyOf(task, base = baseOf(task), data = state) {
   // The polled records leave their diffs out and say how big each is, so a record that was
   // written or rewritten since shows as a different key here and its diff is read again.
   const sizes = (task.records || []).map(r => `${r.id}:${r.diffSize ?? ''}`).join(',');
@@ -69,21 +71,21 @@ function historyOf(task, base = BASE, data = state) {
   return entry;
 }
 
-/* Redraws what shows a task's history: its view, or the side sheet open on it. The side sheet
+/* Redraws what shows a task's history: its view, or the task panel open on it. The panel
    keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
   if (view === 'task' && taskView.id === id) redrawTaskView();
-  if (view === 'board' && selectedTaskId === id) renderDrawer();
+  if ((view === 'board' || view === 'sessions') && selectedTaskId === id) renderTaskPanel();
   if (view === 'sessions') renderSessionSidebar();
   // A record's diff arrives with the history, and nothing else redraws a quiet board.
   // Only the record on screen, and held while a comment is being typed there.
-  if (view === 'review' && recordById(focused)?.task === id) redrawReview();
+  if (view === 'review' && recordByRef(focused)?.task === id) redrawReview();
 }
 
 /* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the
    same record. Without it yet (still loading) the record is returned as it is, and
    `diffPending` says to show that rather than "no diff". */
-function withDiff(record, task, base = BASE, data = state) {
+function withDiff(record, task, base = baseOf(task), data = state) {
   if (!record || record.diff != null || !record.diffSize || !task) return record;
   const kept = historyOf(task, base, data).records.find(r => r.id === record.id);
   return kept?.diff != null ? { ...record, diff: kept.diff } : record;
@@ -93,14 +95,17 @@ const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読�
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
    task's records come from /api/state, which is polled, so a send-back shows at once. */
-function gatesOf(task, data = state, base = BASE) {
+function gatesOf(task, data = state, base = baseOf(task)) {
   const h = historyOf(task, base, data);
   const byId = new Map();
+  // What the history holds belongs to the task's board; in a merged state it says so, as the
+  // open gates do, or a gate picked from it could be taken for another board's.
+  const own = g => g && task._slug ? { ...g, _slug: task._slug, _base: task._base } : g;
   const add = g => g && byId.set(g.id, g);
-  h.answered.forEach(add);
-  add(task.approvedPlan);
-  (task.records || h.records).forEach(r => add(task.records ? withDiff(r, task, base, data) : r));
-  (data.gates || []).filter(g => g.task === task.id).forEach(add);
+  h.answered.forEach(g => add(own(g)));
+  add(own(task.approvedPlan));
+  (task.records || h.records).forEach(r => add(own(task.records ? withDiff(r, task, base, data) : r)));
+  (data.gates || []).filter(g => g.task === task.id && (!task._slug || g._slug === task._slug)).forEach(add);
   // Same-second ties go by the sequence at the end of the id, as `recordsOf` orders them, so
   // the latest of a kind is the one claimed last.
   return [...byId.values()].sort((a, b) =>
@@ -111,7 +116,7 @@ function gatesOf(task, data = state, base = BASE) {
    none for the first. */
 const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 
-const isWaiting = g => (state.gates || []).some(x => x.id === g.id);
+const isWaiting = g => (state.gates || []).some(x => gateRef(x) === gateRef(g));
 
 /* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. */
 function gateForTab(task, tab, all) {
@@ -193,7 +198,7 @@ function framesHtml(g) {
 /* The part of a tab a person acts on, when the gate shown can still take an answer: a gate
    waiting now, or a live task's record. A finished task's records have nowhere to go back to. */
 function actHtml(g) {
-  if (isWaiting(g) || (g.wait === false && recordById(g.id))) return decideHtml(g);
+  if (isWaiting(g) || (g.wait === false && recordByRef(gateRef(g)))) return decideHtml(g);
   return '';
 }
 
@@ -210,6 +215,86 @@ const isGithubIssue = u => /^https?:\/\/[^/?#]+\/[^/?#]+\/[^/?#]+\/issues\/\d+\/
 // The number of a pull request URL, also when it points at a tab of it (`…/pull/82/files`).
 function prNumberOf(url) {
   try { return /\/pull\/(\d+)/.exec(new URL(url).pathname)?.[1] || ''; } catch { return ''; }
+}
+
+/* The Issue and the PR of a task, as the card and the panel show them. What is known about the
+   PR comes from the record's `prStatus`, which the PR refresh writes: the page never asks
+   GitHub, so a PR that has not been refreshed yet is shown as not yet checked. */
+function prStateOf(task) {
+  const stored = task.prStatus?.state;
+  // A finished task is no longer refreshed, so a stored open or draft would never change.
+  if (task.status === 'done') return task.pr ? 'merged' : null;
+  if (task.status === 'cancelled') return stored === 'merged' || stored === 'closed' ? stored : null;
+  return stored || null;
+}
+const PR_STATES = {
+  open: ['オープン', 'pill-good'],
+  draft: ['下書き', 'pill-neutral'],
+  merged: ['マージ済み', 'pill-purple'],
+  closed: ['クローズ', 'pill-neutral'],
+  unknown: ['未確認', 'pill-neutral'],
+};
+const prStateInfo = task => PR_STATES[prStateOf(task) || 'unknown'] || PR_STATES.unknown;
+/* 「レビュー待ち · CI 通過」: the state, the review for an open PR, and the checks if it has any. */
+function prNoteOf(task) {
+  const st = prStateOf(task);
+  const [label] = prStateInfo(task);
+  if (st === 'merged' || st === 'closed' || !st) return label;
+  const parts = [];
+  if (st === 'draft') parts.push(label);
+  else parts.push({ approved: '承認済み', changes: '修正依頼' }[task.prStatus?.review] || 'レビュー待ち');
+  const ci = task.prStatus?.ci;
+  if (ci && ci.pass + ci.fail + ci.pending > 0) {
+    parts.push(ci.fail > 0 ? `CI 失敗 ${ci.fail}` : ci.pending > 0 ? 'CI 実行中' : 'CI 通過');
+  }
+  return parts.join(' · ');
+}
+/* The number of a PR record, which is a URL or, when written by hand, a bare "123" or "#123". */
+const prRefNumber = pr => (httpUrl(pr) ? prNumberOf(pr) : /^#?(\d+)$/.exec(pr || '')?.[1] || '');
+/* Issue number and PR number for a card's header; each opens on GitHub. */
+function ghChipsHtml(task) {
+  const issueUrl = httpUrl(task.issueUrl);
+  const prUrl = httpUrl(task.pr);
+  const issueNumber = issueUrl ? issueNumberOf(issueUrl) : '';
+  const prNumber = prRefNumber(task.pr);
+  const issue = issueNumber
+    ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
+          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
+          <span>${esc(issueNumber)}</span>
+        </a>`
+    : '';
+  // A PR that is not a link is still a PR: shown, but not clickable.
+  const prLabel = `<span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span><span>${prNumber ? `#${esc(prNumber)}` : esc(task.pr)}</span>`;
+  const prTitle = esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}`);
+  const prClass = `gh-pr ${esc(prStateOf(task) || 'unknown')}`;
+  const pr = prUrl
+    ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="${prClass}" title="${prTitle}">${prLabel}</a>`
+    : task.pr ? `<span class="${prClass}" title="${prTitle}">${prLabel}</span>` : '';
+  return issue + pr;
+}
+/* The Issue and the PR as rows for the top of 詳細 and 判断: number and title, and for the PR
+   its state, checks and review. Empty for a task with neither a PR to show nor an Issue. */
+function ghRowsHtml(task) {
+  if (!task) return '';
+  const out = '<span class="material-symbols-outlined gh-out" aria-hidden="true">open_in_new</span>';
+  const issueUrl = httpUrl(task.issueUrl);
+  const prUrl = httpUrl(task.pr);
+  let h = '';
+  if (issueUrl) {
+    const n = issueNumberOf(issueUrl);
+    h += `<a class="gh-row" href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">tag</span><span class="gh-kind">Issue</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.issueSnapshot?.title ?? task.title)}</span>${out}</a>`;
+  }
+  if (task.pr) {
+    const n = prRefNumber(task.pr);
+    const [, cls] = prStateInfo(task);
+    const body = `<span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span>${n ? `<span class="gh-num">#${esc(n)}</span>` : ''}<span class="gh-title">${esc(task.prStatus?.title ?? (n ? task.title : task.pr))}</span><span class="m3-pill ${cls}">${esc(prNoteOf(task))}</span>`;
+    h += prUrl
+      ? `<a class="gh-row" href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer">${body}${out}</a>`
+      : `<div class="gh-row">${body}</div>`;
+  } else {
+    h += '<div class="gh-row gh-none"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span class="gh-kind">PR</span><span class="gh-title">PR はまだありません</span></div>';
+  }
+  return `<div class="gh-block">${h}</div>`;
 }
 
 function overviewTab(task, all) {
@@ -394,11 +479,11 @@ function historyEventsOf(task, all, waiting = isWaiting) {
   return events.sort((a, b) => a.at - b.at);
 }
 
-/* The timeline of 経過, shared by the tab and the side sheet. `limit` keeps only the latest
-   entries, for the side sheet, where a long history would push the actions out of reach. The
+/* The timeline of 経過, shared by the tab and the task panel. `limit` keeps only the latest
+   entries, for the panel, where a long history would push the actions out of reach. The
    worker's phase is not kept as a history — only the one it is in now — so it closes the
    list rather than running through it. */
-function timelineHtml(task, all, limit = Infinity, data = state, base = BASE) {
+function timelineHtml(task, all, limit = Infinity, data = state, base = baseOf(task)) {
   // The waiting gates are those of the board the task is on, not of this page's.
   const events = historyEventsOf(task, all, data === state ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));
   const shown = events.slice(-limit);

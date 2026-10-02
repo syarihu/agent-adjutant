@@ -50,6 +50,36 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         page.contains("boardApi(BASE, path"),
         "the page does not use BASE"
     );
+    // The views are tabs under the board's title; the sidebar no longer lists them.
+    for piece in [
+        "id=\"view-tabs-row\"",
+        "data-tab=\"sessions\"",
+        "1つずつ",
+        "id=\"task-panel\"",
+        "id=\"btn-hub\"",
+        "data-hub-term",
+        "hubterm-btn",
+        // The review view is one queue: its list, the frame around the terminal's host, and the
+        // switch for moving on after an answer.
+        "id=\"rv-judge\"",
+        "id=\"rv-term-host\"",
+        "rv-group-head",
+        "data-rv-refs",
+        // The Issue and PR rows at the top of 詳細 and 判断, and the PR chip in a card's header.
+        "id=\"tp-links\"",
+        "gh-row",
+        "gh-pr",
+        "PR はまだありません",
+        "data-rv-next",
+        "処理したら次へ",
+    ] {
+        assert!(page.contains(piece), "{piece}");
+    }
+    assert!(!page.contains("id=\"nav-sessions\""));
+    // 要対応レビュー opens the queue, not the first gate's task.
+    assert!(page.contains("id=\"nav-review\" title=\"要対応レビュー\" onclick=\"goToQueue()\""));
+    // 着手を促す is the hub panel's, not the title bar's.
+    assert!(!page.contains("id=\"btn-nudge\""));
 
     let (status, list) = resident.get("/api/boards");
     assert_eq!(status, 200);
@@ -65,11 +95,18 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         "{list}"
     );
 
-    let (status, index) = resident.get("/");
-    assert_eq!(status, 200);
-    assert!(index.contains("adj ボード一覧"), "{index}");
-    assert!(index.contains("hub 停止中"), "{index}");
-    assert!(index.contains(&format!("/b/{SLUG}/?token=")), "{index}");
+    // `/` and `/review` are the one page that switches between boards.
+    for path in ["/", "/review"] {
+        let (status, page) = resident.get(path);
+        assert_eq!(status, 200, "{path}");
+        assert!(page.contains("id=\"board-rows\""), "{path}");
+    }
+    assert_eq!(list[0]["hubId"], "hub", "{list}");
+    assert_eq!(list[0]["waiting"], 0, "{list}");
+    assert_eq!(list[0]["working"], 0, "{list}");
+    assert_eq!(list[0]["finished"], false, "{list}");
+    assert!(list[0]["hubLastAlive"].is_null(), "{list}");
+    assert_eq!(list[0]["gates"], serde_json::json!([]), "{list}");
 
     assert_eq!(resident.get("/b/no-such-board/api/state").0, 404);
     assert_eq!(
@@ -189,6 +226,211 @@ fn a_parent_task_hub_s_board_is_served_at_its_own_path() {
     let repository = own(&other);
     assert_eq!(repository["parent"], false, "{repository}");
     assert!(repository["key"].is_null(), "{repository}");
+}
+
+/// A GET whose own query is `query`, with the token added after it.
+fn get_with_query(resident: &Resident, path: &str, query: &str) -> (u16, String) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", resident.port)).unwrap();
+    write!(
+        stream,
+        "GET {path}?{query}&token={} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        resident.token
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        body.to_string(),
+    )
+}
+
+/// `/api/boards`, as a list of objects.
+fn boards_of(resident: &Resident) -> Vec<serde_json::Value> {
+    let (status, body) = resident.get("/api/boards");
+    assert_eq!(status, 200, "{body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+fn board_of(resident: &Resident, slug: &str) -> serde_json::Value {
+    boards_of(resident)
+        .into_iter()
+        .find(|b| b["slug"] == slug)
+        .unwrap_or_else(|| panic!("no board {slug}"))
+}
+
+/// Writes `patch` into a task's record on disk, which is how a test puts a task in a status
+/// the board's own routes would not.
+fn patch_task(fixture: &Fixture, slug: &str, id: &str, patch: serde_json::Value) {
+    let path = fixture
+        .state
+        .join("tasks")
+        .join(slug)
+        .join(format!("{id}.json"));
+    let mut task: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for (key, value) in patch.as_object().unwrap() {
+        task[key] = value.clone();
+    }
+    std::fs::write(path, task.to_string()).unwrap();
+}
+
+#[test]
+fn a_dedicated_board_has_no_board_list() {
+    let fixture = Fixture::new(QUIET);
+    let mut board = fixture
+        .command(["serve", "--port", "0", "--no-open"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::io::BufReader::new(board.stdout.as_mut().unwrap())
+        .read_line(&mut said)
+        .unwrap();
+    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
+    let (host, query) = url
+        .strip_prefix("http://")
+        .unwrap()
+        .split_once('/')
+        .unwrap();
+    let port: u16 = host.rsplit(':').next().unwrap().parse().unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+
+    // The page tells a dedicated board from the resident by this 404.
+    let (boards, _) = get(port, token, "/api/boards");
+    let (status, page) = get(port, token, "/review");
+    board.kill().unwrap();
+    board.wait().unwrap();
+
+    assert_eq!(boards, 404);
+    assert_eq!(status, 200);
+    assert!(page.contains("id=\"board-rows\""));
+}
+
+#[test]
+fn the_board_list_counts_what_waits_and_who_works() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    write_gate_file(&fixture, SLUG, "g-open", "verify", &fixture.repo);
+    let on_pr = made_task(&resident, serde_json::json!({"title": "A pull request"}));
+    let working = made_task(&resident, serde_json::json!({"title": "At work"}));
+    let queued = made_task(&resident, serde_json::json!({"title": "In line"}));
+    patch_task(
+        &fixture,
+        SLUG,
+        queued["id"].as_str().unwrap(),
+        serde_json::json!({"status": "queued"}),
+    );
+    patch_task(
+        &fixture,
+        SLUG,
+        on_pr["id"].as_str().unwrap(),
+        serde_json::json!({"status": "pr", "pr": "https://example.com/pull/1"}),
+    );
+    patch_task(
+        &fixture,
+        SLUG,
+        working["id"].as_str().unwrap(),
+        serde_json::json!({"status": "dispatched"}),
+    );
+
+    let board = board_of(&resident, SLUG);
+    // The gate has no task on the board, and the pull request has no worker to say otherwise.
+    assert_eq!(board["waiting"], 2, "{board}");
+    assert_eq!(board["working"], 1, "{board}");
+    assert_eq!(board["queued"], 1, "{board}");
+    assert_eq!(board["gates"].as_array().unwrap().len(), 1, "{board}");
+    assert_eq!(board["gates"][0]["kind"], "verify", "{board}");
+    assert!(board["gates"][0]["worktree"].is_string(), "{board}");
+}
+
+#[test]
+fn a_parent_board_is_listed_with_its_key_and_hub_id_and_hides_when_finished() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let board = board_of(&resident, FEATURE_SLUG);
+    assert_eq!(board["hub"], FEATURE, "{board}");
+    assert_eq!(board["hubId"], format!("hub-{FEATURE}"), "{board}");
+    // A hub with no task yet has not been used: it stays listed, to be started.
+    assert_eq!(board["finished"], false, "{board}");
+    // The repository's own board is never finished.
+    assert_eq!(board_of(&resident, SLUG)["finished"], false);
+
+    // A task still to be done keeps it too, though nothing works on it yet.
+    let (status, body) = resident.post(
+        &format!("/b/{FEATURE_SLUG}/api/tasks"),
+        &serde_json::json!({"title": "Still to do"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(board_of(&resident, FEATURE_SLUG)["finished"], false);
+    patch_task(
+        &fixture,
+        FEATURE_SLUG,
+        &id,
+        serde_json::json!({"status": "done"}),
+    );
+    assert_eq!(board_of(&resident, FEATURE_SLUG)["finished"], true);
+
+    // A gate left on disk keeps the board in the list.
+    write_gate_file(&fixture, FEATURE_SLUG, "g-left", "question", &fixture.repo);
+    let board = board_of(&resident, FEATURE_SLUG);
+    assert_eq!(board["finished"], false, "{board}");
+    assert_eq!(board["waiting"], 1, "{board}");
+}
+
+#[test]
+fn a_stopped_hub_says_when_it_was_last_alive() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let sessions = fixture.state.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join(format!("{SLUG}.json")),
+        serde_json::json!({"sessionId": "s-1", "nwo": "acme/widget"}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        sessions.join(format!("{SLUG}.alive")),
+        serde_json::json!({"sessionId": "s-1", "lastAlive": 1_700_000_000}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(board_of(&resident, SLUG)["hubLastAlive"], 1_700_000_000);
+
+    // A heartbeat from another session says nothing about this one.
+    std::fs::write(
+        sessions.join(format!("{SLUG}.alive")),
+        serde_json::json!({"sessionId": "s-2", "lastAlive": 1_700_000_000}).to_string(),
+    )
+    .unwrap();
+    assert!(board_of(&resident, SLUG)["hubLastAlive"].is_null());
+}
+
+#[test]
+fn the_state_can_leave_the_sessions_out() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    write_gate_file(&fixture, SLUG, "g-open", "verify", &fixture.repo);
+
+    let (_, full) = resident.get(&format!("/b/{SLUG}/api/state"));
+    let full: serde_json::Value = serde_json::from_str(&full).unwrap();
+    assert!(!full["sessions"].as_array().unwrap().is_empty(), "{full}");
+
+    let (status, lean) = get_with_query(&resident, &format!("/b/{SLUG}/api/state"), "sessions=0");
+    assert_eq!(status, 200, "{lean}");
+    let lean: serde_json::Value = serde_json::from_str(&lean).unwrap();
+    assert_eq!(lean["sessions"], serde_json::json!([]));
+    for key in ["tasks", "gates", "workers", "hubs"] {
+        assert!(lean[key].is_array(), "{key}");
+    }
+    assert_eq!(lean["gates"].as_array().unwrap().len(), 1, "{lean}");
 }
 
 #[test]
@@ -378,6 +620,8 @@ struct FakeTmux {
     clients: PathBuf,
     /// What `display-message` answers: where a window lives, as `session<TAB>group`.
     home: PathBuf,
+    /// What `capture-pane` prints: the screen of every pane.
+    screen: PathBuf,
 }
 
 impl FakeTmux {
@@ -394,6 +638,7 @@ impl FakeTmux {
              -V) echo \"tmux 3.4\" ;;\n\
              *new-window*) [ -f \"$FAKE_TMUX_LOG.failnew\" ] && { echo \"no space for a new window\" >&2; exit 1; } ;;\n\
              *display-message*) cat \"$FAKE_TMUX_HOME\" ;;\n\
+             *capture-pane*) cat \"$FAKE_TMUX_SCREEN\" ;;\n\
              *list-panes*) cat \"$FAKE_TMUX_PANES\" ;;\n\
              *list-clients*) cat \"$FAKE_TMUX_CLIENTS\" ;;\n\
              *kill-pane*|*kill-window*) [ -f \"$FAKE_TMUX_LOG.onkill\" ] && sh \"$FAKE_TMUX_LOG.onkill\"; [ -n \"$FAKE_TMUX_KILL\" ] && kill \"$FAKE_TMUX_KILL\" ;;\n\
@@ -409,12 +654,15 @@ impl FakeTmux {
         std::fs::write(&clients, "").unwrap();
         let home = root.join("home.txt");
         std::fs::write(&home, "").unwrap();
+        let screen = root.join("screen.txt");
+        std::fs::write(&screen, "").unwrap();
         FakeTmux {
             bin,
             log: root.join("tmux.log"),
             panes,
             clients,
             home,
+            screen,
         }
     }
 
@@ -452,6 +700,7 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
     let panes = tmux.panes.to_string_lossy().to_string();
     let clients = tmux.clients.to_string_lossy().to_string();
     let home = tmux.home.to_string_lossy().to_string();
+    let screen = tmux.screen.to_string_lossy().to_string();
     let kill = kill.map(|pid| pid.to_string()).unwrap_or_default();
     Resident::start_with(
         fixture,
@@ -461,6 +710,7 @@ fn resident_with_tmux(fixture: &Fixture, tmux: &FakeTmux, kill: Option<u32>) -> 
             ("FAKE_TMUX_PANES", &panes),
             ("FAKE_TMUX_CLIENTS", &clients),
             ("FAKE_TMUX_HOME", &home),
+            ("FAKE_TMUX_SCREEN", &screen),
             ("FAKE_TMUX_KILL", &kill),
         ],
     )
@@ -2256,6 +2506,59 @@ fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
         session_of(&quiet, "worker-one")["lastActivityAt"],
         1_790_000_000
     );
+}
+
+#[test]
+fn a_session_says_what_its_pane_last_showed_only_when_asked() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(
+        &tmux.screen,
+        include_str!("../src/fixtures/panes/claude-idle-after-turn.txt"),
+    )
+    .unwrap();
+    let running = Sleeper::start();
+    let one = session_worktree(&fixture, "one", None, None, running.0);
+    place_worker(&one, "@5");
+    let panes = |activity: i64| {
+        std::fs::write(
+            &tmux.panes,
+            format!("%5\t1\t/dev/ttys005\t@5\tadjutant-test\t1\tone\t{activity}\n"),
+        )
+        .unwrap();
+    };
+    panes(1_790_000_000);
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let captures = || tmux.logged().matches("capture-pane").count();
+    let state_at = |query: &str| -> serde_json::Value {
+        let (status, body) = get_with_query(&resident, &format!("/b/{SLUG}/api/state"), query);
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str(&body).unwrap()
+    };
+
+    // The ordinary poll reads no screen and says nothing of one.
+    let plain = state_of(&resident);
+    assert!(session_of(&plain, "worker-one").get("lastLine").is_none());
+    assert_eq!(captures(), 0, "{}", tmux.logged());
+    // Nor does a poll that leaves the sessions out.
+    let lean = state_at("sessions=0&lines=1");
+    assert_eq!(lean["sessions"], serde_json::json!([]));
+    assert_eq!(captures(), 0, "{}", tmux.logged());
+
+    // Asked for, the line above the input box.
+    let asked = state_at("lines=1");
+    assert_eq!(
+        session_of(&asked, "worker-one")["lastLine"],
+        "✻ Brewed for 3s · done 2:20",
+        "{asked}"
+    );
+    assert_eq!(captures(), 1);
+    // A window that has not moved is not read again.
+    state_at("lines=1");
+    assert_eq!(captures(), 1, "{}", tmux.logged());
+    // How soon a window that has moved is read again depends on the clock, so that is left to
+    // the unit test of `LastLines`.
 }
 
 fn write_gate_file(fixture: &Fixture, slug: &str, id: &str, kind: &str, worktree: &Path) {

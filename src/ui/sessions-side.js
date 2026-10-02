@@ -445,18 +445,14 @@ function sideTaskOf(s) {
   return { b, task };
 }
 
-/* A link to another board's page: the same token, since it is one per machine. */
-const sideBoardUrl = (b, hash) => `${b.base}/?token=${enc(TOKEN)}${hash}`;
-
 function openSideTask(b, task, tab) {
-  if (b.own) {
+  const open = () => {
     if (tab) return openTask(task.id, tab);
-    setView('board');
-    // selectTask toggles: a card already open would be closed by the click that asks for it.
-    if (selectedTaskId !== task.id) selectTask(task.id);
-    return;
-  }
-  location.href = sideBoardUrl(b, `#task/${enc(task.id)}${tab ? `/${tab}` : ''}`);
+    openTaskPanel(task.id);
+  };
+  // Another board is switched to in place, and the task opened once its state is in.
+  if (b.own) return open();
+  onBoard(b.slug, open);
 }
 
 function sideChildAction(act, id, s) {

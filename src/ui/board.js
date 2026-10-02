@@ -55,7 +55,7 @@ function stuckOf(task) {
    comes from the server, which knows which states mean Jules is busy. */
 const JULES_LABEL = { QUEUED:'待機中', PLANNING:'計画中', IN_PROGRESS:'作業中', AWAITING_PLAN_APPROVAL:'計画の承認待ち',
                       AWAITING_USER_FEEDBACK:'返事待ち', PAUSED:'一時停止', COMPLETED:'完了', FAILED:'失敗' };
-/* The one rule for what a session's state reads as, for the card, the side sheet and the full
+/* The one rule for what a session's state reads as, for the card, the task panel and the full
    view alike: an answer not in yet, or one that failed, is said as such rather than as a state. */
 const julesText = j => j.error ? '状態を読めません' : j.checking ? '確認中' : (JULES_LABEL[j.state] || j.state || '');
 function julesLine(task) {
@@ -79,23 +79,27 @@ let showOlderDone = false;
 
 /* The buttons a card has for the worker behind it. Each runs on the server through the same
    templates the commands use; the log line says which command that was. */
-async function focusHub() {
+async function focusHub(slug = null) {
   const line = 'adj focus';
   try {
-    const data = await api('/api/hub/focus', { method: 'POST', body: '{}' });
+    const data = await boardApi(slug ? `/b/${slug}` : BASE, '/api/hub/focus', { method: 'POST', body: '{}' });
     note(line, false, data.present ? (data.ran ? 'hub のタブを前に出しました' : 'hub のタブが見つかりませんでした') : 'hub は動いていません');
   } catch (e) { note(`${line} → ${e.message}`, true); }
 }
 
 /* `confirmed` is set by the close dialog: closing stops the worker, so it is asked there first. */
-async function worktreeAct(action, worktree, confirmed = false) {
+/* The board a worktree belongs to, for the merged state of 「すべて」 and the review queue. */
+const slugOfWorktree = wt => ((state.gates || []).find(g => g.worktree === wt) || (state.tasks || []).find(t => t.worktree === wt))?._slug || null;
+
+async function worktreeAct(action, worktree, confirmed = false, slug = null) {
+  if (!slug && scopeAll()) slug = slugOfWorktree(worktree);
   const line = { focus: `adj focus --worktree ${worktree}`, ide: `adj ide --worktree ${worktree}`,
                  close: `adj close --worktree ${worktree}` }[action];
   // With no editor configured the server can only refuse, so say how to set one instead.
   if (action === 'ide' && !ideReady()) { openIdeDialog(); return; }
   if (action === 'close' && !confirmed) { openCloseDialog(worktree); return; }
   try {
-    const data = await api(`/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
+    const data = await boardApi(slug ? `/b/${slug}` : BASE, `/api/worktrees/${action}`, { method: 'POST', body: JSON.stringify({ worktree }) });
     const why = action === 'focus' ? (data.present ? (data.ran ? 'タブを前に出しました' : 'worker のタブが見つかりませんでした') : 'worker は動いていません')
               : action === 'close' ? (data.closed ? 'タブを閉じました' : 'まだ閉じていません（確認待ちかもしれません）')
               : 'エディタで開きました';
@@ -133,13 +137,14 @@ function seenRecords() {
   catch { seenCache = new Set(); }
   return seenCache;
 }
-const isUnread = r => !seenRecords().has(r.id);
+// Keyed like the review queue names a record, so records of several boards do not share a mark.
+const isUnread = r => !seenRecords().has(gateRef(r));
 function markSeen(id) {
   seenCache = null;
   const seen = seenRecords();
   if (seen.has(id)) return;
   seen.add(id);
-  const live = new Set(allRecords().map(r => r.id));
+  const live = new Set(allRecords().map(gateRef));
   try { localStorage.setItem(SEEN_KEY(), JSON.stringify([...seen].filter(x => live.has(x)))); }
   catch {}
 }
@@ -149,8 +154,10 @@ window.addEventListener('storage', e => {
   if (view === 'board') render();
   else if (view === 'task') redrawTaskView();
 });
-const allRecords = () => (state.tasks || []).flatMap(t => t.records || []);
+// A record of a merged state carries its board, so answering it reaches the right one.
+const allRecords = () => (state.tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
+const recordByRef = ref => allRecords().find(r => gateRef(r) === ref) || (ref && !String(ref).includes('/') ? recordById(ref) : undefined);
 const recordSeq = r => +(/-record-(\d+)$/.exec(r.id)?.[1] || 1);
 const recordsOf = task => [...(task.records || [])].sort((a, b) =>
   (a.openedAt || '').localeCompare(b.openedAt || '') || recordSeq(a) - recordSeq(b));
@@ -179,7 +186,7 @@ function chipsOf(task) {
   const chips = [];
   for (const r of Object.values(latest)) {
     const [text, tone] = recordSummary(r);
-    chips.push({ id: r.id, text: text + ((r.answers || []).length ? ' ↩' : ''), tone, unread: isUnread(r) });
+    chips.push({ id: r.id, text: text + ((r.answers || []).length ? ' ↩' : ''), tone, unread: isUnread(task._slug && !r._slug ? { ...r, _slug: task._slug } : r) });
     if (r.kind === 'verify' && (r.manual || []).length) {
       chips.push({ id: r.id, text: `手で見る ${r.manual.length}件`, tone: '', unread: false });
     }
@@ -190,9 +197,7 @@ function chipsOf(task) {
 function openRecord(id) {
   const r = recordById(id);
   if (r && r.task) return openTask(r.task, TAB_OF_KIND[r.kind] || 'history', id);
-  focused = id;
-  setView('review');
-  renderReview();
+  goToGate(id);
 }
 
 /* ── Inline reply forms on human board ── */
@@ -224,17 +229,17 @@ async function act(action, id, choice) {
 
   try {
     const t = (state.tasks || []).find(x => x.id === id);
-    const gate = t ? openGate(t) : (state.gates || []).find(g => g.id === id);
+    const gate = t ? openGate(t) : (state.gates || []).find(g => gateRef(g) === id);
     const replyEl = document.querySelector(`textarea[data-reply="${id}"]`);
     const reply = replyEl ? replyEl.value.trim() : '';
 
     switch (action) {
       case 'start': {
         if (gate) {
-          await submitAnswer('approve', undefined, gate.id, '');
+          await submitAnswer('approve', undefined, gateRef(gate), '');
         } else if (t) {
           try {
-            await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+            await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
               method: 'POST', body: JSON.stringify({ autoStart: true }),
             });
           } catch (e) {
@@ -246,38 +251,48 @@ async function act(action, id, choice) {
       }
       case 'shelve': {
         if (gate) {
-          await submitAnswer('reject', undefined, gate.id, '');
+          await submitAnswer('reject', undefined, gateRef(gate), '');
         } else if (t) {
-          await move(t.id, 'backlog');
+          // The queue is one board's; from 「すべて」 the card's own board takes it.
+          if (scopeAll()) {
+            try {
+              await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
+                method: 'POST', body: JSON.stringify({ status: 'backlog' }),
+              });
+            } catch (e) {
+              note(`adj task update --id ${t.id} --status backlog → ${e.message}`, true);
+              succeeded = false;
+            }
+          } else await move(t.id, 'backlog');
         }
         break;
       }
       case 'approve': {
         const decision = gate?.kind === 'result' ? 'ack' : 'approve';
         if (gate) {
-          await submitAnswer(decision, undefined, gate.id, reply);
+          await submitAnswer(decision, undefined, gateRef(gate), reply);
         }
         break;
       }
       case 'choice': {
         if (gate && choice) {
-          await submitAnswer('choice', choice, gate.id, reply);
+          await submitAnswer('choice', choice, gateRef(gate), reply);
         }
         break;
       }
       case 'send-reject': {
         const decision = gate?.kind === 'verify' || gate?.kind === 'diff' ? 'changes' : 'reject';
         if (gate) {
-          await submitAnswer(decision, undefined, gate.id, reply || '差し戻し');
+          await submitAnswer(decision, undefined, gateRef(gate), reply || '差し戻し');
         }
         break;
       }
       case 'send-changes': {
         if (gate) {
-          await submitAnswer('changes', undefined, gate.id, reply || '修正指示');
+          await submitAnswer('changes', undefined, gateRef(gate), reply || '修正指示');
         } else if (t && reply) {
           try {
-            await api(`/api/tasks/${encodeURIComponent(t.id)}`, {
+            await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
               method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
             });
           } catch (e) {
@@ -289,13 +304,13 @@ async function act(action, id, choice) {
       }
       case 'send-answer': {
         if (gate) {
-          await submitAnswer('answer', undefined, gate.id, reply || '回答');
+          await submitAnswer('answer', undefined, gateRef(gate), reply || '回答');
         }
         break;
       }
       case 'send-ask': {
         if (gate) {
-          await submitAnswer('ask', undefined, gate.id, reply || '追加の質問');
+          await submitAnswer('ask', undefined, gateRef(gate), reply || '追加の質問');
         }
         break;
       }
@@ -312,6 +327,15 @@ async function act(action, id, choice) {
   } finally {
     acting.delete(id);
   }
+}
+
+/* In 「すべて」 a card says which board it came from; on a board of its own that is known. */
+function originChip(item) {
+  if (!scopeAll() || !item?._slug) return '';
+  const b = boards.find(x => x.slug === item._slug);
+  const name = b ? (b.hub || repoNameOf(b)) : item._slug;
+  const title = b ? boardName(b) + (b.hub ? ` (${b.nwo})` : '') : item._slug;
+  return `<span class="origin-chip" title="${esc(title)}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(name)}</span></span>`;
 }
 
 function humanActions(task, col, gate) {
@@ -377,13 +401,11 @@ function humanActions(task, col, gate) {
       </button>
     `;
   } else if (col === 'prreview') {
-    const prUrl = httpUrl(task.pr);
     buttons = `
-      ${prUrl ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="btn-m3-primary" style="text-decoration:none;"><span class="material-symbols-outlined">open_in_new</span><span>GitHub で見る</span></a>` : ''}
-      <button type="button" class="btn-m3-tonal" data-act="refresh-prs" data-id="${esc(task.id)}">
+      ${scopeAll() ? '' : `<button type="button" class="btn-m3-primary" data-act="refresh-prs" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">sync</span><span>PR確認</span>
-      </button>
-      <button type="button" class="btn-m3-text" data-act="changes" data-id="${esc(task.id)}">
+      </button>`}
+      <button type="button" class="${scopeAll() ? 'btn-m3-tonal' : 'btn-m3-text'}" data-act="changes" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">rate_review</span><span>指摘をメモ</span>
       </button>
     `;
@@ -392,6 +414,9 @@ function humanActions(task, col, gate) {
       <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(task.id)}">
         <span class="material-symbols-outlined">chat</span><span>回答する</span>
       </button>
+      ${readySessionOfTask(task) ? `<button type="button" class="btn-m3-tonal" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}">
+        <span class="material-symbols-outlined">terminal</span><span>ターミナルで答える</span>
+      </button>` : ''}
     `;
   }
   if (gate && gate.choices && gate.choices.length) {
@@ -405,7 +430,7 @@ function humanActions(task, col, gate) {
 }
 
 function humanGateActions(gate, col) {
-  const open = openReplies[gate.id];
+  const open = openReplies[gateRef(gate)];
   if (open) {
     const ph = open === 'answer' ? '回答を入力してください...'
              : open === 'ask' ? '追加で聞きたい内容を入力してください...'
@@ -417,13 +442,13 @@ function humanGateActions(gate, col) {
                     : '差し戻す';
     return `
       <div class="hcard-reply">
-        <textarea data-reply="${esc(gate.id)}" placeholder="${esc(ph)}"></textarea>
+        <textarea data-reply="${esc(gateRef(gate))}" placeholder="${esc(ph)}"></textarea>
         <div class="hcard-actions">
-          <button type="button" class="btn-m3-primary" data-act="send-${open}" data-id="${esc(gate.id)}">
+          <button type="button" class="btn-m3-primary" data-act="send-${open}" data-id="${esc(gateRef(gate))}">
             <span class="material-symbols-outlined">send</span>
             <span>${esc(sendLabel)}</span>
           </button>
-          <button type="button" class="btn-m3-text" data-act="cancel" data-id="${esc(gate.id)}">やめる</button>
+          <button type="button" class="btn-m3-text" data-act="cancel" data-id="${esc(gateRef(gate))}">やめる</button>
         </div>
       </div>
     `;
@@ -431,42 +456,42 @@ function humanGateActions(gate, col) {
   let buttons = '';
   if (col === 'dispatch') {
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">play_arrow</span><span>着手する</span>
       </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">undo</span><span>Backlog に戻す</span>
       </button>
     `;
   } else if (col === 'plan' || col === 'diff') {
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">check</span><span>承認する</span>
       </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">reply</span><span>差し戻す</span>
       </button>
     `;
   } else if (col === 'verify') {
     const isResult = gate.kind === 'result';
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">check</span><span>${isResult ? '了解' : '確認した'}</span>
       </button>
-      <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${isResult ? '追加で聞く' : '直してほしい'}</span>
       </button>
     `;
   } else if (col === 'question') {
     buttons = `
-      <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(gateRef(gate))}">
         <span class="material-symbols-outlined">chat</span><span>回答する</span>
       </button>
     `;
   }
   if (gate.choices && gate.choices.length) {
     buttons += gate.choices.map(c => `
-      <button type="button" class="btn-m3-tonal" data-act="choice" data-choice="${esc(c.id)}" data-id="${esc(gate.id)}">
+      <button type="button" class="btn-m3-tonal" data-act="choice" data-choice="${esc(c.id)}" data-id="${esc(gateRef(gate))}">
         <span>${esc(c.label || c.id)}</span>
       </button>
     `).join('');
@@ -479,6 +504,7 @@ function humanCard(task, col) {
   el.className = 'card hcard' + (selectedTaskId === task.id ? ' selected' : '');
   el.id = `human-${task.id}`;
   el.dataset.id = task.id;
+  if (task._slug) el.dataset.slug = task._slug;
 
   const gate = openGate(task);
   const mins = waitingMinutes(task);
@@ -495,45 +521,41 @@ function humanCard(task, col) {
     why = 'worker は PR を出して待っています。GitHub でレビューしてください';
   }
 
-  const prUrl = httpUrl(task.pr);
-  const prNumber = prUrl ? prNumberOf(prUrl) : null;
-
   const w = workerOf(task);
   const phaseStr = task.status === 'queued' ? '着手前'
     : (w?.phase ? `${PHASE_LABEL[w.phase] || w.phase}で停止中` : `${task.status}で停止中`);
 
   el.innerHTML = `
     <div class="card-header-row">
-      ${issueNumber ? `
-        <a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
-          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
-          <span>${esc(issueNumber)}</span>
-        </a>
-      ` : `
-        <span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>
-      `}
+      ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
+      ${ghChipsHtml(task)}
       <span class="wait-time ${waitTone(mins)}" title="待たせている時間">
         <span class="material-symbols-outlined">schedule</span>
         <span>${minutesLabel(mins)}待ち</span>
       </span>
     </div>
+    ${originChip(task)}
     <div class="title">${esc(task.title)}</div>
     ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : (why ? `<div class="why">${esc(why)}</div>` : '')}
-    ${col === 'prreview' && prUrl ? `<div class="pills"><a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く"><span class="material-symbols-outlined">merge</span>PR #${esc(prNumber || '')}</a></div>` : ''}
     ${humanActions(task, col, gate)}
     <div class="hcard-foot">
       <span>${esc(phaseStr)}</span>
-      <button type="button" class="agent-back" data-jump-agent="${esc(task.id)}" title="エージェントのボードでこのカードを見る">
-        <span class="material-symbols-outlined">smart_toy</span>
-        <span>エージェントで見る</span>
-      </button>
+      <span class="hcard-foot-links">
+        ${readySessionOfTask(task) ? `<button type="button" class="agent-back" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}">
+          <span class="material-symbols-outlined">terminal</span>
+          <span>ターミナル</span>
+        </button>` : ''}
+        <button type="button" class="agent-back" data-jump-agent="${esc(task.id)}" title="エージェントのボードでこのカードを見る">
+          <span class="material-symbols-outlined">smart_toy</span>
+          <span>エージェントで見る</span>
+        </button>
+      </span>
     </div>
   `;
 
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('a') || e.target.closest('textarea') || e.target.closest('input')) return;
-    if (gate) judgeGate(gate.id);
-    else selectTask(task.id);
+    onBoard(task._slug, () => openTaskPanel(task.id));
   };
   return el;
 }
@@ -542,7 +564,8 @@ function humanGateCard(gate, col) {
   const el = document.createElement('div');
   el.className = 'card hcard';
   el.id = `human-${gate.id}`;
-  el.dataset.id = gate.id;
+  el.dataset.id = gateRef(gate);
+  if (gate._slug) el.dataset.slug = gate._slug;
 
   const mins = stampSecs(gate.openedAt) ? Math.max(0, Math.floor((Date.now() - stampSecs(gate.openedAt) * 1000) / 60000)) : 0;
   const wtName = gate.worktree ? gate.worktree.split('/').pop() : gate.id;
@@ -556,6 +579,7 @@ function humanGateCard(gate, col) {
         <span>${minutesLabel(mins)}待ち</span>
       </span>
     </div>
+    ${originChip(gate)}
     <div class="title">${esc(gate.title)}</div>
     ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : `<div class="why">${esc(why)}</div>`}
     ${humanGateActions(gate, col)}
@@ -567,7 +591,7 @@ function humanGateCard(gate, col) {
 
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('a') || e.target.closest('textarea') || e.target.closest('input')) return;
-    judgeGate(gate.id);
+    onBoard(gate._slug, () => judgeGate(gate.id));
   };
   return el;
 }
@@ -580,6 +604,7 @@ function agentCard(task) {
   el.className = 'card' + (hcol ? ' waiting' : '') + (stuck && !hcol ? ' stuck' : '') + (compact ? ' compact' : '') + (selectedTaskId === task.id ? ' selected' : '');
   el.id = `agent-${task.id}`;
   el.dataset.id = task.id;
+  if (task._slug) el.dataset.slug = task._slug;
 
   const live = ['dispatched', 'pr'].includes(task.status);
   const worker = live ? workerOf(task) : null;
@@ -598,20 +623,15 @@ function agentCard(task) {
 
   h += `
     <div class="card-header-row">
-      ${issueNumber ? `
-        <a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
-          <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
-          <span>${esc(issueNumber)}</span>
-        </a>
-      ` : `
-        <span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>
-      `}
+      ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
+      ${ghChipsHtml(task)}
       ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
       ${task.status === 'queued' && task.order != null ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>` : ''}
     </div>
   `;
 
   // 2. Title
+  h += originChip(task);
   h += `<div class="title">${esc(task.title)}</div>`;
 
   // 3. Worker Status (or Jules)
@@ -642,11 +662,7 @@ function agentCard(task) {
   if (!task.autoStart && task.status !== 'done') {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
   }
-  const prUrl = httpUrl(task.pr);
-  if (prUrl) {
-    const prNumber = prNumberOf(prUrl);
-    metaBadges.push(`<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="m3-pill pill-blue" style="text-decoration:none;" title="PRを開く (${esc(prUrl)})"><span class="material-symbols-outlined" style="font-size:12px;">merge</span>PR${prNumber ? ` #${esc(prNumber)}` : ''}</a>`);
-  } else if (live && worker?.phase === 'pr') {
+  if (!httpUrl(task.pr) && live && worker?.phase === 'pr') {
     metaBadges.push('<span class="m3-pill pill-neutral"><span class="material-symbols-outlined" style="font-size:12px;">hourglass_top</span>PR 作成中</span>');
   }
   if (metaBadges.length) {
@@ -712,8 +728,7 @@ function agentCard(task) {
             : ''}
         </div>
         <div class="card-button-row">
-          ${task.worktree ? `<button type="button" class="m3-icon-button" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
-          ${readySessionOfTask(task) ? `<button type="button" class="m3-icon-button" title="このセッションの tmux をボードで開く" data-term-session="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">web_asset</span><span>端末</span></button>` : ''}
+          ${readySessionOfTask(task) ? `<button type="button" class="m3-icon-button" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
           ${task.worktree ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
           ${task.status === 'backlog' ? `<button type="button" class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
         </div>
@@ -741,7 +756,7 @@ function agentCard(task) {
   el.innerHTML = h;
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('a')) return;
-    selectTask(task.id);
+    onBoard(task._slug, () => openTaskPanel(task.id));
   };
   return el;
 }
@@ -801,7 +816,7 @@ function renderColumns(force = false) {
               <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
               <span class="col-count-pill">${allItems.length}</span>
             </div>
-            ${def.id === 'prreview' ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
+            ${def.id === 'prreview' && !scopeAll() ? `<button type="button" class="col-btn-nudge" title="PRマージ済みタスクを確認" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
           </div>
           ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
         </div>
@@ -864,7 +879,7 @@ function renderColumns(force = false) {
       col.className = 'col' + (isNarrow ? ' narrow' : '') + (isEmpty ? ' empty' : '');
       col.dataset.col = def.id;
 
-      const nextBtn = def.id === 'before'
+      const nextBtn = def.id === 'before' && !scopeAll()
         ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" onclick="nudgeHub()"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
         : '';
 
@@ -949,25 +964,14 @@ function ghostEl(worker) {
   return el;
 }
 
-function selectTask(id) {
-  selectedTaskId = (selectedTaskId === id ? null : id);
-  for (const card of document.querySelectorAll('#boards .card')) {
-    card.classList.toggle('selected', card.dataset.id === selectedTaskId);
-  }
-  renderDrawer();
-}
-
-function closeDrawer() {
-  selectedTaskId = null;
-  for (const card of document.querySelectorAll('#boards .card')) {
-    card.classList.remove('selected');
-  }
-  renderDrawer();
-}
-
-function goToGate(gateId) {
-  focused = gateId;
-  setView('review');
+/* A gate is named by its board and id in the review queue, which reads several boards: two of
+   them can open a gate of one kind in the same second. `slug` is the board it is on; from a
+   board's own page that is the board shown. */
+function goToGate(gateId, slug = null) {
+  const on = slug || (multiBoard && nav.board && nav.board !== 'all' ? nav.board : null);
+  const ref = on ? `${on}/${gateId}` : gateId;
+  focused = ref;
+  go({ view: 'review', item: ref }, { replace: view === 'review' });
   renderReview();
 }
 
@@ -976,30 +980,33 @@ function goToGate(gateId) {
    such view and opens in the review view. */
 function judgeGate(gateId) {
   const g = (state.gates || []).find(x => x.id === gateId);
-  const owner = g?.task && (state.tasks || []).find(t => t.id === g.task);
-  if (owner) openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id);
+  const owner = g?.task && (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
+  if (owner) onBoard(g._slug, () => openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id));
   else goToGate(gateId);
 }
 
-/* The レビュー tab: the first gate in the queue, where it is answered; the review view when the
-   queue is empty, which says so. */
+/* The レビュー tab: the review view, one queue across every board. Without an item it picks the
+   first one waiting on its own. */
 function goToQueue() {
   // Already on the queue: stay on the one being read, and on whatever is typed for it.
   if (view === 'review') return;
-  const first = (state.gates || [])[0];
-  if (first) judgeGate(first.id);
-  else setView('review');
+  // Not the item last read in another view: the queue's first is.
+  focused = null;
+  reviewPane = 'judge';
+  if (multiBoard) return go({ view: 'review' });
+  setView('review');
+  renderReview();
 }
 
-/* The review comments of the task the side sheet is open on, once a person asked for them.
+/* The review comments of the task the panel is open on, once a person asked for them.
    Kept here rather than in /api/state: listing them is a round trip to GitHub, done when
-   somebody wants to choose, and the choice has to survive the side sheet being redrawn. */
+   somebody wants to choose, and the choice has to survive the panel being redrawn. */
 let relay = { taskId: null, loading: false, error: '', findings: [], picked: new Set() };
 
 async function loadFindings(id) {
   const asked = { taskId: id, loading: true, error: '', findings: [], picked: new Set() };
   relay = asked;
-  renderDrawer();
+  renderTaskPanel();
   let data = null, failed = null;
   try { data = await api(`/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
   // Another list was asked for meanwhile — another task's, or this one again. That one's
@@ -1013,7 +1020,7 @@ async function loadFindings(id) {
     note(`adj jules findings --id ${id}`, false, `${relay.findings.length} 件`);
   }
   relay.loading = false;
-  renderDrawer();
+  renderTaskPanel();
 }
 
 async function relayPicked(id) {
@@ -1022,17 +1029,17 @@ async function relayPicked(id) {
   if (!comments.length || relay.posting) return;
   const asked = relay;
   asked.posting = true;
-  renderDrawer();
+  renderTaskPanel();
   const line = `adj jules relay --id ${id} ${comments.map(c => `--comment ${c}`).join(' ')}`;
   try {
     await api(`/api/tasks/${encodeURIComponent(id)}/relay`, { method: 'POST', body: JSON.stringify({ comments }) });
     note(line, false, `${comments.length} 件を PR にコメントしました。Jules が読んで直します`);
-    // Read again only if the side sheet is still on this list; otherwise the reload would
+    // Read again only if the panel is still on this list; otherwise the reload would
     // replace whatever is being looked at now.
     if (relay === asked && selectedTaskId === id) await loadFindings(id);
   } catch (e) { note(`${line} → ${e.message}`, true); }
   asked.posting = false;
-  if (relay === asked) renderDrawer();
+  if (relay === asked) renderTaskPanel();
 }
 
 function relayHtml(task) {
@@ -1071,221 +1078,615 @@ function relayHtml(task) {
   return h + `</div>`;
 }
 
-function renderDrawer() {
-  const drawer = document.getElementById('task-drawer');
-  if (!drawer) return;
+/* ── The task panel ────────────────────────────────────────────────────────────────────────
+   One task at a time, beside the sidebar: `selectedTaskId` is the task it shows and `nav.pane`
+   the tab. Where it sits is only a class on body (panel-right, panel-pop), so the terminal in
+   #tp-term-host is never moved, rebuilt or redrawn: a terminal that is moved reconnects. The
+   redraws below touch the parts around it, and never the host or what holds it. */
+const tp = id => document.getElementById(id);
+const taskById = id => (state.tasks || []).find(t => t.id === id);
+
+function markSelectedCards() {
+  for (const card of document.querySelectorAll('#boards .card')) {
+    card.classList.toggle('selected', card.dataset.id === selectedTaskId);
+  }
+}
+
+/* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
+function showTaskPanel(id) {
+  pendingTask = null;
+  selectedTaskId = id;
+  markSelectedCards();
+  renderTaskPanel();
+}
+
+/* A click on a card or one of its buttons: another card is a step in the history, the other tab
+   of the card that is open replaces the one it is on. */
+function openTaskPanel(id, pane = 'detail') {
+  pendingTask = null;
+  selectedTaskId = id;
+  markSelectedCards();
+  go({ task: id, pane }, { replace: id === nav.task });
+}
+
+/* The panel's state, without the address: for a move the address already made. */
+function hideTaskPanelState() {
+  pendingTask = null;
+  panelPop = false;
+  selectedTaskId = null;
+  panelScrolledFor = null;
+  disposePanelTerminal();
+  markSelectedCards();
+  renderTaskPanel();
+}
+
+/* A screen with no panel (the review queue): the address follows it. */
+function dismissTaskPanel() {
+  hideTaskPanelState();
+  if (nav.task) setNav({ task: null, pane: 'detail' });
+}
+
+function closeTaskPanel() {
+  hideTaskPanelState();
+  if (nav.task) go({ task: null, pane: 'detail' });
+}
+
+/* 'left' and 'right' are the saved side; 'pop' is a large dialog that goes back to the side
+   when closed or clicked away from. */
+function placePanel(where) {
+  if (where === 'pop') panelPop = true;
+  else {
+    panelPop = false;
+    prefs.panelSide = where;
+    savePrefs();
+  }
+  renderTaskPanel();
+}
+
+/* A session is there to open a terminal on when its worktree has one at all. */
+const hasSession = s => !!s && sessionState(s) !== 'none';
+/* The tab shown: ターミナル only where there is a session, whatever the address says. */
+const paneOf = task => nav.pane === 'term' && hasSession(sessionOfTask(task)) ? 'term' : 'detail';
+
+/* The sidebar is the icon rail when the window is narrow, when a session's terminal takes the
+   width of the セッション tab, and while the panel sits on its left. */
+const narrowRail = matchMedia('(max-width: 1024px)');
+const termRail = matchMedia('(max-width: 1199px)');
+function applyRailMode() {
+  const cls = document.body.classList;
+  const byPanel = cls.contains('panel-open') && !cls.contains('panel-right') && !cls.contains('panel-pop');
+  cls.toggle('rail-icons', narrowRail.matches || byPanel || (cls.contains('sess-term-open') && termRail.matches));
+}
+narrowRail.addEventListener('change', applyRailMode);
+termRail.addEventListener('change', applyRailMode);
+// Before the first poll has drawn anything, a narrow window already has its icon rail.
+applyRailMode();
+
+/* What each part was last drawn from: a part is drawn again only when it changed. */
+let panelScrolledFor = null;
+const panelSig = { head: '', tabs: '', gate: '', rest: '', bar: '', ph: '' };
+function setPanelPart(part, el, html) {
+  if (panelSig[part] === html) return;
+  panelSig[part] = html;
+  el.innerHTML = html;
+}
+
+function renderTaskPanel() {
+  const panel = tp('task-panel');
+  if (!panel) return;
+  const hub = hubOfRef(selectedTaskId);
+  const task = selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
+  // A card the board no longer lists, or a hub that left its list, takes the panel with it.
+  if (selectedTaskId && !task && !hub) return dismissTaskPanel();
+  const shown = !!(task || hub) && (view === 'board' || view === 'sessions');
+  const cls = document.body.classList;
+  panel.hidden = !shown;
+  tp('tp-scrim').hidden = !(shown && panelPop);
+  cls.toggle('panel-open', shown);
+  cls.toggle('panel-right', prefs.panelSide === 'right');
+  cls.toggle('panel-pop', shown && panelPop);
+  document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
+  applyRailMode();
+  // The list marks the session the panel is open on.
+  if (view === 'sessions') applySessionSelection();
+  markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
-  if (!selectedTaskId) {
-    drawer.classList.add('hidden');
-    renderHandForm(null);
-    return;
-  }
-  if (view !== 'board') {
-    drawer.classList.add('hidden');
-    return;
-  }
-  const task = (state.tasks || []).find(t => t.id === selectedTaskId);
-  if (!task) {
-    drawer.classList.add('hidden');
-    renderHandForm(null);
-    selectedTaskId = null;
-    return;
-  }
-  drawer.classList.remove('hidden');
+  if (!task && !hub) return renderHandForm(null);
+  // In the task view the panel waits, with its terminal, for the board to come back.
+  if (!shown) return;
 
-  const colId = columnOf(task);
-  const colObj = COLUMNS.find(c => c.id === colId);
-  const gate = openGate(task);
+  const colId = task ? columnOf(task) : null;
+  const gate = task ? openGate(task) : null;
+  const s = hub ? hubSessionOf(hub) : sessionOfTask(task);
+  const pane = hub ? hubPaneOf(hub, s) : paneOf(task);
 
-  const badgesEl = document.getElementById('drawer-badges');
-  if (badgesEl) {
-    badgesEl.innerHTML = `
-      <span class="m3-pill ${gate ? 'pill-warn' : 'pill-blue'}">${colObj ? colObj.label : task.status}</span>
-      <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--md-sys-color-outline);margin-left:4px">${esc(task.id)}</span>
-    `;
+  setPanelPart('head', tp('tp-head'), hub ? hubPanelHeadHtml(hub, s) : panelHeadHtml(task));
+  setPanelPart('tabs', tp('tp-tabs'), hub ? hubPanelTabsHtml(hub, s, pane) : panelTabsHtml(task, gate, s, pane));
+
+  // Shown before the terminal is mounted: a hidden host has no size to fit to.
+  const reveal = pane === 'term' && tp('tp-term').hidden;
+  tp('tp-detail').hidden = pane === 'term';
+  tp('tp-term').hidden = pane !== 'term';
+  // Another task starts at the top, not where the last one was scrolled to: set once the pane
+  // is shown, since a hidden one has no scroll to set.
+  if (pane === 'detail' && panelScrolledFor !== selectedTaskId) {
+    panelScrolledFor = selectedTaskId;
+    tp('tp-detail').scrollTop = 0;
   }
-  const titleEl = document.getElementById('drawer-title');
-  if (titleEl) titleEl.textContent = task.title;
-  const expandBtn = document.getElementById('drawer-expand-btn');
-  if (expandBtn) expandBtn.onclick = () => openTask(task.id);
+  syncPanelTerminal(selectedTaskId, s, pane);
+  setPanelPart('bar', tp('tp-term-bar'), termBarHtml(s));
+  const ph = tp('tp-term-ph');
+  ph.hidden = !!panelTerm.term;
+  setPanelPart('ph', ph, panelTerm.term ? '' : termPlaceholderHtml(s));
+  if (reveal && panelTerm.term) {
+    // It was sized while hidden, which it skips; asked again now that it has a size.
+    panelTerm.term.fit();
+    panelTerm.term.focus();
+  }
 
-  let head = '';
+  setPanelPart('links', tp('tp-links'), hub ? '' : ghRowsHtml(task));
+  setPanelPart('gate', tp('tp-gate'), hub ? '' : panelGateHtml(task, gate));
+  setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : panelRestHtml(task, colId));
+  renderHandForm(!hub && colId === 'backlog' ? task : null);
+}
 
-  if (gate) {
-    const [label] = kindOf(gate.kind);
-    head += `
-      <div class="m3-card-attention-box">
-        <div style="font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px;">
-          <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
-          <span>【${esc(label)}】あなたの判断待ち</span>
-        </div>
-        <div style="font-size:12.5px;">${esc(gate.title)}</div>
-        ${stopWhy(gate).length ? `<div style="font-size:11.5px;margin-top:2px;">止めた理由: ${esc(stopWhy(gate).join(' / '))}</div>` : ''}
-        <button class="btn-m3-primary" style="margin-top:6px;align-self:flex-start;" data-judge="${esc(gate.id)}">
-          <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span>
-          <span>判定画面を開く</span>
-        </button>
+function panelHeadHtml(task) {
+  const hcol = humanColOf(task);
+  const stuck = stuckOf(task);
+  const colObj = COLUMNS.find(c => c.id === columnOf(task));
+  const pill = hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています</span>`
+    : stuck ? `<span class="m3-pill pill-err">${esc(stuck)}</span>`
+    : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
+  const b = selectedBoard();
+  const origin = b ? boardName(b) : (state.repo || '').split('/').pop();
+  return `
+    <div class="tp-head-main">
+      <div class="tp-badges">
+        <span class="tp-key" title="${esc(task.id)}">${esc(task.id)}</span>
+        ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
+        ${pill}
       </div>
-    `;
-  }
+      <h2 class="tp-title">${esc(task.title)}</h2>
+    </div>
+    ${panelBtnsHtml('<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>')}`;
+}
 
-  let body = '';
+/* The head's buttons, which are the same for a task and a hub: `jump` is the one of its own. */
+function panelBtnsHtml(jump) {
+  const place = (where, icon, label, on) =>
+    `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+  return `<div class="tp-head-btns">
+      ${jump}
+      ${place('left', 'left_panel_open', '左に置く', prefs.panelSide === 'left' && !panelPop)}
+      ${place('right', 'right_panel_open', '右に置く', prefs.panelSide === 'right' && !panelPop)}
+      ${place('pop', 'open_in_new', 'ポップアウト', panelPop)}
+      <button type="button" class="tool-btn" data-tp-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+    </div>`;
+}
+
+/* `off` is why the tab cannot be used (its tooltip), or falsy. */
+const panelTab = (pane, id, label, extra, off) =>
+  `<button type="button" role="tab" id="tp-tab-${id}" class="tp-tab${pane === id ? ' on' : ''}" data-pane="${id}" aria-selected="${pane === id}" aria-controls="${id === 'term' ? 'tp-term' : 'tp-detail'}"${off ? ` disabled title="${esc(off)}"` : ''}>${label}${extra}</button>`;
+
+function panelTabsHtml(task, gate, s, pane) {
+  const usable = hasSession(s) && !!state.boardTerminal?.available;
+  const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
+  return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '')
+    + panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>' : '', !usable && hint);
+}
+
+/* ── 詳細 ── */
+const secTitle = text => `<div class="tp-sec-title">${text}</div>`;
+const kv = (label, value) => `<div class="tp-kv"><span>${label}</span><strong>${value}</strong></div>`;
+const monoKv = (label, value, title = '') => `<div class="tp-kv"><span>${label}</span><code title="${esc(title)}">${esc(value)}</code></div>`;
+
+/* The open gate. A decision that needs no comment is one click; reading the plan or the diff,
+   and anything that wants a comment, is the judging screen. Not humanActions(): its reply box
+   is found by `textarea[data-reply]`, which two on one page would share. */
+function panelGateHtml(task, gate) {
+  if (!gate) return '';
+  const [label] = kindOf(gate.kind);
+  const col = gateHumanCol(gate.kind);
+  const why = gate.problem || gate.why || '';
+  const reasons = stopWhy(gate);
+  const quick = col === 'dispatch' ? [['start', '着手する', 'play_arrow']]
+    : col === 'plan' ? [['approve', '承認', 'check']]
+    : col === 'diff' ? [['approve', '承認して PR へ', 'check']]
+    : col === 'verify' ? [['approve', gate.kind === 'result' ? '了解' : '確認した', 'check']]
+    : [];
+  const btn = ([action, text, icon]) =>
+    `<button type="button" class="btn-m3-primary" data-tp-act="${action}"><span class="material-symbols-outlined" style="font-size:16px;">${icon}</span><span>${text}</span></button>`;
+  return `
+    <div class="m3-card-attention-box">
+      <div class="tp-gate-head">
+        <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
+        <span>【${esc(label)}】あなたの判断待ち</span>
+        <span class="tp-gate-wait">${esc(minutesLabel(waitingMinutes(task)))}待ち</span>
+      </div>
+      <div style="font-size:12.5px;">${esc(gate.title)}</div>
+      ${why ? `<div style="font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;">${esc(why)}</div>` : ''}
+      ${reasons.length ? `<div style="font-size:11.5px;">止めた理由: ${esc(reasons.join(' / '))}</div>` : ''}
+      <div class="tp-gate-actions">
+        ${quick.map(btn).join('')}
+        <button type="button" class="${quick.length ? 'btn-m3-tonal' : 'btn-m3-primary'}" data-judge="${esc(gate.id)}"><span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span><span>判定画面を開く</span></button>
+        ${col === 'question' && readySessionOfTask(task) ? `<button type="button" class="btn-m3-tonal" data-pane="term"><span class="material-symbols-outlined" style="font-size:16px;">terminal</span><span>ターミナルで答える</span></button>` : ''}
+      </div>
+    </div>`;
+}
+
+const STEPS = [['plan', '計画'], ['implement', '実装'], ['selfreview', 'セルフレビュー'], ['pr', 'PR']];
+
+function panelRestHtml(task, colId) {
+  const live = ['dispatched', 'pr'].includes(task.status);
+  const worker = live ? workerOf(task) : null;
+  const at = agentColOf(task);
+  // Before the first step nothing is lit; after the last, all of them are.
+  const now = at === 'done' ? STEPS.length : STEPS.findIndex(([id]) => id === at);
+  const mins = worker?.phase ? phaseMinutes(worker) : null;
+  let h = '';
+
+  h += `<div class="m3-filled-card">${secTitle('工程')}
+    <ol class="tp-steps">${STEPS.map(([, text], i) => `<li class="${i < now ? 'done' : i === now ? 'now' : ''}">${esc(text)}</li>`).join('')}</ol>
+    ${worker?.phase ? `<div class="tp-line">worker は${esc(PHASE_LABEL[worker.phase] || worker.phase)}${worker.present ? '' : '（停止）'}${mins != null ? `（${esc(minutesLabel(mins))}前から）` : ''}</div>` : ''}
+    <div class="tp-kvs">
+      ${kv('完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—'))}
+      ${kv('止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—'))}
+      ${task.executor === 'jules' ? kv('実装', httpUrl(task.jules?.url)
+        ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" class="tp-link"><span>Jules ${esc(julesText(task.jules))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
+        : `Jules${task.julesSession ? '' : '（計画の承認後に渡す）'}`) : ''}
+    </div>
+  </div>`;
 
   // Newest first: the one the worker left last is the one that describes where it is now.
   const records = recordsOf(task).reverse();
-  if (records.length) {
-    body += `<div class="m3-filled-card"><div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">記録（止めずに進んだもの）</div>` +
-      records.map(r => {
-        const [label] = kindOf(r.kind);
-        const [text, tone] = recordSummary(r);
-        const isGood = tone === 'good';
-        const isBad = tone === 'bad';
-        const pillClass = isGood ? 'pill-good' : isBad ? 'pill-err' : 'pill-warn';
-        const icon = isGood ? 'check_circle' : isBad ? 'cancel' : 'info';
-        return `<div class="d-record" style="display:flex;flex-direction:column;gap:4px;padding:8px 0;border-top:1px solid var(--md-sys-color-outline-variant);">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span class="m3-pill ${pillClass}">
-              <span class="material-symbols-outlined" style="font-size:12px;margin-right:2px;">${icon}</span>
-              <span>${esc(label)}: ${esc(text)}</span>
-            </span>
-          </div>
-          <div style="font-size:11px;color:var(--md-sys-color-outline);">${ago(r.openedAt)}に記録</div>
-          <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
-        </div>`;
-      }).join('') + `</div>`;
-  }
+  h += `<div class="m3-filled-card">${secTitle('記録（止めずに進んだもの）')}
+    ${records.length ? records.map(r => {
+      const [label] = kindOf(r.kind);
+      const [text, tone] = recordSummary(r);
+      const pillClass = tone === 'good' ? 'pill-good' : tone === 'bad' ? 'pill-err' : 'pill-warn';
+      const icon = tone === 'good' ? 'check_circle' : tone === 'bad' ? 'cancel' : 'info';
+      return `<div class="tp-record">
+        <span class="m3-pill ${pillClass}"><span class="material-symbols-outlined" style="font-size:12px;margin-right:2px;">${icon}</span><span>${esc(label)}: ${esc(text)}</span></span>
+        <div class="tp-muted">${ago(r.openedAt)}に記録</div>
+        <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
+      </div>`;
+    }).join('') : '<div class="tp-muted">記録はまだありません</div>'}
+  </div>`;
+  if (task.julesSession && httpUrl(task.pr) && live) h += relayHtml(task);
 
-  const drawerPrUrl = httpUrl(task.pr);
-  body += `
-    <div class="m3-filled-card">
-      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">基本情報</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12.5px;">
-        <div style="display:flex;flex-direction:column;gap:2px;">
-          <span style="color:var(--md-sys-color-outline);font-size:11px;">完了条件</span>
-          <strong style="color:var(--md-sys-color-on-surface);">${esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')}</strong>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:2px;">
-          <span style="color:var(--md-sys-color-outline);font-size:11px;">確認ポイント</span>
-          <strong style="color:var(--md-sys-color-on-surface);">${esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—')}</strong>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:2px;">
-          <span style="color:var(--md-sys-color-outline);font-size:11px;">ブランチ</span>
-          <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.branch || '—')}</code>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:2px;">
-          <span style="color:var(--md-sys-color-outline);font-size:11px;">worktree</span>
-          <code style="font-family:var(--font-mono);font-size:12px;color:var(--md-sys-color-on-surface);word-break:break-all;">${esc(task.worktree ? task.worktree.split('/').pop() : '—')}</code>
-        </div>
-        ${task.executor === 'jules' ? `<div style="display:flex;flex-direction:column;gap:2px;">
-          <span style="color:var(--md-sys-color-outline);font-size:11px;">実装</span>
-          ${httpUrl(task.jules?.url)
-            ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>Jules ${esc(julesText(task.jules))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
-            : `<strong style="color:var(--md-sys-color-on-surface);">Jules${task.julesSession ? '' : '（計画の承認後に渡す）'}</strong>`}
-        </div>` : ''}
-        ${drawerPrUrl ? `<div style="display:flex;flex-direction:column;gap:2px;">
-          <span style="color:var(--md-sys-color-outline);font-size:11px;">PR</span>
-          <a href="${esc(drawerPrUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(drawerPrUrl)}" style="color:var(--md-sys-color-primary);font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:4px;"><span>${prNumberOf(drawerPrUrl) ? `#${esc(prNumberOf(drawerPrUrl))}` : 'PR を開く'}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>
-        </div>` : ''}
-      </div>
-    </div>
-  `;
-
-  if (task.worktree) {
-    body += `
-      <div class="m3-filled-card">
-        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:8px;">開発環境の操作</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" data-focus="${esc(task.worktree)}">
-            <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
-            <span>ターミナル前面表示</span>
-          </button>
-          ${readySessionOfTask(task) ? `<button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" title="このセッションの tmux をボードで開く" data-term-session="${esc(task.id)}">
-            <span class="material-symbols-outlined" style="font-size:16px;">web_asset</span>
-            <span>ボードで端末を開く</span>
-          </button>` : ''}
-          <button class="btn-m3-tonal" style="padding:6px 14px;font-size:12px;" title="${ideTitle()}" data-ide="${esc(task.worktree)}">
-            <span class="material-symbols-outlined" style="font-size:16px;">code</span>
-            <span>IDE で開く</span>
-          </button>
-          ${workerOf(task)?.present ? `<button class="btn-m3-danger" style="padding:6px 14px;font-size:12px;" data-close="${esc(task.worktree)}">
-            <span class="material-symbols-outlined" style="font-size:16px;">close</span>
-            <span>タブを閉じる</span>
-          </button>` : ''}
-        </div>
-      </div>
-    `;
-  }
-
-  if (task.julesSession && httpUrl(task.pr) && ['dispatched', 'pr'].includes(task.status)) {
-    body += relayHtml(task);
-  }
-
-  if (task.instruction && colId !== 'backlog') {
-    body += `
-      <div class="m3-filled-card">
-        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">エージェントへの申し送り（指示）</div>
-        <p style="font-size:13px;line-height:1.6;color:var(--md-sys-color-on-surface);white-space:pre-wrap;">${esc(task.instruction)}</p>
-      </div>
-    `;
-  }
-
-  if (task.body) {
-    body += `
-      <div class="m3-filled-card">
-        <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">依頼内容・プロンプト</div>
-        <p style="font-size:13px;line-height:1.6;color:var(--md-sys-color-on-surface);white-space:pre-wrap;">${esc(task.body)}</p>
-      </div>
-    `;
-  }
+  h += `<div class="m3-filled-card">${secTitle('作業場所')}
+    ${task.worktree || task.branch ? `<div class="tp-kvs">
+      ${monoKv('worktree', task.worktree ? task.worktree.split('/').pop() : '—', task.worktree || '')}
+      ${monoKv('ブランチ', task.branch || '—')}
+    </div>` : '<div class="tp-muted">worktree はまだありません</div>'}
+    ${task.worktree ? `<button type="button" class="btn-m3-tonal tp-ide" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;">code</span><span>IDE</span></button>` : ''}
+  </div>`;
 
   // The latest few only: the whole history is a click away in the task view's 経過 tab.
   const all = gatesOf(task);
-  body += `
-    <div class="m3-filled-card" style="display:flex;flex-direction:column;">
-      <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">経過</div>
-      ${timelineHtml(task, all, 5)}
-      <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;margin-top:6px;" data-history="${esc(task.id)}">経過をすべて見る →</button>
-    </div>
-  `;
+  h += `<div class="m3-filled-card" style="display:flex;flex-direction:column;">${secTitle('経過')}
+    ${timelineHtml(task, all, 5)}
+    <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;margin-top:6px;" data-history="${esc(task.id)}">経過をすべて見る →</button>
+  </div>`;
+  if (task.instruction && colId !== 'backlog') {
+    h += `<div class="m3-filled-card">${secTitle('エージェントへの申し送り（指示）')}<p class="tp-text">${esc(task.instruction)}</p></div>`;
+  }
+  if (task.body) {
+    h += `<div class="m3-filled-card">${secTitle('依頼内容・プロンプト')}<p class="tp-text">${esc(task.body)}</p></div>`;
+  }
+  return h;
+}
 
-  const headEl = document.getElementById('drawer-head');
-  const restEl = document.getElementById('drawer-rest');
-  if (headEl && restEl) {
-    headEl.innerHTML = head;
-    restEl.innerHTML = body;
-    for (const part of [headEl, restEl]) {
-      part.querySelectorAll('[data-record]').forEach(b =>
-        b.addEventListener('click', () => openRecord(b.dataset.record)));
-      part.querySelectorAll('[data-judge]').forEach(b =>
-        b.addEventListener('click', () => judgeGate(b.dataset.judge)));
-      // A gate in 経過 opens where the task view reads it, rather than being repeated here.
-      part.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
-        const g = all.find(x => x.id === b.dataset.open);
-        if (g) openTask(task.id, TAB_OF_KIND[g.kind] || 'history', g.id);
-      }));
-      part.querySelectorAll('[data-history]').forEach(b =>
-        b.addEventListener('click', () => openTask(b.dataset.history, 'history')));
-      part.querySelectorAll('[data-focus]').forEach(b =>
-        b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
-      part.querySelectorAll('[data-ide]').forEach(b =>
-        b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
-      part.querySelectorAll('[data-term-session]').forEach(b =>
-        b.addEventListener('click', () => openTaskTerminal(b.dataset.termSession)));
-      part.querySelectorAll('[data-close]').forEach(b =>
-        b.addEventListener('click', () => worktreeAct('close', b.dataset.close)));
-      part.querySelectorAll('[data-findings]').forEach(b =>
-        b.addEventListener('click', () => loadFindings(b.dataset.findings)));
-      part.querySelectorAll('[data-relay]').forEach(b =>
-        b.addEventListener('click', () => relayPicked(b.dataset.relay)));
-      part.querySelectorAll('[data-relay-pick]').forEach(b =>
-        b.addEventListener('change', () => {
-          if (b.checked) relay.picked.add(b.dataset.relayPick); else relay.picked.delete(b.dataset.relayPick);
-          renderDrawer();
-        }));
+/* ── A hub in the panel ──────────────────────────────────────────────────────────────────────
+   `selectedTaskId` is `hub:<id>`, and the panel draws the same parts: the hub's session is the
+   terminal, and 詳細 is what the hub is handling and what can be done to it. */
+/* The page's own hub is the one its state counts; another board's hub is counted by its row in
+   the board list. */
+const hubOther = h => { const own = pageHub(); return !!own && own.id !== h.id; };
+const hubRowOf = h => (multiBoard ? boards.find(b => b.slug === h.slug) : null) || null;
+/* Where the hub's own requests go: its board's route when it is not the page's. */
+const hubBaseOf = h => multiBoard && hubOther(h) ? `/b/${h.slug}` : BASE;
+
+/* Why the hub's terminal cannot be opened, as [the tab's hint, its tooltip]; null when it can. */
+function hubTermWhy(h, s) {
+  if (!s.present) return hubStartingNow(h) ? ['起動中', 'hub を起動しています'] : ['hub 停止中', 'hub が止まっています'];
+  if (!state.boardTerminal?.available) return ['端末はボードから開けません', '端末はボードから開けません'];
+  if (!boardTerminalReady(s)) return ['tmux の外', 'tmux の外で動いている hub は、ボードから端末を開けません'];
+  return null;
+}
+const hubPaneOf = (h, s) => nav.pane === 'term' && !hubTermWhy(h, s) ? 'term' : 'detail';
+
+function hubPanelHeadHtml(h, s) {
+  const row = hubRowOf(h);
+  const since = sinceLabel(row?.hubLastAlive);
+  const [pillText, pillCls] = hubStartingNow(h) ? ['起動しています…', 'pill-neutral']
+    : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
+    : s.waiting ? ['入力待ち', 'pill-warn']
+    : ['稼働中', 'pill-good'];
+  const origin = row ? boardName(row) : repoName();
+  const nwo = row?.nwo || state.repo || '';
+  const title = h.parent ? `親タスク hub — ${[h.key, h.title].filter(Boolean).join(' ') || '（キー不明）'}`
+    : `リポジトリ hub — ${nwo}`;
+  const jump = multiBoard && hubOther(h)
+    ? '<button type="button" class="btn-m3-text tp-jump" data-tp-board title="この hub のボードを開く">ボードへ</button>' : '';
+  return `
+    <div class="tp-head-main">
+      <div class="tp-badges">
+        <span class="tp-key" title="${esc(h.id)}">hub</span>
+        ${origin ? `<span class="origin-chip" title="${esc(nwo)}"><span class="material-symbols-outlined" aria-hidden="true">${h.parent ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
+        <span class="m3-pill ${pillCls}">${esc(pillText)}</span>
+      </div>
+      <h2 class="tp-title">${esc(title)}</h2>
+    </div>
+    ${panelBtnsHtml(jump)}`;
+}
+
+function hubPanelTabsHtml(h, s, pane) {
+  const why = hubTermWhy(h, s);
+  return panelTab(pane, 'detail', '詳細', '', '')
+    + panelTab(pane, 'term', 'ターミナル', why ? `<span class="tp-tab-hint">${esc(why[0])}</span>` : s.waiting ? '<span class="tp-wait">入力待ち</span>' : '', why && why[1]);
+}
+
+const HUB_LIST_MAX = 5;
+const hubListMore = n => n > 0 ? `<div class="tp-muted">ほか ${n} 件</div>` : '';
+
+function hubDetailHtml(h, s) {
+  const other = hubOther(h);
+  const row = hubRowOf(h);
+  const startWhy = hubStartWhy(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
+  let html = '';
+  if (!s.present) {
+    const since = sinceLabel(row?.hubLastAlive);
+    html += `<div class="m3-card-attention-box">
+      <div class="tp-gate-head"><span class="material-symbols-outlined" style="font-size:16px;">stop_circle</span><span>hub は${since ? `${esc(since)}から` : ''}止まっています。起動するとここでターミナルを開けます。</span></div>
+      <div class="tp-gate-actions"><button type="button" class="btn-m3-primary" data-tp-hub="start"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'tmux の新しいウィンドウで adj hub を実行します')}"><span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span><span>hub を起動</span></button></div>
+    </div>`;
+  }
+
+  // The page's own board is read from its state; another board's from its row in the list.
+  const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
+  const queued = other ? row?.queued : line.length;
+  const counts = [];
+  if (!other && state.workerSlots) counts.push(kv('worker', `${state.workerSlots.busy} / ${state.workerSlots.max} 稼働`));
+  else if (other && row) counts.push(kv('作業中', `${row.working || 0} 件`));
+  if (!other) counts.push(kv('あなたの確認待ち', `${waitingIn()} 件`));
+  else if (row) counts.push(kv('あなたの確認待ち', `${row.waiting || 0} 件`));
+  if (queued != null) counts.push(kv('待ちキュー', `${queued} 件`));
+  counts.push(kv('受信箱', `${h.inboxCount || 0} 件`));
+  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${counts.join('')}</div></div>`;
+
+  // Only the page's own board has its tasks to name; another board's are read on its own page.
+  if (!other) {
+    html += `<div class="m3-filled-card">${secTitle('待ちキュー')}${line.length
+      ? `<ul class="sess-side-list">${line.slice(0, HUB_LIST_MAX).map(t => `<li><button type="button" class="linkish" data-tp-task="${esc(t.id)}">${esc(t.title)}</button><span class="who">${esc(t.id)}</span></li>`).join('')}</ul>${hubListMore(line.length - HUB_LIST_MAX)}`
+      : '<div class="tp-muted">待ちはありません</div>'}</div>`;
+  }
+
+  // Newest first, as the hub reports them: `inboxCount` is the whole of it.
+  const inbox = (h.inbox || []).slice(0, HUB_LIST_MAX);
+  html += `<div class="m3-filled-card">${secTitle('受信箱')}${inbox.length
+    ? `<ul class="sess-side-list">${inbox.map(m => `<li><div>${esc(m.subject || m.name)}</div><div class="who">${esc([m.kind, m.from, m.at ? when(m.at) : ''].filter(Boolean).join(' ・ '))}</div></li>`).join('')}</ul>${hubListMore((h.inboxCount || 0) - inbox.length)}`
+    : '<div class="tp-muted">受信箱は空です</div>'}</div>`;
+
+  // A stopped hub's start is the banner's.
+  const act = hubActionOf(s);
+  const own = act && act.act !== 'hub-start'
+    ? `<button type="button" class="btn-m3-tonal" data-tp-hub="${act.act.slice(4)}"${act.disabled ? ' disabled' : ''} title="${esc(act.title)}"><span class="material-symbols-outlined" style="font-size:16px;">${act.icon}</span><span>${esc(act.label)}</span></button>` : '';
+  html += `<div class="m3-filled-card">${secTitle('操作')}
+    <div class="tp-gate-actions">
+      <button type="button" class="btn-m3-tonal" data-tp-hub="next" title="adj send --kind next (着手を促す)"><span class="material-symbols-outlined" style="font-size:16px;">bolt</span><span>着手を促す</span></button>
+      <button type="button" class="btn-m3-tonal" data-tp-hub="sync" title="再同期 (adj refresh)"><span class="material-symbols-outlined" style="font-size:16px;">refresh</span><span>再同期</span></button>
+      ${own}
+    </div>
+    <button type="button" class="btn-m3-text tp-reset" data-tp-hub="reset"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）')}">hub をリセット…</button>
+  </div>`;
+  return html;
+}
+
+/* ── ターミナル ── */
+/* The terminal lives in #tp-term-host from its first mount until the task changes or the panel
+   closes. 詳細 only hides the pane around it, so the socket survives; the bar and the note
+   over it are the parts that are drawn again. */
+function syncPanelTerminal(subject, s, pane) { syncTermSlot(panelTerm, subject, s, pane); }
+function disposePanelTerminal() { disposeTermSlot(panelTerm); }
+
+/* A slot is one terminal's place: where it mounts (`host`), what to draw again when it ends
+   (`redraw`) and which board's path it connects through (`base`). The task panel has one and the
+   review view another, and both keep the socket across a redraw the same way. */
+function syncTermSlot(slot, subject, s, pane) {
+  // Another task's (or hub's) socket is not carried over; a fresh one is asked for after
+  // 再開 or 再接続.
+  if (slot.taskId !== subject || (slot.term && s && s.id !== slot.sessionId)
+      || (slot.reconnect && boardTerminalReady(s))) disposeTermSlot(slot);
+  slot.taskId = subject;
+  if (pane !== 'term' || slot.term || !boardTerminalReady(s)) return;
+  // One session, one terminal: the セッション tab lets go of it.
+  const heldBySessions = sessView.selectedId === s.id;
+  if (heldBySessions) detachSessionTerminal();
+  slot.sessionId = s.id;
+  slot.ended = null;
+  const handle = mountSessionTerminal(slot.host(), {
+    sessionId: s.id,
+    base: slot.base(),
+    onEnd: code => {
+      if (slot.term !== handle) return;
+      slot.ended = code;
+      keepScreen({ sessionId: s.id, term: handle });
+      slot.redraw();
+    },
+  });
+  slot.term = handle;
+  // The sessions tab says where its terminal went.
+  if (heldBySessions && view === 'sessions') renderSessionsView();
+}
+
+function disposeTermSlot(slot) {
+  const { term, sessionId } = slot;
+  if (term) {
+    keepScreen({ sessionId, term });
+    term.dispose();
+  }
+  Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
+  // The sessions tab may mount the session again, now that the slot has let go of it.
+  if (term && view === 'sessions') renderSessionsView();
+}
+
+function termBarHtml(s, slot = panelTerm, actions = true) {
+  if (!s || !hasSession(s)) return '';
+  const st = sessionState(s);
+  const last = s.present ? lastOutputText(s) : null;
+  const again = slot.term && slot.ended != null && boardTerminalReady(s);
+  return `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(STATE_LABEL[st])}</span>`
+    + (last ? `<span class="tp-muted">最後の出力: ${esc(last)}</span>` : '')
+    + `<span class="tp-bar-gap"></span>`
+    + (again ? '<button type="button" class="btn-m3-tonal sess-act" data-tp-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>' : '')
+    + (actions ? sessionButtons(s).bar.map(b => actionButtonHtml(b)).join('') : '');
+}
+
+/* Over the host while there is no terminal in it: why not, and the last screen if this page saw
+   one. */
+function termPlaceholderHtml(s) {
+  if (!hasSession(s)) {
+    return `<div class="tp-ph-head">セッションはありません</div>${s?.worktree ? `<div class="tp-muted">${esc(s.worktree)}${s.branch ? `（${esc(s.branch)}）` : ''}</div>` : ''}`;
+  }
+  if (boardTerminalReady(s)) return '<div class="tp-muted">接続しています…</div>';
+  const st = restingState(s);
+  const head = st === 'stopped' ? 'セッションは止まっています' : st === 'ended' ? 'セッションは終了しています'
+    : !s.present ? 'このセッションは動いていません'
+    : 'このセッションの端末はボードから開けません（tmux で動いているセッションだけ開けます）';
+  const shot = sessView.screens[s.id];
+  const mins = shot && state.now != null && shot.at != null ? Math.max(0, Math.floor((state.now - shot.at) / 60)) : null;
+  const resume = canResume(s) ? '' : !s.present && s.kind === 'worker'
+    ? `<div class="tp-muted">${esc(!s.conversation ? '保存された会話がないため再開できません' : state.sessionResume?.reason || 'ボードからは再開できません')}</div>` : '';
+  return `<div class="tp-ph-head">${esc(head)}</div>`
+    + (shot?.lines.length ? `<div class="tp-muted">このページで最後に見た画面${mins == null ? '' : `（${esc(minutesLabel(mins))}前）`}</div><pre class="sess-last-out">${esc(shot.lines.join('\n'))}</pre>` : '')
+    + resume;
+}
+
+/* Events are heard on the panel itself: its parts are drawn again, it is not. */
+tp('task-panel').addEventListener('click', e => {
+  const hub = hubOfRef(selectedTaskId);
+  const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
+  if (!task && !hub) return;
+  const hit = sel => e.target.closest(sel);
+  let b;
+  if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
+  if (hit('[data-tp-close]')) {
+    // Closing a popped-out panel puts it back on its side, as a click outside does; the next closes it.
+    if (panelPop) { panelPop = false; return renderTaskPanel(); }
+    return closeTaskPanel();
+  }
+  if ((b = hit('[data-tp-place]'))) return placePanel(b.dataset.tpPlace);
+  if (hub) return hubPanelClick(e, hub);
+  if (hit('[data-tp-jump]')) {
+    // A popped-out panel is over the card: it goes back to its side first.
+    panelPop = false;
+    renderTaskPanel();
+    return jump('agent', task.id);
+  }
+  if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);
+  if ((b = hit('[data-record]'))) return openRecord(b.dataset.record);
+  if ((b = hit('[data-judge]'))) return judgeGate(b.dataset.judge);
+  // A gate in 経過 opens where the task view reads it, rather than being repeated here.
+  if ((b = hit('[data-open]'))) {
+    const g = gatesOf(task).find(x => x.id === b.dataset.open);
+    if (g) openTask(task.id, TAB_OF_KIND[g.kind] || 'history', g.id);
+    return;
+  }
+  if ((b = hit('[data-history]'))) return openTask(b.dataset.history, 'history');
+  if ((b = hit('[data-ide]'))) return worktreeAct('ide', b.dataset.ide);
+  if ((b = hit('[data-findings]'))) return loadFindings(b.dataset.findings);
+  if ((b = hit('[data-relay]'))) return relayPicked(b.dataset.relay);
+  if ((b = hit('[data-sess-act]'))) {
+    const s = sessionOfTask(task);
+    if (!s || b.disabled) return;
+    // A session resumed from here is connected to once its window exists (syncPanelTerminal).
+    if (b.dataset.sessAct === 'resume') panelTerm.reconnect = true;
+    return runSessionAction(b.dataset.sessAct, s);
+  }
+  if (hit('[data-tp-reconnect]')) {
+    panelTerm.reconnect = true;
+    renderTaskPanel();
+  }
+});
+/* The hub's own buttons. The terminal bar's are the session's (`runSessionAction`), as for a task. */
+function hubPanelClick(e, h) {
+  const hit = sel => e.target.closest(sel);
+  let b;
+  if ((b = hit('[data-tp-hub]'))) {
+    if (b.disabled) return;
+    switch (b.dataset.tpHub) {
+      case 'next': return nudgeHub(hubBaseOf(h));
+      case 'sync': return refreshAll(hubBaseOf(h));
+      case 'start': return hubStart(h.id);
+      case 'stop': return openHubStopDialog(h.id, 'stop');
+      case 'close': return openHubStopDialog(h.id, 'close');
+      case 'reset': return openHubStopDialog(h.id, 'reset');
     }
-    renderHandForm(colId === 'backlog' ? task : null);
+    return;
+  }
+  if ((b = hit('[data-tp-task]'))) return openTaskPanel(b.dataset.tpTask);
+  if (hit('[data-tp-board]')) {
+    // The hub's board, with the hub still in the panel on the tab it was on.
+    panelPop = false;
+    return go({ board: h.slug, task: selectedTaskId, pane: nav.pane });
+  }
+  if ((b = hit('[data-sess-act]'))) {
+    if (b.disabled) return;
+    // A hub started or resumed from here is connected to once its window exists (syncPanelTerminal).
+    if (b.dataset.sessAct === 'resume' || b.dataset.sessAct === 'hub-start') panelTerm.reconnect = true;
+    return runSessionAction(b.dataset.sessAct, hubSessionOf(h));
+  }
+  if (hit('[data-tp-reconnect]')) {
+    panelTerm.reconnect = true;
+    renderTaskPanel();
   }
 }
+tp('task-panel').addEventListener('change', e => {
+  const b = e.target.closest('[data-relay-pick]');
+  if (!b) return;
+  if (b.checked) relay.picked.add(b.dataset.relayPick); else relay.picked.delete(b.dataset.relayPick);
+  renderTaskPanel();
+});
+// Clicking outside a popped-out panel puts it back; it stays open.
+tp('tp-scrim').addEventListener('click', () => { panelPop = false; renderTaskPanel(); });
+
+/* The width is dragged from the edge that faces the page, saved when the pointer is let go;
+   the arrow keys move it a step at a time. */
+function setPanelWidth(raw) {
+  const rail = tp('nav-rail').offsetWidth;
+  prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
+  document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
+}
+tp('tp-resize').addEventListener('keydown', e => {
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop || matchMedia('(max-width: 720px)').matches) return;
+  e.preventDefault();
+  // The panel grows away from its side: toward the right on the left, toward the left on the right.
+  const grow = (e.key === 'ArrowRight') === (prefs.panelSide !== 'right');
+  setPanelWidth(tp('task-panel').offsetWidth + (grow ? 24 : -24));
+  savePrefs();
+});
+tp('tp-resize').addEventListener('pointerdown', e => {
+  if (panelPop || matchMedia('(max-width: 720px)').matches) return;
+  e.preventDefault();
+  const handle = e.currentTarget;
+  handle.setPointerCapture(e.pointerId);
+  document.body.classList.add('tp-dragging');
+  const move = ev => {
+    const rail = tp('nav-rail').offsetWidth;
+    setPanelWidth(prefs.panelSide === 'right' ? innerWidth - ev.clientX : ev.clientX - rail);
+  };
+  const end = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', end);
+    handle.removeEventListener('pointercancel', end);
+    document.body.classList.remove('tp-dragging');
+    savePrefs();
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+});
 
 /* The hand-over form of a backlog task. The board redraws once a minute and on every change of
    state, and a textarea built again loses what is typed into it, the caret, and an IME
@@ -1293,7 +1694,7 @@ function renderDrawer() {
    instruction changed while the box is neither typed in nor focused. When it changed while the
    box is being written, the box is kept and a note says so, with a button to load the new one. */
 function renderHandForm(task) {
-  const el = document.getElementById('drawer-form');
+  const el = document.getElementById('tp-form');
   if (!el) return;
   if (!task) {
     el.replaceChildren();
@@ -1301,7 +1702,7 @@ function renderHandForm(task) {
     return;
   }
   const saved = task.instruction || '';
-  const kept = el.querySelector('#drawer-instruction');
+  const kept = el.querySelector('#tp-instruction');
   if (kept && el.dataset.task === task.id) {
     // Compared with what the box showed, not the saved string: the parser drops a leading newline
     // and turns CRLF into LF, so the saved string can differ from an untouched box.
@@ -1316,19 +1717,19 @@ function renderHandForm(task) {
   el.innerHTML = `
       <div class="m3-filled-card" style="display:flex;flex-direction:column;gap:8px;">
         <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;">キューへの受け渡し</div>
-        <label for="drawer-instruction" style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);">エージェントへの申し送り（指示）</label>
+        <label for="tp-instruction" style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);">エージェントへの申し送り（指示）</label>
         <div data-stale hidden style="font-size:11.5px;color:var(--md-sys-color-error);">
           保存済みの申し送りが別の所で変わりました。いまの入力のまま渡すと上書きします。
           <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;" data-reload>変わった内容を読み込む</button>
         </div>
-        <textarea id="drawer-instruction" placeholder="追加の指示や申し送りがあれば入力（任意）..." style="width:100%;box-sizing:border-box;border-radius:var(--md-shape-corner-xs);border:1px solid var(--md-sys-color-outline-variant);padding:8px 10px;background:var(--md-sys-color-surface-container-high);color:var(--md-sys-color-on-surface);font-size:12.5px;font-family:inherit;resize:vertical;min-height:60px;">${esc(saved)}</textarea>
-        <button class="btn-m3-primary" style="width:100%" data-drawer-hand="${esc(task.id)}">
+        <textarea id="tp-instruction" placeholder="追加の指示や申し送りがあれば入力（任意）..." style="width:100%;box-sizing:border-box;border-radius:var(--md-shape-corner-xs);border:1px solid var(--md-sys-color-outline-variant);padding:8px 10px;background:var(--md-sys-color-surface-container-high);color:var(--md-sys-color-on-surface);font-size:12.5px;font-family:inherit;resize:vertical;min-height:60px;">${esc(saved)}</textarea>
+        <button class="btn-m3-primary" style="width:100%" data-tp-hand="${esc(task.id)}">
           <span class="material-symbols-outlined" style="font-size:16px;">send</span>
           <span>待機キューに渡す</span>
         </button>
       </div>
     `;
-  const textarea = el.querySelector('#drawer-instruction');
+  const textarea = el.querySelector('#tp-instruction');
   el.dataset.shown = textarea.value;
   el.querySelector('[data-reload]').addEventListener('click', () => {
     const now = (state.tasks || []).find(t => t.id === task.id);
@@ -1336,7 +1737,7 @@ function renderHandForm(task) {
     el.replaceChildren();
     renderHandForm(now);
   });
-  el.querySelector('[data-drawer-hand]').addEventListener('click', () =>
+  el.querySelector('[data-tp-hand]').addEventListener('click', () =>
     hand(task.id, textarea.value.trim()));
   textarea.addEventListener('keydown', (e) => {
     // keyCode 229 too: where compositionend comes first, the keydown that confirms the IME
@@ -1347,6 +1748,9 @@ function renderHandForm(task) {
     }
   });
 }
+
+/* The board a card came from, which only 「すべて」 draws cards of. */
+const slugOf = el => scopeAll() ? el.closest('[data-slug]')?.dataset.slug || null : null;
 
 document.addEventListener('click', e => {
   if (!e.target.closest('#boards')) return;
@@ -1368,32 +1772,27 @@ document.addEventListener('click', e => {
   const dh = e.target.closest('[data-hand]');
   if (dh) {
     e.stopPropagation();
-    return openHandoverDialog(dh.dataset.hand);
+    return onBoard(slugOf(dh), () => openHandoverDialog(dh.dataset.hand));
   }
   const di = e.target.closest('[data-ide]');
   if (di) {
     e.stopPropagation();
-    return worktreeAct('ide', di.dataset.ide);
+    return worktreeAct('ide', di.dataset.ide, false, slugOf(di));
   }
   const dt = e.target.closest('[data-term-session]');
   if (dt) {
     e.stopPropagation();
-    return openTaskTerminal(dt.dataset.termSession);
-  }
-  const df = e.target.closest('[data-focus]');
-  if (df) {
-    e.stopPropagation();
-    return worktreeAct('focus', df.dataset.focus);
+    return onBoard(slugOf(dt), () => openTaskPanel(dt.dataset.termSession, 'term'));
   }
   const dg = e.target.closest('[data-gate]');
   if (dg) {
     e.stopPropagation();
-    return judgeGate(dg.dataset.gate);
+    return onBoard(slugOf(dg), () => judgeGate(dg.dataset.gate));
   }
   const dr = e.target.closest('[data-record]');
   if (dr) {
     e.stopPropagation();
-    return openRecord(dr.dataset.record);
+    return onBoard(slugOf(dr), () => openRecord(dr.dataset.record));
   }
 });
 

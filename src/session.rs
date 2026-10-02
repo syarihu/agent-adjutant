@@ -92,6 +92,11 @@ pub struct Session {
     /// Absent when the session is not in tmux or the window is not found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<i64>,
+    /// The last line the session's pane shows above its input box, as the agent drew it. Only
+    /// when the page asked for it (`GET /api/state?lines=1`), and only for a session that runs
+    /// in a tmux window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_line: Option<String>,
     /// How many clients are attached to the session's window, not counting the board's own
     /// `adjboard-*` sessions. Absent when the window is not found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,15 +256,23 @@ mod tests {
             phase_at: None,
             phases: Vec::new(),
             last_activity_at: None,
+            last_line: None,
             attached: None,
             waiting: None,
         };
         let bare = serde_json::to_value(&session).unwrap();
-        for key in ["phases", "lastActivityAt", "attached", "waiting"] {
+        for key in [
+            "phases",
+            "lastActivityAt",
+            "lastLine",
+            "attached",
+            "waiting",
+        ] {
             assert!(bare.get(key).is_none(), "{key} should be left out");
         }
         session.phases = vec![("plan".to_string(), 123), ("verify".to_string(), 456)];
         session.last_activity_at = Some(99);
+        session.last_line = Some("Running tests".to_string());
         session.attached = Some(0);
         session.waiting = Some(SessionWaiting {
             id: "g1".to_string(),
@@ -282,6 +295,7 @@ mod tests {
             serde_json::json!([["plan", 123], ["verify", 456]])
         );
         assert_eq!(full["lastActivityAt"], 99);
+        assert_eq!(full["lastLine"], "Running tests");
         assert_eq!(full["attached"], 0);
         assert_eq!(full["waiting"]["openedAt"], "20260101T000000Z");
         assert!(full["waiting"].get("title").is_none());

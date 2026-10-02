@@ -1,47 +1,80 @@
-/* ── セッション view: a session tree beside the selected session's terminal ── */
-#sessions-view { display:none; height:100%; position:relative; grid-template-columns:auto minmax(0,1fr) auto; }
-.sess-rail {
-  grid-column:1; width:300px; min-height:0; display:flex; flex-direction:column;
+/* ── セッション tab: the board's hubs and their sessions in a list; a session opened beside it ── */
+#sessions-view { display:none; height:100%; position:relative; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
+.sess-list {
+  grid-column:1; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column;
   background:var(--md-sys-color-surface-container-low);
-  border-right:1px solid var(--md-sys-color-outline-variant);
 }
-.sess-main { grid-column:2; min-width:0; min-height:0; display:flex; flex-direction:column; }
-.sess-rail-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--md-sys-color-outline-variant); }
-.sess-filters { display:flex; flex-wrap:wrap; gap:6px; }
-.sess-filters .m3-filter-chip { padding:3px 10px; font-size:11.5px; }
-.sess-scroll { flex:1; min-height:0; overflow-y:auto; padding:6px 8px 12px; }
-.sess-hubrow { display:flex; align-items:center; gap:2px; }
-.sess-fold { flex:none; border:0; background:transparent; color:var(--md-sys-color-on-surface-variant); cursor:pointer; padding:2px; border-radius:var(--md-shape-corner-full); display:inline-flex; }
-.sess-fold:hover { background:var(--md-sys-color-surface-container-high); }
-.sess-children { padding-left:22px; }
-.sess-children[hidden] { display:none; }
+#sess-notice { grid-column:1 / -1; grid-row:1; }
+.sess-main { grid-column:2; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column; }
+/* The terminal and its sidebar come only with a session; until then the list has the page. */
+#sessions-view:not(.term-open) > .sess-main,
+#sessions-view:not(.term-open) > .sess-side { display:none; }
+#sessions-view.term-open { grid-template-columns:340px minmax(0,1fr) auto; }
+#sessions-view.term-open .sess-list { border-right:1px solid var(--md-sys-color-outline-variant); }
+.sess-list-head { padding:10px 18px 8px; color:var(--md-sys-color-primary); border-bottom:1px solid var(--md-sys-color-outline-variant); }
+.sess-list-head .pane-title { color:var(--md-sys-color-on-surface); }
+#sessions-view.term-open .sess-list-head .pane-sub { display:none; }
+.sess-list-scroll { flex:1; min-height:0; overflow-y:auto; padding:0 12px 16px; }
+
+/* A hub's header sticks to the top while its sessions scroll under it. */
+.sess-group { margin-top:10px; }
+.sess-head {
+  position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:8px 10px; border-radius:var(--md-shape-corner-sm);
+  background:var(--md-sys-color-surface-container-high);
+  border:1px solid var(--md-sys-color-outline-variant);
+}
+.sess-head.wait { border-color:var(--md-sys-color-warning); }
+.sess-head.off .sess-head-name { color:var(--md-sys-color-on-surface-variant); }
+.sess-head-ico { flex:none; font-size:18px; color:var(--md-sys-color-on-surface-variant); }
+.sess-head-name { min-width:0; flex:1 1 90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:800; }
+.sess-head-name .key { font-family:var(--font-mono); font-weight:800; margin-right:8px; color:var(--md-sys-color-primary); }
+.sess-head-count { font-size:11.5px; color:var(--md-sys-color-on-surface-variant); white-space:nowrap; }
+.sess-head-count b { color:var(--md-sys-color-warning); font-weight:800; }
+.sess-head-btn { display:inline-flex; align-items:center; gap:4px; padding:3px 12px; font-size:12px; }
+.sess-head-btn .material-symbols-outlined { font-size:16px; }
+.sess-head-btn:disabled { opacity:.5; cursor:not-allowed; }
+.sess-head-btn.on { background:var(--md-sys-color-secondary-container); color:var(--md-sys-color-on-secondary-container); }
+.sess-body { padding:4px 0 0; }
+.sess-group.child { margin-left:8px; }
+.sess-group.child .sess-body { margin-left:8px; padding-left:14px; border-left:2px solid var(--md-sys-color-outline-variant); }
+/* Beside a terminal the count goes, and what waits stays. */
+#sessions-view.term-open .sess-head-n, #sessions-view.term-open .sess-head-sep { display:none; }
+#sessions-view.term-open .sess-head-btn .lbl { display:none; }
+#sessions-view.term-open .sess-head-btn { padding:3px 6px; }
+
 .sess-row {
-  display:flex; align-items:center; gap:8px; width:100%; min-width:0; text-align:left;
-  padding:6px 8px; border:0; border-radius:var(--md-shape-corner-sm); background:transparent;
+  display:flex; align-items:center; gap:10px; width:100%; min-width:0; text-align:left;
+  padding:7px 8px; border:0; border-radius:var(--md-shape-corner-sm); background:transparent;
   color:var(--md-sys-color-on-surface); cursor:pointer; font:inherit;
 }
 button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .sess-row[aria-current="true"] { background:var(--md-sys-color-secondary-container); color:var(--md-sys-color-on-secondary-container); }
-.sess-row.hub { font-weight:700; }
-.sess-ico { flex:none; font-size:18px; }
-.sess-row.waiting .sess-ico { color:var(--md-sys-color-warning); }
-.sess-row.stopped .sess-ico { color:var(--md-sys-color-error); }
-.sess-row.working .sess-ico { color:var(--md-sys-color-success); }
-.sess-row.idle .sess-ico, .sess-row.ended .sess-ico, .sess-row.none .sess-ico { color:var(--md-sys-color-outline); }
-.sess-row-text { display:flex; flex-direction:column; min-width:0; }
+.sess-row-pill { flex:none; width:84px; text-align:center; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sess-row-main { flex:1; display:flex; flex-direction:column; min-width:0; }
 .sess-row-title {
   display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
   overflow-wrap:anywhere; font-size:12.5px; font-weight:600; line-height:1.35;
 }
-.sess-row-branch { font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-on-surface-variant); font-weight:400; }
-.sess-row-key, .sess-row-branch, .sess-row-sub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sess-row-last { font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-on-surface-variant); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sess-row-last:empty { display:none; }
+.sess-row-tag { flex:none; max-width:28%; font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-outline); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sess-row-tag:empty { display:none; }
+.sess-row-open { flex:none; font-size:11.5px; font-weight:700; color:var(--md-sys-color-primary); visibility:hidden; }
+button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-open { visibility:visible; }
+.sess-row.ended { opacity:.6; }
+#sessions-view.term-open .sess-row-last, #sessions-view.term-open .sess-row-open { display:none; }
+/* The row of a session asked for and not started yet (below) is drawn with these. */
+.sess-ico { flex:none; font-size:18px; }
+.sess-row-text { display:flex; flex-direction:column; min-width:0; }
+.sess-row-key, .sess-row-sub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sess-row-key { font-size:12.5px; font-weight:600; }
 .sess-row-sub { font-size:10.5px; color:var(--md-sys-color-outline); font-weight:500; }
-.sess-empty { padding:12px 8px; font-size:12px; color:var(--md-sys-color-outline); }
-.sess-orphans { margin-top:10px; border-top:1px solid var(--md-sys-color-outline-variant); padding-top:6px; }
-.sess-orphans[hidden] { display:none; }
+.sess-empty { padding:10px 8px; font-size:12px; color:var(--md-sys-color-outline); }
+.sess-orphans { margin-top:8px; border-top:1px solid var(--md-sys-color-outline-variant); padding-top:4px; }
 .sess-orphans summary { display:flex; align-items:center; gap:8px; padding:6px 8px; cursor:pointer; font-size:12px; font-weight:600; color:var(--md-sys-color-on-surface-variant); }
 .sess-orphans summary .material-symbols-outlined { font-size:18px; }
+.sess-row.none .sess-row-title { font-family:var(--font-mono); font-weight:500; }
 
 .sess-context {
   display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; padding:8px 14px;
@@ -150,7 +183,7 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 /* The detail sidebar: a column of its own where there is room, floating over the terminal where
    there is not (below). Its sections are always open. */
 .sess-side {
-  grid-column:3; width:340px; min-height:0; display:flex; flex-direction:column;
+  grid-column:3; grid-row:2; width:340px; min-height:0; display:flex; flex-direction:column;
   background:var(--md-sys-color-surface-container-low);
   border-left:1px solid var(--md-sys-color-outline-variant);
 }
@@ -182,33 +215,6 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 #handover-hub-note { margin:0; font-size:12px; color:var(--md-sys-color-outline); }
 #handover-hub-note[hidden] { display:none; }
 
-/* Icons only: the row keeps its state icon, the rest is in its tooltip. */
-.sess-rail.collapsed { width:64px; }
-.sess-rail.collapsed .sess-filters,
-.sess-rail.collapsed .sess-row-text,
-.sess-rail.collapsed .sess-fold,
-.sess-rail.collapsed .sess-orphans-text,
-.sess-rail.collapsed .sess-orphans { display:none; }
-/* The + stays: it is the only way to start a hub or a session from a rail this narrow. */
-.sess-rail.collapsed .sess-rail-head { flex-direction:column; justify-content:center; padding:8px 4px; }
-.sess-rail.collapsed .sess-scroll { padding:6px 4px; }
-.sess-rail.collapsed .sess-children { padding-left:0; }
-.sess-rail.collapsed .sess-row, .sess-rail.collapsed .sess-orphans summary { justify-content:center; padding:6px 0; }
-
-.rail-item[hidden], .rail-dot[hidden] { display:none; }
-.rail-dot { flex:none; width:8px; height:8px; border-radius:50%; background:var(--md-sys-color-error); margin-left:auto; }
-.rail-count:not(.zero) + .rail-dot { margin-left:0; }
-
-/* Below 760px an opened tree floats over the terminal instead of taking its width. */
-@media (max-width: 759px) {
-  #sessions-view { grid-template-columns:64px minmax(0,1fr); }
-  .sess-rail:not(.collapsed) {
-    position:absolute; inset:0 auto 0 0; z-index:30; max-width:calc(100% - 32px);
-    box-shadow:var(--md-elevation-4);
-  }
-  .sess-strip-note { margin-left:0; }
-}
-
 /* Below 1400px the sidebar floats over the terminal rather than taking its width. */
 @media (max-width: 1399px) {
   .sess-side {
@@ -216,32 +222,17 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
     width:min(340px, calc(100% - 32px)); box-shadow:var(--md-elevation-4);
   }
 }
-
-/* On a narrow window the main rail is icons only too, so the terminal keeps its width. */
-@media (max-width: 1199px) {
-  body.view-sessions #nav-rail { width:64px; padding:16px 8px; align-items:center; }
-  body.view-sessions .rail-destinations, body.view-sessions .rail-footer { align-items:center; width:100%; }
-  body.view-sessions .rail-text,
-  body.view-sessions .rail-section-label,
-  body.view-sessions .rail-view,
-  body.view-sessions .repo-info,
-  body.view-sessions .status-pill-group,
-  body.view-sessions .rail-item > span:not(.material-symbols-outlined):not(.rail-badge):not(.rail-count):not(.rail-dot),
-  body.view-sessions .m3-fab-extended > span:not(.material-symbols-outlined) { display:none; }
-  body.view-sessions .rail-item { justify-content:center; padding:10px; }
-  body.view-sessions .m3-fab-extended { justify-content:center; padding:14px; min-width:0; }
-  body.view-sessions .rail-brand { justify-content:center; padding:4px 0 10px; }
-  body.view-sessions .rail-badge,
-  body.view-sessions .rail-count,
-  body.view-sessions .rail-dot { position:absolute; top:2px; right:2px; margin:0; padding:1px 5px; font-size:10px; }
-  body.view-sessions .rail-dot { padding:0; width:8px; height:8px; top:6px; right:6px; }
-  body.view-sessions .rail-tools { flex-direction:column; gap:6px; }
+@media (max-width: 759px) {
+  #sessions-view.term-open { grid-template-columns:minmax(0,1fr); }
+  #sessions-view.term-open .sess-list { display:none; }
+  #sessions-view.term-open > .sess-main { grid-column:1; }
+  .sess-strip-note { margin-left:0; }
 }
 
-/* The + menu opens to the right of its button, which may sit in a rail only 64px wide. */
-.sess-add-wrap { position:relative; }
-.sess-add-wrap .sess-menu { left:0; right:auto; }
-.sess-rail.collapsed .sess-add-wrap .sess-menu { min-width:240px; }
+/* The + sits at the right end of the list's header; its menu opens leftwards from there. */
+.sess-add-wrap { position:relative; margin-left:auto; }
+.sess-add-wrap .sess-menu { left:auto; right:0; }
+.sess-add-wrap .tool-btn:disabled { opacity:.5; cursor:not-allowed; }
 
 /* A session asked for and not started yet: a row in its hub's group, not a button. */
 .sess-row.pending { cursor:default; flex-wrap:wrap; }
@@ -251,8 +242,6 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .sess-row.pending .sess-row-sub { white-space:normal; }
 .sess-pend-btns { display:flex; flex-wrap:wrap; gap:4px; flex-basis:100%; padding-left:26px; }
 .sess-pend-btns .btn-m3-text { font-size:11.5px; padding:2px 8px; }
-.sess-rail.collapsed .sess-pend-btns { display:none; }
-.sess-rail.collapsed .sess-row.pending { cursor:pointer; }
 
 .dlg-error { margin:0; color:var(--md-sys-color-error); font-weight:600; font-size:12.5px; overflow-wrap:anywhere; }
 .dlg-error[hidden], .dlg-note[hidden] { display:none; }

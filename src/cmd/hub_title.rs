@@ -41,6 +41,15 @@ fn file_of(slug: &str) -> std::path::PathBuf {
         .join(format!("{slug}.json"))
 }
 
+/// The title kept for the hub's parent task, if one has been read. Only the file is looked at,
+/// so the board list can use it on every poll.
+pub(super) fn cached_title(slug: &str) -> Option<String> {
+    messaging::read_json(&file_of(slug))?
+        .get("title")?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// The issue the hub's parent task is: the URL a task under the hub names as its parent, else
 /// the one its key stands for in `issueKeys`. None for a key that matches neither, which is
 /// never asked about.

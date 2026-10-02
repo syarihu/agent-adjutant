@@ -126,40 +126,42 @@
   color: var(--md-sys-color-outline);
   padding: 8px 14px 2px;
 }
-.rail-item .rail-sub {
-  display: block;
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--md-sys-color-outline);
-  line-height: 1.2;
-}
-.rail-item .rail-text {
+
+/* ── The board's views: tabs under its title, the layout switches at their right ── */
+.view-tabs-row {
+  flex: 1 0 100%;
   display: flex;
-  flex-direction: column;
-  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: -10px;
 }
-body.layout-split .rail-item[data-tab]:not([aria-current]) {
-  background: color-mix(in srgb, var(--md-sys-color-secondary-container) 35%, transparent);
-}
-.rail-view {
-  display: flex;
-  flex-direction: column;
+.view-tabs-row[hidden], .view-tools[hidden], .view-tab[hidden] { display: none; }
+.view-tabs { display: flex; gap: 2px; }
+.view-tab {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  padding: 6px 8px 4px;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0 0;
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
 }
-.rail-view .m3-segmented-tabs { width: 100%; }
-.rail-view .m3-seg-tab {
-  flex: 1;
-  justify-content: center;
-  padding: 5px 6px;
-  font-size: 11.5px;
-  gap: 3px;
-}
-.rail-view .m3-seg-tab .material-symbols-outlined { font-size: 15px; }
-.rail-divider {
-  height: 1px;
-  background: var(--md-sys-color-outline-variant);
-  margin: 8px 6px;
+.view-tab:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.view-tab.active { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
+.view-tab .material-symbols-outlined { font-size: 18px; }
+.view-tab .rail-badge, .view-tab .rail-count { margin-left: 2px; }
+.view-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-bottom: 5px; }
+.view-tools .m3-seg-tab { padding: 4px 10px; font-size: 12px; gap: 4px; }
+.view-tools .m3-seg-tab .material-symbols-outlined { font-size: 15px; }
+@media (max-width: 720px) {
+  .view-tab .lbl { display: none; }
 }
 body:not(.layout-split) #arrange-switch { display: none; }
 
@@ -184,29 +186,6 @@ body:not(.layout-split) #arrange-switch { display: none; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-.hub-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 0;
-}
-.hub-text { flex: 1; min-width: 0; }
-.hub-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  color: var(--md-sys-color-on-surface);
-}
-.hub-name > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hub-state {
-  padding-left: 14px;
-  font-size: 10.5px;
-  color: var(--md-sys-color-outline);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .hub-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .hub-dot.good { background: var(--md-sys-color-success); }
@@ -327,8 +306,243 @@ main { flex: 1; overflow: hidden; position: relative; }
 #board-view { display: flex; height: 100%; width: 100%; min-width: 0; overflow: hidden; }
 @media (max-width: 900px) {
   #board-view { position: relative; }
-  #board-view #task-drawer { position: absolute; top: 0; right: 0; bottom: 0; max-width: 100%; }
   /* When the top bar wraps, its actions stay on the right of their own line. */
   .top-bar-actions { margin-left: auto; }
 }
 
+
+/* ── Boards in the rail ── */
+.field[hidden] { display: none; }
+.rail-global { display: flex; flex-direction: column; gap: 4px; }
+#board-rows { display: flex; flex-direction: column; gap: 2px; }
+.repo-group { display: flex; flex-direction: column; gap: 2px; }
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--md-shape-corner-md);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  min-width: 0;
+}
+.board-row:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.board-row[aria-current="page"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-weight: 700;
+}
+.board-row.child { margin-left: 18px; }
+.board-row.stopped { opacity: .6; }
+.board-row.stopped:hover { opacity: 1; }
+.board-row .avatar {
+  display: none;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--md-shape-corner-md);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+  font-size: 12px;
+  font-weight: 800;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.board-row .mini-badge {
+  display: none;
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.board-row .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.board-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-row .sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--md-sys-color-outline);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-row .counts { display: flex; align-items: center; gap: 4px; flex: none; }
+.board-row .repo-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.board-row .repo-toggle:hover { background: var(--md-sys-color-surface-container-highest); }
+.board-row .repo-toggle .material-symbols-outlined { font-size: 18px; transition: transform .15s ease; }
+.repo-group.collapsed .repo-toggle .material-symbols-outlined { transform: rotate(-90deg); }
+.repo-group.collapsed .board-row.child { display: none; }
+.hub-dot.off { background: var(--md-sys-color-outline); opacity: .6; }
+.board-row .start-btn {
+  display: none;
+  flex: none;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.board-row.stopped:hover .start-btn,
+.board-row.stopped:focus-within .start-btn { display: inline-flex; }
+.board-row.stopped:hover .counts .rail-count,
+.board-row.stopped:focus-within .counts .rail-count { display: none; }
+/* A running hub's row offers its terminal, in the place a stopped one offers 起動. */
+.board-row .hubterm-btn {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--md-shape-corner-full);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+}
+.board-row .hubterm-btn .material-symbols-outlined { font-size: 18px; }
+.board-row .hubterm-btn:hover { background: var(--md-sys-color-surface-container-highest); }
+.board-row.live:hover .hubterm-btn,
+.board-row.live:focus-within .hubterm-btn { display: inline-flex; }
+.board-row.live:hover .counts .rail-count,
+.board-row.live:focus-within .counts .rail-count { display: none; }
+.origin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.origin-chip .material-symbols-outlined { font-size: 12px; }
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.crumbs:empty { display: none; }
+.crumbs .sep { opacity: .6; }
+.page-title-row { display: flex; align-items: center; gap: 8px; }
+.hub-pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: var(--md-shape-corner-full); }
+.hub-pill.good { background: color-mix(in srgb, var(--md-sys-color-success) 18%, transparent); color: var(--md-sys-color-success); }
+.hub-pill.off { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
+.hub-pill.bad { background: color-mix(in srgb, var(--md-sys-color-error) 14%, transparent); color: var(--md-sys-color-error); }
+
+/* The rail keeps only what a glance needs — repositories as their initials, parent-task hubs
+   as their key number, a badge for what waits. `rail-icons` is set (applyRailMode) on a narrow
+   window, while a session's terminal takes the width of the セッション tab, and while the task
+   panel sits on the left. */
+body { --rail-w: 240px; }
+body.rail-icons { --rail-w: 72px; }
+body.rail-icons #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
+body.rail-icons .rail-brand { padding: 4px 0 10px; }
+body.rail-icons .rail-brand .repo-info,
+body.rail-icons .rail-section-label,
+body.rail-icons .rail-item .rail-label,
+body.rail-icons .board-row .txt,
+body.rail-icons .board-row .counts,
+body.rail-icons .board-row .repo-toggle,
+body.rail-icons .board-row .start-btn,
+body.rail-icons .board-row .hub-dot { display: none; }
+body.rail-icons .m3-fab-extended span:last-child { display: none; }
+body.rail-icons .m3-fab-extended { padding: 12px; }
+body.rail-icons .rail-item { padding: 10px; justify-content: center; }
+body.rail-icons .rail-item .rail-badge,
+body.rail-icons .rail-item .rail-count { position: absolute; top: 0; right: 0; margin: 0; font-size: 10px; padding: 1px 5px; }
+body.rail-icons .board-row { justify-content: center; padding: 4px; }
+body.rail-icons .board-row.child { margin-left: 0; }
+body.rail-icons .board-row .avatar { display: flex; }
+body.rail-icons .board-row .avatar .mini-badge:not(:empty) { display: block; }
+body.rail-icons .board-row.stopped:hover .start-btn,
+body.rail-icons .board-row.stopped:focus-within .start-btn { display: none; }
+body.rail-icons .board-row .hubterm-btn { display: none !important; }
+/* The rail has no fold toggle, so every hub shows. */
+body.rail-icons .repo-group.collapsed .board-row.child { display: flex; }
+body.rail-icons .rail-tools { flex-direction: column; gap: 4px; }
+/* ── The task panel ──
+   A child of body between the sidebar and the page. Left or right is only `order`, and pop-out
+   only `position`: the panel is never moved in the document, so the terminal inside it keeps
+   its connection and just refits to the width it is given. */
+#task-panel {
+  order: 1;
+  flex: none;
+  width: var(--panel-w, 520px);
+  /* The board keeps at least 320px beside the rail, whichever shape that is in. */
+  max-width: calc(100vw - var(--rail-w, 240px) - 320px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--md-sys-color-surface-container-low);
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  z-index: 15;
+}
+#task-panel[hidden] { display: none; }
+#app-main { order: 2; }
+body.panel-right #task-panel { order: 3; border-right: 0; border-left: 1px solid var(--md-sys-color-outline-variant); }
+.tp-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 2; }
+body.panel-right:not(.panel-pop) .tp-resize { right: auto; left: -4px; }
+.tp-resize:hover, body.tp-dragging .tp-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+body.tp-dragging { user-select: none; cursor: col-resize; }
+body.panel-pop .tp-resize { display: none; }
+body.panel-pop #task-panel {
+  position: fixed;
+  max-width: none;
+  inset: 6vh 8vw;
+  width: auto;
+  z-index: 60;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-shape-corner-lg);
+  box-shadow: var(--md-elevation-4);
+  overflow: hidden;
+}
+#tp-scrim { position: fixed; inset: 0; z-index: 59; background: rgba(0, 0, 0, .45); }
+#tp-scrim[hidden] { display: none; }
+/* On a narrow window the panel floats over the board, from either side. */
+@media (max-width: 720px) {
+  #task-panel { max-width: none; position: fixed; top: 0; bottom: 0; left: 72px; width: calc(100% - 100px); z-index: 25; box-shadow: var(--md-elevation-4); }
+  body.panel-right:not(.panel-pop) #task-panel { left: auto; right: 0; width: 88%; }
+  .tp-resize { display: none; }
+}
+
+.rail-item[hidden] { display: none; }
+.single-board .rail-boards-label, .single-board #board-rows { display: none; }
+#btn-hub[hidden], #btn-resync[hidden] { display: none; }
+#btn-hub.on { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }

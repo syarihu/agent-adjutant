@@ -6,8 +6,8 @@
   <div class="rail-brand">
     <div class="brand-badge">adj</div>
     <div class="repo-info">
-      <span class="repo-title" id="repo">…</span>
-      <span class="repo-sub">agent-adjutant</span>
+      <span class="repo-title">ボード</span>
+      <span class="repo-sub" id="boards-sub">…</span>
     </div>
   </div>
 
@@ -17,55 +17,20 @@
   </button>
 
   <div class="rail-destinations">
-    <div class="rail-section-label">ボード</div>
-    <button type="button" class="rail-item" data-tab="human" title="あなたの確認を待っているもの" onclick="showBoard('human')">
-      <span class="material-symbols-outlined" aria-hidden="true">person</span>
-      <span class="rail-text"><span>人</span><span class="rail-sub">あなたの確認待ち</span></span>
-      <span class="rail-badge" id="human-badge">0</span>
-    </button>
-    <button type="button" class="rail-item" data-tab="agent" title="worker の工程" onclick="showBoard('agent')">
-      <span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>
-      <span class="rail-text"><span>エージェント</span><span class="rail-sub">worker の工程</span></span>
-      <span class="rail-count" id="agent-count" title="作業中の worker">0</span>
-    </button>
-
-    <div class="rail-view">
-      <div class="m3-segmented-tabs" id="layout-switch">
-        <button type="button" class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>タブ</button>
-        <button type="button" class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
-      </div>
-      <div class="m3-segmented-tabs" id="arrange-switch">
-        <button type="button" class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
-        <button type="button" class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
-      </div>
+    <div class="rail-global">
+      <div class="rail-section-label">全体</div>
+      <button class="rail-item" id="nav-review" title="要対応レビュー" onclick="goToQueue()">
+        <span class="material-symbols-outlined">mark_chat_unread</span>
+        <span class="rail-label">要対応レビュー</span>
+        <span class="rail-badge" id="gate-count">0</span>
+      </button>
     </div>
 
-    <div class="rail-divider"></div>
-    <button class="rail-item" id="nav-review" title="要対応レビュー" onclick="goToQueue()">
-      <span class="material-symbols-outlined">mark_chat_unread</span>
-      <span>要対応レビュー</span>
-      <span class="rail-badge" id="gate-count">0</span>
-    </button>
-    <button type="button" class="rail-item" id="nav-sessions" title="セッション" hidden onclick="openSessionsView()">
-      <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
-      <span>セッション</span>
-      <span class="rail-count zero" id="sessions-count" title="動いているセッション">0</span>
-      <span class="rail-dot" id="sessions-dot" title="止まった hub / worker があります" hidden></span>
-    </button>
+    <div class="rail-section-label rail-boards-label">ボード</div>
+    <div id="board-rows"></div>
   </div>
 
   <div class="rail-footer">
-    <div class="status-pill-group">
-      <div class="status-row">
-        <span style="font-weight:700">自律 hub</span>
-        <span id="hub" class="state warn">…</span>
-      </div>
-      <div id="hub-rows"></div>
-      <div class="status-row" id="inbox-row" style="display:none">
-        <span>受信箱</span>
-        <span id="inbox" class="state warn"></span>
-      </div>
-    </div>
     <div class="rail-tools">
       <button class="tool-btn" id="btn-notify" onclick="toggleNotify()" title="デスクトップ通知を設定">
         <span class="material-symbols-outlined">notifications</span>
@@ -77,26 +42,66 @@
   </div>
 </aside>
 
+<!-- The task panel is a child of body, between the sidebar and the page, and is never moved:
+     left or right is a class on body (CSS order), so the terminal inside it keeps its socket.
+     Only the parts around #tp-term-host are redrawn; the host and its ancestors are not. -->
+<section id="task-panel" aria-label="タスクのパネル" hidden>
+  <div class="tp-resize" id="tp-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="パネルの幅" title="ドラッグで幅を変える（矢印キーでも変えられます）"></div>
+  <header class="tp-head" id="tp-head"></header>
+  <div class="tp-tabs" role="tablist" id="tp-tabs"></div>
+  <div class="tp-pane" id="tp-detail" role="tabpanel">
+    <div id="tp-links"></div>
+    <div id="tp-gate"></div>
+    <div id="tp-form"></div>
+    <div id="tp-rest"></div>
+  </div>
+  <div class="tp-pane tp-term" id="tp-term" role="tabpanel" hidden>
+    <div class="tp-term-bar" id="tp-term-bar"></div>
+    <div class="tp-term-host" id="tp-term-host"></div>
+    <div class="tp-term-ph" id="tp-term-ph" hidden></div>
+  </div>
+</section>
+<div id="tp-scrim" hidden></div>
+
 <div id="app-main">
   <header class="top-app-bar">
     <div class="page-title-area">
+      <div class="crumbs" id="crumbs"></div>
       <h1 class="page-title" id="page-title">タスクボード</h1>
       <span class="page-subtitle" id="page-subtitle">エージェントの作業と、あなたの確認待ちを分けて表示</span>
     </div>
 
     <div class="top-bar-actions" style="margin-left:auto;">
-      <button class="btn-m3-tonal" style="padding:6px 12px;font-size:12px;" onclick="nudgeHub()" title="adj send --kind next (着手を促す)">
-        <span class="material-symbols-outlined" style="font-size:16px;">bolt</span>
-        <span>着手を促す</span>
+      <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" onclick="openOwnHub()" title="このボードの hub を開く">
+        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+        <span>hub</span>
       </button>
-      <button class="tool-btn" onclick="refreshAll()" title="再同期 (adj refresh)">
+      <button class="tool-btn" id="btn-resync" onclick="refreshAll()" title="再同期 (adj refresh)">
         <span class="material-symbols-outlined">refresh</span>
       </button>
+    </div>
+
+    <div class="view-tabs-row" id="view-tabs-row">
+      <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
+        <button type="button" role="tab" class="view-tab" data-tab="human" aria-controls="board-view" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
+        <button type="button" role="tab" class="view-tab" data-tab="agent" aria-controls="board-view" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
+        <button type="button" role="tab" class="view-tab" data-tab="sessions" aria-controls="sessions-view" id="tab-sessions" title="hub と worker のセッション" hidden><span class="material-symbols-outlined" aria-hidden="true">terminal</span><span class="lbl">セッション</span><span class="rail-badge zero" id="sessions-waiting" title="入力待ち">0</span><span class="rail-count zero" id="sessions-count" title="セッション数">0</span></button>
+      </nav>
+      <div class="view-tools" id="view-tools">
+        <div class="m3-segmented-tabs" id="layout-switch">
+          <button type="button" class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
+          <button type="button" class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
+        </div>
+        <div class="m3-segmented-tabs" id="arrange-switch">
+          <button type="button" class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
+          <button type="button" class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
+        </div>
+      </div>
     </div>
   </header>
 
   <main>
-    <div id="board-view">
+    <div id="board-view" role="tabpanel">
       <div id="boards">
         <section class="pane" id="pane-human">
           <div class="pane-head">
@@ -116,54 +121,46 @@
           <div class="board" id="board-agent"></div>
         </section>
       </div>
-      <aside id="task-drawer" class="hidden">
-        <div class="sidesheet-header">
-          <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1">
-            <div id="drawer-badges" style="display:flex;align-items:center;gap:6px"></div>
-            <h2 id="drawer-title" style="font-size:16px;font-weight:700;line-height:1.4"></h2>
-          </div>
-          <div style="display:flex;align-items:center;gap:4px">
-            <button class="tool-btn" id="drawer-expand-btn" title="詳細画面を開く">
-              <span class="material-symbols-outlined">open_in_full</span>
-            </button>
-            <button class="tool-btn" onclick="closeDrawer()" title="閉じる">
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-        </div>
-        <div class="sidesheet-body" id="drawer-body">
-          <!-- Three parts, so the hand-over form can outlive a redraw of the others. display:contents
-               keeps the body's gap between the cards inside them. -->
-          <div id="drawer-head" style="display:contents"></div>
-          <div id="drawer-form" style="display:contents"></div>
-          <div id="drawer-rest" style="display:contents"></div>
-        </div>
-      </aside>
     </div>
-    <div id="review"><div class="review-inbox-pane rail"></div><div class="review-detail-pane pane"></div></div>
+    <!-- Only the parts named below are drawn again; the terminal host and its parents never are, so the
+         socket survives a switch between 判断 and ターミナル. -->
+    <div id="review">
+      <div class="review-inbox-pane rail">
+        <div class="review-inbox-header">
+          <span class="material-symbols-outlined" aria-hidden="true">inbox</span>
+          <span>要対応 (<span id="rv-count">0</span>)</span>
+        </div>
+        <div class="review-inbox-list"></div>
+      </div>
+      <div class="review-detail-pane pane">
+        <div class="rv-head" id="rv-head"></div>
+        <div class="tp-tabs rv-tabs" id="rv-tabs" role="tablist"></div>
+        <div class="rv-judge" id="rv-judge" role="tabpanel"></div>
+        <div class="tp-pane tp-term rv-term" id="rv-term" role="tabpanel" hidden>
+          <div class="tp-term-bar" id="rv-term-bar"></div>
+          <div class="tp-term-host" id="rv-term-host"></div>
+          <div class="tp-term-ph" id="rv-term-ph" hidden></div>
+        </div>
+      </div>
+    </div>
     <div id="task-view"><div class="rail hidden"></div><div class="tv-main"></div></div>
-    <div id="sessions-view">
-      <aside class="sess-rail" aria-label="セッションの一覧">
-        <div class="sess-rail-head">
-          <button type="button" class="tool-btn" id="sess-collapse" data-sess-collapse aria-expanded="true"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span></button>
+    <div id="sessions-view" role="tabpanel">
+      <!-- Above the list and the terminal alike, so a notice is seen whether or not a session is open. -->
+      <div class="sess-notice" id="sess-notice" hidden></div>
+      <section class="sess-list" aria-label="セッションの一覧">
+        <div class="pane-head sess-list-head">
+          <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+          <span class="pane-title">セッション</span>
+          <span class="pane-sub" id="sess-scope"></span>
           <div class="sess-add-wrap">
             <button type="button" class="tool-btn" id="sess-add" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-add-menu" title="hub やセッションを追加" aria-label="hub やセッションを追加"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
             <div class="sess-menu" id="sess-add-menu" role="menu" aria-labelledby="sess-add" hidden></div>
           </div>
-          <div class="sess-filters">
-            <button type="button" class="m3-filter-chip" data-sess-filter="all">すべて</button>
-            <button type="button" class="m3-filter-chip" data-sess-filter="attention">要対応</button>
-            <button type="button" class="m3-filter-chip" data-sess-filter="running">稼働中</button>
-          </div>
         </div>
-        <div class="sess-scroll">
-          <div class="sess-tree" id="sess-tree"></div>
-          <details class="sess-orphans" id="sess-orphans" hidden>
-            <summary><span class="material-symbols-outlined" aria-hidden="true">folder_off</span><span class="sess-orphans-text">セッションのない worktree（<span id="sess-orphans-count">0</span>）</span></summary>
-            <div id="sess-orphans-list"></div>
-          </details>
+        <div class="sess-list-scroll">
+          <div id="sess-groups"></div>
         </div>
-      </aside>
+      </section>
       <section class="sess-main">
         <div class="sess-context" id="sess-context" hidden>
           <button type="button" class="btn-m3-tonal sess-back" id="sess-back" hidden></button>
@@ -180,7 +177,6 @@
           </div>
           <button type="button" class="tool-btn" id="sess-side-toggle" aria-controls="sess-side" aria-expanded="false" aria-label="詳細を表示" title="詳細を表示"><span class="material-symbols-outlined" aria-hidden="true">right_panel_open</span></button>
         </div>
-        <div class="sess-notice" id="sess-notice" hidden></div>
         <section class="sess-gate" id="sess-gate" aria-label="確認待ちの gate" hidden></section>
         <div class="sess-stage">
           <div class="sess-term-host" id="sess-term-host" hidden></div>
@@ -242,6 +238,8 @@
           <label><input type="radio" name="kind" value="investigate" onchange="syncForm()">調査だけ</label>
         </div>
       </fieldset>
+      <label class="field" id="f-board" hidden><span>作り先</span>
+        <select name="board"></select></label>
       <label class="field"><span>内容</span>
         <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力"></textarea></label>
       <label class="field" id="f-issue"><span>Issue URL</span>
