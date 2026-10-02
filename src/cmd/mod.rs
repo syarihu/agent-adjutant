@@ -1492,6 +1492,32 @@ fn asked_session(
     }
 }
 
+/// Everything a restart of the hub `ctx` addresses has to know can be resumed, checked before
+/// the hub is stopped: a restart that stops the hub and only then finds there is nothing to
+/// come back to has cost the person the session it was meant to keep.
+///
+/// Beyond what `--resume` itself refuses, a `hubRunner` of the person's own with no
+/// `hubResumeRunner` is refused too. Typed out, `--resume` is the person's call to have the
+/// built-in runner reopen it; a button that stops a running hub is not asking anyone.
+pub(super) fn hub_resume_check(ctx: &Context) -> Result<messaging::SavedSession, String> {
+    let saved = saved_hub_session(ctx)?;
+    resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
+    if let Some(refusal) = own_hub_runner_refusal(&ctx.settings) {
+        return Err(refusal);
+    }
+    Ok(saved)
+}
+
+/// Why a hub started by a runner of the person's own cannot be reopened by the built-in one:
+/// `hubRunner` is set and `hubResumeRunner` is not. `None` when that is not the case.
+pub(super) fn own_hub_runner_refusal(settings: &config::Settings) -> Option<String> {
+    (settings.hub_runner.is_some() && settings.hub_resume_runner.is_none()).then(|| {
+        "hubRunner is your own and hubResumeRunner is not set, so the built-in runner \
+         would reopen the session instead of yours"
+            .to_string()
+    })
+}
+
 fn print_performed(done: &terminal::Performed, dry_run: bool) {
     if dry_run {
         println!("{}", done.script);
@@ -1958,7 +1984,7 @@ fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
     // A hub started by a runner of its own would be reopened by the built-in one — without
     // whatever that runner added, or as another agent entirely. Asked for outright, that is
     // the person's call and `--resume` makes it; uninvited, it is not.
-    if ctx.settings.hub_runner.is_some() && ctx.settings.hub_resume_runner.is_none() {
+    if own_hub_runner_refusal(&ctx.settings).is_some() {
         eprintln!(
             "adjutant: not resuming the last session: hubRunner is your own and hubResumeRunner \
              is not set, so the built-in one would reopen it"

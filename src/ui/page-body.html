@@ -496,11 +496,12 @@
     </div>
     <div class="body close-help">
       <p id="hub-stop-lead"></p>
+      <ul id="hub-stop-warnings" class="cleanup-facts" hidden></ul>
       <p id="hub-stop-note">受信箱・タスク・gate の記録は残ります。次に起動すると、hubAutoResumeHours 以内なら同じ会話を再開します。</p>
     </div>
     <div class="foot">
       <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
-      <button type="submit" value="stop" class="btn-m3-danger">
+      <button type="submit" value="stop" id="hub-stop-submit" class="btn-m3-danger">
         <span id="hub-stop-icon" class="material-symbols-outlined" style="font-size:16px;">stop_circle</span>
         <span id="hub-stop-confirm">hub を止める</span>
       </button>
@@ -532,6 +533,32 @@
       <button type="submit" value="close" class="btn-m3-danger">
         <span class="material-symbols-outlined" style="font-size:16px;">close</span>
         <span>タブを閉じる</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="sess-restart-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;">autorenew</span>
+        <span>セッションを再起動</span>
+      </div>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル" aria-label="キャンセル">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body close-help">
+      <p id="sess-restart-lead"></p>
+      <ul id="sess-restart-warnings" class="cleanup-facts" hidden></ul>
+      <p id="sess-restart-note"></p>
+    </div>
+    <div class="foot">
+      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
+      <button type="submit" value="restart" class="btn-m3-primary">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">autorenew</span>
+        <span>セッションを再起動</span>
       </button>
     </div>
   </form>

@@ -105,6 +105,8 @@ adj hub --resume --hub ALPHA-233  # 親タスクの hub（識別子は推測し�
 adj worker --resume               # worktree の中で実行すると、そこで作業していた worker
 ```
 
+ボードの「セッションを再起動」（動いている hub と worker の、端末の上のバーのボタンと、hub のパネルの「操作」）は、今の会話のまま止めて起動し直します。新しい Claude Code に切り替えたいときなどに使います。確認のあと、hub なら `adj hub --resume`（親タスクの hub は `--hub KEY` 付き）、worker なら `adj worker --resume --worktree …` で開き直します。確認待ちの gate があるときや直近 1 分以内に出力があるときは、途中の処理が中断される旨を確認で警告します（gate の記録は残ります）。会話が保存されていない、tmux でない、resume ランナーが `{sessionId}` を受けないなど、起動し直せないときはボタンが押せず、理由を示します。再起動の間は「再起動しています…」と出て、そのセッションの起動・停止・リセット・閉じる・再開のボタンは新しいプロセスが現れるまで押せません。止められなかったときは何も起動せず、記録も会話も残ります。
+
 ボードの「hub をリセット」（hub の行のボタンと、セッションタブの端末の上のメニュー）は `--new` と同じことをします。確認のあと、hub が動いていれば止め、新しい会話で起動し直します。前の会話は消えませんが再開もされず、以後 `adj hub --resume` で戻るのは新しい会話です（会話を記録しない runner では戻り先がなくなります）。受信箱、タスクと gate の記録、動いている worker はそのまま残ります。
 
 `{sessionId}` を含むランナー（既定のランナーは `--session-id {sessionId}` として含んでいます）で新しく起動するときは、セッション ID を作ってエージェントに渡し、保存します。再開するときは新しく作らず、保存済みの ID を使います。`{sessionId}` を含まないランナーで新しく起動したときは ID を作らず、前の起動が保存した ID を消します。これで2つ前の起動の会話が開かれることはありません。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
@@ -323,7 +325,7 @@ worker は普通タスクから始まり、ボードはタスクと worker を w
 
 ### セッションへの操作
 
-セッションや hub に対する操作が、ほかに4つあります。どれも常駐サーバーだけが受け付けます。hub が出すボードは、リポジトリ自身のレコードの外に手を伸ばすこれらのルートに 404 を返します。断るときは、ほかの操作と同じく 400 と `{"error": …}` です。
+セッションや hub に対する操作が、ほかに6つあります。どれも常駐サーバーだけが受け付けます。hub が出すボードは、リポジトリ自身のレコードの外に手を伸ばすこれらのルートに 404 を返します。断るときは、ほかの操作と同じく 400 と `{"error": …}` です。
 
 `POST /api/sessions/<id>/resume` は、動いていない worker を `adjutant work --resume` と同じように開き直します。worktree で `adjutant worker --resume` を走らせるタブを開きます。対象は、保存された会話があり、動いても起動中でもない worker だけで、hub を起動するときと同じく `terminal.preset: "tmux"` で `terminal.spawn` を自分で書いていないときに限ります。組み込みの再開コマンドが開き直せるのは Claude の会話だけなので、Claude 以外のエージェントは `agentResumeRunner`（`{sessionId}` を含むもの）が無ければ断ります。worker には hub を渡しません。最後に紐付いた hub へ戻ります（保存されたセッションがそれを覚えています）。`maxWorkers` の数に入り、満杯ならその理由で断ります。返り値は `{resumed, description, hub, hubRunning}` で、`hub` は `hubs[].id` です。
 
@@ -334,6 +336,10 @@ worker は普通タスクから始まり、ボードはタスクと worker を w
 `POST /api/hubs` に `{"key": "WID-957", "start": "auto"|"resume"|"new"}` を送ると、親タスクのキーの hub を `adjutant hub --hub KEY` と同じように起動します。まだ何もそのキーを指していなくても使えます（`/api/hubs/<id>/start` はボードが一覧に持っている hub にしか使えません）。返り値は `{started, description, hub: {id, slug}}`、すでに動いていれば `{alreadyRunning, pid, hub}` です。hub が `hubs[]` に現れるのは、`adjutant hub` が自分のレコードを書いてからです。
 
 `POST /api/hubs/<id>/reset`（常駐サーバーのみ）は、hub が動いていれば止め、`adj hub --tab --new [--hub KEY]` と同じように起動し直すので、新しい hub は新しい会話で始まります。起動が断られる場合（`terminal.preset: "tmux"` でない、キーの分からない親タスクの hub）は、何も止める前に断ります。返り値は `{reset, wasRunning, started, description}`、すでに動いていれば `{reset, wasRunning, alreadyRunning, pid}` です。その間にリセットが起動したのではない hub が立ち上がっていたときは、新しい会話にはなっていないので `reset` は `false` で、先に止めたかどうかは `wasRunning` で分かります。止めたあとで起動できなかったときは、止めたことを伝えるメッセージ付きの 400 です。
+
+`POST /api/hubs/<id>/restart`（常駐サーバーのみ）は、hub が動いていれば止め、`adj hub --tab --resume [--hub KEY]` と同じように、持っていた会話で起動し直します。起動が断られる場合（`terminal.preset: "tmux"` でない、キーの分からない親タスクの hub）、会話が保存されていない場合、`hubResumeRunner` に `{sessionId}` が無い場合、`hubRunner` が自前で `hubResumeRunner` が無い場合（組み込みのランナーが自前のものの代わりに会話を開いてしまいます）は、何も止める前に断ります。10 秒以内に止まらない hub は再起動せず、記録も残します。返り値は `{restarted, wasRunning, started, description}`、すでに動いていれば `{restarted: false, wasRunning, alreadyRunning, pid}` です。止めたあとで起動できなかったときは、止めたことを伝えるメッセージ付きの 400 です。`state.hubResume` は worker の `sessionResume` と同じ `{available, reason}` です。
+
+`POST /api/sessions/<id>/restart` は worker の「セッションを再起動」です。worker のウィンドウを閉じ、`adjutant worker --resume --worktree <worktree>` で同じ会話のまま開き直します。`resume` が断るもの（`terminal.preset: "tmux"` でない、会話が保存されていない、`{sessionId}` の無い resume ランナー、`agentResumeRunner` の無い Claude 以外のエージェント、起動中の worker）に加え、`terminal.close` が `false` のときも、古いウィンドウを閉じられないので、何も閉じる前に断ります。ウィンドウを閉じて 10 秒経っても worker が動いていれば、何も起動せず、記録も残して 400 を返します。閉じたあとで開き直せなかったときは、そのことを伝える 400 で、保存された会話は残るので「再開」が使えます。同じセッションの再起動は同時に 1 つです。返り値は `{restarted, wasRunning, description, hub, hubRunning}` です。
 
 ### セッションのサイドバー
 

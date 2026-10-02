@@ -1,5 +1,6 @@
 //! What a person does with a session from the board besides looking at it: reopen one that
-//! ended, open one in their own terminal, remove the worktree of one that is finished, and start
+//! ended, restart one that is running on the same conversation, open one in their own
+//! terminal, remove the worktree of one that is finished, and start
 //! a parent-task hub for a key nobody has started one for.
 //!
 //! Only the resident server serves these (see `route`): each reaches outside the repository's
@@ -7,8 +8,11 @@
 //! routes. The session a request names is looked up in the board's own records, and the
 //! worktree, socket and window come from there and never from the request.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -109,6 +113,172 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
     Ok(json!({
         "resumed": true,
+        "description": done.description,
+        "hub": session.hub,
+        "hubRunning": hub_running,
+    }))
+}
+
+/// Why no hub can be resumed from the board with these settings, or `None` when one can: what
+/// `hub_startable` and `hubResumeRunner` say, known without looking at a hub. The per-hub half
+/// (a saved conversation, a parent key that is known) is checked by the restart itself.
+pub(super) fn hub_resume_refusal(settings: &crate::config::Settings) -> Option<String> {
+    if !super::hub_startable(&settings.terminal) {
+        return Some(
+            "restarting a hub from the board needs terminal.preset \"tmux\" and no terminal.spawn"
+                .to_string(),
+        );
+    }
+    if let Err(refusal) =
+        super::resume_template(settings.hub_resume_runner.as_deref(), "hubResumeRunner")
+    {
+        return Some(refusal);
+    }
+    super::own_hub_runner_refusal(settings)
+}
+
+/// What `state` says about resuming a hub: `available`, and the reason when it is not.
+pub(super) fn hub_resume_state(settings: &crate::config::Settings) -> Value {
+    let refusal = hub_resume_refusal(settings);
+    json!({ "available": refusal.is_none(), "reason": refusal })
+}
+
+/// How long a hub's restart keeps refusing another one after it has answered. The answer comes
+/// when the tmux window is open, a moment before the new `adj hub` has registered, and a second
+/// restart in between would stop the new hub or open a stray window beside it. The page's
+/// `RESTART_MS` is the same length: it shows 「再起動しています…」 for as long.
+const RESTART_HOLD: Duration = Duration::from_secs(45);
+
+enum Slot {
+    InFlight,
+    /// Answered at this moment, with the new process possibly not up yet.
+    Held(Instant),
+}
+
+/// The hubs and worktrees being restarted, by key. What it guarantees: while a restart of a key
+/// runs, or for `RESTART_HOLD` after a hub's restart answered with a window opened, another
+/// restart of that key is refused. It does not look at the process table, so a hub that is up
+/// sooner is still held until the time is over; a restart that failed releases at once.
+static RESTARTING: Mutex<Option<HashMap<String, Slot>>> = Mutex::new(None);
+
+/// Holds `key` in `RESTARTING` while it lives, and on every way out of the restart lets go,
+/// unless `hold` turned the claim into the timed hold.
+pub(super) struct Restarting {
+    key: String,
+    held: bool,
+}
+
+impl Restarting {
+    pub(super) fn claim(key: &str, what: &str) -> Result<Restarting, String> {
+        Self::claim_at(key, what, Instant::now())
+    }
+
+    /// `claim`, with the time it is made at handed in so that the hold can be tested.
+    fn claim_at(key: &str, what: &str, now: Instant) -> Result<Restarting, String> {
+        let mut held = RESTARTING.lock().unwrap_or_else(|e| e.into_inner());
+        let map = held.get_or_insert_with(HashMap::new);
+        match map.get(key) {
+            Some(Slot::InFlight) => return Err(format!("{what} is already restarting")),
+            Some(Slot::Held(at)) if now.saturating_duration_since(*at) < RESTART_HOLD => {
+                return Err(format!(
+                    "{what} was restarted a moment ago and is coming up"
+                ));
+            }
+            _ => {}
+        }
+        map.insert(key.to_string(), Slot::InFlight);
+        Ok(Restarting {
+            key: key.to_string(),
+            held: false,
+        })
+    }
+
+    /// The restart answered with a new process on its way: keep refusing for `RESTART_HOLD`
+    /// instead of letting go.
+    pub(super) fn hold(self) {
+        self.hold_at(Instant::now());
+    }
+
+    fn hold_at(mut self, now: Instant) {
+        let mut held = RESTARTING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(map) = held.as_mut() {
+            map.insert(self.key.clone(), Slot::Held(now));
+        }
+        self.held = true;
+    }
+}
+
+impl Drop for Restarting {
+    fn drop(&mut self) {
+        if self.held {
+            return;
+        }
+        let mut held = RESTARTING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(map) = held.as_mut() {
+            map.remove(&self.key);
+        }
+    }
+}
+
+/// Stop the worker session `id` and start it again on the same conversation, in one step:
+/// what closing it and then resuming it would do, with every refusal made before anything is
+/// closed. A restart that finds out afterwards that the conversation cannot be reopened has
+/// stopped a worker for nothing.
+///
+/// A worker that does not go is not forced: nothing is started, and its record stays. Starting
+/// beside it would be two workers in one worktree.
+pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
+    input_of(body)?;
+    let settings = settings_now(server);
+    let session = find_session(server, &settings, id)?;
+    if session.kind != "worker" {
+        return Err("only a worker session can be restarted".to_string());
+    }
+    let worktree = Path::new(&session.worktree);
+    if messaging::is_starting(worktree, messaging::now_secs()) {
+        return Err("the session is starting".to_string());
+    }
+    if let Some(refusal) = resume_refusal(&settings) {
+        return Err(refusal);
+    }
+    super::saved_worker_session(worktree)?;
+    // Without a way to close the window the restart would end up starting a second worker
+    // beside the one it could not stop.
+    if settings.terminal.close.is_off() {
+        return Err(
+            "terminal.close is off, so the session cannot be closed to restart it".to_string(),
+        );
+    }
+    // Built before anything is closed: it does not depend on the close, and a failure here
+    // after it would have closed the session for nothing.
+    let ctx = own_hub_context(server, settings)?;
+    let _restarting = Restarting::claim(&session.worktree, "the session")?;
+    let was_running = messaging::worker_status(worktree).present;
+    let repo = server.ctx.repo.nwo.clone();
+    if !super::close(Some(&repo), &session.worktree, true, false)? {
+        return Err(
+            "the session could not be closed (pid still running or its record unreadable); \
+             nothing was restarted"
+                .to_string(),
+        );
+    }
+    let done =
+        match super::resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false) {
+            Ok(Resumed::Opened(done)) => done,
+            Ok(Resumed::Full(refusal)) | Err(refusal) => {
+                // Nothing was closed when nothing was running, and saying so would be false.
+                return Err(match was_running {
+                    true => format!("closed the session, but could not start it again: {refusal}"),
+                    false => format!("could not start the session again: {refusal}"),
+                });
+            }
+        };
+    let hub_running = messaging::all_repo_hubs(&server.ctx.repo)
+        .iter()
+        .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
+    Ok(json!({
+        "restarted": true,
+        "wasRunning": was_running,
         "description": done.description,
         "hub": session.hub,
         "hubRunning": hub_running,
@@ -681,5 +851,35 @@ pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, St
             "pid": status.pid,
             "hub": hub,
         })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RESTART_HOLD, Restarting};
+    use std::time::Instant;
+
+    #[test]
+    fn a_second_restart_of_the_same_target_is_refused_until_the_first_is_over() {
+        let first = Restarting::claim("guard-test/a", "the session").unwrap();
+        let again = Restarting::claim("guard-test/a", "the session");
+        assert_eq!(again.err().unwrap(), "the session is already restarting");
+        // Another target is not held up by it.
+        let other = Restarting::claim("guard-test/b", "the session");
+        assert!(other.is_ok());
+        drop(first);
+        assert!(Restarting::claim("guard-test/a", "the session").is_ok());
+    }
+
+    #[test]
+    fn a_held_restart_refuses_another_until_the_hold_is_over() {
+        let at = Instant::now();
+        Restarting::claim_at("guard-test/held", "the hub", at)
+            .unwrap()
+            .hold_at(at);
+        let soon = Restarting::claim_at("guard-test/held", "the hub", at + RESTART_HOLD / 2);
+        assert!(soon.err().unwrap().contains("coming up"));
+        let later = Restarting::claim_at("guard-test/held", "the hub", at + RESTART_HOLD);
+        assert!(later.is_ok());
     }
 }

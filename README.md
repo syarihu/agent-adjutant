@@ -527,7 +527,7 @@ tmux, whose 詳細 still works. A hub of another board opens in place with its o
 「ボードへ」 button. The hub is in the address as `task=hub:<id>`.
 
 The bar above the terminal carries the actions for the selected session: resume a stopped
-worker, close a running one, start or stop a hub, open the session in your own terminal, and,
+worker, restart a running hub or worker on its same conversation, close a running worker, start or stop a hub, open the session in your own terminal, and,
 under the menu, reset a hub (start it again on a new conversation), open the worktree in your IDE,
 copy its path and clean it up. Cleaning up removes
 the worktree and its local branch (never the remote one) and refuses when work would be lost
@@ -710,7 +710,7 @@ is a 400, as for `link`.
 
 ### Acting on a session
 
-Four more routes act on a session or a hub. They are served only by the resident server: a
+Six more routes act on a session or a hub. They are served only by the resident server: a
 board a hub serves answers 404 for them, since they reach outside the repository's own records.
 Refusals are a 400 with `{"error": …}`, like every other action.
 
@@ -723,6 +723,21 @@ Claude conversation. The worker is told no hub: it goes back to the one it was l
 which its saved session remembers. It counts against `maxWorkers`, and a full machine is
 refused with that reason. The answer is `{resumed, description, hub, hubRunning}`, with `hub` a
 `hubs[].id`.
+
+`POST /api/sessions/<id>/restart` is 「セッションを再起動」 for a worker: it closes the worker's
+window and reopens it with `adjutant worker --resume --worktree <worktree>`, on the same
+conversation, for instance to pick up a new Claude Code version. The board asks first, and warns
+when the restart would cut something off (the session waits on a gate, or wrote output within
+the last minute). Everything `resume` refuses is refused before anything is closed (not
+`terminal.preset: "tmux"`, no saved conversation, a resume runner without `{sessionId}`, another
+agent without `agentResumeRunner`, a worker that is still starting), and so is
+`terminal.close` set to `false`, since the old window could not be closed. A worker that is still
+running 10 seconds after its window was closed is left alone: nothing is started, its record is
+kept and the answer is a 400. When it was closed but could not be opened again, the answer is a
+400 whose message says so, and the saved conversation is kept, so 再開 still works. One restart
+of a session at a time. The answer is `{restarted, wasRunning, description, hub, hubRunning}`.
+While it runs the page shows 「再起動しています…」 and holds the session's other buttons, until the
+new process appears.
 
 `POST /api/sessions/<id>/open` shows a session that runs in tmux in the person's own terminal.
 It makes a session of its own in the tmux group of the original (`adjterm-<pid>-<n>`), showing
@@ -773,6 +788,17 @@ before anything is stopped. The answer is `{reset, wasRunning, started, descript
 `{reset, wasRunning, alreadyRunning, pid}`; when a hub came up in the meantime that the
 reset did not start, `reset` is `false`, and `wasRunning` says whether one was stopped first. When the hub was stopped but could not be started
 again, the answer is a 400 whose message says it was stopped.
+
+`POST /api/hubs/<id>/restart` (resident server only) is the same for a hub: it stops the hub and
+starts it again as `adj hub --tab --resume [--hub KEY]` does, on the conversation it had. It is
+refused before anything is stopped when the start would be (no `terminal.preset: "tmux"`, a
+parent-task hub whose key is not known), when no conversation is saved, when `hubResumeRunner`
+has no `{sessionId}`, and when `hubRunner` is your own with no `hubResumeRunner` (the built-in
+runner would reopen the session instead of yours). A hub that does not stop within 10 seconds is
+not restarted and keeps its record. The answer is `{restarted, wasRunning, started, description}`,
+or `{restarted: false, wasRunning, alreadyRunning, pid}`; a hub stopped but not started again is
+a 400 that says it was stopped. `state.hubResume` is `{available, reason}`, as `sessionResume`
+is for a worker.
 
 ### The sessions tab's sidebar
 

@@ -1494,12 +1494,14 @@ fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Resul
         // records, and a board a hub serves lives and dies with that hub.
         ("POST", path)
             if server.resident
-                && session_route(path)
-                    .is_some_and(|(_, action)| matches!(action, "resume" | "open" | "cleanup")) =>
+                && session_route(path).is_some_and(|(_, action)| {
+                    matches!(action, "resume" | "restart" | "open" | "cleanup")
+                }) =>
         {
             let (id, action) = session_route(path).unwrap_or((Err("no such route".into()), ""));
             let result = id.and_then(|id| match action {
                 "resume" => super::board_actions::resume(server, &id, &req.body),
+                "restart" => super::board_actions::restart(server, &id, &req.body),
                 "open" => super::board_actions::open(server, &id),
                 _ => super::board_actions::cleanup(server, &id, &req.body),
             });
@@ -1781,6 +1783,9 @@ fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
         // Whether the board can resume a stopped worker, so the page offers it only where it
         // can work, and says why not where it cannot.
         "sessionResume": super::board_actions::resume_state(&settings),
+        // The same for restarting a running hub on its conversation, which needs the hub's own
+        // resume line rather than the worker's.
+        "hubResume": super::board_actions::hub_resume_state(&settings),
         // The command line a hub runs, as configured: the server sends the template with its
         // placeholders in place, and the Sessions sidebar fills in only `{name}` to show it.
         "hubRunner": settings
@@ -2667,8 +2672,8 @@ fn focus_hub(server: &Server) -> Result<Value, String> {
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
-/// `/api/hubs/<id>/<action>` as its id and action, for the four actions there are (start, stop,
-/// close and reset). The id is one path segment, percent-decoded — the page sends it through
+/// `/api/hubs/<id>/<action>` as its id and action, for the five actions there are (start, stop,
+/// close, reset and restart). The id is one path segment, percent-decoded — the page sends it through
 /// `encodeURIComponent`, and a key may hold a `/`, a space or a letter that is not ASCII. The
 /// raw segment is checked for a `/` first, so an encoded one names an id and a bare one is
 /// another route. An encoding that is not UTF-8 is an error for the caller to say, not a
@@ -2677,7 +2682,7 @@ fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
     let (raw, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
     (!raw.is_empty()
         && !raw.contains('/')
-        && matches!(action, "start" | "stop" | "close" | "reset"))
+        && matches!(action, "start" | "stop" | "close" | "reset" | "restart"))
     .then(|| (decode_segment(raw), action))
 }
 
@@ -2692,13 +2697,16 @@ fn terminal_route(path: &str) -> Option<Result<String, String>> {
 }
 
 /// `/api/sessions/<id>/<action>` as the session id, percent-decoded as `terminal_route` does,
-/// and the action, for the five there are besides the terminal (which is a WebSocket and
+/// and the action, for the six there are besides the terminal (which is a WebSocket and
 /// answered before routing). Which of them a board serves is for `route` to say.
 fn session_route(path: &str) -> Option<(Result<String, String>, &str)> {
     let (raw, action) = path.strip_prefix("/api/sessions/")?.split_once('/')?;
     (!raw.is_empty()
         && !raw.contains('/')
-        && matches!(action, "link" | "git" | "resume" | "open" | "cleanup"))
+        && matches!(
+            action,
+            "link" | "git" | "resume" | "restart" | "open" | "cleanup"
+        ))
     .then(|| (decode_segment(raw), action))
 }
 
@@ -2863,7 +2871,7 @@ fn hub_stop_context(
     }
 }
 
-/// Start, stop, close or reset one of the repository's hubs from the board. `id` is the
+/// Start, stop, close, reset or restart one of the repository's hubs from the board. `id` is the
 /// `hubs[].id` the page was given, so the page can only name a hub this repository was found to
 /// have.
 fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
@@ -2915,6 +2923,44 @@ fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String>
                 // the answer must not say it is.
                 Ok(super::TabOutcome::AlreadyRunning(status)) => Ok(json!({
                     "reset": false,
+                    "wasRunning": was_running,
+                    "alreadyRunning": true,
+                    "pid": status.pid,
+                })),
+                Err(e) if was_running => Err(format!(
+                    "stopped {}, but could not start it again: {e}",
+                    hub.name
+                )),
+                Err(e) => Err(e),
+            }
+        }
+        "restart" => {
+            // Everything the start would refuse is refused before the hub is stopped, the
+            // saved conversation included: a restart that cannot reopen it has only taken the
+            // hub down. The saved session file is not touched; `--resume` reads it as it is.
+            if let Some(refusal) = super::board_actions::hub_resume_refusal(&settings) {
+                return Err(refusal);
+            }
+            let start_ctx = hub_start_context(server, &hub, settings.clone())?;
+            super::hub_resume_check(&start_ctx)?;
+            let restarting = super::board_actions::Restarting::claim(&hub.slug, &hub.name)?;
+            let was_running = super::stop_hub(&hub_stop_context(server, &hub, settings))?;
+            match super::start_hub(&start_ctx, super::HubStart::Resume) {
+                Ok(super::TabOutcome::Opened(done)) => {
+                    // The window is open but the new hub has not registered yet: another
+                    // restart now would stop it or open a second window beside it.
+                    restarting.hold();
+                    Ok(json!({
+                        "restarted": true,
+                        "wasRunning": was_running,
+                        "started": true,
+                        "description": done.description,
+                    }))
+                }
+                // As for a reset: a hub is up that this request did not start, so the
+                // answer must not say it was restarted.
+                Ok(super::TabOutcome::AlreadyRunning(status)) => Ok(json!({
+                    "restarted": false,
                     "wasRunning": was_running,
                     "alreadyRunning": true,
                     "pid": status.pid,
@@ -3227,6 +3273,10 @@ mod tests {
             "hub-reset",
             "function hubReset",
             "id=\"hub-stop-icon\"",
+            "function hubRestart",
+            "function sessRestart",
+            "id=\"sess-restart-dialog\"",
+            "セッションを再起動",
         ] {
             assert!(UI_HTML.contains(piece), "{piece}");
         }
@@ -3482,6 +3532,10 @@ mod tests {
             route("/api/hubs/hub-wid-957/reset"),
             Some(("hub-wid-957".into(), "reset"))
         );
+        assert_eq!(
+            route("/api/hubs/hub-wid-957/restart"),
+            Some(("hub-wid-957".into(), "restart"))
+        );
         assert_eq!(route("/api/hubs/a+b/start"), Some(("a+b".into(), "start")));
         // An encoding that is wrong is the caller's mistake to be told, not another route.
         for bad in [
@@ -3492,7 +3546,7 @@ mod tests {
             assert!(hub_route(bad).is_some_and(|(id, _)| id.is_err()), "{bad}");
         }
         for refused in [
-            "/api/hubs/hub/restart",
+            "/api/hubs/hub/rewind",
             "/api/hubs//start",
             "/api/hubs/a/b/start",
             "/api/hubs/hub",
@@ -4020,7 +4074,7 @@ mod tests {
         fn id(path: &str, action: &str) -> Option<String> {
             session_route_for(path, action).map(|id| id.unwrap())
         }
-        for action in ["link", "git", "resume", "open", "cleanup"] {
+        for action in ["link", "git", "resume", "restart", "open", "cleanup"] {
             assert_eq!(
                 id(&format!("/api/sessions/worker-x/{action}"), action),
                 Some("worker-x".into()),

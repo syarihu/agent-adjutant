@@ -80,8 +80,29 @@ let repoHubStartedAt = null;
    not stopped. Read from the same markers a start from the + menu sets, and true for a hub
    whose reset is in flight (`hubResetting`: ids). */
 const hubResetting = new Set();
+/* A restart is over when the page has seen a process other than the one it stopped, or when
+   this long has passed (ms): the answer comes when the window is open, a moment before the new
+   hub or worker writes its record. */
+const RESTART_MS = 45000;
+/* Hubs and workers being restarted: id (a worker's, `restartKey`) → `{ pid, at }` of the process
+   that was running. Set before the request and kept after its answer, until `restartPending`
+   says it is back; dropped at once when the request fails. */
+const hubRestarting = new Map();
+const sessRestarting = new Map();
+function restartPending(entry, s) {
+  if (!entry || Date.now() - entry.at >= RESTART_MS) return false;
+  // Another pid showing as present is the new process. Without a pid to compare there is only
+  // the clock.
+  return !(entry.pid != null && s?.present && s.pid != null && s.pid !== entry.pid);
+}
+const hubRestartPending = h => restartPending(hubRestarting.get(h.id), h.state);
+/* Why a reset or restart of `h` is under way, or '' when neither is. */
+const hubTurnover = h => hubResetting.has(h.id) ? 'hub をリセットしています'
+  : hubRestartPending(h) ? 'hub を再起動しています' : '';
+/* Why a start of `h` is not offered while it is being turned over or coming up, or ''. */
+const hubWaitWhy = h => hubTurnover(h) || (hubStartingNow(h) ? 'hub を起動しています' : '');
 function hubStartingNow(h) {
-  if (hubResetting.has(h.id)) return true;
+  if (hubResetting.has(h.id) || hubRestartPending(h)) return true;
   const at = h.parent ? (h.key ? hubKeyStartedAt[h.key] : null) : repoHubStartedAt;
   return !h.state?.present && at != null && Date.now() - at < HUB_STARTING_MS;
 }
@@ -89,6 +110,7 @@ function hubStartingNow(h) {
    stop or close of it succeeded, so that a hub stopped again a moment later can be started
    at once; `hubStartingNow` itself only reads. */
 function clearHubStarting(h) {
+  hubRestarting.delete(h.id);
   if (!h.parent) repoHubStartedAt = null;
   else if (h.key) delete hubKeyStartedAt[h.key];
   for (const p of sessView.starts) if (p.hubId === h.id) p.hubStartedAt = null;
