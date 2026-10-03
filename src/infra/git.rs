@@ -18,6 +18,17 @@ pub(crate) fn git(args: &[&str], cwd: Option<&Path>) -> Result<std::process::Out
     run(args, cwd, None, false)
 }
 
+/// One pipe of git's output, read to its end on a thread of its own.
+fn drain<R: std::io::Read + Send + 'static>(
+    mut pipe: R,
+) -> std::io::Result<std::thread::JoinHandle<Vec<u8>>> {
+    std::thread::Builder::new().spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        bytes
+    })
+}
+
 /// The one place git is started, so that what is cleared from its environment is decided once.
 ///
 /// `looking` is for a run that only looks at a worktree that is not ours: beyond the variables
@@ -34,7 +45,6 @@ fn run(
     deadline: Option<std::time::Instant>,
     looking: bool,
 ) -> Result<std::process::Output, String> {
-    use std::io::Read;
     use std::process::Stdio;
     let mut cmd = Command::new("git");
     cmd.args(args)
@@ -59,18 +69,26 @@ fn run(
         }
     }
     let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e}"))?;
-    let mut out_pipe = child.stdout.take().ok_or("cannot read git's output")?;
-    let mut err_pipe = child.stderr.take().ok_or("cannot read git's output")?;
-    let out_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = out_pipe.read_to_end(&mut bytes);
-        bytes
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = err_pipe.read_to_end(&mut bytes);
-        bytes
-    });
+    // Dropping a `Child` neither kills nor waits, so a return from here with git still running
+    // would leave it behind unreaped; every way out before the wait below ends it first.
+    let abandon = |child: &mut std::process::Child, msg: String| {
+        let _ = child.kill();
+        let _ = child.wait();
+        Err(msg)
+    };
+    let (Some(out_pipe), Some(err_pipe)) = (child.stdout.take(), child.stderr.take()) else {
+        return abandon(&mut child, "cannot read git's output".to_string());
+    };
+    let out_reader = match drain(out_pipe) {
+        Ok(reader) => reader,
+        Err(e) => return abandon(&mut child, format!("cannot read git's output: {e}")),
+    };
+    // A first reader already started is only dropped on failure here: it ends with its pipe
+    // once git is dead.
+    let err_reader = match drain(err_pipe) {
+        Ok(reader) => reader,
+        Err(e) => return abandon(&mut child, format!("cannot read git's output: {e}")),
+    };
     let status = match deadline {
         None => child
             .wait()
