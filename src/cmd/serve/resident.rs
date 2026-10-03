@@ -11,11 +11,12 @@ use serde_json::{Value, json};
 use crate::http::{self, Request};
 use crate::ws;
 
+use super::Server;
 use super::assets::UI_HTML;
 use super::auth::refuse;
 use super::index::boards_json;
 use super::registry::{Address, address_of};
-use super::{Server, is_page_path, route, terminal_route};
+use super::routes::{is_page_path, route, terminal_route};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `repo::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
