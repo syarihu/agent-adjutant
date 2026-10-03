@@ -39,41 +39,24 @@ fn find(ctx: &Context, id: &str) -> Result<Gate, String> {
     Err(format!("no open gate or record: {id}"))
 }
 
-/// Open the lock file of one gate or record, next to it in `dir`.
-fn open_lock(dir: &Path, id: &str) -> Result<(std::fs::File, PathBuf), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    // Not named `.json`, so the listing never reads it as a gate. Never removed, for the
-    // reason given at `with_dispatch_lock`: a lock file that is unlinked can be locked twice.
-    let path = dir.join(format!("{id}.lock"));
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-    Ok((file, path))
-}
-
 /// Hold the write lock of one gate or record until the returned handle is dropped. The same
 /// advisory lock `task::lock_task` takes, for the same reason: appending an answer is a read
 /// and a write of the whole file, and two at once would each write back what they read. On
 /// an open gate it is what lets only one of the board's answer, the worker's close and the
 /// board's own sweep decide it.
 fn lock_in(dir: &Path, id: &str) -> Result<std::fs::File, String> {
-    let (file, path) = open_lock(dir, id)?;
-    file.lock()
-        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
-    Ok(file)
+    crate::infra::fs::lock(&lock_path(dir, id))
 }
 
 /// `lock_in` without waiting: `None` when somebody else holds it.
 fn try_lock_in(dir: &Path, id: &str) -> Result<Option<std::fs::File>, String> {
-    let (file, path) = open_lock(dir, id)?;
-    match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
-        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-        Err(std::fs::TryLockError::Error(e)) => Err(format!("cannot lock {}: {e}", path.display())),
-    }
+    crate::infra::fs::try_lock(&lock_path(dir, id))
+}
+
+/// Not named `.json`, so the listing never reads it as a gate. Never removed, for the reason
+/// given at `with_dispatch_lock`: a lock file that is unlinked can be locked twice.
+fn lock_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.lock"))
 }
 
 fn stamp() -> String {

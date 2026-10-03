@@ -196,30 +196,14 @@ fn wait_for_resident(mut child: std::process::Child) -> Result<u16, String> {
 /// and answers.
 fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
     let lock_path = server_lock_path();
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
     // Held for the process's lifetime and released by the system when it ends, however it
     // ends — the same lock `messaging::take_over` takes, for the same reason.
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => {
-            return Err(match live_resident() {
-                Some((pid, _)) => format!("another adj server is running (pid {pid})"),
-                None => "another adj server is running".to_string(),
-            });
-        }
-        Err(std::fs::TryLockError::Error(e)) => {
-            return Err(format!("cannot lock {}: {e}", lock_path.display()));
-        }
-    }
+    let Some(lock) = crate::infra::fs::try_lock(&lock_path)? else {
+        return Err(match live_resident() {
+            Some((pid, _)) => format!("another adj server is running (pid {pid})"),
+            None => "another adj server is running".to_string(),
+        });
+    };
     let listener =
         bind_preferring(port).map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e}"))?;
     let bound = listener

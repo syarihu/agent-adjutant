@@ -21,8 +21,8 @@ use std::process::Command;
 pub use crate::infra::clock::{now_secs, utc_stamp};
 pub use crate::infra::env::{HUB_ENV, HUB_SERVE_ENV, HUB_SESSION_ENV, STATE_DIR_ENV};
 pub(crate) use crate::infra::fs::{
-    CLAIM_ATTEMPTS, CreateError, create_new_json, parent_dir, read_json, record_exists,
-    remove_if_present, stage, write_json,
+    CLAIM_ATTEMPTS, CreateError, create_new_json, read_json, record_exists, remove_if_present,
+    stage, write_json,
 };
 pub use crate::infra::paths::state_dir;
 use crate::repo::current_worktree;

@@ -70,6 +70,43 @@ pub(crate) fn create_new(path: &Path) -> std::io::Result<bool> {
     }
 }
 
+/// Open the lock file at `path`, making its directory first. Never truncated and never removed:
+/// unlinking a lock file while another process holds it open hands the next two callers two
+/// different locks. The lock is advisory and released by the system when its holder exits.
+pub(crate) fn open_lock(path: &Path) -> Result<std::fs::File, String> {
+    parent_dir(path)?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))
+}
+
+/// Hold the lock at `path` until the returned handle is dropped, waiting for it if need be.
+pub(crate) fn lock(path: &Path) -> Result<std::fs::File, String> {
+    let file = open_lock(path)?;
+    file.lock()
+        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
+    Ok(file)
+}
+
+/// `lock` without waiting: `None` when another handle holds it. What to do then is the caller's.
+pub(crate) fn try_lock(path: &Path) -> Result<Option<std::fs::File>, String> {
+    let file = open_lock(path)?;
+    Ok(try_hold(&file, path)?.then_some(file))
+}
+
+/// One attempt to lock a file `open_lock` opened: `false` when another handle holds it. For a
+/// caller that polls, so that it opens the file once rather than on every attempt.
+pub(crate) fn try_hold(file: &std::fs::File, path: &Path) -> Result<bool, String> {
+    match file.try_lock() {
+        Ok(()) => Ok(true),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+        Err(std::fs::TryLockError::Error(e)) => Err(format!("cannot lock {}: {e}", path.display())),
+    }
+}
+
 // ── plumbing ─────────────────────────────────────────────────────────
 
 fn render_json<T: Serialize + ?Sized>(value: &T) -> Result<String, String> {
@@ -161,6 +198,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = create_new(&dir.path().join("missing").join("claim")).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn try_lock_answers_none_while_another_handle_holds_it_and_takes_it_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("deeper").join("a.lock");
+        let held = lock(&path).unwrap();
+        assert!(try_lock(&path).unwrap().is_none());
+        drop(held);
+        // A child another test forks shares the lock until it execs, so allow it a moment.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while try_lock(&path).unwrap().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "still held after it was dropped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn open_lock_leaves_what_is_in_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.lock");
+        std::fs::write(&path, "kept").unwrap();
+        drop(open_lock(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "kept");
     }
 
     #[test]

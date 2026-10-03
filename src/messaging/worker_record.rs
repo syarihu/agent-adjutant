@@ -365,32 +365,21 @@ const DISPATCH_LOCK_SECS: u64 = 10;
 /// leaves nothing to clear. Waiting ends in an error rather than in taking the lock anyway.
 pub fn with_dispatch_lock<T>(main: &Path, f: impl FnOnce() -> T) -> Result<T, String> {
     let path = main.join(".claude").join("adjutant-dispatch.lock");
-    parent_dir(&path)?;
     // Never unlinked: removing it while another process holds it open would hand the next
     // two callers two different locks.
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let lock = crate::infra::fs::open_lock(&path)?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(DISPATCH_LOCK_SECS);
     loop {
-        match lock.try_lock() {
-            Ok(()) => break,
-            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(std::fs::TryLockError::WouldBlock) => {
-                return Err(format!(
-                    "another dispatch has held {} for {DISPATCH_LOCK_SECS}s; try again",
-                    path.display()
-                ));
-            }
-            Err(std::fs::TryLockError::Error(e)) => {
-                return Err(format!("cannot lock {}: {e}", path.display()));
-            }
+        if crate::infra::fs::try_hold(&lock, &path)? {
+            break;
         }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "another dispatch has held {} for {DISPATCH_LOCK_SECS}s; try again",
+                path.display()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     let answer = f();
     drop(lock);
