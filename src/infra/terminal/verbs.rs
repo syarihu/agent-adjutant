@@ -657,7 +657,7 @@ pub(super) fn wake_with(
 
 /// `wake_with`, with the thing that waits handed in as well: waiting for an agent to come
 /// back to its prompt is a loop, and a test that slept through it would take the budget.
-pub(super) fn wake_with_clock(
+pub(crate) fn wake_with_clock(
     run: impl Fn(&str) -> Result<String, String>,
     wait: impl Fn(Duration),
     lock_dir: &Path,
@@ -794,12 +794,12 @@ fn wake_on(
 /// How long to wait for the agent to come back to its prompt, looking every so often. Long
 /// enough for a turn that is just ending; a person who is answering a question is not waited
 /// for, and falls back to being notified.
-pub(super) const WAKE_READY_BUDGET: Duration = Duration::from_secs(5);
-pub(super) const WAKE_READY_POLL: Duration = Duration::from_millis(500);
+pub(crate) const WAKE_READY_BUDGET: Duration = Duration::from_secs(5);
+pub(crate) const WAKE_READY_POLL: Duration = Duration::from_millis(500);
 
 /// After typing: how many times to look for the line at the prompt, and how far apart. The
 /// agent draws what it is sent asynchronously, so the first look can be too early.
-pub(super) const WAKE_ECHO_LOOKS: u32 = 5;
+pub(crate) const WAKE_ECHO_LOOKS: u32 = 5;
 const WAKE_ECHO_POLL: Duration = Duration::from_millis(250);
 
 /// Where the per-pane locks live. Not the state directory: that is a matter for a layer above
@@ -816,7 +816,7 @@ fn wake_lock_dir() -> std::path::PathBuf {
 /// the system lets go of it when its holder dies. The wait comes out of the same budget as
 /// waiting for the prompt. `Err` is running out of it; a lock that cannot be made at all is
 /// not a reason to stop waking, so that is `Ok(None)`.
-pub(super) fn lock_pane(
+pub(crate) fn lock_pane(
     dir: &Path,
     socket: Option<&str>,
     pane_id: &str,
@@ -1028,7 +1028,7 @@ pub fn tmux_spawn(
         socket,
         session: session.unwrap_or(DEFAULT_TMUX_SESSION),
     };
-    let cmd_str = crate::template::sh_join(command);
+    let cmd_str = crate::infra::template::sh_join(command);
     spawn_on(
         None,
         &backend,

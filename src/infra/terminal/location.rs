@@ -1,4 +1,22 @@
 use super::*;
+use serde::{Deserialize, Serialize};
+
+/// Where the session runs: its terminal backend, and for tmux the socket, session and window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTerminal {
+    /// Terminal backend name: "tmux", "iterm2" (the built-in one), or "custom" for a
+    /// `terminal.spawn` template.
+    pub backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<String>,
+}
 
 /// The backend `spawn` opens a tab with under `terminal`, in the order `spawn` decides it: a
 /// `terminal.spawn` template first, then the tmux preset, then the built-in iTerm2.

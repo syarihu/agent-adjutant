@@ -8,6 +8,8 @@
 //! The same text is also reachable as a tool (`adjutant_skill`), because MCP prompt support
 //! is uneven across agents and a procedure nobody can fetch is a procedure nobody follows.
 
+pub use crate::infra::agent::Agent;
+
 pub struct PromptDef {
     pub name: &'static str,
     pub raw_content: &'static str,
@@ -84,33 +86,6 @@ pub fn description(prompt: &PromptDef) -> String {
 pub fn render(prompt: &PromptDef, arguments: &str) -> String {
     let (_, body) = strip_frontmatter(prompt.raw_content);
     body.replace("$ARGUMENTS", arguments)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Agent {
-    #[default]
-    Claude,
-    Agy,
-    Generic,
-}
-
-impl Agent {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "claude" | "claude-code" => Some(Agent::Claude),
-            "agy" | "antigravity" => Some(Agent::Agy),
-            "generic" | "codex" => Some(Agent::Generic),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Agent::Claude => "claude",
-            Agent::Agy => "agy",
-            Agent::Generic => "generic",
-        }
-    }
 }
 
 /// Resolve which agent format to render procedures for.

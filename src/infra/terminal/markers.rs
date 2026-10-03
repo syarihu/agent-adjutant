@@ -22,7 +22,7 @@ pub(super) const CLOSED_MARKER: &str = "adjutant:closed";
 /// What the built-in wake prints when it actually typed into a session. Its absence is the
 /// only way to tell "typed into the tab" from "walked every window and found no such tab":
 /// both are a script that ran to the end and exited 0.
-pub(super) const WOKE_MARKER: &str = "adjutant:woke";
+pub(crate) const WOKE_MARKER: &str = "adjutant:woke";
 
 /// Did the command actually reach a session? A template answers for itself with its exit
 /// status; the built-in has to say so out loud, because running to the end having found
