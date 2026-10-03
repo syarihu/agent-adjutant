@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 
 use crate::cmd::HubBoard;
 use crate::config;
+pub use crate::kernel::runner::resolve_runner_for;
+#[cfg(test)]
+pub use crate::kernel::runner::runner_for_procedure;
 use crate::messaging::{self, Message};
 use crate::prompts;
 use crate::repo;
@@ -122,19 +125,6 @@ pub fn set_client_name(name: Option<&str>) {
     if let Ok(mut lock) = CLIENT_NAME.write() {
         *lock = name.map(str::to_string);
     }
-}
-
-pub fn runner_for_procedure(settings: &config::Settings, procedure: &str) -> Option<String> {
-    match procedure {
-        "adj-hub" => settings.hub_runner.clone(),
-        _ => settings.agent_runner.clone(),
-    }
-}
-
-pub fn resolve_runner_for(cwd: Option<&Path>, procedure: &str) -> Option<String> {
-    let info = repo::resolve_in(cwd, None, None).ok()?;
-    let settings = config::resolve_config(&info.nwo).ok()?.settings;
-    runner_for_procedure(&settings, procedure)
 }
 
 fn prompt_get(params: &Value) -> Result<Value, String> {

@@ -16,6 +16,7 @@ mod http;
 mod ide;
 mod infra;
 mod jules;
+mod kernel;
 mod mcp;
 mod messaging;
 mod notify;
