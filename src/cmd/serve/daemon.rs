@@ -10,7 +10,7 @@ use crate::{messaging, task};
 
 use super::auth::{stored_token, token};
 use super::index::{boards_json, checkout_here, seed_boards};
-use super::registry::{addresses, board_url, live_at, note_board, resident_board_url, write_whole};
+use super::registry::{addresses, board_url, live_at, note_board, resident_board_url};
 use super::resident::{Resident, handle_resident};
 use super::{DEFAULT_PORT, bind_preferring};
 
@@ -238,7 +238,7 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
         "startedAt": messaging::utc_stamp(messaging::now_secs()),
         "version": env!("CARGO_PKG_VERSION"),
     });
-    write_whole(&server_record_path(), &format!("{record:#}\n"))?;
+    crate::infra::fs::write_json(&server_record_path(), &record)?;
     seed_boards();
     let index = board_url(bound, &token);
     // The token goes to a terminal and nowhere else: detached, or under a service manager,

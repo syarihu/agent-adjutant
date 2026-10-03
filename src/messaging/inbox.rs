@@ -248,13 +248,9 @@ pub(super) const HELD_STALE_SECS: u64 = 60;
 fn hold(inbox: &Path, name: &str) -> Result<PathBuf, String> {
     for attempt in 0..CLAIM_ATTEMPTS {
         let path = inbox.join(format!("{HOLDING}{}-{attempt}-{name}", std::process::id()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => return Ok(path),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        match crate::infra::fs::create_new(&path) {
+            Ok(true) => return Ok(path),
+            Ok(false) => continue,
             Err(e) => return Err(format!("cannot write {}: {e}", path.display())),
         }
     }
