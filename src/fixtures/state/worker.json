@@ -1,0 +1,20 @@
+{
+  "hub": "wid-957",
+  "phase": "implement",
+  "phaseAt": 1788863400,
+  "phases": [
+    [
+      "implement",
+      1788863400
+    ]
+  ],
+  "pid": 4242,
+  "psStarted": "Tue Sep  8 10:30:00 2026",
+  "startedAt": "20260908T103000Z",
+  "task": "20260908T041500Z-retry-login-on-timeout",
+  "terminal": {
+    "backend": "iterm2"
+  },
+  "title": "WID-957 Retry login on timeout",
+  "x-unknown": {"added": "by a newer binary", "list": [1, 2]}
+}

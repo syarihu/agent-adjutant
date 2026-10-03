@@ -1,0 +1,8 @@
+{
+  "hub": "wid-957",
+  "savedAt": "20260908T103000Z",
+  "sessionId": "00000000-0000-4000-8000-000000000002",
+  "task": "20260908T041500Z-retry-login-on-timeout",
+  "title": "WID-957 Retry login on timeout",
+  "x-unknown": {"added": "by a newer binary", "list": [1, 2]}
+}
