@@ -169,6 +169,13 @@ fn read_fully(stream: &mut TcpStream, buf: &mut [u8], deadline: Instant, what: &
     let started = Instant::now();
     let mut filled = 0;
     while filled < buf.len() {
+        // Checked before every read, not only after a timeout: a trickle of bytes never times
+        // out, and would otherwise carry the wait past the deadline.
+        assert!(
+            Instant::now() < deadline,
+            "no {what} before the deadline (this read began {:?} ago)",
+            started.elapsed()
+        );
         match stream.read(&mut buf[filled..]) {
             Ok(0) => panic!("the connection closed while waiting for {what}"),
             Ok(n) => filled += n,
@@ -178,14 +185,7 @@ fn read_fully(stream: &mut TcpStream, buf: &mut [u8], deadline: Instant, what: &
                     std::io::ErrorKind::WouldBlock
                         | std::io::ErrorKind::TimedOut
                         | std::io::ErrorKind::Interrupted
-                ) =>
-            {
-                assert!(
-                    Instant::now() < deadline,
-                    "no {what} before the deadline (this read began {:?} ago)",
-                    started.elapsed()
-                );
-            }
+                ) => {}
             Err(e) => panic!("reading {what}: {e}"),
         }
     }
