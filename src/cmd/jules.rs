@@ -176,35 +176,14 @@ fn branch_on_github(main: &str, nwo: &str, base: &str) -> String {
 /// Given up on after `LOGIN_TIMEOUT`: `gh` waiting on a login prompt or a network that has
 /// gone should not hold up a command that has more to do.
 pub fn github_login(main: &str) -> Option<String> {
-    let mut child = std::process::Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .current_dir(main)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    let deadline = std::time::Instant::now() + LOGIN_TIMEOUT;
-    // Polled rather than waited on: what `gh` prints here is one short line, far short of
-    // filling a pipe, so it can sit unread until the process is done.
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
-    let out = child
-        .wait_with_output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    let login = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let run = super::gh::run(
+        Some(main),
+        &["api", "user", "--jq", ".login"],
+        std::time::Instant::now() + LOGIN_TIMEOUT,
+    )
+    .ok()
+    .filter(|run| run.ok)?;
+    let login = run.stdout.trim().to_string();
     (!login.is_empty()).then_some(login)
 }
 
