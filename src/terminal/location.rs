@@ -5,10 +5,8 @@ use super::*;
 pub fn backend_name(terminal: &TerminalSettings) -> &'static str {
     if terminal.spawn.is_some() {
         "custom"
-    } else if terminal.is_tmux() {
-        "tmux"
     } else {
-        "iterm2"
+        Backend::of(terminal).name()
     }
 }
 
