@@ -32,10 +32,12 @@
 # An attribute on a `mod x;` or `use` line is not compared, so adding, changing or dropping
 # its `#[cfg]` or `#[path]` passes; the compiler and the test count are left to see it. A
 # comment left behind above a moved `mod x;` or `use` line shows as a change. An attribute is
-# followed to its `]` by counting brackets outside `"..."`, so a bracket or quote in a raw string or
-# char literal can hold the lines up to the next blank one, and a `mod` or `use` line that
-# ends them drops them. A trailing `// ...` is cut off outside `"..."`, so a lone `"` in a
-# char literal keeps the comment on that line.
+# followed to its `]` by counting brackets outside `"..."`, so a bracket or quote in a raw
+# string or char literal can hold the lines up to the next blank one, and a `mod` or `use`
+# line that ends them drops them. A trailing `// ...` is cut off outside `"..."`, so a lone
+# `"` in a char literal keeps the comment on that line. Lines are read one at a time, so a
+# line inside a multi-line string literal that reads as `mod x;`, `use`, `//!` or
+# `#[cfg(test)]` is dropped like one.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
