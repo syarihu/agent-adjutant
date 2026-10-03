@@ -248,13 +248,13 @@ pub(super) fn pick_level(
 /// The top level is where `terminal` and `notification` normally sit — they describe the
 /// machine, and repeating them per repo is how they drift apart.
 ///
-/// `startup_flag` is `ADJUTANT_STARTUP_DASHBOARD` as the entry point found it, handed down
-/// rather than read here. See `resolve_config`, which is the one place that looks.
+/// `env` is what the entry point found in the environment, handed down rather than read
+/// here. See `resolve_config`, which is the one place that looks.
 fn resolve_settings(
     root: &Map<String, Value>,
     defaults: &Map<String, Value>,
     entry: &Map<String, Value>,
-    startup_flag: Option<&str>,
+    env: &ResolveEnv,
     warnings: &mut Vec<String>,
 ) -> Settings {
     for (place, map) in [
@@ -304,12 +304,14 @@ fn resolve_settings(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
-    // The one setting whose answer comes partly from outside the config file. Picked here,
-    // decided by a function of two arguments, and the outside half arrives as one of them.
+    // The dashboard and the tmux session and socket are the settings whose answer comes
+    // partly from outside the config file. Each is decided here by a function of its
+    // arguments, and the outside half arrives in `env`.
     let configured_dashboard = pick("startupDashboard");
     let preset = str_field(&terminal, "preset");
-    let session = std::env::var(TMUX_SESSION_ENV)
-        .ok()
+    let session = env
+        .tmux_session
+        .clone()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| str_field(&terminal, "session"))
         .or_else(|| {
@@ -319,8 +321,9 @@ fn resolve_settings(
                 None
             }
         });
-    let socket = std::env::var(TMUX_SOCKET_ENV)
-        .ok()
+    let socket = env
+        .tmux_socket
+        .clone()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| str_field(&terminal, "socket"));
     Settings {
@@ -360,7 +363,10 @@ fn resolve_settings(
         // question. `adj config` and the MCP tool both come out of this function, and the
         // agent asks the tool — resolving the override in the command layer would leave the
         // hub reading a `settings` block that disagrees with the flag it was started under.
-        startup_dashboard: startup_dashboard(configured_dashboard.as_ref(), startup_flag),
+        startup_dashboard: startup_dashboard(
+            configured_dashboard.as_ref(),
+            env.startup_flag.as_deref(),
+        ),
         // A non-boolean was already reported by `check_shapes`, and falls back to the default.
         hub_serve: pick("hubServe").and_then(|v| v.as_bool()).unwrap_or(true),
         hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
@@ -528,16 +534,28 @@ fn agent_env(value: Option<Value>, warnings: &mut Vec<String>) -> Vec<(String, S
     env
 }
 
+/// What `resolve_config` read from the environment, read once there and handed down so the
+/// resolver below stays a function of its arguments. `Default` is "nothing set".
+#[derive(Debug, Clone, Default)]
+pub struct ResolveEnv {
+    /// `ADJUTANT_STARTUP_DASHBOARD`, as read.
+    pub startup_flag: Option<String>,
+    /// `ADJUTANT_TMUX_SESSION`, as read (blank is filtered where it is used).
+    pub tmux_session: Option<String>,
+    /// `ADJUTANT_TMUX_SOCKET`, as read (blank is filtered where it is used).
+    pub tmux_socket: Option<String>,
+}
+
 /// Resolve one repo's entry out of an already-parsed config document.
 ///
 /// Split from the file reading so it can be tested as what it is: JSON in, JSON out. That
 /// claim is only true while it stays true of the whole call tree, which is why
-/// `startup_flag` is threaded through rather than read where it is used — see
-/// `resolve_config`.
+/// the environment (`ResolveEnv`) is threaded through rather than read where it is used —
+/// see `resolve_config`.
 pub fn resolve_from_value(
     raw: &Value,
     nwo: &str,
-    startup_flag: Option<&str>,
+    env: &ResolveEnv,
 ) -> (bool, Option<Value>, Settings, Vec<String>) {
     let mut warnings: Vec<String> = Vec::new();
     let root = raw.as_object().cloned().unwrap_or_default();
@@ -578,7 +596,7 @@ pub fn resolve_from_value(
     }
 
     let Some(entry_raw) = lookup_entry(&repos, nwo) else {
-        let settings = resolve_settings(&root, &defaults, &Map::new(), startup_flag, &mut warnings);
+        let settings = resolve_settings(&root, &defaults, &Map::new(), env, &mut warnings);
         check_runner(&settings, &mut warnings);
         return (false, None, settings, warnings);
     };
@@ -589,7 +607,7 @@ pub fn resolve_from_value(
         ));
     }
     let entry = as_object(Some(entry_raw));
-    let settings = resolve_settings(&root, &defaults, &entry, startup_flag, &mut warnings);
+    let settings = resolve_settings(&root, &defaults, &entry, env, &mut warnings);
     check_runner(&settings, &mut warnings);
 
     let mut resolved = builtin_defaults();
@@ -694,22 +712,26 @@ pub fn resolve_from_value(
 /// The runtime entry point: the config file on disk, plus the one answer that does not come
 /// from it.
 ///
-/// This is the only place `ADJUTANT_STARTUP_DASHBOARD` is read — `config_path` above has its
-/// own reasons to look at the environment, and they are about *which file*, not what is in
-/// it. Everything below this takes the value as an argument, which is what lets the rest of
-/// the resolver be tested as a function of its inputs — the tests call it
-/// directly, in parallel, holding no lock, and a variable exported by the hub whose tab
-/// `cargo test` was typed in cannot reach them. Read one layer down instead, it could: the
-/// suite would be answering about that hub's `--no-dashboard` rather than about its fixture.
+/// This is the only place `ADJUTANT_STARTUP_DASHBOARD`, `ADJUTANT_TMUX_SESSION` and
+/// `ADJUTANT_TMUX_SOCKET` are read — `config_path` above has its own reasons to look at the
+/// environment, and they are about *which file*, not what is in it. Everything below this
+/// takes the values as an argument (`ResolveEnv`), which is what lets the rest of the
+/// resolver be tested as a function of its inputs — the tests call it directly, in
+/// parallel, holding no lock. A hub exports the tmux pair into every tab it opens, so a
+/// resolver reading them deeper would make the suite answer for that tab rather than for
+/// its fixture; the same goes for the hub's `--no-dashboard`.
 pub fn resolve_config(nwo: &str) -> Result<Resolved, String> {
     let path = config_path();
     let shown = path.to_string_lossy().to_string();
-    let startup_flag = std::env::var(STARTUP_DASHBOARD_ENV).ok();
-    let startup_flag = startup_flag.as_deref();
+    let env = ResolveEnv {
+        startup_flag: std::env::var(STARTUP_DASHBOARD_ENV).ok(),
+        tmux_session: std::env::var(TMUX_SESSION_ENV).ok(),
+        tmux_socket: std::env::var(TMUX_SOCKET_ENV).ok(),
+    };
     if !path.exists() {
         // No config at all is the first-run state, not a failure. Everything that does not
         // need task sources — spawn, send, notify — still works off the built-ins.
-        let (_, _, settings, _) = resolve_from_value(&json!({}), nwo, startup_flag);
+        let (_, _, settings, _) = resolve_from_value(&json!({}), nwo, &env);
         return Ok(Resolved {
             registered: false,
             config_path: shown.clone(),
@@ -721,7 +743,7 @@ pub fn resolve_config(nwo: &str) -> Result<Resolved, String> {
     let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
     let raw: Value =
         serde_json::from_str(&text).map_err(|e| format!("cannot parse {shown}: {e}"))?;
-    let (registered, config, settings, warnings) = resolve_from_value(&raw, nwo, startup_flag);
+    let (registered, config, settings, warnings) = resolve_from_value(&raw, nwo, &env);
     Ok(Resolved {
         registered,
         config_path: shown,
