@@ -1870,7 +1870,7 @@ fn an_entry_with_two_boards_still_stands_a_parent_hub_up() {
     );
 
     // The premise: this is a shape the repository ships, not a hypothetical.
-    let example = include_str!("../../config.example.json");
+    let example = include_str!("../../../config.example.json");
     assert!(
         example.matches("\"type\": \"github-project\"").count() >= 2,
         "the shipped example no longer has an entry with two boards, so the rule above \
