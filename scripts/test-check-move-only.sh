@@ -235,4 +235,21 @@ sed -i.bak 's/dead_code/unused/' src/lib.rs
 rm src/lib.rs.bak
 verify "a changed inner attribute above a mod is not a move" 1 "not a move: the items above" inner-base
 
+# An attribute that closes on a line with code after it: the code is compared, and a mod
+# line below it does not take it away. The base has the one-line function above a mod.
+git checkout -q -B closing-base main
+write_lib $'#[inline(\n    always\n)] pub fn quad(x: u8) -> u8 { x * 4 }\nmod shell;' "$helper"$'\n\n'"$double"
+commit closing-base
+git checkout -q -B closing-case closing-base
+sed -i.bak 's/x \* 4/x * 5/' src/lib.rs
+rm src/lib.rs.bak
+verify "a changed body after a closing attribute is not a move" 1 "not a move: the items above" closing-base
+
+# A `//` inside a string in an attribute is not a comment.
+git checkout -q -B case main
+write_lib "$pty_mod" "$helper"$'\n\n'"$double"
+write_infra $'pub mod clock;\n#[doc = "https://example.invalid"] pub mod shell;' ""
+git mv src/shell.rs src/infra/shell.rs
+verify "a // inside a string in an attribute is not a comment" 0 "move-only ok" main
+
 exit "$failed"
