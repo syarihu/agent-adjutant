@@ -15,15 +15,91 @@ pub(crate) const REPOSITORY_LOCATION_ENV: [&str; 3] =
 
 /// Git, answering for the repository `cwd` (or the current directory) is in.
 pub(crate) fn git(args: &[&str], cwd: Option<&Path>) -> Result<std::process::Output, String> {
+    run(args, cwd, None, false)
+}
+
+/// The one place git is started, so that what is cleared from its environment is decided once.
+///
+/// `looking` is for a run that only looks at a worktree that is not ours: beyond the variables
+/// that choose the repository it also drops the ones that would swap in another index, object
+/// store or ref namespace from whatever environment the server was started in, and sets
+/// `GIT_OPTIONAL_LOCKS=0` so `status` does not refresh the index behind the back of a worker
+/// that is running git in the same worktree.
+///
+/// Output is drained on threads, because a listing longer than a pipe holds would otherwise
+/// stall the child. With a `deadline` the child is killed when it passes.
+fn run(
+    args: &[&str],
+    cwd: Option<&Path>,
+    deadline: Option<std::time::Instant>,
+    looking: bool,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use std::process::Stdio;
     let mut cmd = Command::new("git");
-    cmd.args(args);
-    for name in REPOSITORY_LOCATION_ENV {
-        cmd.env_remove(name);
-    }
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
-    cmd.output().map_err(|e| format!("cannot run git: {e}"))
+    for name in REPOSITORY_LOCATION_ENV {
+        cmd.env_remove(name);
+    }
+    if looking {
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        for name in [
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_NAMESPACE",
+        ] {
+            cmd.env_remove(name);
+        }
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e}"))?;
+    let mut out_pipe = child.stdout.take().ok_or("cannot read git's output")?;
+    let mut err_pipe = child.stderr.take().ok_or("cannot read git's output")?;
+    let out_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = out_pipe.read_to_end(&mut bytes);
+        bytes
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = err_pipe.read_to_end(&mut bytes);
+        bytes
+    });
+    let status = match deadline {
+        None => child
+            .wait()
+            .map_err(|e| format!("cannot wait for git: {e}"))?,
+        Some(deadline) => loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    // Not joined: a grandchild that inherited the pipe keeps it open past the
+                    // kill, and waiting for its end would hold the deadline hostage. The
+                    // threads end with the pipes.
+                    drop(out_reader);
+                    drop(err_reader);
+                    return Err("git did not answer in time".to_string());
+                }
+                Err(e) => return Err(format!("cannot wait for git: {e}")),
+            }
+        },
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out_reader.join().unwrap_or_default(),
+        stderr: err_reader.join().unwrap_or_default(),
+    })
 }
 
 pub(crate) struct GitOut {
@@ -39,63 +115,16 @@ impl GitOut {
 
 /// Git in `cwd`, killed when `deadline` passes.
 ///
-/// Read-only by construction: `GIT_OPTIONAL_LOCKS=0` keeps `status` from refreshing the index
-/// behind the back of a worker that is running git in the same worktree. Output is drained on
-/// threads, because a listing longer than a pipe holds would otherwise stall the child until
-/// the deadline.
-///
-/// It reads the index and refs of a worktree that is not ours, so beyond the variables that
-/// choose the repository it also drops the ones that would swap in another index, object store
-/// or ref namespace from whatever environment the server was started in.
+/// Read-only by construction: it is run as a look at a worktree that is not ours, with what
+/// `run` clears and sets for that.
 pub(crate) fn git_until(
     args: &[&str],
     cwd: &Path,
     deadline: std::time::Instant,
 ) -> Result<GitOut, String> {
-    use std::io::Read;
-    let mut cmd = Command::new("git");
-    cmd.args(args)
-        .current_dir(cwd)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    for name in REPOSITORY_LOCATION_ENV.into_iter().chain([
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_NAMESPACE",
-    ]) {
-        cmd.env_remove(name);
-    }
-    let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e}"))?;
-    let mut pipe = child.stdout.take().ok_or("cannot read git's output")?;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = pipe.read_to_end(&mut bytes);
-        bytes
-    });
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                // Not joined: a grandchild that inherited the pipe keeps it open past the
-                // kill, and waiting for its end would hold the deadline hostage. The thread
-                // ends with the pipe.
-                drop(reader);
-                return Err("git did not answer in time".to_string());
-            }
-            Err(e) => return Err(format!("cannot wait for git: {e}")),
-        }
-    };
-    let bytes = reader.join().unwrap_or_default();
+    let out = run(args, Some(cwd), Some(deadline), true)?;
     Ok(GitOut {
-        code: status.code(),
-        stdout: String::from_utf8_lossy(&bytes).to_string(),
+        code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
     })
 }

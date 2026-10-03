@@ -50,9 +50,7 @@ pub(super) fn check_worktree_name(name: &str) -> Result<(), String> {
     // the name alone, which `branchPattern` puts after a prefix — a name that fails on its
     // own fails there too. A leading '-' is refused first so git cannot read it as a flag.
     let branchable = !name.starts_with('-')
-        && std::process::Command::new("git")
-            .args(["check-ref-format", "--branch", name])
-            .output()
+        && crate::repo::git(&["check-ref-format", "--branch", name], None)
             .is_ok_and(|out| out.status.success());
     if !branchable {
         return Err(format!(
