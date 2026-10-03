@@ -5,9 +5,9 @@
 //! useless if the channel is one the person does not look at — hence a template rather than
 //! a hardcoded notifier.
 
-use crate::config::Hook;
 use crate::infra::shell::on_path;
 use crate::infra::template::{Sub, contains_placeholder, render, sh_quote};
+use crate::infra::terminal::Hook;
 
 /// The terminal every other built-in already assumes. Hardcoded in the *default* only,
 /// which is the thing `notification` exists to replace on a machine running something else.

@@ -4,27 +4,12 @@
 //! worktree. It captures who is running (agent, kind, id), where it runs (terminal backend
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
-//! A leaf: defines pure data structures with serde serialization and no internal crate
-//! dependencies.
+//! Pure data structures with serde serialization. The only thing it names in the crate is
+//! `SessionTerminal`, which lives in `infra::terminal` and is re-exported here.
 
 use serde::{Deserialize, Serialize};
 
-/// Where the session runs: its terminal backend, and for tmux the socket, session and window.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionTerminal {
-    /// Terminal backend name: "tmux", "iterm2" (the built-in one), or "custom" for a
-    /// `terminal.spawn` template.
-    pub backend: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub socket: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane: Option<String>,
-}
+pub use crate::infra::terminal::SessionTerminal;
 
 /// An agent session running under adjutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

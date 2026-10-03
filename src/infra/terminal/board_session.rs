@@ -204,7 +204,7 @@ pub fn native_attach_line(
         args.push(format!("={name}:"));
         args.extend(["destroy-unattached", "keep-last"].map(str::to_string));
     }
-    crate::template::sh_join(&args)
+    crate::infra::template::sh_join(&args)
 }
 
 /// What `board_release_script` prints when it left the session alone.
