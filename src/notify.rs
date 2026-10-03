@@ -6,7 +6,6 @@
 //! a hardcoded notifier.
 
 use crate::config::Hook;
-use crate::repo::RepoInfo;
 use crate::template::{Sub, contains_placeholder, render, sh_quote};
 
 /// The terminal every other built-in already assumes. Hardcoded in the *default* only,
@@ -103,13 +102,8 @@ pub fn command(hook: &Hook, nwo: &str, title: &str, message: &str) -> Option<Str
 /// The same, for a message *about a repository* — which is every notification this tool
 /// raises on its own. The title sentence lives here rather than at each call site so that
 /// `{title}` and `{nwo}` cannot end up describing different repositories.
-pub fn repo_command(hook: &Hook, info: &RepoInfo, message: &str) -> Option<String> {
-    command(
-        hook,
-        &info.nwo,
-        &format!("adjutant / {}", info.repo),
-        message,
-    )
+pub fn repo_command(hook: &Hook, nwo: &str, repo: &str, message: &str) -> Option<String> {
+    command(hook, nwo, &format!("adjutant / {repo}"), message)
 }
 
 /// Whether this notifier has to be told which repository the message is about. `adjutant
@@ -195,17 +189,14 @@ mod tests {
 
     #[test]
     fn the_title_and_the_repository_placeholder_name_the_same_repository() {
-        let info = RepoInfo {
-            hub: None,
-            main: "/src/widget".into(),
-            nwo: "acme/widget".into(),
-            repo: "widget".into(),
-            slug: "acme-widget".into(),
-            hub_name: "adjutant-acme-widget".into(),
-            nwo_source: "origin",
-        };
         assert_eq!(
-            repo_command(&Hook::Command("n {title} {nwo}".into()), &info, "done").unwrap(),
+            repo_command(
+                &Hook::Command("n {title} {nwo}".into()),
+                "acme/widget",
+                "widget",
+                "done"
+            )
+            .unwrap(),
             "n 'adjutant / widget' acme/widget"
         );
     }

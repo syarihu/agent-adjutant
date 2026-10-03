@@ -283,8 +283,12 @@ impl Posted {
 
         if announce
             && wake_needed
-            && let Some(command) =
-                notify::repo_command(&ctx.settings.notification, &ctx.repo, &subject)
+            && let Some(command) = notify::repo_command(
+                &ctx.settings.notification,
+                &ctx.repo.nwo,
+                &ctx.repo.repo,
+                &subject,
+            )
         {
             let _ = terminal::run_shell(&command);
         }
@@ -394,7 +398,12 @@ pub fn deliver_to_worker(
     };
     if wake_needed
         && !woken
-        && let Some(command) = notify::repo_command(&ctx.settings.notification, &ctx.repo, subject)
+        && let Some(command) = notify::repo_command(
+            &ctx.settings.notification,
+            &ctx.repo.nwo,
+            &ctx.repo.repo,
+            subject,
+        )
     {
         let _ = terminal::run_shell(&command);
     }
