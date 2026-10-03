@@ -17,6 +17,7 @@ pub mod http;
 pub mod ide;
 pub mod notify;
 pub mod paths;
+#[cfg(unix)]
 pub mod pty;
 pub mod shell;
 pub mod template;

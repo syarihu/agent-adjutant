@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use serde_json::{Value, json};
 
 use crate::cmd::session::start_request;
-use crate::http::{self, Request};
+use crate::infra::http::{self, Request};
 
 use super::Server;
 use super::assets::{UI_HTML, vendor_asset};

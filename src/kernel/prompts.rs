@@ -8,7 +8,7 @@
 //! The same text is also reachable as a tool (`adjutant_skill`), because MCP prompt support
 //! is uneven across agents and a procedure nobody can fetch is a procedure nobody follows.
 
-pub use crate::infra::agent::Agent;
+use crate::infra::agent::Agent;
 
 mod render_skill;
 pub use render_skill::*;

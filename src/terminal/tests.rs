@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::Hook;
+use crate::infra::terminal::Hook;
 use std::time::Duration;
 // ── reading a pane before waking it ──────────────────────────────
 

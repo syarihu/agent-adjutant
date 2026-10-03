@@ -84,7 +84,7 @@ pub fn close(
     // read is the only thing the repository is asked for here, and this is the command most
     // likely to be run while the repository it belongs to is being taken apart.
     let settings = settings_for(repo_arg);
-    let worktree = config::expand_home(worktree);
+    let worktree = crate::infra::paths::expand_home(worktree);
     // No `is_dir` check, deliberately unlike `tell`: this runs during cleanup, so a
     // worktree that has already been removed is the ordinary way to arrive here twice
     // rather than a mistake worth failing over.

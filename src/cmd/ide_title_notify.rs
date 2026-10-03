@@ -2,7 +2,9 @@ use super::*;
 
 pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result<(), String> {
     let ctx = context_without_hub(repo_arg)?;
-    let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+    let worktree = crate::infra::paths::expand_home(worktree)
+        .to_string_lossy()
+        .to_string();
     let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {
         return Err("ide is not set: put your editor command in the config's ide key".to_string());
     };
@@ -40,7 +42,7 @@ pub fn notify_user(
     // legitimately be run from outside a repository, where there is no answer at all.
     let nwo = match repo_arg {
         Some(arg) => Some(arg.to_string()),
-        None => repo::resolve(None, None).ok().map(|info| info.nwo),
+        None => identity::resolve(None, None).ok().map(|info| info.nwo),
     };
     let settings = settings_for(nwo.as_deref());
     if nwo.is_none() && notify::needs_repo(&settings.notification) {
@@ -95,12 +97,12 @@ fn worktree_name_free(
     name: &str,
     listed: &[String],
 ) -> Result<bool, String> {
-    let branch = repo::branch_fallback(pattern, user, name);
-    let path = repo::worktree_fallback(layout, main, &branch)?;
+    let branch = identity::branch_fallback(pattern, user, name);
+    let path = identity::worktree_fallback(layout, main, &branch)?;
     if std::path::Path::new(&path).exists() || listed.contains(&path) {
         return Ok(false);
     }
-    let taken = repo::git(
+    let taken = crate::infra::git::git(
         &[
             "show-ref",
             "--verify",
@@ -118,12 +120,12 @@ pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
         .settings
         .worktree_pattern
         .as_deref()
-        .unwrap_or(repo::DEFAULT_WORKTREE_PATTERN);
+        .unwrap_or(identity::DEFAULT_WORKTREE_PATTERN);
 
     if let Some(branch) = args.branch {
         println!(
             "{}",
-            repo::worktree_fallback(layout, &ctx.repo.main, branch)?
+            identity::worktree_fallback(layout, &ctx.repo.main, branch)?
         );
         return Ok(());
     }
@@ -137,10 +139,10 @@ pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
         // only the last resort.
         None => std::env::var("USER").unwrap_or_else(|_| "worker".to_string()),
     };
-    let pattern = args.pattern.unwrap_or(repo::DEFAULT_BRANCH_PATTERN);
+    let pattern = args.pattern.unwrap_or(identity::DEFAULT_BRANCH_PATTERN);
     let name = match args.unique {
         true => {
-            let listed = repo::linked_worktrees(&ctx.repo.main)?;
+            let listed = identity::linked_worktrees(&ctx.repo.main)?;
             let mut candidates =
                 std::iter::once(name.to_string()).chain((2..1000).map(|n| format!("{name}-{n}")));
             loop {
@@ -155,13 +157,13 @@ pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
         }
         false => name.to_string(),
     };
-    let branch = repo::branch_fallback(pattern, &user, &name);
+    let branch = identity::branch_fallback(pattern, &user, &name);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "name": name,
             "branch": branch,
-            "path": repo::worktree_fallback(layout, &ctx.repo.main, &branch)?,
+            "path": identity::worktree_fallback(layout, &ctx.repo.main, &branch)?,
             // Named for what it is: the checkout to run `git worktree add` *in*. It was
             // called `base`, and the procedure duly passed it where git wants a commit-ish
             // — which is a path, so every worktree creation failed with `fatal: invalid

@@ -9,18 +9,18 @@
 use serde_json::{Value, json};
 
 use super::{Context, Delivered};
-use crate::config;
-use crate::messaging::{self, Message};
+use crate::kernel::config;
+use crate::messaging::Message;
 use crate::task::{self, PrRef, PrStatus, Status, Task};
 
 use std::path::PathBuf;
 
 pub fn dir(ctx: &Context) -> PathBuf {
-    task::dir(&messaging::state_dir(), &ctx.repo.slug)
+    task::dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
 }
 
 fn stamp() -> String {
-    messaging::utc_stamp(messaging::now_secs())
+    crate::infra::clock::utc_stamp(crate::infra::clock::now_secs())
 }
 
 /// Derive a card title from the input title or the first non-empty line of the body.
@@ -50,7 +50,7 @@ pub(super) fn check_worktree_name(name: &str) -> Result<(), String> {
     // the name alone, which `branchPattern` puts after a prefix — a name that fails on its
     // own fails there too. A leading '-' is refused first so git cannot read it as a flag.
     let branchable = !name.starts_with('-')
-        && crate::repo::git(&["check-ref-format", "--branch", name], None)
+        && crate::infra::git::git(&["check-ref-format", "--branch", name], None)
             .is_ok_and(|out| out.status.success());
     if !branchable {
         return Err(format!(
@@ -134,7 +134,7 @@ fn check_url(url: &str, what: &str) -> Result<(), String> {
 /// A parent task as the board takes it: a URL, or a key the hub turns into one before it
 /// writes the brief. Anything else is refused, since it is quoted on a command line.
 fn check_parent(parent: &str) -> Result<(), String> {
-    if crate::brief::is_key(parent) {
+    if crate::kernel::brief::is_key(parent) {
         return Ok(());
     }
     check_url(parent, "a task")
@@ -216,7 +216,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
 /// so that it is absolute — against the directory of the command giving it, not of some
 /// later one — and matches what git prints once the worktree is created there.
 fn resolved_worktree(path: &str) -> String {
-    let path = config::expand_home(path);
+    let path = crate::infra::paths::expand_home(path);
     let mut current = std::path::absolute(&path).unwrap_or(path);
     // Until it stops changing: stepping back over a part that does not exist can land on
     // one that does — a symlink, say — which only the next pass resolves. Bounded, since a
@@ -443,7 +443,7 @@ const ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Run `gh` from `main` and return what it printed, or the reason it failed.
 fn gh_output(main: &str, args: &[&str], deadline: std::time::Instant) -> Result<String, String> {
-    let run = super::gh::run(Some(main), args, deadline)?;
+    let run = crate::infra::gh::run(Some(main), args, deadline)?;
     if run.ok {
         return Ok(run.stdout);
     }
@@ -475,7 +475,7 @@ pub(super) fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, S
 /// the snapshot read for a task whose issue it is, else the title of the task made from it.
 /// Looked at before `gh` is asked, so an issue the board has already read is not read again.
 pub(super) fn known_title(slugs: &[String], url: &str) -> Option<String> {
-    let state_dir = messaging::state_dir();
+    let state_dir = crate::infra::paths::state_dir();
     let tasks = slugs
         .iter()
         .flat_map(|slug| task::list(&task::dir(&state_dir, slug)));
@@ -577,7 +577,7 @@ pub(super) fn pr_refs(ctx: &Context, tasks: &[Task]) -> Vec<Option<PrRef>> {
             let pr = t.pr.as_deref()?;
             let default = default.get_or_init(|| {
                 (ctx.repo.nwo_source != "dirname")
-                    .then(|| crate::repo::origin_host(&ctx.repo.main))
+                    .then(|| crate::kernel::identity::origin_host(&ctx.repo.main))
                     .flatten()
             });
             task::pr_ref(
@@ -842,7 +842,9 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
     // it would land in is the caller's own, and a hub that messages itself is woken mid-turn
     // to be told what it just did.
     if let Some(worktree) = args.waiting_in {
-        let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+        let worktree = crate::infra::paths::expand_home(worktree)
+            .to_string_lossy()
+            .to_string();
         input["worktree"] = json!(worktree);
         input["handOver"] = json!(false);
     }
@@ -976,7 +978,7 @@ pub fn list(
     // Compared resolved: the hub names the worktree as `git worktree list` printed it, and
     // the record holds whatever path it was written with.
     let resolved = |path: &str| {
-        let path = config::expand_home(path);
+        let path = crate::infra::paths::expand_home(path);
         path.canonicalize().unwrap_or(path)
     };
     let at = worktree.map(resolved);
@@ -1160,7 +1162,7 @@ fn given(value: Option<&str>) -> Option<&str> {
 /// from the record the board shows, so the two cannot disagree, and the one thing the hub
 /// has to get right is the record.
 pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
-    use crate::brief as text;
+    use crate::kernel::brief as text;
 
     let ctx = super::context(args.repo, args.hub)?;
     let worktree = resolved_worktree(args.worktree);
@@ -1170,7 +1172,7 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
     }
     // Read from the worktree rather than taken as an argument: it is the branch the worker
     // will be on, and a typed one is a second answer to a question git already has.
-    let branch = crate::repo::git(&["symbolic-ref", "-q", "--short", "HEAD"], Some(worktree))
+    let branch = crate::infra::git::git(&["symbolic-ref", "-q", "--short", "HEAD"], Some(worktree))
         .ok()
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -1266,7 +1268,7 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
             // Checked again here because a record written before parents were checked on the way
             // in may hold anything.
             if parent != "-" {
-                if crate::brief::is_key(&parent) {
+                if crate::kernel::brief::is_key(&parent) {
                     return Err(format!(
                         "the parent task is a key ({parent}): find its URL and pass --parent '<URL>'"
                     ));
@@ -1316,7 +1318,7 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
     };
 
     let path = match args.out {
-        Some(out) => config::expand_home(out),
+        Some(out) => crate::infra::paths::expand_home(out),
         None => worktree.join(".claude").join("task-brief.md"),
     };
     if let Some(parent) = path.parent() {

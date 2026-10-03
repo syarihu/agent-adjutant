@@ -8,28 +8,16 @@
 //! `adj`), so the same code is one build rather than two, and the integration tests can
 //! drive it directly.
 
-mod brief;
 mod cmd;
-mod config;
 mod gate;
-mod http;
-mod ide;
 mod infra;
 mod jules;
 mod kernel;
 mod mcp;
 mod messaging;
-mod notify;
-mod prompts;
-#[cfg(unix)]
-mod pty;
-mod repo;
-mod runner;
 mod session;
 mod task;
-mod template;
 mod terminal;
-mod ws;
 
 /// Scaffolding the tests share. Not a layer — nothing outside `#[cfg(test)]` may reach it,
 /// which is why `check-layering.sh` lets any module name it.
@@ -64,12 +52,12 @@ pub(crate) mod testing {
                 // `--no-dashboard` exports this, so a test run in that hub's tab would see
                 // `startupDashboard` resolve to `false` no matter what its fixture said —
                 // and the settings tests would fail for a reason nothing in them mentions.
-                std::env::remove_var(crate::config::STARTUP_DASHBOARD_ENV);
+                std::env::remove_var(crate::infra::env::STARTUP_DASHBOARD_ENV);
                 // `cargo test` run from a git hook inherits `GIT_DIR`, and a test that sets
                 // up a repository with git directly would then set up the developer's own.
                 // Cleared here too so that one a test set and failed to take back ends with
                 // the next sandbox.
-                for name in crate::repo::REPOSITORY_LOCATION_ENV {
+                for name in crate::infra::git::REPOSITORY_LOCATION_ENV {
                     std::env::remove_var(name);
                 }
             }
@@ -85,10 +73,10 @@ pub(crate) mod testing {
         }
     }
 
-    /// A repository at `dir` on `branch`, set up through `repo::git` so that a variable a
+    /// A repository at `dir` on `branch`, set up through `crate::infra::git::git` so that a variable a
     /// test has already exported cannot send the setup somewhere else.
     pub fn init_repo(dir: &std::path::Path, branch: &str) {
-        let out = crate::repo::git(&["init", "-q", "-b", branch], Some(dir)).unwrap();
+        let out = crate::infra::git::git(&["init", "-q", "-b", branch], Some(dir)).unwrap();
         assert!(
             out.status.success(),
             "{}",
@@ -138,7 +126,7 @@ fn resolve_wake_flag(wake: bool, no_wake: bool) -> Option<bool> {
 
 /// Parse this process's arguments and run the subcommand. Exits; never returns.
 pub fn run() -> ! {
-    config::anchor_config_env();
+    kernel::config::anchor_config_env();
     let cli = Cli::parse();
     let result: Result<i32, String> = match &cli.command {
         Commands::HubName { repo, hub, json } => {

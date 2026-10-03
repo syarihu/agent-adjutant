@@ -23,10 +23,10 @@ cd "$(dirname "$0")/.." || exit 1
 RANK=(infra kernel registry mail task gate jules lifecycle board transport)
 # The old bottom. Answers questions using nothing but the standard library, its own input
 # and `infra`.
-BOTTOM=(config repo template prompts http session ws pty brief)
+BOTTOM=(session)
 # The old middle. May reach down into BOTTOM, `infra` and `kernel`, never sideways into
 # another middle module and never up.
-MIDDLE=(terminal runner notify ide messaging)
+MIDDLE=(terminal messaging)
 # The top. May name anything; nothing else may name it. `lib` and `main` are the crate roots.
 # `cli_args` is a reservation like the RANK ones.
 TOP=(cmd mcp cli_args lib main)

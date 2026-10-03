@@ -277,10 +277,10 @@ fn procedure_runner_selection_distinguishes_hub_and_worker() {
             None,
             runner_for_procedure(&settings, "adj-hub")
                 .as_deref()
-                .map(crate::runner::agent_from_runner)
+                .map(crate::kernel::runner::agent_from_runner)
                 .as_deref()
         ),
-        prompts::Agent::Claude
+        crate::infra::agent::Agent::Claude
     );
     assert_eq!(
         prompts::resolve_agent(
@@ -288,31 +288,36 @@ fn procedure_runner_selection_distinguishes_hub_and_worker() {
             None,
             runner_for_procedure(&settings, "adj-worker")
                 .as_deref()
-                .map(crate::runner::agent_from_runner)
+                .map(crate::kernel::runner::agent_from_runner)
                 .as_deref()
         ),
-        prompts::Agent::Agy
+        crate::infra::agent::Agent::Agy
     );
 }
 
 #[test]
 fn runner_commands_resolve_to_the_agent_that_starts() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    let resolve =
-        |r: &str| prompts::resolve_agent(None, None, Some(&crate::runner::agent_from_runner(r)));
+    let resolve = |r: &str| {
+        prompts::resolve_agent(
+            None,
+            None,
+            Some(&crate::kernel::runner::agent_from_runner(r)),
+        )
+    };
     for r in [
         "env FOO=1 agy -i {prompt}",
         "agy",
         "/opt/bin/agy -i {prompt}",
         "env A='x y' agy -i {prompt}",
     ] {
-        assert_eq!(resolve(r), prompts::Agent::Agy, "{r}");
+        assert_eq!(resolve(r), crate::infra::agent::Agent::Agy, "{r}");
     }
     for r in [
         "claude --session-id {sessionId}",
         "env CLAUDE_CONFIG_DIR=/x claude",
     ] {
-        assert_eq!(resolve(r), prompts::Agent::Claude, "{r}");
+        assert_eq!(resolve(r), crate::infra::agent::Agent::Claude, "{r}");
     }
 }
 

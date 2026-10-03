@@ -17,7 +17,7 @@ pub(crate) fn skill_text(
     arguments: &str,
     agent: Option<&str>,
 ) -> Result<String, String> {
-    crate::prompts::render_skill(&crate::prompts::SkillRequest {
+    crate::kernel::prompts::render_skill(&crate::kernel::prompts::SkillRequest {
         name,
         arguments,
         agent,
@@ -31,7 +31,7 @@ pub(crate) fn skill_text(
 /// What the hub has left for the worker in this worktree.
 pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {
     let worktree = match worktree {
-        Some(path) => config::expand_home(path),
+        Some(path) => crate::infra::paths::expand_home(path),
         None => std::env::current_dir()
             .map_err(|e| format!("cannot determine the current directory: {e}"))?,
     };

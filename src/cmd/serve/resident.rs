@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use crate::http::{self, Request};
-use crate::ws;
+use crate::infra::http::{self, Request};
+use crate::infra::ws;
 
 use super::Server;
 use super::assets::UI_HTML;
@@ -19,7 +19,7 @@ use super::registry::{Address, address_of};
 use super::routes::{is_page_path, route, terminal_route};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
-/// `repo::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
+/// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
 /// board, so nothing that reaches the address book or the file system is ever a stranger's
 /// string.
 pub(super) fn split_board_path(path: &str) -> Option<(&str, &str)> {
@@ -75,7 +75,7 @@ impl Resident {
             //
             // Never `set_current_dir`: this process is threaded, and the checkout is named to
             // each call instead.
-            let repo = crate::repo::resolve_in(
+            let repo = crate::kernel::identity::resolve_in(
                 Some(Path::new(&address.main)),
                 Some(&address.nwo),
                 address.hub.as_deref(),

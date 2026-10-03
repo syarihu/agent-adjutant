@@ -155,14 +155,14 @@ pub struct Delivered {
 /// procedure in the wrong dialect is a wording problem, but a screen read with the wrong
 /// agent's table is never recognised and the wake would never be typed. So only a runner that
 /// is Claude Code or agy is read; any other custom runner is typed into without looking.
-pub(crate) fn wake_agent(runner: Option<&str>) -> crate::prompts::Agent {
-    use crate::prompts::Agent;
+pub(crate) fn wake_agent(runner: Option<&str>) -> crate::infra::agent::Agent {
+    use crate::infra::agent::Agent;
     let Some(runner) = runner else {
         return Agent::Claude;
     };
     // The program the line runs, past `env` and `KEY=VALUE` words: a runner is often written
     // `env CLAUDE_CONFIG_DIR=… claude --resume {sessionId}`.
-    match crate::runner::agent_from_runner(runner).as_str() {
+    match crate::kernel::runner::agent_from_runner(runner).as_str() {
         "claude" => Agent::Claude,
         "agy" => Agent::Agy,
         _ => Agent::Generic,
@@ -272,7 +272,9 @@ impl Posted {
                     pid,
                     &subject,
                     terminal::HUB_WAKE_LINE,
-                    terminal::look_before_typing(wake_agent(ctx.settings.hub_runner.as_deref())),
+                    crate::terminal::look_before_typing(wake_agent(
+                        ctx.settings.hub_runner.as_deref(),
+                    )),
                     false,
                 )),
                 _ => (false, None),
@@ -308,7 +310,7 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
         from: args.from.unwrap_or("unknown").to_string(),
         // Where this is being sent from, taken from the same directory the repository was
         // resolved in rather than from anything the sender says about itself.
-        worktree: repo::current_worktree(None),
+        worktree: identity::current_worktree(None),
         kind: args.kind.to_string(),
         subject: args.subject.unwrap_or("").to_string(),
         body,
@@ -388,7 +390,9 @@ pub fn deliver_to_worker(
                 pid,
                 subject,
                 terminal::WORKER_WAKE_LINE,
-                terminal::look_before_typing(wake_agent(ctx.settings.agent_runner.as_deref())),
+                crate::terminal::look_before_typing(wake_agent(
+                    ctx.settings.agent_runner.as_deref(),
+                )),
                 false,
             )),
             _ => (false, None),

@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::gate;
+use crate::kernel::identity::Worktree;
+use crate::kernel::runner;
 use crate::messaging;
-use crate::repo::Worktree;
-use crate::runner;
 use crate::session;
 use crate::task;
 
@@ -24,25 +24,24 @@ use super::sessions::{TmuxView, sessions_of, tmux_view};
 /// through tmux for the pid.
 pub(super) fn session_terminal(
     record: Option<&Value>,
-    terminal_settings: &crate::config::TerminalSettings,
+    terminal_settings: &crate::infra::terminal::TerminalSettings,
     views: &mut HashMap<PathBuf, TmuxView>,
     pid: Option<u32>,
-) -> session::SessionTerminal {
-    if let Some(recorded) = record
-        .and_then(|r| r.get("terminal"))
-        .and_then(|t| serde_json::from_value::<session::SessionTerminal>(t.clone()).ok())
-    {
+) -> crate::infra::terminal::SessionTerminal {
+    if let Some(recorded) = record.and_then(|r| r.get("terminal")).and_then(|t| {
+        serde_json::from_value::<crate::infra::terminal::SessionTerminal>(t.clone()).ok()
+    }) {
         return recorded;
     }
-    let backend = crate::terminal::backend_name(terminal_settings);
+    let backend = crate::infra::terminal::backend_name(terminal_settings);
     let tmux = backend == "tmux";
     // Asked of tmux only here: a session whose record says where it runs needs no look at the
     // settings' own server.
     let pane = pid.filter(|_| tmux).and_then(|p| {
         let view = tmux_view(views, terminal_settings.tmux_socket());
-        crate::terminal::find_matching_pane(&view.panes, Some(p), None)
+        crate::infra::terminal::find_matching_pane(&view.panes, Some(p), None)
     });
-    session::SessionTerminal {
+    crate::infra::terminal::SessionTerminal {
         backend: backend.to_string(),
         socket: terminal_settings
             .tmux_socket()
@@ -57,13 +56,13 @@ pub(super) fn session_terminal(
 /// The `hubs[]` id of the hub a worker names by `key`: the repository's own hub when it
 /// names none, and one made from the key when no hub of that key was found.
 pub(super) fn parent_hub_id(
-    repo: &crate::repo::RepoInfo,
+    repo: &crate::kernel::identity::RepoInfo,
     hubs: &[session::RepoHub],
     key: Option<&str>,
 ) -> String {
     match key.map(str::trim).filter(|s| !s.is_empty()) {
         Some(key) => {
-            let slug = crate::repo::slug_for(&repo.nwo, Some(key));
+            let slug = crate::kernel::identity::slug_for(&repo.nwo, Some(key));
             hubs.iter()
                 .find(|h| h.slug == slug)
                 .map(|h| h.id.clone())
@@ -101,7 +100,10 @@ pub(super) fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<Str
             let shared = names.iter().filter(|other| *other == name).count() > 1
                 || (main_listed && name == "main");
             match shared {
-                true => format!("worker-{name}-{}", crate::repo::short_digest(path)),
+                true => format!(
+                    "worker-{name}-{}",
+                    crate::kernel::identity::short_digest(path)
+                ),
                 false => format!("worker-{name}"),
             }
         })
@@ -126,7 +128,7 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         ),
     );
 
-    let now = messaging::now_secs();
+    let now = crate::infra::clock::now_secs();
     let settings = settings_now(server);
     // After the records are joined, from the same values the page gets: a card shows the last
     // answer about its session, and an old answer is asked again behind the page's back.
@@ -148,7 +150,7 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
     // does not grow with the number of worktrees. The `ps` is only run if a record names a pid.
     let processes = messaging::ProcessTable::snapshot();
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
-    let listed = crate::repo::worktrees(&repo.main).unwrap_or_default();
+    let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
@@ -298,8 +300,8 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         "stuckAfterMinutes": settings.stuck_after_minutes,
         // Whether the IDE buttons can do anything, and where to set it when they cannot. Read
         // on every poll, so an `ide` written into the config shows up without a restart.
-        "ideConfigured": crate::ide::configured(settings.ide.as_deref()),
-        "configPath": crate::config::config_path().to_string_lossy(),
+        "ideConfigured": crate::infra::ide::configured(settings.ide.as_deref()),
+        "configPath": crate::kernel::config::config_path().to_string_lossy(),
         "now": now,
         "pending": pending,
         "gates": gate::list(&crate::cmd::gate::dir(&server.ctx)),
@@ -329,7 +331,7 @@ pub(super) fn socket_key_in(
     tmpdir: Option<&str>,
     uid: u32,
 ) -> PathBuf {
-    let path = crate::terminal::tmux_socket_path(socket, tmux_env, tmpdir, uid);
+    let path = crate::infra::terminal::tmux_socket_path(socket, tmux_env, tmpdir, uid);
     match (
         path.parent().and_then(|dir| dir.canonicalize().ok()),
         path.file_name(),
@@ -500,7 +502,7 @@ pub(super) fn waiting_worker(
     started: Option<&str>,
     phase_at: Option<i64>,
 ) -> Option<session::SessionWaiting> {
-    let phase_at = phase_at.map(messaging::utc_stamp);
+    let phase_at = phase_at.map(crate::infra::clock::utc_stamp);
     let open: Vec<&gate::Gate> = gates
         .open
         .iter()
@@ -648,14 +650,15 @@ pub(super) fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate:
 /// from the ones the server started with, because `adj work` reads the config each time it
 /// runs, and a limit changed under a running board would otherwise show one number while
 /// dispatches are refused by another.
-pub(in crate::cmd) fn settings_now(server: &Server) -> crate::config::Settings {
-    crate::config::resolve_config(&server.ctx.repo.nwo)
+pub(in crate::cmd) fn settings_now(server: &Server) -> crate::kernel::config::Settings {
+    crate::kernel::config::resolve_config(&server.ctx.repo.nwo)
         .map(|resolved| resolved.settings)
         .unwrap_or_else(|_| server.ctx.settings.clone())
 }
 
 pub(super) fn branch_of(worktree: &str) -> Option<String> {
-    let output = crate::repo::git(&["-C", worktree, "branch", "--show-current"], None).ok()?;
+    let output =
+        crate::infra::git::git(&["-C", worktree, "branch", "--show-current"], None).ok()?;
     let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!name.is_empty()).then_some(name)
 }

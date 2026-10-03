@@ -5,11 +5,11 @@
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
 //! Pure data structures with serde serialization. The only thing it names in the crate is
-//! `SessionTerminal`, which lives in `infra::terminal` and is re-exported here.
+//! `SessionTerminal`, which lives in `infra::terminal`.
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::infra::terminal::SessionTerminal;
+use crate::infra::terminal::SessionTerminal;
 
 /// An agent session running under adjutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -40,7 +40,7 @@ fn hub_env(ctx: &Context, dashboard: Option<bool>) -> Vec<(String, String)> {
     // line carry an override nobody asked for.
     if let Some(on) = dashboard {
         env.push((
-            config::STARTUP_DASHBOARD_ENV.to_string(),
+            crate::infra::env::STARTUP_DASHBOARD_ENV.to_string(),
             if on { "1" } else { "0" }.to_string(),
         ));
     }
@@ -131,7 +131,7 @@ pub fn hub_in_tab(
     extra: &[String],
     start: HubStart,
     dashboard: Option<bool>,
-    terminal: &config::TerminalSettings,
+    terminal: &crate::infra::terminal::TerminalSettings,
     dry_run: bool,
 ) -> Result<TabOutcome, String> {
     let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
@@ -161,8 +161,8 @@ pub fn start_hub(ctx: &Context, start: HubStart) -> Result<TabOutcome, String> {
 }
 
 /// Whether the board may start a hub under these settings.
-pub fn hub_startable(terminal: &config::TerminalSettings) -> bool {
-    crate::terminal::backend_name(terminal) == "tmux"
+pub fn hub_startable(terminal: &crate::infra::terminal::TerminalSettings) -> bool {
+    crate::infra::terminal::backend_name(terminal) == "tmux"
 }
 
 /// Stop the hub `ctx` addresses by closing the tmux pane it runs in. `Ok(true)` when a hub
@@ -174,7 +174,7 @@ pub fn hub_startable(terminal: &config::TerminalSettings) -> bool {
 /// meantime — and the record cleared would be its.
 pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let slug = &ctx.repo.slug;
-    let record = messaging::read_json(&messaging::hub_record_path(slug));
+    let record = crate::infra::fs::read_json(&messaging::hub_record_path(slug));
     let named = record.as_ref().and_then(|r| {
         let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
         let started = r
@@ -207,7 +207,9 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let recorded = record
         .as_ref()
         .and_then(|r| r.get("terminal"))
-        .and_then(|t| serde_json::from_value::<crate::session::SessionTerminal>(t.clone()).ok());
+        .and_then(|t| {
+            serde_json::from_value::<crate::infra::terminal::SessionTerminal>(t.clone()).ok()
+        });
     // Only a hub known to sit in tmux is looked for there: asking tmux about a hub that runs
     // anywhere else would start by talking to whichever server is the default.
     let in_tmux = match &recorded {
@@ -271,7 +273,7 @@ fn open_hub_tab(
     extra: &[String],
     start: HubStart,
     dashboard: Option<bool>,
-    terminal: &config::TerminalSettings,
+    terminal: &crate::infra::terminal::TerminalSettings,
     dry_run: bool,
 ) -> Result<terminal::Performed, String> {
     let mut parts = forwarded_env();
@@ -320,7 +322,7 @@ fn open_hub_tab(
             // hub, and this is the one thing `hub` moves to before it starts.
             cwd: &ctx.repo.main,
             title: &ctx.repo.hub_name,
-            command: &crate::template::sh_join(&parts),
+            command: &crate::infra::template::sh_join(&parts),
             title_command: name_it.as_deref(),
         },
         dry_run,
@@ -426,7 +428,7 @@ pub fn hub(
     // there would be nothing to come back to.
     if records {
         env.push((
-            messaging::HUB_SESSION_ENV.to_string(),
+            crate::infra::env::HUB_SESSION_ENV.to_string(),
             messaging::hub_session_env(&ctx.repo.slug, &session),
         ));
     }
@@ -434,7 +436,10 @@ pub fn hub(
     // the session, so the board stops when the hub does and nothing has to watch for that.
     // `adj hub` itself cannot, since it `exec`s the agent and is gone.
     if ctx.settings.hub_serve {
-        env.push((messaging::HUB_SERVE_ENV.to_string(), ctx.repo.slug.clone()));
+        env.push((
+            crate::infra::env::HUB_SERVE_ENV.to_string(),
+            ctx.repo.slug.clone(),
+        ));
     }
     let mut command = match &resumed {
         Some(_) => runner::hub_resume_command(
@@ -453,10 +458,10 @@ pub fn hub(
         ),
     };
     if !extra.is_empty() {
-        command = format!("{command} {}", crate::template::sh_join(extra));
+        command = format!("{command} {}", crate::infra::template::sh_join(extra));
     }
     if dry_run {
-        println!("cd {}", crate::template::sh_quote(&ctx.repo.main));
+        println!("cd {}", crate::infra::template::sh_quote(&ctx.repo.main));
         println!("{command}");
         return Ok(());
     }
@@ -552,7 +557,7 @@ fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
     }
     let saved = messaging::hub_session(&ctx.repo.slug)?;
     let last = messaging::hub_last_alive(&ctx.repo.slug, &saved.session_id)?;
-    let age = messaging::now_secs().saturating_sub(last).max(0);
+    let age = crate::infra::clock::now_secs().saturating_sub(last).max(0);
     if age as f64 > window * 3600.0 {
         return None;
     }
@@ -607,7 +612,10 @@ fn saved_hub_session(ctx: &Context) -> Result<messaging::SavedSession, String> {
         message.push_str(" These can be resumed:");
         for other in others {
             let command = match &other.hub {
-                Some(hub) => format!("adj hub --resume --hub {}", crate::template::sh_quote(hub)),
+                Some(hub) => format!(
+                    "adj hub --resume --hub {}",
+                    crate::infra::template::sh_quote(hub)
+                ),
                 None => "adj hub --resume".to_string(),
             };
             message.push_str(&format!("\n  {command}"));
@@ -655,7 +663,7 @@ pub(super) fn closable_check(repo: &RepoInfo, hub: &crate::session::RepoHub) -> 
         return Err("the repository hub can only be stopped, not closed; use hub-stop".to_string());
     }
     // The list is lenient about checkouts it cannot read; closing must not be.
-    repo::linked_worktrees(&repo.main)
+    identity::linked_worktrees(&repo.main)
         .map_err(|e| format!("cannot tell which checkouts report to {}: {e}", hub.name))?;
     if hub.children > 0 {
         return Err(format!(
@@ -696,7 +704,7 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
     // This ends no process, so a hub that is still running would be left running with no
     // record, and the next `adj hub` would start a second one beside it. Only the hub itself
     // may clear its own record; from anywhere else it has to be stopped first.
-    let record = messaging::read_json(&messaging::hub_record_path(&hub.slug));
+    let record = crate::infra::fs::read_json(&messaging::hub_record_path(&hub.slug));
     let named = record.as_ref().and_then(|r| {
         let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
         let started = r

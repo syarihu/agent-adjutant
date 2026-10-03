@@ -3,9 +3,8 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use crate::http::{self, Request};
-use crate::messaging;
-use crate::ws;
+use crate::infra::http::{self, Request};
+use crate::infra::ws;
 
 // ── the security boundary ────────────────────────────────────────────
 
@@ -122,7 +121,7 @@ pub(super) fn token() -> Result<String, String> {
 }
 
 fn token_path() -> PathBuf {
-    messaging::state_dir().join("dashboard-token")
+    crate::infra::paths::state_dir().join("dashboard-token")
 }
 
 /// The token already on disk, without making one: asking for a URL must not be what
@@ -150,5 +149,9 @@ fn random_hex() -> String {
     // Nothing on this machine can be called random. Refusing to start would be worse than
     // a weak token on a loopback socket, but it should be visible.
     eprintln!("adj serve: warning — no /dev/urandom; the token is only as good as the clock");
-    format!("{:x}{:x}", std::process::id(), messaging::now_secs())
+    format!(
+        "{:x}{:x}",
+        std::process::id(),
+        crate::infra::clock::now_secs()
+    )
 }

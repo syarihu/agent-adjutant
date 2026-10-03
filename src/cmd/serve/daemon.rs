@@ -22,15 +22,15 @@ use super::{DEFAULT_PORT, bind_preferring};
 // and builds each board's context from that on first use.
 
 fn server_lock_path() -> PathBuf {
-    messaging::state_dir().join("server.lock")
+    crate::infra::paths::state_dir().join("server.lock")
 }
 
 fn server_record_path() -> PathBuf {
-    messaging::state_dir().join("server.json")
+    crate::infra::paths::state_dir().join("server.json")
 }
 
 fn server_log_path() -> PathBuf {
-    messaging::state_dir().join("server.log")
+    crate::infra::paths::state_dir().join("server.log")
 }
 
 /// The pid and port of the resident server, when one is running. Anchored on the recorded
@@ -49,7 +49,7 @@ pub fn resident_running() -> bool {
 /// the resident and the process that started it — which stand in different places once the
 /// resident is detached — read the same directory. The resident never changes directory.
 fn anchor_state_dir() {
-    let Ok(value) = std::env::var(messaging::STATE_DIR_ENV) else {
+    let Ok(value) = std::env::var(crate::infra::env::STATE_DIR_ENV) else {
         return;
     };
     let path = Path::new(&value);
@@ -61,7 +61,7 @@ fn anchor_state_dir() {
     };
     if let Ok(absolute) = std::path::absolute(cwd.join(path)) {
         // SAFETY: called from `server_start` and `server_restart` as their first step, before either starts a thread.
-        unsafe { std::env::set_var(messaging::STATE_DIR_ENV, absolute) };
+        unsafe { std::env::set_var(crate::infra::env::STATE_DIR_ENV, absolute) };
     }
 }
 
@@ -88,7 +88,7 @@ pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, Stri
 fn start_detached(
     port: u16,
     open: bool,
-    here: Option<&crate::repo::RepoInfo>,
+    here: Option<&crate::kernel::identity::RepoInfo>,
 ) -> Result<i32, String> {
     let port = launch_resident(port)?;
     let index = resident_index_url(port)?;
@@ -114,7 +114,10 @@ fn resident_index_url(port: u16) -> Result<String, String> {
 }
 
 /// The URL worth showing: the board of the checkout this stands in, else the index.
-fn shown_url(port: u16, here: Option<&crate::repo::RepoInfo>) -> Result<String, String> {
+fn shown_url(
+    port: u16,
+    here: Option<&crate::kernel::identity::RepoInfo>,
+) -> Result<String, String> {
     match here {
         Some(repo) => Ok(resident_board_url(port, &repo.slug, &token()?)),
         None => resident_index_url(port),
@@ -159,11 +162,11 @@ fn spawn_resident(port: u16) -> Result<std::process::Child, String> {
         .stderr(open_log()?)
         // What the agent is started without, for the same reason: this one answers for every
         // repository and must not inherit the identity of the hub it was started from.
-        .env_remove(messaging::HUB_SESSION_ENV)
-        .env_remove(messaging::HUB_SERVE_ENV)
-        .env_remove(messaging::HUB_ENV)
+        .env_remove(crate::infra::env::HUB_SESSION_ENV)
+        .env_remove(crate::infra::env::HUB_SERVE_ENV)
+        .env_remove(crate::infra::env::HUB_ENV)
         .process_group(0);
-    for name in crate::repo::REPOSITORY_LOCATION_ENV {
+    for name in crate::infra::git::REPOSITORY_LOCATION_ENV {
         command.env_remove(name);
     }
     command
@@ -219,7 +222,7 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
         "pid": pid,
         "psStarted": messaging::ps_started(pid),
         "port": bound,
-        "startedAt": messaging::utc_stamp(messaging::now_secs()),
+        "startedAt": crate::infra::clock::utc_stamp(crate::infra::clock::now_secs()),
         "version": env!("CARGO_PKG_VERSION"),
     });
     crate::infra::fs::write_json(&server_record_path(), &record)?;
@@ -252,7 +255,7 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
                 // Only a board with a card on a PR is opened for it: opening one asks git where
                 // the checkout is, which is not worth doing every round for a board with nothing
                 // to look after.
-                let state_dir = messaging::state_dir();
+                let state_dir = crate::infra::paths::state_dir();
                 addresses()
                     .iter()
                     .filter(|a| {
@@ -287,7 +290,7 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
 
 /// What `server.json` names, whether or not that process is still there.
 fn recorded_resident() -> Option<(u32, Option<String>)> {
-    let record = messaging::read_json(&server_record_path())?;
+    let record = crate::infra::fs::read_json(&server_record_path())?;
     let pid = record.get("pid").and_then(Value::as_u64)? as u32;
     let started = record
         .get("psStarted")
@@ -371,7 +374,7 @@ pub fn server_stop() -> Result<i32, String> {
 
 /// The version `server.json` names, if any.
 fn recorded_version() -> Option<String> {
-    messaging::read_json(&server_record_path())?
+    crate::infra::fs::read_json(&server_record_path())?
         .get("version")
         .and_then(Value::as_str)
         .map(str::to_string)
@@ -470,7 +473,7 @@ pub fn server_status(as_json: bool) -> Result<i32, String> {
 fn board_terminal_tmux() -> Option<(u32, u32)> {
     #[cfg(unix)]
     {
-        crate::terminal::tmux_version().filter(|&v| v >= (3, 1))
+        crate::infra::terminal::tmux_version().filter(|&v| v >= (3, 1))
     }
     #[cfg(not(unix))]
     {

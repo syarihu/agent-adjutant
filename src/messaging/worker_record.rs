@@ -173,7 +173,7 @@ pub fn register_worker(
     title: &str,
     hub: Option<&str>,
     task: Option<&str>,
-    terminal: Option<&crate::session::SessionTerminal>,
+    terminal: Option<&crate::infra::terminal::SessionTerminal>,
 ) -> Result<PathBuf, String> {
     let path = worker_record_path(worktree);
     let mut record = json!({

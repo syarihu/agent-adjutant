@@ -6,8 +6,8 @@ use std::time::Instant;
 
 use serde_json::Value;
 
+use crate::kernel::runner;
 use crate::messaging;
-use crate::runner;
 use crate::session;
 use crate::task;
 
@@ -19,16 +19,16 @@ use super::state::{
 
 /// What one tmux server said about its panes and clients in one poll.
 pub(super) struct TmuxView {
-    pub(super) panes: Vec<crate::terminal::TmuxPane>,
+    pub(super) panes: Vec<crate::infra::terminal::TmuxPane>,
     /// Clients attached to each window, by window id.
     attached: HashMap<String, u32>,
 }
 
 impl TmuxView {
     fn look(socket: Option<&str>) -> Self {
-        let panes = crate::terminal::list_tmux_panes(socket).unwrap_or_default();
-        let clients = crate::terminal::list_tmux_clients(socket);
-        let attached = crate::terminal::attached_counts(&panes, &clients);
+        let panes = crate::infra::terminal::list_tmux_panes(socket).unwrap_or_default();
+        let clients = crate::infra::terminal::list_tmux_clients(socket);
+        let attached = crate::infra::terminal::attached_counts(&panes, &clients);
         TmuxView { panes, attached }
     }
 }
@@ -49,7 +49,7 @@ pub(super) fn tmux_view<'a>(
 /// session that is not in tmux or whose window is not there.
 fn tmux_activity(
     views: &mut HashMap<PathBuf, TmuxView>,
-    terminal: &session::SessionTerminal,
+    terminal: &crate::infra::terminal::SessionTerminal,
 ) -> (Option<i64>, Option<u32>) {
     let Some(window) = terminal
         .window
@@ -69,7 +69,7 @@ fn tmux_activity(
 /// window's. `None` for a session that is not in tmux or whose window is not there.
 fn tmux_pane_of(
     views: &mut HashMap<PathBuf, TmuxView>,
-    terminal: &session::SessionTerminal,
+    terminal: &crate::infra::terminal::SessionTerminal,
 ) -> Option<String> {
     let window = terminal
         .window
@@ -93,7 +93,7 @@ fn tmux_pane_of(
 /// run for them, so that the one and the whole list are the same code and cannot drift.
 pub(super) fn sessions_of(
     server: &Server,
-    settings: &crate::config::Settings,
+    settings: &crate::kernel::config::Settings,
     hubs: &[session::RepoHub],
     linked_paths: &[String],
     listing: Listing<'_>,
@@ -110,7 +110,7 @@ pub(super) fn sessions_of(
     // hub shows its gate on the repository board too. Read-only — closing a resumed gate stays
     // with the board that owns the hub's directory.
     let mut gates = GateCache {
-        state_dir: messaging::state_dir(),
+        state_dir: crate::infra::paths::state_dir(),
         read: HashMap::new(),
     };
     let worker_waiting = |gates: &mut GateCache,
@@ -144,7 +144,7 @@ pub(super) fn sessions_of(
     // runs in tmux, and cached by pane (see `LastLines`).
     let mut screens: HashSet<String> = HashSet::new();
     let mut last_line = |views: &mut HashMap<PathBuf, TmuxView>,
-                         terminal: &session::SessionTerminal,
+                         terminal: &crate::infra::terminal::SessionTerminal,
                          agent: &str,
                          present: bool,
                          activity: Option<i64>| {
@@ -157,14 +157,16 @@ pub(super) fn sessions_of(
             socket_key(terminal.socket.as_deref()).display()
         );
         screens.insert(key.clone());
-        let agent = crate::prompts::Agent::parse(agent).unwrap_or(crate::prompts::Agent::Generic);
+        let agent =
+            crate::infra::agent::Agent::parse(agent).unwrap_or(crate::infra::agent::Agent::Generic);
         server.last_lines.look(
             &key,
             activity,
             Instant::now(),
-            messaging::now_secs(),
+            crate::infra::clock::now_secs(),
             || {
-                let screen = crate::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
+                let screen =
+                    crate::infra::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
                 crate::terminal::last_output_line(agent, &screen)
             },
         )
@@ -175,7 +177,7 @@ pub(super) fn sessions_of(
 
     // 1. Hub sessions from hubs
     for h in hubs.iter().filter(|h| !skipped(&h.id)) {
-        let record = messaging::read_json(&messaging::hub_record_path(&h.slug));
+        let record = crate::infra::fs::read_json(&messaging::hub_record_path(&h.slug));
         let terminal =
             session_terminal(record.as_ref(), terminal_settings, &mut views, h.state.pid);
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
@@ -217,9 +219,10 @@ pub(super) fn sessions_of(
     // 2. Worker sessions from linked worktrees
     // Whether the main checkout is listed below as `worker-main`, which a worktree of that
     // name would otherwise collide with.
-    let main_listed = messaging::read_json(&messaging::worker_record_path(Path::new(&repo.main)))
-        .is_some()
-        || messaging::worker_session(Path::new(&repo.main)).is_some();
+    let main_listed =
+        crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(&repo.main)))
+            .is_some()
+            || messaging::worker_session(Path::new(&repo.main)).is_some();
     let worker_ids = worker_session_ids(linked_paths, main_listed);
     for (index, (path, id)) in linked_paths.iter().zip(worker_ids).enumerate() {
         if skipped(&id) {
@@ -227,7 +230,7 @@ pub(super) fn sessions_of(
         }
         let (status, branch) = worker_data(index, path);
         let wt_path = Path::new(path);
-        let record_json = messaging::read_json(&messaging::worker_record_path(wt_path));
+        let record_json = crate::infra::fs::read_json(&messaging::worker_record_path(wt_path));
         let saved_session = messaging::worker_session(wt_path);
         let parent_hub = parent_hub_id(repo, hubs, messaging::worker_hub_key(wt_path).as_deref());
         let started_at = record_json
@@ -264,8 +267,10 @@ pub(super) fn sessions_of(
 
         let title = status.title.or(saved_title);
         let task_title = task_id.as_deref().and_then(|id| {
-            let slug =
-                crate::repo::slug_for(&repo.nwo, messaging::worker_hub_key(wt_path).as_deref());
+            let slug = crate::kernel::identity::slug_for(
+                &repo.nwo,
+                messaging::worker_hub_key(wt_path).as_deref(),
+            );
             linked_task_title(&gates.state_dir, &slug, id)
         });
 
@@ -301,7 +306,7 @@ pub(super) fn sessions_of(
     if skipped("worker-main") {
         return sessions;
     }
-    if let Some(record_json) = messaging::read_json(&main_record_path) {
+    if let Some(record_json) = crate::infra::fs::read_json(&main_record_path) {
         let status = messaging::worker_status_with(processes, Path::new(&repo.main));
         let parent_hub = parent_hub_id(
             repo,
@@ -341,7 +346,7 @@ pub(super) fn sessions_of(
             .map(str::to_string);
 
         let task_title = task_id.as_deref().and_then(|id| {
-            let slug = crate::repo::slug_for(
+            let slug = crate::kernel::identity::slug_for(
                 &repo.nwo,
                 messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
             );
@@ -387,7 +392,7 @@ pub(super) fn sessions_of(
         let waiting = worker_waiting(&mut gates, &parent_hub, &repo.main, None, None);
 
         let task_title = saved.task.as_deref().and_then(|id| {
-            let slug = crate::repo::slug_for(&repo.nwo, saved.hub.as_deref());
+            let slug = crate::kernel::identity::slug_for(&repo.nwo, saved.hub.as_deref());
             linked_task_title(&gates.state_dir, &slug, id)
         });
         sessions.push(session::Session {
@@ -426,11 +431,11 @@ pub(super) fn sessions_of(
 /// another worktree, no gates of another hub. Equal to its entry in the list `state` carries.
 pub(in crate::cmd) fn board_session(
     server: &Server,
-    settings: &crate::config::Settings,
+    settings: &crate::kernel::config::Settings,
     id: &str,
 ) -> Option<session::Session> {
     let repo = &server.ctx.repo;
-    let listed = crate::repo::worktrees(&repo.main).unwrap_or_default();
+    let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // A `ps` for each of the few it is asked about, not the whole process table.
@@ -465,7 +470,7 @@ const GIT_CHECK_SECS: u64 = 10;
 /// The session `id` of this board, from the board's own records.
 pub(in crate::cmd) fn find_session(
     server: &Server,
-    settings: &crate::config::Settings,
+    settings: &crate::kernel::config::Settings,
     id: &str,
 ) -> Result<session::Session, String> {
     board_session(server, settings, id).ok_or_else(|| format!("no such session: {id}"))
@@ -473,9 +478,9 @@ pub(in crate::cmd) fn find_session(
 
 /// The slug of the hub the worker in `worktree` reports to, from its own record: the same one
 /// `parent_hub_id` and the hub listing arrive at, without listing the hubs.
-fn worker_hub_slug(repo: &crate::repo::RepoInfo, worktree: &Path) -> String {
+fn worker_hub_slug(repo: &crate::kernel::identity::RepoInfo, worktree: &Path) -> String {
     match messaging::worker_hub_key(worktree) {
-        Some(key) => crate::repo::slug_for(&repo.nwo, Some(&key)),
+        Some(key) => crate::kernel::identity::slug_for(&repo.nwo, Some(&key)),
         None => match &repo.hub {
             Some(_) => repo
                 .clone()
@@ -492,17 +497,24 @@ fn worker_hub_slug(repo: &crate::repo::RepoInfo, worktree: &Path) -> String {
 pub(in crate::cmd) fn git_state_of(
     server: &Server,
     session: &session::Session,
-) -> Result<Option<crate::repo::GitState>, String> {
+) -> Result<Option<crate::kernel::worktree_state::GitState>, String> {
     // The task's own base, when it has one: work meant for a release branch is not merged
     // because it is in the default branch.
     let base = session.task.as_deref().and_then(|task_id| {
         let slug = worker_hub_slug(&server.ctx.repo, Path::new(&session.worktree));
-        task::load(&task::dir(&messaging::state_dir(), &slug), task_id)
-            .ok()?
-            .base
+        task::load(
+            &task::dir(&crate::infra::paths::state_dir(), &slug),
+            task_id,
+        )
+        .ok()?
+        .base
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_CHECK_SECS);
-    crate::repo::worktree_git_state(Path::new(&session.worktree), base.as_deref(), deadline)
+    crate::kernel::worktree_state::worktree_git_state(
+        Path::new(&session.worktree),
+        base.as_deref(),
+        deadline,
+    )
 }
 
 /// What one session's worktree holds that no remote has, asked when a person looks rather than

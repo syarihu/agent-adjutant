@@ -10,7 +10,7 @@
 //! come from the record, never from the request.
 
 use super::serve::Server;
-use crate::http::Request;
+use crate::infra::http::Request;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
@@ -54,16 +54,16 @@ pub(super) fn serve(
     mut stream: TcpStream,
     _reader: BufReader<TcpStream>,
 ) -> std::io::Result<()> {
-    crate::http::json(&mut stream, 404, r#"{"error":"no such route"}"#)
+    crate::infra::http::json(&mut stream, 404, r#"{"error":"no such route"}"#)
 }
 
 #[cfg(unix)]
 mod imp {
     use super::*;
     use crate::cmd::serve::{board_session, settings_now};
-    use crate::pty;
-    use crate::terminal;
-    use crate::ws;
+    use crate::infra::pty;
+    use crate::infra::terminal;
+    use crate::infra::ws;
     use std::io::Read;
     use std::process::Command;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -117,7 +117,7 @@ mod imp {
         let accept = match ws::accept_key(&req.headers) {
             Ok(accept) => accept,
             Err(why) => {
-                return crate::http::json(
+                return crate::infra::http::json(
                     &mut stream,
                     400,
                     &serde_json::json!({ "error": why }).to_string(),
@@ -125,7 +125,7 @@ mod imp {
             }
         };
         let Some(_slot) = Slot::take(&server.terminals) else {
-            return crate::http::json(
+            return crate::infra::http::json(
                 &mut stream,
                 503,
                 &serde_json::json!({ "error": "too many open terminals" }).to_string(),
@@ -434,7 +434,8 @@ mod imp {
 mod tests {
     use super::imp::*;
     use super::*;
-    use crate::session::{Session, SessionTerminal};
+    use crate::infra::terminal::SessionTerminal;
+    use crate::session::Session;
 
     fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Session {
         Session {

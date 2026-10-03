@@ -18,7 +18,7 @@ pub use std::process::{Command, Stdio};
 pub const BIN: &str = env!("CARGO_BIN_EXE_adjutant");
 
 /// Every fixture repository has the same origin, so its address is fixed too. Written out
-/// rather than derived from `adjutant::repo`, so that a change to how a slug is built shows
+/// rather than derived from `adjutant::kernel::identity`, so that a change to how a slug is built shows
 /// up here as a failing test instead of as two implementations agreeing with each other.
 pub const SLUG: &str = "acme-widget-898449509108182c";
 pub const HUB: &str = "adjutant-acme-widget-898449509108182c";

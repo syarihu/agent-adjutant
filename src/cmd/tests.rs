@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn only_claude_and_agy_runners_have_their_screens_read() {
-    use crate::prompts::Agent;
+    use crate::infra::agent::Agent;
     // The built-in runner is Claude Code.
     assert_eq!(wake_agent(None), Agent::Claude);
     assert_eq!(wake_agent(Some("claude {prompt}")), Agent::Claude);
@@ -61,13 +61,13 @@ fn a_tab_is_handed_the_config_and_state_directory_it_must_not_lose() {
     assert!(
         parts
             .iter()
-            .any(|p| p.starts_with(&format!("{}=", config::CONFIG_ENV))),
+            .any(|p| p.starts_with(&format!("{}=", crate::infra::env::CONFIG_ENV))),
         "{parts:?}"
     );
     assert!(
         parts
             .iter()
-            .any(|p| p.starts_with(&format!("{}=", messaging::STATE_DIR_ENV))),
+            .any(|p| p.starts_with(&format!("{}=", crate::infra::env::STATE_DIR_ENV))),
         "{parts:?}"
     );
 }
@@ -78,9 +78,9 @@ fn a_tab_is_handed_the_config_and_state_directory_it_must_not_lose() {
 fn nothing_is_forwarded_when_nothing_was_given() {
     let _sandbox = crate::testing::Sandbox::empty();
     unsafe {
-        std::env::remove_var(config::CONFIG_ENV);
-        std::env::remove_var(config::XDG_CONFIG_HOME_ENV);
-        std::env::remove_var(messaging::STATE_DIR_ENV);
+        std::env::remove_var(crate::infra::env::CONFIG_ENV);
+        std::env::remove_var(crate::infra::env::XDG_CONFIG_HOME_ENV);
+        std::env::remove_var(crate::infra::env::STATE_DIR_ENV);
     }
     assert!(forwarded_env().is_empty());
 }
@@ -89,7 +89,7 @@ fn nothing_is_forwarded_when_nothing_was_given() {
 fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
     let _sandbox = crate::testing::Sandbox::empty();
     unsafe {
-        std::env::set_var(config::CONFIG_ENV, "relative-config.json");
+        std::env::set_var(crate::infra::env::CONFIG_ENV, "relative-config.json");
         std::env::remove_var("XDG_CONFIG_HOME");
     }
     config::anchor_config_env();
@@ -97,7 +97,7 @@ fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
     assert_eq!(env[0], "env");
     assert!(env.contains(&format!(
             "{}={}",
-            config::CONFIG_ENV,
+            crate::infra::env::CONFIG_ENV,
             std::env::current_dir()
                 .unwrap()
                 .join("relative-config.json")
@@ -112,15 +112,19 @@ fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
 #[test]
 fn a_relative_xdg_config_home_reaches_a_tab_as_an_absolute_path() {
     let sandbox = crate::testing::Sandbox::empty();
-    unsafe { std::env::remove_var(config::CONFIG_ENV) };
-    let _xdg = crate::testing::EnvVar::set(&sandbox, config::XDG_CONFIG_HOME_ENV, "relative-xdg");
+    unsafe { std::env::remove_var(crate::infra::env::CONFIG_ENV) };
+    let _xdg = crate::testing::EnvVar::set(
+        &sandbox,
+        crate::infra::env::XDG_CONFIG_HOME_ENV,
+        "relative-xdg",
+    );
     config::anchor_config_env();
     let env = forwarded_env();
     assert_eq!(env[0], "env");
     assert!(
         env.contains(&format!(
             "{}={}",
-            config::XDG_CONFIG_HOME_ENV,
+            crate::infra::env::XDG_CONFIG_HOME_ENV,
             std::env::current_dir()
                 .unwrap()
                 .join("relative-xdg")
@@ -130,7 +134,7 @@ fn a_relative_xdg_config_home_reaches_a_tab_as_an_absolute_path() {
     );
     assert!(
         !env.iter()
-            .any(|p| p.starts_with(&format!("{}=", config::CONFIG_ENV))),
+            .any(|p| p.starts_with(&format!("{}=", crate::infra::env::CONFIG_ENV))),
         "{env:?}"
     );
 }
@@ -146,12 +150,12 @@ fn the_agent_is_started_without_variables_that_point_it_elsewhere() {
         .map(|(name, _)| name)
         .collect();
     let expected = [
-        messaging::HUB_SESSION_ENV,
-        messaging::HUB_SERVE_ENV,
-        messaging::HUB_ENV,
+        crate::infra::env::HUB_SESSION_ENV,
+        crate::infra::env::HUB_SERVE_ENV,
+        crate::infra::env::HUB_ENV,
     ]
     .into_iter()
-    .chain(repo::REPOSITORY_LOCATION_ENV);
+    .chain(crate::infra::git::REPOSITORY_LOCATION_ENV);
     for name in expected {
         assert!(
             removed.contains(&std::ffi::OsStr::new(name)),

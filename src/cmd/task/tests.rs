@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn create_drops_keys_the_record_does_not_know() {
     let _sandbox = crate::testing::Sandbox::empty();
-    let repo = crate::repo::RepoInfo {
+    let repo = crate::kernel::identity::RepoInfo {
         main: "/tmp/acme-widget".to_string(),
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -23,7 +23,7 @@ fn create_drops_keys_the_record_does_not_know() {
 /// The wording guard in `prompts` pins the procedure; this holds the constant to it.
 #[test]
 fn the_prefix_the_queue_skips_is_the_one_the_hub_writes() {
-    let hub = crate::prompts::find("adj-hub").unwrap().raw_content;
+    let hub = crate::kernel::prompts::find("adj-hub").unwrap().raw_content;
     // The procedure is hard-wrapped, so compare with every run of whitespace as one space.
     let hub = hub.split_whitespace().collect::<Vec<_>>().join(" ");
     let written = format!("\"{} {{reason}}\"", task::COULD_NOT_START);
@@ -32,7 +32,7 @@ fn the_prefix_the_queue_skips_is_the_one_the_hub_writes() {
 
 /// The procedures as one line of words, for text the file wraps.
 fn flowed(name: &str) -> String {
-    let raw = crate::prompts::find(name).unwrap().raw_content;
+    let raw = crate::kernel::prompts::find(name).unwrap().raw_content;
     raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -44,12 +44,12 @@ fn flowed(name: &str) -> String {
 #[test]
 fn the_labels_the_brief_writes_are_the_ones_the_worker_reads() {
     let worker = flowed("adj-worker");
-    for label in crate::brief::label::READ_BY_WORKER {
+    for label in crate::kernel::brief::label::READ_BY_WORKER {
         let quoted = format!("brief's \"{label}\"");
         let bare = format!("brief's {label} ");
         // `Task` is also the start of `Task record`, so its bare form proves nothing:
         // only the quoted one counts for a label another label begins with.
-        let begins_another = crate::brief::label::TASK_BRIEF
+        let begins_another = crate::kernel::brief::label::TASK_BRIEF
             .iter()
             .any(|other| other.starts_with(&format!("{label} ")));
         assert!(
@@ -62,7 +62,7 @@ fn the_labels_the_brief_writes_are_the_ones_the_worker_reads() {
 /// `adj-report` copies two lines of the brief into what it forwards.
 #[test]
 fn the_report_forwards_lines_the_brief_writes() {
-    use crate::brief::label;
+    use crate::kernel::brief::label;
     let report = flowed("adj-report");
     let task = format!("the \"{}\" line of `.claude/task-brief.md`", label::TASK);
     let parent = format!("brief's \"{}\"", label::PARENT_TASK);
@@ -88,7 +88,7 @@ fn the_done_when_the_brief_writes_is_one_the_worker_branches_on() {
 /// Jules would act on a line the board never shows.
 #[test]
 fn the_brief_has_no_implementer_line() {
-    let written = crate::brief::render_task(&crate::brief::TaskBrief {
+    let written = crate::kernel::brief::render_task(&crate::kernel::brief::TaskBrief {
         key: "WID-1".to_string(),
         title: "t".to_string(),
         tracker: "github".to_string(),

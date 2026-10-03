@@ -18,7 +18,7 @@ pub(super) struct WorkerSeen {
 /// The worker record in `worktree`, if there is one. The task is read the way `worker_task`
 /// reads it, minus the saved-session fallback: a record is all the page's join looks at.
 fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
-    let record = messaging::read_json(&messaging::worker_record_path(Path::new(worktree)))?;
+    let record = crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(worktree)))?;
     let text = |key: &str| {
         record
             .get(key)
@@ -98,7 +98,7 @@ pub(super) fn board_counts(
 pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
     let addresses = addresses();
     let table = messaging::ProcessTable::snapshot();
-    let state_dir = messaging::state_dir();
+    let state_dir = crate::infra::paths::state_dir();
     // Workers per parent-task hub, counted by the hub their record reports to. Only asked of
     // a repository that has a parent-task hub listed.
     let mut children: HashMap<String, usize> = HashMap::new();
@@ -111,14 +111,14 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
             continue;
         }
         seen_mains.push(&a.main);
-        let listed = crate::repo::linked_worktrees(&a.main).unwrap_or_else(|_| {
+        let listed = crate::kernel::identity::linked_worktrees(&a.main).unwrap_or_else(|_| {
             unlisted.push(&a.main);
             Vec::new()
         });
         for w in listed {
             if let Some(key) = messaging::worker_hub_key(Path::new(&w)) {
                 *children
-                    .entry(crate::repo::slug_for(&a.nwo, Some(&key)))
+                    .entry(crate::kernel::identity::slug_for(&a.nwo, Some(&key)))
                     .or_insert(0) += 1;
             }
         }
@@ -126,7 +126,7 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
     addresses
         .iter()
         .map(|a| {
-            let status = crate::repo::hub_name(&a.nwo, a.hub.as_deref())
+            let status = crate::kernel::identity::hub_name(&a.nwo, a.hub.as_deref())
                 .ok()
                 .map(|name| messaging::hub_status_with(&table, &a.slug, &name));
             let present = status.as_ref().is_some_and(|s| s.present);
@@ -196,7 +196,7 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
 
 /// The repository this process stands in, if it stands in one. Whether it is one is not the
 /// business of the commands that ask.
-pub(super) fn checkout_here() -> Option<crate::repo::RepoInfo> {
+pub(super) fn checkout_here() -> Option<crate::kernel::identity::RepoInfo> {
     crate::cmd::resolve(None, None).ok()
 }
 
@@ -207,7 +207,7 @@ pub(super) fn seed_boards() {
     if let Some(repo) = checkout_here() {
         note_board(&repo);
     }
-    let Ok(entries) = std::fs::read_dir(messaging::state_dir().join("hubs")) else {
+    let Ok(entries) = std::fs::read_dir(crate::infra::paths::state_dir().join("hubs")) else {
         return;
     };
     for path in entries.flatten().map(|entry| entry.path()) {
@@ -219,14 +219,14 @@ pub(super) fn seed_boards() {
         else {
             continue;
         };
-        let Some(record) = messaging::read_json(&path) else {
+        let Some(record) = crate::infra::fs::read_json(&path) else {
             continue;
         };
         let Some(cwd) = record.get("cwd").and_then(Value::as_str) else {
             continue;
         };
         let hub = record.get("hub").and_then(Value::as_str);
-        if let Ok(repo) = crate::repo::resolve_in(Some(Path::new(cwd)), None, hub)
+        if let Ok(repo) = crate::kernel::identity::resolve_in(Some(Path::new(cwd)), None, hub)
             && repo.slug == slug
         {
             note_board(&repo);

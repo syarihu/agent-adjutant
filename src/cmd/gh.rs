@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-pub(super) use crate::infra::gh::{GhRun, run, run_with_input};
+use crate::infra::gh::{GhRun, run};
 
 use super::task::PrState;
 use crate::task::{self, CheckCounts, PrRef, PrStatus};
