@@ -11,6 +11,9 @@
 # whole item anywhere is fine, while changing or reordering tokens within one is not. Lines,
 # indentation and wrapping do not count, so rustfmt re-wrapping a moved item is fine.
 #
+# A `mod x;` or `use` line takes the outer attributes and the `///` and `//` comments directly
+# above it along (up to a blank line or code), so a declaration moves with its `#[cfg(unix)]`.
+#
 # A closure whose body is a block with no `;` of its own (`|x| { e }`) is read without the
 # braces on both sides: rustfmt drops them when a shallower indent lets `e` fit, and adds
 # them back when a deeper one does not. A `;` in the block, or an `-> T` before it, keeps
@@ -26,6 +29,12 @@
 # `a || { b }` loses its braces too, so adding or removing just those braces passes, and so
 # does `|| { e }` inside a macro that reads its tokens as text (`stringify!`): closures in
 # macro arguments such as `assert!` are the ones rustfmt collapses, so macros are not skipped.
+# An attribute on a `mod x;` or `use` line is not compared, so adding, changing or dropping
+# its `#[cfg]` or `#[path]` passes; the compiler and the test count are left to see it. A
+# comment left behind above a moved `mod x;` or `use` line shows as a change. An attribute is
+# followed to its `]` by counting brackets outside `"..."`, so a bracket in a raw string or
+# char literal can hold the lines up to the next blank one, and a `mod` or `use` line that
+# ends them drops them.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
@@ -92,9 +101,18 @@ if ! perl -0 -e '
     return join "/", @parts;
   }
 
+  # How far a line opens `[`, leaving out string literals and a trailing comment.
+  sub brackets {
+    (my $s = shift) =~ s/"(?:[^"\\]|\\.)*"//g;
+    $s =~ s{//.*$}{};
+    return ($s =~ tr/[//) - ($s =~ tr/]//);
+  }
+
   sub normalize {
     my ($file, $src) = @_;
     my @out;
+    my @held;      # attributes and comments directly above the next line of code
+    my $attr = 0;  # bracket depth while an attribute runs over several lines
     my $in_use = 0;
     my $tests_indent;    # set while inside `mod tests {`: the indent of its closing brace
     for my $line (split /\n/, $src, -1) {
@@ -108,14 +126,32 @@ if ! perl -0 -e '
       }
       next if $line =~ m{^\s*//!};
       next if $code =~ /^\s*#\[cfg\(test\)\]\s*$/;
-      next if $code =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;/;
-      if ($code =~ /^(\s*)mod\s+tests\s*\{\s*$/) { $tests_indent = $1; next; }
+      if ($attr > 0) {
+        # rustfmt never puts a blank line inside an attribute: the count went wrong, keep all.
+        if ($line !~ /\S/) { push @out, @held, $line; @held = (); $attr = 0; next; }
+        push @held, $line;
+        $attr += brackets($line);
+        next;
+      }
+      if ($code =~ /^\s*#\[/) {    # an outer attribute; `#![` does not match
+        my $depth = brackets($line);
+        if ($depth > 0) { push @held, $line; $attr = $depth; next; }
+        $code =~ s/^(\s*)(?:#(\[(?:[^\[\]]++|(?-1))*\])\s*)+/$1/;
+        if ($code !~ /\S/) { push @held, $line; next; }
+      }
+      if ($line =~ m{^\s*//}) { push @held, $line; next; }    # `///` or `//`; `//!` is gone above
+      if ($line !~ /\S/) { push @out, @held, $line; @held = (); next; }
+      if ($code =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;/) { @held = (); next; }
+      if ($code =~ /^(\s*)mod\s+tests\s*\{\s*$/) { @held = (); $tests_indent = $1; next; }
       if ($code =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?use\s/) {
+        @held = ();
         $in_use = 1 unless $code =~ /;\s*$/;
         next;
       }
-      push @out, $line;
+      push @out, @held, $line;
+      @held = ();
     }
+    push @out, @held;
     my $text = join "\n", @out;
     $text =~ s{\binclude_(str|bytes)!\(\s*"([^"]*)"\s*(,\s*)?\)}
               {"include_$1!(\"" . resolve($file, $2) . "\")"}ge;
