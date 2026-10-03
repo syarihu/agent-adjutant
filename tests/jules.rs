@@ -1125,3 +1125,120 @@ fn a_board_that_listed_findings_sees_an_account_switched_since() {
     assert!(status.contains(" 200 "), "{status} {body}");
     assert!(posted.exists(), "the relay was refused on a stale account");
 }
+
+#[test]
+fn a_gh_that_hangs_on_the_listing_does_not_hold_the_board_request() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, _) = stub_gh(&fixture);
+    let gh = fixture.repo.join("stub-bin").join("gh");
+    let script = std::fs::read_to_string(&gh).unwrap().replace(
+        "'api repos/acme/widget/pulls/7/comments') cat ",
+        "'api repos/acme/widget/pulls/7/comments') exec sleep 60 ;; 'unused') cat ",
+    );
+    assert_ne!(
+        script,
+        std::fs::read_to_string(&gh).unwrap(),
+        "the stub changed"
+    );
+    std::fs::write(&gh, script).unwrap();
+    let (mut board, url) = serve(&fixture, &path);
+
+    let started = std::time::Instant::now();
+    let (status, body) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
+    board.kill().unwrap();
+    board.wait().unwrap();
+    assert!(status.contains(" 400 "), "{status} {body}");
+    assert!(body.contains("did not answer in time"), "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
+
+#[test]
+fn a_gh_that_exits_but_leaves_its_pipes_open_on_the_post_does_not_hold_the_relay() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let gh = fixture.repo.join("stub-bin").join("gh");
+    let script = std::fs::read_to_string(&gh).unwrap().replace(
+        "'pr comment') sleep 1;",
+        "'pr comment') sleep 25 & exit 0 ;; 'unused') sleep 1;",
+    );
+    assert_ne!(
+        script,
+        std::fs::read_to_string(&gh).unwrap(),
+        "the stub changed"
+    );
+    std::fs::write(&gh, script).unwrap();
+    let (mut board, url) = serve(&fixture, &path);
+
+    let started = std::time::Instant::now();
+    let (status, body) = board_request(
+        &url,
+        "POST",
+        &format!("/api/tasks/{id}/relay"),
+        r#"{"comments": ["11"]}"#,
+    );
+    let elapsed = started.elapsed();
+    let (_, listed) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
+    board.kill().unwrap();
+    board.wait().unwrap();
+    assert!(status.contains(" 400 "), "{status} {body}");
+    assert!(body.contains("did not answer in time"), "{body}");
+    assert!(body.contains("may still have gone up"), "{body}");
+    // `gh` exited at once, but a child it left behind holds the pipes for 25 s: the relay
+    // waits out its 20 s and no longer.
+    assert!(elapsed >= std::time::Duration::from_secs(19), "{elapsed:?}");
+    assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
+    assert!(!posted.exists());
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let first = listed
+        .as_array()
+        .or_else(|| listed["findings"].as_array())
+        .and_then(|l| l.iter().find(|f| f["id"] == "11"))
+        .unwrap_or_else(|| panic!("{listed}"));
+    assert_eq!(first["relayed"], false, "{listed}");
+}
+
+#[test]
+fn a_gh_that_hangs_on_the_post_does_not_hold_the_relay() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let (path, posted) = stub_gh(&fixture);
+    let gh = fixture.repo.join("stub-bin").join("gh");
+    let script = std::fs::read_to_string(&gh).unwrap().replace(
+        "'pr comment') sleep 1;",
+        "'pr comment') exec sleep 60 ;; 'unused') sleep 1;",
+    );
+    assert_ne!(
+        script,
+        std::fs::read_to_string(&gh).unwrap(),
+        "the stub changed"
+    );
+    std::fs::write(&gh, script).unwrap();
+    let (mut board, url) = serve(&fixture, &path);
+
+    let started = std::time::Instant::now();
+    let (status, body) = board_request(
+        &url,
+        "POST",
+        &format!("/api/tasks/{id}/relay"),
+        r#"{"comments": ["11"]}"#,
+    );
+    let elapsed = started.elapsed();
+    let (_, listed) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
+    board.kill().unwrap();
+    board.wait().unwrap();
+    assert!(status.contains(" 400 "), "{status} {body}");
+    assert!(body.contains("did not answer in time"), "{body}");
+    assert!(body.contains("may still have gone up"), "{body}");
+    assert!(elapsed >= std::time::Duration::from_secs(19), "{elapsed:?}");
+    assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
+    assert!(!posted.exists());
+    let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+    let first = listed
+        .as_array()
+        .or_else(|| listed["findings"].as_array())
+        .and_then(|l| l.iter().find(|f| f["id"] == "11"))
+        .unwrap_or_else(|| panic!("{listed}"));
+    assert_eq!(first["relayed"], false, "{listed}");
+}
