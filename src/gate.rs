@@ -344,6 +344,10 @@ pub struct Gate {
     /// A record's answers, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<Answer>,
+    /// Keys this binary does not know, kept from the file so that a record written by another
+    /// version and saved by this one loses nothing. Only ever filled from disk: `open` empties it.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The decision a gate is archived under when it is closed without an answer.
@@ -713,7 +717,27 @@ mod tests {
             comment: None,
             answered_at: None,
             answers: Vec::new(),
+            extra: serde_json::Map::new(),
         }
+    }
+
+    #[test]
+    fn a_key_this_binary_does_not_know_survives_a_load_save_and_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let answered = dir.path().join("answered");
+        let gate = gate(Kind::Plan);
+        let mut raw = serde_json::to_value(&gate).unwrap();
+        raw["futureField"] = serde_json::json!("x");
+        std::fs::write(path_of(dir.path(), &gate.id), raw.to_string()).unwrap();
+
+        let loaded = load(dir.path(), &gate.id).unwrap();
+        save(dir.path(), &loaded).unwrap();
+        let text = std::fs::read_to_string(path_of(dir.path(), &gate.id)).unwrap();
+        assert!(text.contains("\"futureField\": \"x\""), "{text}");
+
+        let archived = archive(dir.path(), &answered, &loaded).unwrap();
+        let text = std::fs::read_to_string(archived).unwrap();
+        assert!(text.contains("\"futureField\": \"x\""), "{text}");
     }
 
     #[test]
