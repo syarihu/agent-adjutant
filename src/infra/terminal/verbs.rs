@@ -827,29 +827,22 @@ pub(crate) fn lock_pane(
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    if std::fs::create_dir_all(dir).is_err() {
-        return Ok(None);
-    }
     // Never removed, for the reason the dispatch lock gives.
-    let Ok(file) = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join(format!("{key}.lock")))
-    else {
+    let path = dir.join(format!("{key}.lock"));
+    let Ok(file) = crate::infra::fs::open_lock(&path) else {
         return Ok(None);
     };
     loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(Some(file)),
-            Err(std::fs::TryLockError::WouldBlock) => {
+        match crate::infra::fs::try_hold(&file, &path) {
+            Ok(true) => return Ok(Some(file)),
+            Ok(false) => {
                 if *waited >= WAKE_READY_BUDGET {
                     return Err(());
                 }
                 wait(WAKE_READY_POLL);
                 *waited += WAKE_READY_POLL;
             }
-            Err(std::fs::TryLockError::Error(_)) => return Ok(None),
+            Err(_) => return Ok(None),
         }
     }
 }

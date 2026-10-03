@@ -282,19 +282,8 @@ pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
     if !task::is_plain_id(id) {
         return Err(format!("no such task: {id}"));
     }
-    let dir = dir(ctx);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     // Beside the record, and not named `.json`, so the listing never reads it as a task.
-    let path = dir.join(format!("{id}.lock"));
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-    file.lock()
-        .map_err(|e| format!("cannot lock {}: {e}", path.display()))?;
-    Ok(file)
+    crate::infra::fs::lock(&dir(ctx).join(format!("{id}.lock")))
 }
 
 pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {

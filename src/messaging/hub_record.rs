@@ -113,28 +113,11 @@ fn take_over(path: &Path, record: &Value, slug: &str, hub_name: &str) -> Result<
     // file itself is never removed: unlinking it while another process holds it open would
     // hand the next two callers two different locks.
     let lock_path = path.with_extension("claiming");
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        // Someone else is part-way through taking this name. Whatever they end up with, it
-        // is not ours — the same answer we would have been given by arriving after they
-        // finished.
-        Err(std::fs::TryLockError::WouldBlock) => {
-            return Ok(Claim::Taken(Box::new(hub_status(slug, hub_name))));
-        }
-        Err(std::fs::TryLockError::Error(e)) => {
-            return Err(format!("cannot lock {}: {e}", lock_path.display()));
-        }
-    }
+    // Someone else is part-way through taking this name. Whatever they end up with, it is
+    // not ours — the same answer we would have been given by arriving after they finished.
+    let Some(lock) = crate::infra::fs::try_lock(&lock_path)? else {
+        return Ok(Claim::Taken(Box::new(hub_status(slug, hub_name))));
+    };
 
     // Asked again inside the lock: the record may have been taken over while we were
     // getting in, and the answer from outside is the one that was about to go stale.
@@ -286,15 +269,7 @@ pub fn unregister_hub(slug: &str) -> Result<(), String> {
 pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<bool, String> {
     let path = hub_record_path(slug);
     let lock_path = path.with_extension("claiming");
-    parent_dir(&lock_path)?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
-    lock.lock()
-        .map_err(|e| format!("cannot lock {}: {e}", lock_path.display()))?;
+    let _lock = crate::infra::fs::lock(&lock_path)?;
     let named = match read_json(&path) {
         None if !path.exists() => return Ok(true),
         None => return Ok(false),
@@ -318,15 +293,7 @@ pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<
 pub fn unregister_hub_if_unnamed(slug: &str) -> Result<bool, String> {
     let path = hub_record_path(slug);
     let lock_path = path.with_extension("claiming");
-    parent_dir(&lock_path)?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|e| format!("cannot open {}: {e}", lock_path.display()))?;
-    lock.lock()
-        .map_err(|e| format!("cannot lock {}: {e}", lock_path.display()))?;
+    let _lock = crate::infra::fs::lock(&lock_path)?;
     match read_json(&path) {
         None if !path.exists() => Ok(true),
         None => Ok(false),
