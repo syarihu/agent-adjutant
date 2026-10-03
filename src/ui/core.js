@@ -190,7 +190,7 @@ function prWaitsOnPerson(t, w) {
   return w ? w.phase === 'pr' : t.status === 'pr';
 }
 
-/* The Rust `board_counts` (src/cmd/serve.rs) counts what waits from the same rules, for the
+/* The Rust `board_counts` (src/cmd/serve/index.rs) counts what waits from the same rules, for the
    sidebar's board rows. Change one and change the other. */
 function humanColOf(t, data = state) {
   if (!t) return null;
