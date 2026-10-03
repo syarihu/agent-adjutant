@@ -252,4 +252,19 @@ write_infra $'pub mod clock;\n#[doc = "https://example.invalid"] pub mod shell;'
 git mv src/shell.rs src/infra/shell.rs
 verify "a // inside a string in an attribute is not a comment" 0 "move-only ok" main
 
+# A string in an attribute can hold `]` and run over several lines: it is read as text.
+git checkout -q -B string-base main
+write_lib $'mod shell;' "$helper"$'\n\n#[doc = "old text\n] mod pty;\n"]\nfn target() {}\n\n'"$double"
+commit string-base
+git checkout -q -B string-case string-base
+sed -i.bak 's/old text/new text/' src/lib.rs
+rm src/lib.rs.bak
+verify "a changed doc string with a ] mod line inside is not a move" 1 "not a move: the items above" string-base
+
+git checkout -q -B case main
+write_lib "$pty_mod" "$helper"$'\n\n'"$double"
+write_infra $'pub mod clock;\n#[doc = "a]b"] pub mod shell;' ""
+git mv src/shell.rs src/infra/shell.rs
+verify "a ] inside a string in an attribute does not end it" 0 "move-only ok" main
+
 exit "$failed"

@@ -32,7 +32,7 @@
 # An attribute on a `mod x;` or `use` line is not compared, so adding, changing or dropping
 # its `#[cfg]` or `#[path]` passes; the compiler and the test count are left to see it. A
 # comment left behind above a moved `mod x;` or `use` line shows as a change. An attribute is
-# followed to its `]` by counting brackets outside `"..."`, so a bracket in a raw string or
+# followed to its `]` by counting brackets outside `"..."`, so a bracket or quote in a raw string or
 # char literal can hold the lines up to the next blank one, and a `mod` or `use` line that
 # ends them drops them. A trailing `// ...` is cut off outside `"..."`, so a lone `"` in a
 # char literal keeps the comment on that line.
@@ -102,11 +102,31 @@ if ! perl -0 -e '
     return join "/", @parts;
   }
 
-  # How far a line opens `[`, leaving out string literals and a trailing comment.
-  sub brackets {
-    (my $s = shift) =~ s/"(?:[^"\\]|\\.)*"//g;
-    $s =~ s{//.*$}{};
-    return ($s =~ tr/[//) - ($s =~ tr/]//);
+  # Reads one line of an attribute, entered at bracket depth $depth and, if a string literal
+  # is open from the line above, inside it. Brackets and `//` in a string do not count; a
+  # trailing comment ends the line. Returns the depth and the string state at the end, and,
+  # when a `]` brings the depth to 0, what follows it (undef while the attribute is open).
+  sub scan {
+    my ($line, $depth, $in_str) = @_;
+    my $pos = 0;
+    while ($pos < length $line) {
+      my $ch = substr $line, $pos++, 1;
+      if ($in_str) {
+        if ($ch eq "\\") { $pos++ } elsif ($ch eq "\"") { $in_str = 0 }
+        next;
+      }
+      if ($ch eq "\"") { $in_str = 1; next; }
+      last if $ch eq "/" && substr($line, $pos, 1) eq "/";
+      $depth++ if $ch eq "[";
+      if ($ch eq "]" && --$depth <= 0) { return (0, 0, substr $line, $pos); }
+    }
+    return ($depth, $in_str, undef);
+  }
+
+  # Drops the `#[...]` groups at the start of a line; a bracket in a string does not close one.
+  sub strip_attrs {
+    (my $c = shift) =~ s/^(\s*)(?:#(\[(?:"(?:[^"\\]|\\.)*"|[^\[\]"]++|(?-1))*\])\s*)+/$1/;
+    return $c;
   }
 
   # The line without a trailing `// ...`; a `//` inside a string literal does not count.
@@ -136,6 +156,7 @@ if ! perl -0 -e '
     my @out;
     my @held;      # attributes and comments directly above the next line of code
     my $attr = 0;  # bracket depth while an attribute runs over several lines
+    my $in_str = 0;    # a string literal in that attribute runs over the end of the line
     my $in_use = 0;
     my $tests_indent;    # set while inside `mod tests {`: the indent of its closing brace
     for my $line (split /\n/, $src, -1) {
@@ -152,15 +173,19 @@ if ! perl -0 -e '
       next if $code =~ /^\s*#\[cfg\(test\)\]\s*$/;
       if ($attr > 0) {
         # rustfmt never puts a blank line inside an attribute: the count went wrong, keep all.
-        if ($line !~ /\S/) { push @out, @held, $line; @held = (); $attr = 0; next; }
-        my $rest = attr_rest($line, $attr);
-        if (!defined $rest) { push @held, $line; $attr += brackets($line); next; }
+        if ($line !~ /\S/) { push @out, @held, $line; @held = (); $attr = 0; $in_str = 0; next; }
+        my ($depth, $open, $rest) = scan($line, $attr, $in_str);
+        if (!defined $rest) { push @held, $line; ($attr, $in_str) = ($depth, $open); next; }
         # The attribute closes on this line: what follows it is code, or nothing.
-        $attr = 0;
-        $rest = code_of($rest);
-        $rest =~ s/^(\s*)(?:#(\[(?:[^\[\]]++|(?-1))*\])\s*)+/$1/;
+        ($attr, $in_str) = (0, 0);
+        $rest = strip_attrs(code_of($rest));
         if ($rest !~ /\S/) { push @held, $line; next; }
         if ($rest =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;/) { @held = (); next; }
+        if ($rest =~ /^\s*mod\s+tests\s*\{\s*$/) {
+          @held = ();
+          ($tests_indent) = $line =~ /^(\s*)/;
+          next;
+        }
         if ($rest =~ /^\s*(?:pub(?:\([^)]*\))?\s+)?use\s/) {
           @held = ();
           $in_use = 1 unless $rest =~ /;\s*$/;
@@ -171,9 +196,9 @@ if ! perl -0 -e '
         next;
       }
       if ($code =~ /^\s*#\[/) {    # an outer attribute; `#![` does not match
-        my $depth = brackets($line);
-        if ($depth > 0) { push @held, $line; $attr = $depth; next; }
-        $code =~ s/^(\s*)(?:#(\[(?:[^\[\]]++|(?-1))*\])\s*)+/$1/;
+        my ($depth, $open, $rest) = scan($line, 0, 0);
+        if (!defined $rest) { push @held, $line; ($attr, $in_str) = ($depth, $open); next; }
+        $code = strip_attrs($code);
         if ($code !~ /\S/) { push @held, $line; next; }
       }
       if ($line =~ m{^\s*//}) { push @held, $line; next; }    # `///` or `//`; `//!` is gone above
