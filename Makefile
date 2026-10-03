@@ -27,6 +27,7 @@ reinstall:
 
 check:
 	./scripts/check-layering.sh
+	./scripts/test-check-move-only.sh
 	for f in src/ui/*.js; do node --check "$$f" || exit 1; done
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
