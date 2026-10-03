@@ -1,3 +1,8 @@
+use super::auth::is_own_origin;
+use super::daemon::{names_resident, private_log};
+use super::index::{WorkerSeen, board_counts};
+use super::registry::{Served, boards_dir, prefer, resident_board_url};
+use super::resident::split_board_path;
 use super::*;
 
 #[test]
