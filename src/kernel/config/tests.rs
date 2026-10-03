@@ -25,11 +25,11 @@ fn an_absolute_empty_or_home_relative_value_is_left_as_it_was() {
     assert_eq!(anchored("~/cfg/config.json", cwd), None);
 }
 
-/// No flag, always and explicitly. The one that a hub exports is `resolve_config`'s to
-/// read, and a test that picked it up from the terminal would be reporting on the tab it
-/// was run in.
+/// Nothing from the environment, always and explicitly: no startup flag, no tmux session or
+/// socket. Those a hub exports are `resolve_config`'s to read, and a test that picked them
+/// up from the terminal would be reporting on the tab it was run in.
 fn resolve(raw: Value, nwo: &str) -> (Option<Value>, Settings, Vec<String>) {
-    let (_, config, settings, warnings) = resolve_from_value(&raw, nwo, None);
+    let (_, config, settings, warnings) = resolve_from_value(&raw, nwo, &ResolveEnv::default());
     (config, settings, warnings)
 }
 
@@ -837,6 +837,31 @@ fn terminal_tmux_preset_resolves() {
     assert_eq!(settings.terminal.preset.as_deref(), Some("tmux"));
     assert_eq!(settings.terminal.tmux_session(), "adjutant");
     assert_eq!(settings.terminal.tmux_socket(), None);
+}
+
+#[test]
+fn the_tmux_session_and_socket_a_hub_exports_win_over_the_file() {
+    let raw = a_repo(
+        json!({"terminal": {"preset": "tmux", "session": "from-file", "socket": "file-sock"}}),
+    );
+    let env = ResolveEnv {
+        tmux_session: Some("hub-session".into()),
+        tmux_socket: Some("hub-sock".into()),
+        ..ResolveEnv::default()
+    };
+    let (_, _, settings, warnings) = resolve_from_value(&raw, "acme/app", &env);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(settings.terminal.tmux_session(), "hub-session");
+    assert_eq!(settings.terminal.tmux_socket(), Some("hub-sock"));
+    // Blank is not an answer: the file stands.
+    let blank = ResolveEnv {
+        tmux_session: Some("  ".into()),
+        tmux_socket: Some("".into()),
+        ..ResolveEnv::default()
+    };
+    let (_, _, settings, _) = resolve_from_value(&raw, "acme/app", &blank);
+    assert_eq!(settings.terminal.tmux_session(), "from-file");
+    assert_eq!(settings.terminal.tmux_socket(), Some("file-sock"));
 }
 
 #[test]
