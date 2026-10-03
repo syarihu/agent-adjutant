@@ -11,6 +11,11 @@
 # whole item anywhere is fine, while changing or reordering tokens within one is not. Lines,
 # indentation and wrapping do not count, so rustfmt re-wrapping a moved item is fine.
 #
+# A closure whose body is a block with no `;` of its own (`|x| { e }`) is read without the
+# braces on both sides: rustfmt drops them when a shallower indent lets `e` fit, and adds
+# them back when a deeper one does not. A `;` in the block, or an `-> T` before it, keeps
+# them.
+#
 # It cannot see a reference retargeted to a same-named item elsewhere (`a::f` to `b::f`):
 # the paths are dropped. The compiler and the test count at the end cover that.
 #
@@ -18,6 +23,7 @@
 # of a `mod tests {` is found by its indent, so a differently indented one is missed. Moving
 # items out of a non-test inline `mod x { }` or out of an `impl` block shows as a change: a
 # false failure, never a false pass. Braces inside string or char literals can do the same.
+# `a || { b }` loses its braces too, so adding or removing just those braces passes.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
@@ -118,6 +124,29 @@ if ! perl -0 -e '
     return $text =~ /[A-Za-z0-9_]+|\S/g;
   }
 
+  # `| … | { e }` -> `| … | e` when the block holds no `;` of its own (one inside `(…)` or
+  # `[…]` is not its own). rustfmt drops the braces of a nested block too
+  # (`|x| { { x } }` -> `|x| x`), hence the repeat.
+  sub closure_bodies {
+    my @t = @_;
+    while (1) {
+      my (@stack, %drop);
+      for my $i (0 .. $#t) {
+        if ($t[$i] =~ /^[{(\[]$/) {
+          push @stack, [$i, $t[$i] eq "{" && $i > 0 && $t[$i - 1] eq "|", 0];
+        }
+        elsif ($t[$i] eq ";" && @stack) { $stack[-1][2] = 1 if $t[$stack[-1][0]] eq "{" }
+        elsif ($t[$i] =~ /^[})\]]$/ && @stack) {
+          my ($open, $closure, $semi) = @{ pop @stack };
+          @drop{$open, $i} = () if $closure && !$semi;
+        }
+      }
+      last unless %drop;
+      @t = @t[grep { !exists $drop{$_} } 0 .. $#t];
+    }
+    return @t;
+  }
+
   # Cuts tokens into top-level items: one ends at the `}` that brings the depth back to 0,
   # or at a `;` at depth 0. What is left at the end is an item of its own.
   sub items {
@@ -148,7 +177,7 @@ if ! perl -0 -e '
     $src = "" unless defined $src;
     chomp $src;
     my ($side, $file) = split /\t/, $head, 2;
-    my @tokens = normalize($file, $src);
+    my @tokens = closure_bodies(normalize($file, $src));
     for my $t (@tokens) {
       $count{$t} += $side eq "base" ? 1 : -1;
       $where{$t}{$side}{$file}++;
