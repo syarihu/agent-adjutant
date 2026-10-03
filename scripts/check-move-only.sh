@@ -23,7 +23,9 @@
 # of a `mod tests {` is found by its indent, so a differently indented one is missed. Moving
 # items out of a non-test inline `mod x { }` or out of an `impl` block shows as a change: a
 # false failure, never a false pass. Braces inside string or char literals can do the same.
-# `a || { b }` loses its braces too, so adding or removing just those braces passes.
+# `a || { b }` loses its braces too, so adding or removing just those braces passes, and so
+# does `|| { e }` inside a macro that reads its tokens as text (`stringify!`): closures in
+# macro arguments such as `assert!` are the ones rustfmt collapses, so macros are not skipped.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
