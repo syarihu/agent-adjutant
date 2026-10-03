@@ -187,7 +187,8 @@ for name in $on_disk; do
   my_rank=$(rank_of "$name")
 
   for file in $(module_files "$name"); do
-    if is_shim "$file"; then
+    # Below registry a shim is checked too: a `pub use` is still a name.
+    if is_shim "$file" && ! { [ -n "$my_rank" ] && [ "$my_rank" -lt "$registry_rank" ]; }; then
       continue
     fi
     # The `super::`s that reach the crate root: one per path component of the file's module.
