@@ -703,23 +703,6 @@ pub(super) fn wake_with_clock(
     }
 }
 
-pub fn run_shell(command: &str) -> Result<String, String> {
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .output()
-        .map_err(|e| format!("cannot run the command: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if err.is_empty() {
-            format!("command failed: {command}")
-        } else {
-            err
-        });
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
 /// How long to wait for the agent to come back to its prompt, looking every so often. Long
 /// enough for a turn that is just ending; a person who is answering a question is not waited
 /// for, and falls back to being notified.

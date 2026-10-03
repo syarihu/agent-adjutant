@@ -17,6 +17,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::config::{TerminalSettings, Wake};
+pub use crate::infra::shell::run_shell;
 use crate::prompts::Agent;
 use crate::session::SessionTerminal;
 use crate::template::{Sub, contains_placeholder, render, sh_quote};

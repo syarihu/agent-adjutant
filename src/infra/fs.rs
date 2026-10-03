@@ -1,6 +1,12 @@
-use super::*;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 
-pub(super) fn remove_if_present(path: &Path) -> Result<(), String> {
+/// How many names are tried before a claim gives up. Same-second sends are normal (a
+/// worker filing two findings at once), so the counter is not an edge case to skip; a
+/// thousand of them in one second is not a collision but a runaway.
+pub(crate) const CLAIM_ATTEMPTS: usize = 1000;
+
+pub(crate) fn remove_if_present(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -11,7 +17,7 @@ pub(super) fn remove_if_present(path: &Path) -> Result<(), String> {
 /// Write `text` into `dir` under a name `list` will not return, so the file can be linked
 /// into place complete. Staging inside the destination directory rather than in a temporary
 /// one is what keeps the link possible: `hard_link` cannot cross a filesystem.
-pub(super) fn stage(dir: &Path, text: &str) -> Result<PathBuf, String> {
+pub(crate) fn stage(dir: &Path, text: &str) -> Result<PathBuf, String> {
     use std::io::Write;
     for attempt in 0..CLAIM_ATTEMPTS {
         // Concurrent stagers are threads as well as processes, so the pid alone is not
@@ -55,7 +61,7 @@ fn render_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string()) + "\n"
 }
 
-pub(super) fn parent_dir(path: &Path) -> Result<&Path, String> {
+pub(crate) fn parent_dir(path: &Path) -> Result<&Path, String> {
     let parent = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)
         .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
@@ -77,14 +83,14 @@ pub(crate) fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     })
 }
 
-pub(super) enum CreateError {
+pub(crate) enum CreateError {
     /// The name already exists. Not a failure — an answer.
     Taken,
     Failed(String),
 }
 
 /// Write `value` at `path` only if nothing is there, and say which of the two happened.
-pub(super) fn create_new_json(path: &Path, value: &Value) -> Result<(), CreateError> {
+pub(crate) fn create_new_json(path: &Path, value: &Value) -> Result<(), CreateError> {
     let parent = parent_dir(path).map_err(CreateError::Failed)?;
     let staged = stage(parent, &render_json(value)).map_err(CreateError::Failed)?;
     let result = match std::fs::hard_link(&staged, path) {
@@ -105,7 +111,7 @@ pub(super) fn create_new_json(path: &Path, value: &Value) -> Result<(), CreateEr
 /// target has gone answers "nothing here", and "nothing here" is the answer each caller goes
 /// on to act on. Asked about the link itself, the answer is that something is there — and the
 /// read that follows fails, which is the "there and cannot be read" each caller already has.
-pub(super) fn record_exists(path: &Path) -> std::io::Result<bool> {
+pub(crate) fn record_exists(path: &Path) -> std::io::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -115,41 +121,4 @@ pub(super) fn record_exists(path: &Path) -> std::io::Result<bool> {
 
 pub(crate) fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
-}
-
-pub fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// `YYYYMMDDTHHMMSSZ`. UTC, and said so in the name: these strings sort, appear in filenames
-/// and get copied into issues, and a local time with no offset in it is the kind of thing
-/// that is wrong for half the year without anyone noticing.
-pub fn utc_stamp(epoch_secs: i64) -> String {
-    let days = epoch_secs.div_euclid(86_400);
-    let secs = epoch_secs.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!(
-        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
-        secs / 3600,
-        (secs % 3600) / 60,
-        secs % 60
-    )
-}
-
-/// Howard Hinnant's days-from-civil, inverted. Shifting the era to start in March makes the
-/// leap day the last day of the year, which is what removes the month-length special cases.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
