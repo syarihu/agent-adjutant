@@ -732,13 +732,9 @@ pub fn claim_id(dir: &Path, stamp: &str, title: &str) -> Result<String, String> 
         } else {
             format!("{base}-{seq}")
         };
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path_of(dir, &id))
-        {
-            Ok(_) => return Ok(id),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        match crate::infra::fs::create_new(&path_of(dir, &id)) {
+            Ok(true) => return Ok(id),
+            Ok(false) => continue,
             Err(e) => {
                 return Err(format!(
                     "cannot create a task file in {}: {e}",
@@ -756,23 +752,13 @@ pub fn claim_id(dir: &Path, stamp: &str, title: &str) -> Result<String, String> 
 /// wants on disk, and a partial write is how two writers end up with a record neither of
 /// them would recognise.
 ///
-/// Written beside the record and renamed over it, because the resident server's PR poll
-/// writes records while `adj task show` and the board read them: a plain write truncates
-/// first, and a reader in between sees an empty file. The temporary name does not end in
-/// `.json`, so `list` never picks it up.
+/// Staged as a dotfile beside the record, synced and renamed over it, because the resident
+/// server's PR poll writes records while `adj task show` and the board read them: a plain
+/// write truncates first, and a reader in between sees an empty file. `list` skips the
+/// staged name, so it never picks one up.
 pub fn save(dir: &Path, task: &Task) -> Result<PathBuf, String> {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let path = path_of(dir, &task.id);
-    let json = serde_json::to_string_pretty(task).map_err(|e| e.to_string())?;
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = dir.join(format!(".{}.{}-{seq}.tmp", task.id, std::process::id()));
-    let written =
-        std::fs::write(&tmp, format!("{json}\n")).and_then(|()| std::fs::rename(&tmp, &path));
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("cannot write {}: {e}", path.display()));
-    }
+    crate::infra::fs::write_json(&path, task)?;
     Ok(path)
 }
 

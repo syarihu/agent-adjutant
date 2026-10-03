@@ -144,22 +144,6 @@ pub(super) fn boards_dir() -> PathBuf {
     messaging::state_dir().join("boards")
 }
 
-/// Write `text` to `path` whole or not at all: to a file of our own beside it, then a rename.
-/// A reader — `adj server status`, a hub asking where the board is — never sees half a record.
-pub(super) fn write_whole(path: &Path, text: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    let staged = path.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::write(&staged, text)
-        .and_then(|()| std::fs::rename(&staged, path))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&staged);
-            format!("cannot write {}: {e}", path.display())
-        })
-}
-
 /// Tell the resident server where `repo` is, so that it can serve its board. Skipped when the
 /// entry is already what it would write, and a failure is not one for the caller: the address
 /// is only ever a convenience for a server that may not be running.
@@ -169,7 +153,7 @@ pub fn note_board(repo: &crate::repo::RepoInfo) {
     if messaging::read_json(&path).as_ref() == Some(&entry) {
         return;
     }
-    let _ = write_whole(&path, &format!("{entry:#}\n"));
+    let _ = crate::infra::fs::write_json(&path, &entry);
 }
 
 /// Take `slug` out of the address book, so a closed hub is not offered a board any more.

@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -55,10 +56,26 @@ pub(crate) fn stage(dir: &Path, text: &str) -> Result<PathBuf, String> {
     ))
 }
 
+/// Make an empty file at `path` only if nothing is there: `true` when this call made it,
+/// `false` when the name was taken. Any other error goes back so each caller keeps its wording.
+pub(crate) fn create_new(path: &Path) -> std::io::Result<bool> {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 // ── plumbing ─────────────────────────────────────────────────────────
 
-fn render_json(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string()) + "\n"
+fn render_json<T: Serialize + ?Sized>(value: &T) -> Result<String, String> {
+    serde_json::to_string_pretty(value)
+        .map(|s| s + "\n")
+        .map_err(|e| e.to_string())
 }
 
 pub(crate) fn parent_dir(path: &Path) -> Result<&Path, String> {
@@ -72,11 +89,11 @@ pub(crate) fn parent_dir(path: &Path) -> Result<&Path, String> {
 ///
 /// A record is read by a process other than the one writing it, and a reader that catches
 /// a half-written file reads no record at all — which for a presence check means a live
-/// session reported as absent. Writing beside the record and renaming over it means the
-/// name never points at a partial file.
-pub(crate) fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+/// session reported as absent. Writing beside the record, syncing it and renaming over it
+/// means the name never points at a partial file, even after a crash.
+pub(crate) fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), String> {
     let parent = parent_dir(path)?;
-    let staged = stage(parent, &render_json(value))?;
+    let staged = stage(parent, &render_json(value)?)?;
     std::fs::rename(&staged, path).map_err(|e| {
         let _ = std::fs::remove_file(&staged);
         format!("cannot write {}: {e}", path.display())
@@ -92,7 +109,8 @@ pub(crate) enum CreateError {
 /// Write `value` at `path` only if nothing is there, and say which of the two happened.
 pub(crate) fn create_new_json(path: &Path, value: &Value) -> Result<(), CreateError> {
     let parent = parent_dir(path).map_err(CreateError::Failed)?;
-    let staged = stage(parent, &render_json(value)).map_err(CreateError::Failed)?;
+    let text = render_json(value).map_err(CreateError::Failed)?;
+    let staged = stage(parent, &text).map_err(CreateError::Failed)?;
     let result = match std::fs::hard_link(&staged, path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(CreateError::Taken),
@@ -121,4 +139,49 @@ pub(crate) fn record_exists(path: &Path) -> std::io::Result<bool> {
 
 pub(crate) fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_new_answers_false_on_a_taken_name_and_leaves_it_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("claim");
+        assert!(create_new(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        std::fs::write(&path, "kept").unwrap();
+        assert!(!create_new(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "kept");
+    }
+
+    #[test]
+    fn create_new_hands_other_errors_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = create_new(&dir.path().join("missing").join("claim")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn write_json_writes_a_typed_record_as_pretty_json() {
+        #[derive(Serialize)]
+        struct Record {
+            id: String,
+            count: u32,
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("record.json");
+        let record = Record {
+            id: "a".into(),
+            count: 2,
+        };
+        write_json(&path, &record).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            serde_json::to_string_pretty(&record).unwrap() + "\n"
+        );
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 1);
+    }
 }

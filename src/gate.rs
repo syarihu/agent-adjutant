@@ -501,13 +501,9 @@ fn claim(dir: &Path, base: String) -> Result<String, String> {
         } else {
             format!("{base}-{seq}")
         };
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path_of(dir, &id))
-        {
-            Ok(_) => return Ok(id),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        match crate::infra::fs::create_new(&path_of(dir, &id)) {
+            Ok(true) => return Ok(id),
+            Ok(false) => continue,
             Err(e) => {
                 return Err(format!(
                     "cannot create a gate file in {}: {e}",
@@ -524,21 +520,11 @@ fn claim(dir: &Path, base: String) -> Result<String, String> {
 /// A record is written again each time it is answered, while the board reads it every few
 /// seconds and nothing it reads through takes the writer's lock. Written in place, a reader
 /// could catch it half-written and drop it from the listing, and a write cut short would
-/// leave it unreadable for good. Staged beside it and renamed over it, the name never points
-/// at a partial file.
+/// leave it unreadable for good. Staged as a dotfile beside it, synced and renamed over it,
+/// the name never points at a partial file.
 pub fn save(dir: &Path, gate: &Gate) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let path = path_of(dir, &gate.id);
-    let json = serde_json::to_string_pretty(gate).map_err(|e| e.to_string())?;
-    // Not named `.json`, so a listing never reads a staged file as a gate. The pid keeps two
-    // processes writing the same gate from staging into each other's file.
-    let staged = dir.join(format!(".{}.{}.tmp", gate.id, std::process::id()));
-    std::fs::write(&staged, format!("{json}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", staged.display()))?;
-    std::fs::rename(&staged, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&staged);
-        format!("cannot write {}: {e}", path.display())
-    })?;
+    crate::infra::fs::write_json(&path, gate)?;
     Ok(path)
 }
 
