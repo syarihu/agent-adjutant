@@ -1,0 +1,16 @@
+{
+  "id": "20260908T041500Z-retry-login-on-timeout",
+  "kind": "start",
+  "title": "Retry login on timeout",
+  "body": "Retry the login request once when it times out.",
+  "issueUrl": "https://github.com/acme/widget/issues/957",
+  "doneWhen": "pr",
+  "stopAt": "plan",
+  "autoStart": true,
+  "order": 1,
+  "status": "backlog",
+  "note": "Waiting for the API change.",
+  "createdAt": "20260908T041500Z",
+  "updatedAt": "20260908T041500Z",
+  "x-unknown": {"added": "by a newer binary", "list": [1, 2]}
+}

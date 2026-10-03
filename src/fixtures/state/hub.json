@@ -1,0 +1,12 @@
+{
+  "cwd": "/path/to/widget",
+  "hubName": "adjutant-acme-widget-898449509108182c",
+  "nameInCommand": true,
+  "pid": 4242,
+  "psStarted": "Tue Sep  8 10:00:00 2026",
+  "startedAt": "20260908T100000Z",
+  "terminal": {
+    "backend": "iterm2"
+  },
+  "x-unknown": {"added": "by a newer binary", "list": [1, 2]}
+}

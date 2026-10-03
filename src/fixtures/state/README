@@ -1,0 +1,54 @@
+Records the hubs and workers a binary leaves in the state directory, as a newer binary meets them (`tests/state_records.rs`).
+
+Hubs and workers keep running across `adj server restart`, so the binary that reads a record is
+not always the one that wrote it. One file per record:
+
+    worker.json          <worktree>/.claude/adjutant-worker.json         a worker's record
+    hub.json             <state>/hubs/<slug>.json                        a hub's record
+    inbox-report.md      <state>/inbox/<slug>/<stamp>-report.md          a message waiting for the hub
+    inbox-held.md        <state>/inbox/<slug>/.acking-<pid>-0-<name>     a message an ack was holding
+    session-hub.json     <state>/sessions/<slug>.json                    the session a hub resumes from
+    session-worker.json  <worktree>/.claude/adjutant-session.json        the session a worker resumes from
+    gate.json            <state>/gates/<slug>/<id>.json                  an open gate (a plan)
+    task.json            <state>/tasks/<slug>/<id>.json                  a task in the backlog
+
+The tests write each one under the name in the second column, which is not the fixture's own.
+The worker fixture names another hub, so it is kept out of the tests that read the repository's
+own inbox, hub and sessions: its record would send them to a different slug.
+
+Captured from the binary at 0.4.0 (main at eb21ee9): a scratch repository with origin
+git@github.com:acme/widget.git, a scratch state directory, and these commands.
+
+    adj hub                                                      hub.json, session-hub.json
+    adj worker --worktree <repo> --title ... --hub wid-957 --task <id>
+    adj phase --set implement --worktree <repo>                  worker.json, session-worker.json
+    adj send --kind report --subject ... --body ... --hub wid-957    inbox-report.md
+    adj task add --title ... --body ... --issue-url ... --json
+    adj task update --id <id> --note ...                         task.json
+    adj gate open --file payload.json --json                     gate.json
+
+The runners were `true`, so no agent started. inbox-held.md is the same shape as the report
+under the name `hold` gives a message while it is being acked: no command leaves one durably
+(an ack holds it for two moves), so it is the report's format with a different message, named by hand.
+
+Editing applied, since the repository is public: pids became 4242, timestamps, the stamps in
+ids, session ids and the epoch seconds became fixed values, `psStarted` was written in the C
+locale's words, paths became `/path/to/...`, and the sender and subject text was made plain.
+Each file keeps the keys and nesting the binary wrote. The worker's `terminal` is what the
+binary wrote outside tmux (`backend` alone); a record from inside tmux carries more.
+
+Added by hand: an `x-unknown` key in each JSON record and as a header in each message. It stands
+for a key a later version adds. It cannot be captured: `task add` and `gate open` clear
+unknown keys, so the binary never writes one. The tests check it survives where a command
+saves the record again (phase, gate close, task update, a gate closing onto its task) and is
+shown where one only reads it (gate show/list, task show/list).
+
+Not every record is written back. A hub's record and the sessions are only read here, so their
+tests check the file is as it was afterwards. Some writers drop unknown keys on purpose: a
+worker's start rewrites the record and session, a hub's start rewrites its own, linking a worker
+to another hub on the board rewrites its session (the record keeps them), and `task add` and
+`gate open` start from nothing. Nested objects (`terminal`, a gate's choices) have no catch-all
+for unknown keys.
+
+When the shape of a record changes, capture it again the same way rather than editing the
+files by hand.

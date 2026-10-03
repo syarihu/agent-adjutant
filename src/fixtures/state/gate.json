@@ -1,0 +1,22 @@
+{
+  "id": "20260908T041500Z-plan",
+  "kind": "plan",
+  "worktree": "/path/to/widget",
+  "task": "20260908T041500Z-retry-login-on-timeout",
+  "title": "Retry login on timeout",
+  "facts": [
+    "Two call sites build the login request."
+  ],
+  "focus": "Retry once or twice?",
+  "decided": "Retries stay inside the client.",
+  "unsure": "Whether the server counts a retry as a second attempt.",
+  "options": [
+    "once",
+    "twice"
+  ],
+  "problem": "A timed-out login fails at once.",
+  "goal": "A timed-out login is retried before it is reported.",
+  "rounds": 0,
+  "openedAt": "20260908T041500Z",
+  "x-unknown": {"added": "by a newer binary", "list": [1, 2]}
+}
