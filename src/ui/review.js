@@ -36,11 +36,7 @@ function ago(stamp) {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
   if (!m) return stamp || '';
   const then = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (mins < 1) return 'たった今';
-  if (mins < 60) return `${mins}分前`;
-  const hours = Math.round(mins / 60);
-  return hours < 24 ? `${hours}時間前` : `${Math.round(hours / 24)}日前`;
+  return agoLabel(Math.max(0, Math.floor((Date.now() - then) / 60000)));
 }
 
 /* Render markdown into safe HTML: headings (H1-H5), code blocks, tables, lists, blockquotes,
@@ -233,12 +229,12 @@ const renderDiff = d => esc(d).split('\n').map(l => {
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
    the `data-gate` around it, so the same panel works in the review view and a task's view. */
 const BUTTONS = {
-  approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${g.kind === 'verify' ? 'OK — 受け入れる' : '承認' + (g.kind === 'diff' ? 'して PR へ' : '')}</span></button>`,
-  changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${g.kind === 'verify' ? 'NG — 直してほしい' : '修正を指示'}</span></button>`,
-  reject:  () => `<button class="btn-m3-text reject" data-act="reject" style="color:var(--md-sys-color-error);"><span class="material-symbols-outlined" style="font-size:16px;">cancel</span><span>却下</span></button>`,
-  ack:     () => `<button class="btn-m3-primary approve" data-act="ack"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>了解(閉じる)</span></button>`,
-  ask:     () => `<button class="btn-m3-tonal changes" data-act="ask"><span class="material-symbols-outlined" style="font-size:16px;">help</span><span>追加で聞く</span></button>`,
-  answer:  () => `<button class="btn-m3-primary approve" data-act="answer"><span class="material-symbols-outlined" style="font-size:16px;">send</span><span>これで返す</span></button>`,
+  approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${decisionLabel('approve', g.kind)}</span></button>`,
+  changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${decisionLabel('changes', g.kind)}</span></button>`,
+  reject:  g => `<button class="btn-m3-text reject" data-act="reject" style="color:var(--md-sys-color-error);"><span class="material-symbols-outlined" style="font-size:16px;">cancel</span><span>${decisionLabel('reject', g.kind)}</span></button>`,
+  ack:     g => `<button class="btn-m3-primary approve" data-act="ack"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${decisionLabel('ack', g.kind)}</span></button>`,
+  ask:     g => `<button class="btn-m3-tonal changes" data-act="ask"><span class="material-symbols-outlined" style="font-size:16px;">help</span><span>${decisionLabel('ask', g.kind)}</span></button>`,
+  answer:  g => `<button class="btn-m3-primary approve" data-act="answer"><span class="material-symbols-outlined" style="font-size:16px;">send</span><span>${decisionLabel('answer', g.kind)}</span></button>`,
 };
 
 /* The nudge toward the terminal once a gate has gone back and forth. */
@@ -254,18 +250,18 @@ function decideHtml(g) {
     return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
       <h3 style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-on-surface);">
         <span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary);">replay</span>
-        <span>差し戻す</span>
+        <span>${decisionLabel('changes', g.kind)}</span>
       </h3>` +
       ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
         `<li><span style="color:var(--md-sys-color-outline)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
       `<div class="field" style="margin-bottom:12px">
         <label style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px;display:block;">コメント（何を直してほしいか）</label>
-        <textarea class="gate-comment" placeholder="差し戻す理由を入力してください..."></textarea>
+        <textarea class="gate-comment" placeholder="理由を入力してください..."></textarea>
       </div>
       <div class="decide">
         <button class="btn-m3-tonal changes" data-act="changes">
           <span class="material-symbols-outlined" style="font-size:16px;">replay</span>
-          <span>差し戻す</span>
+          <span>${decisionLabel('changes', g.kind)}</span>
         </button>
         ${g.worktree ? `
           <button class="m3-icon-button" style="padding:8px 14px" data-focus="${esc(g.worktree)}">
@@ -520,13 +516,13 @@ function reviewDockHtml(g) {
   const btn = (act, cls, icon, text, style = '') =>
     `<button type="button" class="${cls}" data-act="${act}"${style ? ` style="${style}"` : ''}><span class="material-symbols-outlined" style="font-size:16px;">${icon}</span><span>${text}</span></button>`;
   const BUTTON = {
-    approve: () => btn('approve', 'btn-m3-primary approve', 'check', g.kind === 'dispatch' ? '始める' : g.kind === 'verify' ? '確認した' : '承認',
+    approve: () => btn('approve', 'btn-m3-primary approve', 'check', decisionLabel('approve', g.kind),
       'background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)'),
-    changes: () => btn('changes', 'btn-m3-tonal changes', 'replay', '差し戻す'),
-    reject: () => btn('reject', 'btn-m3-text reject', 'cancel', '見送る', 'color:var(--md-sys-color-error)'),
-    ack: () => btn('ack', 'btn-m3-primary approve', 'check', '確認した'),
-    answer: () => btn('answer', 'btn-m3-primary approve', 'send', '答える'),
-    ask: () => btn('ask', 'btn-m3-tonal changes', 'help', '追加で聞く'),
+    changes: () => btn('changes', 'btn-m3-tonal changes', 'replay', decisionLabel('changes', g.kind)),
+    reject: () => btn('reject', 'btn-m3-text reject', 'cancel', decisionLabel('reject', g.kind), 'color:var(--md-sys-color-error)'),
+    ack: () => btn('ack', 'btn-m3-primary approve', 'check', decisionLabel('ack', g.kind)),
+    answer: () => btn('answer', 'btn-m3-primary approve', 'send', decisionLabel('answer', g.kind)),
+    ask: () => btn('ask', 'btn-m3-tonal changes', 'help', decisionLabel('ask', g.kind)),
   };
   return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
     ${roundsHintHtml(g)}

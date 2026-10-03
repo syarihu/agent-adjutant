@@ -140,11 +140,7 @@ function initialsOf(b) {
 
 function sinceLabel(secs) {
   if (secs == null) return '';
-  const mins = Math.max(0, Math.floor((Date.now() / 1000 - secs) / 60));
-  if (mins < 1) return 'たった今';
-  if (mins < 60) return `${mins} 分前`;
-  const hours = Math.floor(mins / 60);
-  return hours < 24 ? `${hours} 時間前` : `${Math.floor(hours / 24)} 日前`;
+  return agoLabel(Math.max(0, Math.floor((Date.now() / 1000 - secs) / 60)));
 }
 
 const rowStartedAt = {};
