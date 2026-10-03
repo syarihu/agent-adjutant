@@ -8,7 +8,14 @@ mod common;
 
 use common::*;
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+
+/// How long to wait for anything the server or tmux has to start processes for. Under load a
+/// single spawn can take seconds and the first frame sits behind a chain of them (git, ps, sh,
+/// tmux, tmux attach); a passing test returns as soon as its condition holds, so this only
+/// bounds a real hang.
+const PATIENCE: Duration = Duration::from_secs(60);
 
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
@@ -27,6 +34,17 @@ fn config(tmux: &IsolatedTmux) -> String {
         }
     })
     .to_string()
+}
+
+/// A tmux name no other test, or copy of this binary, shares: `IsolatedTmux` derives its socket
+/// from the clock alone, which can tie on parallel starts.
+fn unique(name: &str) -> String {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "{name}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// What the isolated tmux holds: a session showing `main`, and a window running `cat` that
@@ -109,7 +127,7 @@ impl IsolatedTmux {
 
 /// Wait for `check` to hold, for as long as tmux and the server can reasonably take.
 fn eventually(what: &str, mut check: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + PATIENCE;
     while !check() {
         assert!(Instant::now() < deadline, "never: {what}");
         std::thread::sleep(Duration::from_millis(50));
@@ -143,13 +161,44 @@ fn forge_worker(fixture: &Fixture, layout: &Layout) {
 
 // ── a WebSocket client, by hand ──────────────────────────────────────
 
+/// Fill `buf`, retrying while the socket's short read timeout runs out, until `deadline`. Not
+/// `read_exact` in a loop: that does not say how much it consumed when it fails, so a retry
+/// could resume in the middle of a frame. The server closing the connection is a failure too,
+/// as it was when `read_exact` was used here.
+fn read_fully(stream: &mut TcpStream, buf: &mut [u8], deadline: Instant, what: &str) {
+    let started = Instant::now();
+    let mut filled = 0;
+    while filled < buf.len() {
+        // Checked before every read, not only after a timeout: a trickle of bytes never times
+        // out, and would otherwise carry the wait past the deadline.
+        assert!(
+            Instant::now() < deadline,
+            "no {what} before the deadline (this read began {:?} ago)",
+            started.elapsed()
+        );
+        match stream.read(&mut buf[filled..]) {
+            Ok(0) => panic!("the connection closed while waiting for {what}"),
+            Ok(n) => filled += n,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(e) => panic!("reading {what}: {e}"),
+        }
+    }
+}
+
 /// The status line and headers of the answer, read up to the blank line and no further: what
 /// follows may already be frames.
 fn read_head(stream: &mut TcpStream) -> String {
+    let deadline = Instant::now() + PATIENCE;
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
-        stream.read_exact(&mut byte).unwrap();
+        read_fully(stream, &mut byte, deadline, "the handshake answer");
         head.push(byte[0]);
     }
     String::from_utf8(head).unwrap()
@@ -163,7 +212,7 @@ fn status_of(head: &str) -> u16 {
 fn handshake(port: u16, target: &str, origin: Option<&str>) -> (String, TcpStream) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(15)))
+        .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
     let origin = origin
         .map(|o| format!("Origin: {o}\r\n"))
@@ -201,40 +250,67 @@ fn client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 /// One frame from the server, as `(opcode, payload)`.
-fn read_frame(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+fn read_frame(stream: &mut TcpStream, deadline: Instant) -> (u8, Vec<u8>) {
+    let what = "a frame from the server";
     let mut head = [0u8; 2];
-    stream.read_exact(&mut head).unwrap();
+    read_fully(stream, &mut head, deadline, what);
     assert_eq!(head[1] & 0x80, 0, "server frames are not masked");
     let len = match head[1] & 0x7f {
         126 => {
             let mut two = [0u8; 2];
-            stream.read_exact(&mut two).unwrap();
+            read_fully(stream, &mut two, deadline, what);
             usize::from(u16::from_be_bytes(two))
         }
         127 => {
             let mut eight = [0u8; 8];
-            stream.read_exact(&mut eight).unwrap();
+            read_fully(stream, &mut eight, deadline, what);
             u64::from_be_bytes(eight) as usize
         }
         short => usize::from(short),
     };
     let mut payload = vec![0u8; len];
-    stream.read_exact(&mut payload).unwrap();
+    read_fully(stream, &mut payload, deadline, what);
     (head[0] & 0x0f, payload)
+}
+
+/// Answer a ping, which the server sends after 30 s of silence and holds against the client
+/// after three unanswered: a test that waits long enough has to stay a client it keeps.
+fn pong(stream: &mut TcpStream, opcode: u8, payload: &[u8]) {
+    if opcode == 0x9 {
+        stream.write_all(&client_frame(0xA, payload)).unwrap();
+    }
+}
+
+/// Read until the server's close frame and return its payload. Output already on its way comes
+/// first, and is skipped.
+fn read_close(stream: &mut TcpStream) -> Vec<u8> {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "the server never closed, though it kept sending"
+        );
+        let (opcode, payload) = read_frame(stream, deadline);
+        if opcode == 0x8 {
+            return payload;
+        }
+        pong(stream, opcode, &payload);
+    }
 }
 
 /// Read output until `wanted` has appeared in it.
 fn read_until(stream: &mut TcpStream, seen: &mut String, wanted: &str) {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + PATIENCE;
     while !seen.contains(wanted) {
         assert!(
             Instant::now() < deadline,
             "never saw {wanted:?} in {seen:?}"
         );
-        let (opcode, payload) = read_frame(stream);
+        let (opcode, payload) = read_frame(stream, deadline);
         match opcode {
             0x2 => seen.push_str(&String::from_utf8_lossy(&payload)),
-            0x9 | 0xA => {}
+            0x9 => pong(stream, opcode, &payload),
+            0xA => {}
             other => {
                 panic!("unexpected frame {other:#x} while waiting for {wanted:?}: {payload:?}")
             }
@@ -246,7 +322,7 @@ fn read_until(stream: &mut TcpStream, seen: &mut String, wanted: &str) {
 
 #[test]
 fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_session() {
-    let Some(tmux) = IsolatedTmux::new("board") else {
+    let Some(tmux) = IsolatedTmux::new(&unique("board")) else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -322,13 +398,7 @@ fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_sessio
     // is untouched.
     ws.write_all(&client_frame(0x8, &1000u16.to_be_bytes()))
         .unwrap();
-    // Output already on its way comes first.
-    let echoed = loop {
-        let (opcode, payload) = read_frame(&mut ws);
-        if opcode == 0x8 {
-            break payload;
-        }
-    };
+    let echoed = read_close(&mut ws);
     assert_eq!(&echoed[..2], &1000u16.to_be_bytes(), "the close is echoed");
     drop(ws);
     eventually("the board session to be gone", || {
@@ -348,7 +418,7 @@ fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_sessio
 
 #[test]
 fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
-    let Some(tmux) = IsolatedTmux::new("board-one") else {
+    let Some(tmux) = IsolatedTmux::new(&unique("board-one")) else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -422,7 +492,7 @@ fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
 
 #[test]
 fn a_handshake_is_refused_unless_it_comes_from_the_board_itself() {
-    let Some(tmux) = IsolatedTmux::new("board-auth") else {
+    let Some(tmux) = IsolatedTmux::new(&unique("board-auth")) else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -447,7 +517,7 @@ fn a_handshake_is_refused_unless_it_comes_from_the_board_itself() {
 
 #[test]
 fn a_session_that_is_not_in_tmux_is_closed_with_4404() {
-    let Some(tmux) = IsolatedTmux::new("board-none") else {
+    let Some(tmux) = IsolatedTmux::new(&unique("board-none")) else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -461,7 +531,9 @@ fn a_session_that_is_not_in_tmux_is_closed_with_4404() {
         let path = terminal_path(&resident, id, "cols=80&rows=24");
         let (head, mut ws) = handshake(resident.port, &path, Some(&own_origin(&resident)));
         assert_eq!(status_of(&head), 101, "{id}: {head}");
-        let (opcode, payload) = read_frame(&mut ws);
+        // The close comes first: nothing was attached, so there is no output to skip, and the
+        // server closes long before it would ping.
+        let (opcode, payload) = read_frame(&mut ws, Instant::now() + PATIENCE);
         assert_eq!(opcode, 0x8, "{id}");
         assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 4404, "{id}");
         assert!(!payload[2..].is_empty(), "{id}: a reason is given");
@@ -537,7 +609,7 @@ struct Open {
 }
 
 fn open_terminal(name: &str) -> Option<Open> {
-    let tmux = IsolatedTmux::new(name)?;
+    let tmux = IsolatedTmux::new(&unique(name))?;
     let layout = tmux.lay_out();
     let fixture = Fixture::new(&config(&tmux));
     forge_worker(&fixture, &layout);
@@ -592,12 +664,7 @@ fn a_client_detached_from_tmux_closes_the_page_with_detached() {
     };
     let made = open.tmux.board_sessions();
     open.tmux.out(&["detach-client", "-s", &made[0]]);
-    let closed = loop {
-        let (opcode, payload) = read_frame(&mut open.ws);
-        if opcode == 0x8 {
-            break payload;
-        }
-    };
+    let closed = read_close(&mut open.ws);
     assert_eq!(&closed[..2], &1000u16.to_be_bytes());
     assert_eq!(&closed[2..], b"detached");
     eventually("the board session to be gone", || {
@@ -615,12 +682,7 @@ fn a_closed_target_window_ends_the_terminal_instead_of_showing_another_agent() {
     // The agent exits and its window goes: the client must not move on to the next window.
     open.tmux
         .out(&["kill-window", "-t", &open.layout.target_window]);
-    let closed = loop {
-        let (opcode, payload) = read_frame(&mut open.ws);
-        if opcode == 0x8 {
-            break payload;
-        }
-    };
+    let closed = read_close(&mut open.ws);
     assert_eq!(&closed[..2], &1000u16.to_be_bytes());
     assert_eq!(&closed[2..], b"detached");
     eventually("the board session to be gone", || {
