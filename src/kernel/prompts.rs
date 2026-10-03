@@ -10,6 +10,9 @@
 
 pub use crate::infra::agent::Agent;
 
+mod render_skill;
+pub use render_skill::*;
+
 pub struct PromptDef {
     pub name: &'static str,
     pub raw_content: &'static str,
@@ -90,8 +93,8 @@ pub fn render(prompt: &PromptDef, arguments: &str) -> String {
 
 /// Resolve which agent format to render procedures for.
 ///
-/// `runner_agent` is the runner's program name as returned by `runner::agent_from_runner`;
-/// `prompts` is a leaf module, so the caller does that parse.
+/// `runner_agent` is the runner's program name, which `render_skill` reads with
+/// `runner::agent_from_runner`.
 pub fn resolve_agent(
     explicit: Option<&str>,
     client_name: Option<&str>,

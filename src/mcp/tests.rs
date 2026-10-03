@@ -445,3 +445,54 @@ fn an_error_is_said_once_until_it_changes() {
     assert!(is_new_error(&mut last, "b"));
     assert!(is_new_error(&mut last, "a"));
 }
+
+#[test]
+fn mcp_takes_the_agent_aliases_adj_skill_takes() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let codex = call_tool(
+        "adjutant_skill",
+        &json!({"name": "adj-hub", "agent": "codex"}),
+    )
+    .unwrap();
+    assert_eq!(codex["agent"], "generic");
+    assert!(
+        !codex["content"]
+            .as_str()
+            .unwrap()
+            .contains("AskUserQuestion")
+    );
+
+    let claude_code = call_tool(
+        "adjutant_skill",
+        &json!({"name": "adj-hub", "agent": "claude-code"}),
+    )
+    .unwrap();
+    assert_eq!(claude_code["agent"], "claude");
+    assert!(
+        claude_code["content"]
+            .as_str()
+            .unwrap()
+            .contains("AskUserQuestion")
+    );
+
+    let via_prompt =
+        prompt_get(&json!({"name": "adj-hub", "arguments": {"agent": "antigravity"}})).unwrap();
+    let text = via_prompt["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(!text.contains("AskUserQuestion"));
+    assert!(text.contains("ask_question"));
+}
+
+#[test]
+fn an_unknown_procedure_is_worded_per_entry_point() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    assert_eq!(
+        prompt_get(&json!({"name": "nope"})).unwrap_err(),
+        "Unknown prompt: nope"
+    );
+    assert_eq!(
+        call_tool("adjutant_skill", &json!({"name": "nope"})).unwrap_err(),
+        "no such procedure: nope (adj-hub / adj-worker / adj-report)"
+    );
+}

@@ -175,7 +175,7 @@ pub(super) fn tool_definitions() -> Value {
                 "properties": {
                     "name": { "type": "string", "enum": ["adj-hub", "adj-worker", "adj-report"] },
                     "arguments": { "type": "string", "description": "Free text substituted into the procedure where it asks for it." },
-                    "agent": { "type": "string", "enum": ["claude", "agy", "generic"], "description": "Target agent format: claude | agy | generic. Defaults to auto-detect." },
+                    "agent": { "type": "string", "enum": ["claude", "claude-code", "agy", "antigravity", "generic", "codex"], "description": "Target agent format: claude (claude-code) | agy (antigravity) | generic (codex). Defaults to auto-detect." },
                     "worktree": { "type": "string", "description": "Path to the worktree or repository root. Defaults to the server's working directory." },
                 },
                 "required": ["name"],

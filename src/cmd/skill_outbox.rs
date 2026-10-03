@@ -17,24 +17,15 @@ pub(crate) fn skill_text(
     arguments: &str,
     agent: Option<&str>,
 ) -> Result<String, String> {
-    let prompt = crate::prompts::find(name).ok_or_else(|| {
-        format!(
-            "no such procedure: {name} ({})",
-            crate::prompts::PROMPTS
-                .iter()
-                .map(|p| p.name)
-                .collect::<Vec<_>>()
-                .join(" / ")
-        )
-    })?;
-    let runner = crate::mcp::resolve_runner_for(None, name);
-    let runner_agent = runner.as_deref().map(crate::runner::agent_from_runner);
-    let resolved_agent = crate::prompts::resolve_agent(agent, None, runner_agent.as_deref());
-    Ok(crate::prompts::render_for(
-        prompt,
+    crate::prompts::render_skill(&crate::prompts::SkillRequest {
+        name,
         arguments,
-        resolved_agent,
-    ))
+        agent,
+        client_name: None,
+        runner_dir: None,
+    })
+    .map(|r| r.text)
+    .map_err(|e| e.to_string())
 }
 
 /// What the hub has left for the worker in this worktree.
