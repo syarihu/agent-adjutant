@@ -30,15 +30,15 @@ const INBOX_LISTED: usize = 20;
 /// whose worker reports to it (`children`, counted by slug, so `WID-957` and `wid-957` are
 /// one hub). A saved hub session alone does not list it, so a stopped hub whose last
 /// checkout is gone leaves the list; its session stays for `--resume`.
-pub fn all_repo_hubs(repo: &crate::repo::RepoInfo) -> Vec<crate::session::RepoHub> {
-    let worktrees = crate::repo::linked_worktrees(&repo.main).unwrap_or_default();
+pub fn all_repo_hubs(repo: &crate::kernel::identity::RepoInfo) -> Vec<crate::session::RepoHub> {
+    let worktrees = crate::kernel::identity::linked_worktrees(&repo.main).unwrap_or_default();
     all_repo_hubs_among(repo, &worktrees)
 }
 
 /// `all_repo_hubs` for a caller that has already listed the linked worktrees of `repo`, so that
 /// git is not asked for them a second time.
 pub fn all_repo_hubs_among(
-    repo: &crate::repo::RepoInfo,
+    repo: &crate::kernel::identity::RepoInfo,
     worktrees: &[String],
 ) -> Vec<crate::session::RepoHub> {
     all_repo_hubs_among_with(&ProcessTable::each(), repo, worktrees)
@@ -47,7 +47,7 @@ pub fn all_repo_hubs_among(
 /// `all_repo_hubs_among`, asking `table` when each hub's process started.
 pub fn all_repo_hubs_among_with(
     table: &ProcessTable,
-    repo: &crate::repo::RepoInfo,
+    repo: &crate::kernel::identity::RepoInfo,
     worktrees: &[String],
 ) -> Vec<crate::session::RepoHub> {
     use crate::session::{InboxItem, RepoHub, RepoHubState};
@@ -100,7 +100,9 @@ pub fn all_repo_hubs_among_with(
                         .get("hubName")
                         .and_then(Value::as_str)
                         .map(str::to_string)
-                        .unwrap_or_else(|| format!("{}{}", crate::repo::HUB_PREFIX, file_stem));
+                        .unwrap_or_else(|| {
+                            format!("{}{}", crate::kernel::identity::HUB_PREFIX, file_stem)
+                        });
                     let key = record
                         .get("hub")
                         .and_then(Value::as_str)
@@ -126,9 +128,9 @@ pub fn all_repo_hubs_among_with(
         let Some(hub_key) = worker_hub_key(Path::new(&wt)) else {
             continue;
         };
-        let slug = crate::repo::slug_for(&repo.nwo, Some(&hub_key));
+        let slug = crate::kernel::identity::slug_for(&repo.nwo, Some(&hub_key));
         *children.entry(slug.clone()).or_insert(0) += 1;
-        let hub_name = format!("{}{}", crate::repo::HUB_PREFIX, slug);
+        let hub_name = format!("{}{}", crate::kernel::identity::HUB_PREFIX, slug);
         let entry = hubs_by_slug
             .entry(slug)
             .or_insert((Some(hub_key.clone()), hub_name));
@@ -140,7 +142,7 @@ pub fn all_repo_hubs_among_with(
     // 4. Saved sessions in state_dir/sessions only say more about a hub already listed: a
     // parent-task hub nobody has a record or a checkout for is finished, and stays gone.
     for saved in hub_sessions_for(&repo.nwo) {
-        let slug = crate::repo::slug_for(&repo.nwo, saved.hub.as_deref());
+        let slug = crate::kernel::identity::slug_for(&repo.nwo, saved.hub.as_deref());
         let Some(entry) = hubs_by_slug.get_mut(&slug) else {
             continue;
         };
@@ -148,7 +150,7 @@ pub fn all_repo_hubs_among_with(
             entry.0 = saved.hub;
         }
         if let Some(name) = saved.hub_name
-            && entry.1 == format!("{}{}", crate::repo::HUB_PREFIX, slug)
+            && entry.1 == format!("{}{}", crate::kernel::identity::HUB_PREFIX, slug)
         {
             entry.1 = name;
         }
@@ -164,7 +166,7 @@ pub fn all_repo_hubs_among_with(
             if key.is_none() && parent {
                 key = read_session(&hub_session_path(&slug))
                     .and_then(|session| session.hub)
-                    .or_else(|| crate::repo::hub_key_from_slug(&repo.nwo, &slug));
+                    .or_else(|| crate::kernel::identity::hub_key_from_slug(&repo.nwo, &slug));
             }
             let status = hub_status_with(table, &slug, &hub_name);
             let entries = list(&slug);

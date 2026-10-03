@@ -37,7 +37,7 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
         .get("worktree")
         .and_then(Value::as_str)
         .ok_or("a worktree is required")?;
-    let known = crate::repo::linked_worktrees(&server.ctx.repo.main)?;
+    let known = crate::kernel::identity::linked_worktrees(&server.ctx.repo.main)?;
     if !known.iter().any(|w| w == worktree) {
         return Err(format!("not a worktree of this repository: {worktree}"));
     }
@@ -52,9 +52,9 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
             }))
         }
         "ide" => {
-            let command = crate::ide::open_command(settings.ide.as_deref(), worktree)
+            let command = crate::infra::ide::open_command(settings.ide.as_deref(), worktree)
                 .ok_or("ide is not set: put your editor command in the config's ide key")?;
-            crate::terminal::run_shell(&command)?;
+            crate::infra::terminal::run_shell(&command)?;
             Ok(json!({ "ran": true }))
         }
         "close" => {
@@ -74,7 +74,7 @@ pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
         return Ok(json!({ "present": false, "ran": false }));
     };
     let settings = settings_now(server);
-    let done = crate::terminal::focus(&settings.terminal, pid, &repo.hub_name, false)?;
+    let done = crate::infra::terminal::focus(&settings.terminal, pid, &repo.hub_name, false)?;
     Ok(json!({ "present": true, "ran": done.ran }))
 }
 
@@ -93,7 +93,7 @@ pub(in crate::cmd) fn hub_start_of(input: &Value) -> Result<crate::cmd::HubStart
 fn hub_start_context(
     server: &Server,
     hub: &crate::session::RepoHub,
-    settings: crate::config::Settings,
+    settings: crate::kernel::config::Settings,
 ) -> Result<crate::cmd::Context, String> {
     if hub.parent && hub.key.is_none() {
         return Err(
@@ -112,7 +112,7 @@ fn hub_start_context(
 fn hub_stop_context(
     server: &Server,
     hub: &crate::session::RepoHub,
-    settings: crate::config::Settings,
+    settings: crate::kernel::config::Settings,
 ) -> crate::cmd::Context {
     let mut stopping = server.ctx.repo.clone();
     stopping.slug = hub.slug.clone();

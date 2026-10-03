@@ -14,15 +14,15 @@ use crate::messaging;
 use std::path::{Path, PathBuf};
 
 pub fn dir(ctx: &Context) -> PathBuf {
-    gate::dir(&messaging::state_dir(), &ctx.repo.slug)
+    gate::dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
 }
 
 pub fn answered_dir(ctx: &Context) -> PathBuf {
-    gate::answered_dir(&messaging::state_dir(), &ctx.repo.slug)
+    gate::answered_dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
 }
 
 pub fn records_dir(ctx: &Context) -> PathBuf {
-    gate::records_dir(&messaging::state_dir(), &ctx.repo.slug)
+    gate::records_dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
 }
 
 /// A gate by id, open or kept as a record. Open first: that is what an id usually names, and
@@ -60,7 +60,7 @@ fn lock_path(dir: &Path, id: &str) -> PathBuf {
 }
 
 fn stamp() -> String {
-    messaging::utc_stamp(messaging::now_secs())
+    crate::infra::clock::utc_stamp(crate::infra::clock::now_secs())
 }
 
 /// Write a gate down and say whether anybody is there to see it.
@@ -196,7 +196,7 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     // waits on an outbox nobody writes to.
     let worktree = match payload.get("worktree").and_then(Value::as_str) {
         Some(path) => path.to_string(),
-        None => crate::repo::current_worktree(None)
+        None => crate::kernel::identity::current_worktree(None)
             .ok_or("not inside a worktree, and no --worktree was given")?,
     };
 
@@ -418,12 +418,13 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
         if !g.wait || g.answered_by_hub() {
             continue;
         }
-        let record = messaging::read_json(&messaging::worker_record_path(Path::new(&g.worktree)));
+        let record =
+            crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(&g.worktree)));
         let field = |name: &str| record.as_ref().and_then(|r| r.get(name));
         let started = field("startedAt").and_then(Value::as_str);
         let phase_at = field("phaseAt")
             .and_then(Value::as_i64)
-            .map(messaging::utc_stamp);
+            .map(crate::infra::clock::utc_stamp);
         let later = signals
             .iter()
             .filter(|s| s.worktree == g.worktree && s.id != g.id && s.opened_at > g.opened_at)
@@ -500,7 +501,7 @@ pub fn open_cmd(
     // interface than a heredoc.
     let raw = match file {
         Some(path) => {
-            let path = crate::config::expand_home(path);
+            let path = crate::infra::paths::expand_home(path);
             std::fs::read_to_string(&path)
                 .map_err(|e| format!("cannot read {}: {e}", path.display()))?
         }
@@ -512,7 +513,7 @@ pub fn open_cmd(
     // report into its own context to quote it into JSON — the hub opening a plan a sub-agent
     // wrote is the case this is for, and what the person approves is that file, byte for byte.
     if let Some(path) = body_file {
-        let path = crate::config::expand_home(path);
+        let path = crate::infra::paths::expand_home(path);
         let body = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         with_body(&mut payload, body)?;
@@ -570,13 +571,13 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
         let (wake, default_line, runner) = if gate.answered_by_hub() {
             (
                 &ctx.settings.hub_wake,
-                crate::terminal::HUB_WAKE_LINE,
+                crate::infra::terminal::HUB_WAKE_LINE,
                 ctx.settings.hub_runner.as_deref(),
             )
         } else {
             (
                 &ctx.settings.worker_wake,
-                crate::terminal::WORKER_WAKE_LINE,
+                crate::infra::terminal::WORKER_WAKE_LINE,
                 ctx.settings.agent_runner.as_deref(),
             )
         };
@@ -587,7 +588,7 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
             // at an empty prompt instead of asking the same thing in the terminal too.
             if ctx.settings.terminal.is_tmux()
                 && wake.hook.template().is_none()
-                && super::wake_agent(runner) != crate::prompts::Agent::Generic
+                && super::wake_agent(runner) != crate::infra::agent::Agent::Generic
             {
                 out["wakeChecksScreen"] = json!(true);
             }
@@ -736,7 +737,7 @@ mod tests {
     #[test]
     fn open_drops_keys_the_gate_does_not_know() {
         let _sandbox = crate::testing::Sandbox::empty();
-        let repo = crate::repo::RepoInfo {
+        let repo = crate::kernel::identity::RepoInfo {
             main: "/tmp/acme-widget".to_string(),
             nwo: "acme/widget".to_string(),
             repo: "widget".to_string(),

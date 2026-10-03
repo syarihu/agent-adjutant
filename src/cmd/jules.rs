@@ -84,7 +84,7 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     // Who started it, as far as `gh` can say. Jules acts on comments by that person only, so a
     // comment passed on in anybody else's name would be posted and ignored.
     task.jules_by = by;
-    task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
+    task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
     task::save(&tasks::dir(&ctx), &task).map_err(|e| {
         format!(
             "Jules started session {} but the task record could not be updated: {e}",
@@ -147,11 +147,11 @@ fn branch_on_github(main: &str, nwo: &str, base: &str) -> String {
     let Some(rest) = base.strip_prefix("origin/") else {
         return base.to_string();
     };
-    if crate::repo::name_with_owner(main).0 != nwo {
+    if crate::kernel::identity::name_with_owner(main).0 != nwo {
         return base.to_string();
     }
     let known = |name: &str| {
-        crate::repo::git(
+        crate::infra::git::git(
             &[
                 "-C",
                 main,
@@ -176,7 +176,7 @@ fn branch_on_github(main: &str, nwo: &str, base: &str) -> String {
 /// Given up on after `LOGIN_TIMEOUT`: `gh` waiting on a login prompt or a network that has
 /// gone should not hold up a command that has more to do.
 pub fn github_login(main: &str) -> Option<String> {
-    let run = super::gh::run(
+    let run = crate::infra::gh::run(
         Some(main),
         &["api", "user", "--jq", ".login"],
         std::time::Instant::now() + LOGIN_TIMEOUT,
@@ -234,7 +234,7 @@ pub fn relay_cmd(
     let (chosen, note) = match plan {
         // A file, since it is prose the hub wrote and a note in it can hold any quote.
         Some(path) => {
-            let path = crate::config::expand_home(path);
+            let path = crate::infra::paths::expand_home(path);
             let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
             let plan: Value =
@@ -265,7 +265,7 @@ fn read_prompt(from: &str) -> Result<String, String> {
             buf
         }
         path => {
-            let path = crate::config::expand_home(path);
+            let path = crate::infra::paths::expand_home(path);
             std::fs::read_to_string(&path)
                 .map_err(|e| format!("cannot read {}: {e}", path.display()))?
         }
@@ -307,7 +307,7 @@ impl Watch {
     pub fn look(
         self: &std::sync::Arc<Self>,
         ctx: &super::Context,
-        key: &crate::config::Hook,
+        key: &crate::infra::terminal::Hook,
         task: &Value,
     ) -> Option<Value> {
         let session = task.get("julesSession")?.as_str()?.to_string();
@@ -358,7 +358,13 @@ impl Watch {
         seen.retain(|session, entry| entry.asking || shown.contains(session));
     }
 
-    fn ask(&self, ctx: &super::Context, key: &crate::config::Hook, task_id: &str, session: &str) {
+    fn ask(
+        &self,
+        ctx: &super::Context,
+        key: &crate::infra::terminal::Hook,
+        task_id: &str,
+        session: &str,
+    ) {
         let answer = jules::get(key, session);
         if let Ok(found) = &answer
             && let Err(e) = follow(ctx, task_id, found)
@@ -443,7 +449,7 @@ fn announce_review(
     let posted = super::post_to_hub(ctx, &message)?;
     task.announced.extend(ids.iter().map(|id| id.to_string()));
     task.relay_rounds = round;
-    task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
+    task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
     let saved = task::save(&tasks::dir(ctx), &task);
     drop(lock);
     posted.follow_up(ctx, true);
@@ -500,7 +506,7 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
     if task.status == task::Status::Dispatched {
         task.status = task::Status::Pr;
     }
-    task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
+    task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
     let saved = task::save(&tasks::dir(ctx), &task);
     drop(lock);
     posted.follow_up(ctx, true);
@@ -545,7 +551,7 @@ pub fn findings(ctx: &super::Context, id: &str) -> Result<Vec<Finding>, String> 
         .ok_or(format!("not a pull request of {}: {pr}", ctx.repo.nwo))?;
     let skip = not_findings_by(&ctx.repo.main)?;
     let endpoint = format!("repos/{}/pulls/{number}/comments", ctx.repo.nwo);
-    let run = super::gh::run(
+    let run = crate::infra::gh::run(
         Some(&ctx.repo.main),
         &[
             "api",
@@ -693,7 +699,7 @@ pub fn relay(
     // On stdin: the text is the reviewers' and the person's, and neither belongs on a
     // command line. Given up on after `POST_TIMEOUT`: the task lock is held, and a `gh` that
     // hangs would hold it, and the board's request, for good.
-    let run = super::gh::run_with_input(
+    let run = crate::infra::gh::run_with_input(
         Some(&ctx.repo.main),
         &["pr", "comment", &pr, "--body-file", "-"],
         Some(body.as_bytes()),
@@ -715,7 +721,7 @@ pub fn relay(
             task.relayed.push(f.id.clone());
         }
     }
-    task.updated_at = crate::messaging::utc_stamp(crate::messaging::now_secs());
+    task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
     task::save(&tasks::dir(ctx), &task)?;
     drop(lock);
     let ids: Vec<&str> = chosen.iter().map(|c| c.id.as_str()).collect();

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use crate::config::Hook;
+use crate::infra::terminal::Hook;
 
 /// Where the API lives. A constant rather than a setting: there is one Jules.
 pub const API: &str = "https://jules.googleapis.com/v1alpha";

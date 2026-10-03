@@ -1586,7 +1586,7 @@ fn all_repo_hubs_discovers_all_sources_and_sorts_repo_first() {
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().to_string_lossy().to_string();
-    let repo = crate::repo::RepoInfo {
+    let repo = crate::kernel::identity::RepoInfo {
         main: main_path.clone(),
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -1607,7 +1607,7 @@ fn all_repo_hubs_discovers_all_sources_and_sorts_repo_first() {
     .unwrap();
 
     // 2. Parent task hub in hubs/
-    let parent_slug = crate::repo::slug_for("acme/widget", Some("parent-task"));
+    let parent_slug = crate::kernel::identity::slug_for("acme/widget", Some("parent-task"));
     write_json(
         &hub_record_path(&parent_slug),
         &json!({
@@ -1619,7 +1619,7 @@ fn all_repo_hubs_discovers_all_sources_and_sorts_repo_first() {
     .unwrap();
 
     // 3. Saved session in sessions/
-    let session_slug = crate::repo::slug_for("acme/widget", Some("other-hub"));
+    let session_slug = crate::kernel::identity::slug_for("acme/widget", Some("other-hub"));
     save_hub_session(
         &session_slug,
         "acme/widget",
@@ -1657,7 +1657,7 @@ fn all_repo_hubs_discovers_hub_from_saved_worker_session_when_record_absent() {
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().to_string_lossy().to_string();
-    let repo = crate::repo::RepoInfo {
+    let repo = crate::kernel::identity::RepoInfo {
         main: main_path.clone(),
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -1683,8 +1683,8 @@ fn all_repo_hubs_discovers_hub_from_saved_worker_session_when_record_absent() {
     assert_eq!(hubs[1].key.as_deref(), Some("unregistered-worker-hub"));
 }
 
-fn widget_repo(main: &Path) -> crate::repo::RepoInfo {
-    crate::repo::RepoInfo {
+fn widget_repo(main: &Path) -> crate::kernel::identity::RepoInfo {
+    crate::kernel::identity::RepoInfo {
         main: main.to_string_lossy().to_string(),
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -1699,7 +1699,7 @@ fn widget_repo(main: &Path) -> crate::repo::RepoInfo {
 fn a_parent_hub_known_only_from_its_saved_session_is_not_listed() {
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
-    let slug = crate::repo::slug_for("acme/widget", Some("WID-957"));
+    let slug = crate::kernel::identity::slug_for("acme/widget", Some("WID-957"));
     save_hub_session(
         &slug,
         "acme/widget",
@@ -1737,7 +1737,7 @@ fn children_are_counted_by_slug_not_by_spelling() {
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     write_json(&worker_record_path(dir.path()), &json!({"hub": "WID-957"})).unwrap();
-    let slug = crate::repo::slug_for("acme/widget", Some("wid-957"));
+    let slug = crate::kernel::identity::slug_for("acme/widget", Some("wid-957"));
     save_hub_session(
         &slug,
         "acme/widget",
@@ -1762,7 +1762,7 @@ fn a_worker_moved_to_another_hub_counts_only_there() {
     // Dispatched by A, moved to B: the record says B, the session still says A.
     write_json(&worker_record_path(dir.path()), &json!({"hub": "B"})).unwrap();
     save_worker_session(dir.path(), "t", Some("A"), None, "sid-1").unwrap();
-    let a = crate::repo::slug_for("acme/widget", Some("A"));
+    let a = crate::kernel::identity::slug_for("acme/widget", Some("A"));
     save_hub_session(&a, "acme/widget", Some("A"), "adjutant-a", "sess-a").unwrap();
 
     let hubs = all_repo_hubs(&widget_repo(dir.path()));
@@ -1791,7 +1791,7 @@ fn a_hub_known_only_from_a_worker_is_given_a_name() {
     write_json(&worker_record_path(dir.path()), &json!({"hub": "WID-957"})).unwrap();
 
     let hubs = all_repo_hubs(&widget_repo(dir.path()));
-    let slug = crate::repo::slug_for("acme/widget", Some("WID-957"));
+    let slug = crate::kernel::identity::slug_for("acme/widget", Some("WID-957"));
     assert_eq!(hubs[1].name, format!("adjutant-{slug}"));
 }
 
@@ -1800,7 +1800,7 @@ fn a_parent_hub_record_without_its_key_is_still_told_apart_from_the_repository_h
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().to_string_lossy().to_string();
-    let repo = crate::repo::RepoInfo {
+    let repo = crate::kernel::identity::RepoInfo {
         main: main_path.clone(),
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -1810,14 +1810,14 @@ fn a_parent_hub_record_without_its_key_is_still_told_apart_from_the_repository_h
         nwo_source: "dirname",
     };
     // Written by a version that did not record `hub`: the key comes back out of the slug.
-    let readable = crate::repo::slug_for("acme/widget", Some("WID-100"));
+    let readable = crate::kernel::identity::slug_for("acme/widget", Some("WID-100"));
     write_json(
         &hub_record_path(&readable),
         &json!({"hubName": format!("adjutant-{readable}"), "cwd": main_path}),
     )
     .unwrap();
     // And one whose key the slug cannot give back: still a parent hub, key unknown.
-    let lossy = crate::repo::slug_for("acme/widget", Some("v1.2"));
+    let lossy = crate::kernel::identity::slug_for("acme/widget", Some("v1.2"));
     write_json(
         &hub_record_path(&lossy),
         &json!({"hubName": format!("adjutant-{lossy}"), "cwd": main_path}),
@@ -1842,7 +1842,7 @@ fn a_parent_hub_record_without_its_key_is_still_told_apart_from_the_repository_h
 fn register_worker_records_where_the_worker_runs() {
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path();
-    let at = crate::session::SessionTerminal {
+    let at = crate::infra::terminal::SessionTerminal {
         backend: "tmux".into(),
         socket: Some("/tmp/tmux-501/default".into()),
         session: Some("adjutant".into()),
@@ -1893,7 +1893,7 @@ fn all_repo_hubs_seeds_default_hub_when_repo_addresses_parent_hub() {
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().to_string_lossy().to_string();
-    let repo = crate::repo::RepoInfo {
+    let repo = crate::kernel::identity::RepoInfo {
         main: main_path,
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -1906,7 +1906,10 @@ fn all_repo_hubs_seeds_default_hub_when_repo_addresses_parent_hub() {
     let hubs = all_repo_hubs(&repo);
     assert_eq!(hubs.len(), 2);
     assert_eq!(hubs[0].id, "hub");
-    assert_eq!(hubs[0].slug, crate::repo::slug_for("acme/widget", None));
+    assert_eq!(
+        hubs[0].slug,
+        crate::kernel::identity::slug_for("acme/widget", None)
+    );
     assert_eq!(hubs[0].key, None);
     assert_eq!(hubs[1].id, "hub-WID-100");
     assert_eq!(hubs[1].slug, "acme-widget-wid-100");
@@ -1963,7 +1966,7 @@ fn unregister_hub_if_leaves_a_record_naming_another_process() {
 #[test]
 fn a_claimed_hub_record_carries_where_it_runs() {
     let _sandbox = Sandbox::empty();
-    let terminal = crate::session::SessionTerminal {
+    let terminal = crate::infra::terminal::SessionTerminal {
         backend: "tmux".into(),
         socket: Some("scratch".into()),
         session: Some("adj".into()),

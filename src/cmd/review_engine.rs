@@ -7,9 +7,7 @@ use serde_json::{Value, json};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::config;
-use crate::messaging;
-use crate::notify;
+use crate::kernel::config;
 
 /// The 5-hour window trips at or above this.
 const FIVE_HOUR_LIMIT: f64 = 50.0;
@@ -316,11 +314,13 @@ pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
 
     let cache = cache_path(
         std::env::var_os("CLAUDE_CONFIG_DIR").as_deref(),
-        &config::home_dir(),
+        &crate::infra::paths::home_dir(),
     );
     let usage = read_cache(&cache);
-    let now = messaging::now_secs();
-    let (engine, reason) = decide(&setting, &usage, now, || notify::on_path("codex"))?;
+    let now = crate::infra::clock::now_secs();
+    let (engine, reason) = decide(&setting, &usage, now, || {
+        crate::infra::shell::on_path("codex")
+    })?;
     let text = message(engine, &reason, &setting, &cache, now);
 
     if as_json {

@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::Context;
-use crate::messaging;
 use crate::session::RepoHub;
 use crate::task;
 
@@ -36,7 +35,7 @@ struct Seen {
 }
 
 fn file_of(slug: &str) -> std::path::PathBuf {
-    messaging::state_dir()
+    crate::infra::paths::state_dir()
         .join("hub-titles")
         .join(format!("{slug}.json"))
 }
@@ -44,7 +43,7 @@ fn file_of(slug: &str) -> std::path::PathBuf {
 /// The title kept for the hub's parent task, if one has been read. Only the file is looked at,
 /// so the board list can use it on every poll.
 pub(super) fn cached_title(slug: &str) -> Option<String> {
-    messaging::read_json(&file_of(slug))?
+    crate::infra::fs::read_json(&file_of(slug))?
         .get("title")?
         .as_str()
         .map(str::to_string)
@@ -54,7 +53,7 @@ pub(super) fn cached_title(slug: &str) -> Option<String> {
 /// the one its key stands for in `issueKeys`. None for a key that matches neither, which is
 /// never asked about.
 fn issue_of(ctx: &Context, hub: &RepoHub, key: &str) -> Option<String> {
-    let dir = task::dir(&messaging::state_dir(), &hub.slug);
+    let dir = task::dir(&crate::infra::paths::state_dir(), &hub.slug);
     let named = task::list(&dir)
         .into_iter()
         .filter_map(|t| t.parent)
@@ -95,7 +94,7 @@ impl HubTitles {
         let entry = seen.entry(hub.slug.clone()).or_default();
         if !entry.loaded {
             entry.loaded = true;
-            entry.found = messaging::read_json(&file_of(&hub.slug)).and_then(|v| {
+            entry.found = crate::infra::fs::read_json(&file_of(&hub.slug)).and_then(|v| {
                 Some((
                     v.get("url")?.as_str()?.to_string(),
                     v.get("title")?.as_str()?.to_string(),
@@ -138,7 +137,7 @@ impl HubTitles {
         // The title is good whether or not it could be written down: only a restart loses it.
         if let Ok(title) = &answer
             && let Err(e) =
-                messaging::write_json(&file_of(slug), &json!({ "url": url, "title": title }))
+                crate::infra::fs::write_json(&file_of(slug), &json!({ "url": url, "title": title }))
         {
             eprintln!("adj serve: could not keep the title of {url}: {e}");
         }

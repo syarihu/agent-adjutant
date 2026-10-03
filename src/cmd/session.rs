@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use super::same_path;
 use super::serve::{Server, find_session, settings_now};
 use super::{Context, HubStart, TabOutcome};
+use crate::kernel::runner;
 use crate::messaging::{self, Message};
-use crate::runner;
 use crate::session::{RepoHub, SessionRequest};
 use crate::task::{self, Executor, Status};
 
@@ -24,7 +24,7 @@ use crate::task::{self, Executor, Status};
 fn hub_context(
     server: &Server,
     id: Option<&str>,
-    settings: crate::config::Settings,
+    settings: crate::kernel::config::Settings,
 ) -> Result<(RepoHub, Context), String> {
     let repo = &server.ctx.repo;
     let hubs = messaging::all_repo_hubs(repo);
@@ -92,7 +92,7 @@ fn derived_name(instruction: &str, epoch_secs: i64) -> String {
 
 /// `session-YYYYMMDD-HHMM`, in UTC like every stamp the server writes.
 fn dated_name(epoch_secs: i64) -> String {
-    let stamp = messaging::utc_stamp(epoch_secs);
+    let stamp = crate::infra::clock::utc_stamp(epoch_secs);
     format!("session-{}-{}", &stamp[..8], &stamp[9..13])
 }
 
@@ -159,14 +159,14 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
             super::task::check_worktree_name(name)?;
             name.to_string()
         }
-        None => derived_name(instruction, messaging::now_secs()),
+        None => derived_name(instruction, crate::infra::clock::now_secs()),
     };
     // Unlike a task, a session request has no record to wait in for a free slot, so a full
     // machine is refused here rather than left for the hub to turn away. The check is advisory:
     // nothing reserves the slot, so two requests at once can both pass, and the hub's exit
     // code 3 from `adjutant work` is what finally turns the loser away.
     if let Some(max) = settings.max_workers {
-        let mut candidates = crate::repo::linked_worktrees(&server.ctx.repo.main)?;
+        let mut candidates = crate::kernel::identity::linked_worktrees(&server.ctx.repo.main)?;
         candidates.push(server.ctx.repo.main.clone());
         let busy = messaging::busy_worktrees(&candidates, None);
         if busy.len() >= max as usize {
@@ -220,7 +220,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         return Err("only a worker session can be linked to a task".to_string());
     }
     let worktree = session.worktree.as_str();
-    if messaging::read_json(&messaging::worker_record_path(Path::new(worktree))).is_none() {
+    if crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(worktree))).is_none() {
         return Err("the session has not started yet".to_string());
     }
     // A task linked to a worker nobody is running would sit as `dispatched` in a worktree

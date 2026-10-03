@@ -18,14 +18,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub use crate::infra::clock::{now_secs, utc_stamp};
-pub use crate::infra::env::{HUB_ENV, HUB_SERVE_ENV, HUB_SESSION_ENV, STATE_DIR_ENV};
-pub(crate) use crate::infra::fs::{
+use crate::infra::clock::{now_secs, utc_stamp};
+use crate::infra::env::HUB_ENV;
+use crate::infra::fs::{
     CLAIM_ATTEMPTS, CreateError, create_new_json, read_json, record_exists, remove_if_present,
     stage, write_json,
 };
-pub use crate::infra::paths::state_dir;
-use crate::repo::current_worktree;
+use crate::infra::paths::state_dir;
+use crate::kernel::identity::current_worktree;
 
 mod board_view;
 mod hub_record;

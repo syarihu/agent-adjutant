@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use crate::cmd::settings_for;
-use crate::terminal;
+use crate::infra::terminal;
 
 pub fn pane(
     repo: Option<&str>,
@@ -75,13 +75,13 @@ pub fn wake(
     // Generic unless told: a pane whose screen is not known is typed into without looking,
     // as it always was, and looking is what the caller asks for by naming the agent.
     let agent = agent
-        .and_then(crate::prompts::Agent::parse)
-        .unwrap_or(crate::prompts::Agent::Generic);
+        .and_then(crate::infra::agent::Agent::parse)
+        .unwrap_or(crate::infra::agent::Agent::Generic);
     let performed = terminal::tmux_wake(
         socket,
         pid,
         line,
-        terminal::look_before_typing(agent),
+        crate::terminal::look_before_typing(agent),
         dry_run,
     )?;
     if dry_run {
@@ -153,7 +153,7 @@ pub fn spawn(
     let expanded;
     let cwd_str = match cwd {
         Some(c) => {
-            expanded = crate::config::expand_home(c);
+            expanded = crate::infra::paths::expand_home(c);
             expanded.to_string_lossy()
         }
         None => std::borrow::Cow::Borrowed("."),

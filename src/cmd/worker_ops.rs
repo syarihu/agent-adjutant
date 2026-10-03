@@ -16,7 +16,7 @@ pub(super) fn title_command(settings: &Settings, title: &str) -> Option<String> 
     // it would never start.
     Some(format!(
         "{} < /dev/null",
-        crate::template::sh_join(&[
+        crate::infra::template::sh_join(&[
             exe_path(),
             "title".to_string(),
             // One word, `--title=…`: a title starting with `--` given as the next word is read
@@ -41,9 +41,9 @@ pub fn spawn(
     let done = terminal::spawn(
         &settings.terminal,
         &SpawnRequest {
-            cwd: &config::expand_home(cwd).to_string_lossy(),
+            cwd: &crate::infra::paths::expand_home(cwd).to_string_lossy(),
             title,
-            command: &crate::template::sh_join(command),
+            command: &crate::infra::template::sh_join(command),
             title_command: name_it.as_deref(),
         },
         dry_run,
@@ -72,11 +72,11 @@ pub fn spawn(
 /// command line it always had.
 pub(super) fn forwarded_env() -> Vec<String> {
     let set: Vec<String> = [
-        config::CONFIG_ENV,
-        config::XDG_CONFIG_HOME_ENV,
-        messaging::STATE_DIR_ENV,
-        config::TMUX_SOCKET_ENV,
-        config::TMUX_SESSION_ENV,
+        crate::infra::env::CONFIG_ENV,
+        crate::infra::env::XDG_CONFIG_HOME_ENV,
+        crate::infra::env::STATE_DIR_ENV,
+        crate::infra::env::TMUX_SOCKET_ENV,
+        crate::infra::env::TMUX_SESSION_ENV,
     ]
     .iter()
     .filter_map(|name| {
@@ -128,7 +128,7 @@ fn claim_worker_slot(
             ));
         }
         // Not on a dry run, which marks nothing and so races with nothing.
-        if !dry_run && messaging::is_starting(worktree, messaging::now_secs()) {
+        if !dry_run && messaging::is_starting(worktree, crate::infra::clock::now_secs()) {
             return Err(format!(
                 "a worker is already starting in {}; nothing was started",
                 worktree.display()
@@ -138,7 +138,7 @@ fn claim_worker_slot(
             // The main checkout too. It is where the hub sits and a worker is not meant to go,
             // but nothing stops `adj work` being pointed at it, and a worker running there
             // uncounted is one past the limit.
-            let mut candidates = repo::linked_worktrees(&ctx.repo.main)?;
+            let mut candidates = identity::linked_worktrees(&ctx.repo.main)?;
             candidates.push(ctx.repo.main.clone());
             let busy = messaging::busy_worktrees(&candidates, Some(worktree));
             if busy.len() >= max as usize {
@@ -222,7 +222,9 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
         }
         _ => title,
     };
-    let worktree = config::expand_home(worktree).to_string_lossy().to_string();
+    let worktree = crate::infra::paths::expand_home(worktree)
+        .to_string_lossy()
+        .to_string();
     // Asked here and not left to the spawn, because marking the slot writes into the
     // worktree and would create the very directory the spawn checks for — a mistyped path
     // would then open a tab in an empty directory outside any repository.
@@ -273,7 +275,7 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
         &SpawnRequest {
             cwd: &worktree,
             title,
-            command: &crate::template::sh_join(&parts),
+            command: &crate::infra::template::sh_join(&parts),
             title_command: name_it.as_deref(),
         },
         dry_run,
@@ -375,7 +377,7 @@ pub(super) fn resume_worker(
         &SpawnRequest {
             cwd: &worktree,
             title,
-            command: &crate::template::sh_join(&parts),
+            command: &crate::infra::template::sh_join(&parts),
             title_command: name_it.as_deref(),
         },
         dry_run,
@@ -439,7 +441,7 @@ pub fn focus_worker_cmd(
     dry_run: bool,
 ) -> Result<bool, String> {
     let settings = settings_for(repo_arg);
-    let worktree = config::expand_home(worktree);
+    let worktree = crate::infra::paths::expand_home(worktree);
     let Some(done) = focus_worker(&settings, &worktree, dry_run)? else {
         if !quiet {
             println!("no worker is running in {}", worktree.display());
@@ -519,7 +521,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     let ctx = match &resumed {
         Some(saved) => {
             let told = hub_arg.map(str::trim).filter(|hub| !hub.is_empty());
-            context_of(repo::resolve(repo_arg, told.or(saved.hub.as_deref()))?)?
+            context_of(identity::resolve(repo_arg, told.or(saved.hub.as_deref()))?)?
         }
         None => context_as(repo_arg, hub_arg)?,
     };
@@ -576,7 +578,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         }
     };
     if dry_run {
-        println!("cd {}", crate::template::sh_quote(&worktree_text));
+        println!("cd {}", crate::infra::template::sh_quote(&worktree_text));
         println!("{command}");
         return Ok(());
     }
@@ -613,7 +615,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     } else if let Some(saved) = &resumed {
         // Resumed under another hub than the session remembers: say so there too, or the
         // worker would count for the old hub once it has ended and its record is gone.
-        let slug_of = |hub: Option<&str>| repo::slug_for(&ctx.repo.nwo, hub);
+        let slug_of = |hub: Option<&str>| identity::slug_for(&ctx.repo.nwo, hub);
         if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
             && let Err(e) = messaging::save_worker_session(
                 &worktree,
@@ -645,16 +647,16 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
 /// The agent gets the caller's environment, minus what would make it answer for something it
 /// is not. The adjutant variables are set on the command line itself when they apply, so an
 /// inherited one could only name another hub. The git variables in
-/// `repo::REPOSITORY_LOCATION_ENV` would point every git command the agent runs at another
+/// `crate::infra::git::REPOSITORY_LOCATION_ENV` would point every git command the agent runs at another
 /// repository, while adjutant — which ignores them — works on the one it was started in.
 pub(super) fn agent_command(command: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new("sh");
     cmd.arg("-c")
         .arg(command)
-        .env_remove(messaging::HUB_SESSION_ENV)
-        .env_remove(messaging::HUB_SERVE_ENV)
-        .env_remove(messaging::HUB_ENV);
-    for name in repo::REPOSITORY_LOCATION_ENV {
+        .env_remove(crate::infra::env::HUB_SESSION_ENV)
+        .env_remove(crate::infra::env::HUB_SERVE_ENV)
+        .env_remove(crate::infra::env::HUB_ENV);
+    for name in crate::infra::git::REPOSITORY_LOCATION_ENV {
         cmd.env_remove(name);
     }
     cmd
@@ -664,8 +666,8 @@ pub(super) fn agent_command(command: &str) -> std::process::Command {
 /// standing in it — the one this command was run from.
 fn worker_worktree(worktree: Option<&str>) -> Result<std::path::PathBuf, String> {
     let worktree = match worktree {
-        Some(path) => config::expand_home(path),
-        None => repo::current_worktree(None)
+        Some(path) => crate::infra::paths::expand_home(path),
+        None => identity::current_worktree(None)
             .map(std::path::PathBuf::from)
             .ok_or("not inside a git worktree; pass --worktree")?,
     };

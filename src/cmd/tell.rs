@@ -13,7 +13,7 @@ pub struct TellArgs<'a> {
 
 pub fn tell(args: &TellArgs<'_>) -> Result<(), String> {
     let ctx = context(args.repo, args.hub)?;
-    let worktree = config::expand_home(args.worktree);
+    let worktree = crate::infra::paths::expand_home(args.worktree);
     if !worktree.is_dir() {
         return Err(format!("no such worktree: {}", worktree.display()));
     }

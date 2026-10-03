@@ -6,13 +6,13 @@ use serde_json::{Value, json};
 use std::io::Read;
 use std::time::Duration;
 
-use crate::config::{self, Settings};
-use crate::ide;
+use crate::infra::ide;
+use crate::infra::notify;
+use crate::infra::terminal::{self, SpawnRequest};
+use crate::kernel::config::{self, Settings};
+use crate::kernel::identity::{self, RepoInfo};
+use crate::kernel::runner;
 use crate::messaging::{self, Message};
-use crate::notify;
-use crate::repo::{self, RepoInfo};
-use crate::runner;
-use crate::terminal::{self, SpawnRequest};
 
 mod board_actions;
 mod board_terminal;

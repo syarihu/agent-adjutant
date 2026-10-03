@@ -15,7 +15,7 @@
 
 use std::path::Path;
 
-pub(crate) use crate::infra::git::{REPOSITORY_LOCATION_ENV, git};
+use crate::infra::git::git;
 
 /// Prefix for every hub session name. `adjutant-` is distinctive enough that a listing can
 /// pick hubs out of a pile of worker sessions by prefix alone.

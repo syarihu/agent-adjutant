@@ -34,7 +34,7 @@ pub(super) fn prefer(resident: Option<u16>, dedicated: Option<u16>) -> Option<Se
         .or(dedicated.map(Served::Dedicated))
 }
 
-fn served(repo: &crate::repo::RepoInfo) -> Option<Served> {
+fn served(repo: &crate::kernel::identity::RepoInfo) -> Option<Served> {
     let resident = live_resident().map(|(_, port)| port);
     if resident.is_some() {
         // Told where the repository is, so that the board this answers with can be opened.
@@ -45,7 +45,7 @@ fn served(repo: &crate::repo::RepoInfo) -> Option<Served> {
 
 /// The board serving `repo`'s hub — its URL and whether the resident server is the one — or
 /// `None`. Whoever started it, the token is the one every board on this machine shares.
-fn located(repo: &crate::repo::RepoInfo) -> Option<(String, bool)> {
+fn located(repo: &crate::kernel::identity::RepoInfo) -> Option<(String, bool)> {
     let token = stored_token()?;
     match served(repo)? {
         Served::Resident(port) => Some((resident_board_url(port, &repo.slug, &token), true)),
@@ -55,7 +55,7 @@ fn located(repo: &crate::repo::RepoInfo) -> Option<(String, bool)> {
 
 /// `board` as `adj config` and `adjutant_config` report it: where it is, and whether the
 /// resident server serves it. `null` when nothing does.
-pub fn board_json(repo: &crate::repo::RepoInfo) -> Value {
+pub fn board_json(repo: &crate::kernel::identity::RepoInfo) -> Value {
     match located(repo) {
         Some((url, resident)) => json!({ "url": url, "resident": resident }),
         None => Value::Null,
@@ -63,7 +63,7 @@ pub fn board_json(repo: &crate::repo::RepoInfo) -> Value {
 }
 
 /// Where the resident server serves `repo`'s board, when a resident is live.
-pub(super) fn resident_url(repo: &crate::repo::RepoInfo) -> Option<String> {
+pub(super) fn resident_url(repo: &crate::kernel::identity::RepoInfo) -> Option<String> {
     let (_, port) = live_resident()?;
     let token = stored_token()?;
     note_board(repo);
@@ -73,7 +73,7 @@ pub(super) fn resident_url(repo: &crate::repo::RepoInfo) -> Option<String> {
 // ── is anybody serving? ──────────────────────────────────────────────
 
 fn record_path(slug: &str) -> PathBuf {
-    messaging::state_dir()
+    crate::infra::paths::state_dir()
         .join("dashboards")
         .join(format!("{slug}.json"))
 }
@@ -107,7 +107,7 @@ pub(super) fn live_at(path: &Path) -> Option<(u32, u16)> {
 /// one would wait for ever. Anchored on the recorded process start time like every other
 /// record here, so a crashed server leaves a file that reads as absent rather than as a
 /// dashboard that is about to answer.
-pub fn running(repo: &crate::repo::RepoInfo) -> Option<u16> {
+pub fn running(repo: &crate::kernel::identity::RepoInfo) -> Option<u16> {
     match served(repo)? {
         Served::Resident(port) | Served::Dedicated(port) => Some(port),
     }
@@ -141,16 +141,16 @@ pub(super) fn record(slug: &str, port: u16) -> Result<bool, String> {
 }
 
 pub(super) fn boards_dir() -> PathBuf {
-    messaging::state_dir().join("boards")
+    crate::infra::paths::state_dir().join("boards")
 }
 
 /// Tell the resident server where `repo` is, so that it can serve its board. Skipped when the
 /// entry is already what it would write, and a failure is not one for the caller: the address
 /// is only ever a convenience for a server that may not be running.
-pub fn note_board(repo: &crate::repo::RepoInfo) {
+pub fn note_board(repo: &crate::kernel::identity::RepoInfo) {
     let entry = json!({ "main": repo.main, "nwo": repo.nwo, "hub": repo.hub });
     let path = boards_dir().join(format!("{}.json", repo.slug));
-    if messaging::read_json(&path).as_ref() == Some(&entry) {
+    if crate::infra::fs::read_json(&path).as_ref() == Some(&entry) {
         return;
     }
     let _ = crate::infra::fs::write_json(&path, &entry);
@@ -177,7 +177,7 @@ pub(super) struct Address {
 }
 
 pub(super) fn address_of(slug: &str) -> Option<Address> {
-    let entry = messaging::read_json(&boards_dir().join(format!("{slug}.json")))?;
+    let entry = crate::infra::fs::read_json(&boards_dir().join(format!("{slug}.json")))?;
     let text = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_string);
     let address = Address {
         slug: slug.to_string(),
@@ -186,7 +186,7 @@ pub(super) fn address_of(slug: &str) -> Option<Address> {
         hub: text("hub").filter(|hub| !hub.is_empty()),
     };
     (Path::new(&address.main).is_dir()
-        && crate::repo::slug_for(&address.nwo, address.hub.as_deref()) == slug)
+        && crate::kernel::identity::slug_for(&address.nwo, address.hub.as_deref()) == slug)
         .then_some(address)
 }
 

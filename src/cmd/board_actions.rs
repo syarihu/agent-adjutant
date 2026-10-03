@@ -20,17 +20,20 @@ use super::board_terminal::target_of;
 use super::serve::{Server, find_session, git_state_of, hub_start_of, settings_now};
 use super::session::{input_of, text};
 use super::{Context, Resumed, TabOutcome, same_path};
+use crate::infra::template::{Sub, render, sh_join, sh_quote};
+use crate::infra::terminal;
+use crate::kernel::runner;
+use crate::kernel::worktree_state::GitState;
 use crate::messaging;
-use crate::repo::GitState;
-use crate::runner;
 use crate::task::{self, Executor, Status};
-use crate::template::{Sub, render, sh_join, sh_quote};
-use crate::terminal;
 
 /// The context of the repository's own hub, as `adj work --resume` builds one, but from what the
 /// server holds: the server's directory is nowhere near the repository, so nothing here may
 /// resolve anything from it.
-fn own_hub_context(server: &Server, settings: crate::config::Settings) -> Result<Context, String> {
+fn own_hub_context(
+    server: &Server,
+    settings: crate::kernel::config::Settings,
+) -> Result<Context, String> {
     Ok(Context {
         repo: server.ctx.repo.clone().addressed(None)?,
         resolved: server.ctx.resolved.clone(),
@@ -42,7 +45,7 @@ fn own_hub_context(server: &Server, settings: crate::config::Settings) -> Result
 
 /// Why no session can be resumed from the board with these settings, or `None` when one can.
 /// The board-wide half of `resume`'s refusals, known without looking at a session.
-pub(super) fn resume_refusal(settings: &crate::config::Settings) -> Option<String> {
+pub(super) fn resume_refusal(settings: &crate::kernel::config::Settings) -> Option<String> {
     if !super::hub_startable(&settings.terminal) {
         return Some(
             "resuming a session from the board needs terminal.preset \"tmux\" and no terminal.spawn"
@@ -73,7 +76,7 @@ pub(super) fn resume_refusal(settings: &crate::config::Settings) -> Option<Strin
 }
 
 /// What `state` says about resuming: `available`, and the reason when it is not.
-pub(super) fn resume_state(settings: &crate::config::Settings) -> Value {
+pub(super) fn resume_state(settings: &crate::kernel::config::Settings) -> Value {
     let refusal = resume_refusal(settings);
     json!({ "available": refusal.is_none(), "reason": refusal })
 }
@@ -95,7 +98,7 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
         return Err("the session is running".to_string());
     }
     let worktree = Path::new(&session.worktree);
-    if messaging::is_starting(worktree, messaging::now_secs()) {
+    if messaging::is_starting(worktree, crate::infra::clock::now_secs()) {
         return Err("the session is starting".to_string());
     }
     if let Some(refusal) = resume_refusal(&settings) {
@@ -122,7 +125,7 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
 /// Why no hub can be resumed from the board with these settings, or `None` when one can: what
 /// `hub_startable` and `hubResumeRunner` say, known without looking at a hub. The per-hub half
 /// (a saved conversation, a parent key that is known) is checked by the restart itself.
-pub(super) fn hub_resume_refusal(settings: &crate::config::Settings) -> Option<String> {
+pub(super) fn hub_resume_refusal(settings: &crate::kernel::config::Settings) -> Option<String> {
     if !super::hub_startable(&settings.terminal) {
         return Some(
             "restarting a hub from the board needs terminal.preset \"tmux\" and no terminal.spawn"
@@ -138,7 +141,7 @@ pub(super) fn hub_resume_refusal(settings: &crate::config::Settings) -> Option<S
 }
 
 /// What `state` says about resuming a hub: `available`, and the reason when it is not.
-pub(super) fn hub_resume_state(settings: &crate::config::Settings) -> Value {
+pub(super) fn hub_resume_state(settings: &crate::kernel::config::Settings) -> Value {
     let refusal = hub_resume_refusal(settings);
     json!({ "available": refusal.is_none(), "reason": refusal })
 }
@@ -235,7 +238,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
         return Err("only a worker session can be restarted".to_string());
     }
     let worktree = Path::new(&session.worktree);
-    if messaging::is_starting(worktree, messaging::now_secs()) {
+    if messaging::is_starting(worktree, crate::infra::clock::now_secs()) {
         return Err("the session is starting".to_string());
     }
     if let Some(refusal) = resume_refusal(&settings) {
@@ -296,7 +299,7 @@ static NEXT: AtomicUsize = AtomicUsize::new(1);
 /// What `state` says about opening a session in the person's own terminal: whether the board
 /// can, and through what. Known in advance so the page does not offer a button that can only
 /// be refused.
-pub(super) fn open_state(server: &Server, settings: &crate::config::Settings) -> Value {
+pub(super) fn open_state(server: &Server, settings: &crate::kernel::config::Settings) -> Value {
     let attach = settings.terminal.attach.is_some();
     let iterm = terminal::iterm_available();
     json!({
@@ -426,7 +429,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     if same_path(worktree, &repo.main) {
         return Err("the main checkout is not a worktree to remove".to_string());
     }
-    let listed = crate::repo::linked_worktrees(&repo.main)?;
+    let listed = crate::kernel::identity::linked_worktrees(&repo.main)?;
     if !listed.iter().any(|w| same_path(w, worktree)) {
         return Err(format!("not a worktree of this repository: {worktree}"));
     }
@@ -440,7 +443,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
 
     // The tasks that name this worktree, in whichever hub they were made.
     let hubs = messaging::all_repo_hubs(repo);
-    let state_dir = messaging::state_dir();
+    let state_dir = crate::infra::paths::state_dir();
     let mut tasks: Vec<(String, task::Task)> = Vec::new();
     for hub in &hubs {
         for t in task::list(&task::dir(&state_dir, &hub.slug)) {
@@ -461,7 +464,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     }) {
         return Err("a Jules plan is being written in it".to_string());
     }
-    if messaging::is_starting(Path::new(worktree), messaging::now_secs()) {
+    if messaging::is_starting(Path::new(worktree), crate::infra::clock::now_secs()) {
         return Err("the session is starting".to_string());
     }
 
@@ -516,7 +519,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     // a big worktree, runs after the lock is released, so that a dispatch elsewhere is not
     // made to wait for it.
     let removing = messaging::with_dispatch_lock(main, || -> Result<_, String> {
-        if messaging::holds_worker_slot(Path::new(worktree), messaging::now_secs()) {
+        if messaging::holds_worker_slot(Path::new(worktree), crate::infra::clock::now_secs()) {
             return Err("a session started in it meanwhile; nothing was removed".to_string());
         }
         messaging::mark_worktree_removing(main, Path::new(worktree))
@@ -710,7 +713,8 @@ fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
 /// Move `.claude/adjutant-*` and `.claude/task-brief.md` out of `worktree` unless git tracks
 /// them, into a directory of the state directory made when the first one is moved.
 fn set_aside_own_files(worktree: &str) -> Result<Aside, String> {
-    let listed = crate::repo::git(&["-C", worktree, "ls-files", "-z", "--", ".claude"], None)?;
+    let listed =
+        crate::infra::git::git(&["-C", worktree, "ls-files", "-z", "--", ".claude"], None)?;
     if !listed.status.success() {
         return Err(format!(
             "cannot list the tracked files: {}",
@@ -726,10 +730,10 @@ fn set_aside_own_files(worktree: &str) -> Result<Aside, String> {
     // Read to the end before anything is moved, so that the listing is not of a directory
     // that is changing under it.
     let entries: Vec<_> = entries.flatten().collect();
-    let dir = messaging::state_dir().join(format!(
+    let dir = crate::infra::paths::state_dir().join(format!(
         "cleanup-{}-{}-{}",
         std::process::id(),
-        messaging::now_secs(),
+        crate::infra::clock::now_secs(),
         NEXT.fetch_add(1, Ordering::SeqCst)
     ));
     let mut made = false;
@@ -768,7 +772,7 @@ fn set_aside_own_files(worktree: &str) -> Result<Aside, String> {
 }
 
 fn git_ok(args: &[&str]) -> Result<(), String> {
-    let out = crate::repo::git(args, None)?;
+    let out = crate::infra::git::git(args, None)?;
     match out.status.success() {
         true => Ok(()),
         false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
@@ -786,7 +790,7 @@ fn delete_branch(main: &str, branch: &str) -> Result<(), String> {
 /// from the settings the server started with. A hook that fails is reported and does not
 /// undo anything.
 fn run_remove_hooks(server: &Server, worktree: &str, name: &str) -> Vec<Value> {
-    let hooks = crate::config::resolve_config(&server.ctx.repo.nwo)
+    let hooks = crate::kernel::config::resolve_config(&server.ctx.repo.nwo)
         .ok()
         .and_then(|resolved| resolved.config)
         .and_then(|config| config.get("onWorktreeRemove").cloned())

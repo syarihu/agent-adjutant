@@ -27,7 +27,7 @@ pub fn context(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context,
 /// `agent_env` puts the answer back on the agent's line so the two still agree.
 pub(super) fn context_as(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context, String> {
     let told = messaging::hub_id_told(hub_arg);
-    let ctx = context_of(repo::resolve(repo_arg, told.as_deref())?)?;
+    let ctx = context_of(identity::resolve(repo_arg, told.as_deref())?)?;
     if told.is_some() {
         return Ok(ctx);
     }
@@ -53,11 +53,11 @@ pub(super) fn agent_env(ctx: &Context) -> Vec<(String, String)> {
         .settings
         .agent_env
         .iter()
-        .filter(|(key, _)| key != messaging::HUB_ENV)
+        .filter(|(key, _)| key != crate::infra::env::HUB_ENV)
         .cloned()
         .collect();
     if let Some(hub) = &ctx.repo.hub {
-        env.push((messaging::HUB_ENV.to_string(), hub.clone()));
+        env.push((crate::infra::env::HUB_ENV.to_string(), hub.clone()));
     }
     env
 }
@@ -69,7 +69,7 @@ pub(super) fn agent_env(ctx: &Context) -> Vec<(String, String)> {
 /// unreadable record is exactly the state of the worktree somebody is trying to open an
 /// editor on. Strictness belongs where a wrong answer misroutes something.
 pub(super) fn context_without_hub(repo_arg: Option<&str>) -> Result<Context, String> {
-    context_of(repo::resolve(repo_arg, None)?)
+    context_of(identity::resolve(repo_arg, None)?)
 }
 
 pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
@@ -87,10 +87,10 @@ pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
 /// Where we are, and which hub of it we are talking to.
 ///
 /// Every subcommand that addresses a hub goes through here rather than calling
-/// `repo::resolve` with whatever it was given: deciding between the flag, the environment
+/// `identity::resolve` with whatever it was given: deciding between the flag, the environment
 /// and the worktree is one rule, and a second copy of it is a second answer.
 pub(super) fn resolve(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<RepoInfo, String> {
-    repo::resolve(repo_arg, messaging::hub_id(hub_arg, None)?.as_deref())
+    identity::resolve(repo_arg, messaging::hub_id(hub_arg, None)?.as_deref())
 }
 
 // ── hub-name ─────────────────────────────────────────────────────────
@@ -169,7 +169,9 @@ pub(super) fn exe_path() -> String {
 pub(super) fn settings_for(repo_arg: Option<&str>) -> Settings {
     let nwo = match repo_arg {
         Some(arg) => arg.to_string(),
-        None => repo::resolve(None, None).map(|i| i.nwo).unwrap_or_default(),
+        None => identity::resolve(None, None)
+            .map(|i| i.nwo)
+            .unwrap_or_default(),
     };
     config::resolve_config(&nwo)
         .map(|r| r.settings)

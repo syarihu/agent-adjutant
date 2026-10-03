@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::http::{self, Request};
+use crate::infra::http::{self, Request};
 use crate::{gate, messaging, task};
 
 use super::assets::{UI_HTML, vendor_asset};
@@ -1200,7 +1200,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     let git = |args: &[&str]| {
         let mut full = vec!["-c", "user.name=t", "-c", "user.email=t@example.com"];
         full.extend_from_slice(args);
-        let out = crate::repo::git(&full, Some(&main)).unwrap();
+        let out = crate::infra::git::git(&full, Some(&main)).unwrap();
         assert!(
             out.status.success(),
             "{}",
@@ -1245,7 +1245,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         json!({"pid": me, "task": "WID-4", "title": "on main"}),
     );
     // A hub record for the parent-task hub, and a gate it has open for `bar`.
-    let hub_slug = crate::repo::slug_for("acme/widget", Some("WID-1"));
+    let hub_slug = crate::kernel::identity::slug_for("acme/widget", Some("WID-1"));
     let hub_record = messaging::hub_record_path(&hub_slug);
     std::fs::create_dir_all(hub_record.parent().unwrap()).unwrap();
     std::fs::write(
@@ -1255,7 +1255,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     )
     .unwrap();
     // The task `bar` is on, written under the hub it reports to.
-    let tasks = task::dir(&messaging::state_dir(), &hub_slug);
+    let tasks = task::dir(&crate::infra::paths::state_dir(), &hub_slug);
     std::fs::create_dir_all(&tasks).unwrap();
     std::fs::write(
         tasks.join("WID-2.json"),
@@ -1265,7 +1265,9 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         .to_string(),
     )
     .unwrap();
-    let gates = messaging::state_dir().join("gates").join(&hub_slug);
+    let gates = crate::infra::paths::state_dir()
+        .join("gates")
+        .join(&hub_slug);
     std::fs::create_dir_all(&gates).unwrap();
     std::fs::write(
         gates.join("g1.json"),
@@ -1275,7 +1277,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     )
     .unwrap();
 
-    let repo = crate::repo::RepoInfo {
+    let repo = crate::kernel::identity::RepoInfo {
         main: main.to_string_lossy().to_string(),
         nwo: "acme/widget".to_string(),
         repo: "widget".to_string(),
@@ -1304,7 +1306,8 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         .unwrap()
         .clone();
     let ids: Vec<&str> = listed.iter().map(|s| s["id"].as_str().unwrap()).collect();
-    let digest = |rel: &str| crate::repo::short_digest(root.join(rel).to_str().unwrap());
+    let digest =
+        |rel: &str| crate::kernel::identity::short_digest(root.join(rel).to_str().unwrap());
     for expected in [
         "hub".to_string(),
         "hub-WID-1".to_string(),

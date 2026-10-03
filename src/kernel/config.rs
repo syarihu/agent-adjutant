@@ -13,11 +13,11 @@ use serde_json::{Map, Value, json};
 #[cfg(test)]
 use std::path::{Path, PathBuf};
 
-pub use crate::infra::env::{
+use crate::infra::env::{
     CONFIG_ENV, STARTUP_DASHBOARD_ENV, TMUX_SESSION_ENV, TMUX_SOCKET_ENV, XDG_CONFIG_HOME_ENV,
 };
-pub use crate::infra::paths::{expand_home, home_dir};
-pub use crate::infra::terminal::{Hook, TerminalSettings, Wake};
+use crate::infra::paths::{expand_home, home_dir};
+use crate::infra::terminal::{Hook, TerminalSettings, Wake};
 
 mod defaults;
 mod location;

@@ -51,7 +51,7 @@ pub fn claim_hub(
     cwd: &str,
     name_in_command: bool,
     hub: Option<&str>,
-    terminal: Option<&crate::session::SessionTerminal>,
+    terminal: Option<&crate::infra::terminal::SessionTerminal>,
 ) -> Result<Claim, String> {
     let path = hub_record_path(slug);
     let mut record = json!({

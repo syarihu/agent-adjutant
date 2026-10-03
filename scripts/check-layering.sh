@@ -2,11 +2,12 @@
 # Keep the dependency arrows pointing one way.
 #
 # The crate is one stack of modules. `RANK` lists the modules of the restructure from the
-# bottom up: a module may name only the ones below it, and the `BOTTOM` modules too (old
-# paths such as `crate::config` stay `pub use` shims until a segment's last child removes
-# them). The modules the restructure has not reached yet keep the two groups they had before
-# it (`BOTTOM`, `MIDDLE`), and the commands (`TOP`) sit over all of it and may name anything.
-# Nothing below the top names the top.
+# bottom up: a module may name only the ones below it. From `registry` up it may also name
+# the `BOTTOM` modules, which the restructure has not reached yet; below `registry` it may
+# not, so `infra` names nothing outside itself and `kernel` names only `infra`. The modules
+# the restructure has not reached yet keep the two groups they had before it (`BOTTOM`,
+# `MIDDLE`), and the commands (`TOP`) sit over all of it and may name anything. Nothing
+# below the top names the top.
 #
 # As long as this passes, splitting into crates later stays a mechanical move: files across,
 # a Cargo.toml each, `crate::infra::` -> `adjutant_infra::`.
@@ -16,17 +17,18 @@ set -uo pipefail
 export LC_ALL=C
 cd "$(dirname "$0")/.." || exit 1
 
-# The restructure, bottom first. A module here may name only modules earlier in this list,
-# plus the BOTTOM modules: until a segment's last child removes them, old paths such as
-# `crate::config` are `pub use` shims over the new modules. Entries that do not exist yet
-# are reservations and are not required to have a source file.
+# The restructure, bottom first. A module here may name only modules earlier in this list.
+# One from `registry` up may also name the BOTTOM modules; one below `registry` may not, so
+# `infra` names nothing outside itself and `kernel` names only `infra`. Entries that do not
+# exist yet are reservations and are not required to have a source file.
 RANK=(infra kernel registry mail task gate jules lifecycle board transport)
-# The old bottom. Answers questions using nothing but the standard library, its own input
-# and `infra`.
-BOTTOM=(config repo template prompts http session ws pty brief)
-# The old middle. May reach down into BOTTOM, `infra` and `kernel`, never sideways into
-# another middle module and never up.
-MIDDLE=(terminal runner notify ide messaging)
+# The old bottom: `session` (`Session`, `RepoHub` and the rest), until they move. Answers
+# questions using nothing but the standard library, its own input and `infra`.
+BOTTOM=(session)
+# The old middle: `messaging`, and `terminal`, which is down to reading an agent's screen.
+# May reach down into BOTTOM, `infra` and `kernel`, never sideways into another middle
+# module and never up.
+MIDDLE=(terminal messaging)
 # The top. May name anything; nothing else may name it. `lib` and `main` are the crate roots.
 # `cli_args` is a reservation like the RANK ones.
 TOP=(cmd mcp cli_args lib main)
@@ -166,6 +168,8 @@ done
 # --- References ---------------------------------------------------------------------------
 all_modules="$(echo "$on_disk" | tr '\n' ' ') ${RANK[*]} ${TOP[*]} ${ANYWHERE[*]}"
 
+# RANK modules below this one may not name the BOTTOM modules.
+registry_rank=$(rank_of registry)
 for name in $on_disk; do
   # TOP wins over RANK wins over MIDDLE wins over BOTTOM.
   if in_list "$name" "${TOP[@]}"; then
@@ -183,7 +187,8 @@ for name in $on_disk; do
   my_rank=$(rank_of "$name")
 
   for file in $(module_files "$name"); do
-    if is_shim "$file"; then
+    # Below registry a shim is checked too: a `pub use` is still a name.
+    if is_shim "$file" && ! { [ -n "$my_rank" ] && [ "$my_rank" -lt "$registry_rank" ]; }; then
       continue
     fi
     # The `super::`s that reach the crate root: one per path component of the file's module.
@@ -211,6 +216,8 @@ for name in $on_disk; do
           rank)
             if [ -n "$t_rank" ]; then
               [ "$t_rank" -lt "$my_rank" ] || why="names \`$target\`, which is not below \`$name\` in RANK"
+            elif [ "$my_rank" -lt "$registry_rank" ]; then
+              why="names \`$target\`; below registry, infra names nothing outside itself and kernel names only infra"
             elif ! in_list "$target" "${BOTTOM[@]}"; then
               why="names \`$target\`, which is not in RANK"
             fi

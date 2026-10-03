@@ -15,12 +15,12 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cmd::HubBoard;
-use crate::config;
+use crate::kernel::config;
+use crate::kernel::identity;
+use crate::kernel::prompts;
 #[cfg(test)]
-pub use crate::kernel::runner::runner_for_procedure;
+use crate::kernel::runner::runner_for_procedure;
 use crate::messaging::{self, Message};
-use crate::prompts;
-use crate::repo;
 
 mod schema;
 
@@ -132,7 +132,7 @@ fn prompt_get(params: &Value) -> Result<Value, String> {
         .as_str()
         .or_else(|| params["arguments"]["cwd"].as_str())
         .filter(|s| !s.is_empty())
-        .map(config::expand_home);
+        .map(crate::infra::paths::expand_home);
     let client = client_name();
     let rendered = prompts::render_skill(&prompts::SkillRequest {
         name,
@@ -158,17 +158,17 @@ fn cwd_param(args: &Value) -> Option<PathBuf> {
     args["cwd"]
         .as_str()
         .filter(|s| !s.is_empty())
-        .map(config::expand_home)
+        .map(crate::infra::paths::expand_home)
 }
 
-fn resolve_repo(args: &Value) -> Result<repo::RepoInfo, String> {
+fn resolve_repo(args: &Value) -> Result<identity::RepoInfo, String> {
     let cwd = cwd_param(args);
     // `cwd` and not the server's own directory, for the same reason the repository is
     // resolved from it: a worker's answer is written in the worktree it is standing in, and
     // this server is started once and then asked about whichever checkout the session is
     // sitting in.
     let hub = messaging::hub_id(args["hub"].as_str(), cwd.as_deref())?;
-    repo::resolve_in(
+    identity::resolve_in(
         cwd.as_deref(),
         args["repo"].as_str().filter(|s| !s.is_empty()),
         hub.as_deref(),
@@ -217,7 +217,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 // From the caller's own `cwd` when it gave one: this server is started once
                 // and then asked about whichever checkout the session is sitting in, so the
                 // process's own directory is not the sender's.
-                worktree: repo::current_worktree(cwd_param(args).as_deref()),
+                worktree: identity::current_worktree(cwd_param(args).as_deref()),
                 kind: args["kind"].as_str().unwrap_or("report").to_string(),
                 subject: args["subject"].as_str().unwrap_or("").to_string(),
                 body: body.to_string(),
@@ -284,7 +284,8 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "adjutant_tell" => {
             let info = resolve_repo(args)?;
-            let worktree = config::expand_home(args["worktree"].as_str().unwrap_or(""));
+            let worktree =
+                crate::infra::paths::expand_home(args["worktree"].as_str().unwrap_or(""));
             if !worktree.is_dir() {
                 return Err(format!("no such worktree: {}", worktree.display()));
             }
@@ -329,7 +330,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .or_else(|| args["cwd"].as_str())
                 .filter(|s| !s.is_empty())
             {
-                Some(path) => config::expand_home(path),
+                Some(path) => crate::infra::paths::expand_home(path),
                 None => std::env::current_dir()
                     .map_err(|e| format!("cannot determine the current directory: {e}"))?,
             };
@@ -367,7 +368,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .is_some_and(|w| !w.trim().is_empty());
             if !given {
-                let here = repo::current_worktree(cwd_param(args).as_deref())
+                let here = identity::current_worktree(cwd_param(args).as_deref())
                     .ok_or("not inside a worktree: pass worktree or cwd")?;
                 fields.insert("worktree".to_string(), json!(here));
             }
@@ -396,7 +397,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .as_str()
                 .or_else(|| args["cwd"].as_str())
                 .filter(|s| !s.is_empty())
-                .map(config::expand_home);
+                .map(crate::infra::paths::expand_home);
             let client = client_name();
             let rendered = prompts::render_skill(&prompts::SkillRequest {
                 name: args["name"].as_str().unwrap_or(""),
@@ -431,7 +432,7 @@ const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Which hub session this server is running under, if any — `ADJUTANT_HUB_SESSION`, put on
 /// the line `adj hub` execs and inherited from the agent.
 fn hub_session() -> Option<(String, String)> {
-    let value = std::env::var(messaging::HUB_SESSION_ENV).ok()?;
+    let value = std::env::var(crate::infra::env::HUB_SESSION_ENV).ok()?;
     let (slug, session) = value.trim().split_once('/')?;
     (!slug.is_empty() && !session.is_empty()).then(|| (slug.to_string(), session.to_string()))
 }
@@ -475,7 +476,7 @@ const RESIDENT_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
 /// The slug of the hub whose board this server serves, if any — `ADJUTANT_HUB_SERVE`, put
 /// on the line `adj hub` execs when `hubServe` is on.
 fn hub_serve() -> Option<String> {
-    let value = std::env::var(messaging::HUB_SERVE_ENV).ok()?;
+    let value = std::env::var(crate::infra::env::HUB_SERVE_ENV).ok()?;
     let slug = value.trim();
     (!slug.is_empty()).then(|| slug.to_string())
 }
