@@ -34,7 +34,8 @@ pub(super) fn session_terminal(
     {
         return recorded;
     }
-    let tmux = terminal_settings.spawn.is_none() && terminal_settings.is_tmux();
+    let backend = crate::terminal::backend_name(terminal_settings);
+    let tmux = backend == "tmux";
     // Asked of tmux only here: a session whose record says where it runs needs no look at the
     // settings' own server.
     let pane = pid.filter(|_| tmux).and_then(|p| {
@@ -42,7 +43,7 @@ pub(super) fn session_terminal(
         crate::terminal::find_matching_pane(&view.panes, Some(p), None)
     });
     session::SessionTerminal {
-        backend: crate::terminal::backend_name(terminal_settings).to_string(),
+        backend: backend.to_string(),
         socket: terminal_settings
             .tmux_socket()
             .filter(|_| tmux)

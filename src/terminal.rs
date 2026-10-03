@@ -16,7 +16,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use crate::config::{TerminalSettings, Wake};
+use crate::config::{Hook, TerminalSettings, Wake};
 pub use crate::infra::shell::run_shell;
 use crate::prompts::Agent;
 use crate::session::SessionTerminal;

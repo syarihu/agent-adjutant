@@ -1,5 +1,36 @@
 use super::*;
 
+/// Which terminal the built-in verbs drive, decided once from the settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend<'a> {
+    Tmux {
+        socket: Option<&'a str>,
+        session: &'a str,
+    },
+    /// The built-in: iTerm2, or the tty itself where no iTerm2 is needed (title).
+    Iterm2,
+}
+
+impl<'a> Backend<'a> {
+    pub fn of(terminal: &'a TerminalSettings) -> Self {
+        if terminal.is_tmux() {
+            Backend::Tmux {
+                socket: terminal.tmux_socket(),
+                session: terminal.tmux_session(),
+            }
+        } else {
+            Backend::Iterm2
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Backend::Tmux { .. } => "tmux",
+            Backend::Iterm2 => "iterm2",
+        }
+    }
+}
+
 /// How long a command line may be before it is staged in a file instead of typed.
 ///
 /// The built-in spawner hands the line to the terminal to type into a shell, and a long one
@@ -80,6 +111,20 @@ pub fn spawn(
     req: &SpawnRequest,
     dry_run: bool,
 ) -> Result<Performed, String> {
+    spawn_on(
+        terminal.spawn.as_deref(),
+        &Backend::of(terminal),
+        req,
+        dry_run,
+    )
+}
+
+fn spawn_on(
+    template: Option<&str>,
+    backend: &Backend,
+    req: &SpawnRequest,
+    dry_run: bool,
+) -> Result<Performed, String> {
     if !std::path::Path::new(req.cwd).is_dir() {
         return Err(format!("no such directory: {}", req.cwd));
     }
@@ -88,7 +133,7 @@ pub fn spawn(
     }
     let title = sanitise_title(req.title, default_title(req.cwd));
 
-    if let Some(template) = &terminal.spawn {
+    if let Some(template) = template {
         let takes_argv = contains_placeholder(template, "cwd");
         let line = if takes_argv {
             req.command.to_string()
@@ -130,19 +175,13 @@ pub fn spawn(
         });
     }
 
-    if terminal.is_tmux() {
+    if let Backend::Tmux { socket, session } = *backend {
         let line = if !dry_run && req.command.len() > MAX_INLINE_COMMAND {
             stage_command(req.command)?
         } else {
             req.command.to_string()
         };
-        let script = tmux_spawn_script(
-            terminal.tmux_socket(),
-            terminal.tmux_session(),
-            req.cwd,
-            &title,
-            &line,
-        );
+        let script = tmux_spawn_script(socket, session, req.cwd, &title, &line);
         if dry_run {
             return Ok(Performed {
                 description: format!("will start in a new tab: {title} ({})", req.cwd),
@@ -194,8 +233,24 @@ pub fn focus(
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
+    focus_on(
+        terminal.focus.as_deref(),
+        &Backend::of(terminal),
+        pid,
+        title,
+        dry_run,
+    )
+}
+
+fn focus_on(
+    template: Option<&str>,
+    backend: &Backend,
+    pid: u32,
+    title: &str,
+    dry_run: bool,
+) -> Result<Performed, String> {
     let tty = tty_of(pid);
-    if let Some(template) = &terminal.focus {
+    if let Some(template) = template {
         let cmd = render(
             template,
             &[
@@ -218,8 +273,8 @@ pub fn focus(
         });
     }
 
-    if terminal.is_tmux() {
-        let panes = list_tmux_panes(terminal.tmux_socket())?;
+    if let Backend::Tmux { socket, .. } = *backend {
+        let panes = list_tmux_panes(socket)?;
         let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
         let Some(pane) = pane else {
             return Ok(Performed {
@@ -229,8 +284,7 @@ pub fn focus(
                 screen: false,
             });
         };
-        let script =
-            tmux_focus_script(terminal.tmux_socket(), &pane.window_id, Some(&pane.pane_id));
+        let script = tmux_focus_script(socket, &pane.window_id, Some(&pane.pane_id));
         if dry_run {
             return Ok(Performed {
                 description: format!("will focus the tab (pid {pid})"),
@@ -317,7 +371,26 @@ pub(super) fn close_with(
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
-    let hook = &terminal.close;
+    close_on(
+        run,
+        tty,
+        &terminal.close,
+        &Backend::of(terminal),
+        pid,
+        title,
+        dry_run,
+    )
+}
+
+fn close_on(
+    run: impl Fn(&str) -> Result<String, String>,
+    tty: Option<String>,
+    hook: &Hook,
+    backend: &Backend,
+    pid: u32,
+    title: &str,
+    dry_run: bool,
+) -> Result<Performed, String> {
     if hook.is_off() {
         // Off is an answer, not an absence: somebody said not to close tabs here, and the
         // built-in would otherwise close one. `ran` stays false, which is what stops the
@@ -340,12 +413,12 @@ pub(super) fn close_with(
             ],
         ),
         None => {
-            if terminal.is_tmux() {
+            if let Backend::Tmux { socket, .. } = *backend {
                 built_in = true;
-                let panes = list_tmux_panes_with(&run, terminal.tmux_socket())?;
+                let panes = list_tmux_panes_with(&run, socket)?;
                 let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
                 match pane {
-                    Some(pane) => tmux_close_script(terminal.tmux_socket(), &pane.window_id),
+                    Some(pane) => tmux_close_script(socket, &pane.window_id),
                     None => {
                         return Ok(Performed {
                             description: format!("no tmux pane found for pid {pid}; not closing"),
@@ -439,24 +512,21 @@ pub fn set_title(
     let title = sanitise_title(title, "adjutant".to_string());
     let command = match hook.template() {
         Some(template) => render(template, &[("title", Sub::Quoted(&title))]),
-        None => {
-            if terminal.is_tmux() {
-                tmux_set_title_script(terminal.tmux_socket(), &title)
-            } else {
-                match own_tty() {
-                    Some(tty) => default_title_command(&title, &tty),
-                    None => {
-                        return Ok(Performed {
-                            description: "no terminal found for this process; not naming the tab"
-                                .to_string(),
-                            script: String::new(),
-                            ran: false,
-                            screen: false,
-                        });
-                    }
+        None => match Backend::of(terminal) {
+            Backend::Tmux { socket, .. } => tmux_set_title_script(socket, &title),
+            Backend::Iterm2 => match own_tty() {
+                Some(tty) => default_title_command(&title, &tty),
+                None => {
+                    return Ok(Performed {
+                        description: "no terminal found for this process; not naming the tab"
+                            .to_string(),
+                        script: String::new(),
+                        ran: false,
+                        screen: false,
+                    });
                 }
-            }
-        }
+            },
+        },
     };
     if !dry_run {
         // A tab with the wrong name is a cosmetic problem; failing the caller over it is not.
@@ -596,6 +666,18 @@ pub(super) fn wake_with_clock(
     wake: &Wake,
     req: &WakeRequest,
 ) -> Result<Performed, String> {
+    wake_on(run, wait, lock_dir, tty, &Backend::of(terminal), wake, req)
+}
+
+fn wake_on(
+    run: impl Fn(&str) -> Result<String, String>,
+    wait: impl Fn(Duration),
+    lock_dir: &Path,
+    tty: Option<String>,
+    backend: &Backend,
+    wake: &Wake,
+    req: &WakeRequest,
+) -> Result<Performed, String> {
     let hook = &wake.hook;
     let line = req.line;
     let pid = req.pid;
@@ -613,7 +695,7 @@ pub(super) fn wake_with_clock(
     // than that, and says so.
     let mut built_in = false;
     // The pane to read before typing, when the built-in tmux wake is the one in use.
-    let mut look_at: Option<(String, &LookBeforeTyping)> = None;
+    let mut look_at: Option<(Option<&str>, String, &LookBeforeTyping)> = None;
     let command = match hook.template() {
         Some(template) => render(
             template,
@@ -625,16 +707,16 @@ pub(super) fn wake_with_clock(
             ],
         ),
         None => {
-            if terminal.is_tmux() {
+            if let Backend::Tmux { socket, .. } = *backend {
                 built_in = true;
-                let panes = list_tmux_panes_with(&run, terminal.tmux_socket())?;
+                let panes = list_tmux_panes_with(&run, socket)?;
                 let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
                 match pane {
                     Some(pane) => {
                         if let Some(look) = &req.look {
-                            look_at = Some((pane.pane_id.clone(), look));
+                            look_at = Some((socket, pane.pane_id.clone(), look));
                         }
-                        tmux_wake_script(terminal.tmux_socket(), &pane.pane_id, line)
+                        tmux_wake_script(socket, &pane.pane_id, line)
                     }
                     None => {
                         return Ok(Performed {
@@ -675,15 +757,9 @@ pub(super) fn wake_with_clock(
             screen: false,
         });
     }
-    if let Some((pane_id, look)) = look_at {
+    if let Some((socket, pane_id, look)) = look_at {
         return Ok(wake_after_looking(
-            &run,
-            &wait,
-            terminal.tmux_socket(),
-            &pane_id,
-            lock_dir,
-            req,
-            look,
+            &run, &wait, socket, &pane_id, lock_dir, req, look,
         ));
     }
     match run(&command) {
@@ -886,6 +962,9 @@ fn wake_after_looking(
     }
 }
 
+/// `TerminalSettings::tmux_session()`'s default, for a caller that was given no session.
+const DEFAULT_TMUX_SESSION: &str = "adjutant";
+
 pub fn tmux_wake(
     socket: Option<&str>,
     pid: u32,
@@ -893,32 +972,48 @@ pub fn tmux_wake(
     look: Option<LookBeforeTyping>,
     dry_run: bool,
 ) -> Result<Performed, String> {
-    let default_line = WORKER_WAKE_LINE;
-    let wake_line = line.unwrap_or(default_line);
-    let term = TerminalSettings {
-        preset: Some("tmux".to_string()),
-        socket: socket.map(str::to_string),
-        ..Default::default()
-    };
-    wake(&term, &Wake::default(), pid, "", wake_line, look, dry_run)
+    wake_on(
+        run_shell,
+        std::thread::sleep,
+        &wake_lock_dir(),
+        tty_of(pid),
+        &Backend::Tmux {
+            socket,
+            session: DEFAULT_TMUX_SESSION,
+        },
+        &Wake::default(),
+        &WakeRequest {
+            pid,
+            subject: "",
+            line: line.unwrap_or(WORKER_WAKE_LINE),
+            look,
+            dry_run,
+        },
+    )
 }
 
 pub fn tmux_focus(socket: Option<&str>, pid: u32, dry_run: bool) -> Result<Performed, String> {
-    let term = TerminalSettings {
-        preset: Some("tmux".to_string()),
-        socket: socket.map(str::to_string),
-        ..Default::default()
+    let backend = Backend::Tmux {
+        socket,
+        session: DEFAULT_TMUX_SESSION,
     };
-    focus(&term, pid, "", dry_run)
+    focus_on(None, &backend, pid, "", dry_run)
 }
 
 pub fn tmux_close(socket: Option<&str>, pid: u32, dry_run: bool) -> Result<Performed, String> {
-    let term = TerminalSettings {
-        preset: Some("tmux".to_string()),
-        socket: socket.map(str::to_string),
-        ..Default::default()
+    let backend = Backend::Tmux {
+        socket,
+        session: DEFAULT_TMUX_SESSION,
     };
-    close(&term, pid, "", dry_run)
+    close_on(
+        run_shell,
+        tty_of(pid),
+        &Hook::default(),
+        &backend,
+        pid,
+        "",
+        dry_run,
+    )
 }
 
 pub fn tmux_spawn(
@@ -929,15 +1024,14 @@ pub fn tmux_spawn(
     command: &[String],
     dry_run: bool,
 ) -> Result<Performed, String> {
-    let term = TerminalSettings {
-        preset: Some("tmux".to_string()),
-        socket: socket.map(str::to_string),
-        session: session.map(str::to_string),
-        ..Default::default()
+    let backend = Backend::Tmux {
+        socket,
+        session: session.unwrap_or(DEFAULT_TMUX_SESSION),
     };
     let cmd_str = crate::template::sh_join(command);
-    spawn(
-        &term,
+    spawn_on(
+        None,
+        &backend,
         &SpawnRequest {
             cwd,
             title,

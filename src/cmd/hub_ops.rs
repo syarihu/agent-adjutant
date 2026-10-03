@@ -162,7 +162,7 @@ pub fn start_hub(ctx: &Context, start: HubStart) -> Result<TabOutcome, String> {
 
 /// Whether the board may start a hub under these settings.
 pub fn hub_startable(terminal: &config::TerminalSettings) -> bool {
-    terminal.spawn.is_none() && terminal.is_tmux()
+    crate::terminal::backend_name(terminal) == "tmux"
 }
 
 /// Stop the hub `ctx` addresses by closing the tmux pane it runs in. `Ok(true)` when a hub
