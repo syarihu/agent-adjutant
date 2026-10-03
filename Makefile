@@ -1,4 +1,4 @@
-.PHONY: help install restart reinstall
+.PHONY: help install restart reinstall check
 .DEFAULT_GOAL := help
 
 # One root for both install and restart, so restart runs the binary install just wrote and not
@@ -12,6 +12,7 @@ help:
 	@echo "make install    build and install adjutant and adj with cargo"
 	@echo "make restart    restart the resident server (INSTALL_ROOT=<dir> or ADJ=<path> picks the adj)"
 	@echo "make reinstall  install, then restart the server on the new binary"
+	@echo "make check      everything a PR has to pass"
 
 install:
 	cargo install --path . --root "$(INSTALL_ROOT)"
@@ -23,3 +24,10 @@ restart:
 reinstall:
 	"$(MAKE)" install
 	"$(MAKE)" restart
+
+check:
+	./scripts/check-layering.sh
+	for f in src/ui/*.js; do node --check "$$f" || exit 1; done
+	cargo fmt --check
+	cargo clippy --all-targets -- -D warnings
+	cargo test
