@@ -312,11 +312,6 @@ fn safe_join(dir: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(name))
 }
 
-/// How many names are tried before a claim gives up. Same-second sends are normal (a
-/// worker filing two findings at once), so the counter is not an edge case to skip; a
-/// thousand of them in one second is not a collision but a runaway.
-pub(super) const CLAIM_ATTEMPTS: usize = 1000;
-
 /// Give `staged` a second name in `dir`, the first one `name_for` offers that is free.
 ///
 /// Two properties have to hold at once, and one primitive gives both. `hard_link` refuses

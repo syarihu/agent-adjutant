@@ -773,18 +773,6 @@ fn the_editor_is_answered_once_not_twice() {
 }
 
 #[test]
-fn a_missing_home_still_gives_an_absolute_anchor() {
-    // A relative anchor puts the state directory under whatever directory the process
-    // started in, so a hub and a worker started from different places end up with
-    // different inboxes and neither can see anything wrong.
-    for absent in [None, Some(""), Some("relative/home")] {
-        let home = home_from(absent);
-        assert!(home.is_absolute(), "{absent:?} gave {}", home.display());
-    }
-    assert_eq!(home_from(Some("/home/x")), PathBuf::from("/home/x"));
-}
-
-#[test]
 fn one_repo_changing_its_tab_title_keeps_the_machines_terminal() {
     // Picked whole, this entry dropped `spawn` and `focus` for that repository — and
     // the symptom of a missing `spawn` is a tab that never opens.
@@ -838,23 +826,6 @@ fn the_sentence_being_the_wrong_type_is_reported_like_everything_else() {
     let (_, settings, warnings) = resolve(a_repo(json!({"hubWake": {"line": 5}})), "acme/app");
     assert!(warning_about(&warnings, "hubWake.line").contains("a number"));
     assert_eq!(settings.hub_wake.line, None);
-}
-
-#[test]
-fn the_home_fallback_is_absolute_and_not_shared_with_anyone() {
-    // One shared directory would put two people's configs and inboxes in one place.
-    for absent in [None, Some(""), Some("relative/home")] {
-        let home = home_from(absent);
-        assert!(home.is_absolute(), "{absent:?} gave {}", home.display());
-        assert!(
-            home.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("adjutant-no-home-"),
-            "{}",
-            home.display()
-        );
-    }
 }
 
 #[test]

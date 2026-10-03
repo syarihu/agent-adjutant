@@ -17,16 +17,20 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::{expand_home, home_dir};
+pub use crate::infra::clock::{now_secs, utc_stamp};
+pub use crate::infra::env::{HUB_ENV, HUB_SERVE_ENV, HUB_SESSION_ENV, STATE_DIR_ENV};
+pub(crate) use crate::infra::fs::{
+    CLAIM_ATTEMPTS, CreateError, create_new_json, parent_dir, read_json, record_exists,
+    remove_if_present, stage, write_json,
+};
+pub use crate::infra::paths::state_dir;
 use crate::repo::current_worktree;
 
 mod board_view;
 mod hub_record;
 mod inbox;
 mod paths;
-mod plumbing;
 mod proc;
 mod saved_session;
 mod worker_record;
@@ -35,7 +39,6 @@ pub use board_view::*;
 pub use hub_record::*;
 pub use inbox::*;
 pub use paths::*;
-pub use plumbing::*;
 pub use proc::*;
 pub use saved_session::*;
 pub use worker_record::*;

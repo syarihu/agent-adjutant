@@ -11,6 +11,11 @@
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
+pub use crate::infra::env::{
+    CONFIG_ENV, STARTUP_DASHBOARD_ENV, TMUX_SESSION_ENV, TMUX_SOCKET_ENV, XDG_CONFIG_HOME_ENV,
+};
+pub use crate::infra::paths::{expand_home, home_dir};
+
 /// Falls back to `defaults`, then to these. `ide` has no built-in on purpose: guessing an
 /// editor puts the user in the wrong one, and the prompts know how to ask.
 pub fn builtin_defaults() -> Map<String, Value> {
@@ -110,18 +115,6 @@ pub const DEFAULT_STUCK_AFTER_MINUTES: f64 = 120.0;
 /// morning starts clean. The hub is meant to be one a day, and a conversation that carries on
 /// forever carries every task it ever dispatched along with it.
 pub const DEFAULT_HUB_AUTO_RESUME_HOURS: f64 = 3.0;
-
-/// Overrides `startupDashboard` for one hub, set by `adj hub --no-dashboard` / `--dashboard`.
-///
-/// A flag on a command that `exec`s an agent has no other way to reach the prompt: the hub
-/// reads its settings through `adjutant_config`, which is served by an MCP server that is
-/// the agent's own child, so the environment is the one channel that survives both hops.
-/// The same trick `ADJUTANT_HUB` uses, for the same reason.
-///
-/// `"1"` and `"0"` and nothing else. Anything else falls through to the configured value
-/// rather than picking a side, because a variable somebody exported with a typo in it should
-/// not quietly reverse a setting they wrote down on purpose.
-pub const STARTUP_DASHBOARD_ENV: &str = "ADJUTANT_STARTUP_DASHBOARD";
 
 /// What each machine-level key is allowed to be.
 ///
@@ -257,15 +250,6 @@ fn required_keys(source_type: &str) -> &'static [&'static str] {
     }
 }
 
-// ── where the config lives ───────────────────────────────────────────
-
-/// The file this binary reads its configuration out of. Named here rather than spelled in
-/// each place that forwards it: a tab that is handed the wrong one reads a different world.
-pub const CONFIG_ENV: &str = "ADJUTANT_CONFIG";
-pub const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
-pub const TMUX_SOCKET_ENV: &str = "ADJUTANT_TMUX_SOCKET";
-pub const TMUX_SESSION_ENV: &str = "ADJUTANT_TMUX_SESSION";
-
 /// `ADJUTANT_CONFIG` wins, then `$XDG_CONFIG_HOME/adjutant/config.json`, then
 /// `~/.config/adjutant/config.json`. Not under a specific agent's config directory: the
 /// point of this tool is that the same config serves whichever agent is driving.
@@ -322,60 +306,6 @@ pub fn anchor_config_env() {
             // SAFETY: called first thing in `run`, before any thread is started.
             unsafe { std::env::set_var(name, path) };
         }
-    }
-}
-
-/// Where `~` points, and the anchor under which every path this program uses is derived.
-///
-/// An unset `HOME` used to make that anchor the empty string, which left the state
-/// directory *relative*: it landed under whatever directory the process happened to start
-/// in, so a hub and a worker started from different places read different inboxes — and
-/// neither is wrong about anything it can see, which is why nobody would find it. An
-/// absolute fallback keeps the two agreeing, and saying so on stderr is the only way the
-/// person running them learns that `HOME` is missing.
-pub fn home_dir() -> PathBuf {
-    home_from(std::env::var("HOME").ok().as_deref())
-}
-
-/// Split out from `home_dir` so the answer can be checked without a test reaching into the
-/// environment every other test is reading.
-fn home_from(home: Option<&str>) -> PathBuf {
-    match home {
-        Some(home) if home.starts_with('/') => PathBuf::from(home),
-        _ => {
-            // Per person, and absolute whatever `TMPDIR` says. `temp_dir()` is one shared
-            // directory on most Linux systems and follows a `TMPDIR` that may itself be
-            // relative — so a bare name under it would put two people's configs and
-            // inboxes in one place, and a relative `TMPDIR` would undo the very thing this
-            // fallback is for.
-            let temp = std::env::temp_dir();
-            let temp = match temp.is_absolute() {
-                true => temp,
-                false => PathBuf::from("/tmp"),
-            };
-            let whose = ["USER", "LOGNAME"]
-                .iter()
-                .find_map(|key| std::env::var(key).ok())
-                .filter(|name| !name.is_empty() && !name.contains('/'))
-                .unwrap_or_else(|| "unknown".to_string());
-            let fallback = temp.join(format!("adjutant-no-home-{whose}"));
-            static SAID: std::sync::Once = std::sync::Once::new();
-            SAID.call_once(|| {
-                eprintln!(
-                    "adjutant: HOME is not set to an absolute path, falling back to {} — set HOME so every session agrees on one location",
-                    fallback.display()
-                );
-            });
-            fallback
-        }
-    }
-}
-
-pub fn expand_home(path: &str) -> PathBuf {
-    match path.strip_prefix("~/") {
-        Some(rest) => home_dir().join(rest),
-        None if path == "~" => home_dir(),
-        None => PathBuf::from(path),
     }
 }
 

@@ -14,6 +14,7 @@ mod config;
 mod gate;
 mod http;
 mod ide;
+mod infra;
 mod jules;
 mod mcp;
 mod messaging;

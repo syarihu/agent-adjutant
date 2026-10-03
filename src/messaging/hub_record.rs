@@ -402,18 +402,6 @@ pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubS
     status
 }
 
-// ── which hub is being addressed ─────────────────────────────────────
-
-/// What `adj hub --hub` was told, handed down to the agent it starts.
-///
-/// The hub's own procedure calls `adjutant_pending` and friends with no arguments at all —
-/// it is talking about itself, and a rule that says "pass your own name every time" is a
-/// rule that gets forgotten once and then silently reads somebody else's inbox. An
-/// environment variable is the one channel that reaches every one of those calls without
-/// any of them mentioning it: `adj hub` puts it on the line it `exec`s, the agent inherits
-/// it, and the MCP server the agent starts is that agent's child.
-pub const HUB_ENV: &str = "ADJUTANT_HUB";
-
 /// Which hub this invocation was *told* it is: what the caller passed (`--hub`, or the
 /// tool's `hub`), and failing that `ADJUTANT_HUB` — the process was started by a hub, so it
 /// is that hub wherever it has since wandered to.
