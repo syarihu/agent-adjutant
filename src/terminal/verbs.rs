@@ -514,14 +514,26 @@ pub const WORKER_WAKE_LINE: &str = "The hub sent you something. Check it with ad
 /// `default_line` is what to type when the config has not overridden it — the caller knows
 /// which direction this is, and the two directions read different boxes.
 ///
-/// `agent` is what the woken session runs. The built-in tmux wake reads the pane before typing
-/// and needs to know whose screen it is looking at; `Generic` is typed into without looking.
+/// `look` is how the built-in tmux wake reads the pane before typing; `None` is typed into
+/// without looking.
 pub struct WakeRequest<'a> {
     pub pid: u32,
     pub subject: &'a str,
     pub line: &'a str,
-    pub agent: Agent,
+    pub look: Option<LookBeforeTyping>,
     pub dry_run: bool,
+}
+
+type MayType = Box<dyn Fn(&PaneScreen) -> Result<(), &'static str>>;
+type HoldsJust = Box<dyn Fn(&PaneScreen, &str) -> bool>;
+
+/// How to read the woken session's pane before typing into it. Supplied by whoever knows
+/// what the session runs; `None` in a `WakeRequest` types without looking.
+pub struct LookBeforeTyping {
+    /// May the line be typed now? `Err` says why not, for whoever is told the wake did not happen.
+    pub may_type: MayType,
+    /// Does the prompt hold the typed line and nothing else?
+    pub holds_just: HoldsJust,
 }
 
 pub fn wake(
@@ -530,7 +542,7 @@ pub fn wake(
     pid: u32,
     subject: &str,
     default_line: &str,
-    agent: Agent,
+    look: Option<LookBeforeTyping>,
     dry_run: bool,
 ) -> Result<Performed, String> {
     let line = wake.line_or(default_line);
@@ -543,7 +555,7 @@ pub fn wake(
             pid,
             subject,
             line,
-            agent,
+            look,
             dry_run,
         },
     )
@@ -601,7 +613,7 @@ pub(super) fn wake_with_clock(
     // than that, and says so.
     let mut built_in = false;
     // The pane to read before typing, when the built-in tmux wake is the one in use.
-    let mut look_at: Option<String> = None;
+    let mut look_at: Option<(String, &LookBeforeTyping)> = None;
     let command = match hook.template() {
         Some(template) => render(
             template,
@@ -619,8 +631,8 @@ pub(super) fn wake_with_clock(
                 let pane = find_matching_pane(&panes, Some(pid), tty.as_deref());
                 match pane {
                     Some(pane) => {
-                        if req.agent != Agent::Generic {
-                            look_at = Some(pane.pane_id.clone());
+                        if let Some(look) = &req.look {
+                            look_at = Some((pane.pane_id.clone(), look));
                         }
                         tmux_wake_script(terminal.tmux_socket(), &pane.pane_id, line)
                     }
@@ -663,7 +675,7 @@ pub(super) fn wake_with_clock(
             screen: false,
         });
     }
-    if let Some(pane_id) = look_at {
+    if let Some((pane_id, look)) = look_at {
         return Ok(wake_after_looking(
             &run,
             &wait,
@@ -671,7 +683,7 @@ pub(super) fn wake_with_clock(
             &pane_id,
             lock_dir,
             req,
-            command,
+            look,
         ));
     }
     match run(&command) {
@@ -771,8 +783,8 @@ pub(super) fn lock_pane(
 ///
 /// The second look is what keeps a screen that changed between the first look and the typing
 /// from being answered: if the line is not where it should be, Enter is not pressed and the
-/// caller is told, which is the same as a wake that could not be done. `script` is what the
-/// wake amounts to, for the caller to report.
+/// caller is told, which is the same as a wake that could not be done. `look` is how the pane
+/// is read.
 fn wake_after_looking(
     run: &impl Fn(&str) -> Result<String, String>,
     wait: &impl Fn(Duration),
@@ -780,9 +792,11 @@ fn wake_after_looking(
     pane_id: &str,
     lock_dir: &Path,
     req: &WakeRequest,
-    script: String,
+    look: &LookBeforeTyping,
 ) -> Performed {
-    let (pid, agent, line) = (req.pid, req.agent, req.line);
+    let (pid, line) = (req.pid, req.line);
+    // What the wake amounts to, for the caller to report.
+    let script = tmux_wake_script(socket, pane_id, line);
     let capture = tmux_capture_script(socket, pane_id);
     let refused = |description: String, script: &str, screen: bool| Performed {
         description,
@@ -817,16 +831,13 @@ fn wake_after_looking(
                 );
             }
         };
-        let state = pane_state(agent, &screen);
-        if state == PaneState::Idle {
-            break;
-        }
+        let why = match (look.may_type)(&screen) {
+            Ok(()) => break,
+            Err(why) => why,
+        };
         if waited >= WAKE_READY_BUDGET {
             return refused(
-                format!(
-                    "the wake was not typed into the session (pid {pid}): {}",
-                    state.why_not_typed()
-                ),
+                format!("the wake was not typed into the session (pid {pid}): {why}"),
                 &capture,
                 true,
             );
@@ -839,12 +850,12 @@ fn wake_after_looking(
         return refused(format!("cannot wake the session: {e}"), &typed, false);
     }
     let mut shown = false;
-    for look in 0..WAKE_ECHO_LOOKS {
-        if look > 0 {
+    for nth in 0..WAKE_ECHO_LOOKS {
+        if nth > 0 {
             wait(WAKE_ECHO_POLL);
         }
         if let Ok(screen) = look_at_pane(run, &capture)
-            && shows_typed_line(agent, &screen, line)
+            && (look.holds_just)(&screen, line)
         {
             shown = true;
             break;
@@ -879,7 +890,7 @@ pub fn tmux_wake(
     socket: Option<&str>,
     pid: u32,
     line: Option<&str>,
-    agent: Agent,
+    look: Option<LookBeforeTyping>,
     dry_run: bool,
 ) -> Result<Performed, String> {
     let default_line = WORKER_WAKE_LINE;
@@ -889,7 +900,7 @@ pub fn tmux_wake(
         socket: socket.map(str::to_string),
         ..Default::default()
     };
-    wake(&term, &Wake::default(), pid, "", wake_line, agent, dry_run)
+    wake(&term, &Wake::default(), pid, "", wake_line, look, dry_run)
 }
 
 pub fn tmux_focus(socket: Option<&str>, pid: u32, dry_run: bool) -> Result<Performed, String> {

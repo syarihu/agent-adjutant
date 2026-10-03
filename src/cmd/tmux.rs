@@ -77,7 +77,13 @@ pub fn wake(
     let agent = agent
         .and_then(crate::prompts::Agent::parse)
         .unwrap_or(crate::prompts::Agent::Generic);
-    let performed = terminal::tmux_wake(socket, pid, line, agent, dry_run)?;
+    let performed = terminal::tmux_wake(
+        socket,
+        pid,
+        line,
+        terminal::look_before_typing(agent),
+        dry_run,
+    )?;
     if dry_run {
         println!("{}", performed.script);
         return Ok(());

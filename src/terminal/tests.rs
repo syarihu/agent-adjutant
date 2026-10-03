@@ -500,7 +500,7 @@ fn waking_a_hub_is_a_template_and_can_be_turned_off() {
         4321,
         "画像が潰れる",
         HUB_WAKE_LINE,
-        Agent::Generic,
+        None,
         true,
     )
     .unwrap();
@@ -520,7 +520,7 @@ fn waking_a_hub_is_a_template_and_can_be_turned_off() {
         4321,
         "s",
         HUB_WAKE_LINE,
-        Agent::Generic,
+        None,
         false,
     )
     .unwrap();
@@ -553,7 +553,7 @@ fn the_sentence_can_be_replaced_without_restating_how_to_poke() {
         4321,
         "s",
         HUB_WAKE_LINE,
-        Agent::Generic,
+        None,
         true,
     )
     .unwrap();
@@ -573,7 +573,7 @@ fn waking_a_pid_with_no_terminal_is_a_quiet_no_op() {
         1,
         "s",
         HUB_WAKE_LINE,
-        Agent::Generic,
+        None,
         false,
     )
     .unwrap();
@@ -611,7 +611,7 @@ fn the_builtin_wake_only_claims_success_when_it_typed_something() {
             pid: ours,
             subject: "s",
             line: "check your inbox",
-            agent: Agent::Generic,
+            look: None,
             dry_run: false,
         },
     )
@@ -629,7 +629,7 @@ fn the_builtin_wake_only_claims_success_when_it_typed_something() {
             pid: ours,
             subject: "s",
             line: "check your inbox",
-            agent: Agent::Generic,
+            look: None,
             dry_run: false,
         },
     )
@@ -651,7 +651,7 @@ fn the_builtin_wake_only_claims_success_when_it_typed_something() {
             pid: ours,
             subject: "s",
             line: "check your inbox",
-            agent: Agent::Generic,
+            look: None,
             dry_run: false,
         },
     )
@@ -878,7 +878,7 @@ fn tmux_wake_with_runner_mock() {
             pid: 12345,
             subject: "sub",
             line: "wake up",
-            agent: Agent::Generic,
+            look: None,
             dry_run: false,
         },
     )
@@ -1651,7 +1651,7 @@ impl FakePane {
                 pid: 12345,
                 subject: "s",
                 line,
-                agent,
+                look: look_before_typing(agent),
                 dry_run: false,
             },
         )
@@ -1874,7 +1874,7 @@ fn wakes_at_the_same_moment_take_turns_at_the_pane() {
                             pid: 12345,
                             subject: "s",
                             line,
-                            agent: Agent::Claude,
+                            look: look_before_typing(Agent::Claude),
                             dry_run: false,
                         },
                     )
@@ -1914,7 +1914,7 @@ fn a_wake_that_cannot_get_the_pane_within_the_budget_gives_up() {
             pid: 12345,
             subject: "s",
             line: WAKE,
-            agent: Agent::Claude,
+            look: look_before_typing(Agent::Claude),
             dry_run: false,
         },
     )
@@ -1982,7 +1982,7 @@ fn where_the_screen_is_not_read_nothing_is_captured() {
             pid: 12345,
             subject: "s",
             line: WAKE,
-            agent: Agent::Claude,
+            look: look_before_typing(Agent::Claude),
             dry_run: true,
         },
     );
@@ -2019,7 +2019,7 @@ fn where_the_screen_is_not_read_nothing_is_captured() {
                 pid: 12345,
                 subject: "s",
                 line: WAKE,
-                agent: Agent::Claude,
+                look: look_before_typing(Agent::Claude),
                 dry_run: false,
             },
         )
