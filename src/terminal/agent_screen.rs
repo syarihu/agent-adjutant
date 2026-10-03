@@ -445,6 +445,21 @@ pub(super) fn shows_typed_line(agent: Agent, screen: &PaneScreen, line: &str) ->
     reading.state == PaneState::Typing && squeeze(&reading.typed) == squeeze(line)
 }
 
+/// How the built-in tmux wake reads `agent`'s pane before typing. `None` for `Generic`:
+/// nothing is known of how its screen reads, so it is typed into without looking.
+pub fn look_before_typing(agent: Agent) -> Option<LookBeforeTyping> {
+    if agent == Agent::Generic {
+        return None;
+    }
+    Some(LookBeforeTyping {
+        may_type: Box::new(move |screen| match pane_state(agent, screen) {
+            PaneState::Idle => Ok(()),
+            state => Err(state.why_not_typed()),
+        }),
+        holds_just: Box::new(move |screen, line| shows_typed_line(agent, screen, line)),
+    })
+}
+
 pub(super) fn look_at_pane(
     run: &impl Fn(&str) -> Result<String, String>,
     capture: &str,
