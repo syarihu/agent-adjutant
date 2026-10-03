@@ -2745,3 +2745,84 @@ fn a_pr_waits_on_bots_as_pr_bots_and_on_people_as_pr() {
         "nothing stops a worker leaving the card in pr-bots: {review}"
     );
 }
+
+#[test]
+fn an_unknown_procedure_names_the_known_ones() {
+    let req = SkillRequest {
+        name: "nope",
+        arguments: "",
+        agent: None,
+        client_name: None,
+        runner_dir: None,
+    };
+    let err = render_skill(&req).err().unwrap();
+    assert_eq!(
+        err,
+        SkillError::NoSuchProcedure {
+            name: "nope".to_string(),
+            known: vec!["adj-hub", "adj-worker", "adj-report"],
+        }
+    );
+    assert_eq!(
+        err.to_string(),
+        "no such procedure: nope (adj-hub / adj-worker / adj-report)"
+    );
+}
+
+#[test]
+fn an_agent_parse_refuses_is_refused() {
+    for value in ["unknown", ""] {
+        let req = SkillRequest {
+            name: "adj-worker",
+            arguments: "",
+            agent: Some(value),
+            client_name: None,
+            runner_dir: None,
+        };
+        let err = render_skill(&req).err().unwrap();
+        assert_eq!(err, SkillError::UnknownAgent(value.to_string()));
+        assert_eq!(
+            err.to_string(),
+            format!("agent must be claude, agy, or generic: {value}")
+        );
+    }
+}
+
+#[test]
+fn the_name_is_checked_before_the_agent() {
+    let req = SkillRequest {
+        name: "nope",
+        arguments: "",
+        agent: Some("unknown"),
+        client_name: None,
+        runner_dir: None,
+    };
+    assert!(matches!(
+        render_skill(&req),
+        Err(SkillError::NoSuchProcedure { .. })
+    ));
+}
+
+#[test]
+fn every_alias_agent_parse_takes_is_taken() {
+    for (value, expected) in [
+        ("codex", Agent::Generic),
+        ("claude-code", Agent::Claude),
+        ("antigravity", Agent::Agy),
+        (" Claude ", Agent::Claude),
+    ] {
+        let req = SkillRequest {
+            name: "adj-worker",
+            arguments: "x",
+            agent: Some(value),
+            client_name: None,
+            runner_dir: None,
+        };
+        let r = render_skill(&req).ok().unwrap();
+        let prompt = find("adj-worker").unwrap();
+        assert_eq!(r.agent, expected, "{value}");
+        assert_eq!(r.name, "adj-worker");
+        assert_eq!(r.description, description(prompt));
+        assert_eq!(r.text, render_for(prompt, "x", r.agent), "{value}");
+    }
+}

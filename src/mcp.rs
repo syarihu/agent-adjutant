@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 
 use crate::cmd::HubBoard;
 use crate::config;
-pub use crate::kernel::runner::resolve_runner_for;
 #[cfg(test)]
 pub use crate::kernel::runner::runner_for_procedure;
 use crate::messaging::{self, Message};
@@ -100,7 +99,7 @@ fn prompt_definitions() -> Value {
                     },
                     {
                         "name": "agent",
-                        "description": "Target agent format: claude | agy | generic. Defaults to auto-detect.",
+                        "description": "Target agent format: claude (claude-code) | agy (antigravity) | generic (codex). Defaults to auto-detect.",
                         "required": false,
                     },
                     {
@@ -129,31 +128,28 @@ pub fn set_client_name(name: Option<&str>) {
 
 fn prompt_get(params: &Value) -> Result<Value, String> {
     let name = params["name"].as_str().unwrap_or("");
-    let prompt = prompts::find(name).ok_or_else(|| format!("Unknown prompt: {name}"))?;
-    let arguments = params["arguments"]["arguments"].as_str().unwrap_or("");
-    let explicit_agent = params["arguments"]["agent"].as_str();
-    if let Some(value) = explicit_agent
-        && !matches!(value, "claude" | "agy" | "generic")
-    {
-        return Err(format!("agent must be claude, agy, or generic: {value}"));
-    }
     let worktree = params["arguments"]["worktree"]
         .as_str()
         .or_else(|| params["arguments"]["cwd"].as_str())
         .filter(|s| !s.is_empty())
         .map(config::expand_home);
-    let runner = resolve_runner_for(worktree.as_deref(), name);
-    let runner_agent = runner.as_deref().map(crate::runner::agent_from_runner);
-    let agent = prompts::resolve_agent(
-        explicit_agent,
-        client_name().as_deref(),
-        runner_agent.as_deref(),
-    );
+    let client = client_name();
+    let rendered = prompts::render_skill(&prompts::SkillRequest {
+        name,
+        arguments: params["arguments"]["arguments"].as_str().unwrap_or(""),
+        agent: params["arguments"]["agent"].as_str(),
+        client_name: client.as_deref(),
+        runner_dir: worktree.as_deref(),
+    })
+    .map_err(|e| match e {
+        prompts::SkillError::NoSuchProcedure { name, .. } => format!("Unknown prompt: {name}"),
+        other => other.to_string(),
+    })?;
     Ok(json!({
-        "description": prompts::description(prompt),
+        "description": rendered.description,
         "messages": [{
             "role": "user",
-            "content": { "type": "text", "text": prompts::render_for(prompt, arguments, agent) },
+            "content": { "type": "text", "text": rendered.text },
         }],
     }))
 }
@@ -396,33 +392,25 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             Ok(crate::cmd::task_refresh_json(&checked))
         }
         "adjutant_skill" => {
-            let name = args["name"].as_str().unwrap_or("");
-            let prompt = prompts::find(name).ok_or_else(|| {
-                format!("no such procedure: {name} (adj-hub / adj-worker / adj-report)")
-            })?;
-            let explicit_agent = args["agent"].as_str();
-            if let Some(value) = explicit_agent
-                && !matches!(value, "claude" | "agy" | "generic")
-            {
-                return Err(format!("agent must be claude, agy, or generic: {value}"));
-            }
             let worktree = args["worktree"]
                 .as_str()
                 .or_else(|| args["cwd"].as_str())
                 .filter(|s| !s.is_empty())
                 .map(config::expand_home);
-            let runner = resolve_runner_for(worktree.as_deref(), name);
-            let runner_agent = runner.as_deref().map(crate::runner::agent_from_runner);
-            let agent = prompts::resolve_agent(
-                explicit_agent,
-                client_name().as_deref(),
-                runner_agent.as_deref(),
-            );
+            let client = client_name();
+            let rendered = prompts::render_skill(&prompts::SkillRequest {
+                name: args["name"].as_str().unwrap_or(""),
+                arguments: args["arguments"].as_str().unwrap_or(""),
+                agent: args["agent"].as_str(),
+                client_name: client.as_deref(),
+                runner_dir: worktree.as_deref(),
+            })
+            .map_err(|e| e.to_string())?;
             Ok(json!({
-                "name": prompt.name,
-                "agent": agent.as_str(),
-                "description": prompts::description(prompt),
-                "content": prompts::render_for(prompt, args["arguments"].as_str().unwrap_or(""), agent),
+                "name": rendered.name,
+                "agent": rendered.agent.as_str(),
+                "description": rendered.description,
+                "content": rendered.text,
             }))
         }
         other => Err(format!("Unknown tool: {other}")),
