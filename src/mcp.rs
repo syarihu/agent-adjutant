@@ -1527,6 +1527,23 @@ mod tests {
     }
 
     #[test]
+    fn cli_skill_picks_the_agent_from_the_runner_without_an_override() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let _guard = ClientNameGuard;
+        for runner in [
+            "agy --dangerously-skip-permissions -i {prompt}",
+            "env FOO=1 agy -i {prompt}",
+        ] {
+            let _sandbox = crate::testing::Sandbox::new(&format!(
+                r#"{{ "defaults": {{ "agentRunner": "{runner}" }} }}"#
+            ));
+            let text = crate::cmd::skill_text("adj-worker", "", None).unwrap();
+            assert!(text.contains("ask_question"), "{runner}");
+            assert!(!text.contains("AskUserQuestion"), "{runner}");
+        }
+    }
+
+    #[test]
     fn install_validates_target_names() {
         assert!(install("unknown-agent").is_err());
         assert!(uninstall("unknown-agent").is_err());
