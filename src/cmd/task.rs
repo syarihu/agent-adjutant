@@ -192,6 +192,8 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>),
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
+    // Only keys read from disk are carried; a caller's unknown keys are dropped, as before.
+    task.extra.clear();
     task.worktree = task.worktree.as_deref().map(resolved_worktree);
     task.order = next_order(ctx);
     // Set here and not through the input, which `with_defaults` strips of both.
@@ -1351,6 +1353,25 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_drops_keys_the_record_does_not_know() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let repo = crate::repo::RepoInfo {
+            main: "/tmp/acme-widget".to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        let ctx = super::super::context_of(repo).unwrap();
+        let (task, _) = create(&ctx, &json!({"title": "t", "futureField": 1})).unwrap();
+        assert!(task.extra.is_empty());
+        let text = std::fs::read_to_string(task::path_of(&dir(&ctx), &task.id)).unwrap();
+        assert!(!text.contains("futureField"), "{text}");
+    }
 
     /// `adj task next` skips a task by this prefix, and the hub procedure is what writes it.
     /// The wording guard in `prompts` pins the procedure; this holds the constant to it.

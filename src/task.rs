@@ -659,6 +659,10 @@ pub struct Task {
     pub pr_status: Option<PrStatus>,
     pub created_at: String,
     pub updated_at: String,
+    /// Keys this binary does not know, kept from the file so that a record written by another
+    /// version and saved by this one loses nothing. Only ever filled from disk: `create` empties it.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -910,6 +914,7 @@ mod tests {
                 pr_status: None,
                 created_at: stamp.to_string(),
                 updated_at: stamp.to_string(),
+                extra: serde_json::Map::new(),
             }
         }
     }
@@ -924,6 +929,25 @@ mod tests {
         );
         task.body = "The retry does not seem to take effect".to_string();
         task
+    }
+
+    #[test]
+    fn a_key_this_binary_does_not_know_survives_a_load_and_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let task = sample();
+        let mut raw = serde_json::to_value(&task).unwrap();
+        raw["futureField"] = serde_json::json!({"n": 1});
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(path_of(dir.path(), &task.id), raw.to_string()).unwrap();
+
+        let loaded = load(dir.path(), &task.id).unwrap();
+        assert_eq!(loaded.extra["futureField"], serde_json::json!({"n": 1}));
+        save(dir.path(), &loaded).unwrap();
+
+        let text = std::fs::read_to_string(path_of(dir.path(), &task.id)).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back["futureField"], serde_json::json!({"n": 1}));
+        assert!(back.get("issueSnapshot").is_none(), "{text}");
     }
 
     fn snap(url: &str) -> IssueSnapshot {

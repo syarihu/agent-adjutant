@@ -240,7 +240,9 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     }
     // A record's answers are appended by whoever answers it, never brought in with it.
     fields.remove("answers");
-    let gate: Gate = serde_json::from_value(value).map_err(|e| format!("bad gate: {e}"))?;
+    let mut gate: Gate = serde_json::from_value(value).map_err(|e| format!("bad gate: {e}"))?;
+    // Only keys read from disk are carried; a caller's unknown keys are dropped, as before.
+    gate.extra.clear();
 
     gate::save(&home, &gate)?;
     Ok((gate, super::serve::running(&ctx.repo).is_some()))
@@ -742,4 +744,32 @@ pub fn close_cmd(args: &CloseArgs<'_>) -> Result<(), String> {
         println!("{} → closed", gate.id);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_drops_keys_the_gate_does_not_know() {
+        let _sandbox = crate::testing::Sandbox::empty();
+        let repo = crate::repo::RepoInfo {
+            main: "/tmp/acme-widget".to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        let ctx = super::super::context_of(repo).unwrap();
+        let (gate, _) = open(
+            &ctx,
+            &json!({"kind": "question", "title": "q", "worktree": "/tmp/wt", "futureField": 1}),
+        )
+        .unwrap();
+        assert!(gate.extra.is_empty());
+        let text = std::fs::read_to_string(gate::path_of(&dir(&ctx), &gate.id)).unwrap();
+        assert!(!text.contains("futureField"), "{text}");
+    }
 }
