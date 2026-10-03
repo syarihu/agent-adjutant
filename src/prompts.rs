@@ -114,10 +114,13 @@ impl Agent {
 }
 
 /// Resolve which agent format to render procedures for.
+///
+/// `runner_agent` is the runner's program name as returned by `runner::agent_from_runner`;
+/// `prompts` is a leaf module, so the caller does that parse.
 pub fn resolve_agent(
     explicit: Option<&str>,
     client_name: Option<&str>,
-    runner: Option<&str>,
+    runner_agent: Option<&str>,
 ) -> Agent {
     if let Some(s) = explicit.and_then(Agent::parse) {
         return s;
@@ -138,11 +141,8 @@ pub fn resolve_agent(
             return Agent::Claude;
         }
     }
-    if let Some(runner_cmd) = runner {
-        let lower = runner_cmd.to_ascii_lowercase();
-        if lower.starts_with("agy ") || lower.contains("/agy ") {
-            return Agent::Agy;
-        }
+    if runner_agent.and_then(Agent::parse) == Some(Agent::Agy) {
+        return Agent::Agy;
     }
     Agent::Claude
 }
@@ -2585,14 +2585,8 @@ mod tests {
             resolve_agent(None, Some("claude-code"), None),
             Agent::Claude
         );
-        assert_eq!(
-            resolve_agent(None, None, Some("agy run {prompt}")),
-            Agent::Agy
-        );
-        assert_eq!(
-            resolve_agent(None, None, Some("claude {prompt}")),
-            Agent::Claude
-        );
+        assert_eq!(resolve_agent(None, None, Some("agy")), Agent::Agy);
+        assert_eq!(resolve_agent(None, None, Some("claude")), Agent::Claude);
     }
 
     /// The hub brings the task records up to date with their pull requests in the first
