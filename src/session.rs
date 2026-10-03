@@ -4,8 +4,8 @@
 //! worktree. It captures who is running (agent, kind, id), where it runs (terminal backend
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
-//! A leaf: defines pure data structures with serde serialization and no internal crate
-//! dependencies.
+//! Pure data structures with serde serialization. The only thing it names in the crate is
+//! `SessionTerminal`, which lives in `infra::terminal` and is re-exported here.
 
 use serde::{Deserialize, Serialize};
 
