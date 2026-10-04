@@ -46,6 +46,7 @@ fn hub_context(
     let ctx = Context {
         repo: repo.clone().addressed(hub.key.as_deref())?,
         resolved: server.ctx.resolved.clone(),
+        state: server.ctx.state.clone(),
         settings,
     };
     Ok((hub, ctx))

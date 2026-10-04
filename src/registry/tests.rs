@@ -24,8 +24,8 @@ fn tally(outcomes: &[Result<Claim, String>]) -> (usize, usize, usize) {
     )
 }
 
-fn claim_ours(slug: &str, hub_name: &str) {
-    match claim_hub(slug, hub_name, "/src/widget", true, None, None).unwrap() {
+fn claim_ours(root: &Path, slug: &str, hub_name: &str) {
+    match claim_hub(root, slug, hub_name, "/src/widget", true, None, None).unwrap() {
         Claim::Ours => {}
         Claim::Taken(status) => panic!("expected to win the claim, but {status:?} holds it"),
     }
@@ -78,9 +78,11 @@ fn a_session_id_is_a_version_4_uuid_and_a_new_one_each_time() {
 
 #[test]
 fn a_hub_session_outlives_the_record_that_hub_stop_clears() {
-    let _sandbox = Sandbox::empty();
-    claim_ours("acme-widget", "adjutant-acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    claim_ours(&root, "acme-widget", "adjutant-acme-widget");
     save_hub_session(
+        &root,
         "acme-widget",
         "acme/widget",
         None,
@@ -88,8 +90,8 @@ fn a_hub_session_outlives_the_record_that_hub_stop_clears() {
         "sid-1",
     )
     .unwrap();
-    unregister_hub("acme-widget").unwrap();
-    let saved = hub_session("acme-widget").expect("the session went with the record");
+    unregister_hub(&root, "acme-widget").unwrap();
+    let saved = hub_session(&root, "acme-widget").expect("the session went with the record");
     assert_eq!(saved.session_id, "sid-1");
     assert_eq!(saved.hub, None);
     assert_eq!(saved.hub_name.as_deref(), Some("adjutant-acme-widget"));
@@ -97,8 +99,10 @@ fn a_hub_session_outlives_the_record_that_hub_stop_clears() {
 
 #[test]
 fn a_repositorys_resumable_hubs_are_listed_its_own_first() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     save_hub_session(
+        &root,
         "w-alpha",
         "acme/widget",
         Some("ALPHA-1"),
@@ -106,9 +110,9 @@ fn a_repositorys_resumable_hubs_are_listed_its_own_first() {
         "a",
     )
     .unwrap();
-    save_hub_session("w", "acme/widget", None, "adjutant-w", "b").unwrap();
-    save_hub_session("other", "acme/other", None, "adjutant-other", "c").unwrap();
-    let found = hub_sessions_for("acme/widget");
+    save_hub_session(&root, "w", "acme/widget", None, "adjutant-w", "b").unwrap();
+    save_hub_session(&root, "other", "acme/other", None, "adjutant-other", "c").unwrap();
+    let found = hub_sessions_for(&root, "acme/widget");
     assert_eq!(
         found
             .iter()
@@ -120,16 +124,17 @@ fn a_repositorys_resumable_hubs_are_listed_its_own_first() {
 
 #[test]
 fn last_alive_is_only_an_answer_about_the_session_it_names() {
-    let _sandbox = Sandbox::empty();
-    assert_eq!(hub_last_alive("acme-widget", "sid-1"), None);
-    touch_hub_session("acme-widget", "sid-1").unwrap();
-    let last = hub_last_alive("acme-widget", "sid-1").expect("the beat was not recorded");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    assert_eq!(hub_last_alive(&root, "acme-widget", "sid-1"), None);
+    touch_hub_session(&root, "acme-widget", "sid-1").unwrap();
+    let last = hub_last_alive(&root, "acme-widget", "sid-1").expect("the beat was not recorded");
     assert!((now_secs() - last).abs() < 5, "{last}");
     // An old hub's server beating after a new hub saved its own session says nothing
     // about the new one.
-    assert_eq!(hub_last_alive("acme-widget", "sid-2"), None);
+    assert_eq!(hub_last_alive(&root, "acme-widget", "sid-2"), None);
     // And the beat is not a session: listing what can be resumed does not read it.
-    assert!(hub_sessions_for("acme/widget").is_empty());
+    assert!(hub_sessions_for(&root, "acme/widget").is_empty());
 }
 
 #[test]
@@ -173,7 +178,8 @@ fn a_session_file_without_an_id_names_nothing_to_resume() {
 
 #[test]
 fn a_live_registration_reads_as_present() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     // The current process is alive by definition; its command line is the test binary,
     // so that is the name the record has to carry for the guard to pass.
     let name = std::env::current_exe()
@@ -182,8 +188,8 @@ fn a_live_registration_reads_as_present() {
         .unwrap()
         .to_string_lossy()
         .to_string();
-    claim_ours("acme-widget", &name);
-    let status = hub_status("acme-widget", &name);
+    claim_ours(&root, "acme-widget", &name);
+    let status = hub_status(&root, "acme-widget", &name);
     assert!(status.present, "{status:?}");
     assert!(!status.stale);
     assert_eq!(status.pid, Some(std::process::id()));
@@ -191,12 +197,13 @@ fn a_live_registration_reads_as_present() {
 
 #[test]
 fn a_recycled_pid_is_not_the_hub() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     // Alive, and the pid is right — but it started at a different moment, which is what
     // a recycled pid looks like and the one case that would otherwise report "present"
     // and drop the report on the floor.
     write_json(
-        &hub_record_path("acme-widget"),
+        &hub_record_path(&root, "acme-widget"),
         &json!({
             "pid": std::process::id(),
             "hubName": this_process_name(),
@@ -205,15 +212,16 @@ fn a_recycled_pid_is_not_the_hub() {
         }),
     )
     .unwrap();
-    let status = hub_status("acme-widget", &this_process_name());
+    let status = hub_status(&root, "acme-widget", &this_process_name());
     assert!(!status.present);
     assert!(status.stale);
 }
 
 #[test]
 fn no_record_at_all_is_absent_but_not_stale() {
-    let _sandbox = Sandbox::empty();
-    let status = hub_status("acme-widget", "adjutant-acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let status = hub_status(&root, "acme-widget", "adjutant-acme-widget");
     assert!(!status.present);
     assert!(!status.stale);
     assert_eq!(status.pid, None);
@@ -229,7 +237,8 @@ fn no_record_at_all_is_absent_but_not_stale() {
 /// `ps_started` never writes one; anything else that writes the file can.
 #[test]
 fn a_blank_start_time_is_no_anchor_in_any_of_the_four_readers() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let ours = std::process::id();
     let name = this_process_name();
     let dir = tempfile::tempdir().unwrap();
@@ -237,23 +246,26 @@ fn a_blank_start_time_is_no_anchor_in_any_of_the_four_readers() {
 
     for blank in ["", "   "] {
         write_json(
-            &hub_record_path("acme-widget"),
+            &hub_record_path(&root, "acme-widget"),
             &json!({"pid": ours, "hubName": name, "cwd": "/", "psStarted": blank}),
         )
         .unwrap();
         // The claim: with nothing saying this pid was recycled, the name stays taken.
         assert!(
-            matches!(holder(&hub_record_path("acme-widget")), Liveness::Alive),
+            matches!(
+                holder(&hub_record_path(&root, "acme-widget")),
+                Liveness::Alive
+            ),
             "{blank:?}"
         );
-        match claim_hub("acme-widget", &name, "/", true, None, None).unwrap() {
+        match claim_hub(&root, "acme-widget", &name, "/", true, None, None).unwrap() {
             Claim::Taken(_) => {}
             Claim::Ours => panic!("{blank:?}: a live hub's name was taken away"),
         }
 
         // The presence check falls through to its other anchor — the name in the
         // command line — instead of reporting a running hub as gone.
-        let status = hub_status("acme-widget", &name);
+        let status = hub_status(&root, "acme-widget", &name);
         assert!(status.present, "{blank:?}: {status:?}");
         assert!(!status.stale, "{blank:?}: {status:?}");
 
@@ -713,24 +725,28 @@ fn a_record_that_cannot_be_read_is_not_read_as_the_repository_s_own_hub() {
 
 #[test]
 fn unregister_is_idempotent() {
-    let _sandbox = Sandbox::empty();
-    unregister_hub("acme-widget").unwrap();
-    claim_ours("acme-widget", "adjutant-acme-widget");
-    unregister_hub("acme-widget").unwrap();
-    unregister_hub("acme-widget").unwrap();
-    assert!(!hub_record_path("acme-widget").exists());
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    unregister_hub(&root, "acme-widget").unwrap();
+    claim_ours(&root, "acme-widget", "adjutant-acme-widget");
+    unregister_hub(&root, "acme-widget").unwrap();
+    unregister_hub(&root, "acme-widget").unwrap();
+    assert!(!hub_record_path(&root, "acme-widget").exists());
 }
 
 /// Five launches at once used to produce three hubs, and a repository with three hubs
 /// makes it luck which one a report reaches.
 #[test]
 fn only_one_of_five_launches_becomes_the_hub() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let name = this_process_name();
     let outcomes: Vec<Result<Claim, String>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..5)
             .map(|_| {
-                scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None, None))
+                scope.spawn(|| {
+                    claim_hub(&root, "acme-widget", &name, "/src/widget", true, None, None)
+                })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
@@ -738,13 +754,14 @@ fn only_one_of_five_launches_becomes_the_hub() {
     // Every launch has to reach an *answer*. Counting only the winners would pass a
     // run where one won and the other four failed outright.
     assert_eq!(tally(&outcomes), (1, 4, 0), "{outcomes:?}");
-    assert!(hub_status("acme-widget", &name).present);
+    assert!(hub_status(&root, "acme-widget", &name).present);
 }
 
 /// A record whose process is gone is not a hub, and must not block the next one.
 #[test]
 fn a_dead_hubs_record_does_not_hold_the_name() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     // A pid that really has exited, rather than this process wearing a wrong name —
     // "alive but not recognised" is a different thing entirely, and the test below is
     // the one that means it.
@@ -752,7 +769,7 @@ fn a_dead_hubs_record_does_not_hold_the_name() {
     let dead = child.id();
     child.wait().unwrap();
     write_json(
-        &hub_record_path("acme-widget"),
+        &hub_record_path(&root, "acme-widget"),
         &json!({
             "pid": dead,
             "hubName": "adjutant-acme-widget",
@@ -764,8 +781,8 @@ fn a_dead_hubs_record_does_not_hold_the_name() {
     .unwrap();
 
     let name = this_process_name();
-    claim_ours("acme-widget", &name);
-    assert!(hub_status("acme-widget", &name).present);
+    claim_ours(&root, "acme-widget", &name);
+    assert!(hub_status(&root, "acme-widget", &name).present);
 }
 
 /// A hub whose name never reaches its own command line is still a hub.
@@ -777,9 +794,10 @@ fn a_dead_hubs_record_does_not_hold_the_name() {
 /// mistaken for a session that has gone.
 #[test]
 fn a_hub_whose_name_is_not_in_its_command_line_is_still_present() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     write_json(
-        &hub_record_path("acme-widget"),
+        &hub_record_path(&root, "acme-widget"),
         &json!({
             "pid": std::process::id(),
             // Nothing on this machine answers to this name.
@@ -790,12 +808,13 @@ fn a_hub_whose_name_is_not_in_its_command_line_is_still_present() {
         }),
     )
     .unwrap();
-    let status = hub_status("acme-widget", "adjutant-acme-widget");
+    let status = hub_status(&root, "acme-widget", "adjutant-acme-widget");
     assert!(status.present, "{status:?}");
     assert!(!status.stale);
     // And a launch arriving now is told someone holds it, rather than taking it.
     assert!(matches!(
         claim_hub(
+            &root,
             "acme-widget",
             "adjutant-acme-widget",
             "/src/widget",
@@ -812,12 +831,13 @@ fn a_hub_whose_name_is_not_in_its_command_line_is_still_present() {
 /// claims, and the second deletes *that* — a live record — and claims too.
 #[test]
 fn five_launches_inheriting_one_dead_record_still_leave_one_hub() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let mut child = std::process::Command::new("true").spawn().unwrap();
     let dead = child.id();
     child.wait().unwrap();
     write_json(
-        &hub_record_path("acme-widget"),
+        &hub_record_path(&root, "acme-widget"),
         &json!({
             "pid": dead,
             "hubName": "adjutant-acme-widget",
@@ -831,7 +851,9 @@ fn five_launches_inheriting_one_dead_record_still_leave_one_hub() {
     let outcomes: Vec<Result<Claim, String>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..5)
             .map(|_| {
-                scope.spawn(|| claim_hub("acme-widget", &name, "/src/widget", true, None, None))
+                scope.spawn(|| {
+                    claim_hub(&root, "acme-widget", &name, "/src/widget", true, None, None)
+                })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
@@ -852,11 +874,12 @@ fn five_launches_inheriting_one_dead_record_still_leave_one_hub() {
 /// away rather than left to decide for itself whether the first one is still alive.
 #[test]
 fn a_takeover_in_progress_turns_the_next_claim_away() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let mut child = std::process::Command::new("true").spawn().unwrap();
     let dead = child.id();
     child.wait().unwrap();
-    let record = hub_record_path("acme-widget");
+    let record = hub_record_path(&root, "acme-widget");
     write_json(
         &record,
         &json!({"pid": dead, "hubName": "adjutant-acme-widget", "psStarted": "long ago"}),
@@ -875,13 +898,13 @@ fn a_takeover_in_progress_turns_the_next_claim_away() {
 
     let name = this_process_name();
     assert!(matches!(
-        claim_hub("acme-widget", &name, "/src/widget", true, None, None),
+        claim_hub(&root, "acme-widget", &name, "/src/widget", true, None, None),
         Ok(Claim::Taken(_))
     ));
 
     // And once they are done, the next claim gets it.
     drop(lock);
-    claim_ours("acme-widget", &name);
+    claim_ours(&root, "acme-widget", &name);
 }
 
 // ── worker slots ─────────────────────────────────────────────────
@@ -1272,13 +1295,14 @@ fn a_worker_record_that_is_a_broken_symlink_is_not_read_as_the_repository_s_own_
 #[test]
 #[cfg(unix)]
 fn a_hub_record_that_is_a_broken_symlink_is_cannot_tell_not_gone() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let slug = "acme-widget";
-    assert_eq!(hub_liveness(slug), Liveness::Gone);
-    let record = hub_record_path(slug);
+    assert_eq!(hub_liveness(&root, slug), Liveness::Gone);
+    let record = hub_record_path(&root, slug);
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(record.with_file_name("gone.json"), &record).unwrap();
-    assert_eq!(hub_liveness(slug), Liveness::CannotTell);
+    assert_eq!(hub_liveness(&root, slug), Liveness::CannotTell);
 }
 
 #[test]
@@ -1346,54 +1370,60 @@ fn register_worker_persists_task_id_when_provided() {
 
 #[test]
 fn unregister_hub_if_unnamed_removes_only_a_record_naming_no_process() {
-    let _sandbox = Sandbox::empty();
-    let path = hub_record_path("acme-widget");
-    assert!(unregister_hub_if_unnamed("acme-widget").unwrap());
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let path = hub_record_path(&root, "acme-widget");
+    assert!(unregister_hub_if_unnamed(&root, "acme-widget").unwrap());
 
     write_json(
         &path,
         &json!({"pid": 4242, "psStarted": "Mon Jan  1 00:00:00 2024"}),
     )
     .unwrap();
-    assert!(!unregister_hub_if_unnamed("acme-widget").unwrap());
+    assert!(!unregister_hub_if_unnamed(&root, "acme-widget").unwrap());
     assert!(path.exists());
 
     write_json(&path, &json!({"hubName": "adjutant-acme-widget"})).unwrap();
-    assert!(unregister_hub_if_unnamed("acme-widget").unwrap());
+    assert!(unregister_hub_if_unnamed(&root, "acme-widget").unwrap());
     assert!(!path.exists());
 }
 
 #[test]
 fn unregister_hub_if_leaves_a_record_naming_another_process() {
-    let _sandbox = Sandbox::empty();
-    let path = hub_record_path("acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let path = hub_record_path(&root, "acme-widget");
     let record = json!({"pid": 4242, "psStarted": "Mon Jan  1 00:00:00 2024"});
     write_json(&path, &record).unwrap();
 
     // Another start time is another process on a recycled pid, and another pid is
     // another hub: neither is this call's to clear.
     assert_eq!(
-        unregister_hub_if("acme-widget", 4242, Some("later")),
+        unregister_hub_if(&root, "acme-widget", 4242, Some("later")),
         Ok(false)
     );
     assert_eq!(
-        unregister_hub_if("acme-widget", 4243, Some("Mon Jan  1 00:00:00 2024")),
+        unregister_hub_if(&root, "acme-widget", 4243, Some("Mon Jan  1 00:00:00 2024")),
         Ok(false)
     );
     assert!(path.exists());
 
     assert_eq!(
-        unregister_hub_if("acme-widget", 4242, Some("Mon Jan  1 00:00:00 2024")),
+        unregister_hub_if(&root, "acme-widget", 4242, Some("Mon Jan  1 00:00:00 2024")),
         Ok(true)
     );
     assert!(!path.exists());
     // Already gone is the same end state.
-    assert_eq!(unregister_hub_if("acme-widget", 4242, None), Ok(true));
+    assert_eq!(
+        unregister_hub_if(&root, "acme-widget", 4242, None),
+        Ok(true)
+    );
 }
 
 #[test]
 fn a_claimed_hub_record_carries_where_it_runs() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let terminal = crate::infra::terminal::SessionTerminal {
         backend: "tmux".into(),
         socket: Some("scratch".into()),
@@ -1402,6 +1432,7 @@ fn a_claimed_hub_record_carries_where_it_runs() {
         pane: Some("%3".into()),
     };
     match claim_hub(
+        &root,
         "acme-widget",
         "adjutant-acme-widget",
         "/src/widget",
@@ -1414,7 +1445,7 @@ fn a_claimed_hub_record_carries_where_it_runs() {
         Claim::Ours => {}
         Claim::Taken(status) => panic!("{status:?}"),
     }
-    let record = read_json(&hub_record_path("acme-widget")).unwrap();
+    let record = read_json(&hub_record_path(&root, "acme-widget")).unwrap();
     assert_eq!(record["terminal"]["socket"], "scratch");
     assert_eq!(record["terminal"]["pane"], "%3");
     assert_eq!(record["terminal"]["backend"], "tmux");
@@ -1436,16 +1467,16 @@ fn a_claimed_hub_record_carries_where_it_runs() {
             "terminal"
         ]
     );
-    let Recorded::Found(read) = read_hub_record("acme-widget") else {
+    let Recorded::Found(read) = read_hub_record(&root, "acme-widget") else {
         panic!("the record just written is readable");
     };
     assert_eq!(read.to_value(), record);
 
     // A launch that does not know where it is leaves the field out, as records always were.
-    unregister_hub("acme-widget").unwrap();
-    claim_ours("acme-widget", "adjutant-acme-widget");
+    unregister_hub(&root, "acme-widget").unwrap();
+    claim_ours(&root, "acme-widget", "adjutant-acme-widget");
     assert!(
-        read_json(&hub_record_path("acme-widget"))
+        read_json(&hub_record_path(&root, "acme-widget"))
             .unwrap()
             .get("terminal")
             .is_none()
@@ -1453,8 +1484,8 @@ fn a_claimed_hub_record_carries_where_it_runs() {
 }
 
 /// Writes `text` as the hub record of `slug`, creating the directory a claim would have.
-fn write_hub_record(slug: &str, text: &str) -> PathBuf {
-    let path = hub_record_path(slug);
+fn write_hub_record(root: &Path, slug: &str, text: &str) -> PathBuf {
+    let path = hub_record_path(root, slug);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, text).unwrap();
     path
@@ -1462,12 +1493,14 @@ fn write_hub_record(slug: &str, text: &str) -> PathBuf {
 
 #[test]
 fn a_hub_record_key_of_the_wrong_type_reads_as_absent_and_the_rest_still_reads() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let path = write_hub_record(
+        &root,
         "acme-widget",
         r#"{"pid":"4242","hubName":"adjutant-x","cwd":7,"startedAt":"s","psStarted":"   ","nameInCommand":"yes","terminal":{"socket":"s"}}"#,
     );
-    let Recorded::Found(record) = read_hub_record("acme-widget") else {
+    let Recorded::Found(record) = read_hub_record(&root, "acme-widget") else {
         panic!("a record with a wrong-typed key is still a record");
     };
     assert_eq!(record.pid, None);
@@ -1478,52 +1511,55 @@ fn a_hub_record_key_of_the_wrong_type_reads_as_absent_and_the_rest_still_reads()
     assert_eq!(recorded_anchor(&record), None);
     assert_eq!(record.other["pid"], "4242");
 
-    let status = hub_status("acme-widget", "adjutant-acme-widget");
+    let status = hub_status(&root, "acme-widget", "adjutant-acme-widget");
     assert!(status.stale);
     assert_eq!(status.pid, None);
     assert_eq!(status.cwd, None);
     assert_eq!(status.started_at.as_deref(), Some("s"));
 
     // A pid of the wrong type is still somebody's claim to the name.
-    assert_eq!(unregister_hub_if_unnamed("acme-widget"), Ok(false));
+    assert_eq!(unregister_hub_if_unnamed(&root, "acme-widget"), Ok(false));
     assert!(path.exists());
 }
 
 #[test]
 fn an_unknown_key_in_a_hub_record_is_kept_and_the_file_left_alone() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let path = write_hub_record(
+        &root,
         "acme-widget",
         r#"{"pid":4242,"hubName":"adjutant-x","cwd":"/src/widget","startedAt":"s","psStarted":"p","nameInCommand":true,"x-unknown":{"a":[1]}}"#,
     );
     let before = std::fs::read(&path).unwrap();
-    let Recorded::Found(record) = read_hub_record("acme-widget") else {
+    let Recorded::Found(record) = read_hub_record(&root, "acme-widget") else {
         panic!("readable");
     };
     assert_eq!(record.other["x-unknown"], json!({"a": [1]}));
-    hub_status("acme-widget", "adjutant-acme-widget");
+    hub_status(&root, "acme-widget", "adjutant-acme-widget");
     assert_eq!(std::fs::read(&path).unwrap(), before);
     assert_eq!(record.to_value(), read_json(&path).unwrap());
 }
 
 #[test]
 fn a_hub_record_that_is_not_an_object_is_unreadable_not_absent() {
-    let _sandbox = Sandbox::empty();
-    assert_eq!(read_hub_record("acme-widget"), Recorded::Absent);
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    assert_eq!(read_hub_record(&root, "acme-widget"), Recorded::Absent);
 
-    write_hub_record("acme-widget", "[1,2]");
-    assert_eq!(read_hub_record("acme-widget"), Recorded::Unreadable);
+    write_hub_record(&root, "acme-widget", "[1,2]");
+    assert_eq!(read_hub_record(&root, "acme-widget"), Recorded::Unreadable);
     assert_eq!(
-        holder(&hub_record_path("acme-widget")),
+        holder(&hub_record_path(&root, "acme-widget")),
         Liveness::CannotTell
     );
-    assert!(!hub_status("acme-widget", "adjutant-acme-widget").stale);
+    assert!(!hub_status(&root, "acme-widget", "adjutant-acme-widget").stale);
 
-    write_hub_record("acme-widget", "{ not json }");
-    assert_eq!(read_hub_record("acme-widget"), Recorded::Unreadable);
+    write_hub_record(&root, "acme-widget", "{ not json }");
+    assert_eq!(read_hub_record(&root, "acme-widget"), Recorded::Unreadable);
 
-    write_hub_record("other", r#"{"cwd":"/src/other"}"#);
-    let found = hub_records();
+    write_hub_record(&root, "other", r#"{"cwd":"/src/other"}"#);
+    let found = hub_records(&root);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].0, "other");
     assert_eq!(found[0].1.cwd.as_deref(), Some("/src/other"));
@@ -1603,4 +1639,31 @@ fn a_removing_mark_is_found_by_the_spelling_it_was_made_with_and_after_the_direc
     drop(mark);
     assert!(!is_being_removed(&main, &link.join("wt")));
     assert!(!is_being_removed(&main, &real.join("wt")));
+}
+
+/// A relative state directory is the main checkout's, wherever the command was typed: the
+/// directory `adj hub` reads.
+#[test]
+fn a_context_takes_a_relative_state_dir_under_its_main_checkout() {
+    let sandbox = Sandbox::empty();
+    let checkout = tempfile::tempdir().unwrap();
+    // An absolute one is itself, whatever the anchor.
+    assert_eq!(state_root(Some(checkout.path())), sandbox.state());
+    let _state =
+        crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "state-here");
+    let repo = crate::kernel::identity::RepoInfo {
+        main: checkout.path().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = context_of(repo).unwrap();
+    assert_eq!(ctx.state, checkout.path().join("state-here"));
+    assert_eq!(
+        state_root(None),
+        std::env::current_dir().unwrap().join("state-here")
+    );
 }

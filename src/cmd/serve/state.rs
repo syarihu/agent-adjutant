@@ -170,7 +170,12 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         .find(|h| h.slug == repo.slug)
         .map(|h| h.state.clone())
         .unwrap_or_else(|| {
-            let status = messaging::hub_status_with(&processes, &repo.slug, &repo.hub_name);
+            let status = messaging::hub_status_with(
+                &server.ctx.state,
+                &processes,
+                &repo.slug,
+                &repo.hub_name,
+            );
             session::RepoHubState {
                 present: status.present,
                 stale: status.stale,

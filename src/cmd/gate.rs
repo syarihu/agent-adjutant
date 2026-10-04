@@ -14,15 +14,15 @@ use crate::messaging;
 use std::path::{Path, PathBuf};
 
 pub fn dir(ctx: &Context) -> PathBuf {
-    gate::dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
+    gate::dir(&ctx.state, &ctx.repo.slug)
 }
 
 pub fn answered_dir(ctx: &Context) -> PathBuf {
-    gate::answered_dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
+    gate::answered_dir(&ctx.state, &ctx.repo.slug)
 }
 
 pub fn records_dir(ctx: &Context) -> PathBuf {
-    gate::records_dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
+    gate::records_dir(&ctx.state, &ctx.repo.slug)
 }
 
 /// A gate by id, open or kept as a record. Open first: that is what an id usually names, and

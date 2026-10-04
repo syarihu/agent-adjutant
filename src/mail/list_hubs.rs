@@ -31,6 +31,7 @@ pub fn all_repo_hubs_among_with(
 ) -> Vec<RepoHub> {
     use std::collections::HashMap;
 
+    let root = state_root(Some(Path::new(&repo.main)));
     let (default_slug, default_hub_name) = match &repo.hub {
         Some(_) => {
             let default_repo = repo
@@ -55,7 +56,7 @@ pub fn all_repo_hubs_among_with(
     }
 
     // 2. Discover from state_dir/hubs
-    for (slug, record) in hub_records() {
+    for (slug, record) in hub_records(&root) {
         let cwd_matches = record.cwd.as_deref().is_some_and(|cwd| {
             cwd == repo.main
                 || matches!(
@@ -100,7 +101,7 @@ pub fn all_repo_hubs_among_with(
 
     // 4. Saved sessions in state_dir/sessions only say more about a hub already listed: a
     // parent-task hub nobody has a record or a checkout for is finished, and stays gone.
-    for saved in hub_sessions_for(&repo.nwo) {
+    for saved in hub_sessions_for(&root, &repo.nwo) {
         let slug = crate::kernel::identity::slug_for(&repo.nwo, saved.hub.as_deref());
         let Some(entry) = hubs_by_slug.get_mut(&slug) else {
             continue;
@@ -123,11 +124,11 @@ pub fn all_repo_hubs_among_with(
             // A record written before it carried the key: the saved session may still say,
             // and failing that the slug itself does, when it can be read back unambiguously.
             if key.is_none() && parent {
-                key = hub_session(&slug)
+                key = hub_session(&root, &slug)
                     .and_then(|session| session.hub)
                     .or_else(|| crate::kernel::identity::hub_key_from_slug(&repo.nwo, &slug));
             }
-            let status = hub_status_with(table, &slug, &hub_name);
+            let status = hub_status_with(&root, table, &slug, &hub_name);
             let entries = list(&slug);
             let inbox_count = entries.len();
             // `list` is oldest first, so the newest are at the end.

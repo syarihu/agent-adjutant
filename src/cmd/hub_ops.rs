@@ -134,13 +134,15 @@ pub fn hub_in_tab(
     terminal: &crate::infra::terminal::TerminalSettings,
     dry_run: bool,
 ) -> Result<TabOutcome, String> {
-    let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
+    let status = messaging::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
     if status.present {
         return Ok(TabOutcome::AlreadyRunning(status));
     }
     asked_session(ctx, start)?;
-    match messaging::hub_liveness(&ctx.repo.slug) {
-        messaging::Liveness::CannotTell => Err(messaging::hub_cannot_tell(&ctx.repo.slug)),
+    match messaging::hub_liveness(&ctx.state, &ctx.repo.slug) {
+        messaging::Liveness::CannotTell => {
+            Err(messaging::hub_cannot_tell(&ctx.state, &ctx.repo.slug))
+        }
         messaging::Liveness::Alive => Ok(TabOutcome::AlreadyRunning(status)),
         messaging::Liveness::Gone => {
             open_hub_tab(ctx, repo_arg, extra, start, dashboard, terminal, dry_run)
@@ -174,7 +176,8 @@ pub fn hub_startable(terminal: &crate::infra::terminal::TerminalSettings) -> boo
 /// meantime — and the record cleared would be its.
 pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let slug = &ctx.repo.slug;
-    let read = messaging::read_hub_record(slug);
+    let root = &ctx.state;
+    let read = messaging::read_hub_record(root, slug);
     let record = match &read {
         messaging::Recorded::Found(r) => Some(r),
         _ => None,
@@ -184,8 +187,8 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let named = record.and_then(|r| Some((r.pid? as u32, r.ps_started.clone())));
     let Some((pid, started)) = named else {
         // No record, or none that names a process: no hub, and nothing that is safe to clear.
-        return match messaging::hub_liveness(slug) {
-            messaging::Liveness::CannotTell => Err(messaging::hub_cannot_tell(slug)),
+        return match messaging::hub_liveness(root, slug) {
+            messaging::Liveness::CannotTell => Err(messaging::hub_cannot_tell(root, slug)),
             _ => Ok(false),
         };
     };
@@ -197,10 +200,10 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     }
     match messaging::hub_process_liveness(pid, started.as_deref()) {
         messaging::Liveness::Gone => {
-            messaging::unregister_hub_if(slug, pid, started.as_deref())?;
+            messaging::unregister_hub_if(root, slug, pid, started.as_deref())?;
             return Ok(false);
         }
-        messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(slug)),
+        messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(root, slug)),
         messaging::Liveness::Alive => {}
     }
     let terminal_recorded = record.and_then(|r| r.terminal.clone());
@@ -239,7 +242,7 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
         GONE_POLL,
     ) {
         messaging::Liveness::Gone => {
-            messaging::unregister_hub_if(slug, pid, started.as_deref())?;
+            messaging::unregister_hub_if(root, slug, pid, started.as_deref())?;
             Ok(true)
         }
         _ => Err(format!(
@@ -270,7 +273,7 @@ fn open_hub_tab(
     terminal: &crate::infra::terminal::TerminalSettings,
     dry_run: bool,
 ) -> Result<terminal::Performed, String> {
-    let mut parts = forwarded_env();
+    let mut parts = forwarded_env(&ctx.state);
     parts.extend([exe_path(), "hub".to_string()]);
     if let Some(repo) = repo_arg {
         parts.push("--repo".to_string());
@@ -359,20 +362,17 @@ pub fn hub(
             ctx.repo.nwo
         );
     }
-    // The directory move comes first, and not only because the hub has to run there: a
-    // relative `ADJUTANT_STATE_DIR` is resolved against the working directory, so looking or
-    // claiming before moving reads and writes the record under wherever `adj hub` happened to
-    // be typed, and the hub then goes looking for it somewhere else. It is above the check
-    // rather than beside the claim because every route below this line reads that record: the
-    // claim used to be the only one, and recovered a missed record by answering `Taken`, which
-    // the tab route has no equivalent of — it would open a tab for a hub already running.
-    // Nothing has been written at this point, so a failure here has nothing to undo.
+    // The directory move comes first: the hub runs in the main checkout, and the board's
+    // records below still read the state dir against the working directory until #327.
+    // `ctx.state` itself is taken against the main checkout, so the hub's own records are the
+    // same wherever this was typed. Nothing has been written at this point, so a failure here
+    // has nothing to undo.
     std::env::set_current_dir(&ctx.repo.main)
         .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
 
     // Asked before the command is even built, so the common "it is already up" case costs
     // nothing. It is not what *enforces* one hub per repository — the claim below is.
-    let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
+    let status = messaging::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
     if status.present {
         return go_to_running_hub(&ctx, &status, dry_run);
     }
@@ -473,6 +473,7 @@ pub fn hub(
 
     let named = command.contains(&ctx.repo.hub_name);
     match messaging::claim_hub(
+        &ctx.state,
         &ctx.repo.slug,
         &ctx.repo.hub_name,
         &ctx.repo.main,
@@ -495,6 +496,7 @@ pub fn hub(
     if resumed.is_none() {
         let saved = match records {
             true => messaging::save_hub_session(
+                &ctx.state,
                 &ctx.repo.slug,
                 &ctx.repo.nwo,
                 ctx.repo.hub.as_deref(),
@@ -502,7 +504,7 @@ pub fn hub(
                 &session,
             )
             .map(|_| ()),
-            false => messaging::forget_hub_session(&ctx.repo.slug),
+            false => messaging::forget_hub_session(&ctx.state, &ctx.repo.slug),
         };
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this hub");
@@ -522,7 +524,7 @@ pub fn hub(
     // server — can see is this hub's own, never one inherited from whatever started this.
     let error = agent_command(&command).exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
-    let _ = messaging::unregister_hub(&ctx.repo.slug);
+    let _ = messaging::unregister_hub(&ctx.state, &ctx.repo.slug);
     Err(format!("cannot start the hub: {error}"))
 }
 
@@ -549,8 +551,8 @@ fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
     if window <= 0.0 {
         return None;
     }
-    let saved = messaging::hub_session(&ctx.repo.slug)?;
-    let last = messaging::hub_last_alive(&ctx.repo.slug, &saved.session_id)?;
+    let saved = messaging::hub_session(&ctx.state, &ctx.repo.slug)?;
+    let last = messaging::hub_last_alive(&ctx.state, &ctx.repo.slug, &saved.session_id)?;
     let age = crate::infra::clock::now_secs().saturating_sub(last).max(0);
     if age as f64 > window * 3600.0 {
         return None;
@@ -595,11 +597,11 @@ pub(super) fn ago(secs: i64) -> String {
 /// repository's own hub when it was a parent task's, or the other way round — so the refusal
 /// lists what this repository does have rather than only saying "no".
 fn saved_hub_session(ctx: &Context) -> Result<messaging::SavedSession, String> {
-    if let Some(saved) = messaging::hub_session(&ctx.repo.slug) {
+    if let Some(saved) = messaging::hub_session(&ctx.state, &ctx.repo.slug) {
         return Ok(saved);
     }
     let mut message = format!("{} has no saved session to resume.", ctx.repo.hub_name);
-    let others = messaging::hub_sessions_for(&ctx.repo.nwo);
+    let others = messaging::hub_sessions_for(&ctx.state, &ctx.repo.nwo);
     if others.is_empty() {
         message.push_str(&format!(" No hub of {} has one.", ctx.repo.nwo));
     } else {
@@ -643,7 +645,10 @@ pub(super) fn resume_template<'a>(
 /// left behind by one that did not.
 pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
     let info = resolve(repo_arg, hub_arg)?;
-    messaging::unregister_hub(&info.slug)?;
+    messaging::unregister_hub(
+        &crate::registry::state_root(Some(std::path::Path::new(&info.main))),
+        &info.slug,
+    )?;
     println!("unregistered {}", info.hub_name);
     Ok(())
 }
@@ -695,10 +700,11 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             children: 0,
         });
     closable_check(&info, &hub)?;
+    let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
     // This ends no process, so a hub that is still running would be left running with no
     // record, and the next `adj hub` would start a second one beside it. Only the hub itself
     // may clear its own record; from anywhere else it has to be stopped first.
-    let recorded = messaging::read_hub_record(&hub.slug);
+    let recorded = messaging::read_hub_record(&root, &hub.slug);
     let named = match &recorded {
         messaging::Recorded::Found(r) => r.pid.map(|pid| (pid as u32, r.ps_started.clone())),
         _ => None,
@@ -707,7 +713,9 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
         let pid = *pid;
         match messaging::hub_process_liveness(pid, started.as_deref()) {
             messaging::Liveness::Gone => {}
-            messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
+            messaging::Liveness::CannotTell => {
+                return Err(messaging::hub_cannot_tell(&root, &hub.slug));
+            }
             messaging::Liveness::Alive => {
                 if !messaging::is_self_or_descendant_of(pid) {
                     return Err(format!(
@@ -722,9 +730,11 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
         // A record that is there and cannot be read is asked the way `stop_hub` asks, and
         // nobody can be told to be the hub itself. A readable one that names no process is
         // `Gone` to `hub_liveness`, so it goes straight on to be cleared.
-        match messaging::hub_liveness(&hub.slug) {
+        match messaging::hub_liveness(&root, &hub.slug) {
             messaging::Liveness::Gone => {}
-            messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),
+            messaging::Liveness::CannotTell => {
+                return Err(messaging::hub_cannot_tell(&root, &hub.slug));
+            }
             messaging::Liveness::Alive => {
                 return Err(format!(
                     "{} is still running; close it from the board, or stop it first \
@@ -737,8 +747,10 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
     // Under the claim lock and only while the record is still the one that was looked at:
     // a hub that registered since is not this call's to unregister.
     let removed = match &named {
-        Some((pid, started)) => messaging::unregister_hub_if(&hub.slug, *pid, started.as_deref())?,
-        None => messaging::unregister_hub_if_unnamed(&hub.slug)?,
+        Some((pid, started)) => {
+            messaging::unregister_hub_if(&root, &hub.slug, *pid, started.as_deref())?
+        }
+        None => messaging::unregister_hub_if_unnamed(&root, &hub.slug)?,
     };
     if !removed {
         return Err(format!("{} changed while it was being closed", hub.name));

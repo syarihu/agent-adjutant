@@ -131,7 +131,7 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
         .map(|a| {
             let status = crate::kernel::identity::hub_name(&a.nwo, a.hub.as_deref())
                 .ok()
-                .map(|name| messaging::hub_status_with(&table, &a.slug, &name));
+                .map(|name| messaging::hub_status_with(&state_dir, &table, &a.slug, &name));
             let present = status.as_ref().is_some_and(|s| s.present);
             let tasks = task::list(&task::dir(&state_dir, &a.slug));
             let mut gates = gate::list(&gate::dir(&state_dir, &a.slug));
@@ -159,8 +159,9 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
             let last_alive = if present {
                 None
             } else {
-                messaging::hub_session(&a.slug)
-                    .and_then(|saved| messaging::hub_last_alive(&a.slug, &saved.session_id))
+                messaging::hub_session(&state_dir, &a.slug).and_then(|saved| {
+                    messaging::hub_last_alive(&state_dir, &a.slug, &saved.session_id)
+                })
             };
             let finished = a.hub.is_some()
                 && !present
@@ -210,7 +211,7 @@ pub(super) fn seed_boards() {
     if let Some(repo) = checkout_here() {
         note_board(&repo);
     }
-    for (slug, record) in messaging::hub_records() {
+    for (slug, record) in messaging::hub_records(&crate::registry::state_root(None)) {
         let Some(cwd) = record.cwd.as_deref() else {
             continue;
         };

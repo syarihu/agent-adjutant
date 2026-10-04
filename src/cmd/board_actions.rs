@@ -37,6 +37,7 @@ fn own_hub_context(
     Ok(Context {
         repo: server.ctx.repo.clone().addressed(None)?,
         resolved: server.ctx.resolved.clone(),
+        state: server.ctx.state.clone(),
         settings,
     })
 }
@@ -443,10 +444,9 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
 
     // The tasks that name this worktree, in whichever hub they were made.
     let hubs = messaging::all_repo_hubs(repo);
-    let state_dir = crate::infra::paths::state_dir();
     let mut tasks: Vec<(String, task::Task)> = Vec::new();
     for hub in &hubs {
-        for t in task::list(&task::dir(&state_dir, &hub.slug)) {
+        for t in task::list(&task::dir(&server.ctx.state, &hub.slug)) {
             if t.worktree
                 .as_deref()
                 .is_some_and(|w| same_path(w, worktree))
@@ -562,6 +562,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
         let ctx = Context {
             repo: addressed,
             resolved: server.ctx.resolved.clone(),
+            state: server.ctx.state.clone(),
             settings: settings.clone(),
         };
         match super::task::update(&ctx, &t.id, &json!({ "status": "done", "handOver": false })) {
@@ -841,6 +842,7 @@ pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, St
     let ctx = Context {
         repo: server.ctx.repo.clone().addressed(Some(key))?,
         resolved: server.ctx.resolved.clone(),
+        state: server.ctx.state.clone(),
         settings,
     };
     let hub = json!({ "id": format!("hub-{key}"), "slug": ctx.repo.slug });

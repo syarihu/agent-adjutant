@@ -3,13 +3,13 @@
 use super::store::{hub_record_path, read_record, worker_record_path};
 use super::*;
 
-pub fn read_hub_record(slug: &str) -> Recorded<HubRecord> {
-    read_record(&hub_record_path(slug), HubRecord::from_value)
+pub fn read_hub_record(root: &Path, slug: &str) -> Recorded<HubRecord> {
+    read_record(&hub_record_path(root, slug), HubRecord::from_value)
 }
 
 /// Every readable `hubs/*.json`, by slug (the file stem). A missing directory is no records.
-pub fn hub_records() -> Vec<(String, HubRecord)> {
-    let Ok(entries) = std::fs::read_dir(state_dir().join("hubs")) else {
+pub fn hub_records(root: &Path) -> Vec<(String, HubRecord)> {
+    let Ok(entries) = std::fs::read_dir(root.join("hubs")) else {
         return Vec::new();
     };
     entries
@@ -28,12 +28,12 @@ pub fn hub_records() -> Vec<(String, HubRecord)> {
         .collect()
 }
 
-pub fn hub_status(slug: &str, hub_name: &str) -> HubStatus {
-    hub_status_with(&ProcessTable::each(), slug, hub_name)
+pub fn hub_status(root: &Path, slug: &str, hub_name: &str) -> HubStatus {
+    hub_status_with(root, &ProcessTable::each(), slug, hub_name)
 }
 
 /// `hub_status`, asking `table` when the hub's process started.
-pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubStatus {
+pub fn hub_status_with(root: &Path, table: &ProcessTable, slug: &str, hub_name: &str) -> HubStatus {
     let mut status = HubStatus {
         slug: slug.to_string(),
         hub_name: hub_name.to_string(),
@@ -43,7 +43,7 @@ pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubS
         started_at: None,
         stale: false,
     };
-    let Recorded::Found(record) = read_hub_record(slug) else {
+    let Recorded::Found(record) = read_hub_record(root, slug) else {
         return status;
     };
     status.pid = record.pid.map(|p| p as u32);

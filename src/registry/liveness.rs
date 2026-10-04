@@ -205,8 +205,8 @@ pub(super) fn process_matches_with(
 /// answering `None` can only mean unreadable. Asked cold, that same `None` is mostly the
 /// ordinary "nothing has ever registered here" — so existence is established first, the way
 /// `read_worker` establishes it, and only then is the record read.
-pub fn hub_liveness(slug: &str) -> Liveness {
-    let path = hub_record_path(slug);
+pub fn hub_liveness(root: &Path, slug: &str) -> Liveness {
+    let path = hub_record_path(root, slug);
     // `record_exists` rather than `exists`, which answers "no" to every error it meets — and
     // "no" is the answer that goes on to start a hub. A symlink pointing nowhere is
     // something here, the same thing the claim's own `hard_link` meets and refuses on.

@@ -334,8 +334,9 @@ travels as a flag; these two have none, and losing them does not fail — it spl
 reads the default config and the default state directory, so the worker it starts registers
 in one world while the hub that dispatched it waits in another, and both halves look healthy
 from where they stand. A relative `ADJUTANT_STATE_DIR` is forwarded as an absolute path,
-resolved against the directory of the process that opens the tab (and the resident server gets
-it the same way).
+resolved against the repository's main checkout, the directory `adj hub` reads wherever the
+command was typed (the resident server still gets it resolved against the directory of the
+process that starts it).
 
 `{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
 terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A

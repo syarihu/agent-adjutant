@@ -26,6 +26,7 @@ use serde_json::Map;
 /// A few retries, not a thousand: each one is two calls to `ps`, and a record that keeps
 /// coming back means someone else keeps winning it.
 pub fn claim_hub(
+    root: &Path,
     slug: &str,
     hub_name: &str,
     cwd: &str,
@@ -33,7 +34,7 @@ pub fn claim_hub(
     hub: Option<&str>,
     terminal: Option<&crate::infra::terminal::SessionTerminal>,
 ) -> Result<Claim, String> {
-    let path = hub_record_path(slug);
+    let path = hub_record_path(root, slug);
     // `terminal` is where this hub runs, so that something outside its tab — the board's stop
     // button — can find its pane without guessing from the pid. Absent for a record written
     // before this, which readers fall back from.
@@ -55,7 +56,7 @@ pub fn claim_hub(
         Err(CreateError::Failed(message)) => return Err(message),
     }
     match holder(&path) {
-        Liveness::Alive => return Ok(Claim::Taken(Box::new(hub_status(slug, hub_name)))),
+        Liveness::Alive => return Ok(Claim::Taken(Box::new(hub_status(root, slug, hub_name)))),
         Liveness::CannotTell => return Err(cannot_tell(&path)),
         Liveness::Gone => {}
     }
@@ -72,10 +73,16 @@ pub fn claim_hub(
     // "this record is dead" and "this record is mine". A lock left behind by a crash goes
     // stale on a clock, which is safe here in a way it would never be for the hub record
     // itself: this one is held for microseconds, so an old one is evidence, not a guess.
-    take_over(&path, &record, slug, hub_name)
+    take_over(root, &path, &record, slug, hub_name)
 }
 
-fn take_over(path: &Path, record: &Value, slug: &str, hub_name: &str) -> Result<Claim, String> {
+fn take_over(
+    root: &Path,
+    path: &Path,
+    record: &Value,
+    slug: &str,
+    hub_name: &str,
+) -> Result<Claim, String> {
     // An advisory lock held on an open file, not a file whose existence is the lock.
     //
     // A lock made of a file has to answer "what if its holder died holding it", and every
@@ -89,19 +96,21 @@ fn take_over(path: &Path, record: &Value, slug: &str, hub_name: &str) -> Result<
     // Someone else is part-way through taking this name. Whatever they end up with, it is
     // not ours — the same answer we would have been given by arriving after they finished.
     let Some(lock) = crate::infra::fs::try_lock(&lock_path)? else {
-        return Ok(Claim::Taken(Box::new(hub_status(slug, hub_name))));
+        return Ok(Claim::Taken(Box::new(hub_status(root, slug, hub_name))));
     };
 
     // Asked again inside the lock: the record may have been taken over while we were
     // getting in, and the answer from outside is the one that was about to go stale.
     let claimed = match holder(path) {
-        Liveness::Alive => Ok(Claim::Taken(Box::new(hub_status(slug, hub_name)))),
+        Liveness::Alive => Ok(Claim::Taken(Box::new(hub_status(root, slug, hub_name)))),
         Liveness::CannotTell => Err(cannot_tell(path)),
         Liveness::Gone => {
             remove_if_present(path)?;
             match create_new_json(path, record) {
                 Ok(()) => Ok(Claim::Ours),
-                Err(CreateError::Taken) => Ok(Claim::Taken(Box::new(hub_status(slug, hub_name)))),
+                Err(CreateError::Taken) => {
+                    Ok(Claim::Taken(Box::new(hub_status(root, slug, hub_name))))
+                }
                 Err(CreateError::Failed(message)) => Err(message),
             }
         }
@@ -121,6 +130,6 @@ fn cannot_tell(path: &Path) -> String {
 ///
 /// A caller that asks `hub_liveness` first is refusing on the claim's behalf, so it says
 /// what the claim would have said — same record named, same thing to go and look at.
-pub fn hub_cannot_tell(slug: &str) -> String {
-    cannot_tell(&hub_record_path(slug))
+pub fn hub_cannot_tell(root: &Path, slug: &str) -> String {
+    cannot_tell(&hub_record_path(root, slug))
 }
