@@ -59,6 +59,42 @@ pub mod label {
 /// What a session with no instruction yet is told to do.
 pub const NO_INSTRUCTION: &str = "No instruction yet. Greet the person in this tab, say you are ready, and wait for what they want.";
 
+/// Which tool the worker reads the ticket with. `None` is a task with no issue, written `-`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tracker {
+    Github,
+    GithubProject,
+    Jira,
+    Linear,
+    None,
+}
+
+impl Tracker {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tracker::Github => "github",
+            Tracker::GithubProject => "github-project",
+            Tracker::Jira => "jira",
+            Tracker::Linear => "linear",
+            Tracker::None => "-",
+        }
+    }
+
+    /// The tracker a person names. Matched exactly, as the list it replaces was.
+    pub fn parse(text: &str) -> Result<Tracker, String> {
+        match text {
+            "github" => Ok(Tracker::Github),
+            "github-project" => Ok(Tracker::GithubProject),
+            "jira" => Ok(Tracker::Jira),
+            "linear" => Ok(Tracker::Linear),
+            "-" => Ok(Tracker::None),
+            _ => Err(format!(
+                "no such tracker: {text} (github, github-project, jira, linear or -)"
+            )),
+        }
+    }
+}
+
 /// Everything a task's brief says. Text the person or the tracker wrote is held as it was
 /// given; `render_task` is what keeps it from passing for a line of its own.
 pub struct TaskBrief {
@@ -66,7 +102,7 @@ pub struct TaskBrief {
     pub key: String,
     pub title: String,
     /// The `type` of the task's source: the worker reads the ticket with the tool it names.
-    pub tracker: String,
+    pub tracker: Tracker,
     pub url: Option<String>,
     /// The request text, written in place of the URL when there is none.
     pub request: String,
@@ -197,7 +233,7 @@ pub fn render_task(brief: &TaskBrief) -> String {
         label::TASK,
         one_line(&brief.key),
         one_line(&brief.title),
-        one_line(&brief.tracker)
+        brief.tracker.as_str()
     ));
     match brief.url.as_deref().filter(|url| !url.trim().is_empty()) {
         Some(url) => indented(&mut out, &one_line(url)),
@@ -331,7 +367,7 @@ pub fn tracker_and_key(
     url: &str,
     sources: &[Value],
     issue_keys: &Map<String, Value>,
-) -> Option<(String, String)> {
+) -> Option<(Tracker, String)> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
@@ -344,13 +380,13 @@ pub fn tracker_and_key(
         && let [_team, "issue", key, ..] = path.as_slice()
         && is_key(key)
     {
-        return Some(("linear".to_string(), key.to_string()));
+        return Some((Tracker::Linear, key.to_string()));
     }
     if let Some(at) = path.iter().position(|part| *part == "browse")
         && let Some(key) = path.get(at + 1)
         && is_key(key)
     {
-        return Some(("jira".to_string(), key.to_string()));
+        return Some((Tracker::Jira, key.to_string()));
     }
     if let [owner, repo, "issues", number, ..] = path.as_slice()
         && !number.is_empty()
@@ -378,16 +414,16 @@ pub fn tracker_and_key(
                     .and_then(Value::as_str)
                     .is_some_and(|name| name.eq_ignore_ascii_case(&repo))
         }) {
-            "github"
+            Tracker::Github
         } else if sources
             .iter()
             .any(|source| type_of(source).as_deref() == Some("github-project"))
         {
-            "github-project"
+            Tracker::GithubProject
         } else {
-            "github"
+            Tracker::Github
         };
-        return Some((tracker.to_string(), key));
+        return Some((tracker, key));
     }
     None
 }
@@ -415,7 +451,7 @@ mod tests {
         TaskBrief {
             key: "WID-12".to_string(),
             title: "Fix login".to_string(),
-            tracker: "github".to_string(),
+            tracker: Tracker::Github,
             url: Some("https://github.com/acme/widget/issues/12".to_string()),
             request: "the request".to_string(),
             branch: "me/wid-12".to_string(),
@@ -493,7 +529,7 @@ mod tests {
     fn a_task_with_no_url_carries_the_request_text() {
         let mut brief = sample();
         brief.key = "-".to_string();
-        brief.tracker = "-".to_string();
+        brief.tracker = Tracker::None;
         brief.url = None;
         brief.request = "Why is the build slow?\nLook at CI.\n".to_string();
         let text = render_task(&brief);
@@ -567,6 +603,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tracker_is_read_back_from_its_name_and_anything_else_is_refused() {
+        for tracker in [
+            Tracker::Github,
+            Tracker::GithubProject,
+            Tracker::Jira,
+            Tracker::Linear,
+            Tracker::None,
+        ] {
+            assert_eq!(Tracker::parse(tracker.as_str()), Ok(tracker));
+        }
+        assert_eq!(
+            Tracker::parse("bogus"),
+            Err("no such tracker: bogus (github, github-project, jira, linear or -)".to_string())
+        );
+        assert!(Tracker::parse(" jira").is_err());
+        assert!(Tracker::parse("GitHub").is_err());
+    }
+
+    #[test]
     fn tracker_and_key_reads_each_tracker() {
         let sources = vec![
             json!({"type": "github", "issueRepo": "acme/widget"}),
@@ -575,23 +630,23 @@ mod tests {
         let keys = json!({"acme/widget": "WID", "acme/other": "WEB"});
         let keys = keys.as_object().unwrap();
         let read = |url: &str| tracker_and_key(url, &sources, keys);
-        let pair = |tracker: &str, key: &str| Some((tracker.to_string(), key.to_string()));
+        let pair = |tracker: Tracker, key: &str| Some((tracker, key.to_string()));
 
         assert_eq!(
             read("https://github.com/acme/widget/issues/12"),
-            pair("github", "WID-12")
+            pair(Tracker::Github, "WID-12")
         );
         assert_eq!(
             read("https://github.com/Acme/Other/issues/7#issuecomment-1"),
-            pair("github-project", "WEB-7")
+            pair(Tracker::GithubProject, "WEB-7")
         );
         assert_eq!(
             read("https://example.atlassian.net/browse/ABC-345?focusedId=1"),
-            pair("jira", "ABC-345")
+            pair(Tracker::Jira, "ABC-345")
         );
         assert_eq!(
             read("https://linear.app/acme/issue/XYZ-9/fix-the-thing"),
-            pair("linear", "XYZ-9")
+            pair(Tracker::Linear, "XYZ-9")
         );
         assert_eq!(read("https://github.com/acme/unknown/issues/3"), None);
         assert_eq!(read("not a url"), None);
@@ -599,7 +654,7 @@ mod tests {
         assert_eq!(read("https://example.atlassian.net/browse/lower"), None);
         assert_eq!(
             read("https://example.atlassian.net/browse/MY_ABC-12"),
-            pair("jira", "MY_ABC-12")
+            pair(Tracker::Jira, "MY_ABC-12")
         );
         assert!(!is_key("_X-1"));
         assert!(is_key("MY-ABC-12"));

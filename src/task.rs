@@ -31,6 +31,7 @@ mod refresh;
 mod remove;
 mod store;
 mod update;
+mod write_brief;
 
 pub use create::*;
 pub use fetch_issue::*;
@@ -47,6 +48,7 @@ pub use pick_review_engine::*;
 pub use refresh::*;
 pub use remove::*;
 pub use update::*;
+pub use write_brief::*;
 // For their callers in `cmd`: `save` and `lock` until #362.
 pub use store::{lock, save};
 // The board's fixture in src/cmd/serve/tests.rs writes a record by hand.

@@ -72,7 +72,7 @@ fn the_brief_has_no_implementer_line() {
     let written = crate::kernel::brief::render_task(&crate::kernel::brief::TaskBrief {
         key: "WID-1".to_string(),
         title: "t".to_string(),
-        tracker: "github".to_string(),
+        tracker: crate::kernel::brief::Tracker::Github,
         url: None,
         request: String::new(),
         branch: "b".to_string(),
@@ -86,21 +86,6 @@ fn the_brief_has_no_implementer_line() {
         verify: vec![],
     });
     assert!(!written.to_lowercase().contains("implementer"), "{written}");
-}
-
-#[test]
-fn a_review_task_is_written_as_the_pr_the_worker_branches_on() {
-    use task::DoneWhen;
-    assert_eq!(brief_done_when(DoneWhen::Review), "up to a PR");
-    assert_eq!(brief_done_when(DoneWhen::Pr), "up to a PR");
-    assert_eq!(
-        brief_done_when(DoneWhen::Verify),
-        "up to handing over for verification"
-    );
-    assert_eq!(
-        brief_done_when(DoneWhen::ReportOnly),
-        "investigation only (report and stop)"
-    );
 }
 
 /// Only a backlog task is said to be kept in the backlog; a task further along is not

@@ -10,8 +10,7 @@ pub enum CopilotReview {
 }
 
 impl CopilotReview {
-    // The brief still spells the setting from the config key; this is the typed side's spelling.
-    #[allow(dead_code)]
+    /// How the brief writes it.
     pub fn as_str(self) -> &'static str {
         match self {
             CopilotReview::Ask => "ask",
