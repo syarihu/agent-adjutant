@@ -895,3 +895,128 @@ fn the_hub_is_woken_for_actionable_messages_and_not_for_self_notes_or_acks() {
         "[ACK:123] received"
     ));
 }
+
+fn performed(ran: bool, screen: bool, description: &str) -> crate::infra::terminal::Performed {
+    crate::infra::terminal::Performed {
+        description: description.to_string(),
+        script: String::new(),
+        ran,
+        screen,
+    }
+}
+
+#[test]
+fn nobody_running_is_not_running_and_no_wake_is_tried() {
+    for wake_needed in [true, false] {
+        let reached = reached_after(false, wake_needed, || panic!("no one to wake"));
+        assert_eq!(reached, Reached::NotRunning);
+    }
+}
+
+#[test]
+fn a_wake_that_is_not_needed_is_not_tried() {
+    let reached = reached_after(true, false, || panic!("no wake was called for"));
+    assert_eq!(
+        reached,
+        Reached::Running {
+            wake: NotWoken::NotNeeded
+        }
+    );
+}
+
+#[test]
+fn a_wake_that_ran_is_woken() {
+    let reached = reached_after(true, true, || Some(Ok(performed(true, false, "woke"))));
+    assert_eq!(reached, Reached::Woken);
+}
+
+#[test]
+fn a_wake_stopped_by_the_screen_says_why() {
+    let reached = reached_after(true, true, || {
+        Some(Ok(performed(false, true, "a question is showing")))
+    });
+    assert_eq!(
+        reached,
+        Reached::Running {
+            wake: NotWoken::Held {
+                why: Some("a question is showing".to_string())
+            }
+        }
+    );
+}
+
+#[test]
+fn any_other_failed_wake_is_held_without_a_reason() {
+    let held = Reached::Running {
+        wake: NotWoken::Held { why: None },
+    };
+    assert_eq!(reached_after(true, true, || None), held);
+    assert_eq!(
+        reached_after(true, true, || Some(Err("no pane".to_string()))),
+        held
+    );
+    assert_eq!(
+        reached_after(true, true, || Some(Ok(performed(false, false, "nothing")))),
+        held
+    );
+}
+
+#[test]
+fn an_outcome_tells_present_and_woken_from_where_it_reached() {
+    let outcome = |reached| DeliveryOutcome {
+        path: PathBuf::from("m.md"),
+        reached,
+    };
+    let held = || Reached::Running {
+        wake: NotWoken::Held { why: None },
+    };
+    let not_needed = Reached::Running {
+        wake: NotWoken::NotNeeded,
+    };
+    assert!(outcome(Reached::Woken).is_present());
+    assert!(outcome(Reached::Woken).was_woken());
+    assert!(outcome(not_needed.clone()).is_present());
+    assert!(!outcome(not_needed).was_woken());
+    assert!(outcome(held()).is_present());
+    assert!(!outcome(held()).was_woken());
+    assert!(!outcome(Reached::NotRunning).is_present());
+    assert!(!outcome(Reached::NotRunning).was_woken());
+}
+
+#[test]
+fn the_wake_reads_the_screen_only_where_the_built_in_tmux_wake_is_used() {
+    use crate::infra::terminal::{Hook, Wake};
+    let tmux = || {
+        let mut settings = crate::kernel::config::Settings::default();
+        settings.terminal.preset = Some("tmux".to_string());
+        settings
+    };
+
+    let not_tmux = crate::kernel::config::Settings::default();
+    assert!(!wake_looks_at_screen(&not_tmux, true));
+    assert!(!wake_looks_at_screen(&not_tmux, false));
+
+    assert!(wake_looks_at_screen(&tmux(), true));
+    assert!(wake_looks_at_screen(&tmux(), false));
+
+    let mut templated = tmux();
+    templated.worker_wake = Wake {
+        hook: Hook::Command("notify {pid}".to_string()),
+        line: None,
+    };
+    assert!(!wake_looks_at_screen(&templated, false));
+    assert!(wake_looks_at_screen(&templated, true));
+
+    let mut off = tmux();
+    off.hub_wake = Wake {
+        hook: Hook::Off,
+        line: None,
+    };
+    assert!(!wake_looks_at_screen(&off, true));
+    assert!(wake_looks_at_screen(&off, false));
+
+    let mut generic = tmux();
+    generic.agent_runner = Some("codex exec {prompt}".to_string());
+    assert!(!wake_looks_at_screen(&generic, false));
+    assert!(wake_looks_at_screen(&generic, true));
+}

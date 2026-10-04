@@ -1,10 +1,9 @@
 use super::*;
 
 // Moved to `mail`; re-exported until #331 so that `cmd::deliver_to_hub` and the rest still resolve.
-pub(crate) use crate::mail::wake_agent;
 pub use crate::mail::{
-    Delivered, Told, deliver_to_hub, deliver_to_hub_announcing, deliver_to_hub_with_wake,
-    deliver_to_worker, post_to_hub,
+    DeliveryOutcome, NotWoken, Reached, deliver_to_hub, deliver_to_hub_announcing,
+    deliver_to_hub_with_wake, deliver_to_worker, post_to_hub,
 };
 
 // ── pending ──────────────────────────────────────────────────────────
@@ -115,12 +114,7 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
         subject: args.subject.unwrap_or("").to_string(),
         body,
     };
-    let Delivered {
-        delivery,
-        woken,
-        wake_needed,
-        wake_note,
-    } = deliver_to_hub_with_wake(&ctx, &message, true, args.wake)?;
+    let outcome = deliver_to_hub_with_wake(&ctx, &message, true, args.wake)?;
 
     if args.quiet {
         return Ok(());
@@ -128,22 +122,26 @@ pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     println!(
         "delivered to {}: {}",
         ctx.repo.hub_name,
-        delivery.path.display()
+        outcome.path.display()
     );
-    match (delivery.present, woken, wake_needed) {
-        (true, true, _) => println!("Woke the hub; it will pick this up."),
-        (true, false, false) => {
+    match outcome.reached {
+        Reached::Woken => println!("Woke the hub; it will pick this up."),
+        Reached::Running {
+            wake: NotWoken::NotNeeded,
+        } => {
             println!(
                 "The hub is running; wake skipped (no action needed). It will pick this up the next time it checks its inbox."
             )
         }
-        (true, false, true) => {
+        Reached::Running {
+            wake: NotWoken::Held { why },
+        } => {
             println!("The hub is running; it will pick this up the next time it checks its inbox.");
-            if let Some(note) = wake_note {
+            if let Some(note) = why {
                 println!("{}", wake_note_sentence(&note));
             }
         }
-        (false, _, _) => {
+        Reached::NotRunning => {
             println!(
                 "The hub is not running. Left in its inbox; it will be picked up the next time it starts."
             )

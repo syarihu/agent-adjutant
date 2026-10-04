@@ -104,12 +104,9 @@ fn dated_name(epoch_secs: i64) -> String {
 fn start_if_stopped(
     server: &Server,
     ctx: &Context,
-    delivered: &super::Delivered,
+    delivered: &super::DeliveryOutcome,
 ) -> (bool, Option<String>) {
-    if delivered.delivery.present
-        || !server.resident
-        || !super::hub_startable(&ctx.settings.terminal)
-    {
+    if delivered.is_present() || !server.resident || !super::hub_startable(&ctx.settings.terminal) {
         return (false, None);
     }
     match super::start_hub(ctx, HubStart::Auto) {
@@ -120,9 +117,8 @@ fn start_if_stopped(
 }
 
 /// The inbox file name of a delivered message, which is what `hubs[].inbox[].name` calls it.
-fn inbox_name(delivered: &super::Delivered) -> Option<String> {
+fn inbox_name(delivered: &super::DeliveryOutcome) -> Option<String> {
     delivered
-        .delivery
         .path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -195,7 +191,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
     let delivered = super::deliver_to_hub(&ctx, &message)?;
     let (started, start_error) = start_if_stopped(server, &ctx, &delivered);
     let mut reply = json!({
-        "handed": { "present": delivered.delivery.present, "woken": delivered.woken },
+        "handed": { "present": delivered.is_present(), "woken": delivered.was_woken() },
         "hubStarted": started,
         "worktreeName": name,
         "hub": hub.id,
@@ -398,7 +394,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         match super::deliver_to_hub(&ctx, &message) {
             Ok(delivered) => {
                 reply["fileIssue"] = json!({
-                    "handed": { "present": delivered.delivery.present, "woken": delivered.woken },
+                    "handed": { "present": delivered.is_present(), "woken": delivered.was_woken() },
                     "message": inbox_name(&delivered),
                 });
                 let (started, error) = start_if_stopped(server, &ctx, &delivered);

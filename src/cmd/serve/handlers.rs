@@ -320,17 +320,17 @@ pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         input.get("choice").and_then(Value::as_str),
         input.get("comment").and_then(Value::as_str),
     )?;
-    Ok(json!({ "gate": gate, "present": told.present, "woken": told.woken }))
+    Ok(json!({ "gate": gate, "present": told.is_present(), "woken": told.was_woken() }))
 }
 
 /// What the page is told about the hand-over: whether the hub was there, and whether its
 /// tab was poked. Both matter to the person — a hub that is down is not an error, it just
 /// means the task waits.
-fn handed_json(handed: Option<crate::cmd::Delivered>) -> Value {
+fn handed_json(handed: Option<crate::cmd::DeliveryOutcome>) -> Value {
     match handed {
         Some(d) => json!({
-            "present": d.delivery.present,
-            "woken": d.woken,
+            "present": d.is_present(),
+            "woken": d.was_woken(),
         }),
         None => Value::Null,
     }

@@ -40,11 +40,12 @@ pub use close::close;
 use close::{GONE_BUDGET, GONE_POLL, settled};
 pub use context::{Context, context, context_of, hub_name, show_config};
 use context::{agent_env, context_as, context_without_hub, exe_path, resolve, settings_for};
+pub(crate) use delivery::wake_note_sentence;
 pub use delivery::{
-    Delivered, PendingArgs, SendArgs, Told, deliver_to_hub, deliver_to_hub_announcing,
-    deliver_to_hub_with_wake, deliver_to_worker, pending, post_to_hub, send,
+    DeliveryOutcome, NotWoken, PendingArgs, Reached, SendArgs, deliver_to_hub,
+    deliver_to_hub_announcing, deliver_to_hub_with_wake, deliver_to_worker, pending, post_to_hub,
+    send,
 };
-pub(crate) use delivery::{wake_agent, wake_note_sentence};
 pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close as gate_close_payload,
     close_cmd as gate_close, list as gate_list, open as gate_open_payload, open_cmd as gate_open,
