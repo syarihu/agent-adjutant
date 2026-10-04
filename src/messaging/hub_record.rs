@@ -1,4 +1,6 @@
 use super::*;
+use crate::infra::terminal::SessionTerminal;
+use serde_json::Map;
 
 // ── presence ─────────────────────────────────────────────────────────
 
@@ -22,6 +24,142 @@ pub enum Claim {
     Ours,
     /// Another hub holds the record and is alive. Its status, so the caller can say which.
     Taken(Box<HubStatus>),
+}
+
+/// What a record file can be. Shared with worker records (#323).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recorded<T> {
+    /// Nothing is there.
+    Absent,
+    /// Something is there and it cannot be read as a record: not JSON, not an object, or not
+    /// readable at all. Not evidence that nobody holds the name.
+    Unreadable,
+    Found(T),
+}
+
+/// What `hubs/<slug>.json` says, read leniently.
+///
+/// Records are written by `claim_hub` but also edited by hand and left over from older
+/// versions, so every field is optional and a key whose value is of another type is not an
+/// error: it stays in `other` and the rest still reads. Each reader then falls back as it
+/// did when it looked the key up in raw JSON, rather than treating a record with one bad
+/// key as unreadable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubRecord {
+    pub pid: Option<u64>,
+    pub hub_name: Option<String>,
+    pub cwd: Option<String>,
+    pub started_at: Option<String>,
+    /// As written: untrimmed, possibly blank. `recorded_anchor` is the reading of it.
+    pub ps_started: Option<String>,
+    /// Untrimmed, as the scans read it.
+    pub hub: Option<String>,
+    pub name_in_command: Option<bool>,
+    pub terminal: Option<SessionTerminal>,
+    /// Every key not read into a field above: unknown ones, and known ones whose value is
+    /// null or of another type.
+    pub other: Map<String, Value>,
+}
+
+impl HubRecord {
+    /// `None` only for something that is not a JSON object.
+    pub(super) fn from_value(value: Value) -> Option<HubRecord> {
+        let Value::Object(mut fields) = value else {
+            return None;
+        };
+        // A key leaves `fields` only when its value reads as the field's type, so what is
+        // left over is exactly what the typed fields do not account for.
+        fn lift<T>(
+            fields: &mut Map<String, Value>,
+            key: &str,
+            read: impl Fn(&Value) -> Option<T>,
+        ) -> Option<T> {
+            let read = fields.get(key).and_then(read)?;
+            fields.remove(key);
+            Some(read)
+        }
+        let text = |value: &Value| value.as_str().map(str::to_string);
+        Some(HubRecord {
+            pid: lift(&mut fields, "pid", Value::as_u64),
+            hub_name: lift(&mut fields, "hubName", text),
+            cwd: lift(&mut fields, "cwd", text),
+            started_at: lift(&mut fields, "startedAt", text),
+            ps_started: lift(&mut fields, "psStarted", text),
+            hub: lift(&mut fields, "hub", text),
+            name_in_command: lift(&mut fields, "nameInCommand", Value::as_bool),
+            terminal: lift(&mut fields, "terminal", |t| {
+                serde_json::from_value::<SessionTerminal>(t.clone()).ok()
+            }),
+            other: fields,
+        })
+    }
+
+    /// The JSON `claim_hub` writes, and only for it: a record built with an empty `other`.
+    ///
+    /// A record that was read is never written back. Its wrong-typed known keys sit in
+    /// `other` and would be overwritten here by `null` for the typed field that is `None`,
+    /// so the round trip would change a file nobody meant to change.
+    pub(super) fn to_value(&self) -> Value {
+        let mut fields = self.other.clone();
+        fields.insert("pid".to_string(), json!(self.pid));
+        fields.insert("hubName".to_string(), json!(self.hub_name));
+        fields.insert("cwd".to_string(), json!(self.cwd));
+        fields.insert("startedAt".to_string(), json!(self.started_at));
+        fields.insert("psStarted".to_string(), json!(self.ps_started));
+        fields.insert("nameInCommand".to_string(), json!(self.name_in_command));
+        if let Some(hub) = &self.hub {
+            fields.insert("hub".to_string(), json!(hub));
+        }
+        if let Some(terminal) = &self.terminal
+            && let Ok(value) = serde_json::to_value(terminal)
+        {
+            fields.insert("terminal".to_string(), value);
+        }
+        Value::Object(fields)
+    }
+
+    /// Whether the record names a process at all, even one `pid` could not read: a `pid` of
+    /// the wrong type is somebody's claim to the name, and only a null or missing one is not.
+    pub(super) fn names_a_pid(&self) -> bool {
+        self.pid.is_some() || self.other.get("pid").is_some_and(|pid| !pid.is_null())
+    }
+}
+
+/// Read first, and only when that fails ask whether anything is there, so a record removed
+/// in between reads as absent.
+pub(super) fn read_record<T>(path: &Path, parse: impl FnOnce(Value) -> Option<T>) -> Recorded<T> {
+    if let Some(value) = read_json(path) {
+        return parse(value).map_or(Recorded::Unreadable, Recorded::Found);
+    }
+    match record_exists(path) {
+        Ok(false) => Recorded::Absent,
+        Ok(true) | Err(_) => Recorded::Unreadable,
+    }
+}
+
+pub fn read_hub_record(slug: &str) -> Recorded<HubRecord> {
+    read_record(&hub_record_path(slug), HubRecord::from_value)
+}
+
+/// Every readable `hubs/*.json`, by slug (the file stem). A missing directory is no records.
+pub fn hub_records() -> Vec<(String, HubRecord)> {
+    let Ok(entries) = std::fs::read_dir(state_dir().join("hubs")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                return None;
+            }
+            let slug = path.file_stem()?.to_str().filter(|s| !s.is_empty())?;
+            match read_record(&path, HubRecord::from_value) {
+                Recorded::Found(record) => Some((slug.to_string(), record)),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// Record this process as the hub for `slug`, unless another live hub already is.
@@ -54,28 +192,21 @@ pub fn claim_hub(
     terminal: Option<&crate::infra::terminal::SessionTerminal>,
 ) -> Result<Claim, String> {
     let path = hub_record_path(slug);
-    let mut record = json!({
-        "pid": std::process::id(),
-        "hubName": hub_name,
-        "cwd": cwd,
-        "startedAt": utc_stamp(now_secs()),
-        "psStarted": ps_started(std::process::id()),
-        "nameInCommand": name_in_command,
-    });
-    if let Some(hub) = said(hub)
-        && let Some(fields) = record.as_object_mut()
-    {
-        fields.insert("hub".to_string(), json!(hub));
+    // `terminal` is where this hub runs, so that something outside its tab — the board's stop
+    // button — can find its pane without guessing from the pid. Absent for a record written
+    // before this, which readers fall back from.
+    let record = HubRecord {
+        pid: Some(u64::from(std::process::id())),
+        hub_name: Some(hub_name.to_string()),
+        cwd: Some(cwd.to_string()),
+        started_at: Some(utc_stamp(now_secs())),
+        ps_started: ps_started(std::process::id()),
+        hub: said(hub),
+        name_in_command: Some(name_in_command),
+        terminal: terminal.cloned(),
+        other: Map::new(),
     }
-    // Where this hub runs, so that something outside its tab — the board's stop button — can
-    // find its pane without guessing from the pid. Absent for a record written before this,
-    // which readers fall back from.
-    if let Some(terminal) = terminal
-        && let Some(fields) = record.as_object_mut()
-        && let Ok(value) = serde_json::to_value(terminal)
-    {
-        fields.insert("terminal".to_string(), value);
-    }
+    .to_value();
     match create_new_json(&path, &record) {
         Ok(()) => return Ok(Claim::Ours),
         Err(CreateError::Taken) => {}
@@ -197,12 +328,13 @@ pub fn hub_cannot_tell(slug: &str) -> String {
 /// something else. Interpreted here, once, so that an anchor which cannot anchor is the
 /// same answer everywhere as no anchor at all — and each reader then falls back to whatever
 /// it uses when a record has none, rather than asserting an absence it never established.
-pub(super) fn recorded_anchor(record: &Value) -> Option<&str> {
-    record
-        .get("psStarted")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|started| !started.is_empty())
+pub(super) fn recorded_anchor(record: &HubRecord) -> Option<&str> {
+    anchor_of(record.ps_started.as_deref())
+}
+
+/// `recorded_anchor` for a start time already lifted out of whatever record held it.
+pub(super) fn anchor_of(started: Option<&str>) -> Option<&str> {
+    started.map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// Whether the process a record names is still there — with "cannot tell" kept separate.
@@ -212,13 +344,13 @@ pub(super) fn recorded_anchor(record: &Value) -> Option<&str> {
 /// absent from a perfectly live hub, and mistaking that for a dead one is how a second hub
 /// gets started.
 pub(super) fn holder(path: &Path) -> Liveness {
-    let Some(record) = read_json(path) else {
-        // Unreadable rather than absent — `read_json` cannot say which, and a record that
-        // cannot be read cannot be shown to belong to anybody. Refusing to act on it is
-        // the answer that never takes a live hub's name.
+    let Recorded::Found(record) = read_record(path, HubRecord::from_value) else {
+        // Unreadable rather than absent, or not a JSON object — a record that cannot be
+        // read cannot be shown to belong to anybody. Refusing to act on it is the answer
+        // that never takes a live hub's name.
         return Liveness::CannotTell;
     };
-    let Some(pid) = record.get("pid").and_then(Value::as_u64) else {
+    let Some(pid) = record.pid else {
         // A record with no pid names nobody. Nothing to be careful of.
         return Liveness::Gone;
     };
@@ -270,13 +402,12 @@ pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<
     let path = hub_record_path(slug);
     let lock_path = path.with_extension("claiming");
     let _lock = crate::infra::fs::lock(&lock_path)?;
-    let named = match read_json(&path) {
-        None if !path.exists() => return Ok(true),
-        None => return Ok(false),
-        Some(record) => record,
+    let named = match read_hub_record(slug) {
+        Recorded::Absent => return Ok(true),
+        Recorded::Unreadable => return Ok(false),
+        Recorded::Found(record) => record,
     };
-    let same = named.get("pid").and_then(Value::as_u64) == Some(u64::from(pid))
-        && recorded_anchor(&named) == started.map(str::trim).filter(|s| !s.is_empty());
+    let same = named.pid == Some(u64::from(pid)) && recorded_anchor(&named) == anchor_of(started);
     if !same {
         return Ok(false);
     }
@@ -294,11 +425,11 @@ pub fn unregister_hub_if_unnamed(slug: &str) -> Result<bool, String> {
     let path = hub_record_path(slug);
     let lock_path = path.with_extension("claiming");
     let _lock = crate::infra::fs::lock(&lock_path)?;
-    match read_json(&path) {
-        None if !path.exists() => Ok(true),
-        None => Ok(false),
-        Some(record) if record.get("pid").is_some_and(|pid| !pid.is_null()) => Ok(false),
-        Some(_) => remove_if_present(&path).map(|()| true),
+    match read_hub_record(slug) {
+        Recorded::Absent => Ok(true),
+        Recorded::Unreadable => Ok(false),
+        Recorded::Found(record) if record.names_a_pid() => Ok(false),
+        Recorded::Found(_) => remove_if_present(&path).map(|()| true),
     }
 }
 
@@ -332,18 +463,12 @@ pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubS
         started_at: None,
         stale: false,
     };
-    let Some(record) = read_json(&hub_record_path(slug)) else {
+    let Recorded::Found(record) = read_hub_record(slug) else {
         return status;
     };
-    status.pid = record.get("pid").and_then(Value::as_u64).map(|p| p as u32);
-    status.cwd = record
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    status.started_at = record
-        .get("startedAt")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    status.pid = record.pid.map(|p| p as u32);
+    status.cwd = record.cwd.clone();
+    status.started_at = record.started_at.clone();
     let ps_started = recorded_anchor(&record);
     // Looking for the hub's name in its command line is the stronger of the two anchors,
     // but it only works if the name is *there* — a `hubRunner` with no `{name}` in it, or
@@ -353,14 +478,8 @@ pub fn hub_status_with(table: &ProcessTable, slug: &str, hub_name: &str) -> HubS
     // start time alone, exactly as a worker is. A record from before this was written has
     // no answer, and the old behaviour is the safe reading of that: it was started by a
     // template that did carry the name, or it would not have been found at all.
-    let named = record
-        .get("nameInCommand")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let recorded_name = record
-        .get("hubName")
-        .and_then(Value::as_str)
-        .unwrap_or(hub_name);
+    let named = record.name_in_command.unwrap_or(true);
+    let recorded_name = record.hub_name.as_deref().unwrap_or(hub_name);
     let expect = named.then_some(recorded_name);
     match status.pid {
         Some(pid) if process_matches_with(table, pid, expect, ps_started) => status.present = true,
