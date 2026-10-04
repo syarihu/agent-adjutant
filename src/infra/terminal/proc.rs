@@ -43,7 +43,7 @@ pub fn own_tty() -> Option<String> {
     None
 }
 
-pub(super) fn parent_of(pid: u32) -> Option<u32> {
+pub fn parent_of(pid: u32) -> Option<u32> {
     let out = Command::new("ps")
         .args(["-o", "ppid=", "-p", &pid.to_string()])
         .output()

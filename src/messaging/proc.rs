@@ -140,16 +140,12 @@ pub fn is_self_or_descendant_of(pid: u32) -> bool {
         if curr == pid {
             return true;
         }
-        match parent_of(curr) {
+        match crate::infra::terminal::parent_of(curr) {
             Some(parent) if parent > 1 => curr = parent,
             _ => return false,
         }
     }
     false
-}
-
-fn parent_of(pid: u32) -> Option<u32> {
-    ps_field(pid, "ppid")?.parse().ok()
 }
 
 /// Is `pid` still the process that was recorded?
