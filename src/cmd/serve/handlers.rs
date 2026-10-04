@@ -79,14 +79,15 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
 /// Raise the hub's tab: 「タブで話す」 on a gate the hub opened, which sits in the main
 /// checkout where there is no worker to raise.
 pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
-    let repo = &server.ctx.repo;
-    let status = crate::registry::hub_status(&server.ctx.state, &repo.slug, &repo.hub_name);
-    let Some(pid) = status.pid.filter(|_| status.present) else {
-        return Ok(json!({ "present": false, "ran": false }));
+    let ctx = crate::registry::Context {
+        settings: settings_now(server),
+        ..server.ctx.clone()
     };
-    let settings = settings_now(server);
-    let done = crate::infra::terminal::focus(&settings.terminal, pid, &repo.hub_name, false)?;
-    Ok(json!({ "present": true, "ran": done.ran }))
+    let raised = crate::lifecycle::hub::focus(&ctx, false)?;
+    Ok(json!({
+        "present": raised.is_some(),
+        "ran": raised.as_ref().is_some_and(|r| r.done.ran),
+    }))
 }
 
 /// How a hub is to be started, from the `start` a request names: `auto` when it names none.

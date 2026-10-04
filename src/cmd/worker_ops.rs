@@ -182,20 +182,21 @@ pub fn focus(
     dry_run: bool,
 ) -> Result<bool, String> {
     let ctx = context(repo_arg, hub_arg)?;
-    let status = registry::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
-    let Some(pid) = status.pid.filter(|_| status.present) else {
+    let Some(raised) = crate::lifecycle::hub::focus(&ctx, dry_run)? else {
         if !quiet {
             println!("{} is not running", ctx.repo.hub_name);
         }
         return Ok(false);
     };
-    let done = terminal::focus(&ctx.settings.terminal, pid, &ctx.repo.hub_name, dry_run)?;
     if dry_run {
-        println!("{}", done.script);
+        println!("{}", raised.done.script);
     } else if !quiet {
-        println!("{} is already running (pid {pid})", ctx.repo.hub_name);
-        if !done.ran {
-            println!("({})", done.description);
+        println!(
+            "{} is already running (pid {})",
+            ctx.repo.hub_name, raised.pid
+        );
+        if !raised.done.ran {
+            println!("({})", raised.done.description);
         }
     }
     Ok(true)
