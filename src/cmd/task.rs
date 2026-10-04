@@ -147,7 +147,7 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
     if args.json {
         println!(
             "{}",
-            json!({ "task": task, "handed": handed_json(&handed) })
+            json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) })
         );
         return Ok(());
     }
@@ -219,7 +219,7 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     if args.json {
         println!(
             "{}",
-            json!({ "task": task, "handed": handed_json(&handed) })
+            json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) })
         );
         return Ok(());
     }
@@ -370,17 +370,6 @@ pub fn refresh_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Resu
         );
     }
     Ok(())
-}
-
-fn handed_json(handed: &Option<DeliveryOutcome>) -> Value {
-    match handed {
-        Some(d) => json!({
-            "present": d.is_present(),
-            "woken": d.was_woken(),
-            "path": d.path.display().to_string(),
-        }),
-        None => Value::Null,
-    }
 }
 
 /// What to say when nothing was put in the hub's inbox, which depends on where the task is

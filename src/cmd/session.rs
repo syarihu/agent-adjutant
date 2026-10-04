@@ -193,7 +193,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
     let delivered = crate::mail::deliver_to_hub(&ctx, &message)?;
     let (started, start_error) = start_if_stopped(server, &ctx, &delivered);
     let mut reply = json!({
-        "handed": { "present": delivered.is_present(), "woken": delivered.was_woken() },
+        "handed": crate::mail::Handed::from(&delivered),
         "hubStarted": started,
         "worktreeName": name,
         "hub": hub.id,
@@ -400,7 +400,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         match crate::mail::deliver_to_hub(&ctx, &message) {
             Ok(delivered) => {
                 reply["fileIssue"] = json!({
-                    "handed": { "present": delivered.is_present(), "woken": delivered.was_woken() },
+                    "handed": crate::mail::Handed::from(&delivered),
                     "message": inbox_name(&delivered),
                 });
                 let (started, error) = start_if_stopped(server, &ctx, &delivered);
