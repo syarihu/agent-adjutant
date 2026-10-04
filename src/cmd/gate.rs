@@ -242,7 +242,7 @@ pub fn answer(
     decision: &str,
     choice: Option<&str>,
     comment: Option<&str>,
-) -> Result<(Gate, super::Told), String> {
+) -> Result<(Gate, super::DeliveryOutcome), String> {
     // Locked before the gate is read, and held until it is archived: the worker's close and
     // the board's sweep decide a gate under the same lock, and an answer delivered to a gate
     // somebody else has just closed would wake a worker to something that was settled.
@@ -290,14 +290,7 @@ pub fn answer(
             subject: subject.clone(),
             body: body.clone(),
         };
-        let handed = super::deliver_to_hub_announcing(ctx, &message, false)?;
-        super::Told {
-            path: handed.delivery.path,
-            present: handed.delivery.present,
-            woken: handed.woken,
-            wake_needed: handed.wake_needed,
-            wake_note: handed.wake_note,
-        }
+        super::deliver_to_hub_announcing(ctx, &message, false)?
     } else {
         super::deliver_to_worker(
             ctx,
@@ -573,17 +566,15 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
         out["wait"] = json!(false);
         out["note"] = json!(RECORDED);
     } else {
-        let (wake, default_line, runner) = if gate.answered_by_hub() {
+        let (wake, default_line) = if gate.answered_by_hub() {
             (
                 &ctx.settings.hub_wake,
                 crate::infra::terminal::HUB_WAKE_LINE,
-                ctx.settings.hub_runner.as_deref(),
             )
         } else {
             (
                 &ctx.settings.worker_wake,
                 crate::infra::terminal::WORKER_WAKE_LINE,
-                ctx.settings.agent_runner.as_deref(),
             )
         };
         if !wake.hook.is_off() {
@@ -591,10 +582,7 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
             // Said only where it holds: the built-in tmux wake reads the screen and holds
             // its line back from a question, and a caller that knows that can end its turn
             // at an empty prompt instead of asking the same thing in the terminal too.
-            if ctx.settings.terminal.is_tmux()
-                && wake.hook.template().is_none()
-                && super::wake_agent(runner) != crate::infra::agent::Agent::Generic
-            {
+            if crate::mail::wake_looks_at_screen(&ctx.settings, gate.answered_by_hub()) {
                 out["wakeChecksScreen"] = json!(true);
             }
         }
@@ -651,11 +639,14 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     if args.json {
         let mut out = json!({
             "gate": gate,
-            "present": told.present,
-            "woken": told.woken,
+            "present": told.is_present(),
+            "woken": told.was_woken(),
             "path": told.path.display().to_string(),
         });
-        if let Some(why) = &told.wake_note {
+        if let super::Reached::Running {
+            wake: super::NotWoken::Held { why: Some(why) },
+        } = &told.reached
+        {
             out["wakeNote"] = json!(why);
         }
         println!("{out}");
@@ -664,33 +655,33 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     println!("{} → {}", gate.id, args.decision);
     println!("wrote {}", told.path.display());
     if gate.answered_by_hub() {
-        match (told.present, told.woken) {
-            (true, true) => println!("Woke the hub."),
-            (true, false) => {
+        match &told.reached {
+            super::Reached::Woken => println!("Woke the hub."),
+            super::Reached::Running { wake } => {
                 println!(
                     "The hub is running; it will read this the next time it checks its inbox."
                 );
-                if let Some(note) = &told.wake_note {
+                if let super::NotWoken::Held { why: Some(note) } = wake {
                     println!("{}", super::wake_note_sentence(note));
                 }
             }
-            (false, _) => println!(
+            super::Reached::NotRunning => println!(
                 "The hub is not running. The answer waits in its inbox for the next time it starts."
             ),
         }
         return Ok(());
     }
-    match (told.present, told.woken) {
-        (true, true) => println!("Woke the worker."),
-        (true, false) => {
+    match &told.reached {
+        super::Reached::Woken => println!("Woke the worker."),
+        super::Reached::Running { wake } => {
             println!(
                 "The worker is running; it will read this the next time it checks its outbox."
             );
-            if let Some(note) = &told.wake_note {
+            if let super::NotWoken::Held { why: Some(note) } = wake {
                 println!("{}", super::wake_note_sentence(note));
             }
         }
-        (false, _) => println!(
+        super::Reached::NotRunning => println!(
             "The worker is not running. The answer waits in that worktree's outbox for \
              whoever starts one there next."
         ),

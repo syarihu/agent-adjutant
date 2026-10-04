@@ -1,16 +1,65 @@
 use super::*;
 use crate::infra::notify;
-use crate::infra::terminal;
+use crate::infra::terminal::{self, Wake};
+use crate::kernel::config::Settings;
 
-/// What `terminal::wake` came to, as the pair the callers keep: whether the session was
-/// woken, and, when the screen is what stopped it, the reason. Any other failure is left
-/// unsaid, as it always was.
-fn woken_and_why(tried: Result<terminal::Performed, String>) -> (bool, Option<String>) {
-    match tried {
-        Ok(done) if done.ran => (true, None),
-        Ok(done) if done.screen => (false, Some(done.description)),
-        _ => (false, None),
+/// What a message came to, given whether anyone was there to read it, whether it called for a
+/// wake, and what the wake came to when one was tried: whether the session was woken, and,
+/// when the screen is what stopped it, the reason. Any other failure is left unsaid, as it
+/// always was.
+///
+/// The wake is run only when someone is there and it is called for.
+pub(crate) fn reached_after(
+    present: bool,
+    wake_needed: bool,
+    wake: impl FnOnce() -> Option<Result<terminal::Performed, String>>,
+) -> Reached {
+    if !present {
+        return Reached::NotRunning;
     }
+    if !wake_needed {
+        return Reached::Running {
+            wake: NotWoken::NotNeeded,
+        };
+    }
+    match wake() {
+        Some(Ok(done)) if done.ran => Reached::Woken,
+        Some(Ok(done)) if done.screen => Reached::Running {
+            wake: NotWoken::Held {
+                why: Some(done.description),
+            },
+        },
+        _ => Reached::Running {
+            wake: NotWoken::Held { why: None },
+        },
+    }
+}
+
+/// What a wake in one direction is made with: the hook, the built-in line, the runner whose
+/// screen is read.
+fn wake_settings(settings: &Settings, to_hub: bool) -> (&Wake, &'static str, Option<&str>) {
+    if to_hub {
+        (
+            &settings.hub_wake,
+            terminal::HUB_WAKE_LINE,
+            settings.hub_runner.as_deref(),
+        )
+    } else {
+        (
+            &settings.worker_wake,
+            terminal::WORKER_WAKE_LINE,
+            settings.agent_runner.as_deref(),
+        )
+    }
+}
+
+/// Whether the built-in wake will read the receiver's screen before typing.
+pub fn wake_looks_at_screen(settings: &Settings, to_hub: bool) -> bool {
+    let (wake, _, runner) = wake_settings(settings, to_hub);
+    !wake.hook.is_off()
+        && wake.hook.template().is_none()
+        && settings.terminal.is_tmux()
+        && look_before_typing(wake_agent(runner)).is_some()
 }
 
 /// Leave a message for the hub, poke its tab if needed, and tell the person.
@@ -18,7 +67,7 @@ fn woken_and_why(tried: Result<terminal::Performed, String>) -> (bool, Option<St
 /// Shared by `adj send` and by the dashboard's hand-over, which is the whole reason it is a
 /// function: the three steps are one rule, and a second copy of it is a second set of
 /// conditions about when to wake and when to notify — drifting from the day it is written.
-pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<Delivered, String> {
+pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<DeliveryOutcome, String> {
     deliver_to_hub_with_wake(ctx, message, true, None)
 }
 
@@ -28,7 +77,7 @@ pub fn deliver_to_hub_announcing(
     ctx: &Context,
     message: &Message,
     announce: bool,
-) -> Result<Delivered, String> {
+) -> Result<DeliveryOutcome, String> {
     deliver_to_hub_with_wake(ctx, message, announce, None)
 }
 
@@ -38,7 +87,7 @@ pub fn deliver_to_hub_with_wake(
     message: &Message,
     announce: bool,
     wake: Option<bool>,
-) -> Result<Delivered, String> {
+) -> Result<DeliveryOutcome, String> {
     Ok(post_to_hub_with_wake(ctx, message, wake)?.follow_up(ctx, announce))
 }
 
@@ -77,32 +126,29 @@ pub fn post_to_hub_with_wake(
 
 impl Posted {
     /// The second half: poke the hub if it is there and waking is needed, and tell the person when `announce`.
-    pub fn follow_up(self, ctx: &Context, announce: bool) -> Delivered {
+    pub fn follow_up(self, ctx: &Context, announce: bool) -> DeliveryOutcome {
         let Posted {
             subject,
             delivery,
             wake_needed,
         } = self;
 
-        let (woken, wake_note) = if wake_needed {
-            match (
-                delivery.present,
-                hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name).pid,
-            ) {
-                (true, Some(pid)) => woken_and_why(terminal::wake(
-                    &ctx.settings.terminal,
-                    &ctx.settings.hub_wake,
-                    pid,
-                    &subject,
-                    terminal::HUB_WAKE_LINE,
-                    look_before_typing(wake_agent(ctx.settings.hub_runner.as_deref())),
-                    false,
-                )),
-                _ => (false, None),
-            }
-        } else {
-            (false, None)
-        };
+        let (wake, default_line, runner) = wake_settings(&ctx.settings, true);
+        let reached = reached_after(delivery.present, wake_needed, || {
+            hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name)
+                .pid
+                .map(|pid| {
+                    terminal::wake(
+                        &ctx.settings.terminal,
+                        wake,
+                        pid,
+                        &subject,
+                        default_line,
+                        look_before_typing(wake_agent(runner)),
+                        false,
+                    )
+                })
+        });
 
         if announce
             && wake_needed
@@ -115,11 +161,9 @@ impl Posted {
         {
             let _ = terminal::run_shell(&command);
         }
-        Delivered {
-            delivery,
-            woken,
-            wake_needed,
-            wake_note,
+        DeliveryOutcome {
+            path: delivery.path,
+            reached,
         }
     }
 }
@@ -139,28 +183,26 @@ pub fn deliver_to_worker(
     subject: &str,
     body: &str,
     wake: Option<bool>,
-) -> Result<Told, String> {
+) -> Result<DeliveryOutcome, String> {
     let path = tell(worktree, from, subject, body)?;
     let status = worker_status(worktree);
     let wake_needed = wake.unwrap_or_else(|| should_wake_worker(subject));
-    let (woken, wake_note) = if wake_needed {
-        match (status.present, status.pid) {
-            (true, Some(pid)) => woken_and_why(terminal::wake(
+    let (wake, default_line, runner) = wake_settings(&ctx.settings, false);
+    let reached = reached_after(status.present, wake_needed, || {
+        status.pid.map(|pid| {
+            terminal::wake(
                 &ctx.settings.terminal,
-                &ctx.settings.worker_wake,
+                wake,
                 pid,
                 subject,
-                terminal::WORKER_WAKE_LINE,
-                look_before_typing(wake_agent(ctx.settings.agent_runner.as_deref())),
+                default_line,
+                look_before_typing(wake_agent(runner)),
                 false,
-            )),
-            _ => (false, None),
-        }
-    } else {
-        (false, None)
-    };
+            )
+        })
+    });
     if wake_needed
-        && !woken
+        && !matches!(reached, Reached::Woken)
         && let Some(command) = notify::repo_command(
             &ctx.settings.notification,
             &ctx.repo.nwo,
@@ -170,11 +212,5 @@ pub fn deliver_to_worker(
     {
         let _ = terminal::run_shell(&command);
     }
-    Ok(Told {
-        path,
-        present: status.present,
-        woken,
-        wake_needed,
-        wake_note,
-    })
+    Ok(DeliveryOutcome { path, reached })
 }

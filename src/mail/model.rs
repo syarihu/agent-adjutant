@@ -206,14 +206,41 @@ pub fn should_wake_hub(from: &str, hub_name: &str, kind: &str, subject: &str) ->
     true
 }
 
-/// What became of a message handed to the hub.
-pub struct Delivered {
-    pub delivery: Delivery,
-    pub woken: bool,
-    pub wake_needed: bool,
-    /// Why the wake did not happen, when one was tried: what the receiver's screen was
-    /// showing, or what went wrong. `None` when it was woken or there was nothing to try.
-    pub wake_note: Option<String>,
+/// What became of a message left for a hub or a worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryOutcome {
+    pub path: PathBuf,
+    pub reached: Reached,
+}
+
+impl DeliveryOutcome {
+    /// Whether anyone was running to read it.
+    pub fn is_present(&self) -> bool {
+        !matches!(self.reached, Reached::NotRunning)
+    }
+
+    /// Whether the receiver was woken to read it.
+    pub fn was_woken(&self) -> bool {
+        matches!(self.reached, Reached::Woken)
+    }
+}
+
+/// Whether the message reached a running receiver, and if so whether it was woken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reached {
+    Woken,
+    Running { wake: NotWoken },
+    NotRunning,
+}
+
+/// Why a running receiver was not woken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotWoken {
+    /// The message did not call for a wake.
+    NotNeeded,
+    /// A wake was called for and did not happen. `why` is what the receiver's screen was
+    /// showing, or what went wrong; `None` when there was nothing to say about it.
+    Held { why: Option<String> },
 }
 
 /// The agent a wake will find on the other end, which decides how its screen is read.
@@ -237,15 +264,4 @@ pub(crate) fn wake_agent(runner: Option<&str>) -> crate::infra::agent::Agent {
         "agy" => Agent::Agy,
         _ => Agent::Generic,
     }
-}
-
-/// Leave a message for the worker in a worktree, and poke it if it is sitting there.
-/// What became of a message left for a worker.
-pub struct Told {
-    pub path: std::path::PathBuf,
-    pub present: bool,
-    pub woken: bool,
-    pub wake_needed: bool,
-    /// As `Delivered::wake_note`.
-    pub wake_note: Option<String>,
 }

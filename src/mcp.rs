@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cmd::HubBoard;
+use crate::cmd::{HubBoard, NotWoken, Reached};
 use crate::kernel::config;
 use crate::kernel::identity;
 use crate::kernel::prompts;
@@ -229,28 +229,40 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let wake = args.get("wake").and_then(|v| v.as_bool());
             let ctx = crate::cmd::context_of(info)?;
             let delivered = crate::cmd::deliver_to_hub_with_wake(&ctx, &message, true, wake)?;
-            let mut note = match (
-                delivered.delivery.present,
-                delivered.woken,
-                delivered.wake_needed,
-            ) {
-                (true, true, _) => "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
-                (true, false, false) => "The hub is running; waking was skipped because this message needs no action. It will pick this up the next time it checks its inbox.",
-                (true, false, true) => "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
-                (false, _, _) => "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
-            }
-            .to_string();
-            if let Some(why) = &delivered.wake_note {
-                note = format!("{} {note}", crate::cmd::wake_note_sentence(why));
-            }
+            let (note, why) = match &delivered.reached {
+                Reached::Woken => (
+                    "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
+                    None,
+                ),
+                Reached::Running {
+                    wake: NotWoken::NotNeeded,
+                } => (
+                    "The hub is running; waking was skipped because this message needs no action. It will pick this up the next time it checks its inbox.",
+                    None,
+                ),
+                Reached::Running {
+                    wake: NotWoken::Held { why },
+                } => (
+                    "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
+                    why.as_ref(),
+                ),
+                Reached::NotRunning => (
+                    "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
+                    None,
+                ),
+            };
+            let note = match why {
+                Some(why) => format!("{} {note}", crate::cmd::wake_note_sentence(why)),
+                None => note.to_string(),
+            };
             let mut out = json!({
                 "hubName": ctx.repo.hub_name,
-                "present": delivered.delivery.present,
-                "woken": delivered.woken,
-                "path": delivered.delivery.path.to_string_lossy(),
+                "present": delivered.is_present(),
+                "woken": delivered.was_woken(),
+                "path": delivered.path.to_string_lossy(),
                 "note": note,
             });
-            if let Some(why) = &delivered.wake_note {
+            if let Some(why) = why {
                 out["wakeNote"] = json!(why);
             }
             Ok(out)
@@ -308,24 +320,40 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .to_string();
             let wake = args.get("wake").and_then(|v| v.as_bool());
             let told = crate::cmd::deliver_to_worker(&ctx, &worktree, &from, subject, body, wake)?;
-            let mut note = match (told.present, told.woken, told.wake_needed) {
-                (true, true, _) => "Woke the worker. Do not wait for a reply, go back to waiting.",
-                (true, false, false) => "The worker is running; waking was skipped because this message needs no action. It will read this the next time it checks its outbox.",
-                (true, false, true) => "The worker is running; it will read this the next time it checks its outbox.",
-                (false, _, _) => "The worker is not running; it will read this the next time it starts.",
-            }
-            .to_string();
-            if let Some(why) = &told.wake_note {
-                note = format!("{} {note}", crate::cmd::wake_note_sentence(why));
-            }
+            let (note, why) = match &told.reached {
+                Reached::Woken => (
+                    "Woke the worker. Do not wait for a reply, go back to waiting.",
+                    None,
+                ),
+                Reached::Running {
+                    wake: NotWoken::NotNeeded,
+                } => (
+                    "The worker is running; waking was skipped because this message needs no action. It will read this the next time it checks its outbox.",
+                    None,
+                ),
+                Reached::Running {
+                    wake: NotWoken::Held { why },
+                } => (
+                    "The worker is running; it will read this the next time it checks its outbox.",
+                    why.as_ref(),
+                ),
+                Reached::NotRunning => (
+                    "The worker is not running; it will read this the next time it starts.",
+                    None,
+                ),
+            };
+            let note = match why {
+                Some(why) => format!("{} {note}", crate::cmd::wake_note_sentence(why)),
+                None => note.to_string(),
+            };
             let mut out = json!({
                 "worktree": worktree.to_string_lossy(),
                 "outbox": told.path.to_string_lossy(),
-                "present": told.present,
-                "woken": told.woken,
+                "present": told.is_present(),
+                "woken": told.was_woken(),
                 "note": note,
             });
-            if let Some(why) = &told.wake_note {
+            if let Some(why) = why {
                 out["wakeNote"] = json!(why);
             }
             Ok(out)

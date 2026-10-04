@@ -8,7 +8,7 @@
 
 use serde_json::{Value, json};
 
-use super::{Context, Delivered};
+use super::{Context, DeliveryOutcome, Reached};
 use crate::kernel::config;
 use crate::messaging::Message;
 use crate::task::{self, PrRef, PrStatus, Status, Task};
@@ -141,7 +141,7 @@ fn check_parent(parent: &str) -> Result<(), String> {
 }
 
 /// Write a new record, and hand it over if it was created already queued.
-pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<Delivered>), String> {
+pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<DeliveryOutcome>), String> {
     let stamp = stamp();
     // Before anything reaches `gh` or the id is claimed: claiming writes a reservation, and a
     // refusal after it would leave that behind.
@@ -286,7 +286,11 @@ pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
     crate::infra::fs::lock(&dir(ctx).join(format!("{id}.lock")))
 }
 
-pub fn update(ctx: &Context, id: &str, input: &Value) -> Result<(Task, Option<Delivered>), String> {
+pub fn update(
+    ctx: &Context,
+    id: &str,
+    input: &Value,
+) -> Result<(Task, Option<DeliveryOutcome>), String> {
     update_checked(ctx, id, input, |_| Ok(()))
 }
 
@@ -297,7 +301,7 @@ pub fn update_checked(
     id: &str,
     input: &Value,
     check: impl FnOnce(&Task) -> Result<(), String>,
-) -> Result<(Task, Option<Delivered>), String> {
+) -> Result<(Task, Option<DeliveryOutcome>), String> {
     let lock = lock_task(ctx, id)?;
     let mut task = task::load(&dir(ctx), id)?;
     check(&task)?;
@@ -375,7 +379,7 @@ pub fn update_checked(
 
 /// Put the task in the hub's inbox and poke its tab — the same delivery `adj send` performs,
 /// through the same code, so waking and notifying cannot drift between the two callers.
-pub fn hand_over(ctx: &Context, task: &Task) -> Result<Delivered, String> {
+pub fn hand_over(ctx: &Context, task: &Task) -> Result<DeliveryOutcome, String> {
     let message = Message {
         from: "dashboard".to_string(),
         // Deliberately none. The sender is a person at a browser, not a worktree, and a
@@ -395,7 +399,7 @@ pub fn hand_over(ctx: &Context, task: &Task) -> Result<Delivered, String> {
 /// `done`. Its slot came free and nothing woke the hub to say so. A message rather than a
 /// bare wake, because a hub that is woken and finds its inbox empty goes straight back to
 /// waiting — and one that is not running should find this waiting when it starts.
-pub fn nudge(ctx: &Context) -> Result<Delivered, String> {
+pub fn nudge(ctx: &Context) -> Result<DeliveryOutcome, String> {
     let message = Message {
         from: "dashboard".to_string(),
         // None, for the reason `hand_over` gives.
@@ -1076,12 +1080,12 @@ pub fn refresh_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Resu
     Ok(())
 }
 
-fn handed_json(handed: &Option<Delivered>) -> Value {
+fn handed_json(handed: &Option<DeliveryOutcome>) -> Value {
     match handed {
         Some(d) => json!({
-            "present": d.delivery.present,
-            "woken": d.woken,
-            "path": d.delivery.path.display().to_string(),
+            "present": d.is_present(),
+            "woken": d.was_woken(),
+            "path": d.path.display().to_string(),
         }),
         None => Value::Null,
     }
@@ -1101,24 +1105,20 @@ fn not_handed_line(status: Status, hub_name: &str) -> Option<String> {
     }
 }
 
-fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<Delivered>) {
+fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<DeliveryOutcome>) {
     let Some(handed) = handed else {
         if let Some(line) = not_handed_line(task.status, &ctx.repo.hub_name) {
             println!("{line}");
         }
         return;
     };
-    println!(
-        "handed to {}: {}",
-        ctx.repo.hub_name,
-        handed.delivery.path.display()
-    );
-    match (handed.delivery.present, handed.woken) {
-        (true, true) => println!("Woke the hub; it will pick this up."),
-        (true, false) => {
+    println!("handed to {}: {}", ctx.repo.hub_name, handed.path.display());
+    match handed.reached {
+        Reached::Woken => println!("Woke the hub; it will pick this up."),
+        Reached::Running { .. } => {
             println!("The hub is running; it will pick this up the next time it checks its inbox.")
         }
-        (false, _) => println!(
+        Reached::NotRunning => println!(
             "The hub is not running. Waiting in its inbox for the next time it starts (task {}).",
             task.id
         ),
