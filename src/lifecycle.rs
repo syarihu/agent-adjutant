@@ -1,6 +1,6 @@
 //! Hub and worker lifecycle: starting, stopping, reopening and focusing the agents the
 //! board and the subcommands hand work to, one file per operation. Names infra, kernel,
-//! registry and mail, and nothing above them.
+//! registry, mail and task, and nothing above them.
 
 pub mod hub;
 mod model;

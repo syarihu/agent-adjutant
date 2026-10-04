@@ -2,23 +2,25 @@
 //!
 //! A worker used to exist only as the far end of a task, and the board joins a task to its
 //! worker by worktree, so a worker with no task had no card and nothing could give a running
-//! one a task or another hub. Both halves live here so the HTTP layer only routes: starting
-//! is a message to a hub (the hub owns creating worktrees, as it always has), and linking is
-//! the one place that writes a task, a worker record and a message to the worker in step.
+//! one a task or another hub. Starting is a message to a hub (the hub owns creating
+//! worktrees, as it always has). Linking is `lifecycle::worker::link`'s: it writes the task,
+//! the worker's record and the message to the worker in step. This module keeps the board's
+//! half: reading the request, finding the session and the hub, asking the hub to file an
+//! issue, and the answer.
 
 use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::same_path;
 use super::serve::{Server, find_session, settings_now};
 use super::{HubStart, TabOutcome};
 use crate::kernel::runner;
+use crate::lifecycle::worker::{LinkRequest, LinkTo, Linked};
 use crate::mail::RepoHub;
 use crate::mail::{self, Message};
 use crate::registry::{self, Context};
 use crate::session::SessionRequest;
-use crate::task::{self, Executor, Status, TaskPatch};
+use crate::task;
 
 /// The hub named by `hub` (a `hubs[].id`), or this board's own when none is named, with the
 /// context to address it by. Refused the way `act_on_hub` refuses: a parent-task hub whose key
@@ -210,7 +212,8 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
 /// The task is either an existing one (`task`) or a new one (`newTask`, the fields
 /// `POST /api/tasks` takes) and is looked up or made in the task directory of the hub named
 /// by `hub` — that directory is what says which hub a task belongs to, and the worker's
-/// record follows it.
+/// record follows it. The link itself is `lifecycle::worker::link`'s; what is here is the
+/// request, the issue the hub is asked to file and the answer.
 pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
     let input = input_of(body)?;
     let settings = settings_now(server);
@@ -218,38 +221,10 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
     if session.kind != "worker" {
         return Err("only a worker session can be linked to a task".to_string());
     }
-    let worktree = session.worktree.as_str();
-    if !matches!(
-        registry::read_worker_record(Path::new(worktree)),
-        registry::Recorded::Found(_)
-    ) {
-        return Err("the session has not started yet".to_string());
-    }
-    // A task linked to a worker nobody is running would sit as `dispatched` in a worktree
-    // that never reads the notice.
-    if !registry::worker_status(Path::new(worktree)).present {
-        return Err("the session has ended; resume it first".to_string());
-    }
-    // Checked before anything is written: a task made or changed for a phase the record would
-    // then refuse is the half-linked state the undo below exists for.
-    let phase = text(&input, "phase")?;
-    if let Some(phase) = phase.filter(|p| !registry::PHASES.contains(p)) {
-        return Err(format!(
-            "no such phase: {phase} (one of {})",
-            registry::PHASES.join(", ")
-        ));
-    }
     let (hub, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
-    let held = session.task.as_deref();
-
-    // Written first, and undone if the worker's record cannot be: a task naming a worktree
-    // whose worker still reports for nothing is the half-linked state to avoid.
-    let (linked, undo) = match (text(&input, "task")?, input.get("newTask")) {
+    let to = match (text(&input, "task")?, input.get("newTask")) {
         (Some(_), Some(_)) => return Err("give either task or newTask, not both".to_string()),
         (Some(task_id), None) => {
-            if !task::is_plain_id(task_id) {
-                return Err(format!("no such task: {task_id}"));
-            }
             // An existing task already has its issue or its reason not to; only a task made by
             // this link can ask the hub to file one.
             if text(&input, "kind")? == Some("file-and-start") {
@@ -257,60 +232,9 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                     "file-and-start needs a newTask: an existing task is not filed".to_string(),
                 );
             }
-            if held.is_some_and(|held| held != task_id) {
-                return Err(format!(
-                    "this session already has a task: {}",
-                    held.unwrap_or_default()
-                ));
-            }
-            // Read to choose the status; the checks that matter are made again under the lock.
-            let status = match task::get(&ctx.state, &ctx.repo.slug, task_id)?.status {
-                Status::Pr => Status::Pr,
-                _ => Status::Dispatched,
-            };
-            let mut before = TaskPatch::default();
-            let (updated, _) = task::update_checked(
-                &ctx,
-                task_id,
-                &TaskPatch {
-                    worktree: Some(Some(worktree.to_string())),
-                    status: Some(status),
-                    note: Some(None),
-                    ..TaskPatch::default()
-                },
-                false,
-                |existing| {
-                    if matches!(existing.status, Status::Done | Status::Cancelled) {
-                        return Err(format!("{task_id} is finished"));
-                    }
-                    if existing.executor == Executor::Jules {
-                        return Err(format!("{task_id} is for Jules; a session cannot take it"));
-                    }
-                    if let Some(other) = existing
-                        .worktree
-                        .as_deref()
-                        .filter(|w| !same_path(w, worktree))
-                        && registry::worker_status(Path::new(other)).present
-                    {
-                        return Err(format!("{task_id} already has a worker running in {other}"));
-                    }
-                    // Every field `link` writes, so a failed relink puts each one back, absent
-                    // ones too.
-                    before = TaskPatch {
-                        worktree: Some(existing.worktree.clone()),
-                        status: Some(existing.status),
-                        note: Some(existing.note.clone()),
-                        ..TaskPatch::default()
-                    };
-                    Ok(())
-                },
-            )?;
-            (updated, Undo::Restore(Box::new(before)))
+            LinkTo::Existing(task_id.to_string())
         }
         (None, Some(new_task)) => {
-            if let Some(held) = held {
-                return Err(format!("this session already has a task: {held}"));
-            }
             let mut fields = new_task
                 .as_object()
                 .cloned()
@@ -320,66 +244,19 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
             fields.remove("worktreeName");
             fields.remove("status");
             fields.remove("worktree");
-            let mut new = task::NewTask::from_json(&Value::Object(fields))?;
-            if new.executor == Executor::Jules {
-                return Err("a session cannot take a task for Jules".to_string());
-            }
-            new.status = Status::Dispatched;
-            new.worktree = Some(worktree.to_string());
-            let (created, _) = task::create(&ctx, new, false)?;
-            (created, Undo::Remove)
+            LinkTo::New(task::NewTask::from_json(&Value::Object(fields))?)
         }
         (None, None) => return Err("a task or a newTask is required".to_string()),
     };
-
-    let made_here = matches!(undo, Undo::Remove);
-    if let Err(e) =
-        registry::relink_worker(Path::new(worktree), hub.key.as_deref(), &linked.id, phase)
-    {
-        match undo {
-            Undo::Remove => {
-                let _ = task::remove(&ctx, &linked.id);
-            }
-            Undo::Restore(before) => {
-                let _ = task::update(&ctx, &linked.id, &before, false);
-            }
-        }
-        return Err(e);
-    }
-    // Only a task this link made: an existing one may carry `file-and-start` from its own request,
-    // which was already handed to a hub.
+    let phase = text(&input, "phase")?.map(str::to_string);
+    let worktree = session.worktree.as_str();
+    let Linked {
+        task: linked,
+        made_here,
+    } = crate::lifecycle::worker::link(&ctx, Path::new(worktree), LinkRequest { to, phase })?;
+    // Only a task this link made: an existing one may carry `file-and-start` from its own
+    // request, which was already handed to a hub.
     let files_issue = made_here && linked.kind == task::Kind::FileAndStart;
-    let filing = if files_issue {
-        "The hub files the issue for this task; its URL reaches you as `[issue <id>] <url>` \
-         and is recorded on the task.\n\n"
-    } else if made_here && linked.kind == task::Kind::Start && linked.issue_url.is_none() {
-        // `start` reads as "an issue that already exists" in the request below.
-        "This task has no issue and none will be filed for it; the Kind line below does not \
-         mean one exists.\n\n"
-    } else {
-        ""
-    };
-    let body = format!(
-        "From now on your Task record is {} and your hub is {}. Fetch adj-worker \
-         (`adj skill adj-worker`) and follow it from where the work stands.\n\n{filing}{}",
-        linked.id,
-        ctx.repo.hub_name,
-        task::render_request(&linked)
-    );
-    crate::mail::deliver_to_worker(
-        &ctx,
-        Path::new(worktree),
-        "dashboard",
-        &format!("[linked {}] this session is now a task's worker", linked.id),
-        &body,
-        None,
-    )
-    .map_err(|e| {
-        format!(
-            "{} is linked, but the session could not be told: {e}",
-            linked.id
-        )
-    })?;
     let mut reply = json!({
         "task": linked,
         "session": { "id": session.id, "task": linked.id, "hub": hub.id },
@@ -425,14 +302,6 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         }
     }
     Ok(reply)
-}
-
-/// How to take back the task write when the worker's record cannot be written.
-enum Undo {
-    /// The record was made for this link: remove it.
-    Remove,
-    /// The record existed: put these fields back.
-    Restore(Box<TaskPatch>),
 }
 
 #[cfg(test)]
