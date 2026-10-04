@@ -864,11 +864,15 @@ pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<
     let ctx = crate::registry::context(repo, hub)?;
     // Open gates only: an answered one has gone to the archive, and its answer is the hub's
     // to act on from the inbox.
-    let gated: std::collections::HashSet<String> =
-        crate::gate::list_of_kind(&super::gate::dir(&ctx), crate::gate::Kind::Dispatch)
-            .into_iter()
-            .filter_map(|g| g.task)
-            .collect();
+    let gated: std::collections::HashSet<String> = crate::gate::list_of_kind(
+        &ctx.state,
+        &ctx.repo.slug,
+        crate::gate::Shelf::Open,
+        crate::gate::Kind::Dispatch,
+    )
+    .into_iter()
+    .filter_map(|g| g.task)
+    .collect();
     let next = task::next(task::list(&ctx.state, &ctx.repo.slug), &gated);
     if as_json {
         println!("{}", json!(next));
