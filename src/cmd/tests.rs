@@ -87,24 +87,69 @@ fn nothing_is_forwarded_when_nothing_was_given() {
 
 #[test]
 fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
-    let _sandbox = crate::testing::Sandbox::empty();
-    unsafe {
-        std::env::set_var(crate::infra::env::CONFIG_ENV, "relative-config.json");
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
+    let sandbox = crate::testing::Sandbox::empty();
+    let _config = crate::testing::EnvVar::set(
+        &sandbox,
+        crate::infra::env::CONFIG_ENV,
+        "relative-config.json",
+    );
+    unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
     config::anchor_config_env();
     let env = forwarded_env();
     assert_eq!(env[0], "env");
     assert!(env.contains(&format!(
+        "{}={}",
+        crate::infra::env::CONFIG_ENV,
+        std::env::current_dir()
+            .unwrap()
+            .join("relative-config.json")
+            .display()
+    )));
+}
+
+/// A tab reads `ADJUTANT_STATE_DIR` against its own worktree, so a relative one has to be
+/// sent as the directory this process means.
+#[test]
+fn a_relative_state_dir_reaches_a_tab_as_an_absolute_path() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let _state =
+        crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "relative-state");
+    let env = forwarded_env();
+    assert!(
+        env.contains(&format!(
             "{}={}",
-            crate::infra::env::CONFIG_ENV,
+            crate::infra::env::STATE_DIR_ENV,
             std::env::current_dir()
                 .unwrap()
-                .join("relative-config.json")
+                .join("relative-state")
                 .display()
-        )));
-    // The sandbox also sets ADJUTANT_STATE_DIR, but we only care about CONFIG_ENV here
-    // so that the test logic correctly asserts on the rewritten config path.
+        )),
+        "{env:?}"
+    );
+}
+
+/// The resident is detached and stands elsewhere, so it is handed the absolute directory.
+#[test]
+fn the_resident_is_started_with_an_absolute_state_dir() {
+    use std::process::Stdio;
+    let sandbox = crate::testing::Sandbox::empty();
+    let _state =
+        crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "relative-state");
+    let command =
+        serve::resident_command(std::path::Path::new("adj"), 0, Stdio::null(), Stdio::null());
+    let value = command
+        .get_envs()
+        .find(|(name, _)| *name == crate::infra::env::STATE_DIR_ENV)
+        .and_then(|(_, value)| value);
+    assert_eq!(
+        value,
+        Some(
+            std::env::current_dir()
+                .unwrap()
+                .join("relative-state")
+                .as_os_str()
+        )
+    );
 }
 
 /// With `ADJUTANT_CONFIG` unset, `XDG_CONFIG_HOME` is what picks the config, so a tab

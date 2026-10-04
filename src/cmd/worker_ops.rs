@@ -69,7 +69,8 @@ pub fn spawn(
 /// inbox nobody is reading, and both halves look healthy from where they stand.
 ///
 /// Forwarded only when this process was given them. A machine that never sets them gets the
-/// command line it always had.
+/// command line it always had. A relative state directory is sent absolute, resolved where
+/// this process stands, because the tab reads it against its own worktree.
 pub(super) fn forwarded_env() -> Vec<String> {
     let set: Vec<String> = [
         crate::infra::env::CONFIG_ENV,
@@ -83,7 +84,16 @@ pub(super) fn forwarded_env() -> Vec<String> {
         std::env::var(name)
             .ok()
             .filter(|value| !value.is_empty())
-            .map(|value| format!("{name}={value}"))
+            .map(|value| {
+                if *name == crate::infra::env::STATE_DIR_ENV {
+                    format!(
+                        "{name}={}",
+                        crate::infra::paths::state_dir_absolute().display()
+                    )
+                } else {
+                    format!("{name}={value}")
+                }
+            })
     })
     .collect();
     if set.is_empty() {

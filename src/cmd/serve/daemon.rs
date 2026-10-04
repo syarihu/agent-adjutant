@@ -45,30 +45,9 @@ pub fn resident_running() -> bool {
     live_resident().is_some()
 }
 
-/// A relative `ADJUTANT_STATE_DIR`, made absolute against where this was started, so that
-/// the resident and the process that started it — which stand in different places once the
-/// resident is detached — read the same directory. The resident never changes directory.
-fn anchor_state_dir() {
-    let Ok(value) = std::env::var(crate::infra::env::STATE_DIR_ENV) else {
-        return;
-    };
-    let path = Path::new(&value);
-    if value.is_empty() || value == "~" || value.starts_with("~/") || path.is_absolute() {
-        return;
-    }
-    let Ok(cwd) = std::env::current_dir() else {
-        return;
-    };
-    if let Ok(absolute) = std::path::absolute(cwd.join(path)) {
-        // SAFETY: called from `server_start` and `server_restart` as their first step, before either starts a thread.
-        unsafe { std::env::set_var(crate::infra::env::STATE_DIR_ENV, absolute) };
-    }
-}
-
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
 /// tests run.
 pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, String> {
-    anchor_state_dir();
     if foreground {
         return serve_resident(port, open);
     }
@@ -144,8 +123,6 @@ pub(super) fn private_log(path: &Path) -> Result<std::fs::File, String> {
 /// The resident, started in a process group of its own so that closing the terminal it was
 /// started from does not take it along, with what it says written to `server.log`.
 fn spawn_resident(port: u16) -> Result<std::process::Child, String> {
-    use std::os::unix::process::CommandExt;
-
     let log = server_log_path();
     if let Some(parent) = log.parent() {
         std::fs::create_dir_all(parent)
@@ -153,13 +130,29 @@ fn spawn_resident(port: u16) -> Result<std::process::Child, String> {
     }
     let open_log = || private_log(&log);
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+    resident_command(&exe, port, open_log()?.into(), open_log()?.into())
+        .spawn()
+        .map_err(|e| format!("cannot start adj server: {e}"))
+}
+
+/// The command that starts the resident, built apart from the spawn so its environment can be
+/// read. The resident is detached and stands elsewhere, so a relative `ADJUTANT_STATE_DIR` is
+/// handed to it as the absolute directory this process reads now.
+pub(in crate::cmd) fn resident_command(
+    exe: &Path,
+    port: u16,
+    stdout: std::process::Stdio,
+    stderr: std::process::Stdio,
+) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
+
     let mut command = std::process::Command::new(exe);
     command
         .args(["server", "start", "--foreground", "--no-open", "--port"])
         .arg(port.to_string())
         .stdin(std::process::Stdio::null())
-        .stdout(open_log()?)
-        .stderr(open_log()?)
+        .stdout(stdout)
+        .stderr(stderr)
         // What the agent is started without, for the same reason: this one answers for every
         // repository and must not inherit the identity of the hub it was started from.
         .env_remove(crate::infra::env::HUB_SESSION_ENV)
@@ -169,9 +162,13 @@ fn spawn_resident(port: u16) -> Result<std::process::Child, String> {
     for name in crate::infra::git::REPOSITORY_LOCATION_ENV {
         command.env_remove(name);
     }
+    if std::env::var_os(crate::infra::env::STATE_DIR_ENV).is_some_and(|v| !v.is_empty()) {
+        command.env(
+            crate::infra::env::STATE_DIR_ENV,
+            crate::infra::paths::state_dir_absolute(),
+        );
+    }
     command
-        .spawn()
-        .map_err(|e| format!("cannot start adj server: {e}"))
 }
 
 /// Wait for the resident to say where it is — it writes `server.json` once it is listening.
@@ -385,7 +382,6 @@ fn recorded_version() -> Option<String> {
 /// effect. Hubs and workers are other processes and go on running; board tabs reconnect by
 /// themselves, which is why the browser is opened only on request.
 pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
-    anchor_state_dir();
     let here = checkout_here();
     let old_version = recorded_version();
     let Some((old_pid, old_port)) = stop_resident(true)? else {
