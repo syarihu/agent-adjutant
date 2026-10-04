@@ -3,15 +3,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::auth::stored_token;
-use super::daemon::live_resident;
 
-// Moved to `registry`; re-exported until #331 so the `serve` callers keep their paths.
-pub(in crate::cmd) use crate::registry::forget_board;
-use crate::registry::served;
-pub(super) use crate::registry::{Address, Served, address_of, addresses, record};
-#[cfg(test)]
-pub(super) use crate::registry::{boards_dir, prefer};
-pub use crate::registry::{dashboards_running, note_board, running};
+use crate::registry::{Served, live_resident, note_board, served};
 
 pub(super) fn board_url(port: u16, token: &str) -> String {
     format!("http://127.0.0.1:{port}/?token={token}")

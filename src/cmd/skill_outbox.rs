@@ -36,11 +36,11 @@ pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {
             .map_err(|e| format!("cannot determine the current directory: {e}"))?,
     };
     if clear {
-        messaging::clear_outbox(&worktree)?;
+        mail::clear_outbox(&worktree)?;
         println!("cleared the outbox");
         return Ok(());
     }
-    let text = messaging::read_outbox(&worktree).text;
+    let text = mail::read_outbox(&worktree).text;
     if text.trim().is_empty() {
         println!("(empty)");
         return Ok(());

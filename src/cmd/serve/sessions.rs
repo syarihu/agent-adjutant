@@ -7,7 +7,6 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::kernel::runner;
-use crate::messaging;
 use crate::session;
 use crate::task;
 
@@ -94,11 +93,11 @@ fn tmux_pane_of(
 pub(super) fn sessions_of(
     server: &Server,
     settings: &crate::kernel::config::Settings,
-    hubs: &[session::RepoHub],
+    hubs: &[crate::mail::RepoHub],
     linked_paths: &[String],
     listing: Listing<'_>,
     only: Option<&str>,
-    mut worker_data: impl FnMut(usize, &str) -> (messaging::WorkerStatus, Option<String>),
+    mut worker_data: impl FnMut(usize, &str) -> (crate::registry::WorkerStatus, Option<String>),
 ) -> Vec<session::Session> {
     let repo = &server.ctx.repo;
     let terminal_settings = &settings.terminal;
@@ -167,7 +166,7 @@ pub(super) fn sessions_of(
             || {
                 let screen =
                     crate::infra::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
-                crate::terminal::last_output_line(agent, &screen)
+                crate::mail::last_output_line(agent, &screen)
             },
         )
     };
@@ -177,8 +176,8 @@ pub(super) fn sessions_of(
 
     // 1. Hub sessions from hubs
     for h in hubs.iter().filter(|h| !skipped(&h.id)) {
-        let recorded = match messaging::read_hub_record(&server.ctx.state, &h.slug) {
-            messaging::Recorded::Found(r) => r.terminal,
+        let recorded = match crate::registry::read_hub_record(&server.ctx.state, &h.slug) {
+            crate::registry::Recorded::Found(r) => r.terminal,
             _ => None,
         };
         let terminal = session_terminal(
@@ -198,7 +197,8 @@ pub(super) fn sessions_of(
 
         sessions.push(session::Session {
             id: h.id.clone(),
-            conversation: messaging::hub_session(&server.ctx.state, &h.slug).map(|s| s.session_id),
+            conversation: crate::registry::hub_session(&server.ctx.state, &h.slug)
+                .map(|s| s.session_id),
             kind: "hub".to_string(),
             agent: hub_agent.clone(),
             terminal,
@@ -227,9 +227,9 @@ pub(super) fn sessions_of(
     // Whether the main checkout is listed below as `worker-main`, which a worktree of that
     // name would otherwise collide with.
     let main_listed = matches!(
-        messaging::read_worker_record(Path::new(&repo.main)),
-        messaging::Recorded::Found(_)
-    ) || messaging::worker_session(Path::new(&repo.main)).is_some();
+        crate::registry::read_worker_record(Path::new(&repo.main)),
+        crate::registry::Recorded::Found(_)
+    ) || crate::registry::worker_session(Path::new(&repo.main)).is_some();
     let worker_ids = worker_session_ids(linked_paths, main_listed);
     for (index, (path, id)) in linked_paths.iter().zip(worker_ids).enumerate() {
         if skipped(&id) {
@@ -237,19 +237,23 @@ pub(super) fn sessions_of(
         }
         let (status, branch) = worker_data(index, path);
         let wt_path = Path::new(path);
-        let record = match messaging::read_worker_record(wt_path) {
-            messaging::Recorded::Found(record) => Some(record),
+        let record = match crate::registry::read_worker_record(wt_path) {
+            crate::registry::Recorded::Found(record) => Some(record),
             _ => None,
         };
-        let saved_session = messaging::worker_session(wt_path);
-        let parent_hub = parent_hub_id(repo, hubs, messaging::worker_hub_key(wt_path).as_deref());
+        let saved_session = crate::registry::worker_session(wt_path);
+        let parent_hub = parent_hub_id(
+            repo,
+            hubs,
+            crate::registry::worker_hub_key(wt_path).as_deref(),
+        );
         let started_at = record.as_ref().and_then(|r| r.started_at.clone());
         let conversation = saved_session.as_ref().map(|s| s.session_id.clone());
 
         let terminal = session_terminal(
             record
                 .as_ref()
-                .and_then(messaging::WorkerRecord::terminal)
+                .and_then(crate::registry::WorkerRecord::terminal)
                 .as_ref(),
             terminal_settings,
             &mut views,
@@ -272,13 +276,13 @@ pub(super) fn sessions_of(
         );
 
         let saved_title = saved_session.and_then(|s| s.title);
-        let task_id = messaging::worker_task(wt_path);
+        let task_id = crate::registry::worker_task(wt_path);
 
         let title = status.title.or(saved_title);
         let task_title = task_id.as_deref().and_then(|id| {
             let slug = crate::kernel::identity::slug_for(
                 &repo.nwo,
-                messaging::worker_hub_key(wt_path).as_deref(),
+                crate::registry::worker_hub_key(wt_path).as_deref(),
             );
             linked_task_title(&gates.state_dir, &slug, id)
         });
@@ -314,13 +318,14 @@ pub(super) fn sessions_of(
     if skipped("worker-main") {
         return sessions;
     }
-    if let messaging::Recorded::Found(record) = messaging::read_worker_record(Path::new(&repo.main))
+    if let crate::registry::Recorded::Found(record) =
+        crate::registry::read_worker_record(Path::new(&repo.main))
     {
-        let status = messaging::worker_status_with(processes, Path::new(&repo.main));
+        let status = crate::registry::worker_status_with(processes, Path::new(&repo.main));
         let parent_hub = parent_hub_id(
             repo,
             hubs,
-            messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
+            crate::registry::worker_hub_key(Path::new(&repo.main)).as_deref(),
         );
         let started_at = record.started_at.clone();
 
@@ -351,13 +356,14 @@ pub(super) fn sessions_of(
         let task_title = task_id.as_deref().and_then(|id| {
             let slug = crate::kernel::identity::slug_for(
                 &repo.nwo,
-                messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
+                crate::registry::worker_hub_key(Path::new(&repo.main)).as_deref(),
             );
             linked_task_title(&gates.state_dir, &slug, id)
         });
         sessions.push(session::Session {
             id: "worker-main".to_string(),
-            conversation: messaging::worker_session(Path::new(&repo.main)).map(|s| s.session_id),
+            conversation: crate::registry::worker_session(Path::new(&repo.main))
+                .map(|s| s.session_id),
             kind: "worker".to_string(),
             agent: worker_agent.clone(),
             terminal,
@@ -380,7 +386,7 @@ pub(super) fn sessions_of(
             attached,
             waiting,
         });
-    } else if let Some(saved) = messaging::worker_session(Path::new(&repo.main)) {
+    } else if let Some(saved) = crate::registry::worker_session(Path::new(&repo.main)) {
         let parent_hub = parent_hub_id(repo, hubs, saved.hub.as_deref());
         let terminal = session_terminal(None, terminal_settings, &mut views, None);
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
@@ -442,9 +448,9 @@ pub(in crate::cmd) fn board_session(
     let (main_branch, linked) = split_main(&repo.main, listed);
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // A `ps` for each of the few it is asked about, not the whole process table.
-    let processes = messaging::ProcessTable::each();
+    let processes = crate::registry::ProcessTable::each();
     let hubs =
-        messaging::all_repo_hubs_among_with(&server.ctx.state, &processes, repo, &linked_paths);
+        crate::mail::all_repo_hubs_among_with(&server.ctx.state, &processes, repo, &linked_paths);
     sessions_of(
         server,
         settings,
@@ -458,7 +464,7 @@ pub(in crate::cmd) fn board_session(
         Some(id),
         |index, path| {
             (
-                messaging::worker_status_with(&processes, Path::new(path)),
+                crate::registry::worker_status_with(&processes, Path::new(path)),
                 linked[index].branch.clone(),
             )
         },
@@ -483,7 +489,7 @@ pub(in crate::cmd) fn find_session(
 /// The slug of the hub the worker in `worktree` reports to, from its own record: the same one
 /// `parent_hub_id` and the hub listing arrive at, without listing the hubs.
 fn worker_hub_slug(repo: &crate::kernel::identity::RepoInfo, worktree: &Path) -> String {
-    match messaging::worker_hub_key(worktree) {
+    match crate::registry::worker_hub_key(worktree) {
         Some(key) => crate::kernel::identity::slug_for(&repo.nwo, Some(&key)),
         None => match &repo.hub {
             Some(_) => repo

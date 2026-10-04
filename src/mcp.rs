@@ -14,13 +14,16 @@ use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cmd::{HubBoard, NotWoken, Reached};
+use crate::cmd::HubBoard;
 use crate::kernel::config;
 use crate::kernel::identity;
 use crate::kernel::prompts;
 #[cfg(test)]
 use crate::kernel::runner::runner_for_procedure;
-use crate::messaging::{self, Message};
+use crate::mail::{self, Message};
+use crate::mail::{NotWoken, Reached};
+use crate::registry;
+use crate::registry::dashboards_running as board_running;
 
 mod schema;
 
@@ -167,7 +170,7 @@ fn resolve_repo(args: &Value) -> Result<identity::RepoInfo, String> {
     // resolved from it: a worker's answer is written in the worktree it is standing in, and
     // this server is started once and then asked about whichever checkout the session is
     // sitting in.
-    let hub = messaging::hub_id(args["hub"].as_str(), cwd.as_deref())?;
+    let hub = registry::hub_id(args["hub"].as_str(), cwd.as_deref())?;
     identity::resolve_in(
         cwd.as_deref(),
         args["repo"].as_str().filter(|s| !s.is_empty()),
@@ -202,8 +205,8 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         "adjutant_hub_status" => {
             let info = resolve_repo(args)?;
             let root = crate::registry::state_root(Some(Path::new(&info.main)));
-            let status = messaging::hub_status(&root, &info.slug, &info.hub_name);
-            let pending = messaging::pending(&root, &info.slug);
+            let status = registry::hub_status(&root, &info.slug, &info.hub_name);
+            let pending = mail::pending(&root, &info.slug);
             let mut out = status_json(&status, &pending.dir);
             out["repo"] = json!(info.nwo);
             out["hub"] = json!(info.hub);
@@ -228,8 +231,8 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 body: body.to_string(),
             };
             let wake = args.get("wake").and_then(|v| v.as_bool());
-            let ctx = crate::cmd::context_of(info)?;
-            let delivered = crate::cmd::deliver_to_hub_with_wake(&ctx, &message, true, wake)?;
+            let ctx = crate::registry::context_of(info)?;
+            let delivered = crate::mail::deliver_to_hub_with_wake(&ctx, &message, true, wake)?;
             let (note, why) = match &delivered.reached {
                 Reached::Woken => (
                     "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
@@ -274,7 +277,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             let action = args["action"].as_str().unwrap_or("list");
             match action {
                 "list" => {
-                    let pending = messaging::pending(&root, &info.slug);
+                    let pending = mail::pending(&root, &info.slug);
                     let entries: Vec<Value> = pending
                         .messages
                         .into_iter()
@@ -292,13 +295,11 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 }
                 "read" => {
                     let name = args["name"].as_str().unwrap_or("");
-                    Ok(
-                        json!({ "name": name, "content": messaging::read(&root, &info.slug, name)? }),
-                    )
+                    Ok(json!({ "name": name, "content": mail::read(&root, &info.slug, name)? }))
                 }
                 "ack" => {
                     let name = args["name"].as_str().unwrap_or("");
-                    let moved = messaging::ack(&root, &info.slug, name)?;
+                    let moved = mail::ack(&root, &info.slug, name)?;
                     Ok(json!({ "name": name, "archived": moved.to_string_lossy() }))
                 }
                 other => Err(format!("action must be list, read or ack: {other}")),
@@ -316,13 +317,13 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             if subject.is_empty() || body.is_empty() {
                 return Err("subject and body are both required".to_string());
             }
-            let ctx = crate::cmd::context_of(info)?;
+            let ctx = crate::registry::context_of(info)?;
             let from = args["from"]
                 .as_str()
                 .unwrap_or(&ctx.repo.hub_name)
                 .to_string();
             let wake = args.get("wake").and_then(|v| v.as_bool());
-            let told = crate::cmd::deliver_to_worker(&ctx, &worktree, &from, subject, body, wake)?;
+            let told = crate::mail::deliver_to_worker(&ctx, &worktree, &from, subject, body, wake)?;
             let (note, why) = match &told.reached {
                 Reached::Woken => (
                     "Woke the worker. Do not wait for a reply, go back to waiting.",
@@ -374,7 +375,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             };
             match args["action"].as_str().unwrap_or("read") {
                 "read" => {
-                    let outbox = messaging::read_outbox(&worktree);
+                    let outbox = mail::read_outbox(&worktree);
                     Ok(json!({
                         "path": outbox.path.to_string_lossy(),
                         "empty": outbox.text.trim().is_empty(),
@@ -382,14 +383,14 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                     }))
                 }
                 "clear" => {
-                    messaging::clear_outbox(&worktree)?;
+                    mail::clear_outbox(&worktree)?;
                     Ok(json!({ "cleared": true }))
                 }
                 other => Err(format!("action must be read or clear: {other}")),
             }
         }
         "adjutant_gate_open" => {
-            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let ctx = crate::registry::context_of(resolve_repo(args)?)?;
             let mut payload = args.clone();
             let fields = payload
                 .as_object_mut()
@@ -416,7 +417,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         "adjutant_gate_close" => {
             let id = args["id"].as_str().ok_or("a gate needs an id")?;
             let comment = args.get("comment").and_then(Value::as_str);
-            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let ctx = crate::registry::context_of(resolve_repo(args)?)?;
             let terminal = args
                 .get("terminal")
                 .and_then(Value::as_bool)
@@ -426,7 +427,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
             Ok(json!({ "gate": gate, "closed": !on_board, "alreadyAnswered": on_board }))
         }
         "adjutant_refresh" => {
-            let ctx = crate::cmd::context_of(resolve_repo(args)?)?;
+            let ctx = crate::registry::context_of(resolve_repo(args)?)?;
             let checked = crate::cmd::task_refresh(&ctx)?;
             Ok(crate::cmd::task_refresh_json(&checked))
         }
@@ -456,7 +457,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
     }
 }
 
-pub fn status_json(status: &messaging::HubStatus, inbox: &Path) -> Value {
+pub fn status_json(status: &registry::HubStatus, inbox: &Path) -> Value {
     json!({
         "hubName": status.hub_name,
         "slug": status.slug,
@@ -499,7 +500,7 @@ fn start_heartbeat(root: PathBuf) -> Option<(String, String)> {
     let (beat_slug, beat_session) = (slug.clone(), session.clone());
     std::thread::spawn(move || {
         loop {
-            let _ = messaging::touch_hub_session(&root, &beat_slug, &beat_session);
+            let _ = registry::touch_hub_session(&root, &beat_slug, &beat_session);
             std::thread::sleep(HEARTBEAT);
         }
     });
@@ -536,8 +537,8 @@ fn hub_serve() -> Option<String> {
 /// hub runs in the main checkout, and a hub for a parent task has `ADJUTANT_HUB` on its line.
 /// A slug that does not come out the same is a server started somewhere else than the hub
 /// it was told about, and serving whatever it resolved to would put up the wrong board.
-fn hub_board_context(slug: &str) -> Result<crate::cmd::Context, String> {
-    let ctx = crate::cmd::context(None, None)?;
+fn hub_board_context(slug: &str) -> Result<crate::registry::Context, String> {
+    let ctx = crate::registry::context(None, None)?;
     if ctx.repo.slug != slug {
         return Err(format!(
             "this server resolves to {} rather than {slug}",
@@ -631,11 +632,11 @@ fn watch_board(root: &Path, slug: &str, mut mode: Mode) {
         match mode {
             Mode::Resident => {
                 std::thread::sleep(RESIDENT_WATCH);
-                if crate::cmd::resident_running(root) {
+                if crate::registry::resident_running(root) {
                     continue;
                 }
                 std::thread::sleep(RESIDENT_RECHECK);
-                if crate::cmd::resident_running(root) {
+                if crate::registry::resident_running(root) {
                     continue;
                 }
             }
@@ -646,7 +647,7 @@ fn watch_board(root: &Path, slug: &str, mut mode: Mode) {
                 }
                 std::thread::sleep(BOARD_HANDOVER_STEP);
                 waited += BOARD_HANDOVER_STEP;
-                if crate::cmd::board_running(root, slug).is_some() {
+                if board_running(root, slug).is_some() {
                     continue;
                 }
             }
@@ -682,7 +683,7 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // The client closed the pipe: the session is ending now, which is a better answer than
     // the last beat. Written on the way out whatever the loop ended with.
     if let Some((slug, session)) = &heartbeat {
-        let _ = messaging::touch_hub_session(&root, slug, session);
+        let _ = registry::touch_hub_session(&root, slug, session);
     }
     served
 }

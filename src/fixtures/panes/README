@@ -1,4 +1,4 @@
-Screens of the two agents the built-in tmux wake reads before typing (`terminal::pane_state`).
+Screens of the two agents the built-in tmux wake reads before typing (`mail::pane_state`).
 
 Captured from real sessions, one file per state:
 

@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::infra::http::{self, Request};
-use crate::{gate, messaging, task};
+use crate::{gate, task};
 
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{is_own_origin, refuse};
 use super::daemon::{names_resident, private_log, resident_root};
 use super::index::{WorkerSeen, board_counts};
-use super::registry::{Served, boards_dir, prefer, resident_board_url};
+use super::registry::resident_board_url;
 use super::resident::split_board_path;
 use super::routes::{hub_route, is_page_path, session_route, session_route_for, terminal_route};
 use super::state::{
@@ -19,6 +19,7 @@ use super::state::{
     with_records, worker_session_ids,
 };
 use super::*;
+use crate::registry::{Served, boards_dir, dashboards_running, forget_board, prefer};
 
 #[test]
 fn forgetting_a_board_removes_only_that_slug() {
@@ -78,7 +79,10 @@ fn the_dashboards_record_is_written_whole() {
     let pid = std::process::id();
     assert_eq!(written["pid"], pid);
     assert_eq!(written["port"], 4321);
-    assert_eq!(written["psStarted"], json!(messaging::ps_started(pid)));
+    assert_eq!(
+        written["psStarted"],
+        json!(crate::registry::ps_started(pid))
+    );
     assert_eq!(
         dashboards_running(&sandbox.state(), "acme-widget"),
         Some(4321)
@@ -1273,7 +1277,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         ]);
     }
     let record = |worktree: &Path, body: Value| {
-        let path = messaging::worker_record_path(worktree);
+        let path = crate::registry::worker_record_path(worktree);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, body.to_string()).unwrap();
     };
@@ -1297,7 +1301,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     );
     // A hub record for the parent-task hub, and a gate it has open for `bar`.
     let hub_slug = crate::kernel::identity::slug_for("acme/widget", Some("WID-1"));
-    let hub_record = messaging::hub_record_path(&sandbox.state(), &hub_slug);
+    let hub_record = crate::registry::hub_record_path(&sandbox.state(), &hub_slug);
     std::fs::create_dir_all(hub_record.parent().unwrap()).unwrap();
     std::fs::write(
         &hub_record,
@@ -1336,7 +1340,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         nwo_source: "dirname",
     };
     let server = Server {
-        ctx: super::super::context_of(repo).unwrap(),
+        ctx: crate::registry::context_of(repo).unwrap(),
         token: String::new(),
         port: 0,
         resident: false,

@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::Context;
 use super::gh::{self, Notified};
 use super::task as cmd_task;
+use crate::registry::Context;
 use crate::task::{self, PrRef, PrTurn, Task};
 
 /// The only host polled. Notifications of another host would need its own `Last-Modified`

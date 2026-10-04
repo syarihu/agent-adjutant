@@ -127,15 +127,15 @@ fn claim_worker_slot(
     // Always under the lock, limit or not: the check that nobody else is starting a worker
     // here and the mark that says so is taken are one step, or two requests at once both pass
     // the check, and a cleanup's last look at the slots means nothing.
-    messaging::with_dispatch_lock(main, || {
-        if messaging::is_being_removed(main, worktree) {
+    registry::with_dispatch_lock(main, || {
+        if registry::is_being_removed(main, worktree) {
             return Err(format!(
                 "{} is being removed; nothing was started",
                 worktree.display()
             ));
         }
         // Not on a dry run, which marks nothing and so races with nothing.
-        if !dry_run && messaging::is_starting(worktree, crate::infra::clock::now_secs()) {
+        if !dry_run && registry::is_starting(worktree, crate::infra::clock::now_secs()) {
             return Err(format!(
                 "a worker is already starting in {}; nothing was started",
                 worktree.display()
@@ -147,7 +147,7 @@ fn claim_worker_slot(
             // uncounted is one past the limit.
             let mut candidates = identity::linked_worktrees(&ctx.repo.main)?;
             candidates.push(ctx.repo.main.clone());
-            let busy = messaging::busy_worktrees(&candidates, Some(worktree));
+            let busy = registry::busy_worktrees(&candidates, Some(worktree));
             if busy.len() >= max as usize {
                 return Ok(Some(format!(
                     "worker limit reached: {} of maxWorkers {max} are running ({}). \
@@ -158,7 +158,7 @@ fn claim_worker_slot(
             }
         }
         if !dry_run {
-            messaging::mark_worker_starting(worktree)?;
+            registry::mark_worker_starting(worktree)?;
         }
         Ok(None)
     })?
@@ -172,7 +172,7 @@ fn open_worker_tab(
     dry_run: bool,
 ) -> Result<terminal::Performed, String> {
     terminal::spawn(&ctx.settings.terminal, request, dry_run).inspect_err(|_| {
-        let _ = messaging::unmark_worker_starting(std::path::Path::new(worktree));
+        let _ = registry::unmark_worker_starting(std::path::Path::new(worktree));
     })
 }
 
@@ -399,7 +399,7 @@ pub fn focus(
     dry_run: bool,
 ) -> Result<bool, String> {
     let ctx = context(repo_arg, hub_arg)?;
-    let status = messaging::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
+    let status = registry::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
     let Some(pid) = status.pid.filter(|_| status.present) else {
         if !quiet {
             println!("{} is not running", ctx.repo.hub_name);
@@ -425,7 +425,7 @@ pub fn focus_worker(
     worktree: &std::path::Path,
     dry_run: bool,
 ) -> Result<Option<terminal::Performed>, String> {
-    let status = messaging::worker_status(worktree);
+    let status = registry::worker_status(worktree);
     let Some(pid) = status.pid.filter(|_| status.present) else {
         return Ok(None);
     };
@@ -470,10 +470,10 @@ pub fn phase(worktree: Option<&str>, set: Option<&str>) -> Result<(), String> {
     let worktree = worker_worktree(worktree)?;
     match set {
         Some(phase) => {
-            messaging::set_worker_phase(&worktree, phase)?;
+            registry::set_worker_phase(&worktree, phase)?;
             println!("phase: {phase}");
         }
-        None => match messaging::worker_status(&worktree).phase {
+        None => match registry::worker_status(&worktree).phase {
             Some(phase) => println!("{phase}"),
             None => println!("(none)"),
         },
@@ -532,7 +532,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         }
         None => context_as(repo_arg, hub_arg)?,
     };
-    let status = messaging::worker_status(&worktree);
+    let status = registry::worker_status(&worktree);
     if status.present {
         println!(
             "a worker is already running in this worktree (pid {})",
@@ -541,7 +541,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         // `adj work` marked this worktree on the way here, and nobody is going to register
         // over it. Left, it would hold a second slot for the grace period after the running
         // worker ends.
-        let _ = messaging::unmark_worker_starting(&worktree);
+        let _ = registry::unmark_worker_starting(&worktree);
         return Ok(());
     }
 
@@ -568,7 +568,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
             (command, None)
         }
         None => {
-            let session = messaging::new_session_id()?;
+            let session = registry::new_session_id()?;
             let command = runner::worker_command(
                 ctx.settings.agent_runner.as_deref(),
                 &agent_env(&ctx),
@@ -595,7 +595,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     // The address goes into the record here, at the last moment before this process stops
     // being a launcher. Everything the worker's agent later sends is addressed from it.
     let location = terminal::own_location(&ctx.settings.terminal);
-    messaging::register_worker(
+    registry::register_worker(
         &worktree,
         &title,
         ctx.repo.hub.as_deref(),
@@ -606,7 +606,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
     if resumed.is_none() {
         let saved = match &fresh_session {
-            Some(session) => messaging::save_worker_session(
+            Some(session) => registry::save_worker_session(
                 &worktree,
                 &title,
                 ctx.repo.hub.as_deref(),
@@ -614,7 +614,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
                 session,
             )
             .map(|_| ()),
-            None => messaging::forget_worker_session(&worktree),
+            None => registry::forget_worker_session(&worktree),
         };
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
@@ -624,7 +624,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
         // worker would count for the old hub once it has ended and its record is gone.
         let slug_of = |hub: Option<&str>| identity::slug_for(&ctx.repo.nwo, hub);
         if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
-            && let Err(e) = messaging::save_worker_session(
+            && let Err(e) = registry::save_worker_session(
                 &worktree,
                 &title,
                 ctx.repo.hub.as_deref(),
@@ -645,7 +645,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
     // above, so an inherited one would send every report to the hub that dispatched the
     // tab rather than the one this worker registered under; the line carries the right one.
     let error = agent_command(&command).exec();
-    let _ = messaging::unregister_worker(&worktree);
+    let _ = registry::unregister_worker(&worktree);
     Err(format!("cannot start the worker: {error}"))
 }
 
@@ -687,8 +687,8 @@ fn worker_worktree(worktree: Option<&str>) -> Result<std::path::PathBuf, String>
 /// The session `--resume` reopens in `worktree`, or a refusal that says why there is none.
 pub(super) fn saved_worker_session(
     worktree: &std::path::Path,
-) -> Result<messaging::SavedSession, String> {
-    messaging::worker_session(worktree).ok_or_else(|| {
+) -> Result<registry::SavedSession, String> {
+    registry::worker_session(worktree).ok_or_else(|| {
         format!(
             "no saved worker session in {}: a session is saved when a worker is started by \
              `adj work` with a runner that takes {{sessionId}} (the built-in one does)",

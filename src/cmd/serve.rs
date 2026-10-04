@@ -26,15 +26,15 @@ mod routes;
 mod sessions;
 mod state;
 
+use crate::registry::{dashboards_running, record};
 use auth::token;
 use daemon::open_browser;
 #[cfg(test)]
 pub(super) use daemon::resident_command;
-pub use daemon::{resident_running, server_restart, server_start, server_status, server_stop};
+pub use daemon::{server_restart, server_start, server_status, server_stop};
 pub(super) use handlers::hub_start_of;
-pub(super) use registry::forget_board;
-pub use registry::{board_json, dashboards_running, note_board, running};
-use registry::{board_url, record, resident_url};
+pub use registry::board_json;
+use registry::{board_url, resident_url};
 use routes::handle;
 pub(super) use sessions::{board_session, find_session, git_state_of};
 use state::LastLines;
@@ -45,7 +45,7 @@ pub const DEFAULT_PORT: u16 = 4577;
 /// Everything a connection needs. Shared across threads, read-only after startup — the
 /// state that changes lives on disk, where the hub and its workers can also reach it.
 pub(super) struct Server {
-    pub(super) ctx: super::Context,
+    pub(super) ctx: crate::registry::Context,
     token: String,
     port: u16,
     /// Whether the resident server is the one answering, which serves this board at a path
@@ -76,7 +76,7 @@ pub fn serve(
     port: u16,
     open: bool,
 ) -> Result<(), String> {
-    let ctx = super::context(repo_arg, hub_arg)?;
+    let ctx = crate::registry::context(repo_arg, hub_arg)?;
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
         format!(
             "cannot listen on 127.0.0.1:{port}: {e}\n\
@@ -121,7 +121,7 @@ pub enum HubBoard {
 ///
 /// Nothing here writes to stdout. In that process stdout carries JSON-RPC, and a stray line
 /// on it breaks the protocol for the whole session.
-pub fn serve_for_hub(ctx: super::Context) -> Result<HubBoard, String> {
+pub fn serve_for_hub(ctx: crate::registry::Context) -> Result<HubBoard, String> {
     if let Some(url) = resident_url(&ctx.state, &ctx.repo) {
         return Ok(HubBoard::Resident(url));
     }
@@ -154,7 +154,7 @@ struct Board {
 }
 
 impl Board {
-    fn new(ctx: super::Context, listener: TcpListener) -> Result<Board, String> {
+    fn new(ctx: crate::registry::Context, listener: TcpListener) -> Result<Board, String> {
         let token = token(&ctx.state)?;
         // Asked back rather than taken from the caller: port 0 is how a board gets a free
         // port, and the number it got is the only way to reach it.

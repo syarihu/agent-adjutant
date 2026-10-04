@@ -6,18 +6,15 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
-use crate::{messaging, task};
+use crate::task;
 
 use super::auth::{stored_token, token};
 use super::index::{boards_json, checkout_here, seed_boards};
-use super::registry::{addresses, board_url, note_board, resident_board_url};
+use super::registry::{board_url, resident_board_url};
 use super::resident::{Resident, handle_resident};
 use super::{DEFAULT_PORT, bind_preferring};
 
-// Moved to `registry`; re-exported until #331 so the `serve` callers keep their paths.
-pub(super) use crate::registry::live_resident;
-pub use crate::registry::resident_running;
-use crate::registry::{recorded_version, server_record_path};
+use crate::registry::{addresses, live_resident, note_board, recorded_version, server_record_path};
 
 // ── the resident server ──────────────────────────────────────────────
 //
@@ -198,7 +195,7 @@ fn wait_for_resident(root: &Path, mut child: std::process::Child) -> Result<u16,
 fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
     let lock_path = server_lock_path(root);
     // Held for the process's lifetime and released by the system when it ends, however it
-    // ends — the same lock `messaging::take_over` takes, for the same reason.
+    // ends — the same lock `registry::take_over` takes, for the same reason.
     let Some(lock) = crate::infra::fs::try_lock(&lock_path)? else {
         return Err(match live_resident(root) {
             Some((pid, _)) => format!("another adj server is running (pid {pid})"),
@@ -218,7 +215,7 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
     let pid = std::process::id();
     let record = json!({
         "pid": pid,
-        "psStarted": messaging::ps_started(pid),
+        "psStarted": crate::registry::ps_started(pid),
         "port": bound,
         "startedAt": crate::infra::clock::utc_stamp(crate::infra::clock::now_secs()),
         "version": env!("CARGO_PKG_VERSION"),
@@ -345,7 +342,7 @@ fn stop_resident(root: &Path, restarting: bool) -> Result<Option<(u32, u16)>, St
     // The process this record named, not whatever the record names by now: a supervisor may
     // already have started the next one.
     let still_there = || match &started {
-        Some(started) => messaging::ps_started(pid).as_deref() == Some(started.as_str()),
+        Some(started) => crate::registry::ps_started(pid).as_deref() == Some(started.as_str()),
         None => live_resident(root).is_some_and(|(p, _)| p == pid),
     };
     while still_there() {

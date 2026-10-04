@@ -5,9 +5,10 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::{gate, messaging, task};
+use crate::{gate, task};
 
-use super::registry::{addresses, note_board, resident_board_url};
+use super::registry::resident_board_url;
+use crate::registry::{addresses, note_board};
 
 /// What a worker's record says about the task it is on, for `board_counts`.
 pub(super) struct WorkerSeen {
@@ -18,7 +19,8 @@ pub(super) struct WorkerSeen {
 /// The worker record in `worktree`, if there is one. The task is read the way `worker_task`
 /// reads it, minus the saved-session fallback: a record is all the page's join looks at.
 fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
-    let messaging::Recorded::Found(record) = messaging::read_worker_record(Path::new(worktree))
+    let crate::registry::Recorded::Found(record) =
+        crate::registry::read_worker_record(Path::new(worktree))
     else {
         return None;
     };
@@ -100,7 +102,7 @@ pub(super) fn board_counts(
 /// repository serve every board.
 pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
     let addresses = addresses(root);
-    let table = messaging::ProcessTable::snapshot();
+    let table = crate::registry::ProcessTable::snapshot();
     // Workers per parent-task hub, counted by the hub their record reports to. Only asked of
     // a repository that has a parent-task hub listed.
     let mut children: HashMap<String, usize> = HashMap::new();
@@ -118,7 +120,7 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
             Vec::new()
         });
         for w in listed {
-            if let Some(key) = messaging::worker_hub_key(Path::new(&w)) {
+            if let Some(key) = crate::registry::worker_hub_key(Path::new(&w)) {
                 *children
                     .entry(crate::kernel::identity::slug_for(&a.nwo, Some(&key)))
                     .or_insert(0) += 1;
@@ -130,7 +132,7 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
         .map(|a| {
             let status = crate::kernel::identity::hub_name(&a.nwo, a.hub.as_deref())
                 .ok()
-                .map(|name| messaging::hub_status_with(root, &table, &a.slug, &name));
+                .map(|name| crate::registry::hub_status_with(root, &table, &a.slug, &name));
             let present = status.as_ref().is_some_and(|s| s.present);
             let tasks = task::list(&task::dir(root, &a.slug));
             let mut gates = gate::list(&gate::dir(root, &a.slug));
@@ -158,8 +160,8 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
             let last_alive = if present {
                 None
             } else {
-                messaging::hub_session(root, &a.slug).and_then(|saved| {
-                    messaging::hub_last_alive(root, &a.slug, &saved.session_id)
+                crate::registry::hub_session(root, &a.slug).and_then(|saved| {
+                    crate::registry::hub_last_alive(root, &a.slug, &saved.session_id)
                 })
             };
             let finished = a.hub.is_some()
@@ -200,7 +202,7 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
 /// The repository this process stands in, if it stands in one. Whether it is one is not the
 /// business of the commands that ask.
 pub(super) fn checkout_here() -> Option<crate::kernel::identity::RepoInfo> {
-    crate::cmd::resolve(None, None).ok()
+    crate::registry::resolve(None, None).ok()
 }
 
 /// Seed the address book from where this process stands and from the hub records already on
@@ -210,7 +212,7 @@ pub(super) fn seed_boards(root: &Path) {
     if let Some(repo) = checkout_here() {
         note_board(root, &repo);
     }
-    for (slug, record) in messaging::hub_records(root) {
+    for (slug, record) in crate::registry::hub_records(root) {
         let Some(cwd) = record.cwd.as_deref() else {
             continue;
         };

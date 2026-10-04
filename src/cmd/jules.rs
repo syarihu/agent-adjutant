@@ -22,7 +22,7 @@ pub struct StartArgs<'a> {
 }
 
 pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     // Read before anything is started: a session that exists with nobody recorded as its
     // starter would have its review comments passed on in the wrong name, and a lookup that
     // hangs after the session is created would leave it running unrecorded.
@@ -113,7 +113,7 @@ pub struct ShowArgs<'a> {
 
 /// How a session is doing, named by its task or by its own id.
 pub fn show(args: &ShowArgs<'_>) -> Result<(), String> {
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     let session_id = match (args.session, args.id) {
         (Some(session), _) => session.to_string(),
         (None, Some(id)) => task::load(&tasks::dir(&ctx), id)?
@@ -205,7 +205,7 @@ pub fn findings_cmd(
     id: &str,
     as_json: bool,
 ) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let found = findings(&ctx, id)?;
     if as_json {
         println!("{}", json!(found));
@@ -229,7 +229,7 @@ pub fn relay_cmd(
     plan: Option<&str>,
     note: Option<&str>,
 ) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let note = note.map(super::dash_is_stdin).transpose()?;
     let (chosen, note) = match plan {
         // A file, since it is prose the hub wrote and a note in it can hold any quote.
@@ -306,7 +306,7 @@ impl Watch {
     /// and a session that is left alone does not change.
     pub fn look(
         self: &std::sync::Arc<Self>,
-        ctx: &super::Context,
+        ctx: &crate::registry::Context,
         key: &crate::infra::terminal::Hook,
         task: &Value,
     ) -> Option<Value> {
@@ -360,7 +360,7 @@ impl Watch {
 
     fn ask(
         &self,
-        ctx: &super::Context,
+        ctx: &crate::registry::Context,
         key: &crate::infra::terminal::Hook,
         task_id: &str,
         session: &str,
@@ -397,7 +397,7 @@ pub const RELAY_ROUNDS: u32 = 2;
 /// arrive meanwhile are read with the next. Each comment is brought up once, and a PR at most
 /// `RELAY_ROUNDS` times; past that the card is left to the side sheet's manual relay.
 fn announce_review(
-    ctx: &super::Context,
+    ctx: &crate::registry::Context,
     task_id: &str,
     session: &jules::Session,
 ) -> Result<(), String> {
@@ -430,7 +430,7 @@ fn announce_review(
     }
     let round = task.relay_rounds + 1;
     let ids: Vec<&str> = new.iter().map(|f| f.id.as_str()).collect();
-    let message = crate::messaging::Message {
+    let message = crate::mail::Message {
         from: "jules".to_string(),
         // None, for the reason `task::hand_over` gives.
         worktree: None,
@@ -446,7 +446,7 @@ fn announce_review(
     };
     // Posted first and written after, under the lock; woken and notified after it, for the
     // reasons `follow` gives.
-    let posted = super::post_to_hub(ctx, &message)?;
+    let posted = crate::mail::post_to_hub(ctx, &message)?;
     task.announced.extend(ids.iter().map(|id| id.to_string()));
     task.relay_rounds = round;
     task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
@@ -476,7 +476,11 @@ pub fn working(state: &str) -> bool {
 /// The hub is told first and the record written after. The other order loses the message for
 /// good when delivery fails: the record already has its PR, so no later poll gets this far
 /// again. This order at worst tells the hub twice, when the write fails after a delivery.
-fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Result<(), String> {
+fn follow(
+    ctx: &crate::registry::Context,
+    task_id: &str,
+    session: &jules::Session,
+) -> Result<(), String> {
     let Some(pr) = &session.pr else {
         return Ok(());
     };
@@ -488,7 +492,7 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
     if !waiting {
         return Ok(());
     }
-    let message = crate::messaging::Message {
+    let message = crate::mail::Message {
         from: "jules".to_string(),
         // None, for the reason `task::hand_over` gives: this comes from no worktree.
         worktree: None,
@@ -501,7 +505,7 @@ fn follow(ctx: &super::Context, task_id: &str, session: &jules::Session) -> Resu
     };
     // Posted under the lock, so no second poll can post it again; the hub is woken and the
     // person told after the lock is let go, since those run commands that may not return.
-    let posted = super::post_to_hub(ctx, &message)?;
+    let posted = crate::mail::post_to_hub(ctx, &message)?;
     task.pr = Some(pr.clone());
     if task.status == task::Status::Dispatched {
         task.status = task::Status::Pr;
@@ -539,7 +543,7 @@ pub struct Finding {
 /// first. Replies are left out: a thread is passed on by its first comment.
 ///
 /// Given up on after `FINDINGS_TIMEOUT`, so a `gh` that hangs cannot hold a board request.
-pub fn findings(ctx: &super::Context, id: &str) -> Result<Vec<Finding>, String> {
+pub fn findings(ctx: &crate::registry::Context, id: &str) -> Result<Vec<Finding>, String> {
     let task = task::load(&tasks::dir(ctx), id)?;
     let pr = task
         .pr
@@ -644,7 +648,7 @@ pub fn read_plan(plan: &Value) -> Result<(Vec<Chosen>, Option<String>), String> 
 }
 
 pub fn relay(
-    ctx: &super::Context,
+    ctx: &crate::registry::Context,
     id: &str,
     chosen: &[Chosen],
     note: Option<&str>,

@@ -8,7 +8,7 @@ use super::*;
 /// here first" and "it was already running when we looked".
 fn go_to_running_hub(
     ctx: &Context,
-    status: &messaging::HubStatus,
+    status: &registry::HubStatus,
     dry_run: bool,
 ) -> Result<(), String> {
     println!(
@@ -50,7 +50,7 @@ fn hub_env(ctx: &Context, dashboard: Option<bool>) -> Vec<(String, String)> {
 /// What starting a hub in a tab came to.
 pub enum TabOutcome {
     /// A hub is up under this name already, so no tab was opened.
-    AlreadyRunning(messaging::HubStatus),
+    AlreadyRunning(registry::HubStatus),
     Opened(terminal::Performed),
 }
 
@@ -59,10 +59,7 @@ pub enum TabOutcome {
 /// refused here, in the tab it was typed in — not in a tab opened to show the refusal. The
 /// template is checked here too, for the same reason: on the tab route the refusal would
 /// otherwise come from inside a tab this one had already reported as opened.
-fn asked_session(
-    ctx: &Context,
-    start: HubStart,
-) -> Result<Option<messaging::SavedSession>, String> {
+fn asked_session(ctx: &Context, start: HubStart) -> Result<Option<registry::SavedSession>, String> {
     match start {
         HubStart::Resume => {
             let saved = saved_hub_session(ctx)?;
@@ -80,7 +77,7 @@ fn asked_session(
 /// Beyond what `--resume` itself refuses, a `hubRunner` of the person's own with no
 /// `hubResumeRunner` is refused too. Typed out, `--resume` is the person's call to have the
 /// built-in runner reopen it; a button that stops a running hub is not asking anyone.
-pub(super) fn hub_resume_check(ctx: &Context) -> Result<messaging::SavedSession, String> {
+pub(super) fn hub_resume_check(ctx: &Context) -> Result<registry::SavedSession, String> {
     let saved = saved_hub_session(ctx)?;
     resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?;
     if let Some(refusal) = own_hub_runner_refusal(&ctx.settings) {
@@ -134,17 +131,17 @@ pub fn hub_in_tab(
     terminal: &crate::infra::terminal::TerminalSettings,
     dry_run: bool,
 ) -> Result<TabOutcome, String> {
-    let status = messaging::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
+    let status = registry::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
     if status.present {
         return Ok(TabOutcome::AlreadyRunning(status));
     }
     asked_session(ctx, start)?;
-    match messaging::hub_liveness(&ctx.state, &ctx.repo.slug) {
-        messaging::Liveness::CannotTell => {
-            Err(messaging::hub_cannot_tell(&ctx.state, &ctx.repo.slug))
+    match registry::hub_liveness(&ctx.state, &ctx.repo.slug) {
+        registry::Liveness::CannotTell => {
+            Err(registry::hub_cannot_tell(&ctx.state, &ctx.repo.slug))
         }
-        messaging::Liveness::Alive => Ok(TabOutcome::AlreadyRunning(status)),
-        messaging::Liveness::Gone => {
+        registry::Liveness::Alive => Ok(TabOutcome::AlreadyRunning(status)),
+        registry::Liveness::Gone => {
             open_hub_tab(ctx, repo_arg, extra, start, dashboard, terminal, dry_run)
                 .map(TabOutcome::Opened)
         }
@@ -177,9 +174,9 @@ pub fn hub_startable(terminal: &crate::infra::terminal::TerminalSettings) -> boo
 pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let slug = &ctx.repo.slug;
     let root = &ctx.state;
-    let read = messaging::read_hub_record(root, slug);
+    let read = registry::read_hub_record(root, slug);
     let record = match &read {
-        messaging::Recorded::Found(r) => Some(r),
+        registry::Recorded::Found(r) => Some(r),
         _ => None,
     };
     // The start time as recorded, not `recorded_anchor`: a blank one is refused below by
@@ -187,8 +184,8 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let named = record.and_then(|r| Some((r.pid? as u32, r.ps_started.clone())));
     let Some((pid, started)) = named else {
         // No record, or none that names a process: no hub, and nothing that is safe to clear.
-        return match messaging::hub_liveness(root, slug) {
-            messaging::Liveness::CannotTell => Err(messaging::hub_cannot_tell(root, slug)),
+        return match registry::hub_liveness(root, slug) {
+            registry::Liveness::CannotTell => Err(registry::hub_cannot_tell(root, slug)),
             _ => Ok(false),
         };
     };
@@ -198,13 +195,13 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     if started.as_deref().is_none_or(|s| s.trim().is_empty()) {
         return Err("the hub record carries no start time, so the process cannot be told apart from a reused pid; stop it where it runs".to_string());
     }
-    match messaging::hub_process_liveness(pid, started.as_deref()) {
-        messaging::Liveness::Gone => {
-            messaging::unregister_hub_if(root, slug, pid, started.as_deref())?;
+    match registry::hub_process_liveness(pid, started.as_deref()) {
+        registry::Liveness::Gone => {
+            registry::unregister_hub_if(root, slug, pid, started.as_deref())?;
             return Ok(false);
         }
-        messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(root, slug)),
-        messaging::Liveness::Alive => {}
+        registry::Liveness::CannotTell => return Err(registry::hub_cannot_tell(root, slug)),
+        registry::Liveness::Alive => {}
     }
     let terminal_recorded = record.and_then(|r| r.terminal.clone());
     // Only a hub known to sit in tmux is looked for there: asking tmux about a hub that runs
@@ -236,13 +233,13 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
         &pane.pane_id,
     ))?;
     match settled(
-        || messaging::hub_process_liveness(pid, started.as_deref()),
+        || registry::hub_process_liveness(pid, started.as_deref()),
         std::thread::sleep,
         GONE_BUDGET,
         GONE_POLL,
     ) {
-        messaging::Liveness::Gone => {
-            messaging::unregister_hub_if(root, slug, pid, started.as_deref())?;
+        registry::Liveness::Gone => {
+            registry::unregister_hub_if(root, slug, pid, started.as_deref())?;
             Ok(true)
         }
         _ => Err(format!(
@@ -371,7 +368,7 @@ pub fn hub(
 
     // Asked before the command is even built, so the common "it is already up" case costs
     // nothing. It is not what *enforces* one hub per repository — the claim below is.
-    let status = messaging::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
+    let status = registry::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
     if status.present {
         return go_to_running_hub(&ctx, &status, dry_run);
     }
@@ -407,7 +404,7 @@ pub fn hub(
     // and saving its id would point the next `--resume` at a conversation that never began.
     let session = match &resumed {
         Some(saved) => saved.session_id.clone(),
-        None => messaging::new_session_id()?,
+        None => registry::new_session_id()?,
     };
     let records = resumed.is_some()
         || runner::records_session(
@@ -422,7 +419,7 @@ pub fn hub(
     if records {
         env.push((
             crate::infra::env::HUB_SESSION_ENV.to_string(),
-            messaging::hub_session_env(&ctx.repo.slug, &session),
+            registry::hub_session_env(&ctx.repo.slug, &session),
         ));
     }
     // The board this hub is served by, for the same MCP server: it lives exactly as long as
@@ -471,7 +468,7 @@ pub fn hub(
     // away does not, and only the finished line knows which.
 
     let named = command.contains(&ctx.repo.hub_name);
-    match messaging::claim_hub(
+    match registry::claim_hub(
         &ctx.state,
         &ctx.repo.slug,
         &ctx.repo.hub_name,
@@ -480,12 +477,12 @@ pub fn hub(
         ctx.repo.hub.as_deref(),
         Some(&terminal::own_location(&ctx.settings.terminal)),
     )? {
-        messaging::Claim::Ours => {}
-        messaging::Claim::Taken(status) => return go_to_running_hub(&ctx, &status, dry_run),
+        registry::Claim::Ours => {}
+        registry::Claim::Taken(status) => return go_to_running_hub(&ctx, &status, dry_run),
     }
     // Where this repository is, for a resident server that may serve its board without
     // being told anything else. Only the address: nothing here needs the server to be up.
-    serve::note_board(&ctx.state, &ctx.repo);
+    crate::registry::note_board(&ctx.state, &ctx.repo);
     // A hub that cannot be resumed later is still a hub, so failing to write this down is
     // said and then got past — refusing to start over it would trade a working hub for a
     // convenience.
@@ -494,7 +491,7 @@ pub fn hub(
     // that nothing can later reopen the conversation of the hub before it.
     if resumed.is_none() {
         let saved = match records {
-            true => messaging::save_hub_session(
+            true => registry::save_hub_session(
                 &ctx.state,
                 &ctx.repo.slug,
                 &ctx.repo.nwo,
@@ -503,7 +500,7 @@ pub fn hub(
                 &session,
             )
             .map(|_| ()),
-            false => messaging::forget_hub_session(&ctx.state, &ctx.repo.slug),
+            false => registry::forget_hub_session(&ctx.state, &ctx.repo.slug),
         };
         if let Err(e) = saved {
             eprintln!("adjutant: {e}; --resume may not reopen this hub");
@@ -523,7 +520,7 @@ pub fn hub(
     // server — can see is this hub's own, never one inherited from whatever started this.
     let error = agent_command(&command).exec();
     // Only reachable if exec failed — otherwise this process no longer exists.
-    let _ = messaging::unregister_hub(&ctx.state, &ctx.repo.slug);
+    let _ = registry::unregister_hub(&ctx.state, &ctx.repo.slug);
     Err(format!("cannot start the hub: {error}"))
 }
 
@@ -545,13 +542,13 @@ pub enum HubStart {
 /// server, a runner that is not the agent this knows, a session saved by an older version)
 /// there is no answer, and no answer starts fresh: coming back uninvited to a conversation of
 /// unknown age is worse than one clean start too many.
-fn recent_hub_session(ctx: &Context) -> Option<messaging::SavedSession> {
+fn recent_hub_session(ctx: &Context) -> Option<registry::SavedSession> {
     let window = ctx.settings.hub_auto_resume_hours;
     if window <= 0.0 {
         return None;
     }
-    let saved = messaging::hub_session(&ctx.state, &ctx.repo.slug)?;
-    let last = messaging::hub_last_alive(&ctx.state, &ctx.repo.slug, &saved.session_id)?;
+    let saved = registry::hub_session(&ctx.state, &ctx.repo.slug)?;
+    let last = registry::hub_last_alive(&ctx.state, &ctx.repo.slug, &saved.session_id)?;
     let age = crate::infra::clock::now_secs().saturating_sub(last).max(0);
     if age as f64 > window * 3600.0 {
         return None;
@@ -595,12 +592,12 @@ pub(super) fn ago(secs: i64) -> String {
 /// Asking for a hub that has nothing saved is most often asking for the wrong one — the
 /// repository's own hub when it was a parent task's, or the other way round — so the refusal
 /// lists what this repository does have rather than only saying "no".
-fn saved_hub_session(ctx: &Context) -> Result<messaging::SavedSession, String> {
-    if let Some(saved) = messaging::hub_session(&ctx.state, &ctx.repo.slug) {
+fn saved_hub_session(ctx: &Context) -> Result<registry::SavedSession, String> {
+    if let Some(saved) = registry::hub_session(&ctx.state, &ctx.repo.slug) {
         return Ok(saved);
     }
     let mut message = format!("{} has no saved session to resume.", ctx.repo.hub_name);
-    let others = messaging::hub_sessions_for(&ctx.state, &ctx.repo.nwo);
+    let others = registry::hub_sessions_for(&ctx.state, &ctx.repo.nwo);
     if others.is_empty() {
         message.push_str(&format!(" No hub of {} has one.", ctx.repo.nwo));
     } else {
@@ -644,7 +641,7 @@ pub(super) fn resume_template<'a>(
 /// left behind by one that did not.
 pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
     let info = resolve(repo_arg, hub_arg)?;
-    messaging::unregister_hub(
+    registry::unregister_hub(
         &crate::registry::state_root(Some(std::path::Path::new(&info.main))),
         &info.slug,
     )?;
@@ -656,7 +653,7 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
 /// checkouts report to it any more is closable: the repository hub is always there, and a
 /// hub with workers is still in use. Unread messages, open tasks and gates do not stop it —
 /// they are kept, and starting the same key again finds them.
-pub(super) fn closable_check(repo: &RepoInfo, hub: &crate::session::RepoHub) -> Result<(), String> {
+pub(super) fn closable_check(repo: &RepoInfo, hub: &crate::mail::RepoHub) -> Result<(), String> {
     if !hub.parent {
         return Err("the repository hub can only be stopped, not closed; use hub-stop".to_string());
     }
@@ -679,17 +676,17 @@ pub(super) fn closable_check(repo: &RepoInfo, hub: &crate::session::RepoHub) -> 
 pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
     let info = resolve(repo_arg, hub_arg)?;
     let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
-    let hub = messaging::all_repo_hubs(&root, &info)
+    let hub = mail::all_repo_hubs(&root, &info)
         .into_iter()
         .find(|h| h.slug == info.slug)
-        .unwrap_or_else(|| crate::session::RepoHub {
+        .unwrap_or_else(|| crate::mail::RepoHub {
             id: format!("hub-{}", info.slug),
             parent: info.hub.is_some(),
             key: info.hub.clone(),
             name: info.hub_name.clone(),
             title: None,
             slug: info.slug.clone(),
-            state: crate::session::RepoHubState {
+            state: crate::mail::RepoHubState {
                 present: false,
                 stale: false,
                 pid: None,
@@ -703,20 +700,20 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
     // This ends no process, so a hub that is still running would be left running with no
     // record, and the next `adj hub` would start a second one beside it. Only the hub itself
     // may clear its own record; from anywhere else it has to be stopped first.
-    let recorded = messaging::read_hub_record(&root, &hub.slug);
+    let recorded = registry::read_hub_record(&root, &hub.slug);
     let named = match &recorded {
-        messaging::Recorded::Found(r) => r.pid.map(|pid| (pid as u32, r.ps_started.clone())),
+        registry::Recorded::Found(r) => r.pid.map(|pid| (pid as u32, r.ps_started.clone())),
         _ => None,
     };
     if let Some((pid, started)) = &named {
         let pid = *pid;
-        match messaging::hub_process_liveness(pid, started.as_deref()) {
-            messaging::Liveness::Gone => {}
-            messaging::Liveness::CannotTell => {
-                return Err(messaging::hub_cannot_tell(&root, &hub.slug));
+        match registry::hub_process_liveness(pid, started.as_deref()) {
+            registry::Liveness::Gone => {}
+            registry::Liveness::CannotTell => {
+                return Err(registry::hub_cannot_tell(&root, &hub.slug));
             }
-            messaging::Liveness::Alive => {
-                if !messaging::is_self_or_descendant_of(pid) {
+            registry::Liveness::Alive => {
+                if !registry::is_self_or_descendant_of(pid) {
                     return Err(format!(
                         "{} is still running (pid {pid}); close it from the board, or stop it first \
                          (`adj hub-stop` from inside it, or the board's stop) and then close it",
@@ -725,16 +722,16 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
                 }
             }
         }
-    } else if matches!(recorded, messaging::Recorded::Unreadable) {
+    } else if matches!(recorded, registry::Recorded::Unreadable) {
         // A record that is there and cannot be read is asked the way `stop_hub` asks, and
         // nobody can be told to be the hub itself. A readable one that names no process is
         // `Gone` to `hub_liveness`, so it goes straight on to be cleared.
-        match messaging::hub_liveness(&root, &hub.slug) {
-            messaging::Liveness::Gone => {}
-            messaging::Liveness::CannotTell => {
-                return Err(messaging::hub_cannot_tell(&root, &hub.slug));
+        match registry::hub_liveness(&root, &hub.slug) {
+            registry::Liveness::Gone => {}
+            registry::Liveness::CannotTell => {
+                return Err(registry::hub_cannot_tell(&root, &hub.slug));
             }
-            messaging::Liveness::Alive => {
+            registry::Liveness::Alive => {
                 return Err(format!(
                     "{} is still running; close it from the board, or stop it first \
                      (`adj hub-stop` from inside it, or the board's stop) and then close it",
@@ -747,14 +744,14 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
     // a hub that registered since is not this call's to unregister.
     let removed = match &named {
         Some((pid, started)) => {
-            messaging::unregister_hub_if(&root, &hub.slug, *pid, started.as_deref())?
+            registry::unregister_hub_if(&root, &hub.slug, *pid, started.as_deref())?
         }
-        None => messaging::unregister_hub_if_unnamed(&root, &hub.slug)?,
+        None => registry::unregister_hub_if_unnamed(&root, &hub.slug)?,
     };
     if !removed {
         return Err(format!("{} changed while it was being closed", hub.name));
     }
-    serve::forget_board(&root, &hub.slug)?;
+    crate::registry::forget_board(&root, &hub.slug)?;
     println!("closed {}", hub.name);
     if hub.inbox_count > 0 {
         println!(

@@ -81,7 +81,7 @@ pub fn wake(
         socket,
         pid,
         line,
-        crate::terminal::look_before_typing(agent),
+        crate::mail::look_before_typing(agent),
         dry_run,
     )?;
     if dry_run {

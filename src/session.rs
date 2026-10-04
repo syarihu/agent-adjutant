@@ -5,15 +5,11 @@
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
 //! Pure data structures with serde serialization. The only thing it names in the crate is
-//! `SessionTerminal`, which lives in `infra::terminal`, apart from re-exporting `RepoHub` and
-//! `RepoHubState` from `mail` until #331.
+//! `SessionTerminal`, which lives in `infra::terminal`.
 
 use serde::{Deserialize, Serialize};
 
 use crate::infra::terminal::SessionTerminal;
-// Moved to `mail`; re-exported until #331 so that `session::RepoHub` and `session::RepoHubState`
-// still resolve. `InboxItem` moved too, but nothing names it through `session`.
-pub use crate::mail::{RepoHub, RepoHubState};
 
 /// An agent session running under adjutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

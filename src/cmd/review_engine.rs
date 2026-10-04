@@ -297,7 +297,7 @@ fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i6
 
 /// `adj review-engine`.
 pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = super::context_without_hub(repo_arg)?;
+    let ctx = crate::registry::context_without_hub(repo_arg)?;
     let setting = match ctx
         .resolved
         .config
