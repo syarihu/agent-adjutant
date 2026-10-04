@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 mod create;
+mod edit;
 mod fetch_issue;
 mod get;
 mod github;
@@ -34,6 +35,7 @@ mod update;
 mod write_brief;
 
 pub use create::*;
+pub use edit::*;
 pub use fetch_issue::*;
 pub use get::*;
 pub use github::*;
@@ -49,8 +51,6 @@ pub use refresh::*;
 pub use remove::*;
 pub use update::*;
 pub use write_brief::*;
-// For their callers in `cmd`: `save` and `lock` until #362.
-pub use store::{lock, save};
 // The board's fixture in src/cmd/serve/tests.rs writes a record by hand.
 #[cfg(test)]
 pub(crate) use store::dir;

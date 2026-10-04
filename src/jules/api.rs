@@ -29,7 +29,7 @@ pub const KEYCHAIN_SERVICE: &str = "jules-api";
 const TIMEOUT_SECS: &str = "20";
 
 /// Start a session.
-pub fn create(
+pub(super) fn create(
     key: &Hook,
     nwo: &str,
     base: &str,
@@ -43,12 +43,6 @@ pub fn create(
         Some(&create_body(nwo, base, title, prompt)),
     )?;
     parse_session(&answer)
-}
-
-/// Ask how a session is doing.
-pub fn get(key: &Hook, id: &str) -> Result<Session, String> {
-    check_id(id)?;
-    parse_session(&call(key, "GET", &format!("sessions/{id}"), None)?)
 }
 
 /// The key, from the command `julesKey` names.
@@ -101,7 +95,12 @@ pub(super) fn read_key(key: &Hook) -> Result<String, String> {
 
 /// One request. `curl` is told to append the status code, so an error answer can be told
 /// from a good one without `--fail`, which would throw away the API's own reason.
-fn call(key: &Hook, method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+pub(super) fn call(
+    key: &Hook,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Result<Value, String> {
     let secret = read_key(key)?;
     let redact = |text: &str| text.replace(&secret, "[redacted]");
     let mut command = Command::new("curl");

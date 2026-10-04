@@ -25,35 +25,35 @@ pub fn follow(
     let Some(pr) = &session.pr else {
         return Ok(());
     };
-    let lock = task::lock(ctx, task_id)?;
-    let mut task = task::get(&ctx.state, &ctx.repo.slug, task_id)?;
-    let waiting = task.pr.is_none()
-        && task.jules_session.as_deref() == Some(session.id.as_str())
-        && matches!(task.status, task::Status::Dispatched | task::Status::Pr);
-    if !waiting {
-        return Ok(());
+    let edited = task::edit(ctx, task_id, |task| {
+        let waiting = task.pr.is_none()
+            && task.jules_session.as_deref() == Some(session.id.as_str())
+            && matches!(task.status, task::Status::Dispatched | task::Status::Pr);
+        if !waiting {
+            return Ok(task::Edit::Keep(None));
+        }
+        let message = crate::mail::Message {
+            from: "jules".to_string(),
+            // None, for the reason `task::hand_over` gives: this comes from no worktree.
+            worktree: None,
+            kind: "jules-pr".to_string(),
+            subject: task.title.clone(),
+            body: format!(
+                "## task        {}\n## pr          {pr}\n## session     {}\n",
+                task.id, session.id
+            ),
+        };
+        // Posted under the lock, so no second poll can post it again; the hub is woken and the
+        // person told after the lock is let go, since those run commands that may not return.
+        let posted = crate::mail::post_to_hub(ctx, &message)?;
+        task.pr = Some(pr.clone());
+        if task.status == task::Status::Dispatched {
+            task.status = task::Status::Pr;
+        }
+        Ok(task::Edit::Write(Some(posted)))
+    })?;
+    if let Some(posted) = edited.value {
+        posted.follow_up(ctx, true);
     }
-    let message = crate::mail::Message {
-        from: "jules".to_string(),
-        // None, for the reason `task::hand_over` gives: this comes from no worktree.
-        worktree: None,
-        kind: "jules-pr".to_string(),
-        subject: task.title.clone(),
-        body: format!(
-            "## task        {}\n## pr          {pr}\n## session     {}\n",
-            task.id, session.id
-        ),
-    };
-    // Posted under the lock, so no second poll can post it again; the hub is woken and the
-    // person told after the lock is let go, since those run commands that may not return.
-    let posted = crate::mail::post_to_hub(ctx, &message)?;
-    task.pr = Some(pr.clone());
-    if task.status == task::Status::Dispatched {
-        task.status = task::Status::Pr;
-    }
-    task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
-    let saved = task::save(ctx, &task);
-    drop(lock);
-    posted.follow_up(ctx, true);
-    saved.map(|_| ())
+    edited.saved
 }

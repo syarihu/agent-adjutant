@@ -6,22 +6,24 @@
 //! task record, and the rest is asked of the API each time. So there is no `store`; the API
 //! client, which is where its state lives, takes that place as the private `api`.
 //!
-//! Names `infra`, `registry`, `mail` and `task` and nothing else.
+//! Names `infra`, `kernel`, `registry`, `mail` and `task` and nothing else.
 
 mod announce_review;
 mod api;
 mod findings;
 mod follow;
+mod get;
 mod model;
 mod relay;
+mod start;
 
 pub use announce_review::*;
-// For `start` and `show` in `cmd`, and for `Watch`; #362 takes them out.
-pub use api::{create, get};
 pub use findings::*;
 pub use follow::*;
+pub use get::*;
 pub use model::*;
 pub use relay::*;
+pub use start::*;
 
 #[cfg(test)]
 mod tests;

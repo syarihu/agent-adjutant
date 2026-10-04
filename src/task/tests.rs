@@ -1,5 +1,7 @@
 use super::*;
 
+use super::store::{lock, save};
+
 use serde_json::json;
 
 /// Production builds a task out of the form's JSON; this is the shorthand the tests
@@ -1260,4 +1262,79 @@ fn an_unknown_copilot_review_is_written_as_ask() {
     .unwrap();
     let text = std::fs::read_to_string(&written.path).unwrap();
     assert!(text.contains("- Copilot review: ask"), "{text}");
+}
+
+/// A saved record to edit, with a stale `updatedAt` so a stamp shows.
+fn saved_sample(ctx: &crate::registry::Context) -> Task {
+    let mut task = sample();
+    task.updated_at = "20200101T000000Z".to_string();
+    save(ctx, &task).unwrap();
+    task
+}
+
+fn on_disk(ctx: &crate::registry::Context, id: &str) -> Task {
+    get(&ctx.state, &ctx.repo.slug, id).unwrap()
+}
+
+#[test]
+fn edit_keep_returns_the_value_and_writes_nothing() {
+    let (_sandbox, ctx) = hub();
+    let task = saved_sample(&ctx);
+    let edited = edit(&ctx, &task.id, |t| {
+        t.note = Some("not saved".to_string());
+        Ok(Edit::Keep(7))
+    })
+    .unwrap();
+    assert_eq!(edited.value, 7);
+    assert_eq!(edited.saved, Ok(()));
+    assert_eq!(on_disk(&ctx, &task.id), task);
+}
+
+#[test]
+fn edit_write_saves_the_record_with_a_fresh_stamp() {
+    let (_sandbox, ctx) = hub();
+    let task = saved_sample(&ctx);
+    let edited = edit(&ctx, &task.id, |t| {
+        t.note = Some("kept".to_string());
+        Ok(Edit::Write("done"))
+    })
+    .unwrap();
+    assert_eq!(edited.value, "done");
+    assert_eq!(edited.saved, Ok(()));
+    let back = on_disk(&ctx, &task.id);
+    assert_eq!(back.note.as_deref(), Some("kept"));
+    assert_ne!(back.updated_at, task.updated_at);
+}
+
+#[test]
+fn edit_returns_the_closures_error_and_writes_nothing() {
+    let (_sandbox, ctx) = hub();
+    let task = saved_sample(&ctx);
+    let err = edit(&ctx, &task.id, |t| -> Result<Edit<()>, String> {
+        t.note = Some("not saved".to_string());
+        Err("refused".to_string())
+    })
+    .err();
+    assert_eq!(err.as_deref(), Some("refused"));
+    assert_eq!(on_disk(&ctx, &task.id), task);
+    assert!(edit(&ctx, "no-such-task", |_| Ok(Edit::Keep(()))).is_err());
+}
+
+#[test]
+fn edit_returns_a_failed_save_beside_the_value() {
+    let (_sandbox, ctx) = hub();
+    let task = saved_sample(&ctx);
+    let path = record_path(&ctx, &task.id);
+    let edited = edit(&ctx, &task.id, |_| {
+        // Something non-empty where the record was, so the rename over it fails. Not a
+        // permission change: that does not stop root.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(path.join("x")).unwrap();
+        Ok(Edit::Write("session-1"))
+    })
+    .unwrap();
+    assert_eq!(edited.value, "session-1");
+    let error = edited.saved.unwrap_err();
+    assert!(error.starts_with("cannot write "), "{error}");
+    assert!(error.contains(&task.id), "{error}");
 }
