@@ -15,6 +15,7 @@ mod jules;
 mod kernel;
 mod mcp;
 mod messaging;
+mod registry;
 mod session;
 mod task;
 mod terminal;
