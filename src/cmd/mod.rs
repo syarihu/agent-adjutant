@@ -21,9 +21,7 @@ use crate::lifecycle::worker::{
     Resumed, claim_worker_slot, open_worker_tab, resume_worker, saved_worker_session,
     worker_worktree,
 };
-use crate::lifecycle::{
-    GONE_BUDGET, GONE_POLL, agent_command, forwarded_env, resume_template, settled, title_command,
-};
+use crate::lifecycle::{agent_command, forwarded_env, resume_template, title_command};
 use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, deliver_to_worker};
 use crate::registry::{
     self, Context, agent_env, context, context_as, context_of, context_without_hub, resolve,

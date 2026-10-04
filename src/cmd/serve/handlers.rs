@@ -69,7 +69,7 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
             Ok(json!({ "ran": true }))
         }
         "close" => {
-            let closed = crate::cmd::close(Some(&server.ctx.repo.nwo), worktree, true, false)?;
+            let closed = crate::lifecycle::worker::close(&settings, path, false)?.is_free();
             Ok(json!({ "closed": closed }))
         }
         other => Err(format!("no such action: {other}")),
