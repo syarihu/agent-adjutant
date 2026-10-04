@@ -18,7 +18,7 @@ use crate::mail::RepoHub;
 use crate::mail::{self, Message};
 use crate::registry::{self, Context};
 use crate::session::SessionRequest;
-use crate::task::{self, Executor, Status};
+use crate::task::{self, Executor, Status, TaskPatch};
 
 /// The hub named by `hub` (a `hubs[].id`), or this board's own when none is named, with the
 /// context to address it by. Refused the way `act_on_hub` refuses: a parent-task hub whose key
@@ -66,7 +66,7 @@ pub(super) fn input_of(body: &[u8]) -> Result<Value, String> {
 }
 
 /// A string field, trimmed; blank and `null` are absent. Anything that is not a string is
-/// refused rather than read as absent, as `text_field` does for a task update.
+/// refused rather than read as absent, as `TaskPatch::from_json` does for a task update.
 pub(super) fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
     match input.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -265,14 +265,20 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
             }
             // Read to choose the status; the checks that matter are made again under the lock.
             let status = match task::get(&ctx.state, &ctx.repo.slug, task_id)?.status {
-                Status::Pr => "pr",
-                _ => "dispatched",
+                Status::Pr => Status::Pr,
+                _ => Status::Dispatched,
             };
-            let mut before = Value::Null;
+            let mut before = TaskPatch::default();
             let (updated, _) = super::task::update_checked(
                 &ctx,
                 task_id,
-                &json!({ "worktree": worktree, "status": status, "note": "", "handOver": false }),
+                &TaskPatch {
+                    worktree: Some(Some(worktree.to_string())),
+                    status: Some(status),
+                    note: Some(None),
+                    ..TaskPatch::default()
+                },
+                false,
                 |existing| {
                     if matches!(existing.status, Status::Done | Status::Cancelled) {
                         return Err(format!("{task_id} is finished"));
@@ -288,16 +294,18 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                     {
                         return Err(format!("{task_id} already has a worker running in {other}"));
                     }
-                    before = json!({
-                        "worktree": existing.worktree,
-                        "status": existing.status.as_str(),
-                        "note": existing.note,
-                        "handOver": false,
-                    });
+                    // Every field `link` writes, so a failed relink puts each one back, absent
+                    // ones too.
+                    before = TaskPatch {
+                        worktree: Some(existing.worktree.clone()),
+                        status: Some(existing.status),
+                        note: Some(existing.note.clone()),
+                        ..TaskPatch::default()
+                    };
                     Ok(())
                 },
             )?;
-            (updated, Undo::Restore(before))
+            (updated, Undo::Restore(Box::new(before)))
         }
         (None, Some(new_task)) => {
             if let Some(held) = held {
@@ -333,7 +341,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 let _ = task::remove(&ctx, &linked.id);
             }
             Undo::Restore(before) => {
-                let _ = super::task::update(&ctx, &linked.id, &before);
+                let _ = super::task::update(&ctx, &linked.id, &before, false);
             }
         }
         return Err(e);
@@ -424,7 +432,7 @@ enum Undo {
     /// The record was made for this link: remove it.
     Remove,
     /// The record existed: put these fields back.
-    Restore(Value),
+    Restore(Box<TaskPatch>),
 }
 
 #[cfg(test)]

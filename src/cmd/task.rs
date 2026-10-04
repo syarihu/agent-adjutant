@@ -177,40 +177,40 @@ pub struct UpdateArgs<'a> {
 
 pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo, args.hub)?;
-    let mut input = json!({});
-    let fields = input.as_object_mut().expect("just built");
     // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
     // comment typed on the board — and does not belong inside quotes on a command line.
     let note = args.note.map(super::dash_is_stdin).transpose()?;
     let instruction = args.instruction.map(super::dash_is_stdin).transpose()?;
-    for (key, value) in [
-        ("status", args.status),
-        ("worktree", args.worktree),
-        ("issue", args.issue),
-        ("pr", args.pr),
-        ("base", args.base),
-        ("julesSession", args.jules_session),
-        ("executor", args.executor),
-        ("note", note.as_deref()),
-        ("instruction", instruction.as_deref()),
-    ] {
-        if let Some(value) = value {
-            fields.insert(key.to_string(), json!(value));
-        }
+    // Trimmed, and blank is no change, as the board's JSON has always been read.
+    fn word(v: Option<&str>) -> Option<&str> {
+        v.map(str::trim).filter(|s| !s.is_empty())
     }
-    if let Some(order) = args.order {
-        fields.insert("order".to_string(), json!(order));
-    }
-    if let Some(auto_start) = args.auto_start {
-        fields.insert("autoStart".to_string(), json!(auto_start));
-    }
-    if args.no_hand_over {
-        fields.insert("handOver".to_string(), json!(false));
-    }
+    // An empty one clears: a command line has no way to say `null`.
+    let text = |v: Option<&str>| v.map(|v| Some(v.to_string()).filter(|v| !v.is_empty()));
+    let patch = task::TaskPatch {
+        status: word(args.status)
+            .map(|s| Status::parse(s).ok_or(format!("no such status: {s}")))
+            .transpose()?,
+        order: args.order,
+        auto_start: args.auto_start,
+        executor: word(args.executor)
+            .map(|s| {
+                task::Executor::parse(s).ok_or(format!("no such executor: {s} (worker or jules)"))
+            })
+            .transpose()?,
+        worktree: text(args.worktree),
+        issue: text(args.issue),
+        pr: text(args.pr),
+        base: text(args.base),
+        jules_session: text(args.jules_session),
+        jules_by: None,
+        note: text(note.as_deref()),
+        instruction: text(instruction.as_deref()),
+    };
     // Read without the lock and `.ok()`: a failed or raced read can only cost one extra fetch
     // attempt, since `needs_snapshot` still guards it.
     let before = task::get(&ctx.state, &ctx.repo.slug, args.id).ok();
-    let (task, handed) = update(&ctx, args.id, &input)?;
+    let (task, handed) = update(&ctx, args.id, &patch, !args.no_hand_over)?;
     let changed = before.is_none_or(|b| {
         !matches!(b.status, Status::Dispatched | Status::Pr)
             || task::issue_to_fetch(&b) != task::issue_to_fetch(&task)
