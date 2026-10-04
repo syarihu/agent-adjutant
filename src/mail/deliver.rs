@@ -1,0 +1,180 @@
+use super::*;
+use crate::infra::notify;
+use crate::infra::terminal;
+
+/// What `terminal::wake` came to, as the pair the callers keep: whether the session was
+/// woken, and, when the screen is what stopped it, the reason. Any other failure is left
+/// unsaid, as it always was.
+fn woken_and_why(tried: Result<terminal::Performed, String>) -> (bool, Option<String>) {
+    match tried {
+        Ok(done) if done.ran => (true, None),
+        Ok(done) if done.screen => (false, Some(done.description)),
+        _ => (false, None),
+    }
+}
+
+/// Leave a message for the hub, poke its tab if needed, and tell the person.
+///
+/// Shared by `adj send` and by the dashboard's hand-over, which is the whole reason it is a
+/// function: the three steps are one rule, and a second copy of it is a second set of
+/// conditions about when to wake and when to notify — drifting from the day it is written.
+pub fn deliver_to_hub(ctx: &Context, message: &Message) -> Result<Delivered, String> {
+    deliver_to_hub_with_wake(ctx, message, true, None)
+}
+
+/// `deliver_to_hub`, choosing whether to tell the person. Not when they are the sender: a
+/// decision made on the board a moment ago does not need a banner to say it was made.
+pub fn deliver_to_hub_announcing(
+    ctx: &Context,
+    message: &Message,
+    announce: bool,
+) -> Result<Delivered, String> {
+    deliver_to_hub_with_wake(ctx, message, announce, None)
+}
+
+/// `deliver_to_hub`, choosing whether to announce and optionally overriding the wake decision.
+pub fn deliver_to_hub_with_wake(
+    ctx: &Context,
+    message: &Message,
+    announce: bool,
+    wake: Option<bool>,
+) -> Result<Delivered, String> {
+    Ok(post_to_hub_with_wake(ctx, message, wake)?.follow_up(ctx, announce))
+}
+
+/// A message written into the hub's inbox, its two follow-ups not yet run.
+pub struct Posted {
+    subject: String,
+    delivery: Delivery,
+    wake_needed: bool,
+}
+
+/// The first half of `deliver_to_hub`: the message is in the inbox once this returns.
+///
+/// Split off for a caller holding a lock: writing a file is quick, while waking the hub and
+/// notifying run commands of the person's choosing, which can hang. Such a caller posts under
+/// the lock and follows up after letting it go.
+pub fn post_to_hub(ctx: &Context, message: &Message) -> Result<Posted, String> {
+    post_to_hub_with_wake(ctx, message, None)
+}
+
+pub fn post_to_hub_with_wake(
+    ctx: &Context,
+    message: &Message,
+    wake: Option<bool>,
+) -> Result<Posted, String> {
+    let subject = header_value(&render_message(message), "subject").unwrap_or_default();
+    let delivery = send(&ctx.repo.slug, &ctx.repo.hub_name, message)?;
+    let wake_needed = wake.unwrap_or_else(|| {
+        should_wake_hub(&message.from, &ctx.repo.hub_name, &message.kind, &subject)
+    });
+    Ok(Posted {
+        subject,
+        delivery,
+        wake_needed,
+    })
+}
+
+impl Posted {
+    /// The second half: poke the hub if it is there and waking is needed, and tell the person when `announce`.
+    pub fn follow_up(self, ctx: &Context, announce: bool) -> Delivered {
+        let Posted {
+            subject,
+            delivery,
+            wake_needed,
+        } = self;
+
+        let (woken, wake_note) = if wake_needed {
+            match (
+                delivery.present,
+                hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
+            ) {
+                (true, Some(pid)) => woken_and_why(terminal::wake(
+                    &ctx.settings.terminal,
+                    &ctx.settings.hub_wake,
+                    pid,
+                    &subject,
+                    terminal::HUB_WAKE_LINE,
+                    look_before_typing(wake_agent(ctx.settings.hub_runner.as_deref())),
+                    false,
+                )),
+                _ => (false, None),
+            }
+        } else {
+            (false, None)
+        };
+
+        if announce
+            && wake_needed
+            && let Some(command) = notify::repo_command(
+                &ctx.settings.notification,
+                &ctx.repo.nwo,
+                &ctx.repo.repo,
+                &subject,
+            )
+        {
+            let _ = terminal::run_shell(&command);
+        }
+        Delivered {
+            delivery,
+            woken,
+            wake_needed,
+            wake_note,
+        }
+    }
+}
+
+/// Append to a worktree's outbox, poke the worker sitting in it if waking is needed,
+/// and tell the person when poking was not possible.
+///
+/// Shared by `adj tell` and by a gate's answer, which is the point: both are the hub-to-
+/// worker direction, and the rule about when to wake and when to notify is one rule. A
+/// worker that was woken reads the message itself, so the notification is what happens
+/// *instead* — unlike the other direction, where the hub is unattended and the person is
+/// told either way.
+pub fn deliver_to_worker(
+    ctx: &Context,
+    worktree: &std::path::Path,
+    from: &str,
+    subject: &str,
+    body: &str,
+    wake: Option<bool>,
+) -> Result<Told, String> {
+    let path = tell(worktree, from, subject, body)?;
+    let status = worker_status(worktree);
+    let wake_needed = wake.unwrap_or_else(|| should_wake_worker(subject));
+    let (woken, wake_note) = if wake_needed {
+        match (status.present, status.pid) {
+            (true, Some(pid)) => woken_and_why(terminal::wake(
+                &ctx.settings.terminal,
+                &ctx.settings.worker_wake,
+                pid,
+                subject,
+                terminal::WORKER_WAKE_LINE,
+                look_before_typing(wake_agent(ctx.settings.agent_runner.as_deref())),
+                false,
+            )),
+            _ => (false, None),
+        }
+    } else {
+        (false, None)
+    };
+    if wake_needed
+        && !woken
+        && let Some(command) = notify::repo_command(
+            &ctx.settings.notification,
+            &ctx.repo.nwo,
+            &ctx.repo.repo,
+            subject,
+        )
+    {
+        let _ = terminal::run_shell(&command);
+    }
+    Ok(Told {
+        path,
+        present: status.present,
+        woken,
+        wake_needed,
+        wake_note,
+    })
+}

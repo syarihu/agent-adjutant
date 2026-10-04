@@ -1,11 +1,4 @@
-//! Reading an agent's screen before typing into it. It stays here until it moves to `mail`.
+//! Reading an agent's screen moved to `mail`; re-exported until #331 so that `terminal::`
+//! paths still resolve.
 
-use crate::infra::agent::Agent;
-use crate::infra::terminal::*;
-
-mod agent_screen;
-
-pub use self::agent_screen::*;
-
-#[cfg(test)]
-mod tests;
+pub use crate::mail::{last_output_line, look_before_typing};

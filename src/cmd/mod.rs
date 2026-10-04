@@ -44,8 +44,6 @@ pub use delivery::{
     Delivered, PendingArgs, SendArgs, Told, deliver_to_hub, deliver_to_hub_announcing,
     deliver_to_hub_with_wake, deliver_to_worker, pending, post_to_hub, send,
 };
-#[cfg(test)]
-use delivery::{should_wake_hub, should_wake_worker};
 pub(crate) use delivery::{wake_agent, wake_note_sentence};
 pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close as gate_close_payload,

@@ -10,6 +10,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::infra::terminal::SessionTerminal;
+// Moved to `mail`; re-exported until #331 so that `session::RepoHub` and the rest still resolve.
+pub use crate::mail::{RepoHub, RepoHubState};
 
 /// An agent session running under adjutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,61 +125,6 @@ pub struct SessionWaiting {
 pub struct WaitingChoice {
     pub id: String,
     pub label: String,
-}
-
-/// One message waiting in a hub's inbox, as hubs[].inbox lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InboxItem {
-    pub name: String,
-    pub subject: String,
-    pub kind: String,
-    pub from: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree: Option<String>,
-    /// UTC timestamp string from the message header, or its file name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub at: Option<String>,
-}
-
-/// A hub of the repository, as reported in hubs[].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoHub {
-    pub id: String,
-    /// Whether this is a parent-task hub rather than the repository's own one. Said apart from
-    /// `key` because a parent-task hub started before its record carried the key can have
-    /// none that can be told.
-    pub parent: bool,
-    /// null for the repository hub, the key string for parent-task hubs, and null for a
-    /// parent-task hub whose key cannot be told (`parent` says which).
-    pub key: Option<String>,
-    pub name: String,
-    /// The parent task's title, from the tracker cache; None for the repository hub and until
-    /// the title is known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub slug: String,
-    pub state: RepoHubState,
-    pub inbox_count: usize,
-    /// The newest messages waiting, newest first and capped: `inbox_count` is the full number.
-    #[serde(default)]
-    pub inbox: Vec<InboxItem>,
-    /// How many checkouts have a worker that reports to this hub, running or ended.
-    #[serde(default)]
-    pub children: usize,
-}
-
-/// The status / state of a hub.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoHubState {
-    pub present: bool,
-    pub stale: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<String>,
 }
 
 /// What the board asks a hub for when a person starts a session without a task: the session

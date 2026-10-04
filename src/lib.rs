@@ -13,6 +13,7 @@ mod gate;
 mod infra;
 mod jules;
 mod kernel;
+mod mail;
 mod mcp;
 mod messaging;
 mod registry;
