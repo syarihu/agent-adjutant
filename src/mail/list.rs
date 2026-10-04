@@ -11,7 +11,7 @@ fn stamp_of_name(name: &str) -> Option<String> {
     shaped.then(|| stamp.to_string())
 }
 
-pub fn list(root: &Path, slug: &str) -> Vec<Entry> {
+pub(super) fn list(root: &Path, slug: &str) -> Vec<Entry> {
     let dir = inbox_dir(root, slug);
     // Before answering, put back anything an ack was interrupted half way through. This is
     // the one place that reads the whole directory, so it is the one place that can see it.
