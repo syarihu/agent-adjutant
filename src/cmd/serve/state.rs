@@ -156,7 +156,8 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         Path::new(&repo.main),
         now,
     ));
-    let mut hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    let mut hubs =
+        messaging::all_repo_hubs_among_with(&server.ctx.state, &processes, repo, &linked_paths);
     let slugs: Vec<String> = hubs.iter().map(|h| h.slug.clone()).collect();
     for h in &mut hubs {
         h.title = server.hub_titles.look(&server.ctx, h, &slugs);
@@ -231,7 +232,7 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         Vec::new()
     };
 
-    let pending: Vec<Value> = messaging::list(&repo.slug)
+    let pending: Vec<Value> = messaging::list(&server.ctx.state, &repo.slug)
         .iter()
         .map(|entry| {
             json!({

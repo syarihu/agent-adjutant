@@ -64,7 +64,7 @@ pub fn post_to_hub_with_wake(
     wake: Option<bool>,
 ) -> Result<Posted, String> {
     let subject = header_value(&render_message(message), "subject").unwrap_or_default();
-    let delivery = send(&ctx.repo.slug, &ctx.repo.hub_name, message)?;
+    let delivery = send(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name, message)?;
     let wake_needed = wake.unwrap_or_else(|| {
         should_wake_hub(&message.from, &ctx.repo.hub_name, &message.kind, &subject)
     });

@@ -112,7 +112,7 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
             Resumed::Opened(done) => done,
             Resumed::Full(refusal) => return Err(refusal),
         };
-    let hub_running = messaging::all_repo_hubs(&server.ctx.repo)
+    let hub_running = messaging::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
     Ok(json!({
@@ -277,7 +277,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
                 });
             }
         };
-    let hub_running = messaging::all_repo_hubs(&server.ctx.repo)
+    let hub_running = messaging::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
     Ok(json!({
@@ -443,7 +443,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     }
 
     // The tasks that name this worktree, in whichever hub they were made.
-    let hubs = messaging::all_repo_hubs(repo);
+    let hubs = messaging::all_repo_hubs(&server.ctx.state, repo);
     let mut tasks: Vec<(String, task::Task)> = Vec::new();
     for hub in &hubs {
         for t in task::list(&task::dir(&server.ctx.state, &hub.slug)) {

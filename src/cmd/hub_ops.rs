@@ -678,7 +678,8 @@ pub(super) fn closable_check(repo: &RepoInfo, hub: &crate::session::RepoHub) -> 
 /// Its saved session, tasks, gates and inbox stay, and starting the same key with `--resume` picks them up again.
 pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
     let info = resolve(repo_arg, hub_arg)?;
-    let hub = messaging::all_repo_hubs(&info)
+    let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
+    let hub = messaging::all_repo_hubs(&root, &info)
         .into_iter()
         .find(|h| h.slug == info.slug)
         .unwrap_or_else(|| crate::session::RepoHub {
@@ -699,7 +700,6 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             children: 0,
         });
     closable_check(&info, &hub)?;
-    let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
     // This ends no process, so a hub that is still running would be left running with no
     // record, and the next `adj hub` would start a second one beside it. Only the hub itself
     // may clear its own record; from anywhere else it has to be stopped first.

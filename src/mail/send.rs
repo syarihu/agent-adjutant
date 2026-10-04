@@ -2,9 +2,14 @@ use super::*;
 
 /// Leave `message` for the hub. Returns where it landed and whether anyone was there to see
 /// it arrive.
-pub fn send(slug: &str, hub_name: &str, message: &Message) -> Result<Delivery, String> {
-    let status = hub_status(&state_root(None), slug, hub_name);
-    let dir = inbox_dir(slug);
+pub fn send(
+    root: &Path,
+    slug: &str,
+    hub_name: &str,
+    message: &Message,
+) -> Result<Delivery, String> {
+    let status = hub_status(root, slug, hub_name);
+    let dir = inbox_dir(root, slug);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let kind = if message.kind.is_empty() {
         "report"

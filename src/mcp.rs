@@ -201,16 +201,13 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "adjutant_hub_status" => {
             let info = resolve_repo(args)?;
-            let status = messaging::hub_status(
-                &crate::registry::state_root(Some(Path::new(&info.main))),
-                &info.slug,
-                &info.hub_name,
-            );
-            let mut out = status_json(&status);
+            let root = crate::registry::state_root(Some(Path::new(&info.main)));
+            let status = messaging::hub_status(&root, &info.slug, &info.hub_name);
+            let mut out = status_json(&root, &status);
             out["repo"] = json!(info.nwo);
             out["hub"] = json!(info.hub);
             out["main"] = json!(info.main);
-            out["waiting"] = json!(messaging::list(&info.slug).len());
+            out["waiting"] = json!(messaging::list(&root, &info.slug).len());
             Ok(out)
         }
         "adjutant_send" => {
@@ -260,10 +257,11 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "adjutant_pending" => {
             let info = resolve_repo(args)?;
+            let root = crate::registry::state_root(Some(Path::new(&info.main)));
             let action = args["action"].as_str().unwrap_or("list");
             match action {
                 "list" => {
-                    let entries: Vec<Value> = messaging::list(&info.slug)
+                    let entries: Vec<Value> = messaging::list(&root, &info.slug)
                         .into_iter()
                         .map(|e| {
                             json!({"name": e.name, "from": e.from, "worktree": e.worktree,
@@ -272,18 +270,20 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                         .collect();
                     Ok(json!({
                         "hubName": info.hub_name,
-                        "dir": messaging::inbox_dir(&info.slug).to_string_lossy(),
+                        "dir": messaging::inbox_dir(&root, &info.slug).to_string_lossy(),
                         "count": entries.len(),
                         "messages": entries,
                     }))
                 }
                 "read" => {
                     let name = args["name"].as_str().unwrap_or("");
-                    Ok(json!({ "name": name, "content": messaging::read(&info.slug, name)? }))
+                    Ok(
+                        json!({ "name": name, "content": messaging::read(&root, &info.slug, name)? }),
+                    )
                 }
                 "ack" => {
                     let name = args["name"].as_str().unwrap_or("");
-                    let moved = messaging::ack(&info.slug, name)?;
+                    let moved = messaging::ack(&root, &info.slug, name)?;
                     Ok(json!({ "name": name, "archived": moved.to_string_lossy() }))
                 }
                 other => Err(format!("action must be list, read or ack: {other}")),
@@ -425,7 +425,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
     }
 }
 
-pub fn status_json(status: &messaging::HubStatus) -> Value {
+pub fn status_json(root: &Path, status: &messaging::HubStatus) -> Value {
     json!({
         "hubName": status.hub_name,
         "slug": status.slug,
@@ -434,7 +434,7 @@ pub fn status_json(status: &messaging::HubStatus) -> Value {
         "pid": status.pid,
         "cwd": status.cwd,
         "startedAt": status.started_at,
-        "inbox": messaging::inbox_dir(&status.slug).to_string_lossy(),
+        "inbox": messaging::inbox_dir(root, &status.slug).to_string_lossy(),
     })
 }
 
