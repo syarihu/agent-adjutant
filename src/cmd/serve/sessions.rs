@@ -443,7 +443,8 @@ pub(in crate::cmd) fn board_session(
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // A `ps` for each of the few it is asked about, not the whole process table.
     let processes = messaging::ProcessTable::each();
-    let hubs = messaging::all_repo_hubs_among_with(&processes, repo, &linked_paths);
+    let hubs =
+        messaging::all_repo_hubs_among_with(&server.ctx.state, &processes, repo, &linked_paths);
     sessions_of(
         server,
         settings,

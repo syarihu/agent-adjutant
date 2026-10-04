@@ -9,29 +9,30 @@ const INBOX_LISTED: usize = 20;
 /// whose worker reports to it (`children`, counted by slug, so `WID-957` and `wid-957` are
 /// one hub). A saved hub session alone does not list it, so a stopped hub whose last
 /// checkout is gone leaves the list; its session stays for `--resume`.
-pub fn all_repo_hubs(repo: &crate::kernel::identity::RepoInfo) -> Vec<RepoHub> {
+pub fn all_repo_hubs(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Vec<RepoHub> {
     let worktrees = crate::kernel::identity::linked_worktrees(&repo.main).unwrap_or_default();
-    all_repo_hubs_among(repo, &worktrees)
+    all_repo_hubs_among(root, repo, &worktrees)
 }
 
 /// `all_repo_hubs` for a caller that has already listed the linked worktrees of `repo`, so that
 /// git is not asked for them a second time.
 pub fn all_repo_hubs_among(
+    root: &Path,
     repo: &crate::kernel::identity::RepoInfo,
     worktrees: &[String],
 ) -> Vec<RepoHub> {
-    all_repo_hubs_among_with(&ProcessTable::each(), repo, worktrees)
+    all_repo_hubs_among_with(root, &ProcessTable::each(), repo, worktrees)
 }
 
 /// `all_repo_hubs_among`, asking `table` when each hub's process started.
 pub fn all_repo_hubs_among_with(
+    root: &Path,
     table: &ProcessTable,
     repo: &crate::kernel::identity::RepoInfo,
     worktrees: &[String],
 ) -> Vec<RepoHub> {
     use std::collections::HashMap;
 
-    let root = state_root(Some(Path::new(&repo.main)));
     let (default_slug, default_hub_name) = match &repo.hub {
         Some(_) => {
             let default_repo = repo
@@ -56,7 +57,7 @@ pub fn all_repo_hubs_among_with(
     }
 
     // 2. Discover from state_dir/hubs
-    for (slug, record) in hub_records(&root) {
+    for (slug, record) in hub_records(root) {
         let cwd_matches = record.cwd.as_deref().is_some_and(|cwd| {
             cwd == repo.main
                 || matches!(
@@ -101,7 +102,7 @@ pub fn all_repo_hubs_among_with(
 
     // 4. Saved sessions in state_dir/sessions only say more about a hub already listed: a
     // parent-task hub nobody has a record or a checkout for is finished, and stays gone.
-    for saved in hub_sessions_for(&root, &repo.nwo) {
+    for saved in hub_sessions_for(root, &repo.nwo) {
         let slug = crate::kernel::identity::slug_for(&repo.nwo, saved.hub.as_deref());
         let Some(entry) = hubs_by_slug.get_mut(&slug) else {
             continue;
@@ -124,12 +125,12 @@ pub fn all_repo_hubs_among_with(
             // A record written before it carried the key: the saved session may still say,
             // and failing that the slug itself does, when it can be read back unambiguously.
             if key.is_none() && parent {
-                key = hub_session(&root, &slug)
+                key = hub_session(root, &slug)
                     .and_then(|session| session.hub)
                     .or_else(|| crate::kernel::identity::hub_key_from_slug(&repo.nwo, &slug));
             }
-            let status = hub_status_with(&root, table, &slug, &hub_name);
-            let entries = list(&slug);
+            let status = hub_status_with(root, table, &slug, &hub_name);
+            let entries = list(root, &slug);
             let inbox_count = entries.len();
             // `list` is oldest first, so the newest are at the end.
             let inbox = entries

@@ -27,7 +27,7 @@ fn hub_context(
     settings: crate::kernel::config::Settings,
 ) -> Result<(RepoHub, Context), String> {
     let repo = &server.ctx.repo;
-    let hubs = messaging::all_repo_hubs(repo);
+    let hubs = messaging::all_repo_hubs(&server.ctx.state, repo);
     let hub = match id.map(str::trim).filter(|id| !id.is_empty()) {
         Some(id) => hubs
             .into_iter()

@@ -14,10 +14,10 @@ use super::*;
 /// Between the two steps the message is real but hidden, which is a state this has to be
 /// able to come back from: the name it was taken from is written into the holding name, and
 /// `list` puts back anything it finds there that is too old to be in flight.
-pub fn ack(slug: &str, name: &str) -> Result<PathBuf, String> {
-    let inbox = inbox_dir(slug);
+pub fn ack(root: &Path, slug: &str, name: &str) -> Result<PathBuf, String> {
+    let inbox = inbox_dir(root, slug);
     let from = safe_join(&inbox, name)?;
-    let dir = archive_dir(slug);
+    let dir = archive_dir(root, slug);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
 
     let held = hold(&inbox, name)?;

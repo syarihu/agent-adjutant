@@ -138,7 +138,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
         false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
     };
     let repo = &server.ctx.repo;
-    let hub = messaging::all_repo_hubs(repo)
+    let hub = messaging::all_repo_hubs(&server.ctx.state, repo)
         .into_iter()
         .find(|h| h.id == id)
         .ok_or_else(|| format!("no such hub: {id}"))?;

@@ -29,8 +29,10 @@ fn names_in(dir: &Path) -> Vec<String> {
 
 #[test]
 fn an_absent_hub_still_takes_delivery() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let delivery = send(
+        &root,
         "acme-widget",
         "adjutant-acme-widget",
         &Message {
@@ -44,7 +46,7 @@ fn an_absent_hub_still_takes_delivery() {
     .unwrap();
     assert!(!delivery.present);
     assert!(delivery.path.exists());
-    let entries = list("acme-widget");
+    let entries = list(&root, "acme-widget");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].subject, "検索結果の画像が縦に潰れる");
     assert_eq!(entries[0].from, "wid-957-34");
@@ -52,9 +54,11 @@ fn an_absent_hub_still_takes_delivery() {
 
 #[test]
 fn two_sends_in_the_same_second_do_not_overwrite_each_other() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     for _ in 0..3 {
         send(
+            &root,
             "acme-widget",
             "adjutant-acme-widget",
             &Message {
@@ -67,13 +71,15 @@ fn two_sends_in_the_same_second_do_not_overwrite_each_other() {
         )
         .unwrap();
     }
-    assert_eq!(list("acme-widget").len(), 3);
+    assert_eq!(list(&root, "acme-widget").len(), 3);
 }
 
 #[test]
 fn ack_moves_the_message_out_of_the_way() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     send(
+        &root,
         "acme-widget",
         "adjutant-acme-widget",
         &Message {
@@ -85,18 +91,19 @@ fn ack_moves_the_message_out_of_the_way() {
         },
     )
     .unwrap();
-    let name = list("acme-widget")[0].name.clone();
-    let moved = ack("acme-widget", &name).unwrap();
+    let name = list(&root, "acme-widget")[0].name.clone();
+    let moved = ack(&root, "acme-widget", &name).unwrap();
     assert!(moved.exists());
-    assert!(list("acme-widget").is_empty());
+    assert!(list(&root, "acme-widget").is_empty());
 }
 
 #[test]
 fn a_message_name_cannot_walk_out_of_the_inbox() {
-    let _sandbox = Sandbox::empty();
-    assert!(read("acme-widget", "../../etc/passwd").is_err());
-    assert!(ack("acme-widget", "..").is_err());
-    assert!(read("acme-widget", "").is_err());
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    assert!(read(&root, "acme-widget", "../../etc/passwd").is_err());
+    assert!(ack(&root, "acme-widget", "..").is_err());
+    assert!(read(&root, "acme-widget", "").is_err());
 }
 
 #[test]
@@ -155,20 +162,25 @@ fn a_message_written_before_the_worktree_header_existed_still_reads() {
     // An inbox outlives an upgrade, and what is sitting in one right now has four
     // headers. A listing that could not read those would strand every message already
     // delivered.
-    let _sandbox = Sandbox::empty();
-    let dir = inbox_dir("acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = inbox_dir(&root, "acme-widget");
     std::fs::create_dir_all(&dir).unwrap();
     let older =
         "---\nfrom: wid-957\nkind: report\nsubject: 検索が潰れる\nat: 20260908T041500Z\n---\n\nb\n";
     std::fs::write(dir.join("20260908T041500Z-report.md"), older).unwrap();
 
-    let listed = list("acme-widget");
+    let listed = list(&root, "acme-widget");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].from, "wid-957");
     assert_eq!(listed[0].subject, "検索が潰れる");
     assert_eq!(listed[0].kind, "report");
     assert_eq!(listed[0].worktree, None);
-    assert!(read("acme-widget", &listed[0].name).unwrap().contains('b'));
+    assert!(
+        read(&root, "acme-widget", &listed[0].name)
+            .unwrap()
+            .contains('b')
+    );
 }
 
 #[test]
@@ -192,17 +204,25 @@ fn an_empty_subject_falls_back_to_the_first_body_line() {
 /// that reproduced it, so forty is the number that guards it.
 #[test]
 fn forty_reports_sent_at_once_are_forty_reports() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let bodies: Vec<String> = (0..40).map(|i| format!("finding number {i}")).collect();
     std::thread::scope(|scope| {
+        let root = &root;
         for body in &bodies {
             scope.spawn(move || {
-                send("acme-widget", "adjutant-acme-widget", &a_message(body)).unwrap();
+                send(
+                    root,
+                    "acme-widget",
+                    "adjutant-acme-widget",
+                    &a_message(body),
+                )
+                .unwrap();
             });
         }
     });
 
-    let entries = list("acme-widget");
+    let entries = list(&root, "acme-widget");
     assert_eq!(entries.len(), 40, "reports were lost: {entries:?}");
 
     // Every one of them whole, and every one of them still its own report: a delivery
@@ -210,7 +230,7 @@ fn forty_reports_sent_at_once_are_forty_reports() {
     let mut seen: Vec<String> = entries
         .iter()
         .map(|e| {
-            let text = read("acme-widget", &e.name).unwrap();
+            let text = read(&root, "acme-widget", &e.name).unwrap();
             assert!(
                 text.starts_with("---\nfrom: w\n"),
                 "half a message: {text:?}"
@@ -224,7 +244,7 @@ fn forty_reports_sent_at_once_are_forty_reports() {
     assert_eq!(seen, expected);
 
     // Nothing staged is left behind — invisible to `list`, so it would grow unnoticed.
-    let staged: Vec<String> = names_in(&inbox_dir("acme-widget"))
+    let staged: Vec<String> = names_in(&inbox_dir(&root, "acme-widget"))
         .into_iter()
         .filter(|n| n.starts_with('.'))
         .collect();
@@ -235,16 +255,17 @@ fn forty_reports_sent_at_once_are_forty_reports() {
 /// that was mishandled can still be found, and an overwrite is exactly losing one.
 #[test]
 fn acking_the_same_name_twice_keeps_both() {
-    let _sandbox = Sandbox::empty();
-    let dir = inbox_dir("acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = inbox_dir(&root, "acme-widget");
     std::fs::create_dir_all(&dir).unwrap();
     // The same name twice on purpose — a send can reuse a name the moment the previous
     // message with it has been acked, and both then land on one archived name.
     for body in ["the first report", "the second report"] {
         std::fs::write(dir.join("20260908T112233Z-report.md"), body).unwrap();
-        ack("acme-widget", "20260908T112233Z-report.md").unwrap();
+        ack(&root, "acme-widget", "20260908T112233Z-report.md").unwrap();
     }
-    let archived = names_in(&archive_dir("acme-widget"));
+    let archived = names_in(&archive_dir(&root, "acme-widget"));
     assert_eq!(
         archived,
         vec![
@@ -254,7 +275,7 @@ fn acking_the_same_name_twice_keeps_both() {
     );
     let bodies: Vec<String> = archived
         .iter()
-        .map(|n| std::fs::read_to_string(archive_dir("acme-widget").join(n)).unwrap())
+        .map(|n| std::fs::read_to_string(archive_dir(&root, "acme-widget").join(n)).unwrap())
         .collect();
     assert!(bodies.contains(&"the first report".to_string()));
     assert!(bodies.contains(&"the second report".to_string()));
@@ -275,14 +296,15 @@ fn a_numbered_name_keeps_its_extension() {
 /// message somebody had just sent, which nothing had filed.
 #[test]
 fn one_message_acked_five_times_at_once_is_acked_once() {
-    let _sandbox = Sandbox::empty();
-    let dir = inbox_dir("acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = inbox_dir(&root, "acme-widget");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("20260908T112233Z-report.md"), "the only report").unwrap();
 
     let outcomes: Vec<Result<PathBuf, String>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..5)
-            .map(|_| scope.spawn(|| ack("acme-widget", "20260908T112233Z-report.md")))
+            .map(|_| scope.spawn(|| ack(&root, "acme-widget", "20260908T112233Z-report.md")))
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -296,8 +318,8 @@ fn one_message_acked_five_times_at_once_is_acked_once() {
         assert!(message.contains("is waiting"), "{message}");
     }
     // Filed exactly once, and the inbox is empty rather than holding a copy.
-    assert_eq!(names_in(&archive_dir("acme-widget")).len(), 1);
-    assert!(list("acme-widget").is_empty());
+    assert_eq!(names_in(&archive_dir(&root, "acme-widget")).len(), 1);
+    assert!(list(&root, "acme-widget").is_empty());
     // Nothing staged left behind on any of the five paths.
     let staged: Vec<String> = names_in(&dir)
         .into_iter()
@@ -313,7 +335,8 @@ fn one_message_acked_five_times_at_once_is_acked_once() {
 /// the only way to look at the window the staging-then-linking exists to close.
 #[test]
 fn a_reader_during_delivery_never_sees_half_a_message() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let body = "x".repeat(64 * 1024);
     let done = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
@@ -321,7 +344,13 @@ fn a_reader_during_delivery_never_sees_half_a_message() {
             .map(|_| {
                 scope.spawn(|| {
                     for _ in 0..25 {
-                        send("acme-widget", "adjutant-acme-widget", &a_message(&body)).unwrap();
+                        send(
+                            &root,
+                            "acme-widget",
+                            "adjutant-acme-widget",
+                            &a_message(&body),
+                        )
+                        .unwrap();
                     }
                 })
             })
@@ -333,10 +362,10 @@ fn a_reader_during_delivery_never_sees_half_a_message() {
             // implementation fails whenever this thread happens to start last.
             loop {
                 let finished = done.load(std::sync::atomic::Ordering::Relaxed);
-                for entry in list("acme-widget") {
+                for entry in list(&root, "acme-widget") {
                     // A name `list` returned can only be gone if something removed it,
                     // and nothing here does — so anything readable must be whole.
-                    if let Ok(text) = read("acme-widget", &entry.name) {
+                    if let Ok(text) = read(&root, "acme-widget", &entry.name) {
                         assert!(text.starts_with("---\nfrom: w\n"), "half a header");
                         assert!(
                             text.trim_end().ends_with(&body),
@@ -357,7 +386,7 @@ fn a_reader_during_delivery_never_sees_half_a_message() {
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         assert!(reader.join().unwrap() >= 200);
     });
-    assert_eq!(list("acme-widget").len(), 200);
+    assert_eq!(list(&root, "acme-widget").len(), 200);
 }
 
 /// An ack that stops half way must leave the message reachable.
@@ -368,8 +397,9 @@ fn a_reader_during_delivery_never_sees_half_a_message() {
 /// that exists and cannot be reached.
 #[test]
 fn a_message_left_held_by_an_interrupted_ack_comes_back() {
-    let _sandbox = Sandbox::empty();
-    let dir = inbox_dir("acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = inbox_dir(&root, "acme-widget");
     std::fs::create_dir_all(&dir).unwrap();
     // Exactly what an ack leaves behind when it dies after the rename: the content, a
     // holding name, and the name it came from written into it.
@@ -385,11 +415,11 @@ fn a_message_left_held_by_an_interrupted_ack_comes_back() {
         .set_modified(long_ago)
         .unwrap();
 
-    let waiting = list("acme-widget");
+    let waiting = list(&root, "acme-widget");
     assert_eq!(waiting.len(), 1, "{waiting:?}");
     assert_eq!(waiting[0].name, "20260908T112233Z-report.md");
     assert_eq!(
-        read("acme-widget", &waiting[0].name).unwrap(),
+        read(&root, "acme-widget", &waiting[0].name).unwrap(),
         "the report nobody filed"
     );
     assert!(!held.exists());
@@ -399,21 +429,23 @@ fn a_message_left_held_by_an_interrupted_ack_comes_back() {
 /// between the two steps would file it *and* leave a copy waiting.
 #[test]
 fn a_message_still_being_acked_is_not_put_back_underneath_it() {
-    let _sandbox = Sandbox::empty();
-    let dir = inbox_dir("acme-widget");
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = inbox_dir(&root, "acme-widget");
     std::fs::create_dir_all(&dir).unwrap();
     let held = dir.join(format!("{HOLDING}424242-0-20260908T112233Z-report.md"));
     std::fs::write(&held, "mid-flight").unwrap();
 
-    assert!(list("acme-widget").is_empty());
+    assert!(list(&root, "acme-widget").is_empty());
     assert!(held.exists());
 }
 
 #[test]
 fn an_inbox_lists_the_newest_first_with_when_each_was_sent() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let slug = "acme-widget";
-    let dir = inbox_dir(slug);
+    let dir = inbox_dir(&root, slug);
     std::fs::create_dir_all(&dir).unwrap();
     let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
     write(
@@ -426,7 +458,7 @@ fn an_inbox_lists_the_newest_first_with_when_each_was_sent() {
         "---\nfrom: b\nkind: question\nsubject: second\n---\n\nb\n",
     );
     write("odd-name.md", "---\nfrom: c\nsubject: third\n---\n\nb\n");
-    let entries = list(slug);
+    let entries = list(&root, slug);
     assert_eq!(entries[0].at.as_deref(), Some("20260101T000001Z"));
     assert_eq!(entries[1].at.as_deref(), Some("20260101T000002Z"));
     assert_eq!(entries[2].at, None);
@@ -491,7 +523,7 @@ fn all_repo_hubs_discovers_all_sources_and_sorts_repo_first() {
     )
     .unwrap();
 
-    let hubs = all_repo_hubs(&repo);
+    let hubs = all_repo_hubs(&root, &repo);
     // `other-hub` is known only from its saved session, which no longer lists a parent
     // hub on its own (#161): nothing points at it, so it is finished.
     assert_eq!(hubs.len(), 3);
@@ -507,7 +539,8 @@ fn all_repo_hubs_discovers_all_sources_and_sorts_repo_first() {
 
 #[test]
 fn all_repo_hubs_discovers_hub_from_saved_worker_session_when_record_absent() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().to_string_lossy().to_string();
     let repo = crate::kernel::identity::RepoInfo {
@@ -529,7 +562,7 @@ fn all_repo_hubs_discovers_hub_from_saved_worker_session_when_record_absent() {
     )
     .unwrap();
 
-    let hubs = all_repo_hubs(&repo);
+    let hubs = all_repo_hubs(&root, &repo);
     assert_eq!(hubs.len(), 2);
     assert_eq!(hubs[0].id, "hub");
     assert_eq!(hubs[1].id, "hub-unregistered-worker-hub");
@@ -564,7 +597,7 @@ fn a_parent_hub_known_only_from_its_saved_session_is_not_listed() {
     )
     .unwrap();
 
-    let hubs = all_repo_hubs(&widget_repo(dir.path()));
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     assert_eq!(hubs.len(), 1, "{hubs:?}");
     assert_eq!(hubs[0].id, "hub");
     assert_eq!(hubs[0].children, 0);
@@ -574,12 +607,13 @@ fn a_parent_hub_known_only_from_its_saved_session_is_not_listed() {
 
 #[test]
 fn a_parent_hub_with_an_ended_worker_is_listed_with_its_count() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let dir = tempfile::tempdir().unwrap();
     // The worker's record is gone; its saved session still names the hub.
     save_worker_session(dir.path(), "WID-957", Some("WID-957"), None, "sid-1").unwrap();
 
-    let hubs = all_repo_hubs(&widget_repo(dir.path()));
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     assert_eq!(hubs.len(), 2, "{hubs:?}");
     assert_eq!(hubs[0].children, 0);
     assert!(hubs[1].parent);
@@ -604,7 +638,7 @@ fn children_are_counted_by_slug_not_by_spelling() {
     )
     .unwrap();
 
-    let hubs = all_repo_hubs(&widget_repo(dir.path()));
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     assert_eq!(hubs.len(), 2, "{hubs:?}");
     assert_eq!(hubs[1].slug, slug);
     assert_eq!(hubs[1].children, 1);
@@ -623,7 +657,7 @@ fn a_worker_moved_to_another_hub_counts_only_there() {
     let a = crate::kernel::identity::slug_for("acme/widget", Some("A"));
     save_hub_session(&root, &a, "acme/widget", Some("A"), "adjutant-a", "sess-a").unwrap();
 
-    let hubs = all_repo_hubs(&widget_repo(dir.path()));
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     let keys: Vec<_> = hubs.iter().map(|h| h.key.as_deref()).collect();
     assert_eq!(keys, vec![None, Some("B")], "{hubs:?}");
     assert_eq!(hubs[1].children, 1);
@@ -631,11 +665,12 @@ fn a_worker_moved_to_another_hub_counts_only_there() {
 
 #[test]
 fn a_hub_known_only_from_a_worker_is_given_a_name() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let dir = tempfile::tempdir().unwrap();
     write_json(&worker_record_path(dir.path()), &json!({"hub": "WID-957"})).unwrap();
 
-    let hubs = all_repo_hubs(&widget_repo(dir.path()));
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     let slug = crate::kernel::identity::slug_for("acme/widget", Some("WID-957"));
     assert_eq!(hubs[1].name, format!("adjutant-{slug}"));
 }
@@ -670,7 +705,7 @@ fn a_parent_hub_record_without_its_key_is_still_told_apart_from_the_repository_h
     )
     .unwrap();
 
-    let hubs = all_repo_hubs(&repo);
+    let hubs = all_repo_hubs(&root, &repo);
     assert_eq!(hubs.len(), 3, "{hubs:?}");
     assert_eq!(hubs[0].id, "hub");
     assert!(!hubs[0].parent);
@@ -686,7 +721,8 @@ fn a_parent_hub_record_without_its_key_is_still_told_apart_from_the_repository_h
 
 #[test]
 fn all_repo_hubs_seeds_default_hub_when_repo_addresses_parent_hub() {
-    let _sandbox = Sandbox::empty();
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
     let dir = tempfile::tempdir().unwrap();
     let main_path = dir.path().to_string_lossy().to_string();
     let repo = crate::kernel::identity::RepoInfo {
@@ -699,7 +735,7 @@ fn all_repo_hubs_seeds_default_hub_when_repo_addresses_parent_hub() {
         nwo_source: "dirname",
     };
 
-    let hubs = all_repo_hubs(&repo);
+    let hubs = all_repo_hubs(&root, &repo);
     assert_eq!(hubs.len(), 2);
     assert_eq!(hubs[0].id, "hub");
     assert_eq!(
