@@ -9,7 +9,7 @@ const INBOX_LISTED: usize = 20;
 /// whose worker reports to it (`children`, counted by slug, so `WID-957` and `wid-957` are
 /// one hub). A saved hub session alone does not list it, so a stopped hub whose last
 /// checkout is gone leaves the list; its session stays for `--resume`.
-pub fn all_repo_hubs(repo: &crate::kernel::identity::RepoInfo) -> Vec<crate::session::RepoHub> {
+pub fn all_repo_hubs(repo: &crate::kernel::identity::RepoInfo) -> Vec<RepoHub> {
     let worktrees = crate::kernel::identity::linked_worktrees(&repo.main).unwrap_or_default();
     all_repo_hubs_among(repo, &worktrees)
 }
@@ -19,7 +19,7 @@ pub fn all_repo_hubs(repo: &crate::kernel::identity::RepoInfo) -> Vec<crate::ses
 pub fn all_repo_hubs_among(
     repo: &crate::kernel::identity::RepoInfo,
     worktrees: &[String],
-) -> Vec<crate::session::RepoHub> {
+) -> Vec<RepoHub> {
     all_repo_hubs_among_with(&ProcessTable::each(), repo, worktrees)
 }
 
@@ -28,8 +28,7 @@ pub fn all_repo_hubs_among_with(
     table: &ProcessTable,
     repo: &crate::kernel::identity::RepoInfo,
     worktrees: &[String],
-) -> Vec<crate::session::RepoHub> {
-    use crate::session::{InboxItem, RepoHub, RepoHubState};
+) -> Vec<RepoHub> {
     use std::collections::HashMap;
 
     let (default_slug, default_hub_name) = match &repo.hub {

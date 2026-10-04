@@ -199,7 +199,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         "adjutant_hub_status" => {
             let info = resolve_repo(args)?;
             let status = messaging::hub_status(&info.slug, &info.hub_name);
-            let mut out = messaging::status_json(&status);
+            let mut out = status_json(&status);
             out["repo"] = json!(info.nwo);
             out["hub"] = json!(info.hub);
             out["main"] = json!(info.main);
@@ -416,6 +416,19 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         other => Err(format!("Unknown tool: {other}")),
     }
+}
+
+pub fn status_json(status: &messaging::HubStatus) -> Value {
+    json!({
+        "hubName": status.hub_name,
+        "slug": status.slug,
+        "present": status.present,
+        "stale": status.stale,
+        "pid": status.pid,
+        "cwd": status.cwd,
+        "startedAt": status.started_at,
+        "inbox": messaging::inbox_dir(&status.slug).to_string_lossy(),
+    })
 }
 
 // ── the loop ─────────────────────────────────────────────────────────

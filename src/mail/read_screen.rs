@@ -1,5 +1,6 @@
 //! Reading what an agent's screen shows and whether it is safe to type into.
-use super::*;
+use crate::infra::agent::Agent;
+use crate::infra::terminal::*;
 
 /// A box at the bottom of the screen with more than this under it is not an input box but
 /// something drawn over one.
@@ -399,3 +400,6 @@ pub fn look_before_typing(agent: Agent) -> Option<LookBeforeTyping> {
         holds_just: Box::new(move |screen, line| shows_typed_line(agent, screen, line)),
     })
 }
+
+#[cfg(test)]
+mod tests;
