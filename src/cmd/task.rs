@@ -12,16 +12,15 @@ use crate::kernel::config;
 use crate::mail::Message;
 use crate::mail::{DeliveryOutcome, Reached};
 use crate::registry::Context;
-use crate::task::{self, PrRef, PrStatus, Status, Task};
+use crate::task::{self, PrRef, PrStatus, Status, Task, stamp};
+
+// Old paths, kept until #363: `hub_title` calls `read_issue` through here.
+pub(super) use crate::task::{PrState, read_issue};
 
 use std::path::{Path, PathBuf};
 
 pub fn dir(ctx: &Context) -> PathBuf {
     task::dir(&ctx.state, &ctx.repo.slug)
-}
-
-fn stamp() -> String {
-    crate::infra::clock::utc_stamp(crate::infra::clock::now_secs())
 }
 
 /// Derive a card title from the input title or the first non-empty line of the body.
@@ -412,69 +411,11 @@ pub fn nudge(ctx: &Context) -> Result<DeliveryOutcome, String> {
     crate::mail::deliver_to_hub(ctx, &message)
 }
 
-/// What GitHub says about a pull request a record points at.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrState {
-    Open,
-    /// Closed without being merged. The work may have gone on in another PR, so this is not
-    /// read as "done" or as "cancelled": a person says which.
-    Closed,
-    Merged,
-    /// `gh` could not say: not installed, not signed in, no such PR, or an answer this does
-    /// not recognise. Why, in `gh`'s own words where it gave any.
-    Unreadable(String),
-}
-
-impl PrState {
-    fn as_str(&self) -> &'static str {
-        match self {
-            PrState::Open => "open",
-            PrState::Closed => "closed",
-            PrState::Merged => "merged",
-            PrState::Unreadable(_) => "unreadable",
-        }
-    }
-}
-
 /// How long a whole refresh may spend waiting on `gh`. The hub asks in the block it starts
 /// with, and the MCP server answers one request at a time, so a `gh` that hangs — no network,
 /// a login prompt — would hold up every other answer in that block with it. One deadline for
 /// the lot rather than one per PR, so the wait does not grow with the number of records.
 const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// How long reading one issue may take. A person is waiting on the command or the click, and
-/// an issue is one request, so this is shorter than a whole refresh's allowance.
-const ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// Run `gh` from `main` and return what it printed, or the reason it failed.
-fn gh_output(main: &str, args: &[&str], deadline: std::time::Instant) -> Result<String, String> {
-    let run = crate::infra::gh::run(Some(main), args, deadline)?;
-    if run.ok {
-        return Ok(run.stdout);
-    }
-    Err(if run.stderr.is_empty() {
-        "gh exited without succeeding".to_string()
-    } else {
-        run.stderr
-    })
-}
-
-/// Read one issue through `gh`, from the main checkout so a URL on another host is still
-/// resolved with this machine's `gh` login.
-pub(super) fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, String> {
-    // A value that starts with '-' would reach `gh` as a flag.
-    if url.starts_with('-') {
-        return Err(format!("not an issue: {url}"));
-    }
-    let deadline = std::time::Instant::now() + ISSUE_TIMEOUT;
-    let json = gh_output(
-        main,
-        // `--` so the URL is only ever a positional, whatever it starts with.
-        &["issue", "view", "--json", "title,body", "--", url],
-        deadline,
-    )?;
-    task::snapshot_from_gh(&json, url, &stamp())
-}
 
 /// The title of the issue at `url` when a task record of one of these hubs already holds it:
 /// the snapshot read for a task whose issue it is, else the title of the task made from it.
