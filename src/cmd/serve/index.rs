@@ -134,7 +134,7 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
                 .ok()
                 .map(|name| crate::registry::hub_status_with(root, &table, &a.slug, &name));
             let present = status.as_ref().is_some_and(|s| s.present);
-            let tasks = task::list(&task::dir(root, &a.slug));
+            let tasks = task::list(root, &a.slug);
             let mut gates = gate::list(&gate::dir(root, &a.slug));
             let (waiting, working) = board_counts(&tasks, &gates, worker_seen);
             let queued = tasks

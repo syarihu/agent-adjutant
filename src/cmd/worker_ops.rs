@@ -224,7 +224,7 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
     let from_record;
     let title = match task_id {
         Some(id) if title.is_empty() => {
-            from_record = crate::task::load(&task::dir(&ctx), id)?.title;
+            from_record = crate::task::get(&ctx.state, &ctx.repo.slug, id)?.title;
             from_record.as_str()
         }
         _ => title,

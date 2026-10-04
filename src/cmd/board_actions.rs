@@ -447,7 +447,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     let hubs = mail::all_repo_hubs(&server.ctx.state, repo);
     let mut tasks: Vec<(String, task::Task)> = Vec::new();
     for hub in &hubs {
-        for t in task::list(&task::dir(&server.ctx.state, &hub.slug)) {
+        for t in task::list(&server.ctx.state, &hub.slug) {
             if t.worktree
                 .as_deref()
                 .is_some_and(|w| same_path(w, worktree))

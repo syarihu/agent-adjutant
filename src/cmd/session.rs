@@ -240,7 +240,6 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         ));
     }
     let (hub, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
-    let dir = super::task::dir(&ctx);
     let held = session.task.as_deref();
 
     // Written first, and undone if the worker's record cannot be: a task naming a worktree
@@ -265,7 +264,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 ));
             }
             // Read to choose the status; the checks that matter are made again under the lock.
-            let status = match task::load(&dir, task_id)?.status {
+            let status = match task::get(&ctx.state, &ctx.repo.slug, task_id)?.status {
                 Status::Pr => "pr",
                 _ => "dispatched",
             };
@@ -333,8 +332,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
     {
         match undo {
             Undo::Remove => {
-                let _ = std::fs::remove_file(task::path_of(&dir, &linked.id));
-                let _ = std::fs::remove_file(dir.join(format!("{}.lock", linked.id)));
+                let _ = task::remove(&ctx, &linked.id);
             }
             Undo::Restore(before) => {
                 let _ = super::task::update(&ctx, &linked.id, &before);

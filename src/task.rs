@@ -7,23 +7,35 @@
 //! body out of the same struct the file holds, rather than a second description of a task
 //! kept in step by hand.
 //!
-//! A leaf: it is handed the directory to work in rather than deriving it, so it never has
-//! to know where this machine keeps its state.
+//! Reads take a state root and a hub's slug, so the board can read every hub's records;
+//! writes take the `Context` of the hub they are for and find `tasks/<slug>/` under its state
+//! directory. Nothing outside this module builds that path or takes the record's lock.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod get;
 mod github;
+mod list;
 mod model;
 mod next;
+mod note_gate_answered;
+mod remove;
 mod store;
 
+pub use get::*;
 pub use github::*;
+pub use list::*;
 pub use model::*;
 pub use next::*;
-// The commands, the board, `gate` and `jules` call these today; #351 narrows this.
-pub use store::{claim_id, dir, list, load, path_of, save, stamp};
+pub use note_gate_answered::*;
+pub use remove::*;
+// For their callers in `cmd`: `claim_id` and `stamp` until #354, `save` and `lock` until #362.
+pub use store::{claim_id, lock, save, stamp};
+// The board's fixture in src/cmd/serve/tests.rs writes a record by hand.
+#[cfg(test)]
+pub(crate) use store::dir;
 
 #[cfg(test)]
 mod tests;

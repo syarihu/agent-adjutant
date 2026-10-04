@@ -15,7 +15,10 @@ fn create_drops_keys_the_record_does_not_know() {
     let ctx = crate::registry::context_of(repo).unwrap();
     let (task, _) = create(&ctx, &json!({"title": "t", "futureField": 1})).unwrap();
     assert!(task.extra.is_empty());
-    let text = std::fs::read_to_string(task::path_of(&dir(&ctx), &task.id)).unwrap();
+    let text = std::fs::read_to_string(
+        task::dir(&ctx.state, &ctx.repo.slug).join(format!("{}.json", task.id)),
+    )
+    .unwrap();
     assert!(!text.contains("futureField"), "{text}");
 }
 

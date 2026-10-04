@@ -254,15 +254,10 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
                 addresses(&resident.root)
                     .iter()
                     .filter(|a| {
-                        task::list(&task::dir(&resident.root, &a.slug))
-                            .iter()
-                            .any(|t| {
-                                t.pr.is_some()
-                                    && !matches!(
-                                        t.status,
-                                        task::Status::Done | task::Status::Cancelled
-                                    )
-                            })
+                        task::list(&resident.root, &a.slug).iter().any(|t| {
+                            t.pr.is_some()
+                                && !matches!(t.status, task::Status::Done | task::Status::Cancelled)
+                        })
                     })
                     .filter_map(|a| resident.board(&a.slug))
                     .map(|server| server.ctx.clone())

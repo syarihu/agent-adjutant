@@ -7,7 +7,6 @@
 
 use serde_json::{Value, json};
 
-use super::task as tasks;
 use crate::jules;
 use crate::task;
 
@@ -30,8 +29,8 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     // Held from the checks to the record, across the call that creates the session. Two starts
     // for one task at once would otherwise both find it without a session and both create one,
     // and the record would keep whichever wrote last.
-    let lock = tasks::lock_task(&ctx, args.id)?;
-    let mut task = task::load(&tasks::dir(&ctx), args.id)?;
+    let lock = task::lock(&ctx, args.id)?;
+    let mut task = task::get(&ctx.state, &ctx.repo.slug, args.id)?;
     // Handed over by the hub once the task is in progress, and not before. The board follows a
     // session only while its task is in progress or in review, so one started for a task still
     // in the backlog or the queue would run with nothing watching it.
@@ -85,7 +84,7 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     // comment passed on in anybody else's name would be posted and ignored.
     task.jules_by = by;
     task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
-    task::save(&tasks::dir(&ctx), &task).map_err(|e| {
+    task::save(&ctx, &task).map_err(|e| {
         format!(
             "Jules started session {} but the task record could not be updated: {e}",
             session.id
@@ -116,7 +115,7 @@ pub fn show(args: &ShowArgs<'_>) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo, args.hub)?;
     let session_id = match (args.session, args.id) {
         (Some(session), _) => session.to_string(),
-        (None, Some(id)) => task::load(&tasks::dir(&ctx), id)?
+        (None, Some(id)) => task::get(&ctx.state, &ctx.repo.slug, id)?
             .jules_session
             .ok_or(format!("{id} has not been handed to Jules"))?,
         (None, None) => return Err("name the task with --id or the session with --session".into()),
@@ -412,12 +411,12 @@ fn announce_review(
     };
     // A first look without the lock: listing the comments is two round trips to GitHub, and
     // most polls end here.
-    if !eligible(&task::load(&tasks::dir(ctx), task_id)?) {
+    if !eligible(&task::get(&ctx.state, &ctx.repo.slug, task_id)?) {
         return Ok(());
     }
     let listed = findings(ctx, task_id)?;
-    let lock = tasks::lock_task(ctx, task_id)?;
-    let mut task = task::load(&tasks::dir(ctx), task_id)?;
+    let lock = task::lock(ctx, task_id)?;
+    let mut task = task::get(&ctx.state, &ctx.repo.slug, task_id)?;
     if !eligible(&task) {
         return Ok(());
     }
@@ -450,7 +449,7 @@ fn announce_review(
     task.announced.extend(ids.iter().map(|id| id.to_string()));
     task.relay_rounds = round;
     task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
-    let saved = task::save(&tasks::dir(ctx), &task);
+    let saved = task::save(ctx, &task);
     drop(lock);
     posted.follow_up(ctx, true);
     saved.map(|_| ())
@@ -484,8 +483,8 @@ fn follow(
     let Some(pr) = &session.pr else {
         return Ok(());
     };
-    let lock = tasks::lock_task(ctx, task_id)?;
-    let mut task = task::load(&tasks::dir(ctx), task_id)?;
+    let lock = task::lock(ctx, task_id)?;
+    let mut task = task::get(&ctx.state, &ctx.repo.slug, task_id)?;
     let waiting = task.pr.is_none()
         && task.jules_session.as_deref() == Some(session.id.as_str())
         && matches!(task.status, task::Status::Dispatched | task::Status::Pr);
@@ -511,7 +510,7 @@ fn follow(
         task.status = task::Status::Pr;
     }
     task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
-    let saved = task::save(&tasks::dir(ctx), &task);
+    let saved = task::save(ctx, &task);
     drop(lock);
     posted.follow_up(ctx, true);
     saved.map(|_| ())
@@ -544,7 +543,7 @@ pub struct Finding {
 ///
 /// Given up on after `FINDINGS_TIMEOUT`, so a `gh` that hangs cannot hold a board request.
 pub fn findings(ctx: &crate::registry::Context, id: &str) -> Result<Vec<Finding>, String> {
-    let task = task::load(&tasks::dir(ctx), id)?;
+    let task = task::get(&ctx.state, &ctx.repo.slug, id)?;
     let pr = task
         .pr
         .as_deref()
@@ -666,7 +665,7 @@ pub fn relay(
     // comment — a double click, the board and a shell at once — would otherwise both find it
     // not yet passed on and both post it. Waiting a few seconds on a button somebody pressed
     // is the cheaper failure.
-    let lock = tasks::lock_task(ctx, id)?;
+    let lock = task::lock(ctx, id)?;
     let all = findings(ctx, id)?;
     let mut picked = Vec::new();
     for want in chosen {
@@ -679,7 +678,7 @@ pub fn relay(
         }
         picked.push((found, want.note.as_deref()));
     }
-    let task = task::load(&tasks::dir(ctx), id)?;
+    let task = task::get(&ctx.state, &ctx.repo.slug, id)?;
     let pr = task
         .pr
         .clone()
@@ -719,14 +718,14 @@ pub fn relay(
     }
     let posted = run.stdout.trim().to_string();
     // Written after the comment is up, so a failure to post leaves them choosable.
-    let mut task = task::load(&tasks::dir(ctx), id)?;
+    let mut task = task::get(&ctx.state, &ctx.repo.slug, id)?;
     for (f, _) in &picked {
         if !task.relayed.contains(&f.id) {
             task.relayed.push(f.id.clone());
         }
     }
     task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
-    task::save(&tasks::dir(ctx), &task)?;
+    task::save(ctx, &task)?;
     drop(lock);
     let ids: Vec<&str> = chosen.iter().map(|c| c.id.as_str()).collect();
     Ok(json!({ "relayed": ids, "comment": posted }))
