@@ -36,9 +36,9 @@ fn forgetting_a_board_removes_only_that_slug() {
 
 #[test]
 fn the_dashboards_record_is_written_whole() {
-    let _sandbox = crate::testing::Sandbox::empty();
+    let sandbox = crate::testing::Sandbox::empty();
     assert_eq!(record("acme-widget", 4321), Ok(true));
-    let dir = crate::infra::paths::state_dir().join("dashboards");
+    let dir = sandbox.state().join("dashboards");
     let names: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -1211,7 +1211,7 @@ fn the_page_does_not_carry_the_terminal_library() {
 /// shape of id: the two can only differ if a field is gathered in one path and not the other.
 #[test]
 fn one_session_is_the_entry_the_whole_list_holds() {
-    let _sandbox = crate::testing::Sandbox::empty();
+    let sandbox = crate::testing::Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let main = root.join("repo");
@@ -1266,7 +1266,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     );
     // A hub record for the parent-task hub, and a gate it has open for `bar`.
     let hub_slug = crate::kernel::identity::slug_for("acme/widget", Some("WID-1"));
-    let hub_record = messaging::hub_record_path(&hub_slug);
+    let hub_record = messaging::hub_record_path(&sandbox.state(), &hub_slug);
     std::fs::create_dir_all(hub_record.parent().unwrap()).unwrap();
     std::fs::write(
         &hub_record,
@@ -1275,7 +1275,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     )
     .unwrap();
     // The task `bar` is on, written under the hub it reports to.
-    let tasks = task::dir(&crate::infra::paths::state_dir(), &hub_slug);
+    let tasks = task::dir(&sandbox.state(), &hub_slug);
     std::fs::create_dir_all(&tasks).unwrap();
     std::fs::write(
         tasks.join("WID-2.json"),
@@ -1285,9 +1285,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         .to_string(),
     )
     .unwrap();
-    let gates = crate::infra::paths::state_dir()
-        .join("gates")
-        .join(&hub_slug);
+    let gates = sandbox.state().join("gates").join(&hub_slug);
     std::fs::create_dir_all(&gates).unwrap();
     std::fs::write(
         gates.join("g1.json"),

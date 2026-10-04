@@ -200,12 +200,10 @@ fn a_hub_that_is_already_running_is_brought_forward_rather_than_opened_again() {
     assert_eq!(std::fs::read_to_string(&record).unwrap(), written);
 }
 
-/// The record is looked for where the hub keeps it, not where the command was typed.
-///
-/// A relative `ADJUTANT_STATE_DIR` resolves against the working directory, so a look taken
-/// before the move to the main checkout reads a directory that holds nothing. The claim used
-/// to cover for that by answering `Taken` a few lines later; the tab route never reaches the
-/// claim, so a missed record there opens a tab for a hub that is already running.
+/// A relative `ADJUTANT_STATE_DIR` is taken against the main checkout, so a look taken from
+/// anywhere in the checkout reads the directory the hub keeps. Taken against the working
+/// directory, it would read a directory that holds nothing, and the tab route, which never
+/// reaches the claim, would open a tab for a hub that is already running.
 #[test]
 fn a_relative_state_directory_is_read_from_the_checkout_not_from_where_it_was_typed() {
     let fixture = Fixture::new(QUIET);

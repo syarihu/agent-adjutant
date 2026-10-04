@@ -16,7 +16,7 @@ use crate::task::{self, PrRef, PrStatus, Status, Task};
 use std::path::PathBuf;
 
 pub fn dir(ctx: &Context) -> PathBuf {
-    task::dir(&crate::infra::paths::state_dir(), &ctx.repo.slug)
+    task::dir(&ctx.state, &ctx.repo.slug)
 }
 
 fn stamp() -> String {

@@ -31,7 +31,7 @@ pub(crate) mod testing {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     pub struct Sandbox {
-        _dir: tempfile::TempDir,
+        dir: tempfile::TempDir,
         _guard: std::sync::MutexGuard<'static, ()>,
     }
 
@@ -63,10 +63,12 @@ pub(crate) mod testing {
                     std::env::remove_var(name);
                 }
             }
-            Sandbox {
-                _dir: dir,
-                _guard: guard,
-            }
+            Sandbox { dir, _guard: guard }
+        }
+
+        /// The state directory this sandbox points `ADJUTANT_STATE_DIR` at.
+        pub fn state(&self) -> std::path::PathBuf {
+            self.dir.path().join("state")
         }
 
         /// For tests that only care about where messages go.

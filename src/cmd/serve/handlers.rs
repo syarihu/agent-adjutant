@@ -69,7 +69,7 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
 /// checkout where there is no worker to raise.
 pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
     let repo = &server.ctx.repo;
-    let status = messaging::hub_status(&repo.slug, &repo.hub_name);
+    let status = messaging::hub_status(&server.ctx.state, &repo.slug, &repo.hub_name);
     let Some(pid) = status.pid.filter(|_| status.present) else {
         return Ok(json!({ "present": false, "ran": false }));
     };
@@ -103,6 +103,7 @@ fn hub_start_context(
     Ok(crate::cmd::Context {
         repo: server.ctx.repo.clone().addressed(hub.key.as_deref())?,
         resolved: server.ctx.resolved.clone(),
+        state: server.ctx.state.clone(),
         settings,
     })
 }
@@ -120,6 +121,7 @@ fn hub_stop_context(
     crate::cmd::Context {
         repo: stopping,
         resolved: server.ctx.resolved.clone(),
+        state: server.ctx.state.clone(),
         settings,
     }
 }
@@ -235,7 +237,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
             if closing {
                 // `stop_hub` cleared a record naming the process it stopped; what is left
                 // names none, unless a hub registered in the meantime, which stays.
-                if !messaging::unregister_hub_if_unnamed(&hub.slug)? {
+                if !messaging::unregister_hub_if_unnamed(&server.ctx.state, &hub.slug)? {
                     return Err(format!("{} changed while it was being closed", hub.name));
                 }
                 forget_board(&hub.slug)?;

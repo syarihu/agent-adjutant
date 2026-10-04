@@ -3,7 +3,7 @@ use super::*;
 /// Leave `message` for the hub. Returns where it landed and whether anyone was there to see
 /// it arrive.
 pub fn send(slug: &str, hub_name: &str, message: &Message) -> Result<Delivery, String> {
-    let status = hub_status(slug, hub_name);
+    let status = hub_status(&state_root(None), slug, hub_name);
     let dir = inbox_dir(slug);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let kind = if message.kind.is_empty() {

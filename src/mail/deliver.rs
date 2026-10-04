@@ -87,7 +87,7 @@ impl Posted {
         let (woken, wake_note) = if wake_needed {
             match (
                 delivery.present,
-                hub_status(&ctx.repo.slug, &ctx.repo.hub_name).pid,
+                hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name).pid,
             ) {
                 (true, Some(pid)) => woken_and_why(terminal::wake(
                     &ctx.settings.terminal,

@@ -53,7 +53,7 @@ pub(super) fn cached_title(slug: &str) -> Option<String> {
 /// the one its key stands for in `issueKeys`. None for a key that matches neither, which is
 /// never asked about.
 fn issue_of(ctx: &Context, hub: &RepoHub, key: &str) -> Option<String> {
-    let dir = task::dir(&crate::infra::paths::state_dir(), &hub.slug);
+    let dir = task::dir(&ctx.state, &hub.slug);
     let named = task::list(&dir)
         .into_iter()
         .filter_map(|t| t.parent)

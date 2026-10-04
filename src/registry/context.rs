@@ -11,6 +11,10 @@ pub struct Context {
     pub repo: RepoInfo,
     pub settings: Settings,
     pub resolved: config::Resolved,
+    /// The state directory every record of this repository is read from: `state_root` taken
+    /// against the main checkout, so a command reads the directory `adj hub` reads wherever it
+    /// was typed.
+    pub state: PathBuf,
 }
 
 /// Where we are, for a command addressing a hub: sending to it, listing its inbox, naming
@@ -76,15 +80,29 @@ pub(crate) fn context_without_hub(repo_arg: Option<&str>) -> Result<Context, Str
     context_of(identity::resolve(repo_arg, None)?)
 }
 
+/// The state directory, absolute. A relative `ADJUTANT_STATE_DIR` is taken against `anchor` — a
+/// repository's main checkout — when given, else against the working directory. The one place
+/// outside `infra` that asks the environment for it.
+pub fn state_root(anchor: Option<&Path>) -> PathBuf {
+    let dir = state_dir();
+    let joined = match anchor {
+        Some(anchor) => anchor.join(&dir),
+        None => dir,
+    };
+    std::path::absolute(&joined).unwrap_or(joined)
+}
+
 pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
     // By `owner/name` and nothing else. The hub identifier moves the address; it must not
     // move the lookup, or asking for a second hub of a registered repository would answer
     // with an unregistered one — no task sources, no issue keys, no verify command.
     let resolved = config::resolve_config(&repo.nwo)?;
+    let state = state_root(Some(Path::new(&repo.main)));
     Ok(Context {
         settings: resolved.settings.clone(),
         repo,
         resolved,
+        state,
     })
 }
 

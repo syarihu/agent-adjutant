@@ -3,8 +3,8 @@
 use super::store::{hub_record_path, worker_record_path};
 use super::*;
 
-pub fn unregister_hub(slug: &str) -> Result<(), String> {
-    remove_if_present(&hub_record_path(slug))
+pub fn unregister_hub(root: &Path, slug: &str) -> Result<(), String> {
+    remove_if_present(&hub_record_path(root, slug))
 }
 
 /// Remove the hub record only while it still names the process `pid` started at `started`.
@@ -15,11 +15,16 @@ pub fn unregister_hub(slug: &str) -> Result<(), String> {
 /// Under the lock a takeover takes, so that it cannot read a record a claim is part-way
 /// through replacing: unlike the launcher's own cleanup, whoever calls this is acting on a
 /// hub it did not start, some time after it looked.
-pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<bool, String> {
-    let path = hub_record_path(slug);
+pub fn unregister_hub_if(
+    root: &Path,
+    slug: &str,
+    pid: u32,
+    started: Option<&str>,
+) -> Result<bool, String> {
+    let path = hub_record_path(root, slug);
     let lock_path = path.with_extension("claiming");
     let _lock = crate::infra::fs::lock(&lock_path)?;
-    let named = match read_hub_record(slug) {
+    let named = match read_hub_record(root, slug) {
         Recorded::Absent => return Ok(true),
         Recorded::Unreadable => return Ok(false),
         Recorded::Found(record) => record,
@@ -38,11 +43,11 @@ pub fn unregister_hub_if(slug: &str, pid: u32, started: Option<&str>) -> Result<
 ///
 /// Under the same lock as `unregister_hub_if`, for a caller that has stopped or checked a
 /// hub and must not delete the record of one that registered in the meantime.
-pub fn unregister_hub_if_unnamed(slug: &str) -> Result<bool, String> {
-    let path = hub_record_path(slug);
+pub fn unregister_hub_if_unnamed(root: &Path, slug: &str) -> Result<bool, String> {
+    let path = hub_record_path(root, slug);
     let lock_path = path.with_extension("claiming");
     let _lock = crate::infra::fs::lock(&lock_path)?;
-    match read_hub_record(slug) {
+    match read_hub_record(root, slug) {
         Recorded::Absent => Ok(true),
         Recorded::Unreadable => Ok(false),
         Recorded::Found(record) if record.names_a_pid() => Ok(false),

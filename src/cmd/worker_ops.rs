@@ -69,9 +69,9 @@ pub fn spawn(
 /// inbox nobody is reading, and both halves look healthy from where they stand.
 ///
 /// Forwarded only when this process was given them. A machine that never sets them gets the
-/// command line it always had. A relative state directory is sent absolute, resolved where
-/// this process stands, because the tab reads it against its own worktree.
-pub(super) fn forwarded_env() -> Vec<String> {
+/// command line it always had. The state directory is sent as `root`, the absolute one this
+/// command read, because the tab would otherwise read a relative one against its own worktree.
+pub(super) fn forwarded_env(root: &std::path::Path) -> Vec<String> {
     let set: Vec<String> = [
         crate::infra::env::CONFIG_ENV,
         crate::infra::env::XDG_CONFIG_HOME_ENV,
@@ -86,10 +86,7 @@ pub(super) fn forwarded_env() -> Vec<String> {
             .filter(|value| !value.is_empty())
             .map(|value| {
                 if *name == crate::infra::env::STATE_DIR_ENV {
-                    format!(
-                        "{name}={}",
-                        crate::infra::paths::state_dir_absolute().display()
-                    )
+                    format!("{name}={}", root.display())
                 } else {
                     format!("{name}={value}")
                 }
@@ -248,7 +245,7 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
     // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
     // process that has already written down its own PID and then `exec`s itself away, which
     // is the only way anyone later gets to ask "is that worker still there".
-    let mut parts = forwarded_env();
+    let mut parts = forwarded_env(&ctx.state);
     parts.extend([
         exe_path(),
         "worker".to_string(),
@@ -359,7 +356,7 @@ pub(super) fn resume_worker(
         "" => saved.title.as_deref().unwrap_or(""),
         given => given,
     };
-    let mut parts = forwarded_env();
+    let mut parts = forwarded_env(&ctx.state);
     parts.extend([
         exe_path(),
         "worker".to_string(),
@@ -402,7 +399,7 @@ pub fn focus(
     dry_run: bool,
 ) -> Result<bool, String> {
     let ctx = context(repo_arg, hub_arg)?;
-    let status = messaging::hub_status(&ctx.repo.slug, &ctx.repo.hub_name);
+    let status = messaging::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
     let Some(pid) = status.pid.filter(|_| status.present) else {
         if !quiet {
             println!("{} is not running", ctx.repo.hub_name);

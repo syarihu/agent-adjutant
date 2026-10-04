@@ -16,8 +16,8 @@ fn a_wake_note_reads_as_a_sentence() {
 /// inbox the hub is not watching, and both halves look healthy from where they stand.
 #[test]
 fn a_tab_is_handed_the_config_and_state_directory_it_must_not_lose() {
-    let _sandbox = crate::testing::Sandbox::empty();
-    let parts = forwarded_env();
+    let sandbox = crate::testing::Sandbox::empty();
+    let parts = forwarded_env(&sandbox.state());
     assert_eq!(parts.first().map(String::as_str), Some("env"));
     assert!(
         parts
@@ -37,13 +37,13 @@ fn a_tab_is_handed_the_config_and_state_directory_it_must_not_lose() {
 /// prefix, nothing to read past.
 #[test]
 fn nothing_is_forwarded_when_nothing_was_given() {
-    let _sandbox = crate::testing::Sandbox::empty();
+    let sandbox = crate::testing::Sandbox::empty();
     unsafe {
         std::env::remove_var(crate::infra::env::CONFIG_ENV);
         std::env::remove_var(crate::infra::env::XDG_CONFIG_HOME_ENV);
         std::env::remove_var(crate::infra::env::STATE_DIR_ENV);
     }
-    assert!(forwarded_env().is_empty());
+    assert!(forwarded_env(&sandbox.state()).is_empty());
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
     );
     unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
     config::anchor_config_env();
-    let env = forwarded_env();
+    let env = forwarded_env(&sandbox.state());
     assert_eq!(env[0], "env");
     assert!(env.contains(&format!(
         "{}={}",
@@ -68,22 +68,19 @@ fn a_relative_config_reaches_a_tab_as_an_absolute_path() {
     )));
 }
 
-/// A tab reads `ADJUTANT_STATE_DIR` against its own worktree, so a relative one has to be
-/// sent as the directory this process means.
+/// A tab reads `ADJUTANT_STATE_DIR` against its own worktree, so it is sent the absolute root
+/// the command read: the main checkout's, not the working directory's.
 #[test]
-fn a_relative_state_dir_reaches_a_tab_as_an_absolute_path() {
+fn a_relative_state_dir_reaches_a_tab_as_the_root_the_command_read() {
     let sandbox = crate::testing::Sandbox::empty();
     let _state =
         crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "relative-state");
-    let env = forwarded_env();
+    let root = crate::registry::state_root(Some(std::path::Path::new("/src/widget")));
+    let env = forwarded_env(&root);
     assert!(
         env.contains(&format!(
-            "{}={}",
-            crate::infra::env::STATE_DIR_ENV,
-            std::env::current_dir()
-                .unwrap()
-                .join("relative-state")
-                .display()
+            "{}=/src/widget/relative-state",
+            crate::infra::env::STATE_DIR_ENV
         )),
         "{env:?}"
     );
@@ -125,7 +122,7 @@ fn a_relative_xdg_config_home_reaches_a_tab_as_an_absolute_path() {
         "relative-xdg",
     );
     config::anchor_config_env();
-    let env = forwarded_env();
+    let env = forwarded_env(&sandbox.state());
     assert_eq!(env[0], "env");
     assert!(
         env.contains(&format!(

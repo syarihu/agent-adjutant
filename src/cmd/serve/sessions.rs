@@ -110,7 +110,7 @@ pub(super) fn sessions_of(
     // hub shows its gate on the repository board too. Read-only — closing a resumed gate stays
     // with the board that owns the hub's directory.
     let mut gates = GateCache {
-        state_dir: crate::infra::paths::state_dir(),
+        state_dir: server.ctx.state.clone(),
         read: HashMap::new(),
     };
     let worker_waiting = |gates: &mut GateCache,
@@ -177,7 +177,7 @@ pub(super) fn sessions_of(
 
     // 1. Hub sessions from hubs
     for h in hubs.iter().filter(|h| !skipped(&h.id)) {
-        let recorded = match messaging::read_hub_record(&h.slug) {
+        let recorded = match messaging::read_hub_record(&server.ctx.state, &h.slug) {
             messaging::Recorded::Found(r) => r.terminal,
             _ => None,
         };
@@ -198,7 +198,7 @@ pub(super) fn sessions_of(
 
         sessions.push(session::Session {
             id: h.id.clone(),
-            conversation: messaging::hub_session(&h.slug).map(|s| s.session_id),
+            conversation: messaging::hub_session(&server.ctx.state, &h.slug).map(|s| s.session_id),
             kind: "hub".to_string(),
             agent: hub_agent.clone(),
             terminal,
@@ -505,12 +505,9 @@ pub(in crate::cmd) fn git_state_of(
     // because it is in the default branch.
     let base = session.task.as_deref().and_then(|task_id| {
         let slug = worker_hub_slug(&server.ctx.repo, Path::new(&session.worktree));
-        task::load(
-            &task::dir(&crate::infra::paths::state_dir(), &slug),
-            task_id,
-        )
-        .ok()?
-        .base
+        task::load(&task::dir(&server.ctx.state, &slug), task_id)
+            .ok()?
+            .base
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_CHECK_SECS);
     crate::kernel::worktree_state::worktree_git_state(

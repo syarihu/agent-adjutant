@@ -2,8 +2,8 @@
 
 use super::*;
 
-pub fn hub_record_path(slug: &str) -> PathBuf {
-    state_dir().join("hubs").join(format!("{slug}.json"))
+pub fn hub_record_path(root: &Path, slug: &str) -> PathBuf {
+    root.join("hubs").join(format!("{slug}.json"))
 }
 
 // ── the other direction: a worker in a worktree ──────────────────────
@@ -46,8 +46,8 @@ pub(super) fn removing_marker_path(main: &Path, worktree: &Path) -> PathBuf {
         .join(format!("{name}.json"))
 }
 
-pub fn hub_session_path(slug: &str) -> PathBuf {
-    state_dir().join("sessions").join(format!("{slug}.json"))
+pub fn hub_session_path(root: &Path, slug: &str) -> PathBuf {
+    root.join("sessions").join(format!("{slug}.json"))
 }
 
 /// When a hub session was last known to be running, kept in a file of its own.
@@ -58,8 +58,8 @@ pub fn hub_session_path(slug: &str) -> PathBuf {
 /// its last write could put the old session back over the one a new hub has just saved. Here
 /// the worst it can do is record that the old session was alive, which the reader discards
 /// because the ids do not match.
-pub fn hub_alive_path(slug: &str) -> PathBuf {
-    state_dir().join("sessions").join(format!("{slug}.alive"))
+pub fn hub_alive_path(root: &Path, slug: &str) -> PathBuf {
+    root.join("sessions").join(format!("{slug}.alive"))
 }
 
 /// Beside the worker record, for the reason the record is there: the worktree is the one key

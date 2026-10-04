@@ -43,8 +43,8 @@ pub(super) fn anchored(value: &str, cwd: &Path) -> Option<PathBuf> {
 /// checkout before it execs, and tabs open at the checkout or the worktree. Rewriting the
 /// variable, rather than resolving it where it is read, is what makes the answer travel: exec
 /// and spawned children inherit it, and `forwarded_env` hands the same value to a tab.
-/// `ADJUTANT_STATE_DIR` is deliberately not included; see the comment above the directory move
-/// in `hub`.
+/// `ADJUTANT_STATE_DIR` is deliberately not included: `registry::state_root` takes a relative
+/// one against the repository's main checkout, not against where the process was started.
 pub fn anchor_config_env() {
     let Ok(cwd) = std::env::current_dir() else {
         return;

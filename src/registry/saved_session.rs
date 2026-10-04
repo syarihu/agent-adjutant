@@ -35,30 +35,31 @@ pub fn hub_session_env(slug: &str, session_id: &str) -> String {
 }
 
 /// Note that the hub session `session_id` is alive now.
-pub fn touch_hub_session(slug: &str, session_id: &str) -> Result<(), String> {
+pub fn touch_hub_session(root: &Path, slug: &str, session_id: &str) -> Result<(), String> {
     write_json(
-        &hub_alive_path(slug),
+        &hub_alive_path(root, slug),
         &json!({"sessionId": session_id, "lastAlive": now_secs()}),
     )
 }
 
 /// When the hub session saved for `slug` was last seen alive, in epoch seconds — or `None`
 /// when nothing has said so about *that* session.
-pub fn hub_last_alive(slug: &str, session_id: &str) -> Option<i64> {
-    let record = read_json(&hub_alive_path(slug))?;
+pub fn hub_last_alive(root: &Path, slug: &str, session_id: &str) -> Option<i64> {
+    let record = read_json(&hub_alive_path(root, slug))?;
     (record.get("sessionId").and_then(Value::as_str) == Some(session_id))
         .then(|| record.get("lastAlive").and_then(Value::as_i64))
         .flatten()
 }
 
 pub fn save_hub_session(
+    root: &Path,
     slug: &str,
     nwo: &str,
     hub: Option<&str>,
     hub_name: &str,
     session_id: &str,
 ) -> Result<PathBuf, String> {
-    let path = hub_session_path(slug);
+    let path = hub_session_path(root, slug);
     let mut record = json!({
         "sessionId": session_id,
         "nwo": nwo,
@@ -106,9 +107,9 @@ pub fn save_worker_session(
 /// For a hub started by a runner that records no session: what was saved belongs to a hub
 /// before it, and leaving it would have the next `--resume` — or a plain `adj hub`, while
 /// that older hub's last beat is still recent — reopen a conversation two hubs ago.
-pub fn forget_hub_session(slug: &str) -> Result<(), String> {
-    remove_if_present(&hub_session_path(slug))?;
-    remove_if_present(&hub_alive_path(slug))
+pub fn forget_hub_session(root: &Path, slug: &str) -> Result<(), String> {
+    remove_if_present(&hub_session_path(root, slug))?;
+    remove_if_present(&hub_alive_path(root, slug))
 }
 
 /// The same for a worktree, for a worker started by a runner that records no session.
@@ -116,8 +117,8 @@ pub fn forget_worker_session(worktree: &Path) -> Result<(), String> {
     remove_if_present(&worker_session_path(worktree))
 }
 
-pub fn hub_session(slug: &str) -> Option<SavedSession> {
-    read_session(&hub_session_path(slug))
+pub fn hub_session(root: &Path, slug: &str) -> Option<SavedSession> {
+    read_session(&hub_session_path(root, slug))
 }
 
 pub fn worker_session(worktree: &Path) -> Option<SavedSession> {
@@ -125,8 +126,8 @@ pub fn worker_session(worktree: &Path) -> Option<SavedSession> {
 }
 
 /// Every hub of `nwo` that has a session to reopen, the repository's own first.
-pub fn hub_sessions_for(nwo: &str) -> Vec<SavedSession> {
-    let Ok(entries) = std::fs::read_dir(state_dir().join("sessions")) else {
+pub fn hub_sessions_for(root: &Path, nwo: &str) -> Vec<SavedSession> {
+    let Ok(entries) = std::fs::read_dir(root.join("sessions")) else {
         return Vec::new();
     };
     let mut found: Vec<SavedSession> = entries

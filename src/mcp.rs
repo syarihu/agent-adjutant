@@ -198,7 +198,11 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "adjutant_hub_status" => {
             let info = resolve_repo(args)?;
-            let status = messaging::hub_status(&info.slug, &info.hub_name);
+            let status = messaging::hub_status(
+                &crate::registry::state_root(Some(Path::new(&info.main))),
+                &info.slug,
+                &info.hub_name,
+            );
             let mut out = status_json(&status);
             out["repo"] = json!(info.nwo);
             out["hub"] = json!(info.hub);
@@ -456,12 +460,12 @@ fn hub_session() -> Option<(String, String)> {
 /// what `adj hub` cannot see for itself: it has `exec`ed into the agent and is gone. A
 /// thread rather than a timer in the loop, because the loop sits in a blocking read for as
 /// long as the hub is idle — which is most of the time.
-fn start_heartbeat() -> Option<(String, String)> {
+fn start_heartbeat(root: PathBuf) -> Option<(String, String)> {
     let (slug, session) = hub_session()?;
     let (beat_slug, beat_session) = (slug.clone(), session.clone());
     std::thread::spawn(move || {
         loop {
-            let _ = messaging::touch_hub_session(&beat_slug, &beat_session);
+            let _ = messaging::touch_hub_session(&root, &beat_slug, &beat_session);
             std::thread::sleep(HEARTBEAT);
         }
     });
@@ -633,13 +637,14 @@ fn watch_board(slug: &str, mut mode: Mode) {
 }
 
 pub fn run_server() -> Result<(), Box<dyn std::error::Error>> {
-    let heartbeat = start_heartbeat();
+    let root = crate::registry::state_root(None);
+    let heartbeat = start_heartbeat(root.clone());
     start_board();
     let served = serve_stdio();
     // The client closed the pipe: the session is ending now, which is a better answer than
     // the last beat. Written on the way out whatever the loop ended with.
     if let Some((slug, session)) = &heartbeat {
-        let _ = messaging::touch_hub_session(slug, session);
+        let _ = messaging::touch_hub_session(&root, slug, session);
     }
     served
 }
