@@ -570,7 +570,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
             status: Some(Status::Done),
             ..task::TaskPatch::default()
         };
-        match super::task::update(&ctx, &t.id, &done_patch, false) {
+        match task::update(&ctx, &t.id, &done_patch, false) {
             Ok(_) => done.push(t.id.clone()),
             Err(e) => task_errors.push(json!({ "id": t.id, "error": e })),
         }

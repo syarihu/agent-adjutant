@@ -13,9 +13,6 @@ use crate::infra::gh::{GhRun, run};
 
 use crate::task::{self, PrRef};
 
-// Old path, kept until #363: `cmd/task.rs` and `pr_poll` read PRs through here.
-pub(super) use crate::task::read_prs;
-
 /// What `gh api -i` printed: the status line and headers, then the body.
 pub(super) struct Included<'a> {
     pub status: u16,

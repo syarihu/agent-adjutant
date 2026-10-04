@@ -46,9 +46,8 @@ pub use context::{hub_name, show_config};
 pub(crate) use delivery::wake_note_sentence;
 pub use delivery::{PendingArgs, SendArgs, pending, send};
 pub use gate::{
-    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close as gate_close_payload,
-    close_cmd as gate_close, list as gate_list, open as gate_open_payload, open_cmd as gate_open,
-    open_json as gate_open_json, show as gate_show,
+    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
+    open_cmd as gate_open, open_json as gate_open_json, show as gate_show,
 };
 pub use hub_ops::{
     HubStart, TabOutcome, hub, hub_close, hub_startable, hub_stop, start_hub, stop_hub,
@@ -59,9 +58,9 @@ use hub_ops::{
 pub use hub_title::HubTitles;
 pub use ide_title_notify::{WorktreeArgs, notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
-    Chosen as JulesChosen, ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs,
-    Watch as JulesWatch, findings as jules_findings, findings_cmd as jules_findings_cmd,
-    relay as jules_relay, relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
+    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, Watch as JulesWatch,
+    findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
+    start as jules_start,
 };
 pub use pr_poll::PrPoll;
 pub use review_engine::run as review_engine;
@@ -76,8 +75,8 @@ use stdin::{dash_is_stdin, read_body};
 pub use task::{
     AddArgs, BriefArgs, UpdateArgs, add as task_add, brief as task_brief,
     fetch_issue_cmd as task_fetch_issue_cmd, list as task_list, next_cmd as task_next,
-    refresh as task_refresh, refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json,
-    show as task_show, update_cmd as task_update,
+    refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
+    update_cmd as task_update,
 };
 pub use tell::{TellArgs, tell};
 use worker_ops::{

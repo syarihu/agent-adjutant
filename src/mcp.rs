@@ -15,6 +15,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cmd::HubBoard;
+use crate::gate::{close as gate_close_payload, open as gate_open_payload};
 use crate::kernel::config;
 use crate::kernel::identity;
 use crate::kernel::prompts;
@@ -24,6 +25,7 @@ use crate::mail::{self, Message};
 use crate::mail::{NotWoken, Reached};
 use crate::registry;
 use crate::registry::dashboards_running as board_running;
+use crate::task::refresh as task_refresh;
 
 mod schema;
 
@@ -411,10 +413,8 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                     .ok_or("not inside a worktree: pass worktree or cwd")?;
                 fields.insert("worktree".to_string(), json!(here));
             }
-            let (gate, served) = crate::cmd::gate_open_payload(
-                &ctx,
-                crate::gate::GateRequest::from_json(&payload)?,
-            )?;
+            let (gate, served) =
+                gate_open_payload(&ctx, crate::gate::GateRequest::from_json(&payload)?)?;
             Ok(crate::cmd::gate_open_json(&ctx, &gate, served))
         }
         "adjutant_gate_close" => {
@@ -425,13 +425,13 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 .get("terminal")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let gate = crate::cmd::gate_close_payload(&ctx, id, comment, terminal)?;
+            let gate = gate_close_payload(&ctx, id, comment, terminal)?;
             let on_board = gate.answered_on_board();
             Ok(json!({ "gate": gate, "closed": !on_board, "alreadyAnswered": on_board }))
         }
         "adjutant_refresh" => {
             let ctx = crate::registry::context_of(resolve_repo(args)?)?;
-            let checked = crate::cmd::task_refresh(&ctx)?;
+            let checked = task_refresh(&ctx)?;
             Ok(crate::cmd::task_refresh_json(&checked))
         }
         "adjutant_skill" => {

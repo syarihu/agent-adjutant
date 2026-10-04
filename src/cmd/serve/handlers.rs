@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::Server;
 use super::routes::{hub_route, task_id_in};
 use super::state::settings_now;
+use crate::jules::{findings as jules_findings, relay as jules_relay};
 use crate::registry::forget_board;
 
 // ── the two things the board can change ──────────────────────────────
@@ -19,7 +20,7 @@ pub(super) fn create_task(server: &Server, body: &[u8]) -> Result<Value, String>
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let new = crate::task::NewTask::from_json(&input)?;
-    let (task, handed) = crate::cmd::task::create(&server.ctx, new, hand_over)?;
+    let (task, handed) = crate::task::create(&server.ctx, new, hand_over)?;
     Ok(json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) }))
 }
 
@@ -31,7 +32,7 @@ pub(super) fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let patch = crate::task::TaskPatch::from_json(&input)?;
-    let (task, handed) = crate::cmd::task::update(&server.ctx, id, &patch, hand_over)?;
+    let (task, handed) = crate::task::update(&server.ctx, id, &patch, hand_over)?;
     Ok(json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) }))
 }
 
@@ -264,7 +265,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
 /// for when a person opens the list, not on every poll: it is a round trip to GitHub.
 pub(super) fn review_findings(server: &Server, path: &str) -> Result<Value, String> {
     let id = task_id_in(path, "findings").ok_or("no such task")?;
-    Ok(json!({ "findings": crate::cmd::jules_findings(&server.ctx, id)? }))
+    Ok(json!({ "findings": jules_findings(&server.ctx, id)? }))
 }
 
 /// Post the chosen comments to the PR for Jules, in the name `gh` is signed in as.
@@ -276,12 +277,12 @@ pub(super) fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result
         .and_then(Value::as_array)
         .map(|ids| {
             ids.iter()
-                .map(crate::cmd::JulesChosen::read)
+                .map(crate::jules::Chosen::read)
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?
         .unwrap_or_default();
-    crate::cmd::jules_relay(
+    jules_relay(
         &server.ctx,
         id,
         &chosen,
@@ -292,19 +293,19 @@ pub(super) fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result
 /// The board's 「再取得」: read the task's issue again, on a click and never on a poll.
 pub(super) fn fetch_issue(server: &Server, path: &str) -> Result<Value, String> {
     let id = task_id_in(path, "issue").ok_or("no such task")?;
-    let task = crate::cmd::task::fetch_issue(&server.ctx, id)?;
+    let task = crate::task::fetch_issue(&server.ctx, id)?;
     Ok(json!({ "task": task }))
 }
 
 /// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
 /// in its log before it redraws.
 pub(super) fn refresh_tasks(server: &Server) -> Result<Value, String> {
-    let checked = crate::cmd::task::refresh(&server.ctx)?;
+    let checked = crate::task::refresh(&server.ctx)?;
     Ok(crate::cmd::task::refresh_json(&checked))
 }
 
 pub(super) fn nudge_hub(server: &Server) -> Result<Value, String> {
-    let handed = crate::cmd::task::nudge(&server.ctx)?;
+    let handed = crate::task::nudge(&server.ctx)?;
     Ok(json!({ "handed": crate::mail::Handed::from(&handed) }))
 }
 
@@ -315,7 +316,7 @@ pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         .and_then(Value::as_str)
         .ok_or("a decision is required")?;
     if decision == "close" || decision == "dismiss" {
-        let gate = crate::cmd::gate::close(
+        let gate = crate::gate::close(
             &server.ctx,
             id,
             input.get("comment").and_then(Value::as_str),
@@ -323,7 +324,7 @@ pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         )?;
         return Ok(json!({ "gate": gate, "closed": true }));
     }
-    let (gate, told) = crate::cmd::gate::answer(
+    let (gate, told) = crate::gate::answer(
         &server.ctx,
         id,
         decision,

@@ -89,7 +89,7 @@ fn derived_name(instruction: &str, epoch_secs: i64) -> String {
     let mut name = words.join("-");
     name.truncate(32);
     Some(name.trim_matches('-').to_string())
-        .filter(|name| !name.is_empty() && super::task::check_worktree_name(name).is_ok())
+        .filter(|name| !name.is_empty() && task::check_worktree_name(name).is_ok())
         .unwrap_or_else(|| dated_name(epoch_secs))
 }
 
@@ -155,7 +155,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
     }
     let name = match text(&input, "worktreeName")? {
         Some(name) => {
-            super::task::check_worktree_name(name)?;
+            task::check_worktree_name(name)?;
             name.to_string()
         }
         None => derived_name(instruction, crate::infra::clock::now_secs()),
@@ -269,7 +269,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 _ => Status::Dispatched,
             };
             let mut before = TaskPatch::default();
-            let (updated, _) = super::task::update_checked(
+            let (updated, _) = task::update_checked(
                 &ctx,
                 task_id,
                 &TaskPatch {
@@ -326,7 +326,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
             }
             new.status = Status::Dispatched;
             new.worktree = Some(worktree.to_string());
-            let (created, _) = super::task::create(&ctx, new, false)?;
+            let (created, _) = task::create(&ctx, new, false)?;
             (created, Undo::Remove)
         }
         (None, None) => return Err("a task or a newTask is required".to_string()),
@@ -341,7 +341,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 let _ = task::remove(&ctx, &linked.id);
             }
             Undo::Restore(before) => {
-                let _ = super::task::update(&ctx, &linked.id, &before, false);
+                let _ = task::update(&ctx, &linked.id, &before, false);
             }
         }
         return Err(e);

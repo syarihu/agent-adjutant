@@ -7,10 +7,8 @@
 
 use serde_json::{Value, json};
 
-use crate::gate::{self, Gate, GateRequest, Shelf};
+use crate::gate::{self, Gate, GateRequest, Shelf, answer, close, open};
 use crate::registry::Context;
-// For the callers that still reach them through `cmd` (cmd/mod.rs, the board's handlers and state) until #363.
-pub use crate::gate::{answer, close, close_resumed, open};
 
 // ── the subcommands ──────────────────────────────────────────────────
 

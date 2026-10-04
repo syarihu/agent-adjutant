@@ -113,7 +113,7 @@ pub(super) fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<Str
 pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
     // Before the gates are read: a gate whose worker has moved on is closed here rather than
     // by a timer, since nothing in the server polls on one.
-    let _ = crate::cmd::gate::close_resumed(&server.ctx);
+    let _ = crate::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
     let tasks = with_records(
         task::list(&server.ctx.state, &server.ctx.repo.slug),
