@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::config::ReviewEngine;
 
 use serde_json::json;
 
@@ -6,14 +7,14 @@ pub(crate) const NOW: i64 = 1_800_000_000;
 
 #[test]
 fn a_pinned_engine_does_not_read_the_cache() {
-    let (engine, reason) = decide("claude", &Usage::Missing, NOW, || {
+    let (engine, reason) = decide(&ReviewEngine::Claude, &Usage::Missing, NOW, || {
         panic!("PATH was searched although nothing tripped")
     })
     .unwrap();
     assert_eq!(engine, Engine::Claude);
     assert_eq!(reason, Reason::Pinned);
 
-    let (engine, reason) = decide("codex", &Usage::Missing, NOW, || {
+    let (engine, reason) = decide(&ReviewEngine::Codex, &Usage::Missing, NOW, || {
         panic!("PATH was searched although nothing tripped")
     })
     .unwrap();
@@ -23,8 +24,17 @@ fn a_pinned_engine_does_not_read_the_cache() {
 
 #[test]
 fn an_unknown_setting_is_an_error() {
-    let err = decide("sometimes", &Usage::Missing, NOW, || false).unwrap_err();
-    assert!(err.contains("reviewEngine"), "{}", err);
+    let err = decide(
+        &ReviewEngine::Other("\"sometimes\"".into()),
+        &Usage::Missing,
+        NOW,
+        || false,
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        "reviewEngine is \"sometimes\"; it takes \"auto\", \"claude\" or \"codex\""
+    );
 }
 
 #[test]
@@ -33,7 +43,7 @@ fn five_hour_trips_at_fifty() {
         "captured_at": NOW,
         "five_hour": { "used_percentage": 50.0 }
     }));
-    let (engine, reason) = decide("auto", &usage, NOW, || true).unwrap();
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
     assert_eq!(engine, Engine::Codex);
     assert_eq!(
         reason,
@@ -48,7 +58,7 @@ fn five_hour_trips_at_fifty() {
         "captured_at": NOW,
         "five_hour": { "used_percentage": 49.9 }
     }));
-    let (engine, reason) = decide("auto", &usage, NOW, || {
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || {
         panic!("PATH was searched although nothing tripped")
     })
     .unwrap();
@@ -68,7 +78,7 @@ fn seven_day_trips_only_above_seventy() {
         "captured_at": NOW,
         "seven_day": { "used_percentage": 70.0 }
     }));
-    let (engine, reason) = decide("auto", &usage, NOW, || {
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || {
         panic!("PATH was searched although nothing tripped")
     })
     .unwrap();
@@ -85,7 +95,7 @@ fn seven_day_trips_only_above_seventy() {
         "captured_at": NOW,
         "seven_day": { "used_percentage": 70.1 }
     }));
-    let (engine, reason) = decide("auto", &usage, NOW, || true).unwrap();
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
     assert_eq!(engine, Engine::Codex);
     assert_eq!(
         reason,
@@ -104,7 +114,7 @@ fn when_both_trip_the_five_hour_window_is_named_with_its_own_reset() {
         "five_hour": { "used_percentage": 60.0, "resets_at": 100 },
         "seven_day": { "used_percentage": 90.0, "resets_at": 200 }
     }));
-    let (_, reason) = decide("auto", &usage, NOW, || true).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
     assert_eq!(
         reason,
         Reason::Tripped(Window {
@@ -121,7 +131,7 @@ fn each_window_is_judged_on_its_own() {
         "captured_at": NOW,
         "seven_day": { "used_percentage": 80.0 }
     }));
-    let (_, reason) = decide("auto", &usage, NOW, || true).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
     assert_eq!(
         reason,
         Reason::Tripped(Window {
@@ -135,7 +145,7 @@ fn each_window_is_judged_on_its_own() {
         "captured_at": NOW,
         "five_hour": { "used_percentage": 10.0 }
     }));
-    let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || false).unwrap();
     assert_eq!(
         reason,
         Reason::WithinLimits {
@@ -148,7 +158,7 @@ fn each_window_is_judged_on_its_own() {
 #[test]
 fn a_cache_with_neither_window_skips_the_check() {
     let usage = Usage::Read(json!({ "captured_at": NOW }));
-    let (engine, reason) = decide("auto", &usage, NOW, || {
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || {
         panic!("PATH was searched although nothing tripped")
     })
     .unwrap();
@@ -160,12 +170,12 @@ fn a_cache_with_neither_window_skips_the_check() {
 fn a_cache_older_than_fifteen_minutes_skips_the_check() {
     let usage =
         Usage::Read(json!({ "captured_at": NOW - 901, "five_hour": { "used_percentage": 90.0 } }));
-    let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || false).unwrap();
     assert_eq!(reason, Reason::CacheStale { age_secs: 901 });
 
     let usage =
         Usage::Read(json!({ "captured_at": NOW - 900, "five_hour": { "used_percentage": 90.0 } }));
-    let (_, reason) = decide("auto", &usage, NOW, || true).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
     assert_eq!(
         reason,
         Reason::Tripped(Window {
@@ -179,11 +189,11 @@ fn a_cache_older_than_fifteen_minutes_skips_the_check() {
 #[test]
 fn a_cache_without_captured_at_or_not_an_object_is_broken() {
     let usage = Usage::Read(json!({ "five_hour": { "used_percentage": 90.0 } }));
-    let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || false).unwrap();
     assert_eq!(reason, Reason::CacheBroken);
 
     let usage = Usage::Read(json!([1, 2]));
-    let (_, reason) = decide("auto", &usage, NOW, || false).unwrap();
+    let (_, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || false).unwrap();
     assert_eq!(reason, Reason::CacheBroken);
 }
 
@@ -191,7 +201,7 @@ fn a_cache_without_captured_at_or_not_an_object_is_broken() {
 fn a_tripped_window_without_codex_stays_with_claude() {
     let usage =
         Usage::Read(json!({ "captured_at": NOW, "five_hour": { "used_percentage": 62.0 } }));
-    let (engine, reason) = decide("auto", &usage, NOW, || false).unwrap();
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || false).unwrap();
     assert_eq!(engine, Engine::Claude);
     assert_eq!(
         reason,

@@ -1,6 +1,69 @@
 use super::*;
 use serde_json::Value;
 
+/// Whether the worker asks the human before requesting a Copilot review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopilotReview {
+    Ask,
+    Always,
+    Never,
+}
+
+impl CopilotReview {
+    // The brief still spells the setting from the config key; this is the typed side's spelling.
+    #[allow(dead_code)]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CopilotReview::Ask => "ask",
+            CopilotReview::Always => "always",
+            CopilotReview::Never => "never",
+        }
+    }
+
+    /// Anything but "always" and "never" is `Ask`; `resolve_from_value` warns about it.
+    fn read(value: Option<&Value>) -> Self {
+        match value.and_then(Value::as_str) {
+            Some("always") => CopilotReview::Always,
+            Some("never") => CopilotReview::Never,
+            _ => CopilotReview::Ask,
+        }
+    }
+}
+
+/// Which engine reads the diff in a self-review round.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewEngine {
+    Auto,
+    Claude,
+    Codex,
+    /// A value that is none of the three. Holds the configured value's JSON text, so it is
+    /// written as it was configured: `"sometimes"` with its quotes for a string, `3` for a
+    /// number.
+    Other(String),
+}
+
+impl ReviewEngine {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ReviewEngine::Auto => "auto",
+            ReviewEngine::Claude => "claude",
+            ReviewEngine::Codex => "codex",
+            ReviewEngine::Other(text) => text,
+        }
+    }
+
+    /// Absent is `Auto`, the built-in.
+    fn read(value: Option<&Value>) -> Self {
+        match value {
+            None => ReviewEngine::Auto,
+            Some(Value::String(s)) if s == "auto" => ReviewEngine::Auto,
+            Some(Value::String(s)) if s == "claude" => ReviewEngine::Claude,
+            Some(Value::String(s)) if s == "codex" => ReviewEngine::Codex,
+            Some(other) => ReviewEngine::Other(other.to_string()),
+        }
+    }
+}
+
 /// `Default` is hand-written rather than derived because `startup_dashboard` is the one
 /// field whose "nothing was configured" answer is not the type's zero. Derived, a
 /// `Settings::default()` would say the dashboard is off, which is the opposite of what an
@@ -75,6 +138,51 @@ pub struct Settings {
     /// that output. What it prints here is how to get the key, which is worth nothing without
     /// the keychain's consent.
     pub jules_key: Hook,
+    /// Skipped when serialising, with the four below: the resolved `config` printed next to
+    /// `settings` already carries these keys, and a second copy would be two answers to one
+    /// question (see the note on `ide` in `defaults.rs`).
+    #[serde(skip)]
+    pub copilot_review: CopilotReview,
+    /// Commands the worker runs before it reports. Empty for an unregistered repo.
+    #[serde(skip)]
+    pub verify: Vec<String>,
+    #[serde(skip)]
+    pub review_engine: ReviewEngine,
+    /// Repository to issue-key prefix, as `issueKeys` spells it. Empty for an unregistered repo.
+    #[serde(skip)]
+    pub issue_keys: serde_json::Map<String, Value>,
+    /// The normalised task sources, as `config.taskSources` holds them.
+    #[serde(skip)]
+    pub task_sources: Vec<Value>,
+}
+
+impl Settings {
+    /// What `resolve_from_value` fills in for a registered repo, read from the merged `config`
+    /// (`verify`, `copilotReview`, `reviewEngine`, `issueKeys`) and the normalised sources.
+    pub(super) fn read_task_keys(
+        &mut self,
+        resolved: &serde_json::Map<String, Value>,
+        sources: &[Value],
+    ) {
+        self.copilot_review = CopilotReview::read(resolved.get("copilotReview"));
+        self.verify = resolved
+            .get("verify")
+            .and_then(Value::as_array)
+            .map(|commands| {
+                commands
+                    .iter()
+                    .map(|c| c.as_str().map_or_else(|| c.to_string(), str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.review_engine = ReviewEngine::read(resolved.get("reviewEngine"));
+        self.issue_keys = resolved
+            .get("issueKeys")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        self.task_sources = sources.to_vec();
+    }
 }
 
 impl Default for Settings {
@@ -97,6 +205,11 @@ impl Default for Settings {
             max_workers: None,
             stuck_after_minutes: DEFAULT_STUCK_AFTER_MINUTES,
             jules_key: Hook::default(),
+            copilot_review: CopilotReview::Ask,
+            verify: Vec::new(),
+            review_engine: ReviewEngine::Auto,
+            issue_keys: serde_json::Map::new(),
+            task_sources: Vec::new(),
         }
     }
 }
