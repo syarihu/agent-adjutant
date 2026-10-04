@@ -1010,26 +1010,96 @@ fn a_parent_may_be_a_key_or_a_plain_url_and_nothing_else() {
 }
 
 #[test]
-fn a_text_field_is_cleared_by_null_or_empty_and_refused_as_anything_else() {
+fn a_text_field_of_a_patch_is_left_alone_absent_cleared_by_null_or_empty_and_set_by_a_string() {
+    let pr = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.pr);
+    assert_eq!(pr(json!({})).unwrap(), None);
+    assert_eq!(pr(json!({ "pr": null })).unwrap(), Some(None));
+    assert_eq!(pr(json!({ "pr": "" })).unwrap(), Some(None));
     assert_eq!(
-        text_field("pr", &json!("https://x/pull/1"))
-            .unwrap()
-            .as_deref(),
-        Some("https://x/pull/1")
+        pr(json!({ "pr": "https://x/pull/1" })).unwrap(),
+        Some(Some("https://x/pull/1".to_string()))
     );
-    assert_eq!(text_field("pr", &json!(null)).unwrap(), None);
-    assert_eq!(text_field("note", &json!("")).unwrap(), None);
     assert_eq!(
-        text_field("instruction", &json!("優先して実装してください"))
-            .unwrap()
-            .as_deref(),
-        Some("優先して実装してください")
+        pr(json!({ "pr": 42 })).unwrap_err(),
+        "pr has to be a string or null, not 42"
     );
-    assert_eq!(text_field("instruction", &json!("")).unwrap(), None);
-    assert_eq!(text_field("instruction", &json!(null)).unwrap(), None);
+    let patch = TaskPatch::from_json(&json!({
+        "instruction": "優先して実装してください",
+        "julesSession": "s-1",
+        "note": "",
+    }))
+    .unwrap();
+    assert_eq!(
+        patch.instruction,
+        Some(Some("優先して実装してください".to_string()))
+    );
+    assert_eq!(patch.jules_session, Some(Some("s-1".to_string())));
+    assert_eq!(patch.note, Some(None));
     for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
-        assert!(text_field("pr", &bad).is_err(), "{bad} was taken");
+        assert!(pr(json!({ "pr": bad })).is_err(), "{bad} was taken");
     }
+}
+
+#[test]
+fn a_patch_passes_over_a_status_or_executor_that_is_blank_or_not_a_string_and_trims_the_rest() {
+    let read = |input: serde_json::Value| TaskPatch::from_json(&input);
+    assert_eq!(
+        read(json!({ "status": " queued " })).unwrap().status,
+        Some(Status::Queued)
+    );
+    for blank in [json!(""), json!("  "), json!(42), json!(null)] {
+        let patch = read(json!({ "status": blank, "executor": blank })).unwrap();
+        assert_eq!(patch.status, None, "{blank} was taken");
+        assert_eq!(patch.executor, None, "{blank} was taken");
+    }
+    assert_eq!(
+        read(json!({ "status": "nope" })).unwrap_err(),
+        "no such status: nope"
+    );
+    assert_eq!(
+        read(json!({ "executor": "julse" })).unwrap_err(),
+        "no such executor: julse (worker or jules)"
+    );
+    assert_eq!(
+        read(json!({ "executor": "jules" })).unwrap().executor,
+        Some(Executor::Jules)
+    );
+}
+
+#[test]
+fn a_patch_passes_over_an_order_or_auto_start_of_the_wrong_type_and_cuts_the_order_to_u32() {
+    let read = |input: serde_json::Value| TaskPatch::from_json(&input).unwrap();
+    for bad in [json!("3"), json!(-1), json!(5.5)] {
+        assert_eq!(read(json!({ "order": bad })).order, None, "{bad} was taken");
+    }
+    assert_eq!(read(json!({ "order": 4294967297u64 })).order, Some(1));
+    assert_eq!(read(json!({ "autoStart": "yes" })).auto_start, None);
+    assert_eq!(read(json!({ "autoStart": false })).auto_start, Some(false));
+}
+
+#[test]
+fn a_patch_ignores_hand_over_and_keys_it_does_not_name() {
+    assert_eq!(
+        TaskPatch::from_json(&json!({ "handOver": false, "title": "x", "relayed": ["1"] }))
+            .unwrap(),
+        TaskPatch::default()
+    );
+    assert_eq!(
+        TaskPatch::from_json(&json!([])).unwrap(),
+        TaskPatch::default()
+    );
+}
+
+#[test]
+fn the_first_bad_value_in_a_patch_is_the_one_refused() {
+    assert_eq!(
+        TaskPatch::from_json(&json!({ "status": "nope", "pr": 42 })).unwrap_err(),
+        "no such status: nope"
+    );
+    assert_eq!(
+        TaskPatch::from_json(&json!({ "executor": "x", "pr": 42 })).unwrap_err(),
+        "no such executor: x (worker or jules)"
+    );
 }
 
 #[test]

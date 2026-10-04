@@ -580,6 +580,86 @@ impl NewTask {
     }
 }
 
+/// What a caller may change about an existing task. `None` leaves a field as it is. For the
+/// text fields `Some(None)` clears and `Some(Some(v))` sets. Whether a change that queues
+/// the task also hands it over is an instruction to `update`, not a field, so it is not here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskPatch {
+    pub status: Option<Status>,
+    pub order: Option<u32>,
+    /// Set by the hub when a person approved a task that asked to be confirmed first, so that
+    /// being turned away for a slot afterwards does not put the same question to them again.
+    pub auto_start: Option<bool>,
+    pub executor: Option<Executor>,
+    pub worktree: Option<Option<String>>,
+    pub issue: Option<Option<String>>,
+    pub pr: Option<Option<String>>,
+    /// The branching point the hub decided, for a task whose record did not bring one:
+    /// `adj jules start` reads it after the hub may have restarted.
+    pub base: Option<Option<String>>,
+    pub jules_session: Option<Option<String>>,
+    pub jules_by: Option<Option<String>>,
+    pub note: Option<Option<String>>,
+    pub instruction: Option<Option<String>>,
+}
+
+impl TaskPatch {
+    /// Read an update request's JSON. Keys this does not name are ignored, `handOver` among
+    /// them. Unlike `NewTask::from_json`, the status, executor, order and autoStart are read
+    /// as `update` always read them: a value of the wrong type is passed over, not refused.
+    /// A body that is not an object is an empty patch.
+    pub fn from_json(input: &serde_json::Value) -> Result<TaskPatch, String> {
+        use serde_json::Value;
+        // Trimmed. Blank, `null` and anything that is not a string are absent.
+        fn word(input: &Value, key: &str) -> Option<String> {
+            input
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        }
+        // An explicit `null` clears; an absent key leaves it alone. Without the distinction
+        // there is no way to take back a worktree the hub wrote down. An empty string clears
+        // too, since a command line has no way to say `null` — and a "waiting for a slot"
+        // note has to go once the worker starts. Anything that is not a string is refused
+        // rather than read as "clear": `{"pr": 42}` from a mistaken caller would otherwise
+        // wipe the URL it meant to set.
+        fn text_field(input: &Value, key: &str) -> Result<Option<Option<String>>, String> {
+            input
+                .get(key)
+                .map(|value| match value {
+                    Value::Null => Ok(None),
+                    Value::String(v) if v.is_empty() => Ok(None),
+                    Value::String(v) => Ok(Some(v.clone())),
+                    other => Err(format!("{key} has to be a string or null, not {other}")),
+                })
+                .transpose()
+        }
+        // Struct fields are evaluated in source order, which is the order of the refusals.
+        Ok(TaskPatch {
+            status: word(input, "status")
+                .map(|s| Status::parse(&s).ok_or(format!("no such status: {s}")))
+                .transpose()?,
+            order: input.get("order").and_then(Value::as_u64).map(|n| n as u32),
+            auto_start: input.get("autoStart").and_then(Value::as_bool),
+            executor: word(input, "executor")
+                .map(|s| {
+                    Executor::parse(&s).ok_or(format!("no such executor: {s} (worker or jules)"))
+                })
+                .transpose()?,
+            worktree: text_field(input, "worktree")?,
+            issue: text_field(input, "issue")?,
+            pr: text_field(input, "pr")?,
+            base: text_field(input, "base")?,
+            jules_session: text_field(input, "julesSession")?,
+            jules_by: text_field(input, "julesBy")?,
+            note: text_field(input, "note")?,
+            instruction: text_field(input, "instruction")?,
+        })
+    }
+}
+
 /// `20260922T041233Z-login-retry`. The stamp comes from the caller so this stays a leaf —
 /// and so a test can pin it.
 pub fn new_id(stamp: &str, title: &str) -> String {
