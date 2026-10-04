@@ -307,20 +307,18 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 .as_object()
                 .cloned()
                 .ok_or("newTask has to be an object")?;
-            if fields
-                .get("executor")
-                .and_then(Value::as_str)
-                .and_then(Executor::parse)
-                == Some(Executor::Jules)
-            {
+            // What the link decides itself, whatever the caller sent: removed before the
+            // rest is read, so that junk in them is not refused.
+            fields.remove("worktreeName");
+            fields.remove("status");
+            fields.remove("worktree");
+            let mut new = task::NewTask::from_json(&Value::Object(fields))?;
+            if new.executor == Executor::Jules {
                 return Err("a session cannot take a task for Jules".to_string());
             }
-            // What the link decides itself, whatever the caller sent.
-            fields.remove("worktreeName");
-            fields.insert("status".to_string(), json!("dispatched"));
-            fields.insert("worktree".to_string(), json!(worktree));
-            fields.insert("handOver".to_string(), json!(false));
-            let (created, _) = super::task::create(&ctx, &Value::Object(fields))?;
+            new.status = Status::Dispatched;
+            new.worktree = Some(worktree.to_string());
+            let (created, _) = super::task::create(&ctx, new, false)?;
             (created, Undo::Remove)
         }
         (None, None) => return Err("a task or a newTask is required".to_string()),

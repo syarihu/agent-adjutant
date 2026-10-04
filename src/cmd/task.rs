@@ -104,35 +104,45 @@ pub struct AddArgs<'a> {
 pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo, args.hub)?;
     let body = super::read_body(args.body)?;
-    let mut input = json!({
-        "body": body,
-        "kind": args.kind,
-        "doneWhen": args.done_when,
-        "stopAt": args.stop_at,
-        "executor": args.executor,
-        "issueUrl": args.issue_url,
-        "base": args.base,
-        "parent": args.parent,
-        "worktreeName": args.worktree_name,
-        "autoStart": !args.ask_first,
-        "status": if args.queue || args.waiting_in.is_some() { "queued" } else { "backlog" },
-    });
+    let mut new = task::NewTask {
+        title: args.title.map(str::to_string),
+        body,
+        kind: task::Kind::parse(args.kind)?,
+        done_when: task::DoneWhen::parse(args.done_when)?,
+        stop_at: if args.stop_at.is_empty() {
+            task::StopAt::default()
+        } else {
+            task::StopAt::parse(args.stop_at)?
+        },
+        executor: task::Executor::parse(args.executor)
+            .ok_or_else(|| format!("no such executor: {} (worker or jules)", args.executor))?,
+        issue_url: args.issue_url.map(str::to_string),
+        base: args.base.map(str::to_string),
+        parent: args.parent.map(str::to_string),
+        worktree_name: args.worktree_name.map(str::to_string),
+        auto_start: !args.ask_first,
+        status: if args.queue || args.waiting_in.is_some() {
+            Status::Queued
+        } else {
+            Status::Backlog
+        },
+        ..task::NewTask::default()
+    };
     // The hub writing down work it has prepared a worktree for: before it starts the worker,
     // so the brief can carry the id, or after `adj work` turned it away for want of a slot.
     // Queued either way, so a free slot can take it; but not handed over, because the inbox
     // it would land in is the caller's own, and a hub that messages itself is woken mid-turn
     // to be told what it just did.
+    let mut hand_over = true;
     if let Some(worktree) = args.waiting_in {
-        let worktree = crate::infra::paths::expand_home(worktree)
-            .to_string_lossy()
-            .to_string();
-        input["worktree"] = json!(worktree);
-        input["handOver"] = json!(false);
+        new.worktree = Some(
+            crate::infra::paths::expand_home(worktree)
+                .to_string_lossy()
+                .to_string(),
+        );
+        hand_over = false;
     }
-    if let Some(title) = args.title {
-        input["title"] = json!(title);
-    }
-    let (task, handed) = create(&ctx, &input)?;
+    let (task, handed) = create(&ctx, new, hand_over)?;
     let task = snapshot_if_started(&ctx, task, true);
     if args.json {
         println!(

@@ -18,6 +18,14 @@ pub enum Kind {
     TellWorker,
 }
 
+impl Kind {
+    /// The text a caller gives, refused in the words a bad value in a task's JSON gets.
+    pub fn parse(text: &str) -> Result<Kind, String> {
+        serde_json::from_value(serde_json::Value::String(text.to_string()))
+            .map_err(|e| format!("bad task: {e}"))
+    }
+}
+
 /// Where the worker stops. The vocabulary the brief's 完了条件 line already uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -29,6 +37,12 @@ pub enum DoneWhen {
 }
 
 impl DoneWhen {
+    /// The text a caller gives, refused in the words a bad value in a task's JSON gets.
+    pub fn parse(text: &str) -> Result<DoneWhen, String> {
+        serde_json::from_value(serde_json::Value::String(text.to_string()))
+            .map_err(|e| format!("bad task: {e}"))
+    }
+
     /// How the request and the brief say it. The worker branches on the first three
     /// phrases, so the brief maps `Review` to `Pr` before asking.
     pub fn as_prose(self) -> &'static str {
@@ -59,6 +73,17 @@ pub enum StopAt {
 }
 
 impl StopAt {
+    /// The text a caller gives, refused with the words the stop points are listed in. A blank
+    /// one is the default, which is the caller's to say.
+    pub fn parse(text: &str) -> Result<StopAt, String> {
+        Ok(match text {
+            "plan" => StopAt::Plan,
+            "diff" => StopAt::Diff,
+            "all" => StopAt::All,
+            _ => return Err(format!("no such stop point: {text} (plan, diff or all)")),
+        })
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             StopAt::Plan => "plan",
@@ -449,13 +474,107 @@ pub struct Task {
     pub created_at: String,
     pub updated_at: String,
     /// Keys this binary does not know, kept from the file so that a record written by another
-    /// version and saved by this one loses nothing. Only ever filled from disk: `create` empties it.
+    /// version and saved by this one loses nothing. Only ever filled from disk: `create` never fills it.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn is_zero(n: &u32) -> bool {
     *n == 0
+}
+
+/// What a caller may say about a task it creates. Every other field of the record is the
+/// hub's: a caller that could set `relayed` or `julesBy` would change what Jules is told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTask {
+    /// As given; `create` trims it and falls back on the body or the issue.
+    pub title: Option<String>,
+    /// As given, and stored as given.
+    pub body: String,
+    pub kind: Kind,
+    pub done_when: DoneWhen,
+    pub stop_at: StopAt,
+    pub executor: Executor,
+    pub issue_url: Option<String>,
+    pub base: Option<String>,
+    pub parent: Option<String>,
+    pub worktree_name: Option<String>,
+    pub worktree: Option<String>,
+    pub auto_start: bool,
+    pub status: Status,
+}
+
+impl Default for NewTask {
+    /// What a form that filled in nothing else means.
+    fn default() -> Self {
+        NewTask {
+            title: None,
+            body: String::new(),
+            kind: Kind::Start,
+            done_when: DoneWhen::Pr,
+            stop_at: StopAt::default(),
+            executor: Executor::default(),
+            issue_url: None,
+            base: None,
+            parent: None,
+            worktree_name: None,
+            worktree: None,
+            auto_start: true,
+            status: Status::Backlog,
+        }
+    }
+}
+
+impl NewTask {
+    /// Read a request's JSON. Keys this does not name are ignored, whatever they are. A value
+    /// of the wrong type is refused here, before anything is claimed or read from `gh`.
+    pub fn from_json(input: &serde_json::Value) -> Result<NewTask, String> {
+        use serde_json::Value;
+        let fields = input.as_object().ok_or("expected an object")?;
+        // A missing key is the default; one that is there is read as the record would read it,
+        // so `null` where a string is needed is refused rather than taken for "missing".
+        fn read<T: serde::de::DeserializeOwned>(
+            fields: &serde_json::Map<String, Value>,
+            key: &str,
+        ) -> Result<Option<T>, String> {
+            fields
+                .get(key)
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| format!("bad task: {e}")))
+                .transpose()
+        }
+        // A form sends the stop point whether or not one was picked: nothing picked is the
+        // default.
+        let stop_at = match fields.get("stopAt") {
+            None | Some(Value::Null) => StopAt::default(),
+            Some(Value::String(s)) if s.is_empty() => StopAt::default(),
+            Some(Value::String(s)) => StopAt::parse(s)?,
+            Some(other) => return Err(format!("no such stop point: {other}")),
+        };
+        let executor = match fields.get("executor") {
+            Some(Value::String(s)) if !s.is_empty() => Executor::parse(s)
+                .ok_or_else(|| format!("no such executor: {s} (worker or jules)"))?,
+            _ => read::<Executor>(fields, "executor")?.unwrap_or_default(),
+        };
+        let defaults = NewTask::default();
+        Ok(NewTask {
+            title: fields
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            body: read::<String>(fields, "body")?.unwrap_or_default(),
+            kind: read(fields, "kind")?.unwrap_or(defaults.kind),
+            done_when: read(fields, "doneWhen")?.unwrap_or(defaults.done_when),
+            stop_at,
+            executor,
+            issue_url: read::<Option<String>>(fields, "issueUrl")?.flatten(),
+            base: read::<Option<String>>(fields, "base")?.flatten(),
+            parent: read::<Option<String>>(fields, "parent")?.flatten(),
+            worktree_name: read::<Option<String>>(fields, "worktreeName")?.flatten(),
+            worktree: read::<Option<String>>(fields, "worktree")?.flatten(),
+            auto_start: read(fields, "autoStart")?.unwrap_or(defaults.auto_start),
+            status: read(fields, "status")?.unwrap_or(defaults.status),
+        })
+    }
 }
 
 /// `20260922T041233Z-login-retry`. The stamp comes from the caller so this stays a leaf —

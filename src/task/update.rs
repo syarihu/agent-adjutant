@@ -19,6 +19,17 @@ pub(super) fn text_field(key: &str, value: &Value) -> Result<Option<String>, Str
     }
 }
 
+/// A string field of the input, trimmed; blank is absent. Until #356 gives `update` its own
+/// input type.
+fn string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// Change a record, and hand it over if this is the change that queued it.
 pub fn update(
     ctx: &Context,

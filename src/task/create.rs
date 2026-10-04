@@ -2,17 +2,14 @@
 
 use super::*;
 
-use serde_json::{Value, json};
-
 use crate::mail::DeliveryOutcome;
 use crate::registry::Context;
 
-/// Derive a card title from the input title or the first non-empty line of the body.
-pub(super) fn derive_title(input: &Value) -> Option<String> {
-    if let Some(title) = string(input, "title") {
-        return Some(title);
+/// Derive a card title from the given title or the first non-empty line of the body.
+pub(super) fn derive_title(title: Option<&str>, body: &str) -> Option<String> {
+    if let Some(title) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        return Some(title.to_string());
     }
-    let body = string(input, "body")?;
     let first_line = body.lines().map(str::trim).find(|l| !l.is_empty())?;
     let title: String = first_line.chars().take(80).collect();
     if title.is_empty() { None } else { Some(title) }
@@ -49,37 +46,19 @@ pub fn check_worktree_name(name: &str) -> Result<(), String> {
 /// quoted as they are.
 /// Checked here, where they come in, rather than in every command the procedures write — an
 /// apostrophe in either would close the quote around it and run the rest as shell.
-pub(super) fn check_typed_values(input: &Value) -> Result<(), String> {
+pub(super) fn check_typed(new: &NewTask) -> Result<(), String> {
     // An empty field is a form left blank, not a value.
-    let typed = |key: &str| {
-        input
-            .get(key)
-            .and_then(Value::as_str)
-            .filter(|v| !v.is_empty())
-    };
-    if let Some(name) = typed("worktreeName") {
+    fn typed(value: &Option<String>) -> Option<&str> {
+        value.as_deref().filter(|v| !v.is_empty())
+    }
+    if let Some(name) = typed(&new.worktree_name) {
         check_worktree_name(name)?;
     }
-    // Not typed, but refused here all the same: past this point the id is claimed, and a
-    // value serde turns away afterwards would leave the reservation behind.
-    if let Some(stop_at) = typed("stopAt") {
-        serde_json::from_value::<StopAt>(json!(stop_at))
-            .map_err(|_| format!("no such stop point: {stop_at} (plan, diff or all)"))?;
-    } else if input
-        .get("stopAt")
-        .is_some_and(|v| !v.is_null() && !v.is_string())
-    {
-        return Err(format!("no such stop point: {}", input["stopAt"]));
-    }
-    if let Some(executor) = typed("executor") {
-        Executor::parse(executor)
-            .ok_or_else(|| format!("no such executor: {executor} (worker or jules)"))?;
-    }
-    if let Some(url) = typed("issueUrl") {
+    if let Some(url) = typed(&new.issue_url) {
         check_url(url, "an issue")?;
     }
     // The parent task is typed on the form too, and the procedure quotes it on a command line.
-    if let Some(parent) = typed("parent") {
+    if let Some(parent) = typed(&new.parent) {
         check_parent(parent)?;
     }
     Ok(())
@@ -124,24 +103,28 @@ pub fn check_parent(parent: &str) -> Result<(), String> {
     check_url(parent, "a task")
 }
 
-/// Write a new record, and hand it over if it was created already queued.
-pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<DeliveryOutcome>), String> {
+/// Write a new record, and hand it over if it was created already queued and `hand` says so.
+/// `hand` is an instruction to this function, not a field of the task.
+pub fn create(
+    ctx: &Context,
+    new: NewTask,
+    hand: bool,
+) -> Result<(Task, Option<DeliveryOutcome>), String> {
     let stamp = store::stamp();
     // Before anything reaches `gh` or the id is claimed: claiming writes a reservation, and a
     // refusal after it would leave that behind.
-    check_typed_values(input)?;
-    // Likewise a record that will not deserialize: it is refused here, not after a wait on `gh`
-    // and a claimed id.
-    let mut probe = with_defaults(input, "probe", &stamp)?;
-    probe["title"] = json!("probe");
-    serde_json::from_value::<Task>(probe).map_err(|e| format!("bad task: {e}"))?;
+    check_typed(&new)?;
     // A request that names an issue and says nothing else is a request to hand that issue
     // over: read it now so the card has its title from the start. What the person typed wins.
     // Only for a task that starts an issue: any other kind with no content has nothing to go on.
-    let starts = string(input, "kind").is_none_or(|k| k == "start");
-    let url = string(input, "issueUrl").filter(|u| fetchable_issue(u));
-    let reads = starts && url.is_some() && string(input, "body").is_none();
-    let snapshot = match &url {
+    let starts = new.kind == Kind::Start;
+    let url = new
+        .issue_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| fetchable_issue(u));
+    let reads = starts && url.is_some() && new.body.trim().is_empty();
+    let snapshot = match url {
         Some(url) if reads => match read_issue(&ctx.repo.main, url) {
             Ok(read) => Some(read).filter(|s| !s.title.is_empty()),
             Err(why) => {
@@ -152,11 +135,11 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<DeliveryOutc
         _ => None,
     };
     let mut pending = false;
-    let title = if let Some(title) = derive_title(input) {
+    let title = if let Some(title) = derive_title(new.title.as_deref(), &new.body) {
         title
     } else if let Some(snapshot) = &snapshot {
         snapshot.title.clone()
-    } else if let Some(name) = url.as_deref().filter(|_| reads).and_then(issue_ref) {
+    } else if let Some(name) = url.filter(|_| reads).and_then(issue_ref) {
         // The issue could not be read: keep the record under a name that says which issue it
         // is, and let the first successful read replace it.
         pending = true;
@@ -165,22 +148,41 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<DeliveryOutc
         return Err("a task needs content or a title".to_string());
     };
     let id = store::claim_id(ctx, &stamp, &title)?;
-    let mut defaults = with_defaults(input, &id, &stamp)?;
-    defaults["title"] = json!(title);
-    // An instruction to this function rather than part of the record.
-    let hand = defaults
-        .as_object_mut()
-        .and_then(|fields| fields.remove("handOver"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let mut task: Task = serde_json::from_value(defaults).map_err(|e| format!("bad task: {e}"))?;
-    // Only keys read from disk are carried; a caller's unknown keys are dropped, as before.
-    task.extra.clear();
-    task.worktree = task.worktree.as_deref().map(resolved_worktree);
-    task.order = next_order(ctx);
-    // Set here and not through the input, which `with_defaults` strips of both.
-    task.issue_snapshot = snapshot;
-    task.title_pending = pending;
+    let task = Task {
+        id,
+        kind: new.kind,
+        title,
+        body: new.body,
+        issue_url: new.issue_url,
+        done_when: new.done_when,
+        stop_at: new.stop_at,
+        executor: new.executor,
+        base: new.base,
+        parent: new.parent,
+        worktree_name: new.worktree_name,
+        auto_start: new.auto_start,
+        order: next_order(ctx),
+        status: new.status,
+        worktree: new.worktree.as_deref().map(resolved_worktree),
+        issue: None,
+        pr: None,
+        jules_session: None,
+        jules_by: None,
+        relayed: Vec::new(),
+        announced: Vec::new(),
+        relay_rounds: 0,
+        note: None,
+        instruction: None,
+        gate_answered_at: None,
+        // Only a fetch writes the snapshot, and only `create` knows the title came from the
+        // issue URL because the issue could not be read.
+        issue_snapshot: snapshot,
+        title_pending: pending,
+        pr_status: None,
+        created_at: stamp.clone(),
+        updated_at: stamp,
+        extra: Default::default(),
+    };
 
     // Written before the message is sent, and never the other way round: the record is what
     // the hub checks when it is about to act, so a message that arrived first would name a
@@ -248,43 +250,4 @@ fn next_order(ctx: &Context) -> u32 {
         .max()
         .unwrap_or(0)
         + 1
-}
-
-/// Fill in what a caller may leave out, so a form can post the fields a person filled and
-/// nothing else.
-pub(super) fn with_defaults(input: &Value, id: &str, stamp: &str) -> Result<Value, String> {
-    let mut value = input.clone();
-    let fields = value.as_object_mut().ok_or("expected an object")?;
-    fields.insert("id".to_string(), json!(id));
-    // Only a fetch writes the snapshot: a caller's copy would be text nobody read from the
-    // issue, shown on the board as if somebody had.
-    fields.remove("issueSnapshot");
-    // Likewise the PR summary: only a refresh read it from GitHub.
-    fields.remove("prStatus");
-    // And the title's flag: only `create` knows that the issue could not be read.
-    fields.remove("titlePending");
-    fields.insert("createdAt".to_string(), json!(stamp));
-    fields.insert("updatedAt".to_string(), json!(stamp));
-    fields.entry("kind").or_insert(json!("start"));
-    fields.entry("doneWhen").or_insert(json!("pr"));
-    // `null` and `""` too: a form sends the field whether or not anything was picked in it.
-    if fields
-        .get("stopAt")
-        .is_none_or(|v| v.is_null() || v.as_str() == Some(""))
-    {
-        fields.insert("stopAt".to_string(), json!(StopAt::default().as_str()));
-    }
-    fields.entry("autoStart").or_insert(json!(true));
-    fields.entry("status").or_insert(json!("backlog"));
-    fields.entry("body").or_insert(json!(""));
-    Ok(value)
-}
-
-pub(super) fn string(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
 }

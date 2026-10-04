@@ -849,9 +849,8 @@ fn nothing_waits_on_a_person_without_a_pr_or_after_the_task_ended() {
     }
 }
 
-#[test]
-fn create_drops_keys_the_record_does_not_know() {
-    let _sandbox = crate::testing::Sandbox::empty();
+/// A sandbox hub to create records in.
+fn sandbox_ctx() -> crate::registry::Context {
     let repo = crate::kernel::identity::RepoInfo {
         main: "/tmp/acme-widget".to_string(),
         nwo: "acme/widget".to_string(),
@@ -861,35 +860,67 @@ fn create_drops_keys_the_record_does_not_know() {
         hub_name: "adjutant-acme-widget".to_string(),
         nwo_source: "dirname",
     };
-    let ctx = crate::registry::context_of(repo).unwrap();
-    let (task, _) = create(&ctx, &json!({"title": "t", "futureField": 1})).unwrap();
+    crate::registry::context_of(repo).unwrap()
+}
+
+/// What a caller may say about a new task is `NewTask`; the rest of the record is the hub's,
+/// so a field outside it never reaches the file.
+#[test]
+fn a_new_task_takes_no_field_outside_new_task() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let ctx = sandbox_ctx();
+    let input = json!({
+        "title": "t",
+        "pr": "https://github.com/o/r/pull/1",
+        "relayed": ["1"],
+        "issueSnapshot": { "url": "u", "title": "x", "fetchedAt": "s" },
+        "futureField": 1,
+    });
+    let new = NewTask::from_json(&input).unwrap();
+    assert_eq!(
+        new,
+        NewTask {
+            title: Some("t".to_string()),
+            ..NewTask::default()
+        }
+    );
+    let (task, handed) = create(&ctx, new, true).unwrap();
+    assert!(task.pr.is_none());
+    assert!(task.relayed.is_empty());
+    assert!(task.issue_snapshot.is_none());
     assert!(task.extra.is_empty());
+    assert!(handed.is_none());
     let text =
         std::fs::read_to_string(dir(&ctx.state, &ctx.repo.slug).join(format!("{}.json", task.id)))
             .unwrap();
-    assert!(!text.contains("futureField"), "{text}");
+    for left_out in ["pull/1", "relayed", "issueSnapshot", "futureField"] {
+        assert!(!text.contains(left_out), "{text}");
+    }
 }
 
 #[test]
 fn title_is_taken_verbatim_when_present() {
-    let input = json!({ "title": "explicit title", "body": "first line\nsecond line" });
-    assert_eq!(derive_title(&input).as_deref(), Some("explicit title"));
+    assert_eq!(
+        derive_title(Some("explicit title"), "first line\nsecond line").as_deref(),
+        Some("explicit title")
+    );
 }
 
 #[test]
 fn title_is_derived_from_the_first_non_empty_line_of_the_body() {
-    let input = json!({ "body": "\n\n  Fix the flaky network retry logic  \nand more details" });
     assert_eq!(
-        derive_title(&input).as_deref(),
+        derive_title(
+            None,
+            "\n\n  Fix the flaky network retry logic  \nand more details"
+        )
+        .as_deref(),
         Some("Fix the flaky network retry logic")
     );
 }
 
 #[test]
 fn title_is_capped_at_eighty_characters() {
-    let long_line = "a".repeat(120);
-    let input = json!({ "body": long_line });
-    let derived = derive_title(&input).expect("derived");
+    let derived = derive_title(None, &"a".repeat(120)).expect("derived");
     assert_eq!(derived.len(), 80);
 }
 
@@ -898,35 +929,75 @@ fn title_is_capped_at_eighty_characters() {
 #[test]
 fn a_stop_point_left_blank_is_the_default_and_anything_unknown_is_refused() {
     for blank in [json!({}), json!({"stopAt": null}), json!({"stopAt": ""})] {
-        assert!(check_typed_values(&blank).is_ok(), "{blank}");
-        let filled = with_defaults(&blank, "t", "20260922T000000Z").unwrap();
-        assert_eq!(filled["stopAt"], "plan", "{blank}");
+        assert_eq!(
+            NewTask::from_json(&blank).unwrap().stop_at,
+            StopAt::Plan,
+            "{blank}"
+        );
     }
     assert_eq!(
-        with_defaults(&json!({"stopAt": "all"}), "t", "20260922T000000Z").unwrap()["stopAt"],
-        "all"
+        NewTask::from_json(&json!({"stopAt": "all"}))
+            .unwrap()
+            .stop_at,
+        StopAt::All
     );
-    for bad in [json!({"stopAt": "verify"}), json!({"stopAt": 1})] {
-        assert!(check_typed_values(&bad).is_err(), "{bad}");
-    }
+    assert_eq!(
+        NewTask::from_json(&json!({"stopAt": "verify"})).unwrap_err(),
+        "no such stop point: verify (plan, diff or all)"
+    );
+    assert_eq!(
+        StopAt::parse("verify").unwrap_err(),
+        "no such stop point: verify (plan, diff or all)"
+    );
+    assert_eq!(
+        NewTask::from_json(&json!({"stopAt": 1})).unwrap_err(),
+        "no such stop point: 1"
+    );
+}
+
+#[test]
+fn a_value_a_task_cannot_hold_is_refused_in_the_words_the_record_uses() {
+    let err = NewTask::from_json(&json!({"doneWhen": "never"})).unwrap_err();
+    assert!(err.starts_with("bad task: unknown variant"), "{err}");
+    assert_eq!(err, DoneWhen::parse("never").unwrap_err());
+    assert_eq!(
+        NewTask::from_json(&json!({"kind": "nope"})).unwrap_err(),
+        Kind::parse("nope").unwrap_err()
+    );
+    assert_eq!(
+        NewTask::from_json(&json!({"executor": "julse"})).unwrap_err(),
+        "no such executor: julse (worker or jules)"
+    );
+    assert!(
+        NewTask::from_json(&json!({"autoStart": "yes"}))
+            .unwrap_err()
+            .starts_with("bad task: ")
+    );
+    assert_eq!(
+        NewTask::from_json(&json!([])).unwrap_err(),
+        "expected an object"
+    );
 }
 
 /// The parent task is typed on the form and quoted on a command line, so it is held to
 /// the same rule as the issue URL.
 #[test]
 fn a_parent_task_url_that_could_close_a_quote_is_refused() {
-    let ok = json!({"parent": "https://github.com/acme/widget/issues/1"});
-    assert!(check_typed_values(&ok).is_ok());
+    let with_parent = |parent: &str| NewTask {
+        parent: Some(parent.to_string()),
+        ..NewTask::default()
+    };
+    assert!(check_typed(&with_parent("https://github.com/acme/widget/issues/1")).is_ok());
     // A key typed on the board is turned into its URL by the hub, not refused here.
-    assert!(check_typed_values(&json!({"parent": "ALPHA-233"})).is_ok());
-    assert!(check_typed_values(&json!({"parent": ""})).is_ok());
+    assert!(check_typed(&with_parent("ALPHA-233")).is_ok());
+    assert!(check_typed(&with_parent("")).is_ok());
     for bad in [
         "https://x.test/a'; rm -rf ~; '",
         "not a url",
         "https://x.test/a b",
         "ALPHA-233; rm",
     ] {
-        let err = check_typed_values(&json!({ "parent": bad })).unwrap_err();
+        let err = check_typed(&with_parent(bad)).unwrap_err();
         assert!(err.starts_with("not a task URL: "), "{err}");
     }
 }
@@ -969,18 +1040,7 @@ fn a_pr_that_cannot_be_read_says_whether_it_is_a_bare_number_or_not_a_pr() {
     assert!(unreadable_pr("https://example.com/x").contains("not a pull request"));
 }
 
-/// The snapshot is text somebody read from the issue; a caller's JSON does not get to
-/// claim it.
-#[test]
-fn a_snapshot_in_the_input_is_dropped() {
-    let input =
-        json!({ "title": "t", "issueSnapshot": { "url": "u", "title": "x", "fetchedAt": "s" } });
-    let filled = with_defaults(&input, "t", "20260922T000000Z").unwrap();
-    assert!(filled.get("issueSnapshot").is_none());
-}
-
 #[test]
 fn empty_title_and_body_produce_nothing() {
-    let input = json!({ "title": "   ", "body": "   \n\n  " });
-    assert!(derive_title(&input).is_none());
+    assert!(derive_title(Some("   "), "   \n\n  ").is_none());
 }
