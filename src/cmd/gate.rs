@@ -7,7 +7,7 @@
 
 use serde_json::{Value, json};
 
-use crate::gate::{self, Gate, Shelf};
+use crate::gate::{self, Gate, GateRequest, Shelf};
 use crate::registry::Context;
 // For the callers that still reach them through `cmd` (cmd/mod.rs, the board's handlers and state) until #363.
 pub use crate::gate::{answer, close, close_resumed, open};
@@ -34,17 +34,29 @@ pub fn open_cmd(
         // `read_body(None)` is the stdin path, which is the one a heredoc uses.
         None => super::read_body(None)?,
     };
-    let mut payload: Value = serde_json::from_str(&raw).map_err(|e| format!("bad JSON: {e}"))?;
+    let payload: Value = serde_json::from_str(&raw).map_err(|e| format!("bad JSON: {e}"))?;
     // The body read from a file as it is, so the one who opens the gate need not read a long
     // report into its own context to quote it into JSON — the hub opening a plan a sub-agent
     // wrote is the case this is for, and what the person approves is that file, byte for byte.
-    if let Some(path) = body_file {
-        let path = crate::infra::paths::expand_home(path);
-        let body = std::fs::read_to_string(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        with_body(&mut payload, body)?;
+    let body = match body_file {
+        Some(path) => {
+            let path = crate::infra::paths::expand_home(path);
+            Some(
+                std::fs::read_to_string(&path)
+                    .map_err(|e| format!("cannot read {}: {e}", path.display()))?,
+            )
+        }
+        None => None,
+    };
+    let mut request = GateRequest::from_json(&payload)?;
+    // Where the caller stands, when the payload does not name a worktree.
+    if request.worktree.is_none() {
+        request.worktree = crate::kernel::identity::current_worktree(None);
     }
-    let (gate, served) = open(&ctx, &payload)?;
+    if let Some(body) = body {
+        with_body(&mut request, body)?;
+    }
+    let (gate, served) = open(&ctx, request)?;
 
     if as_json {
         println!("{}", open_json(&ctx, &gate, served));
@@ -68,15 +80,14 @@ pub fn open_cmd(
     Ok(())
 }
 
-/// Put a body read from a file into a payload. Refused when the payload has one of its own:
+/// Put a body read from a file into a request. Refused when the payload has one of its own:
 /// which of the two was meant cannot be told, and the one dropped is what a person expected
 /// to be shown.
-fn with_body(payload: &mut Value, body: String) -> Result<(), String> {
-    let fields = payload.as_object_mut().ok_or("expected an object")?;
-    if fields.get("body").is_some_and(|b| !b.is_null()) {
+fn with_body(request: &mut GateRequest, body: String) -> Result<(), String> {
+    if request.body.is_some() {
         return Err("the payload has a body already; drop it or --body-file".to_string());
     }
-    fields.insert("body".to_string(), json!(body));
+    request.body = Some(body);
     Ok(())
 }
 

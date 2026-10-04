@@ -493,12 +493,104 @@ fn open_drops_keys_the_gate_does_not_know() {
         nwo_source: "dirname",
     };
     let ctx = crate::registry::context_of(repo).unwrap();
-    let (gate, _) = open(
-        &ctx,
+    let request = GateRequest::from_json(
         &json!({"kind": "question", "title": "q", "worktree": "/tmp/wt", "futureField": 1}),
     )
     .unwrap();
+    let (gate, _) = open(&ctx, request).unwrap();
     assert!(gate.extra.is_empty());
     let stored = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
     assert!(stored.extra.is_empty());
+}
+
+#[test]
+fn an_open_payload_cannot_carry_a_decision() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_of(repo).unwrap();
+    let request = GateRequest::from_json(&json!({
+        "kind": "question", "title": "q", "worktree": "/tmp/wt",
+        "decision": "approve", "choice": "a", "comment": "c",
+        "answeredAt": "20260101T000000Z",
+        "answers": [{"decision": "approve", "answeredAt": "20260101T000000Z"}],
+    }))
+    .unwrap();
+    let (gate, _) = open(&ctx, request).unwrap();
+    let stored = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    for g in [&gate, &stored] {
+        assert!(g.decision.is_none() && g.choice.is_none());
+        assert!(g.comment.is_none() && g.answered_at.is_none());
+        assert!(g.answers.is_empty());
+        assert!(!g.answered_on_board());
+    }
+}
+
+#[test]
+fn null_opener_wait_and_worktree_read_as_absent() {
+    let request = GateRequest::from_json(
+        &json!({"kind": "question", "title": "q", "openedBy": null, "wait": null, "worktree": null}),
+    )
+    .unwrap();
+    assert_eq!(request.opened_by, Opener::Worker);
+    assert!(request.wait);
+    assert_eq!(request.worktree, None);
+}
+
+#[test]
+fn a_field_of_the_wrong_type_is_refused_by_name() {
+    let err =
+        GateRequest::from_json(&json!({"kind": "question", "title": "q", "facts": 5})).unwrap_err();
+    assert!(err.starts_with("bad gate: "), "{err}");
+    let err = GateRequest::from_json(&json!({"kind": "plan", "title": "t", "stoppedBy": null}))
+        .unwrap_err();
+    assert_eq!(err, "stoppedBy must be a list of rules");
+}
+
+#[test]
+fn a_request_without_a_worktree_leaves_no_gate_behind() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_of(repo).unwrap();
+    let request = GateRequest::from_json(&json!({"kind": "question", "title": "q"})).unwrap();
+    let err = open(&ctx, request).unwrap_err();
+    assert_eq!(err, "not inside a worktree, and no --worktree was given");
+    let dir = dir_of(&ctx, Shelf::Open);
+    let left = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
+    assert_eq!(left, 0);
+}
+
+#[test]
+fn absent_options_fall_back_to_the_kinds_defaults() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_of(repo).unwrap();
+    let request =
+        GateRequest::from_json(&json!({"kind": "question", "title": "q", "worktree": "/tmp/wt"}))
+            .unwrap();
+    let (gate, _) = open(&ctx, request).unwrap();
+    assert_eq!(gate.options, Kind::Question.default_options());
 }

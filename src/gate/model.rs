@@ -329,9 +329,141 @@ pub struct Gate {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<Answer>,
     /// Keys this binary does not know, kept from the file so that a record written by another
-    /// version and saved by this one loses nothing. Only ever filled from disk: `open` empties it.
+    /// version and saved by this one loses nothing. Only ever filled from disk: `open` starts it
+    /// empty.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What a caller asks for when it opens a gate.
+///
+/// Not a `Gate`: the id and `openedAt` are written by `open`, and the decision, choice,
+/// comment, `answeredAt` and answers by whoever answers it, so none of them is here for a
+/// payload to carry in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateRequest {
+    pub kind: Kind,
+    pub title: String,
+    /// Where the answer goes. `None` when the caller did not say; `open` refuses that.
+    pub worktree: Option<String>,
+    pub opened_by: Opener,
+    pub task: Option<String>,
+    pub wait: bool,
+    pub stopped_by: Vec<StopRule>,
+    /// `None` for the kind's default buttons.
+    pub options: Option<Vec<String>>,
+    pub facts: Vec<String>,
+    pub focus: Option<String>,
+    pub decided: Option<String>,
+    pub unsure: Option<String>,
+    pub body: Option<String>,
+    pub run: Option<String>,
+    pub diff: Option<String>,
+    pub choices: Vec<Choice>,
+    pub rounds: u32,
+    pub problem: Option<String>,
+    pub goal: Option<String>,
+    pub review_rounds: Vec<ReviewRound>,
+    pub findings: Vec<Finding>,
+    pub commands: Vec<CommandRun>,
+    pub manual: Vec<String>,
+}
+
+/// The keys of a payload that are shown as they are. The rest of a `GateRequest` is read
+/// by hand in `from_json`, so that a wrong one is named before anything is written.
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Shown {
+    task: Option<String>,
+    options: Option<Vec<String>>,
+    facts: Vec<String>,
+    focus: Option<String>,
+    decided: Option<String>,
+    unsure: Option<String>,
+    body: Option<String>,
+    run: Option<String>,
+    diff: Option<String>,
+    problem: Option<String>,
+    goal: Option<String>,
+    choices: Vec<Choice>,
+    rounds: u32,
+    review_rounds: Vec<ReviewRound>,
+    findings: Vec<Finding>,
+    commands: Vec<CommandRun>,
+    manual: Vec<String>,
+}
+
+impl GateRequest {
+    /// Read a request out of a JSON payload. Keys a gate does not take from a caller are
+    /// ignored, and the ones that are wrong are refused here, in the words `adj gate open`
+    /// has always used.
+    pub fn from_json(payload: &serde_json::Value) -> Result<GateRequest, String> {
+        let kind = payload
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("a gate needs a kind")?;
+        let kind: Kind = serde_json::from_value(serde_json::json!(kind))
+            .map_err(|_| format!("no such gate kind: {kind}"))?;
+        // Checked before the rest so the error names the field, rather than arriving as a
+        // serde message about a struct the caller never saw.
+        let title = match payload.get("title").and_then(serde_json::Value::as_str) {
+            Some(t) if !t.trim().is_empty() => t.to_string(),
+            _ => return Err("a gate needs a title".to_string()),
+        };
+        let opened_by: Opener = match payload.get("openedBy") {
+            None | Some(serde_json::Value::Null) => Opener::Worker,
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| format!("no such opener: {value} (worker or hub)"))?,
+        };
+        let wait = match payload.get("wait") {
+            None | Some(serde_json::Value::Null) => true,
+            Some(serde_json::Value::Bool(wait)) => *wait,
+            Some(_) => return Err("wait must be true or false".to_string()),
+        };
+        // `null` too: it is a present value of the wrong type, not a missing one.
+        let stopped_by = match payload.get("stoppedBy") {
+            None => Vec::new(),
+            Some(serde_json::Value::Array(rules)) => rules
+                .iter()
+                .map(|rule| {
+                    serde_json::from_value(rule.clone())
+                        .map_err(|_| format!("no such stop rule: {rule}"))
+                })
+                .collect::<Result<Vec<StopRule>, String>>()?,
+            Some(_) => return Err("stoppedBy must be a list of rules".to_string()),
+        };
+        let worktree = payload
+            .get("worktree")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let shown: Shown =
+            serde_json::from_value(payload.clone()).map_err(|e| format!("bad gate: {e}"))?;
+        Ok(GateRequest {
+            kind,
+            title,
+            worktree,
+            opened_by,
+            task: shown.task,
+            wait,
+            stopped_by,
+            options: shown.options,
+            facts: shown.facts,
+            focus: shown.focus,
+            decided: shown.decided,
+            unsure: shown.unsure,
+            body: shown.body,
+            run: shown.run,
+            diff: shown.diff,
+            choices: shown.choices,
+            rounds: shown.rounds,
+            problem: shown.problem,
+            goal: shown.goal,
+            review_rounds: shown.review_rounds,
+            findings: shown.findings,
+            commands: shown.commands,
+            manual: shown.manual,
+        })
+    }
 }
 
 /// The decision a gate is archived under when it is closed without an answer.
