@@ -411,7 +411,10 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                     .ok_or("not inside a worktree: pass worktree or cwd")?;
                 fields.insert("worktree".to_string(), json!(here));
             }
-            let (gate, served) = crate::cmd::gate_open_payload(&ctx, &payload)?;
+            let (gate, served) = crate::cmd::gate_open_payload(
+                &ctx,
+                crate::gate::GateRequest::from_json(&payload)?,
+            )?;
             Ok(crate::cmd::gate_open_json(&ctx, &gate, served))
         }
         "adjutant_gate_close" => {

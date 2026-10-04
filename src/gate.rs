@@ -16,7 +16,7 @@
 //! `gates/<slug>/…` or takes a gate's lock: `store` is private, and opening, answering and
 //! closing a gate are operations of this module beside it.
 //!
-//! Names `infra`, `kernel`, `registry`, `mail` and `task`, all below it.
+//! Names `infra`, `registry`, `mail` and `task`, all below it.
 
 mod answer;
 mod close;
