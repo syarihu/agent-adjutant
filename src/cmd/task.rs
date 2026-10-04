@@ -8,7 +8,6 @@
 
 use serde_json::{Value, json};
 
-use crate::kernel::config;
 use crate::mail::{DeliveryOutcome, Reached};
 use crate::registry::Context;
 use crate::task::{self, Status, Task};
@@ -21,8 +20,6 @@ pub use crate::task::{
     Checked, apply, candidates, check_worktree_name, create, fetch_issue, known_title, nudge,
     pr_refs, refresh, update, update_checked,
 };
-// `brief` checks and resolves what it is given as `create` does, until #359.
-use crate::task::{check_parent, check_url, resolved_worktree};
 
 /// Read the issue of a task that has just started and has none kept. A failure is reported
 /// on stderr and nothing more: the command that got here did what it was asked, and the
@@ -422,199 +419,53 @@ pub struct BriefArgs<'a> {
     pub json: bool,
 }
 
-/// The Done when the brief says. The worker branches on three phrases only, and a task that
-/// goes as far as handling review has opened its PR, so `Review` is written as the PR.
-fn brief_done_when(done_when: task::DoneWhen) -> &'static str {
-    match done_when {
-        task::DoneWhen::Review => task::DoneWhen::Pr.as_prose(),
-        other => other.as_prose(),
-    }
-}
-
 /// A flag value that says something: a blank one is the same as not given.
 fn given(value: Option<&str>) -> Option<&str> {
     value.filter(|v| !v.trim().is_empty())
 }
 
-/// `adj task brief`: write the worker's `.claude/task-brief.md` from the record and the config.
+/// `adj task brief`: write the worker's `.claude/task-brief.md` from the record and the settings.
 ///
 /// The hub used to fill the brief in from a template by hand. Written here, the lines come
 /// from the record the board shows, so the two cannot disagree, and the one thing the hub
 /// has to get right is the record.
 pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
-    use crate::kernel::brief as text;
-
     let ctx = crate::registry::context(args.repo, args.hub)?;
-    let worktree = resolved_worktree(args.worktree);
-    let worktree = std::path::Path::new(&worktree);
-    if !worktree.is_dir() {
-        return Err(format!("no such worktree: {}", worktree.display()));
-    }
-    // Read from the worktree rather than taken as an argument: it is the branch the worker
-    // will be on, and a typed one is a second answer to a question git already has.
-    let branch = crate::infra::git::git(&["symbolic-ref", "-q", "--short", "HEAD"], Some(worktree))
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| {
-            format!(
-                "{} is not on a branch: the brief names the branch the worker works on",
-                worktree.display()
-            )
-        })?;
-    let config = ctx
-        .resolved
-        .config
-        .clone()
-        .unwrap_or_else(|| Value::Object(config::builtin_defaults()));
-    let base = args.base.trim();
-    if base.is_empty() {
-        return Err("--base is empty: pass the commit-ish the worktree was cut from, or -".into());
-    }
-
-    let rendered = match args.id {
-        Some(id) => {
-            let (key_arg, tracker_arg, parent_arg) =
-                (given(args.key), given(args.tracker), given(args.parent));
-            if let Some(parent) = parent_arg {
-                check_parent(parent)?;
-            }
-            // Written to a line the worker reads, and the hub puts it on a command line.
-            if let Some(key) = key_arg.filter(|key| *key != "-" && !text::is_key(key)) {
-                return Err(format!("not a tracker key: {key} (like ABC-123)"));
-            }
-            let record = task::get(&ctx.state, &ctx.repo.slug, id)?;
-            if record.executor == task::Executor::Jules {
-                return Err(format!(
-                    "task {id} is handed to Jules: no worker is started, so no brief is written"
-                ));
-            }
-            // An empty URL is none: `--issue-url ''` stores one.
-            let nonblank = |url: &Option<String>| url.clone().filter(|url| !url.trim().is_empty());
-            let url = nonblank(&record.issue_url).or_else(|| nonblank(&record.issue));
-            let (key, tracker) = match (&url, key_arg, tracker_arg) {
-                (_, Some(key), Some(tracker)) => (key.to_string(), tracker.to_string()),
-                (None, key, tracker) => (
-                    key.unwrap_or("-").to_string(),
-                    tracker.unwrap_or("-").to_string(),
-                ),
-                (Some(url), key, tracker) => {
-                    let sources = config
-                        .get("taskSources")
-                        .and_then(Value::as_array)
-                        .map(Vec::as_slice)
-                        .unwrap_or_default();
-                    let issue_keys = config
-                        .get("issueKeys")
-                        .and_then(Value::as_object)
-                        .cloned()
-                        .unwrap_or_default();
-                    let (read_tracker, read_key) = text::tracker_and_key(url, sources, &issue_keys)
-                        .ok_or_else(|| {
-                            format!(
-                                "cannot tell the tracker and key of {url}: pass --key and --tracker"
-                            )
-                        })?;
-                    (
-                        key.map_or(read_key, str::to_string),
-                        tracker.map_or(read_tracker, str::to_string),
-                    )
-                }
-            };
-            if !["github", "github-project", "jira", "linear", "-"].contains(&tracker.as_str()) {
-                return Err(format!(
-                    "no such tracker: {tracker} (github, github-project, jira, linear or -)"
-                ));
-            }
-            let verify = config
-                .get("verify")
-                .and_then(Value::as_array)
-                .map(|commands| {
-                    commands
-                        .iter()
-                        .map(|c| c.as_str().map_or_else(|| c.to_string(), str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let parent = parent_arg
-                .map(str::to_string)
-                .or(record
-                    .parent
-                    .clone()
-                    .filter(|parent| !parent.trim().is_empty()))
-                .unwrap_or_else(|| "-".to_string());
-            // The worker fetches the parent from its URL; a bare key says nothing of the tracker.
-            // Checked again here because a record written before parents were checked on the way
-            // in may hold anything.
-            if parent != "-" {
-                if crate::kernel::brief::is_key(&parent) {
-                    return Err(format!(
-                        "the parent task is a key ({parent}): find its URL and pass --parent '<URL>'"
-                    ));
-                }
-                check_url(&parent, "a task")?;
-            }
-            text::render_task(&text::TaskBrief {
-                key,
-                title: record.title.clone(),
-                tracker,
-                url,
-                request: record.body.clone(),
-                branch: branch.clone(),
-                base: base.to_string(),
-                parent,
-                record: record.id.clone(),
-                done_when: brief_done_when(record.done_when).to_string(),
-                stop_at: record.stop_at.as_str().to_string(),
-                handover: record
-                    .instruction
-                    .clone()
-                    .filter(|note| !note.trim().is_empty())
-                    .unwrap_or_else(|| "-".to_string()),
-                copilot_review: config
-                    .get("copilotReview")
-                    .and_then(Value::as_str)
-                    .unwrap_or("ask")
-                    .to_string(),
-                verify,
-            })
-        }
+    let of = match args.id {
+        Some(id) => task::BriefOf::Task {
+            id: id.to_string(),
+            key: given(args.key).map(str::to_string),
+            // Before the record is read, in the words the list it replaces used.
+            tracker: given(args.tracker)
+                .map(crate::kernel::brief::Tracker::parse)
+                .transpose()?,
+            parent: given(args.parent).map(str::to_string),
+        },
         None => {
             let instruction = args
                 .instruction
                 .ok_or("a brief with no --id needs --instruction")?;
-            let instruction = super::dash_is_stdin(instruction)?;
-            let instruction = match instruction.trim() {
-                "" | "-" => text::NO_INSTRUCTION.to_string(),
-                _ => instruction,
-            };
-            text::render_session(&text::SessionBrief {
-                branch: branch.clone(),
-                base: base.to_string(),
-                instruction,
-            })
+            task::BriefOf::Session {
+                instruction: super::dash_is_stdin(instruction)?,
+            }
         }
     };
-
-    let path = match args.out {
-        Some(out) => crate::infra::paths::expand_home(out),
-        None => worktree.join(".claude").join("task-brief.md"),
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    // Always written over: the brief is derived, and one left from an earlier start is the
-    // stale answer this exists to replace.
-    std::fs::write(&path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let written = task::write_brief(
+        &ctx,
+        &task::BriefRequest {
+            worktree: args.worktree.to_string(),
+            base: args.base.to_string(),
+            out: args.out.map(str::to_string),
+            of,
+        },
+    )?;
     if args.json {
         println!(
             "{}",
-            json!({ "path": path, "task": args.id, "branch": branch })
+            json!({ "path": written.path, "task": args.id, "branch": written.branch })
         );
     } else {
-        println!("{}", path.display());
+        println!("{}", written.path.display());
     }
     Ok(())
 }

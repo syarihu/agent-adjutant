@@ -66,7 +66,7 @@ pub(super) fn check_typed(new: &NewTask) -> Result<(), String> {
 
 /// Refuse a URL that is not safe to put in quotes on a command line: not an http(s) address
 /// with a plausible host, or holding a character the shell would read.
-pub fn check_url(url: &str, what: &str) -> Result<(), String> {
+pub(super) fn check_url(url: &str, what: &str) -> Result<(), String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"));
@@ -96,7 +96,7 @@ pub fn check_url(url: &str, what: &str) -> Result<(), String> {
 
 /// A parent task as the board takes it: a URL, or a key the hub turns into one before it
 /// writes the brief. Anything else is refused, since it is quoted on a command line.
-pub fn check_parent(parent: &str) -> Result<(), String> {
+pub(super) fn check_parent(parent: &str) -> Result<(), String> {
     if crate::kernel::brief::is_key(parent) {
         return Ok(());
     }
@@ -201,7 +201,7 @@ pub fn create(
 /// (yet) is resolved through the nearest part of it that does, with the rest put back on,
 /// so that it is absolute — against the directory of the command giving it, not of some
 /// later one — and matches what git prints once the worktree is created there.
-pub fn resolved_worktree(path: &str) -> String {
+pub(super) fn resolved_worktree(path: &str) -> String {
     let path = crate::infra::paths::expand_home(path);
     let mut current = std::path::absolute(&path).unwrap_or(path);
     // Until it stops changing: stepping back over a part that does not exist can land on

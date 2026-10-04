@@ -683,9 +683,9 @@ pub fn resolve_from_value(
         }
     }
 
-    // `adj task brief` copies this into the worker brief verbatim, and the worker falls back to asking
-    // on anything it does not recognise. Without a warning, a typo such as "alway" would
-    // quietly keep the question coming while the person believes it is switched off.
+    // `adj task brief` writes anything else as `ask`, which is what the worker would have done
+    // with it. Without a warning, a typo such as "alway" would quietly keep the question coming
+    // while the person believes it is switched off.
     if let Some(value) = resolved.get("copilotReview")
         && !matches!(value.as_str(), Some("ask" | "always" | "never"))
     {

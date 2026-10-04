@@ -1114,3 +1114,150 @@ fn a_pr_that_cannot_be_read_says_whether_it_is_a_bare_number_or_not_a_pr() {
 fn empty_title_and_body_produce_nothing() {
     assert!(derive_title(Some("   "), "   \n\n  ").is_none());
 }
+
+#[test]
+fn a_review_task_is_written_as_the_pr_the_worker_branches_on() {
+    assert_eq!(brief_done_when(DoneWhen::Review), "up to a PR");
+    assert_eq!(brief_done_when(DoneWhen::Pr), "up to a PR");
+    assert_eq!(
+        brief_done_when(DoneWhen::Verify),
+        "up to handing over for verification"
+    );
+    assert_eq!(
+        brief_done_when(DoneWhen::ReportOnly),
+        "investigation only (report and stop)"
+    );
+}
+
+/// A worktree on `branch`, outside the sandbox's repository: `write_brief` only needs git to
+/// name its branch.
+fn worktree_on(branch: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    crate::testing::init_repo(dir.path(), branch);
+    dir
+}
+
+#[test]
+fn write_brief_writes_a_task_from_the_record_and_the_settings() {
+    let (_sandbox, mut ctx) = hub();
+    ctx.settings.issue_keys = json!({"acme/widget": "WID"}).as_object().unwrap().clone();
+    ctx.settings.task_sources = vec![json!({"type": "github", "issueRepo": "acme/widget"})];
+    ctx.settings.verify = vec!["cargo test".to_string()];
+    ctx.settings.copilot_review = crate::kernel::config::CopilotReview::Never;
+    let mut task = sample();
+    task.issue_url = Some("https://github.com/acme/widget/issues/12".to_string());
+    task.done_when = DoneWhen::Review;
+    save(&ctx, &task).unwrap();
+    let worktree = worktree_on("me/wid-12");
+
+    let written = write_brief(
+        &ctx,
+        &BriefRequest {
+            worktree: worktree.path().display().to_string(),
+            base: "origin/main".to_string(),
+            out: None,
+            of: BriefOf::Task {
+                id: task.id.clone(),
+                key: None,
+                tracker: None,
+                parent: None,
+            },
+        },
+    )
+    .unwrap();
+
+    assert_eq!(written.branch, "me/wid-12");
+    assert!(written.path.ends_with(".claude/task-brief.md"));
+    let text = std::fs::read_to_string(&written.path).unwrap();
+    assert!(
+        text.contains("- Task: WID-12 \"ログインのリトライを調べる\" (github)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("https://github.com/acme/widget/issues/12"),
+        "{text}"
+    );
+    assert!(text.contains("(branch me/wid-12)"), "{text}");
+    assert!(text.contains("- Base branch: origin/main"), "{text}");
+    assert!(text.contains("- Done when: up to a PR"), "{text}");
+    assert!(text.contains("- Copilot review: never"), "{text}");
+    assert!(text.contains("cargo test"), "{text}");
+}
+
+#[test]
+fn write_brief_writes_a_session_brief_ending_with_the_instruction() {
+    let (_sandbox, ctx) = hub();
+    let worktree = worktree_on("me/scratch");
+    let elsewhere = tempfile::tempdir().unwrap();
+    let out = elsewhere.path().join("elsewhere").join("brief.md");
+    let request = |instruction: &str| BriefRequest {
+        worktree: worktree.path().display().to_string(),
+        base: "-".to_string(),
+        out: Some(out.display().to_string()),
+        of: BriefOf::Session {
+            instruction: instruction.to_string(),
+        },
+    };
+
+    let written = write_brief(&ctx, &request("do this\n## not a header")).unwrap();
+    assert_eq!(written.path, out);
+    assert!(
+        !worktree
+            .path()
+            .join(".claude")
+            .join("task-brief.md")
+            .exists()
+    );
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.contains("- Task: -"), "{text}");
+    assert!(
+        text.ends_with("## Instruction\n\ndo this\n## not a header\n"),
+        "{text}"
+    );
+
+    write_brief(&ctx, &request("-")).unwrap();
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        text.ends_with(&format!("{}\n", crate::kernel::brief::NO_INSTRUCTION)),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_unknown_copilot_review_is_written_as_ask() {
+    let sandbox = crate::testing::Sandbox::new(
+        r#"{"repos": {"acme/widget": {"copilotReview": "sometimes"}}}"#,
+    );
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    let mut task = sample();
+    task.done_when = DoneWhen::Pr;
+    save(&ctx, &task).unwrap();
+    let worktree = worktree_on("me/ask");
+
+    let written = write_brief(
+        &ctx,
+        &BriefRequest {
+            worktree: worktree.path().display().to_string(),
+            base: "-".to_string(),
+            out: None,
+            of: BriefOf::Task {
+                id: task.id.clone(),
+                key: None,
+                tracker: None,
+                parent: None,
+            },
+        },
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&written.path).unwrap();
+    assert!(text.contains("- Copilot review: ask"), "{text}");
+}
