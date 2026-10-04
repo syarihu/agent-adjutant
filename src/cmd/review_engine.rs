@@ -3,10 +3,9 @@
 //! Every round used to redo the same reading and arithmetic by hand. This command
 //! runs it the same way every time and leaves the procedures.
 
-use serde_json::{Value, json};
+use serde_json::json;
 use std::path::Path;
 
-use crate::kernel::config;
 use crate::task::{Engine, Reason, cache_path, decide, read_cache};
 
 /// The one line the worker tells the user.
@@ -78,19 +77,7 @@ fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i6
 /// `adj review-engine`.
 pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
     let ctx = crate::registry::context_without_hub(repo_arg)?;
-    let setting = match ctx
-        .resolved
-        .config
-        .as_ref()
-        .and_then(|c| c.get("reviewEngine"))
-    {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => return Err(format!("reviewEngine must be a string, not {other}")),
-        None => config::builtin_defaults()["reviewEngine"]
-            .as_str()
-            .unwrap()
-            .to_string(),
-    };
+    let setting = &ctx.settings.review_engine;
 
     let cache = cache_path(
         std::env::var_os("CLAUDE_CONFIG_DIR").as_deref(),
@@ -98,10 +85,10 @@ pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
     );
     let usage = read_cache(&cache);
     let now = crate::infra::clock::now_secs();
-    let (engine, reason) = decide(&setting, &usage, now, || {
+    let (engine, reason) = decide(setting, &usage, now, || {
         crate::infra::shell::on_path("codex")
     })?;
-    let text = message(engine, &reason, &setting, &cache, now);
+    let text = message(engine, &reason, setting.as_str(), &cache, now);
 
     if as_json {
         let (window, used_percentage, resets_at) = match &reason {
@@ -113,7 +100,7 @@ pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
 
         let out = json!({
             "engine": engine.as_str(),
-            "setting": setting,
+            "setting": setting.as_str(),
             "reason": reason.code(),
             "window": window,
             "usedPercentage": used_percentage,

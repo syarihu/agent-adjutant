@@ -56,15 +56,7 @@ fn issue_of(ctx: &Context, hub: &RepoHub, key: &str) -> Option<String> {
         .filter_map(|t| t.parent)
         .map(|p| p.trim().to_string())
         .find(|p| task::fetchable_issue(p));
-    named.or_else(|| {
-        let keys = ctx
-            .resolved
-            .config
-            .as_ref()?
-            .get("issueKeys")?
-            .as_object()?;
-        task::parent_issue_url(key, keys)
-    })
+    named.or_else(|| task::parent_issue_url(key, &ctx.settings.issue_keys))
 }
 
 impl HubTitles {

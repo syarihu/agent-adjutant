@@ -928,3 +928,93 @@ fn terminal_attach_is_read_and_a_non_string_is_warned_about() {
         "{warnings:?}"
     );
 }
+
+fn app(extra: Value) -> Value {
+    let mut entry = json!({"taskSource": "github", "issueRepo": "acme/app",
+        "issueKeys": {"acme/app": "WID"}, "ide": "code"});
+    entry
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    entry
+}
+
+#[test]
+fn the_task_keys_are_typed_settings_on_a_registered_repo() {
+    let (config, settings, _) = resolve(
+        json!({"repos": {"acme/app": app(json!({
+            "copilotReview": "always", "reviewEngine": "codex", "verify": ["make check", 3]
+        }))}}),
+        "acme/app",
+    );
+    assert_eq!(settings.copilot_review, CopilotReview::Always);
+    assert_eq!(settings.review_engine, ReviewEngine::Codex);
+    assert_eq!(
+        settings.verify,
+        vec!["make check".to_string(), "3".to_string()]
+    );
+    assert_eq!(settings.issue_keys["acme/app"], "WID");
+    assert_eq!(settings.task_sources.len(), 1);
+    assert_eq!(
+        settings.task_sources[0]["worktreeName"],
+        DEFAULT_WORKTREE_NAME
+    );
+    assert_eq!(
+        Value::Array(settings.task_sources.clone()),
+        config.unwrap()["taskSources"]
+    );
+}
+
+#[test]
+fn an_unknown_copilot_review_value_is_read_as_ask() {
+    let (_, settings, _) = resolve(
+        json!({"repos": {"acme/app": app(json!({"copilotReview": "alway"}))}}),
+        "acme/app",
+    );
+    assert_eq!(settings.copilot_review, CopilotReview::Ask);
+}
+
+#[test]
+fn a_review_engine_that_is_not_one_of_the_three_is_kept_as_configured() {
+    for (value, text) in [
+        (json!("sometimes"), "\"sometimes\""),
+        (json!(3), "3"),
+        (json!(null), "null"),
+    ] {
+        let (_, settings, _) = resolve(
+            json!({"repos": {"acme/app": app(json!({"reviewEngine": value}))}}),
+            "acme/app",
+        );
+        assert_eq!(
+            settings.review_engine,
+            ReviewEngine::Other(text.to_string())
+        );
+        assert_eq!(settings.review_engine.as_str(), text);
+    }
+}
+
+#[test]
+fn copilot_review_is_inherited_from_defaults() {
+    let (_, settings, _) = resolve(
+        json!({"defaults": {"copilotReview": "never", "reviewEngine": "claude"},
+               "repos": {"acme/app": app(json!({}))}}),
+        "acme/app",
+    );
+    assert_eq!(settings.copilot_review, CopilotReview::Never);
+    assert_eq!(settings.review_engine, ReviewEngine::Claude);
+}
+
+#[test]
+fn an_unregistered_repo_keeps_the_built_in_task_keys() {
+    let (config, settings, _) = resolve(
+        json!({"defaults": {"copilotReview": "never", "reviewEngine": "codex", "verify": ["x"]},
+               "repos": {}}),
+        "acme/app",
+    );
+    assert!(config.is_none());
+    assert_eq!(settings.copilot_review, CopilotReview::Ask);
+    assert_eq!(settings.review_engine, ReviewEngine::Auto);
+    assert!(settings.verify.is_empty());
+    assert!(settings.issue_keys.is_empty());
+    assert!(settings.task_sources.is_empty());
+}

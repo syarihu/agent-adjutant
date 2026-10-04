@@ -373,6 +373,12 @@ fn resolve_settings(
         max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
         stuck_after_minutes: stuck_after_minutes(pick("stuckAfterMinutes").as_ref(), warnings),
         jules_key: Hook::read(pick("julesKey")),
+        // Only a registered repo has these; `resolve_from_value` fills them in.
+        copilot_review: CopilotReview::Ask,
+        verify: Vec::new(),
+        review_engine: ReviewEngine::Auto,
+        issue_keys: Map::new(),
+        task_sources: Vec::new(),
     }
 }
 
@@ -607,7 +613,7 @@ pub fn resolve_from_value(
         ));
     }
     let entry = as_object(Some(entry_raw));
-    let settings = resolve_settings(&root, &defaults, &entry, env, &mut warnings);
+    let mut settings = resolve_settings(&root, &defaults, &entry, env, &mut warnings);
     check_runner(&settings, &mut warnings);
 
     let mut resolved = builtin_defaults();
@@ -646,6 +652,7 @@ pub fn resolve_from_value(
         }
     }
     resolved.insert("taskSources".to_string(), Value::Array(sources.clone()));
+    settings.read_task_keys(&resolved, &sources);
 
     if sources.is_empty() {
         warnings.push("no task sources: treating this repository as unregistered".to_string());

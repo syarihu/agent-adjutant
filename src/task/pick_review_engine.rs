@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::kernel::config::ReviewEngine;
+
 /// The 5-hour window trips at or above this.
 const FIVE_HOUR_LIMIT: f64 = 50.0;
 /// The 7-day window trips above this.
@@ -114,17 +116,18 @@ pub fn read_cache(path: &Path) -> Usage {
 }
 
 /// The decision, as a function of its inputs. `codex_on_path` is only called when a window trips.
-/// Err only for a `reviewEngine` value that is not auto / claude / codex.
+/// Err only for a `reviewEngine` value that is not auto / claude / codex; the message shows
+/// the value as it was configured.
 pub fn decide(
-    setting: &str,
+    setting: &ReviewEngine,
     usage: &Usage,
     now: i64,
     codex_on_path: impl FnOnce() -> bool,
 ) -> Result<(Engine, Reason), String> {
     match setting {
-        "claude" => Ok((Engine::Claude, Reason::Pinned)),
-        "codex" => Ok((Engine::Codex, Reason::Pinned)),
-        "auto" => match usage {
+        ReviewEngine::Claude => Ok((Engine::Claude, Reason::Pinned)),
+        ReviewEngine::Codex => Ok((Engine::Codex, Reason::Pinned)),
+        ReviewEngine::Auto => match usage {
             Usage::Missing => Ok((Engine::Claude, Reason::CacheMissing)),
             Usage::Broken => Ok((Engine::Claude, Reason::CacheBroken)),
             Usage::Read(v) => {
@@ -219,8 +222,8 @@ pub fn decide(
                 }
             }
         },
-        other => Err(format!(
-            "reviewEngine is {other:?}; it takes \"auto\", \"claude\" or \"codex\""
+        ReviewEngine::Other(text) => Err(format!(
+            "reviewEngine is {text}; it takes \"auto\", \"claude\" or \"codex\""
         )),
     }
 }

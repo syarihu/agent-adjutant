@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::config::ReviewEngine;
 
 use crate::task::{NOW, Usage, Window};
 
@@ -6,7 +7,7 @@ use crate::task::{NOW, Usage, Window};
 fn a_cache_stamped_in_the_future_skips_the_check() {
     let usage =
         Usage::Read(json!({ "captured_at": NOW + 1, "five_hour": { "used_percentage": 90.0 } }));
-    let (engine, reason) = decide("auto", &usage, NOW, || {
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || {
         panic!("PATH was searched although the cache is not trusted")
     })
     .unwrap();
@@ -22,7 +23,7 @@ fn a_cache_stamped_in_the_future_skips_the_check() {
 
     let usage =
         Usage::Read(json!({ "captured_at": NOW, "five_hour": { "used_percentage": 90.0 } }));
-    let (engine, _) = decide("auto", &usage, NOW, || true).unwrap();
+    let (engine, _) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
     assert_eq!(engine, Engine::Codex);
 }
 
