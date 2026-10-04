@@ -4,14 +4,26 @@
 
 use serde_json::{Value, json};
 use std::io::Read;
-use std::time::Duration;
 
 use crate::infra::ide;
 use crate::infra::notify;
+use crate::infra::paths::{exe_path, same_path};
 use crate::infra::terminal::{self, SpawnRequest};
 use crate::kernel::config::{self, Settings};
-use crate::kernel::identity::{self, RepoInfo};
+use crate::kernel::identity;
 use crate::kernel::runner;
+pub use crate::lifecycle::hub::{HubStart, TabOutcome, hub_startable, start_hub, stop_hub};
+use crate::lifecycle::hub::{
+    asked_session, closable_check, hub_env, hub_in_tab, hub_resume_check, own_hub_runner_refusal,
+};
+pub use crate::lifecycle::worker::focus_worker;
+use crate::lifecycle::worker::{
+    Resumed, claim_worker_slot, open_worker_tab, resume_worker, saved_worker_session,
+    worker_worktree,
+};
+use crate::lifecycle::{
+    GONE_BUDGET, GONE_POLL, agent_command, forwarded_env, resume_template, settled, title_command,
+};
 use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, deliver_to_worker};
 use crate::registry::{
     self, Context, agent_env, context, context_as, context_of, context_without_hub, resolve,
@@ -40,8 +52,7 @@ pub mod tmux;
 mod worker_ops;
 
 pub use close::close;
-use close::{GONE_BUDGET, GONE_POLL, settled};
-use context::{exe_path, settings_for};
+use context::settings_for;
 pub use context::{hub_name, show_config};
 pub(crate) use delivery::wake_note_sentence;
 pub use delivery::{PendingArgs, SendArgs, pending, send};
@@ -49,12 +60,8 @@ pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
     open_cmd as gate_open, open_json as gate_open_json, show as gate_show,
 };
-pub use hub_ops::{
-    HubStart, TabOutcome, hub, hub_close, hub_startable, hub_stop, start_hub, stop_hub,
-};
-use hub_ops::{
-    ago, closable_check, hub_resume_check, own_hub_runner_refusal, print_performed, resume_template,
-};
+use hub_ops::{ago, print_performed};
+pub use hub_ops::{hub, hub_close, hub_stop};
 pub use hub_title::HubTitles;
 pub use ide_title_notify::{WorktreeArgs, notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
@@ -79,13 +86,7 @@ pub use task::{
     update_cmd as task_update,
 };
 pub use tell::{TellArgs, tell};
-use worker_ops::{
-    Resumed, agent_command, forwarded_env, resume_worker, same_path, saved_worker_session,
-    title_command,
-};
-pub use worker_ops::{
-    WorkArgs, WorkerArgs, focus, focus_worker, focus_worker_cmd, phase, spawn, work, worker,
-};
+pub use worker_ops::{WorkArgs, WorkerArgs, focus, focus_worker_cmd, phase, spawn, work, worker};
 
 #[cfg(test)]
 mod tests;

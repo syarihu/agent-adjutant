@@ -1,44 +1,5 @@
 use super::*;
 
-/// How long to wait for a closed tab's worker to actually be gone, and how often to look.
-///
-/// Closing a tab hangs its session up and the process in it then unwinds, which is not
-/// instant — a single look straight afterwards would call a live worker gone. How long the
-/// unwinding takes is the agent's business: a Claude Code session routinely needs more than
-/// two seconds, and a budget shorter than that reports a worker whose tab is already closed
-/// as still there. The budget only costs anything when the process really does stay, and a
-/// terminal waiting for someone to confirm the close does not answer sooner for being
-/// given less time, so it is set well past how long an agent takes rather than close to it.
-/// Polling keeps the common case — gone at the first few looks — as quick as before.
-pub(super) const GONE_BUDGET: Duration = Duration::from_secs(10);
-pub(super) const GONE_POLL: Duration = Duration::from_millis(100);
-
-/// Wait for a worker to be gone, and answer with what was actually seen.
-///
-/// Polled rather than slept through: a process that has already exited by the first look is
-/// the common case, and a cleanup step that always cost the whole budget is a step people
-/// stop running. `look` and `wait` are handed in for the reason `terminal::close_with` takes
-/// its runner — this decision has to be testable without spending the budget in real time.
-pub(super) fn settled(
-    mut look: impl FnMut() -> registry::Liveness,
-    mut wait: impl FnMut(Duration),
-    budget: Duration,
-    poll: Duration,
-) -> registry::Liveness {
-    // One look before any waiting, then one more per interval until the budget is spent.
-    // Counted rather than accumulated, so that a zero interval cannot spin here forever.
-    let looks = 1 + budget.as_millis() / poll.as_millis().max(1);
-    let mut answer = look();
-    for _ in 1..looks {
-        if answer == registry::Liveness::Gone {
-            return answer;
-        }
-        wait(poll);
-        answer = look();
-    }
-    answer
-}
-
 /// Why a record was left where it was, said the way a person reads it.
 ///
 /// `None` when it was cleared. The two reasons get a sentence each: announcing "somebody

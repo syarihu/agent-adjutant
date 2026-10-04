@@ -68,5 +68,20 @@ pub fn expand_home(path: &str) -> PathBuf {
     }
 }
 
+/// Whether two paths name one directory, for a task's stored worktree against the one git lists.
+pub fn same_path(a: &str, b: &str) -> bool {
+    let resolved = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
+    resolved(a) == resolved(b)
+}
+
+/// This binary, for commands that have to name themselves in a command line handed to a
+/// terminal. The absolute path rather than `adjutant`, so a new tab whose PATH is not yet
+/// loaded still finds it.
+pub fn exe_path() -> String {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "adjutant".to_string())
+}
+
 #[cfg(test)]
 mod tests;

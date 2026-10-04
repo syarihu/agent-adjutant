@@ -60,15 +60,6 @@ pub fn show_config(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), 
     Ok(())
 }
 
-/// This binary, for commands that have to name themselves in a command line handed to a
-/// terminal. The absolute path rather than `adjutant`, so a new tab whose PATH is not yet
-/// loaded still finds it.
-pub(super) fn exe_path() -> String {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "adjutant".to_string())
-}
-
 /// Settings without insisting on a resolvable repository.
 ///
 /// `spawn` and `notify` are useful from anywhere, including outside a checkout, and failing
