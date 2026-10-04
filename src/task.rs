@@ -15,24 +15,40 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod create;
+mod fetch_issue;
 mod get;
 mod github;
+mod hand_over;
+mod known_title;
 mod list;
 mod model;
 mod next;
 mod note_gate_answered;
+mod nudge;
+mod pick_review_engine;
+mod refresh;
 mod remove;
 mod store;
+mod update;
 
+pub use create::*;
+pub use fetch_issue::*;
 pub use get::*;
 pub use github::*;
+pub use hand_over::*;
+pub use known_title::*;
 pub use list::*;
 pub use model::*;
 pub use next::*;
 pub use note_gate_answered::*;
+pub use nudge::*;
+pub use pick_review_engine::*;
+pub use refresh::*;
 pub use remove::*;
-// For their callers in `cmd`: `claim_id` and `stamp` until #354, `save` and `lock` until #362.
-pub use store::{claim_id, lock, save, stamp};
+pub use update::*;
+// For their callers in `cmd`: `save` and `lock` until #362.
+pub use store::{lock, save};
 // The board's fixture in src/cmd/serve/tests.rs writes a record by hand.
 #[cfg(test)]
 pub(crate) use store::dir;

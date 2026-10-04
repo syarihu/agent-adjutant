@@ -202,7 +202,7 @@ pub fn read_issue(main: &str, url: &str) -> Result<IssueSnapshot, String> {
         &["issue", "view", "--json", "title,body", "--", url],
         deadline,
     )?;
-    snapshot_from_gh(&json, url, &stamp())
+    snapshot_from_gh(&json, url, &store::stamp())
 }
 
 /// How many pull requests one query asks about. GraphQL prices a query by what it names, and
