@@ -15,11 +15,9 @@ mod jules;
 mod kernel;
 mod mail;
 mod mcp;
-mod messaging;
 mod registry;
 mod session;
 mod task;
-mod terminal;
 
 /// Scaffolding the tests share. Not a layer — nothing outside `#[cfg(test)]` may reach it,
 /// which is why `check-layering.sh` lets any module name it.

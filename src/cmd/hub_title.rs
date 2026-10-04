@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use super::Context;
-use crate::session::RepoHub;
+use crate::mail::RepoHub;
+use crate::registry::Context;
 use crate::task;
 
 /// How long an issue that could not be read is left alone before it is asked about again.

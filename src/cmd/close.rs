@@ -20,17 +20,17 @@ pub(super) const GONE_POLL: Duration = Duration::from_millis(100);
 /// stop running. `look` and `wait` are handed in for the reason `terminal::close_with` takes
 /// its runner — this decision has to be testable without spending the budget in real time.
 pub(super) fn settled(
-    mut look: impl FnMut() -> messaging::Liveness,
+    mut look: impl FnMut() -> registry::Liveness,
     mut wait: impl FnMut(Duration),
     budget: Duration,
     poll: Duration,
-) -> messaging::Liveness {
+) -> registry::Liveness {
     // One look before any waiting, then one more per interval until the budget is spent.
     // Counted rather than accumulated, so that a zero interval cannot spin here forever.
     let looks = 1 + budget.as_millis() / poll.as_millis().max(1);
     let mut answer = look();
     for _ in 1..looks {
-        if answer == messaging::Liveness::Gone {
+        if answer == registry::Liveness::Gone {
             return answer;
         }
         wait(poll);
@@ -44,14 +44,14 @@ pub(super) fn settled(
 /// `None` when it was cleared. The two reasons get a sentence each: announcing "somebody
 /// else is working here" for a file that cannot be read sends a person looking for a worker
 /// who was never there.
-fn left_alone(cleared: &messaging::Cleared, worktree: &std::path::Path) -> Option<String> {
+fn left_alone(cleared: &registry::Cleared, worktree: &std::path::Path) -> Option<String> {
     match cleared {
-        messaging::Cleared::Yes => None,
-        messaging::Cleared::AnotherWorker => Some(format!(
+        registry::Cleared::Yes => None,
+        registry::Cleared::AnotherWorker => Some(format!(
             "another worker has registered in {} since",
             worktree.display()
         )),
-        messaging::Cleared::Unreadable => Some(format!(
+        registry::Cleared::Unreadable => Some(format!(
             "the record in {} can no longer be read",
             worktree.display()
         )),
@@ -88,16 +88,16 @@ pub fn close(
     // No `is_dir` check, deliberately unlike `tell`: this runs during cleanup, so a
     // worktree that has already been removed is the ordinary way to arrive here twice
     // rather than a mistake worth failing over.
-    let worker = match messaging::read_worker(&worktree) {
+    let worker = match registry::read_worker(&worktree) {
         // Nothing registered here is the job already done. A hub that calls this twice, or
         // calls it on a worker that stopped on its own, has to get on with the cleanup.
-        messaging::Recorded::Absent => {
+        registry::Recorded::Absent => {
             if !quiet {
                 println!("no worker is running in {}", worktree.display());
             }
             return Ok(true);
         }
-        messaging::Recorded::Unreadable => {
+        registry::Recorded::Unreadable => {
             if !quiet {
                 println!(
                     "the worker record in {} cannot be read as naming a worker, so nothing was cleared",
@@ -106,16 +106,16 @@ pub fn close(
             }
             return Ok(false);
         }
-        messaging::Recorded::Found(worker) => worker,
+        registry::Recorded::Found(worker) => worker,
     };
     let pid = worker.pid;
-    match messaging::worker_liveness(&worker) {
-        messaging::Liveness::Gone => {
+    match registry::worker_liveness(&worker) {
+        registry::Liveness::Gone => {
             // The worker this record named is gone, so the record is the only thing left to
             // clear — and only while it is still that worker's.
             let cleared = match dry_run {
-                true => messaging::Cleared::Yes,
-                false => messaging::unregister_worker_if(&worktree, &worker)?,
+                true => registry::Cleared::Yes,
+                false => registry::unregister_worker_if(&worktree, &worker)?,
             };
             if let Some(why) = left_alone(&cleared, &worktree) {
                 if !quiet {
@@ -132,13 +132,13 @@ pub fn close(
             }
             return Ok(true);
         }
-        messaging::Liveness::CannotTell => {
+        registry::Liveness::CannotTell => {
             if !quiet {
                 println!("cannot tell whether pid {pid} is still running, so nothing was cleared");
             }
             return Ok(false);
         }
-        messaging::Liveness::Alive => {}
+        registry::Liveness::Alive => {}
     }
     let done = terminal::close(
         &settings.terminal,
@@ -184,17 +184,17 @@ pub fn close(
     // that removed the record instead of the tab would leave a worktree that *looks* free.
     // Only the worker's own absence settles it.
     match settled(
-        || messaging::worker_liveness(&worker),
+        || registry::worker_liveness(&worker),
         std::thread::sleep,
         GONE_BUDGET,
         GONE_POLL,
     ) {
-        messaging::Liveness::Gone => {
+        registry::Liveness::Gone => {
             // The process went with its tab, so a record left behind would have `present`
             // lying to whoever asks next — including the next call to this. Conditional,
             // because the worktree may have been handed to a new worker while this one was
             // being closed, and that worker's record is not this call's to remove.
-            let cleared = messaging::unregister_worker_if(&worktree, &worker)?;
+            let cleared = registry::unregister_worker_if(&worktree, &worker)?;
             if let Some(why) = left_alone(&cleared, &worktree) {
                 if !quiet {
                     println!("pid {pid} is gone, but {why}; nothing was cleared");
@@ -206,7 +206,7 @@ pub fn close(
             }
             Ok(true)
         }
-        messaging::Liveness::Alive => {
+        registry::Liveness::Alive => {
             if !quiet {
                 println!("the close command ran but pid {pid} is still there; nothing was cleared");
                 println!(
@@ -215,7 +215,7 @@ pub fn close(
             }
             Ok(false)
         }
-        messaging::Liveness::CannotTell => {
+        registry::Liveness::CannotTell => {
             if !quiet {
                 println!(
                     "the close command ran but whether pid {pid} is gone cannot be established; nothing was cleared"

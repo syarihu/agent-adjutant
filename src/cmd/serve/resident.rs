@@ -15,8 +15,8 @@ use super::Server;
 use super::assets::UI_HTML;
 use super::auth::refuse;
 use super::index::boards_json;
-use super::registry::{Address, address_of};
 use super::routes::{is_page_path, route, terminal_route};
+use crate::registry::{Address, address_of};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a

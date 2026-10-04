@@ -4,12 +4,10 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::messaging;
-
 use super::Server;
-use super::registry::forget_board;
 use super::routes::{hub_route, task_id_in};
 use super::state::settings_now;
+use crate::registry::forget_board;
 
 // ── the two things the board can change ──────────────────────────────
 
@@ -69,7 +67,7 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
 /// checkout where there is no worker to raise.
 pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
     let repo = &server.ctx.repo;
-    let status = messaging::hub_status(&server.ctx.state, &repo.slug, &repo.hub_name);
+    let status = crate::registry::hub_status(&server.ctx.state, &repo.slug, &repo.hub_name);
     let Some(pid) = status.pid.filter(|_| status.present) else {
         return Ok(json!({ "present": false, "ran": false }));
     };
@@ -92,15 +90,15 @@ pub(in crate::cmd) fn hub_start_of(input: &Value) -> Result<crate::cmd::HubStart
 /// known (it could only be started as some other hub).
 fn hub_start_context(
     server: &Server,
-    hub: &crate::session::RepoHub,
+    hub: &crate::mail::RepoHub,
     settings: crate::kernel::config::Settings,
-) -> Result<crate::cmd::Context, String> {
+) -> Result<crate::registry::Context, String> {
     if hub.parent && hub.key.is_none() {
         return Err(
             "the key of this hub is not known; start it with adj hub --hub <key>".to_string(),
         );
     }
-    Ok(crate::cmd::Context {
+    Ok(crate::registry::Context {
         repo: server.ctx.repo.clone().addressed(hub.key.as_deref())?,
         resolved: server.ctx.resolved.clone(),
         state: server.ctx.state.clone(),
@@ -112,13 +110,13 @@ fn hub_start_context(
 /// key cannot be told can still be stopped, and nothing here needs the key for it.
 fn hub_stop_context(
     server: &Server,
-    hub: &crate::session::RepoHub,
+    hub: &crate::mail::RepoHub,
     settings: crate::kernel::config::Settings,
-) -> crate::cmd::Context {
+) -> crate::registry::Context {
     let mut stopping = server.ctx.repo.clone();
     stopping.slug = hub.slug.clone();
     stopping.hub_name = hub.name.clone();
-    crate::cmd::Context {
+    crate::registry::Context {
         repo: stopping,
         resolved: server.ctx.resolved.clone(),
         state: server.ctx.state.clone(),
@@ -138,7 +136,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
         false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
     };
     let repo = &server.ctx.repo;
-    let hub = messaging::all_repo_hubs(&server.ctx.state, repo)
+    let hub = crate::mail::all_repo_hubs(&server.ctx.state, repo)
         .into_iter()
         .find(|h| h.id == id)
         .ok_or_else(|| format!("no such hub: {id}"))?;
@@ -237,7 +235,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
             if closing {
                 // `stop_hub` cleared a record naming the process it stopped; what is left
                 // names none, unless a hub registered in the meantime, which stays.
-                if !messaging::unregister_hub_if_unnamed(&server.ctx.state, &hub.slug)? {
+                if !crate::registry::unregister_hub_if_unnamed(&server.ctx.state, &hub.slug)? {
                     return Err(format!("{} changed while it was being closed", hub.name));
                 }
                 forget_board(&server.ctx.state, &hub.slug)?;
@@ -326,7 +324,7 @@ pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Valu
 /// What the page is told about the hand-over: whether the hub was there, and whether its
 /// tab was poked. Both matter to the person — a hub that is down is not an error, it just
 /// means the task waits.
-fn handed_json(handed: Option<crate::cmd::DeliveryOutcome>) -> Value {
+fn handed_json(handed: Option<crate::mail::DeliveryOutcome>) -> Value {
     match handed {
         Some(d) => json!({
             "present": d.is_present(),

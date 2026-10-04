@@ -12,7 +12,10 @@ use crate::infra::terminal::{self, SpawnRequest};
 use crate::kernel::config::{self, Settings};
 use crate::kernel::identity::{self, RepoInfo};
 use crate::kernel::runner;
-use crate::messaging::{self, Message};
+use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, deliver_to_worker};
+use crate::registry::{
+    self, Context, agent_env, context, context_as, context_of, context_without_hub, resolve,
+};
 
 mod board_actions;
 mod board_terminal;
@@ -38,14 +41,10 @@ mod worker_ops;
 
 pub use close::close;
 use close::{GONE_BUDGET, GONE_POLL, settled};
-pub use context::{Context, context, context_of, hub_name, show_config};
-use context::{agent_env, context_as, context_without_hub, exe_path, resolve, settings_for};
+use context::{exe_path, settings_for};
+pub use context::{hub_name, show_config};
 pub(crate) use delivery::wake_note_sentence;
-pub use delivery::{
-    DeliveryOutcome, NotWoken, PendingArgs, Reached, SendArgs, deliver_to_hub,
-    deliver_to_hub_announcing, deliver_to_hub_with_wake, deliver_to_worker, pending, post_to_hub,
-    send,
-};
+pub use delivery::{PendingArgs, SendArgs, pending, send};
 pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close as gate_close_payload,
     close_cmd as gate_close, list as gate_list, open as gate_open_payload, open_cmd as gate_open,
@@ -67,8 +66,8 @@ pub use jules::{
 pub use pr_poll::PrPoll;
 pub use review_engine::run as review_engine;
 pub use serve::{
-    DEFAULT_PORT, HubBoard, board_json, dashboards_running as board_running, resident_running,
-    serve, serve_for_hub, server_restart, server_start, server_status, server_stop,
+    DEFAULT_PORT, HubBoard, board_json, serve, serve_for_hub, server_restart, server_start,
+    server_status, server_stop,
 };
 #[cfg(test)]
 pub(crate) use skill_outbox::skill_text;

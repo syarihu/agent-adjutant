@@ -168,7 +168,7 @@ fn the_agent_is_started_without_variables_that_point_it_elsewhere() {
         );
     }
 }
-use crate::messaging::Liveness;
+use crate::registry::Liveness;
 
 /// A `look` that answers down a script and then keeps repeating its last word, so a
 /// test can say "still there twice, then gone" without owning a process to kill.

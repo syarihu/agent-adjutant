@@ -12,10 +12,12 @@ use serde_json::{Value, json};
 
 use super::same_path;
 use super::serve::{Server, find_session, settings_now};
-use super::{Context, HubStart, TabOutcome};
+use super::{HubStart, TabOutcome};
 use crate::kernel::runner;
-use crate::messaging::{self, Message};
-use crate::session::{RepoHub, SessionRequest};
+use crate::mail::RepoHub;
+use crate::mail::{self, Message};
+use crate::registry::{self, Context};
+use crate::session::SessionRequest;
 use crate::task::{self, Executor, Status};
 
 /// The hub named by `hub` (a `hubs[].id`), or this board's own when none is named, with the
@@ -27,7 +29,7 @@ fn hub_context(
     settings: crate::kernel::config::Settings,
 ) -> Result<(RepoHub, Context), String> {
     let repo = &server.ctx.repo;
-    let hubs = messaging::all_repo_hubs(&server.ctx.state, repo);
+    let hubs = mail::all_repo_hubs(&server.ctx.state, repo);
     let hub = match id.map(str::trim).filter(|id| !id.is_empty()) {
         Some(id) => hubs
             .into_iter()
@@ -104,7 +106,7 @@ fn dated_name(epoch_secs: i64) -> String {
 fn start_if_stopped(
     server: &Server,
     ctx: &Context,
-    delivered: &super::DeliveryOutcome,
+    delivered: &crate::mail::DeliveryOutcome,
 ) -> (bool, Option<String>) {
     if delivered.is_present() || !server.resident || !super::hub_startable(&ctx.settings.terminal) {
         return (false, None);
@@ -117,7 +119,7 @@ fn start_if_stopped(
 }
 
 /// The inbox file name of a delivered message, which is what `hubs[].inbox[].name` calls it.
-fn inbox_name(delivered: &super::DeliveryOutcome) -> Option<String> {
+fn inbox_name(delivered: &crate::mail::DeliveryOutcome) -> Option<String> {
     delivered
         .path
         .file_name()
@@ -165,7 +167,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
     if let Some(max) = settings.max_workers {
         let mut candidates = crate::kernel::identity::linked_worktrees(&server.ctx.repo.main)?;
         candidates.push(server.ctx.repo.main.clone());
-        let busy = messaging::busy_worktrees(&candidates, None);
+        let busy = registry::busy_worktrees(&candidates, None);
         if busy.len() >= max as usize {
             return Err(format!(
                 "worker limit reached: {} of maxWorkers {max} are running; \
@@ -188,7 +190,7 @@ pub(super) fn start_request(server: &Server, body: &[u8]) -> Result<Value, Strin
         subject: format!("start a session: {name}"),
         body: request.render_request(),
     };
-    let delivered = super::deliver_to_hub(&ctx, &message)?;
+    let delivered = crate::mail::deliver_to_hub(&ctx, &message)?;
     let (started, start_error) = start_if_stopped(server, &ctx, &delivered);
     let mut reply = json!({
         "handed": { "present": delivered.is_present(), "woken": delivered.was_woken() },
@@ -218,23 +220,23 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
     }
     let worktree = session.worktree.as_str();
     if !matches!(
-        messaging::read_worker_record(Path::new(worktree)),
-        messaging::Recorded::Found(_)
+        registry::read_worker_record(Path::new(worktree)),
+        registry::Recorded::Found(_)
     ) {
         return Err("the session has not started yet".to_string());
     }
     // A task linked to a worker nobody is running would sit as `dispatched` in a worktree
     // that never reads the notice.
-    if !messaging::worker_status(Path::new(worktree)).present {
+    if !registry::worker_status(Path::new(worktree)).present {
         return Err("the session has ended; resume it first".to_string());
     }
     // Checked before anything is written: a task made or changed for a phase the record would
     // then refuse is the half-linked state the undo below exists for.
     let phase = text(&input, "phase")?;
-    if let Some(phase) = phase.filter(|p| !messaging::PHASES.contains(p)) {
+    if let Some(phase) = phase.filter(|p| !registry::PHASES.contains(p)) {
         return Err(format!(
             "no such phase: {phase} (one of {})",
-            messaging::PHASES.join(", ")
+            registry::PHASES.join(", ")
         ));
     }
     let (hub, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
@@ -283,7 +285,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                         .worktree
                         .as_deref()
                         .filter(|w| !same_path(w, worktree))
-                        && messaging::worker_status(Path::new(other)).present
+                        && registry::worker_status(Path::new(other)).present
                     {
                         return Err(format!("{task_id} already has a worker running in {other}"));
                     }
@@ -327,7 +329,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
 
     let made_here = matches!(undo, Undo::Remove);
     if let Err(e) =
-        messaging::relink_worker(Path::new(worktree), hub.key.as_deref(), &linked.id, phase)
+        registry::relink_worker(Path::new(worktree), hub.key.as_deref(), &linked.id, phase)
     {
         match undo {
             Undo::Remove => {
@@ -360,7 +362,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         ctx.repo.hub_name,
         task::render_request(&linked)
     );
-    super::deliver_to_worker(
+    crate::mail::deliver_to_worker(
         &ctx,
         Path::new(worktree),
         "dashboard",
@@ -391,7 +393,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 task::render_request(&linked)
             ),
         };
-        match super::deliver_to_hub(&ctx, &message) {
+        match crate::mail::deliver_to_hub(&ctx, &message) {
             Ok(delivered) => {
                 reply["fileIssue"] = json!({
                     "handed": { "present": delivered.is_present(), "woken": delivered.was_woken() },
@@ -407,7 +409,7 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
                 reply["fileIssueError"] = json!(e);
                 // The worker was told the hub would file it: say it will not, in the words it
                 // already handles, so it does not wait for a URL.
-                let _ = super::deliver_to_worker(
+                let _ = crate::mail::deliver_to_worker(
                     &ctx,
                     Path::new(worktree),
                     "dashboard",

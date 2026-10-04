@@ -722,7 +722,7 @@ pub fn path_of(dir: &Path, id: &str) -> PathBuf {
 ///
 /// Claimed with `create_new` rather than checked with `exists` first: the dashboard and the
 /// command line can both be creating one, and check-then-write leaves a window where both
-/// see the name free. `messaging::send` names inbox files the same way, for the same reason.
+/// see the name free. `mail::send` names inbox files the same way, for the same reason.
 pub fn claim_id(dir: &Path, stamp: &str, title: &str) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let base = new_id(stamp, title);

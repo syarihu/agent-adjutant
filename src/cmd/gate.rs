@@ -7,9 +7,9 @@
 
 use serde_json::{Value, json};
 
-use super::Context;
 use crate::gate::{self, Gate, Kind};
-use crate::messaging;
+use crate::registry;
+use crate::registry::Context;
 
 use std::path::{Path, PathBuf};
 
@@ -228,7 +228,10 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     gate.extra.clear();
 
     gate::save(&home, &gate)?;
-    Ok((gate, super::serve::running(&ctx.state, &ctx.repo).is_some()))
+    Ok((
+        gate,
+        crate::registry::running(&ctx.state, &ctx.repo).is_some(),
+    ))
 }
 
 /// Hand the ball back. The gate leaves the queue and the answer lands in the outbox.
@@ -242,7 +245,7 @@ pub fn answer(
     decision: &str,
     choice: Option<&str>,
     comment: Option<&str>,
-) -> Result<(Gate, super::DeliveryOutcome), String> {
+) -> Result<(Gate, crate::mail::DeliveryOutcome), String> {
     // Locked before the gate is read, and held until it is archived: the worker's close and
     // the board's sweep decide a gate under the same lock, and an answer delivered to a gate
     // somebody else has just closed would wake a worker to something that was settled.
@@ -282,7 +285,7 @@ pub fn answer(
     let told = if gate.answered_by_hub() {
         // `gate` rather than `answer`: the hub pairs an `answer` with a question it asked a
         // worker, and this is a person deciding on something the hub put on the board.
-        let message = crate::messaging::Message {
+        let message = crate::mail::Message {
             from: "dashboard".to_string(),
             // None, for the reason `task::hand_over` gives.
             worktree: None,
@@ -290,9 +293,9 @@ pub fn answer(
             subject: subject.clone(),
             body: body.clone(),
         };
-        super::deliver_to_hub_announcing(ctx, &message, false)?
+        crate::mail::deliver_to_hub_announcing(ctx, &message, false)?
     } else {
-        super::deliver_to_worker(
+        crate::mail::deliver_to_worker(
             ctx,
             std::path::Path::new(&gate.worktree),
             &ctx.repo.hub_name,
@@ -411,8 +414,8 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
         if !g.wait || g.answered_by_hub() {
             continue;
         }
-        let record = match messaging::read_worker_record(Path::new(&g.worktree)) {
-            messaging::Recorded::Found(record) => Some(record),
+        let record = match registry::read_worker_record(Path::new(&g.worktree)) {
+            registry::Recorded::Found(record) => Some(record),
             _ => None,
         };
         let started = record.as_ref().and_then(|r| r.started_at.as_deref());
@@ -493,7 +496,7 @@ pub fn open_cmd(
     body_file: Option<&str>,
     as_json: bool,
 ) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     // The payload arrives whole rather than as a dozen flags: every interesting field is
     // multi-line prose, and a shell quoting three paragraphs into `--focus` is a worse
     // interface than a heredoc.
@@ -591,7 +594,7 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
 }
 
 pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let gates = gate::list(&dir(&ctx));
     if as_json {
         println!("{}", json!(gates));
@@ -614,7 +617,7 @@ pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), 
 }
 
 pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let gate = find(&ctx, id)?;
     println!(
         "{}",
@@ -634,7 +637,7 @@ pub struct AnswerArgs<'a> {
 }
 
 pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     let (gate, told) = answer(&ctx, args.id, args.decision, args.choice, args.comment)?;
     if args.json {
         let mut out = json!({
@@ -643,8 +646,8 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
             "woken": told.was_woken(),
             "path": told.path.display().to_string(),
         });
-        if let super::Reached::Running {
-            wake: super::NotWoken::Held { why: Some(why) },
+        if let crate::mail::Reached::Running {
+            wake: crate::mail::NotWoken::Held { why: Some(why) },
         } = &told.reached
         {
             out["wakeNote"] = json!(why);
@@ -656,32 +659,32 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     println!("wrote {}", told.path.display());
     if gate.answered_by_hub() {
         match &told.reached {
-            super::Reached::Woken => println!("Woke the hub."),
-            super::Reached::Running { wake } => {
+            crate::mail::Reached::Woken => println!("Woke the hub."),
+            crate::mail::Reached::Running { wake } => {
                 println!(
                     "The hub is running; it will read this the next time it checks its inbox."
                 );
-                if let super::NotWoken::Held { why: Some(note) } = wake {
+                if let crate::mail::NotWoken::Held { why: Some(note) } = wake {
                     println!("{}", super::wake_note_sentence(note));
                 }
             }
-            super::Reached::NotRunning => println!(
+            crate::mail::Reached::NotRunning => println!(
                 "The hub is not running. The answer waits in its inbox for the next time it starts."
             ),
         }
         return Ok(());
     }
     match &told.reached {
-        super::Reached::Woken => println!("Woke the worker."),
-        super::Reached::Running { wake } => {
+        crate::mail::Reached::Woken => println!("Woke the worker."),
+        crate::mail::Reached::Running { wake } => {
             println!(
                 "The worker is running; it will read this the next time it checks its outbox."
             );
-            if let super::NotWoken::Held { why: Some(note) } = wake {
+            if let crate::mail::NotWoken::Held { why: Some(note) } = wake {
                 println!("{}", super::wake_note_sentence(note));
             }
         }
-        super::Reached::NotRunning => println!(
+        crate::mail::Reached::NotRunning => println!(
             "The worker is not running. The answer waits in that worktree's outbox for \
              whoever starts one there next."
         ),
@@ -702,7 +705,7 @@ pub struct CloseArgs<'a> {
 
 /// `adj gate close`: archive an open gate from the command line.
 pub fn close_cmd(args: &CloseArgs<'_>) -> Result<(), String> {
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     let gate = close(&ctx, args.id, args.comment, args.terminal)?;
     let on_board = gate.answered_on_board();
     if args.json {
@@ -742,7 +745,7 @@ mod tests {
             hub_name: "adjutant-acme-widget".to_string(),
             nwo_source: "dirname",
         };
-        let ctx = super::super::context_of(repo).unwrap();
+        let ctx = crate::registry::context_of(repo).unwrap();
         let (gate, _) = open(
             &ctx,
             &json!({"kind": "question", "title": "q", "worktree": "/tmp/wt", "futureField": 1}),

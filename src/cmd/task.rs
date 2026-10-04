@@ -8,9 +8,10 @@
 
 use serde_json::{Value, json};
 
-use super::{Context, DeliveryOutcome, Reached};
 use crate::kernel::config;
-use crate::messaging::Message;
+use crate::mail::Message;
+use crate::mail::{DeliveryOutcome, Reached};
+use crate::registry::Context;
 use crate::task::{self, PrRef, PrStatus, Status, Task};
 
 use std::path::{Path, PathBuf};
@@ -390,7 +391,7 @@ pub fn hand_over(ctx: &Context, task: &Task) -> Result<DeliveryOutcome, String> 
         subject: task.title.clone(),
         body: task::render_request(task),
     };
-    super::deliver_to_hub(ctx, &message)
+    crate::mail::deliver_to_hub(ctx, &message)
 }
 
 /// Ask the hub to start the next queued task if a worker slot is free.
@@ -408,7 +409,7 @@ pub fn nudge(ctx: &Context) -> Result<DeliveryOutcome, String> {
         subject: "start the next queued task if a worker slot is free".to_string(),
         body: String::new(),
     };
-    super::deliver_to_hub(ctx, &message)
+    crate::mail::deliver_to_hub(ctx, &message)
 }
 
 /// What GitHub says about a pull request a record points at.
@@ -824,7 +825,7 @@ pub struct AddArgs<'a> {
 }
 
 pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     let body = super::read_body(args.body)?;
     let mut input = json!({
         "body": body,
@@ -888,7 +889,7 @@ pub struct UpdateArgs<'a> {
 }
 
 pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     let mut input = json!({});
     let fields = input.as_object_mut().expect("just built");
     // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
@@ -943,7 +944,7 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
 /// `adj task next`: the queued task a free worker slot should take, and the queued tasks that
 /// ask first and have no `dispatch` gate open yet.
 pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     // Open gates only: an answered one has gone to the archive, and its answer is the hub's
     // to act on from the inbox.
     let gated: std::collections::HashSet<String> =
@@ -973,7 +974,7 @@ pub fn list(
     worktree: Option<&str>,
     as_json: bool,
 ) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let wanted = match status {
         Some(text) => Some(Status::parse(text).ok_or(format!("no such status: {text}"))?),
         None => None,
@@ -1015,7 +1016,7 @@ pub fn list(
 }
 
 pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let task = task::load(&dir(&ctx), id)?;
     println!(
         "{}",
@@ -1031,7 +1032,7 @@ pub fn fetch_issue_cmd(
     id: &str,
     as_json: bool,
 ) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let task = fetch_issue(&ctx, id)?;
     if as_json {
         println!("{}", json!({ "task": task }));
@@ -1046,7 +1047,7 @@ pub fn fetch_issue_cmd(
 }
 
 pub fn refresh_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = super::context(repo, hub)?;
+    let ctx = crate::registry::context(repo, hub)?;
     let checked = refresh(&ctx)?;
     if as_json {
         println!("{}", refresh_json(&checked));
@@ -1163,7 +1164,7 @@ fn given(value: Option<&str>) -> Option<&str> {
 pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
     use crate::kernel::brief as text;
 
-    let ctx = super::context(args.repo, args.hub)?;
+    let ctx = crate::registry::context(args.repo, args.hub)?;
     let worktree = resolved_worktree(args.worktree);
     let worktree = std::path::Path::new(&worktree);
     if !worktree.is_dir() {

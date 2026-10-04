@@ -19,12 +19,13 @@ use serde_json::{Value, json};
 use super::board_terminal::target_of;
 use super::serve::{Server, find_session, git_state_of, hub_start_of, settings_now};
 use super::session::{input_of, text};
-use super::{Context, Resumed, TabOutcome, same_path};
+use super::{Resumed, TabOutcome, same_path};
 use crate::infra::template::{Sub, render, sh_join, sh_quote};
 use crate::infra::terminal;
 use crate::kernel::runner;
 use crate::kernel::worktree_state::GitState;
-use crate::messaging;
+use crate::mail;
+use crate::registry::{self, Context};
 use crate::task::{self, Executor, Status};
 
 /// The context of the repository's own hub, as `adj work --resume` builds one, but from what the
@@ -99,7 +100,7 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
         return Err("the session is running".to_string());
     }
     let worktree = Path::new(&session.worktree);
-    if messaging::is_starting(worktree, crate::infra::clock::now_secs()) {
+    if registry::is_starting(worktree, crate::infra::clock::now_secs()) {
         return Err("the session is starting".to_string());
     }
     if let Some(refusal) = resume_refusal(&settings) {
@@ -112,7 +113,7 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
             Resumed::Opened(done) => done,
             Resumed::Full(refusal) => return Err(refusal),
         };
-    let hub_running = messaging::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
+    let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
     Ok(json!({
@@ -239,7 +240,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
         return Err("only a worker session can be restarted".to_string());
     }
     let worktree = Path::new(&session.worktree);
-    if messaging::is_starting(worktree, crate::infra::clock::now_secs()) {
+    if registry::is_starting(worktree, crate::infra::clock::now_secs()) {
         return Err("the session is starting".to_string());
     }
     if let Some(refusal) = resume_refusal(&settings) {
@@ -257,7 +258,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     // after it would have closed the session for nothing.
     let ctx = own_hub_context(server, settings)?;
     let _restarting = Restarting::claim(&session.worktree, "the session")?;
-    let was_running = messaging::worker_status(worktree).present;
+    let was_running = registry::worker_status(worktree).present;
     let repo = server.ctx.repo.nwo.clone();
     if !super::close(Some(&repo), &session.worktree, true, false)? {
         return Err(
@@ -277,7 +278,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
                 });
             }
         };
-    let hub_running = messaging::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
+    let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
     Ok(json!({
@@ -443,7 +444,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     }
 
     // The tasks that name this worktree, in whichever hub they were made.
-    let hubs = messaging::all_repo_hubs(&server.ctx.state, repo);
+    let hubs = mail::all_repo_hubs(&server.ctx.state, repo);
     let mut tasks: Vec<(String, task::Task)> = Vec::new();
     for hub in &hubs {
         for t in task::list(&task::dir(&server.ctx.state, &hub.slug)) {
@@ -464,7 +465,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     }) {
         return Err("a Jules plan is being written in it".to_string());
     }
-    if messaging::is_starting(Path::new(worktree), crate::infra::clock::now_secs()) {
+    if registry::is_starting(Path::new(worktree), crate::infra::clock::now_secs()) {
         return Err("the session is starting".to_string());
     }
 
@@ -480,7 +481,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     let state = state.ok().flatten();
 
     let main = Path::new(&repo.main);
-    let was_running = messaging::worker_status(Path::new(worktree)).present;
+    let was_running = registry::worker_status(Path::new(worktree)).present;
     // `close` answers `true` for a worker that is not there, so a stopped session is not
     // refused; `false` is a worker that may still be running, or a record that cannot be
     // read, and removing under either is what this must not do. Outside the dispatch lock,
@@ -488,11 +489,11 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     //
     // Only when something may be running: closing a worker that is gone clears its record, and
     // a removal that then fails would have taken the session's phase history for nothing.
-    let may_run = match messaging::read_worker(Path::new(worktree)) {
-        messaging::Recorded::Absent => false,
-        messaging::Recorded::Unreadable => true,
-        messaging::Recorded::Found(worker) => {
-            messaging::worker_liveness(&worker) != messaging::Liveness::Gone
+    let may_run = match registry::read_worker(Path::new(worktree)) {
+        registry::Recorded::Absent => false,
+        registry::Recorded::Unreadable => true,
+        registry::Recorded::Found(worker) => {
+            registry::worker_liveness(&worker) != registry::Liveness::Gone
         }
     };
     if may_run && !super::close(Some(&repo.nwo), worktree, true, false)? {
@@ -518,11 +519,11 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     // that starts here from now on is turned away. The removal itself, which can take long on
     // a big worktree, runs after the lock is released, so that a dispatch elsewhere is not
     // made to wait for it.
-    let removing = messaging::with_dispatch_lock(main, || -> Result<_, String> {
-        if messaging::holds_worker_slot(Path::new(worktree), crate::infra::clock::now_secs()) {
+    let removing = registry::with_dispatch_lock(main, || -> Result<_, String> {
+        if registry::holds_worker_slot(Path::new(worktree), crate::infra::clock::now_secs()) {
             return Err("a session started in it meanwhile; nothing was removed".to_string());
         }
-        messaging::mark_worktree_removing(main, Path::new(worktree))
+        registry::mark_worktree_removing(main, Path::new(worktree))
     })??;
     let removed = remove_worktree(&server.ctx.state, &repo.main, worktree, force);
     // Released only now, whatever the removal came to.

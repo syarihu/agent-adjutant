@@ -28,7 +28,7 @@ pub fn context(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<Context,
 /// The difference is the worker record. A hub launched from inside a worktree, and a worker
 /// registering in the worktree its tab was opened at, would both read a record that belongs
 /// to somebody else — or, for the worker, the one it is a moment away from overwriting. See
-/// `messaging::hub_id_told`.
+/// `registry::hub_id_told`.
 ///
 /// Told nothing, it takes the identifier `agentEnv` names, because that is the one the agent
 /// it starts will be given. Only then: a flag or `ADJUTANT_HUB` outranks the config, and

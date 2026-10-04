@@ -1,11 +1,5 @@
 use super::*;
 
-// Moved to `mail`; re-exported until #331 so that `cmd::deliver_to_hub` and the rest still resolve.
-pub use crate::mail::{
-    DeliveryOutcome, NotWoken, Reached, deliver_to_hub, deliver_to_hub_announcing,
-    deliver_to_hub_with_wake, deliver_to_worker, post_to_hub,
-};
-
 // ── pending ──────────────────────────────────────────────────────────
 
 pub struct PendingArgs<'a> {
@@ -22,23 +16,23 @@ pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
     let info = resolve(args.repo, args.hub)?;
     let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
     if args.path_only {
-        println!("{}", messaging::open_inbox(&root, &info.slug)?.display());
+        println!("{}", mail::open_inbox(&root, &info.slug)?.display());
         return Ok(());
     }
     if let Some(name) = args.read {
-        print!("{}", messaging::read(&root, &info.slug, name)?);
+        print!("{}", mail::read(&root, &info.slug, name)?);
         return Ok(());
     }
     if let Some(name) = args.ack {
-        let moved = messaging::ack(&root, &info.slug, name)?;
+        let moved = mail::ack(&root, &info.slug, name)?;
         println!("filed {} ({})", name, moved.display());
         return Ok(());
     }
 
-    let messaging::Pending {
+    let mail::Pending {
         dir,
         messages: entries,
-    } = messaging::pending(&root, &info.slug);
+    } = mail::pending(&root, &info.slug);
     if args.as_json {
         let items: Vec<Value> = entries
             .iter()

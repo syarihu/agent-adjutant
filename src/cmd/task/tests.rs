@@ -12,7 +12,7 @@ fn create_drops_keys_the_record_does_not_know() {
         hub_name: "adjutant-acme-widget".to_string(),
         nwo_source: "dirname",
     };
-    let ctx = super::super::context_of(repo).unwrap();
+    let ctx = crate::registry::context_of(repo).unwrap();
     let (task, _) = create(&ctx, &json!({"title": "t", "futureField": 1})).unwrap();
     assert!(task.extra.is_empty());
     let text = std::fs::read_to_string(task::path_of(&dir(&ctx), &task.id)).unwrap();

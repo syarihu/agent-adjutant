@@ -1,10 +1,5 @@
 use super::*;
 
-// Moved to `registry`; re-exported until #331 so that `crate::cmd::context_of` and the rest
-// still resolve.
-pub use crate::registry::{Context, context, context_of};
-pub(super) use crate::registry::{agent_env, context_as, context_without_hub, resolve};
-
 // ── hub-name ─────────────────────────────────────────────────────────
 
 pub fn hub_name(
