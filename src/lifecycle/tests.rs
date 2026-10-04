@@ -220,3 +220,114 @@ fn focusing_a_hub_with_no_record_raises_nothing() {
     let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
     assert!(hub::focus(&ctx, false).unwrap().is_none());
 }
+
+use super::worker::{Done, LinkRequest, LinkTo, link, undo};
+use crate::task::{self, NewTask, Status, TaskPatch};
+
+/// A hub's context in a sandboxed state directory. Hold the sandbox for the whole test.
+fn hub() -> (crate::testing::Sandbox, crate::registry::Context) {
+    let sandbox = crate::testing::Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    (sandbox, ctx)
+}
+
+/// A task the test makes the way the board's form would, with nothing handed over.
+fn made(ctx: &crate::registry::Context, title: &str) -> task::Task {
+    let new = NewTask {
+        title: Some(title.to_string()),
+        ..NewTask::default()
+    };
+    task::create(ctx, new, false).unwrap().0
+}
+
+/// A link whose worker record cannot be written takes its task writes back: a task naming a
+/// worktree whose worker reports for nothing is the half-linked state it exists to avoid. The
+/// task it made is gone, and the one it took has every field it wrote put back, absent ones too.
+#[test]
+fn an_undone_link_removes_the_task_it_made_and_puts_back_the_one_it_took() {
+    let (_sandbox, ctx) = hub();
+    let created = made(&ctx, "Made by the link");
+    let taken = made(&ctx, "Taken by the link");
+    let waiting = TaskPatch {
+        note: Some(Some("waiting for a person".to_string())),
+        ..TaskPatch::default()
+    };
+    task::update(&ctx, &taken.id, &waiting, false).unwrap();
+    let before = task::get(&ctx.state, &ctx.repo.slug, &taken.id).unwrap();
+    task::update(
+        &ctx,
+        &taken.id,
+        &TaskPatch {
+            worktree: Some(Some("/tmp/acme-widget-try".to_string())),
+            status: Some(Status::Dispatched),
+            note: Some(None),
+            ..TaskPatch::default()
+        },
+        false,
+    )
+    .unwrap();
+
+    let back = TaskPatch {
+        worktree: Some(before.worktree.clone()),
+        status: Some(before.status),
+        note: Some(before.note.clone()),
+        ..TaskPatch::default()
+    };
+    undo(
+        &ctx,
+        vec![
+            Done::Created(created.id.clone()),
+            Done::Updated(taken.id.clone(), Box::new(back.clone())),
+        ],
+    )
+    .unwrap();
+
+    let gone = task::get(&ctx.state, &ctx.repo.slug, &created.id).unwrap_err();
+    assert!(gone.starts_with("no such task"), "{gone}");
+    let restored = task::get(&ctx.state, &ctx.repo.slug, &taken.id).unwrap();
+    assert_eq!(restored.worktree, None);
+    assert_eq!(restored.status, Status::Backlog);
+    assert_eq!(restored.note.as_deref(), Some("waiting for a person"));
+
+    // The record made for the link is already gone: say so rather than drop it.
+    let err = undo(&ctx, vec![Done::Created(created.id.clone())]).unwrap_err();
+    assert!(
+        err.starts_with(&format!("{} could not be put back:", created.id)),
+        "{err}"
+    );
+}
+
+/// A worktree no worker ever registered in is refused before anything is written, whichever
+/// task it was asked to take.
+#[test]
+fn a_link_to_a_session_that_has_not_started_writes_no_task() {
+    let (sandbox, ctx) = hub();
+    let worktree = sandbox.state().join("never-started");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let existing = made(&ctx, "Already there");
+    let new = NewTask {
+        title: Some("Would be made".to_string()),
+        ..NewTask::default()
+    };
+
+    for to in [LinkTo::New(new), LinkTo::Existing(existing.id.clone())] {
+        let err = link(&ctx, &worktree, LinkRequest { to, phase: None })
+            .err()
+            .unwrap();
+        assert_eq!(err, "the session has not started yet");
+    }
+
+    let tasks = task::list(&ctx.state, &ctx.repo.slug);
+    assert_eq!(tasks.len(), 1, "{tasks:?}");
+    assert_eq!(tasks[0].status, Status::Backlog);
+    assert_eq!(tasks[0].worktree, None);
+}
