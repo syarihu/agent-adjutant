@@ -220,7 +220,10 @@ pub(super) fn link(server: &Server, id: &str, body: &[u8]) -> Result<Value, Stri
         return Err("only a worker session can be linked to a task".to_string());
     }
     let worktree = session.worktree.as_str();
-    if crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(worktree))).is_none() {
+    if !matches!(
+        messaging::read_worker_record(Path::new(worktree)),
+        messaging::Recorded::Found(_)
+    ) {
         return Err("the session has not started yet".to_string());
     }
     // A task linked to a worker nobody is running would sit as `dispatched` in a worktree

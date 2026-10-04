@@ -19,16 +19,6 @@ use super::sessions::{TmuxView, sessions_of, tmux_view};
 
 // ── what the board reads ─────────────────────────────────────────────
 
-/// The terminal a worker record names, read as `session_terminal` used to read it. Until
-/// worker records are typed (#323).
-pub(super) fn recorded_terminal(
-    record: Option<&Value>,
-) -> Option<crate::infra::terminal::SessionTerminal> {
-    record
-        .and_then(|r| r.get("terminal"))
-        .and_then(|t| serde_json::from_value(t.clone()).ok())
-}
-
 /// Where a session runs: what its record says it was started in (`recorded`), or — for a
 /// record written before it said so — the settings and a live look through tmux for the pid.
 pub(super) fn session_terminal(

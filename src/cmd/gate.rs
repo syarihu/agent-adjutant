@@ -418,12 +418,14 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
         if !g.wait || g.answered_by_hub() {
             continue;
         }
-        let record =
-            crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(&g.worktree)));
-        let field = |name: &str| record.as_ref().and_then(|r| r.get(name));
-        let started = field("startedAt").and_then(Value::as_str);
-        let phase_at = field("phaseAt")
-            .and_then(Value::as_i64)
+        let record = match messaging::read_worker_record(Path::new(&g.worktree)) {
+            messaging::Recorded::Found(record) => Some(record),
+            _ => None,
+        };
+        let started = record.as_ref().and_then(|r| r.started_at.as_deref());
+        let phase_at = record
+            .as_ref()
+            .and_then(|r| r.phase_at)
             .map(crate::infra::clock::utc_stamp);
         let later = signals
             .iter()
@@ -440,7 +442,10 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
         let comment = match signal {
             gate::Signal::Phase => format!(
                 "closed by the board: the worker moved on to phase {} at {at}",
-                field("phase").and_then(Value::as_str).unwrap_or("unknown")
+                record
+                    .as_ref()
+                    .and_then(|r| r.phase.as_deref())
+                    .unwrap_or("unknown")
             ),
             gate::Signal::Gate => format!(
                 "closed by the board: the worker opened gate {}",

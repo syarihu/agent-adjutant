@@ -18,17 +18,20 @@ pub(super) struct WorkerSeen {
 /// The worker record in `worktree`, if there is one. The task is read the way `worker_task`
 /// reads it, minus the saved-session fallback: a record is all the page's join looks at.
 fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
-    let record = crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(worktree)))?;
-    let text = |key: &str| {
-        record
-            .get(key)
-            .and_then(Value::as_str)
-            .map(|s| s.trim().to_string())
+    let messaging::Recorded::Found(record) = messaging::read_worker_record(Path::new(worktree))
+    else {
+        return None;
+    };
+    let text = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
+            .map(str::to_string)
     };
     Some(WorkerSeen {
-        task: text("task"),
-        phase: text("phase"),
+        task: text(&record.task),
+        phase: text(&record.phase),
     })
 }
 

@@ -5,9 +5,11 @@ use super::*;
 /// resume, while the session is only written when a session starts.
 pub fn worker_hub_key(worktree: &Path) -> Option<String> {
     let clean = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
-    read_json(&worker_record_path(worktree))
-        .and_then(|record| record.get("hub").and_then(Value::as_str).and_then(clean))
-        .or_else(|| worker_session(worktree).and_then(|saved| saved.hub.as_deref().and_then(clean)))
+    match read_worker_record(worktree) {
+        Recorded::Found(record) => record.hub.as_deref().and_then(clean),
+        _ => None,
+    }
+    .or_else(|| worker_session(worktree).and_then(|saved| saved.hub.as_deref().and_then(clean)))
 }
 
 /// The task a checkout's worker is on: what its record says, and only when it has no record
@@ -15,9 +17,11 @@ pub fn worker_hub_key(worktree: &Path) -> Option<String> {
 /// session saved before it was linked must not give it back one it has since been moved off.
 pub fn worker_task(worktree: &Path) -> Option<String> {
     let clean = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
-    match read_json(&worker_record_path(worktree)) {
-        Some(record) => record.get("task").and_then(Value::as_str).and_then(clean),
-        None => worker_session(worktree).and_then(|saved| saved.task.as_deref().and_then(clean)),
+    match read_worker_record(worktree) {
+        Recorded::Found(record) => record.task.as_deref().and_then(clean),
+        Recorded::Absent | Recorded::Unreadable => {
+            worker_session(worktree).and_then(|saved| saved.task.as_deref().and_then(clean))
+        }
     }
 }
 
