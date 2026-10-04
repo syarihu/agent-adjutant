@@ -260,7 +260,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     let _restarting = Restarting::claim(&session.worktree, "the session")?;
     let was_running = registry::worker_status(worktree).present;
     let repo = server.ctx.repo.nwo.clone();
-    if !super::close(Some(&repo), &session.worktree, true, false)? {
+    if !crate::lifecycle::worker::close(&ctx.settings, worktree, false)?.is_free() {
         return Err(
             "the session could not be closed (pid still running or its record unreadable); \
              nothing was restarted"
@@ -482,7 +482,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
 
     let main = Path::new(&repo.main);
     let was_running = registry::worker_status(Path::new(worktree)).present;
-    // `close` answers `true` for a worker that is not there, so a stopped session is not
+    // `close` finds the worktree free when no worker is there, so a stopped session is not
     // refused; `false` is a worker that may still be running, or a record that cannot be
     // read, and removing under either is what this must not do. Outside the dispatch lock,
     // which others give up waiting for after ten seconds.
@@ -496,7 +496,8 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
             registry::worker_liveness(&worker) != registry::Liveness::Gone
         }
     };
-    if may_run && !super::close(Some(&repo.nwo), worktree, true, false)? {
+    if may_run && !crate::lifecycle::worker::close(&settings, Path::new(worktree), false)?.is_free()
+    {
         return Err("the session could not be closed; nothing was removed".to_string());
     }
     // Looked at again now that nothing is running: a worker that committed between the first

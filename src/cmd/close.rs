@@ -1,4 +1,5 @@
 use super::*;
+use crate::lifecycle::worker::WorkerClose;
 
 /// Why a record was left where it was, said the way a person reads it.
 ///
@@ -24,17 +25,8 @@ fn left_alone(cleared: &registry::Cleared, worktree: &std::path::Path) -> Option
 /// The hub's way of ending a session it started: it is the side that knows the task is
 /// over, and a finished worker's tab otherwise stays open with nobody to close it.
 ///
-/// Everything here is about **one** worker, read out of the record once and carried
-/// through: the gate, the tab that gets closed, the process that has to be gone afterwards
-/// and the record that may then be cleared. Asked separately, each of those questions can
-/// be answered about a different worker — the next one registering in the same worktree —
-/// and the answers then compose into a worktree that is deleted while somebody is using it.
-///
-/// `false` means a worker may still be sitting there. The caller is on its way to removing
-/// this worktree, so that answer has to reach a shell as an exit code rather than as a
-/// sentence in the output — and everything this cannot establish answers `false`, because
-/// the cost of the two mistakes is not symmetric: a cleanup that stops is finished by hand,
-/// a cleanup that carries on deletes work nobody can get back.
+/// `false` is `WorkerClose::is_free` saying a worker may still be sitting there, which has
+/// to reach a shell as an exit code rather than as a sentence in the output.
 pub fn close(
     repo_arg: Option<&str>,
     worktree: &str,
@@ -46,143 +38,62 @@ pub fn close(
     // likely to be run while the repository it belongs to is being taken apart.
     let settings = settings_for(repo_arg);
     let worktree = crate::infra::paths::expand_home(worktree);
-    // No `is_dir` check, deliberately unlike `tell`: this runs during cleanup, so a
-    // worktree that has already been removed is the ordinary way to arrive here twice
-    // rather than a mistake worth failing over.
-    let worker = match registry::read_worker(&worktree) {
-        // Nothing registered here is the job already done. A hub that calls this twice, or
-        // calls it on a worker that stopped on its own, has to get on with the cleanup.
-        registry::Recorded::Absent => {
-            if !quiet {
-                println!("no worker is running in {}", worktree.display());
-            }
-            return Ok(true);
-        }
-        registry::Recorded::Unreadable => {
-            if !quiet {
-                println!(
-                    "the worker record in {} cannot be read as naming a worker, so nothing was cleared",
-                    worktree.display()
-                );
-            }
-            return Ok(false);
-        }
-        registry::Recorded::Found(worker) => worker,
-    };
-    let pid = worker.pid;
-    match registry::worker_liveness(&worker) {
-        registry::Liveness::Gone => {
-            // The worker this record named is gone, so the record is the only thing left to
-            // clear — and only while it is still that worker's.
-            let cleared = match dry_run {
-                true => registry::Cleared::Yes,
-                false => registry::unregister_worker_if(&worktree, &worker)?,
-            };
-            if let Some(why) = left_alone(&cleared, &worktree) {
-                if !quiet {
-                    println!("the worker recorded here is gone, but {why}; nothing was cleared");
+    let outcome = crate::lifecycle::worker::close(&settings, &worktree, dry_run)?;
+    say(&outcome, &worktree, quiet);
+    Ok(outcome.is_free())
+}
+
+/// What closing came to, in words. A dry run's plan is the one thing said under `--quiet`:
+/// it is what the flag was asked for.
+fn say(outcome: &WorkerClose, worktree: &std::path::Path, quiet: bool) {
+    match outcome {
+        WorkerClose::WouldClose(done) => {
+            // The description when there is no script to show. The built-in path produces none
+            // for a pid whose terminal cannot be found, and a blank line tells the reader less
+            // than the sentence explaining why.
+            println!(
+                "{}",
+                match done.script.is_empty() {
+                    true => &done.description,
+                    false => &done.script,
                 }
-                return Ok(false);
-            }
-            if !quiet {
-                println!("no worker is running in {}", worktree.display());
-                match dry_run {
-                    true => println!("(a record is left behind; it would be cleared)"),
-                    false => println!("(cleared the record it left behind)"),
-                }
-            }
-            return Ok(true);
+            );
         }
-        registry::Liveness::CannotTell => {
-            if !quiet {
-                println!("cannot tell whether pid {pid} is still running, so nothing was cleared");
-            }
-            return Ok(false);
-        }
-        registry::Liveness::Alive => {}
-    }
-    let done = terminal::close(
-        &settings.terminal,
-        pid,
-        // The name the tab actually carries: `spawn` put the record's title through
-        // `sanitise_title` with the directory name behind it, and a template that matches
-        // a tab by name has to be handed the answer that got there.
-        &terminal::sanitise_title(
-            worker.title.as_deref().unwrap_or_default(),
-            worktree
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default(),
+        _ if quiet => {}
+        WorkerClose::NoWorker => println!("no worker is running in {}", worktree.display()),
+        WorkerClose::Unreadable => println!(
+            "the worker record in {} cannot be read as naming a worker, so nothing was cleared",
+            worktree.display()
         ),
-        dry_run,
-    )?;
-    if dry_run {
-        // The description when there is no script to show. The built-in path produces none
-        // for a pid whose terminal cannot be found, and a blank line tells the reader less
-        // than the sentence explaining why.
-        println!(
-            "{}",
-            match done.script.is_empty() {
-                true => &done.description,
-                false => &done.script,
+        WorkerClose::Gone { dry_run } => {
+            println!("no worker is running in {}", worktree.display());
+            match dry_run {
+                true => println!("(a record is left behind; it would be cleared)"),
+                false => println!("(cleared the record it left behind)"),
             }
-        );
-        // The exit code still answers about the worktree rather than about the plan — a
-        // live worker was found a few lines above, and nothing has been closed. `focus`
-        // sets the precedent: its dry run reports the state it looked at. Answering "safe
-        // to remove" here is how `close --dry-run && git worktree remove` deletes a live
-        // worker's checkout.
-        return Ok(false);
-    }
-    if !done.ran {
-        if !quiet {
-            println!("{}", done.description);
         }
-        return Ok(false);
-    }
-    // What the close command reported is not the question — `terminal::close` says what
-    // little `ran` can mean. Neither is what the record says afterwards: a close command
-    // that removed the record instead of the tab would leave a worktree that *looks* free.
-    // Only the worker's own absence settles it.
-    match settled(
-        || registry::worker_liveness(&worker),
-        std::thread::sleep,
-        GONE_BUDGET,
-        GONE_POLL,
-    ) {
-        registry::Liveness::Gone => {
-            // The process went with its tab, so a record left behind would have `present`
-            // lying to whoever asks next — including the next call to this. Conditional,
-            // because the worktree may have been handed to a new worker while this one was
-            // being closed, and that worker's record is not this call's to remove.
-            let cleared = registry::unregister_worker_if(&worktree, &worker)?;
-            if let Some(why) = left_alone(&cleared, &worktree) {
-                if !quiet {
-                    println!("pid {pid} is gone, but {why}; nothing was cleared");
-                }
-                return Ok(false);
+        WorkerClose::GoneLeftAlone(cleared) => {
+            if let Some(why) = left_alone(cleared, worktree) {
+                println!("the worker recorded here is gone, but {why}; nothing was cleared");
             }
-            if !quiet {
-                println!("{}", done.description);
-            }
-            Ok(true)
         }
-        registry::Liveness::Alive => {
-            if !quiet {
-                println!("the close command ran but pid {pid} is still there; nothing was cleared");
-                println!(
-                    "(a terminal that asks before closing a session with a process in it is waiting for an answer)"
-                );
-            }
-            Ok(false)
+        WorkerClose::CannotTell { pid } => {
+            println!("cannot tell whether pid {pid} is still running, so nothing was cleared");
         }
-        registry::Liveness::CannotTell => {
-            if !quiet {
-                println!(
-                    "the close command ran but whether pid {pid} is gone cannot be established; nothing was cleared"
-                );
+        WorkerClose::NotRun(done) | WorkerClose::Closed(done) => println!("{}", done.description),
+        WorkerClose::ClosedLeftAlone { pid, cleared } => {
+            if let Some(why) = left_alone(cleared, worktree) {
+                println!("pid {pid} is gone, but {why}; nothing was cleared");
             }
-            Ok(false)
         }
+        WorkerClose::StillRunning { pid } => {
+            println!("the close command ran but pid {pid} is still there; nothing was cleared");
+            println!(
+                "(a terminal that asks before closing a session with a process in it is waiting for an answer)"
+            );
+        }
+        WorkerClose::GoneUnknown { pid } => println!(
+            "the close command ran but whether pid {pid} is gone cannot be established; nothing was cleared"
+        ),
     }
 }
