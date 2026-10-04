@@ -122,7 +122,7 @@ pub fn hub_startable(terminal: &crate::infra::terminal::TerminalSettings) -> boo
 /// PID, so claiming here would write down a launcher that is about to exit, for a hub that
 /// is a different process in another tab. Every later liveness check would then be asking
 /// about the wrong one, and the first `--hub` that answered "gone" would start a second hub
-/// beside the live one. See the comment above the claim in `hub`.
+/// beside the live one. See the comment above the claim in `claim_launch`.
 ///
 /// The *resolved* identifier goes on the line rather than the flag, for the reason `work`
 /// spells out: the caller most likely to open a tab for a hub is another hub, running this
