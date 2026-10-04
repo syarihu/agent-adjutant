@@ -1990,6 +1990,28 @@ fn a_claimed_hub_record_carries_where_it_runs() {
     assert_eq!(record["terminal"]["socket"], "scratch");
     assert_eq!(record["terminal"]["pane"], "%3");
     assert_eq!(record["terminal"]["backend"], "tmux");
+    let keys: Vec<&str> = record
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "cwd",
+            "hubName",
+            "nameInCommand",
+            "pid",
+            "psStarted",
+            "startedAt",
+            "terminal"
+        ]
+    );
+    let Recorded::Found(read) = read_hub_record("acme-widget") else {
+        panic!("the record just written is readable");
+    };
+    assert_eq!(read.to_value(), record);
 
     // A launch that does not know where it is leaves the field out, as records always were.
     unregister_hub("acme-widget").unwrap();
@@ -1999,6 +2021,137 @@ fn a_claimed_hub_record_carries_where_it_runs() {
             .unwrap()
             .get("terminal")
             .is_none()
+    );
+}
+
+/// Writes `text` as the hub record of `slug`, creating the directory a claim would have.
+fn write_hub_record(slug: &str, text: &str) -> PathBuf {
+    let path = hub_record_path(slug);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn a_hub_record_key_of_the_wrong_type_reads_as_absent_and_the_rest_still_reads() {
+    let _sandbox = Sandbox::empty();
+    let path = write_hub_record(
+        "acme-widget",
+        r#"{"pid":"4242","hubName":"adjutant-x","cwd":7,"startedAt":"s","psStarted":"   ","nameInCommand":"yes","terminal":{"socket":"s"}}"#,
+    );
+    let Recorded::Found(record) = read_hub_record("acme-widget") else {
+        panic!("a record with a wrong-typed key is still a record");
+    };
+    assert_eq!(record.pid, None);
+    assert_eq!(record.cwd, None);
+    assert_eq!(record.hub_name.as_deref(), Some("adjutant-x"));
+    assert_eq!(record.name_in_command, None);
+    assert_eq!(record.terminal, None);
+    assert_eq!(recorded_anchor(&record), None);
+    assert_eq!(record.other["pid"], "4242");
+
+    let status = hub_status("acme-widget", "adjutant-acme-widget");
+    assert!(status.stale);
+    assert_eq!(status.pid, None);
+    assert_eq!(status.cwd, None);
+    assert_eq!(status.started_at.as_deref(), Some("s"));
+
+    // A pid of the wrong type is still somebody's claim to the name.
+    assert_eq!(unregister_hub_if_unnamed("acme-widget"), Ok(false));
+    assert!(path.exists());
+}
+
+#[test]
+fn an_unknown_key_in_a_hub_record_is_kept_and_the_file_left_alone() {
+    let _sandbox = Sandbox::empty();
+    let path = write_hub_record(
+        "acme-widget",
+        r#"{"pid":4242,"hubName":"adjutant-x","cwd":"/src/widget","startedAt":"s","psStarted":"p","nameInCommand":true,"x-unknown":{"a":[1]}}"#,
+    );
+    let before = std::fs::read(&path).unwrap();
+    let Recorded::Found(record) = read_hub_record("acme-widget") else {
+        panic!("readable");
+    };
+    assert_eq!(record.other["x-unknown"], json!({"a": [1]}));
+    hub_status("acme-widget", "adjutant-acme-widget");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(record.to_value(), read_json(&path).unwrap());
+}
+
+#[test]
+fn a_hub_record_that_is_not_an_object_is_unreadable_not_absent() {
+    let _sandbox = Sandbox::empty();
+    assert_eq!(read_hub_record("acme-widget"), Recorded::Absent);
+
+    write_hub_record("acme-widget", "[1,2]");
+    assert_eq!(read_hub_record("acme-widget"), Recorded::Unreadable);
+    assert_eq!(
+        holder(&hub_record_path("acme-widget")),
+        Liveness::CannotTell
+    );
+    assert!(!hub_status("acme-widget", "adjutant-acme-widget").stale);
+
+    write_hub_record("acme-widget", "{ not json");
+    assert_eq!(read_hub_record("acme-widget"), Recorded::Unreadable);
+
+    write_hub_record("other", r#"{"cwd":"/src/other"}"#);
+    let found = hub_records();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0, "other");
+    assert_eq!(found[0].1.cwd.as_deref(), Some("/src/other"));
+}
+
+#[test]
+fn claim_hub_writes_the_record_it_always_wrote() {
+    let terminal = crate::infra::terminal::SessionTerminal {
+        backend: "tmux".into(),
+        socket: Some("scratch".into()),
+        session: None,
+        window: None,
+        pane: Some("%3".into()),
+    };
+    let full = HubRecord {
+        pid: Some(4242),
+        hub_name: Some("adjutant-x".into()),
+        cwd: Some("/src/widget".into()),
+        started_at: Some("2026-01-01T00:00:00Z".into()),
+        ps_started: None,
+        hub: Some("task-1".into()),
+        name_in_command: Some(true),
+        terminal: Some(terminal.clone()),
+        other: serde_json::Map::new(),
+    };
+    let literal = json!({
+        "pid": 4242u32,
+        "hubName": "adjutant-x",
+        "cwd": "/src/widget",
+        "startedAt": "2026-01-01T00:00:00Z",
+        "psStarted": null,
+        "nameInCommand": true,
+        "hub": "task-1",
+        "terminal": serde_json::to_value(&terminal).unwrap(),
+    });
+    assert_eq!(
+        serde_json::to_string_pretty(&full.to_value()).unwrap(),
+        serde_json::to_string_pretty(&literal).unwrap()
+    );
+
+    let bare = HubRecord {
+        hub: None,
+        terminal: None,
+        ..full
+    };
+    let literal = json!({
+        "pid": 4242u32,
+        "hubName": "adjutant-x",
+        "cwd": "/src/widget",
+        "startedAt": "2026-01-01T00:00:00Z",
+        "psStarted": null,
+        "nameInCommand": true,
+    });
+    assert_eq!(
+        serde_json::to_string_pretty(&bare.to_value()).unwrap(),
+        serde_json::to_string_pretty(&literal).unwrap()
     );
 }
 

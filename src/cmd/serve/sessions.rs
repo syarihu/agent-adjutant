@@ -13,8 +13,8 @@ use crate::task;
 
 use super::Server;
 use super::state::{
-    GateCache, Listing, linked_task_title, parent_hub_id, session_terminal, settings_now,
-    socket_key, split_main, waiting_hub, waiting_worker, worker_session_ids,
+    GateCache, Listing, linked_task_title, parent_hub_id, recorded_terminal, session_terminal,
+    settings_now, socket_key, split_main, waiting_hub, waiting_worker, worker_session_ids,
 };
 
 /// What one tmux server said about its panes and clients in one poll.
@@ -177,9 +177,16 @@ pub(super) fn sessions_of(
 
     // 1. Hub sessions from hubs
     for h in hubs.iter().filter(|h| !skipped(&h.id)) {
-        let record = crate::infra::fs::read_json(&messaging::hub_record_path(&h.slug));
-        let terminal =
-            session_terminal(record.as_ref(), terminal_settings, &mut views, h.state.pid);
+        let recorded = match messaging::read_hub_record(&h.slug) {
+            messaging::Recorded::Found(r) => r.terminal,
+            _ => None,
+        };
+        let terminal = session_terminal(
+            recorded.as_ref(),
+            terminal_settings,
+            &mut views,
+            h.state.pid,
+        );
         let (last_activity_at, attached) = tmux_activity(&mut views, &terminal);
         let line = last_line(
             &mut views,
@@ -241,7 +248,7 @@ pub(super) fn sessions_of(
         let conversation = saved_session.as_ref().map(|s| s.session_id.clone());
 
         let terminal = session_terminal(
-            record_json.as_ref(),
+            recorded_terminal(record_json.as_ref()).as_ref(),
             terminal_settings,
             &mut views,
             status.pid,
@@ -319,7 +326,7 @@ pub(super) fn sessions_of(
             .map(str::to_string);
 
         let terminal = session_terminal(
-            Some(&record_json),
+            recorded_terminal(Some(&record_json)).as_ref(),
             terminal_settings,
             &mut views,
             status.pid,

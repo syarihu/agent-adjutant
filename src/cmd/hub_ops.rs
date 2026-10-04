@@ -174,15 +174,14 @@ pub fn hub_startable(terminal: &crate::infra::terminal::TerminalSettings) -> boo
 /// meantime — and the record cleared would be its.
 pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
     let slug = &ctx.repo.slug;
-    let record = crate::infra::fs::read_json(&messaging::hub_record_path(slug));
-    let named = record.as_ref().and_then(|r| {
-        let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
-        let started = r
-            .get("psStarted")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        Some((pid, started))
-    });
+    let read = messaging::read_hub_record(slug);
+    let record = match &read {
+        messaging::Recorded::Found(r) => Some(r),
+        _ => None,
+    };
+    // The start time as recorded, not `recorded_anchor`: a blank one is refused below by
+    // name rather than read as no anchor.
+    let named = record.and_then(|r| Some((r.pid? as u32, r.ps_started.clone())));
     let Some((pid, started)) = named else {
         // No record, or none that names a process: no hub, and nothing that is safe to clear.
         return match messaging::hub_liveness(slug) {
@@ -204,19 +203,14 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
         messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(slug)),
         messaging::Liveness::Alive => {}
     }
-    let recorded = record
-        .as_ref()
-        .and_then(|r| r.get("terminal"))
-        .and_then(|t| {
-            serde_json::from_value::<crate::infra::terminal::SessionTerminal>(t.clone()).ok()
-        });
+    let terminal_recorded = record.and_then(|r| r.terminal.clone());
     // Only a hub known to sit in tmux is looked for there: asking tmux about a hub that runs
     // anywhere else would start by talking to whichever server is the default.
-    let in_tmux = match &recorded {
+    let in_tmux = match &terminal_recorded {
         Some(t) => t.backend == "tmux",
         None => hub_startable(&ctx.settings.terminal),
     };
-    let socket = recorded
+    let socket = terminal_recorded
         .as_ref()
         .and_then(|t| t.socket.clone())
         .or_else(|| ctx.settings.terminal.tmux_socket().map(str::to_string));
@@ -704,15 +698,11 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
     // This ends no process, so a hub that is still running would be left running with no
     // record, and the next `adj hub` would start a second one beside it. Only the hub itself
     // may clear its own record; from anywhere else it has to be stopped first.
-    let record = crate::infra::fs::read_json(&messaging::hub_record_path(&hub.slug));
-    let named = record.as_ref().and_then(|r| {
-        let pid = r.get("pid").and_then(serde_json::Value::as_u64)? as u32;
-        let started = r
-            .get("psStarted")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        Some((pid, started))
-    });
+    let recorded = messaging::read_hub_record(&hub.slug);
+    let named = match &recorded {
+        messaging::Recorded::Found(r) => r.pid.map(|pid| (pid as u32, r.ps_started.clone())),
+        _ => None,
+    };
     if let Some((pid, started)) = &named {
         let pid = *pid;
         match messaging::hub_process_liveness(pid, started.as_deref()) {
@@ -728,9 +718,10 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
                 }
             }
         }
-    } else if messaging::hub_record_path(&hub.slug).exists() {
-        // A record that is there but names no process (or cannot be read): asked the way
-        // `stop_hub` asks, and nobody can be told to be the hub itself.
+    } else if matches!(recorded, messaging::Recorded::Unreadable) {
+        // A record that is there and cannot be read is asked the way `stop_hub` asks, and
+        // nobody can be told to be the hub itself. A readable one that names no process is
+        // `Gone` to `hub_liveness`, so it goes straight on to be cleared.
         match messaging::hub_liveness(&hub.slug) {
             messaging::Liveness::Gone => {}
             messaging::Liveness::CannotTell => return Err(messaging::hub_cannot_tell(&hub.slug)),

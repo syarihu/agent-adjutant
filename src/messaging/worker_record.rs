@@ -449,7 +449,7 @@ pub fn worker_status_with(table: &ProcessTable, worktree: &Path) -> WorkerStatus
     // A worker's command line carries nothing distinctive — it is whatever agent the config
     // names — so the start time is the only anchor available here, and with none the
     // question narrows to whether that pid is there at all.
-    let ps_started = recorded_anchor(&record);
+    let ps_started = anchor_of(record.get("psStarted").and_then(Value::as_str));
     match status.pid {
         Some(pid) if process_matches_with(table, pid, None, ps_started) => status.present = true,
         _ => status.stale = true,
@@ -528,7 +528,7 @@ pub fn read_worker(worktree: &Path) -> WorkerRecord {
         // Blank counts as absent, like everywhere else. Here the fallback for a record
         // with no anchor is `CannotTell`, which is what stops a worktree being deleted on
         // the strength of a pid number alone.
-        started: recorded_anchor(&record).map(str::to_string),
+        started: anchor_of(record.get("psStarted").and_then(Value::as_str)).map(str::to_string),
         title: record
             .get("title")
             .and_then(Value::as_str)

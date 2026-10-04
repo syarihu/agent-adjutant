@@ -207,26 +207,12 @@ pub(super) fn seed_boards() {
     if let Some(repo) = checkout_here() {
         note_board(&repo);
     }
-    let Ok(entries) = std::fs::read_dir(crate::infra::paths::state_dir().join("hubs")) else {
-        return;
-    };
-    for path in entries.flatten().map(|entry| entry.path()) {
-        let Some(slug) = path
-            .extension()
-            .filter(|ext| *ext == "json")
-            .and_then(|_| path.file_stem())
-            .and_then(|stem| stem.to_str())
-        else {
+    for (slug, record) in messaging::hub_records() {
+        let Some(cwd) = record.cwd.as_deref() else {
             continue;
         };
-        let Some(record) = crate::infra::fs::read_json(&path) else {
-            continue;
-        };
-        let Some(cwd) = record.get("cwd").and_then(Value::as_str) else {
-            continue;
-        };
-        let hub = record.get("hub").and_then(Value::as_str);
-        if let Ok(repo) = crate::kernel::identity::resolve_in(Some(Path::new(cwd)), None, hub)
+        if let Ok(repo) =
+            crate::kernel::identity::resolve_in(Some(Path::new(cwd)), None, record.hub.as_deref())
             && repo.slug == slug
         {
             note_board(&repo);

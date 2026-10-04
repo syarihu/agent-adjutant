@@ -19,19 +19,26 @@ use super::sessions::{TmuxView, sessions_of, tmux_view};
 
 // ── what the board reads ─────────────────────────────────────────────
 
-/// Where a session runs: what its record says it was started in, or — for a record written
-/// before it said so, and for a hub, whose record does not — the settings and a live look
-/// through tmux for the pid.
-pub(super) fn session_terminal(
+/// The terminal a worker record names, read as `session_terminal` used to read it. Until
+/// worker records are typed (#323).
+pub(super) fn recorded_terminal(
     record: Option<&Value>,
+) -> Option<crate::infra::terminal::SessionTerminal> {
+    record
+        .and_then(|r| r.get("terminal"))
+        .and_then(|t| serde_json::from_value(t.clone()).ok())
+}
+
+/// Where a session runs: what its record says it was started in (`recorded`), or — for a
+/// record written before it said so — the settings and a live look through tmux for the pid.
+pub(super) fn session_terminal(
+    recorded: Option<&crate::infra::terminal::SessionTerminal>,
     terminal_settings: &crate::infra::terminal::TerminalSettings,
     views: &mut HashMap<PathBuf, TmuxView>,
     pid: Option<u32>,
 ) -> crate::infra::terminal::SessionTerminal {
-    if let Some(recorded) = record.and_then(|r| r.get("terminal")).and_then(|t| {
-        serde_json::from_value::<crate::infra::terminal::SessionTerminal>(t.clone()).ok()
-    }) {
-        return recorded;
+    if let Some(recorded) = recorded {
+        return recorded.clone();
     }
     let backend = crate::infra::terminal::backend_name(terminal_settings);
     let tmux = backend == "tmux";

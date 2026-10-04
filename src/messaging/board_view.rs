@@ -77,44 +77,25 @@ pub fn all_repo_hubs_among_with(
     }
 
     // 2. Discover from state_dir/hubs
-    let hubs_dir = state_dir().join("hubs");
-    if let Ok(entries) = std::fs::read_dir(&hubs_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json")
-                && let Some(record) = read_json(&path)
-            {
-                let cwd_matches = record
-                    .get("cwd")
-                    .and_then(Value::as_str)
-                    .is_some_and(|cwd| {
-                        cwd == repo.main
-                            || matches!(
-                                (Path::new(cwd).canonicalize(), Path::new(&repo.main).canonicalize()),
-                                (Ok(a), Ok(b)) if a == b
-                            )
-                    });
-                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if cwd_matches && !file_stem.is_empty() {
-                    let hub_name = record
-                        .get("hubName")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| {
-                            format!("{}{}", crate::kernel::identity::HUB_PREFIX, file_stem)
-                        });
-                    let key = record
-                        .get("hub")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    let entry = hubs_by_slug
-                        .entry(file_stem.to_string())
-                        .or_insert((key.clone(), hub_name));
-                    if entry.0.is_none() && key.is_some() {
-                        entry.0 = key;
-                    }
-                }
-            }
+    for (slug, record) in hub_records() {
+        let cwd_matches = record.cwd.as_deref().is_some_and(|cwd| {
+            cwd == repo.main
+                || matches!(
+                    (Path::new(cwd).canonicalize(), Path::new(&repo.main).canonicalize()),
+                    (Ok(a), Ok(b)) if a == b
+                )
+        });
+        if !cwd_matches {
+            continue;
+        }
+        let hub_name = record
+            .hub_name
+            .clone()
+            .unwrap_or_else(|| format!("{}{}", crate::kernel::identity::HUB_PREFIX, slug));
+        let key = record.hub.clone();
+        let entry = hubs_by_slug.entry(slug).or_insert((key.clone(), hub_name));
+        if entry.0.is_none() && key.is_some() {
+            entry.0 = key;
         }
     }
 
@@ -164,7 +145,7 @@ pub fn all_repo_hubs_among_with(
             // A record written before it carried the key: the saved session may still say,
             // and failing that the slug itself does, when it can be read back unambiguously.
             if key.is_none() && parent {
-                key = read_session(&hub_session_path(&slug))
+                key = hub_session(&slug)
                     .and_then(|session| session.hub)
                     .or_else(|| crate::kernel::identity::hub_key_from_slug(&repo.nwo, &slug));
             }
