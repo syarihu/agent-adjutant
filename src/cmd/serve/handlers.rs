@@ -240,7 +240,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
                 if !messaging::unregister_hub_if_unnamed(&server.ctx.state, &hub.slug)? {
                     return Err(format!("{} changed while it was being closed", hub.name));
                 }
-                forget_board(&hub.slug)?;
+                forget_board(&server.ctx.state, &hub.slug)?;
                 Ok(json!({ "closed": true, "wasRunning": was_running, "unread": hub.inbox_count }))
             } else {
                 Ok(json!({ "stopped": true, "wasRunning": was_running }))

@@ -188,7 +188,10 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 // The board running for this hub, or null, and whether the resident server
                 // serves it. Read from records, so one started by hand with `adj serve` is
                 // found as well as the hub's own.
-                "board": crate::cmd::board_json(&info),
+                "board": crate::cmd::board_json(
+                    &crate::registry::state_root(Some(Path::new(&info.main))),
+                    &info,
+                ),
                 "registered": resolved.registered,
                 "configPath": resolved.config_path,
                 "warnings": resolved.warnings,
@@ -523,7 +526,10 @@ fn start_board() {
     let Some(slug) = hub_serve() else {
         return;
     };
-    let served = hub_board_context(&slug).and_then(crate::cmd::serve_for_hub);
+    let context = hub_board_context(&slug);
+    // Taken before `serve_for_hub` consumes the context: the watcher reads the same directory.
+    let root = context.as_ref().ok().map(|ctx| ctx.state.clone());
+    let served = context.and_then(crate::cmd::serve_for_hub);
     match &served {
         Ok(HubBoard::Serving(url)) => say_serving(url),
         Ok(HubBoard::Resident(url)) => say_resident(url),
@@ -531,9 +537,10 @@ fn start_board() {
         Err(e) => eprintln!("adjutant: not serving the board: {e}"),
     }
     // The one thread that looks after this hub's board from here on, whichever way it got
-    // here: nothing else starts one, so two never run.
-    if let Some(mode) = watch_mode(&served, false) {
-        std::thread::spawn(move || watch_board(&slug, mode));
+    // here: nothing else starts one, so two never run. Without a context there is no root to
+    // watch, and no mode either.
+    if let (Some(mode), Some(root)) = (watch_mode(&served, false), root) {
+        std::thread::spawn(move || watch_board(&root, &slug, mode));
     }
 }
 
@@ -586,18 +593,18 @@ fn is_new_error(last: &mut Option<String>, message: &str) -> bool {
 /// Look after this hub's board for as long as there is something to look after: the resident
 /// that serves it may stop or crash, and a board that was in the way may go. Lives as long as
 /// this server does and looks only at intervals, never in a tight loop.
-fn watch_board(slug: &str, mut mode: Mode) {
+fn watch_board(root: &Path, slug: &str, mut mode: Mode) {
     let mut last_error: Option<String> = None;
     let mut waited = std::time::Duration::ZERO;
     loop {
         match mode {
             Mode::Resident => {
                 std::thread::sleep(RESIDENT_WATCH);
-                if crate::cmd::resident_running() {
+                if crate::cmd::resident_running(root) {
                     continue;
                 }
                 std::thread::sleep(RESIDENT_RECHECK);
-                if crate::cmd::resident_running() {
+                if crate::cmd::resident_running(root) {
                     continue;
                 }
             }
@@ -608,7 +615,7 @@ fn watch_board(slug: &str, mut mode: Mode) {
                 }
                 std::thread::sleep(BOARD_HANDOVER_STEP);
                 waited += BOARD_HANDOVER_STEP;
-                if crate::cmd::board_running(slug).is_some() {
+                if crate::cmd::board_running(root, slug).is_some() {
                     continue;
                 }
             }

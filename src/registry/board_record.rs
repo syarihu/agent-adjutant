@@ -3,17 +3,17 @@
 use super::store::{boards_dir, record_path};
 use super::*;
 
-pub(crate) fn served(repo: &crate::kernel::identity::RepoInfo) -> Option<Served> {
-    let resident = live_resident().map(|(_, port)| port);
+pub(crate) fn served(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Option<Served> {
+    let resident = live_resident(root).map(|(_, port)| port);
     if resident.is_some() {
         // Told where the repository is, so that the board this answers with can be opened.
-        note_board(repo);
+        note_board(root, repo);
     }
-    prefer(resident, dashboards_running(&repo.slug))
+    prefer(resident, dashboards_running(root, &repo.slug))
 }
 
-fn live_record(slug: &str) -> Option<(u32, u16)> {
-    live_at(&record_path(slug))
+fn live_record(root: &Path, slug: &str) -> Option<(u32, u16)> {
+    live_at(&record_path(root, slug))
 }
 
 /// The pid and port `path` records, when the process is still the one that wrote them.
@@ -41,16 +41,16 @@ pub(crate) fn live_at(path: &Path) -> Option<(u32, u16)> {
 /// one would wait for ever. Anchored on the recorded process start time like every other
 /// record here, so a crashed server leaves a file that reads as absent rather than as a
 /// dashboard that is about to answer.
-pub fn running(repo: &crate::kernel::identity::RepoInfo) -> Option<u16> {
-    match served(repo)? {
+pub fn running(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Option<u16> {
+    match served(root, repo)? {
         Served::Resident(port) | Served::Dedicated(port) => Some(port),
     }
 }
 
 /// The port of a board of its own for `slug`, one started by a hub or by `adj serve`. The
 /// resident server is not asked: this is what a hub's MCP server checks before it binds one.
-pub fn dashboards_running(slug: &str) -> Option<u16> {
-    live_record(slug).map(|(_, port)| port)
+pub fn dashboards_running(root: &Path, slug: &str) -> Option<u16> {
+    live_record(root, slug).map(|(_, port)| port)
 }
 
 /// Record this board as the one serving the hub. Returns `Ok(true)` if it wrote the record,
@@ -58,11 +58,11 @@ pub fn dashboards_running(slug: &str) -> Option<u16> {
 /// A second board (for instance one started in a worktree to check a UI change) must not
 /// take the record from a live board, because once it stops the record would name a dead
 /// process and the live board would read as absent.
-pub(crate) fn record(slug: &str, port: u16) -> Result<bool, String> {
-    if live_record(slug).is_some_and(|(pid, _)| pid != std::process::id()) {
+pub(crate) fn record(root: &Path, slug: &str, port: u16) -> Result<bool, String> {
+    if live_record(root, slug).is_some_and(|(pid, _)| pid != std::process::id()) {
         return Ok(false);
     }
-    let path = record_path(slug);
+    let path = record_path(root, slug);
     let pid = std::process::id();
     let record = json!({ "pid": pid, "port": port, "psStarted": ps_started(pid) });
     crate::infra::fs::write_json(&path, &record)?;
@@ -72,9 +72,9 @@ pub(crate) fn record(slug: &str, port: u16) -> Result<bool, String> {
 /// Tell the resident server where `repo` is, so that it can serve its board. Skipped when the
 /// entry is already what it would write, and a failure is not one for the caller: the address
 /// is only ever a convenience for a server that may not be running.
-pub fn note_board(repo: &crate::kernel::identity::RepoInfo) {
+pub fn note_board(root: &Path, repo: &crate::kernel::identity::RepoInfo) {
     let entry = json!({ "main": repo.main, "nwo": repo.nwo, "hub": repo.hub });
-    let path = boards_dir().join(format!("{}.json", repo.slug));
+    let path = boards_dir(root).join(format!("{}.json", repo.slug));
     if crate::infra::fs::read_json(&path).as_ref() == Some(&entry) {
         return;
     }
@@ -82,8 +82,8 @@ pub fn note_board(repo: &crate::kernel::identity::RepoInfo) {
 }
 
 /// Take `slug` out of the address book, so a closed hub is not offered a board any more.
-pub(crate) fn forget_board(slug: &str) -> Result<(), String> {
-    let path = boards_dir().join(format!("{slug}.json"));
+pub(crate) fn forget_board(root: &Path, slug: &str) -> Result<(), String> {
+    let path = boards_dir(root).join(format!("{slug}.json"));
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -91,8 +91,8 @@ pub(crate) fn forget_board(slug: &str) -> Result<(), String> {
     }
 }
 
-pub(crate) fn address_of(slug: &str) -> Option<Address> {
-    let entry = crate::infra::fs::read_json(&boards_dir().join(format!("{slug}.json")))?;
+pub(crate) fn address_of(root: &Path, slug: &str) -> Option<Address> {
+    let entry = crate::infra::fs::read_json(&boards_dir(root).join(format!("{slug}.json")))?;
     let text = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_string);
     let address = Address {
         slug: slug.to_string(),
@@ -106,8 +106,8 @@ pub(crate) fn address_of(slug: &str) -> Option<Address> {
 }
 
 /// Every board the address book names, by slug.
-pub(crate) fn addresses() -> Vec<Address> {
-    let mut slugs: Vec<String> = std::fs::read_dir(boards_dir())
+pub(crate) fn addresses(root: &Path) -> Vec<Address> {
+    let mut slugs: Vec<String> = std::fs::read_dir(boards_dir(root))
         .into_iter()
         .flatten()
         .flatten()
@@ -120,28 +120,31 @@ pub(crate) fn addresses() -> Vec<Address> {
         })
         .collect();
     slugs.sort();
-    slugs.iter().filter_map(|slug| address_of(slug)).collect()
+    slugs
+        .iter()
+        .filter_map(|slug| address_of(root, slug))
+        .collect()
 }
 
-pub(crate) fn server_record_path() -> PathBuf {
-    crate::infra::paths::state_dir().join("server.json")
+pub(crate) fn server_record_path(root: &Path) -> PathBuf {
+    root.join("server.json")
 }
 
 /// The pid and port of the resident server, when one is running. Anchored on the recorded
 /// process start time like every other record here, so a killed server leaves a file that
 /// reads as absent.
-pub(crate) fn live_resident() -> Option<(u32, u16)> {
-    live_at(&server_record_path())
+pub(crate) fn live_resident(root: &Path) -> Option<(u32, u16)> {
+    live_at(&server_record_path(root))
 }
 
 /// Whether a resident server is running.
-pub fn resident_running() -> bool {
-    live_resident().is_some()
+pub fn resident_running(root: &Path) -> bool {
+    live_resident(root).is_some()
 }
 
 /// The version `server.json` names, if any.
-pub(crate) fn recorded_version() -> Option<String> {
-    crate::infra::fs::read_json(&server_record_path())?
+pub(crate) fn recorded_version(root: &Path) -> Option<String> {
+    crate::infra::fs::read_json(&server_record_path(root))?
         .get("version")
         .and_then(Value::as_str)
         .map(str::to_string)

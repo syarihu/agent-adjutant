@@ -122,10 +122,10 @@ pub enum HubBoard {
 /// Nothing here writes to stdout. In that process stdout carries JSON-RPC, and a stray line
 /// on it breaks the protocol for the whole session.
 pub fn serve_for_hub(ctx: super::Context) -> Result<HubBoard, String> {
-    if let Some(url) = resident_url(&ctx.repo) {
+    if let Some(url) = resident_url(&ctx.state, &ctx.repo) {
         return Ok(HubBoard::Resident(url));
     }
-    if dashboards_running(&ctx.repo.slug).is_some() {
+    if dashboards_running(&ctx.state, &ctx.repo.slug).is_some() {
         return Ok(HubBoard::AlreadyRunning);
     }
     let listener =
@@ -155,14 +155,14 @@ struct Board {
 
 impl Board {
     fn new(ctx: super::Context, listener: TcpListener) -> Result<Board, String> {
-        let token = token()?;
+        let token = token(&ctx.state)?;
         // Asked back rather than taken from the caller: port 0 is how a board gets a free
         // port, and the number it got is the only way to reach it.
         let port = listener
             .local_addr()
             .map(|a| a.port())
             .map_err(|e| format!("cannot read the board's port: {e}"))?;
-        let recorded = record(&ctx.repo.slug, port)?;
+        let recorded = record(&ctx.state, &ctx.repo.slug, port)?;
         Ok(Board {
             server: Arc::new(Server {
                 ctx,

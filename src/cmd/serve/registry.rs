@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use super::auth::stored_token;
@@ -22,9 +24,9 @@ pub(super) fn resident_board_url(port: u16, slug: &str, token: &str) -> String {
 
 /// The board serving `repo`'s hub — its URL and whether the resident server is the one — or
 /// `None`. Whoever started it, the token is the one every board on this machine shares.
-fn located(repo: &crate::kernel::identity::RepoInfo) -> Option<(String, bool)> {
-    let token = stored_token()?;
-    match served(repo)? {
+fn located(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Option<(String, bool)> {
+    let token = stored_token(root)?;
+    match served(root, repo)? {
         Served::Resident(port) => Some((resident_board_url(port, &repo.slug, &token), true)),
         Served::Dedicated(port) => Some((board_url(port, &token), false)),
     }
@@ -32,17 +34,20 @@ fn located(repo: &crate::kernel::identity::RepoInfo) -> Option<(String, bool)> {
 
 /// `board` as `adj config` and `adjutant_config` report it: where it is, and whether the
 /// resident server serves it. `null` when nothing does.
-pub fn board_json(repo: &crate::kernel::identity::RepoInfo) -> Value {
-    match located(repo) {
+pub fn board_json(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Value {
+    match located(root, repo) {
         Some((url, resident)) => json!({ "url": url, "resident": resident }),
         None => Value::Null,
     }
 }
 
 /// Where the resident server serves `repo`'s board, when a resident is live.
-pub(super) fn resident_url(repo: &crate::kernel::identity::RepoInfo) -> Option<String> {
-    let (_, port) = live_resident()?;
-    let token = stored_token()?;
-    note_board(repo);
+pub(super) fn resident_url(
+    root: &Path,
+    repo: &crate::kernel::identity::RepoInfo,
+) -> Option<String> {
+    let (_, port) = live_resident(root)?;
+    let token = stored_token(root)?;
+    note_board(root, repo);
     Some(resident_board_url(port, &repo.slug, &token))
 }

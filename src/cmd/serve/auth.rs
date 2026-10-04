@@ -1,7 +1,7 @@
 //! The security boundary of the board.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::infra::http::{self, Request};
 use crate::infra::ws;
@@ -73,11 +73,11 @@ pub(super) fn is_own_origin(origin: &str, port: u16) -> bool {
 ///
 /// Stored beside the rest of the state rather than handed out on each start: the URL is
 /// meant to be a bookmark, and a token that changed every run would break it daily.
-pub(super) fn token() -> Result<String, String> {
-    if let Some(existing) = stored_token() {
+pub(super) fn token(root: &Path) -> Result<String, String> {
+    if let Some(existing) = stored_token(root) {
         return Ok(existing);
     }
-    let path = token_path();
+    let path = token_path(root);
     let token = random_hex();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -104,7 +104,7 @@ pub(super) fn token() -> Result<String, String> {
         .map_err(|e| format!("cannot write {}: {e}", staged.display()))?;
     let placed = match std::fs::hard_link(&staged, &path) {
         Ok(()) => Ok(token),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match stored_token() {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match stored_token(root) {
             Some(theirs) => Ok(theirs),
             // An empty file is no token at all, and is replaced as it always was — by a
             // rename, so the replacement is whole and owner-only too. Read back afterwards,
@@ -112,7 +112,7 @@ pub(super) fn token() -> Result<String, String> {
             // is the one every URL will carry.
             None => std::fs::rename(&staged, &path)
                 .map_err(|e| format!("cannot write {}: {e}", path.display()))
-                .map(|()| stored_token().unwrap_or(token)),
+                .map(|()| stored_token(root).unwrap_or(token)),
         },
         Err(e) => Err(format!("cannot write {}: {e}", path.display())),
     };
@@ -120,14 +120,14 @@ pub(super) fn token() -> Result<String, String> {
     placed
 }
 
-fn token_path() -> PathBuf {
-    crate::infra::paths::state_dir().join("dashboard-token")
+fn token_path(root: &Path) -> PathBuf {
+    root.join("dashboard-token")
 }
 
 /// The token already on disk, without making one: asking for a URL must not be what
 /// creates the secret a board was never started with.
-pub(super) fn stored_token() -> Option<String> {
-    let existing = std::fs::read_to_string(token_path()).ok()?;
+pub(super) fn stored_token(root: &Path) -> Option<String> {
+    let existing = std::fs::read_to_string(token_path(root)).ok()?;
     let existing = existing.trim().to_string();
     (!existing.is_empty()).then_some(existing)
 }

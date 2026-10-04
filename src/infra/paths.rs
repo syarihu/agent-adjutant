@@ -14,13 +14,6 @@ pub fn state_dir() -> PathBuf {
     }
 }
 
-/// `state_dir()` made absolute against the working directory — the directory this process
-/// reads and writes now.
-pub fn state_dir_absolute() -> PathBuf {
-    let dir = state_dir();
-    std::path::absolute(&dir).unwrap_or(dir)
-}
-
 /// Where `~` points, and the anchor under which every path this program uses is derived.
 ///
 /// An unset `HOME` used to make that anchor the empty string, which left the state

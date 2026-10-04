@@ -335,8 +335,11 @@ reads the default config and the default state directory, so the worker it start
 in one world while the hub that dispatched it waits in another, and both halves look healthy
 from where they stand. A relative `ADJUTANT_STATE_DIR` is forwarded as an absolute path,
 resolved against the repository's main checkout, the directory `adj hub` reads wherever the
-command was typed (the resident server still gets it resolved against the directory of the
-process that starts it).
+command was typed. `adj server start`, `stop`, `status` and `restart` resolve it the same way
+(against the main checkout of the repository they are typed in), and `start` hands the resident
+the absolute directory. The resident and every board it serves read that one directory, so with
+a relative `ADJUTANT_STATE_DIR` a resident started in one repository does not see the hubs of
+another repository whose state lives under that repository's checkout.
 
 `{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
 terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A

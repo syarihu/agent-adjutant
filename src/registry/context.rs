@@ -93,11 +93,17 @@ pub fn state_root(anchor: Option<&Path>) -> PathBuf {
 }
 
 pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
+    let state = state_root(Some(Path::new(&repo.main)));
+    context_at(repo, state)
+}
+
+/// The context of `repo` over the state directory `state`, for a caller that already holds the
+/// root it reads (the resident server opens every board over its own).
+pub fn context_at(repo: RepoInfo, state: PathBuf) -> Result<Context, String> {
     // By `owner/name` and nothing else. The hub identifier moves the address; it must not
     // move the lookup, or asking for a second hub of a registered repository would answer
     // with an unregistered one — no task sources, no issue keys, no verify command.
     let resolved = config::resolve_config(&repo.nwo)?;
-    let state = state_root(Some(Path::new(&repo.main)));
     Ok(Context {
         settings: resolved.settings.clone(),
         repo,

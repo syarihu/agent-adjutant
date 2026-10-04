@@ -39,6 +39,8 @@ pub(super) fn split_board_path(path: &str) -> Option<(&str, &str)> {
 /// on the first request for it and kept, for the same reason a dedicated one keeps its
 /// `JulesWatch`: what it remembers between polls is a cache, and the records stay the answer.
 pub(super) struct Resident {
+    /// The state directory this resident and every board it opens read.
+    pub(super) root: std::path::PathBuf,
     pub(super) token: String,
     pub(super) port: u16,
     /// Each open board with the address it was built from, so that one whose address has
@@ -61,7 +63,7 @@ impl Resident {
     pub(super) fn board(&self, slug: &str) -> Option<Arc<Server>> {
         // Bounded: a file rewritten again and again while this builds is not worth chasing.
         for _ in 0..3 {
-            let Some(address) = address_of(slug) else {
+            let Some(address) = address_of(&self.root, slug) else {
                 self.boards.lock().ok()?.remove(slug);
                 return None;
             };
@@ -82,7 +84,7 @@ impl Resident {
             )
             .ok()
             .filter(|repo| repo.slug == slug)?;
-            let ctx = crate::cmd::context_of(repo).ok()?;
+            let ctx = crate::registry::context_at(repo, self.root.clone()).ok()?;
             let server = Arc::new(Server {
                 ctx,
                 token: self.token.clone(),
@@ -99,7 +101,7 @@ impl Resident {
             // Asked again under the lock: what was built is only put in place while it is still
             // what the file says, so a slower build of an older address cannot replace a newer
             // one — and one that lost the race is thrown away and built again.
-            if address_of(slug).as_ref() != Some(&address) {
+            if address_of(&self.root, slug).as_ref() != Some(&address) {
                 continue;
             }
             match boards.get(slug) {
@@ -175,7 +177,7 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         ("GET", "/api/boards") => http::json(
             out,
             200,
-            &Value::Array(boards_json(resident.port, &resident.token)).to_string(),
+            &Value::Array(boards_json(&resident.root, resident.port, &resident.token)).to_string(),
         ),
         _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
     }

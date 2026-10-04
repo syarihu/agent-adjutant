@@ -98,10 +98,9 @@ pub(super) fn board_counts(
 /// working, and queued: tasks still to be started) are read from
 /// each board's records (see `board_counts`), so one `ps` and one `git worktree list` per
 /// repository serve every board.
-pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
-    let addresses = addresses();
+pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
+    let addresses = addresses(root);
     let table = messaging::ProcessTable::snapshot();
-    let state_dir = crate::infra::paths::state_dir();
     // Workers per parent-task hub, counted by the hub their record reports to. Only asked of
     // a repository that has a parent-task hub listed.
     let mut children: HashMap<String, usize> = HashMap::new();
@@ -131,10 +130,10 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
         .map(|a| {
             let status = crate::kernel::identity::hub_name(&a.nwo, a.hub.as_deref())
                 .ok()
-                .map(|name| messaging::hub_status_with(&state_dir, &table, &a.slug, &name));
+                .map(|name| messaging::hub_status_with(root, &table, &a.slug, &name));
             let present = status.as_ref().is_some_and(|s| s.present);
-            let tasks = task::list(&task::dir(&state_dir, &a.slug));
-            let mut gates = gate::list(&gate::dir(&state_dir, &a.slug));
+            let tasks = task::list(&task::dir(root, &a.slug));
+            let mut gates = gate::list(&gate::dir(root, &a.slug));
             let (waiting, working) = board_counts(&tasks, &gates, worker_seen);
             let queued = tasks
                 .iter()
@@ -159,8 +158,8 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
             let last_alive = if present {
                 None
             } else {
-                messaging::hub_session(&state_dir, &a.slug).and_then(|saved| {
-                    messaging::hub_last_alive(&state_dir, &a.slug, &saved.session_id)
+                messaging::hub_session(root, &a.slug).and_then(|saved| {
+                    messaging::hub_last_alive(root, &a.slug, &saved.session_id)
                 })
             };
             let finished = a.hub.is_some()
@@ -187,7 +186,7 @@ pub(super) fn boards_json(port: u16, token: &str) -> Vec<Value> {
                 "hubStale": status.as_ref().is_some_and(|s| s.stale),
                 "hubStartedAt": status.as_ref().and_then(|s| s.started_at.clone()),
                 "hubLastAlive": last_alive,
-                "title": a.hub.as_ref().and_then(|_| crate::cmd::hub_title::cached_title(&a.slug)),
+                "title": a.hub.as_ref().and_then(|_| crate::cmd::hub_title::cached_title(root, &a.slug)),
                 "waiting": waiting,
                 "working": working,
                 "queued": queued,
@@ -207,11 +206,11 @@ pub(super) fn checkout_here() -> Option<crate::kernel::identity::RepoInfo> {
 /// Seed the address book from where this process stands and from the hub records already on
 /// disk, so that the boards of hubs started before the resident are there from the first
 /// request.
-pub(super) fn seed_boards() {
+pub(super) fn seed_boards(root: &Path) {
     if let Some(repo) = checkout_here() {
-        note_board(&repo);
+        note_board(root, &repo);
     }
-    for (slug, record) in messaging::hub_records(&crate::registry::state_root(None)) {
+    for (slug, record) in messaging::hub_records(root) {
         let Some(cwd) = record.cwd.as_deref() else {
             continue;
         };
@@ -219,7 +218,7 @@ pub(super) fn seed_boards() {
             crate::kernel::identity::resolve_in(Some(Path::new(cwd)), None, record.hub.as_deref())
             && repo.slug == slug
         {
-            note_board(&repo);
+            note_board(root, &repo);
         }
     }
 }
