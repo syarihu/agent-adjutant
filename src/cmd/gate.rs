@@ -7,57 +7,11 @@
 
 use serde_json::{Value, json};
 
-use crate::gate::{self, Gate, Kind};
+use crate::gate::{self, Gate, Kind, Shelf};
 use crate::registry;
 use crate::registry::Context;
 
-use std::path::{Path, PathBuf};
-
-pub fn dir(ctx: &Context) -> PathBuf {
-    gate::dir(&ctx.state, &ctx.repo.slug)
-}
-
-pub fn answered_dir(ctx: &Context) -> PathBuf {
-    gate::answered_dir(&ctx.state, &ctx.repo.slug)
-}
-
-pub fn records_dir(ctx: &Context) -> PathBuf {
-    gate::records_dir(&ctx.state, &ctx.repo.slug)
-}
-
-/// A gate by id, open or kept as a record. Open first: that is what an id usually names, and
-/// a record's id cannot be an open gate's (see `gate::claim_record_id`).
-fn find(ctx: &Context, id: &str) -> Result<Gate, String> {
-    // Only a missing file falls through: one that is there and broken says so, rather than
-    // reading as an id that does not exist.
-    if gate::path_of(&dir(ctx), id).exists() {
-        return gate::load(&dir(ctx), id);
-    }
-    if gate::path_of(&records_dir(ctx), id).exists() {
-        return gate::load(&records_dir(ctx), id);
-    }
-    Err(format!("no open gate or record: {id}"))
-}
-
-/// Hold the write lock of one gate or record until the returned handle is dropped. The same
-/// advisory lock `task::lock` takes, for the same reason: appending an answer is a read
-/// and a write of the whole file, and two at once would each write back what they read. On
-/// an open gate it is what lets only one of the board's answer, the worker's close and the
-/// board's own sweep decide it.
-fn lock_in(dir: &Path, id: &str) -> Result<std::fs::File, String> {
-    crate::infra::fs::lock(&lock_path(dir, id))
-}
-
-/// `lock_in` without waiting: `None` when somebody else holds it.
-fn try_lock_in(dir: &Path, id: &str) -> Result<Option<std::fs::File>, String> {
-    crate::infra::fs::try_lock(&lock_path(dir, id))
-}
-
-/// Not named `.json`, so the listing never reads it as a gate. Never removed, for the reason
-/// given at `with_dispatch_lock`: a lock file that is unlinked can be locked twice.
-fn lock_path(dir: &Path, id: &str) -> PathBuf {
-    dir.join(format!("{id}.lock"))
-}
+use std::path::Path;
 
 fn stamp() -> String {
     crate::infra::clock::utc_stamp(crate::infra::clock::now_secs())
@@ -201,12 +155,8 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     };
 
     let stamp = stamp();
-    let home = if wait { dir(ctx) } else { records_dir(ctx) };
-    let id = if wait {
-        gate::claim_id(&home, &stamp, kind)?
-    } else {
-        gate::claim_record_id(&home, &stamp, kind)?
-    };
+    let shelf = if wait { Shelf::Open } else { Shelf::Record };
+    let id = gate::claim_id(ctx, shelf, &stamp, kind)?;
 
     let mut value = payload.clone();
     let fields = value.as_object_mut().ok_or("expected an object")?;
@@ -227,7 +177,7 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     // Only keys read from disk are carried; a caller's unknown keys are dropped, as before.
     gate.extra.clear();
 
-    gate::save(&home, &gate)?;
+    gate::save(ctx, shelf, &gate)?;
     Ok((
         gate,
         crate::registry::running(&ctx.state, &ctx.repo).is_some(),
@@ -249,16 +199,16 @@ pub fn answer(
     // Locked before the gate is read, and held until it is archived: the worker's close and
     // the board's sweep decide a gate under the same lock, and an answer delivered to a gate
     // somebody else has just closed would wake a worker to something that was settled.
-    let held = if gate::path_of(&dir(ctx), id).exists() {
-        let lock = lock_in(&dir(ctx), id)?;
-        if !gate::path_of(&dir(ctx), id).exists() {
+    let held = if gate::exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
+        let lock = gate::lock(ctx, Shelf::Open, id)?;
+        if !gate::exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
             return Err(already_decided(ctx, id).unwrap_or_else(|| format!("no open gate: {id}")));
         }
         Some(lock)
     } else {
         None
     };
-    let mut gate = match find(ctx, id) {
+    let mut gate = match gate::get(&ctx.state, &ctx.repo.slug, id) {
         Ok(gate) => gate,
         Err(e) => return Err(already_decided(ctx, id).unwrap_or(e)),
     };
@@ -315,14 +265,14 @@ pub fn answer(
         // delivery: the board and `adj gate answer` can send the same record back at once,
         // and the second write would otherwise drop the first answer the worker has already
         // been given.
-        let lock = lock_in(&records_dir(ctx), id)?;
-        let mut gate = gate::load(&records_dir(ctx), id).unwrap_or(gate);
+        let lock = gate::lock(ctx, Shelf::Record, id)?;
+        let mut gate = gate::load(&ctx.state, &ctx.repo.slug, Shelf::Record, id).unwrap_or(gate);
         gate.answers.push(gate::Answer {
             decision: decision.to_string(),
             comment,
             answered_at: at.clone(),
         });
-        gate::save(&records_dir(ctx), &gate)?;
+        gate::save(ctx, Shelf::Record, &gate)?;
         drop(lock);
         note_answered(ctx, gate.task.as_deref(), &at);
         return Ok((gate, told));
@@ -335,7 +285,7 @@ pub fn answer(
     gate.comment = comment;
     let at = stamp();
     gate.answered_at = Some(at.clone());
-    gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
+    gate::archive(ctx, &gate)?;
     drop(held);
     note_answered(ctx, gate.task.as_deref(), &at);
     Ok((gate, told))
@@ -344,7 +294,7 @@ pub fn answer(
 /// What became of a gate that is no longer open, said as an error for whoever tried to
 /// answer it.
 fn already_decided(ctx: &Context, id: &str) -> Option<String> {
-    let archived = gate::load(&answered_dir(ctx), id).ok()?;
+    let archived = gate::load(&ctx.state, &ctx.repo.slug, Shelf::Answered, id).ok()?;
     Some(format!(
         "gate {id} was already answered or closed ({})",
         archived.decision.as_deref().unwrap_or("unknown")
@@ -366,14 +316,17 @@ pub fn close(
     comment: Option<&str>,
     terminal: bool,
 ) -> Result<Gate, String> {
-    if !gate::path_of(&dir(ctx), id).exists() {
-        return gate::load(&answered_dir(ctx), id).map_err(|_| format!("no open gate: {id}"));
+    if !gate::exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
+        return gate::load(&ctx.state, &ctx.repo.slug, Shelf::Answered, id)
+            .map_err(|_| format!("no open gate: {id}"));
     }
-    let _lock = lock_in(&dir(ctx), id)?;
+    let _lock = gate::lock(ctx, Shelf::Open, id)?;
     // Read under the lock: an answer or a sweep that got there first has archived it.
-    let mut gate = match gate::load(&dir(ctx), id) {
+    let mut gate = match gate::load(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
         Ok(g) => g,
-        Err(e) => return gate::load(&answered_dir(ctx), id).map_err(|_| e),
+        Err(e) => {
+            return gate::load(&ctx.state, &ctx.repo.slug, Shelf::Answered, id).map_err(|_| e);
+        }
     };
     gate.decision = Some(
         if terminal {
@@ -389,7 +342,7 @@ pub fn close(
         .map(str::to_string);
     let at = stamp();
     gate.answered_at = Some(at.clone());
-    gate::archive(&dir(ctx), &answered_dir(ctx), &gate)?;
+    gate::archive(ctx, &gate)?;
     note_answered(ctx, gate.task.as_deref(), &at);
     Ok(gate)
 }
@@ -404,11 +357,11 @@ pub fn close(
 /// gate was opened. Best effort, and silent: this runs inside the board's poll, and in a hub
 /// process whose stdout is the MCP stream.
 pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
-    let open = gate::list(&dir(ctx));
+    let open = gate::list(&ctx.state, &ctx.repo.slug, Shelf::Open);
     if open.iter().all(|g| !g.wait || g.answered_by_hub()) {
         return Vec::new();
     }
-    let signals = gate::resume_signals(&open, &dir(ctx), &records_dir(ctx), &answered_dir(ctx));
+    let signals = gate::resume_signals(&ctx.state, &ctx.repo.slug, &open);
     let mut closed = Vec::new();
     for g in &open {
         if !g.wait || g.answered_by_hub() {
@@ -450,16 +403,16 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
         };
         // Skipped when somebody is deciding it right now: whoever holds the lock is
         // answering or closing it, and that is the decision that stands.
-        let Ok(Some(_lock)) = try_lock_in(&dir(ctx), &g.id) else {
+        let Ok(Some(_lock)) = gate::try_lock(ctx, Shelf::Open, &g.id) else {
             continue;
         };
-        let Ok(mut fresh) = gate::load(&dir(ctx), &g.id) else {
+        let Ok(mut fresh) = gate::load(&ctx.state, &ctx.repo.slug, Shelf::Open, &g.id) else {
             continue;
         };
         fresh.decision = Some(gate::TERMINAL.to_string());
         fresh.comment = Some(comment);
         fresh.answered_at = Some(at.clone());
-        if gate::archive(&dir(ctx), &answered_dir(ctx), &fresh).is_err() {
+        if gate::archive(ctx, &fresh).is_err() {
             continue;
         }
         note_answered(ctx, fresh.task.as_deref(), &at);
@@ -583,7 +536,7 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
 
 pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
     let ctx = crate::registry::context(repo, hub)?;
-    let gates = gate::list(&dir(&ctx));
+    let gates = gate::list(&ctx.state, &ctx.repo.slug, Shelf::Open);
     if as_json {
         println!("{}", json!(gates));
         return Ok(());
@@ -606,7 +559,7 @@ pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), 
 
 pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
     let ctx = crate::registry::context(repo, hub)?;
-    let gate = find(&ctx, id)?;
+    let gate = gate::get(&ctx.state, &ctx.repo.slug, id)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&gate).map_err(|e| e.to_string())?
@@ -740,7 +693,7 @@ mod tests {
         )
         .unwrap();
         assert!(gate.extra.is_empty());
-        let text = std::fs::read_to_string(gate::path_of(&dir(&ctx), &gate.id)).unwrap();
-        assert!(!text.contains("futureField"), "{text}");
+        let stored = gate::load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+        assert!(stored.extra.is_empty());
     }
 }

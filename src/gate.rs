@@ -11,12 +11,16 @@
 //! so a gate needs no channel of its own — and an answer to a worktree whose worker has
 //! died simply waits there, which is the same promise `adjutant tell` already makes.
 //!
-//! A leaf: handed the directory to work in, and told the time rather than asking.
+//! Reads take a state root and a hub's slug, so the board can read every hub's gates; writes
+//! take the `Context` of the hub they are for. Nothing outside this module builds
+//! `gates/<slug>/…` or takes a gate's lock. Told the time rather than asking.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+
+use crate::registry::Context;
 
 /// What is being shown. Each one is a moment that used to be an `AskUserQuestion` in a tab
 /// nobody was watching.
@@ -401,21 +405,22 @@ pub fn resumed_at(
     }
 }
 
-/// The gates that can show a worker in `open` (one hub's open gates, from `dir`) moved on to
-/// something else: `open` itself, and what `records` and `answered` hold that was written since
-/// the earliest waiting gate was opened. Only reads, so a board can ask it about a hub
-/// directory that is not its own.
+/// The gates that can show a worker in `open` (one hub's open gates, as `list` read them)
+/// moved on to something else: `open` itself, and what the hub's records and answered gates
+/// hold that was written since the earliest waiting gate was opened. Only reads, so a board
+/// can ask it about a hub that is not its own.
 ///
 /// A gate already answered on the board still shows the worker got as far as opening it. The
 /// archive only grows, so it is not parsed whole: a file older than the earliest waiting gate
 /// cannot be a signal. A little slack for coarse file times; the mtime only prunes, and
 /// `resumed_at` and the caller's filter decide.
-pub fn resume_signals(open: &[Gate], dir: &Path, records: &Path, answered: &Path) -> Vec<Gate> {
+pub fn resume_signals(root: &Path, slug: &str, open: &[Gate]) -> Vec<Gate> {
+    let open_dir = dir(root, slug, Shelf::Open);
     let since = open
         .iter()
         .filter(|g| g.wait && !g.answered_by_hub())
         .filter_map(|g| {
-            std::fs::metadata(path_of(dir, &g.id))
+            std::fs::metadata(path_of(&open_dir, &g.id))
                 .and_then(|m| m.modified())
                 .ok()
         })
@@ -424,8 +429,11 @@ pub fn resume_signals(open: &[Gate], dir: &Path, records: &Path, answered: &Path
         .unwrap_or(std::time::UNIX_EPOCH);
     open.iter()
         .cloned()
-        .chain(list_modified_since(records, since))
-        .chain(list_modified_since(answered, since))
+        .chain(list_modified_since(&dir(root, slug, Shelf::Record), since))
+        .chain(list_modified_since(
+            &dir(root, slug, Shelf::Answered),
+            since,
+        ))
         .filter(|g| !g.answered_by_hub())
         .collect()
 }
@@ -455,26 +463,41 @@ fn is_waiting(wait: &bool) -> bool {
     *wait
 }
 
-/// Where this hub's open gates wait.
-pub fn dir(state_dir: &Path, slug: &str) -> PathBuf {
-    state_dir.join("gates").join(slug)
+/// Where a gate lives. Three directories of one hub's state, each holding `<id>.json` files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shelf {
+    /// Where this hub's open gates wait.
+    Open,
+    /// Where a gate kept as a record lives. Beside `answered/` rather than in the open queue,
+    /// so nothing that counts what is waiting for a person counts it.
+    Record,
+    /// Where a gate goes once it has been answered. Kept rather than deleted, for the same
+    /// reason the inbox keeps what it has read: a decision that turned out wrong has to be
+    /// findable afterwards.
+    Answered,
 }
 
-/// Where a gate goes once it has been answered. Kept rather than deleted, for the same
-/// reason the inbox keeps what it has read: a decision that turned out wrong has to be
-/// findable afterwards.
-pub fn answered_dir(state_dir: &Path, slug: &str) -> PathBuf {
-    dir(state_dir, slug).join("answered")
+fn dir(root: &Path, slug: &str, shelf: Shelf) -> PathBuf {
+    let open = root.join("gates").join(slug);
+    match shelf {
+        Shelf::Open => open,
+        Shelf::Record => open.join("records"),
+        Shelf::Answered => open.join("answered"),
+    }
 }
 
-/// Where a gate kept as a record lives. Beside `answered/` rather than in the open queue, so
-/// nothing that counts what is waiting for a person counts it.
-pub fn records_dir(state_dir: &Path, slug: &str) -> PathBuf {
-    dir(state_dir, slug).join("records")
+fn dir_of(ctx: &Context, shelf: Shelf) -> PathBuf {
+    dir(&ctx.state, &ctx.repo.slug, shelf)
 }
 
-pub fn path_of(dir: &Path, id: &str) -> PathBuf {
+fn path_of(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
+}
+
+/// Whether a gate file is on `shelf`, without reading it. Lets a caller tell a missing gate
+/// from one that is there and broken, which `load` reports the same way.
+pub fn exists(root: &Path, slug: &str, shelf: Shelf, id: &str) -> bool {
+    path_of(&dir(root, slug, shelf), id).exists()
 }
 
 /// `20260922T041233Z-diff`, and a suffix if that name is taken.
@@ -482,15 +505,17 @@ pub fn path_of(dir: &Path, id: &str) -> PathBuf {
 /// Claimed rather than checked, like a task id and an inbox filename: a worker finishing two
 /// pieces of work in the same second is ordinary, and the loser of a check-then-write would
 /// overwrite a gate somebody is in the middle of reading.
-pub fn claim_id(dir: &Path, stamp: &str, kind: Kind) -> Result<String, String> {
-    claim(dir, format!("{stamp}-{}", kind.as_str()))
-}
-
-/// `20260922T041233Z-diff-record`. Named apart from an open gate's id rather than claimed in
-/// both directories: an answer finds its gate by id alone, and a record and a gate opened in
-/// the same second must not be mistaken for each other.
-pub fn claim_record_id(dir: &Path, stamp: &str, kind: Kind) -> Result<String, String> {
-    claim(dir, format!("{stamp}-{}-record", kind.as_str()))
+///
+/// A record's id ends in `-record` (`20260922T041233Z-diff-record`). Named apart from an open
+/// gate's id rather than claimed on both shelves: an answer finds its gate by id alone, and a
+/// record and a gate opened in the same second must not be mistaken for each other.
+pub fn claim_id(ctx: &Context, shelf: Shelf, stamp: &str, kind: Kind) -> Result<String, String> {
+    let base = if shelf == Shelf::Record {
+        format!("{stamp}-{}-record", kind.as_str())
+    } else {
+        format!("{stamp}-{}", kind.as_str())
+    };
+    claim(&dir_of(ctx, shelf), base)
 }
 
 fn claim(dir: &Path, base: String) -> Result<String, String> {
@@ -522,29 +547,43 @@ fn claim(dir: &Path, base: String) -> Result<String, String> {
 /// could catch it half-written and drop it from the listing, and a write cut short would
 /// leave it unreadable for good. Staged as a dotfile beside it, synced and renamed over it,
 /// the name never points at a partial file.
-pub fn save(dir: &Path, gate: &Gate) -> Result<PathBuf, String> {
-    let path = path_of(dir, &gate.id);
+pub fn save(ctx: &Context, shelf: Shelf, gate: &Gate) -> Result<PathBuf, String> {
+    let path = path_of(&dir_of(ctx, shelf), &gate.id);
     crate::infra::fs::write_json(&path, gate)?;
     Ok(path)
 }
 
-pub fn load(dir: &Path, id: &str) -> Result<Gate, String> {
-    let path = path_of(dir, id);
+pub fn load(root: &Path, slug: &str, shelf: Shelf, id: &str) -> Result<Gate, String> {
+    let path = path_of(&dir(root, slug, shelf), id);
     let text = std::fs::read_to_string(&path).map_err(|_| format!("no open gate: {id}"))?;
     serde_json::from_str(&text).map_err(|e| format!("cannot read {}: {e}", path.display()))
 }
 
-/// Every gate still waiting for a person, oldest first — which is the order they should be
-/// worked through. Given the records directory instead, every record, in the same order.
-pub fn list(dir: &Path) -> Vec<Gate> {
-    list_where(dir, |_| true)
+/// A gate by id, open or kept as a record. Open first: that is what an id usually names, and
+/// a record's id cannot be an open gate's (see `claim_id`).
+pub fn get(root: &Path, slug: &str, id: &str) -> Result<Gate, String> {
+    // Only a missing file falls through: one that is there and broken says so, rather than
+    // reading as an id that does not exist.
+    if exists(root, slug, Shelf::Open, id) {
+        return load(root, slug, Shelf::Open, id);
+    }
+    if exists(root, slug, Shelf::Record, id) {
+        return load(root, slug, Shelf::Record, id);
+    }
+    Err(format!("no open gate or record: {id}"))
+}
+
+/// Every gate on `shelf`, oldest first — which for the open shelf is the order they should
+/// be worked through.
+pub fn list(root: &Path, slug: &str, shelf: Shelf) -> Vec<Gate> {
+    list_where(&dir(root, slug, shelf), |_| true)
 }
 
 /// The gates in `dir` whose file was written at or after `since`, oldest first. For a caller
 /// that can only care about gates opened after some moment: a gate's file is written after it
 /// is opened, so an older file cannot be one, and the directory's history is not parsed.
 /// Only prunes: a caller still checks what it needs of each gate it gets.
-pub fn list_modified_since(dir: &Path, since: SystemTime) -> Vec<Gate> {
+fn list_modified_since(dir: &Path, since: SystemTime) -> Vec<Gate> {
     let mut gates: Vec<Gate> = match std::fs::read_dir(dir) {
         Ok(entries) => entries
             .filter_map(Result::ok)
@@ -563,13 +602,13 @@ pub fn list_modified_since(dir: &Path, since: SystemTime) -> Vec<Gate> {
     gates
 }
 
-/// The gates of one kind, told apart by their file names before any is read. For the
-/// archive, which only grows: the board asks it for plans on every poll, and parsing every
+/// The gates of one kind on `shelf`, told apart by their file names before any is read. For
+/// the archive, which only grows: the board asks it for plans on every poll, and parsing every
 /// diff ever answered to find them would cost more each day.
-pub fn list_of_kind(dir: &Path, kind: Kind) -> Vec<Gate> {
+pub fn list_of_kind(root: &Path, slug: &str, shelf: Shelf, kind: Kind) -> Vec<Gate> {
     // `{stamp}-{kind}`, `{stamp}-{kind}-{seq}` or `{stamp}-{kind}-record`. No kind's name
     // begins another's, so the prefix is enough; the kind is checked again once parsed.
-    list_where(dir, |id| {
+    list_where(&dir(root, slug, shelf), |id| {
         id.split_once('-')
             .is_some_and(|(_, rest)| rest.starts_with(kind.as_str()))
     })
@@ -598,15 +637,34 @@ fn list_where(dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<Gate> {
 }
 
 /// Move an answered gate out of the way, so "open" means what it says.
-pub fn archive(dir: &Path, answered: &Path, gate: &Gate) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(answered)
-        .map_err(|e| format!("cannot create {}: {e}", answered.display()))?;
-    let path = path_of(answered, &gate.id);
-    let json = serde_json::to_string_pretty(gate).map_err(|e| e.to_string())?;
-    std::fs::write(&path, format!("{json}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    let _ = std::fs::remove_file(path_of(dir, &gate.id));
+///
+/// Written through `write_json` like `save`: the board reads `answered/` on every poll, so it
+/// must never see a half-written file there.
+pub fn archive(ctx: &Context, gate: &Gate) -> Result<PathBuf, String> {
+    let path = path_of(&dir_of(ctx, Shelf::Answered), &gate.id);
+    crate::infra::fs::write_json(&path, gate)?;
+    let _ = std::fs::remove_file(path_of(&dir_of(ctx, Shelf::Open), &gate.id));
     Ok(path)
+}
+
+/// Hold the write lock of one gate or record until the returned handle is dropped. The same
+/// advisory lock `task::lock` takes, for the same reason: appending an answer is a read
+/// and a write of the whole file, and two at once would each write back what they read. On
+/// an open gate it is what lets only one of the board's answer, the worker's close and the
+/// board's own sweep decide it.
+pub fn lock(ctx: &Context, shelf: Shelf, id: &str) -> Result<std::fs::File, String> {
+    crate::infra::fs::lock(&lock_path(&dir_of(ctx, shelf), id))
+}
+
+/// `lock` without waiting: `None` when somebody else holds it.
+pub fn try_lock(ctx: &Context, shelf: Shelf, id: &str) -> Result<Option<std::fs::File>, String> {
+    crate::infra::fs::try_lock(&lock_path(&dir_of(ctx, shelf), id))
+}
+
+/// Not named `.json`, so the listing never reads it as a gate. Never removed, for the reason
+/// given at `with_dispatch_lock`: a lock file that is unlinked can be locked twice.
+fn lock_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.lock"))
 }
 
 /// The subject the answer is delivered under.
@@ -665,6 +723,26 @@ pub fn answer_body(
 mod tests {
     use super::*;
 
+    /// A hub's context in a sandboxed state directory. Hold the sandbox for the whole test.
+    fn hub() -> (crate::testing::Sandbox, Context) {
+        let sandbox = crate::testing::Sandbox::empty();
+        let repo = crate::kernel::identity::RepoInfo {
+            main: "/tmp/acme-widget".to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+        (sandbox, ctx)
+    }
+
+    fn ids(gates: Vec<Gate>) -> Vec<String> {
+        gates.into_iter().map(|g| g.id).collect()
+    }
+
     fn gate(kind: Kind) -> Gate {
         Gate {
             id: "20260922T041233Z-plan".to_string(),
@@ -709,19 +787,20 @@ mod tests {
 
     #[test]
     fn a_key_this_binary_does_not_know_survives_a_load_save_and_archive() {
-        let dir = tempfile::tempdir().unwrap();
-        let answered = dir.path().join("answered");
+        let (_sandbox, ctx) = hub();
         let gate = gate(Kind::Plan);
+        let open = dir_of(&ctx, Shelf::Open);
+        std::fs::create_dir_all(&open).unwrap();
         let mut raw = serde_json::to_value(&gate).unwrap();
         raw["futureField"] = serde_json::json!("x");
-        std::fs::write(path_of(dir.path(), &gate.id), raw.to_string()).unwrap();
+        std::fs::write(path_of(&open, &gate.id), raw.to_string()).unwrap();
 
-        let loaded = load(dir.path(), &gate.id).unwrap();
-        save(dir.path(), &loaded).unwrap();
-        let text = std::fs::read_to_string(path_of(dir.path(), &gate.id)).unwrap();
+        let loaded = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+        save(&ctx, Shelf::Open, &loaded).unwrap();
+        let text = std::fs::read_to_string(path_of(&open, &gate.id)).unwrap();
         assert!(text.contains("\"futureField\": \"x\""), "{text}");
 
-        let archived = archive(dir.path(), &answered, &loaded).unwrap();
+        let archived = archive(&ctx, &loaded).unwrap();
         let text = std::fs::read_to_string(archived).unwrap();
         assert!(text.contains("\"futureField\": \"x\""), "{text}");
     }
@@ -807,46 +886,49 @@ mod tests {
 
     #[test]
     fn listing_by_modification_time_skips_older_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         let (mut old, mut new) = (gate(Kind::Plan), gate(Kind::Plan));
         old.id = "old".to_string();
         new.id = "new".to_string();
-        save(dir.path(), &old).unwrap();
-        save(dir.path(), &new).unwrap();
+        save(&ctx, Shelf::Open, &old).unwrap();
+        save(&ctx, Shelf::Open, &new).unwrap();
+        let open = dir_of(&ctx, Shelf::Open);
         let now = SystemTime::now();
         let then = now - std::time::Duration::from_secs(3600);
         std::fs::File::options()
             .write(true)
-            .open(path_of(dir.path(), "old"))
+            .open(path_of(&open, "old"))
             .unwrap()
             .set_modified(then)
             .unwrap();
         let since = now - std::time::Duration::from_secs(60);
-        let ids: Vec<String> = list_modified_since(dir.path(), since)
-            .into_iter()
-            .map(|g| g.id)
-            .collect();
-        assert_eq!(ids, ["new"]);
+        assert_eq!(ids(list_modified_since(&open, since)), ["new"]);
     }
 
     #[test]
     fn a_saved_gate_reads_back_the_same() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         let gate = gate(Kind::Plan);
-        save(dir.path(), &gate).unwrap();
-        assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
+        save(&ctx, Shelf::Open, &gate).unwrap();
+        assert_eq!(
+            load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap(),
+            gate
+        );
     }
 
     /// Written again over itself, a gate leaves nothing staged behind and still reads back.
     #[test]
     fn saving_over_a_gate_replaces_it_and_leaves_nothing_behind() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         let mut gate = gate(Kind::Diff);
-        save(dir.path(), &gate).unwrap();
+        save(&ctx, Shelf::Open, &gate).unwrap();
         gate.title = "Rewritten".to_string();
-        save(dir.path(), &gate).unwrap();
-        assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
-        let names: Vec<String> = std::fs::read_dir(dir.path())
+        save(&ctx, Shelf::Open, &gate).unwrap();
+        assert_eq!(
+            load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap(),
+            gate
+        );
+        let names: Vec<String> = std::fs::read_dir(dir_of(&ctx, Shelf::Open))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .collect();
@@ -857,9 +939,9 @@ mod tests {
     /// check-then-write would overwrite a gate somebody is reading.
     #[test]
     fn ids_claimed_in_the_same_second_do_not_collide() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         let ids: Vec<String> = (0..3)
-            .map(|_| claim_id(dir.path(), "20260922T041233Z", Kind::Diff).unwrap())
+            .map(|_| claim_id(&ctx, Shelf::Open, "20260922T041233Z", Kind::Diff).unwrap())
             .collect();
         assert_eq!(
             ids,
@@ -873,7 +955,7 @@ mod tests {
 
     #[test]
     fn listing_is_oldest_first_so_the_queue_is_worked_in_order() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         for (id, at) in [
             ("c", "20260922T03"),
             ("a", "20260922T01"),
@@ -882,15 +964,17 @@ mod tests {
             let mut gate = gate(Kind::Plan);
             gate.id = id.to_string();
             gate.opened_at = at.to_string();
-            save(dir.path(), &gate).unwrap();
+            save(&ctx, Shelf::Open, &gate).unwrap();
         }
-        let ids: Vec<String> = list(dir.path()).into_iter().map(|g| g.id).collect();
-        assert_eq!(ids, ["a", "b", "c"]);
+        assert_eq!(
+            ids(list(&ctx.state, &ctx.repo.slug, Shelf::Open)),
+            ["a", "b", "c"]
+        );
     }
 
     #[test]
     fn listing_by_kind_reads_only_that_kind() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         for (id, kind) in [
             ("20260922T01Z-plan", Kind::Plan),
             ("20260922T02Z-plan-2", Kind::Plan),
@@ -898,12 +982,14 @@ mod tests {
         ] {
             let mut gate = gate(kind);
             gate.id = id.to_string();
-            save(dir.path(), &gate).unwrap();
+            save(&ctx, Shelf::Open, &gate).unwrap();
         }
-        let ids: Vec<String> = list_of_kind(dir.path(), Kind::Plan)
-            .into_iter()
-            .map(|g| g.id)
-            .collect();
+        let ids = ids(list_of_kind(
+            &ctx.state,
+            &ctx.repo.slug,
+            Shelf::Open,
+            Kind::Plan,
+        ));
         assert_eq!(ids.len(), 2, "{ids:?}");
         assert!(ids.iter().all(|id| id.contains("-plan")), "{ids:?}");
     }
@@ -912,22 +998,72 @@ mod tests {
     /// a gate itself.
     #[test]
     fn the_archive_is_not_listed_as_an_open_gate() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         let gate = gate(Kind::Plan);
-        save(dir.path(), &gate).unwrap();
-        let answered = dir.path().join("answered");
-        archive(dir.path(), &answered, &gate).unwrap();
-        assert!(list(dir.path()).is_empty());
-        assert!(path_of(&answered, &gate.id).exists());
-        assert!(!path_of(dir.path(), &gate.id).exists());
+        save(&ctx, Shelf::Open, &gate).unwrap();
+        archive(&ctx, &gate).unwrap();
+        assert!(list(&ctx.state, &ctx.repo.slug, Shelf::Open).is_empty());
+        assert!(exists(
+            &ctx.state,
+            &ctx.repo.slug,
+            Shelf::Answered,
+            &gate.id
+        ));
+        assert!(!exists(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id));
+    }
+
+    /// The board reads `answered/` on every poll, so the archived gate is staged and renamed
+    /// rather than written in place, and nothing of the staging is left behind.
+    #[test]
+    fn archiving_leaves_only_the_answered_file() {
+        let (_sandbox, ctx) = hub();
+        let gate = gate(Kind::Plan);
+        save(&ctx, Shelf::Open, &gate).unwrap();
+        archive(&ctx, &gate).unwrap();
+        let names: Vec<String> = std::fs::read_dir(dir_of(&ctx, Shelf::Answered))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, [format!("{}.json", gate.id)]);
+        assert!(!path_of(&dir_of(&ctx, Shelf::Open), &gate.id).exists());
+    }
+
+    /// A write in flight is a dotfile beside the gates, and it is not a gate yet.
+    #[test]
+    fn a_staged_file_is_not_listed() {
+        let (_sandbox, ctx) = hub();
+        let open = dir_of(&ctx, Shelf::Open);
+        std::fs::create_dir_all(&open).unwrap();
+        let json = serde_json::to_string(&gate(Kind::Plan)).unwrap();
+        crate::infra::fs::stage(&open, &json).unwrap();
+        assert!(list(&ctx.state, &ctx.repo.slug, Shelf::Open).is_empty());
+    }
+
+    #[test]
+    fn a_gate_is_found_open_first_then_as_a_record() {
+        let (_sandbox, ctx) = hub();
+        let (root, slug) = (&ctx.state, &ctx.repo.slug);
+        let mut open = gate(Kind::Diff);
+        open.id = "same".to_string();
+        let mut record = open.clone();
+        record.title = "the record".to_string();
+        record.wait = false;
+        save(&ctx, Shelf::Record, &record).unwrap();
+        assert_eq!(get(root, slug, "same").unwrap(), record);
+        save(&ctx, Shelf::Open, &open).unwrap();
+        assert_eq!(get(root, slug, "same").unwrap(), open);
+        assert_eq!(
+            get(root, slug, "missing").unwrap_err(),
+            "no open gate or record: missing"
+        );
     }
 
     #[test]
     fn a_broken_file_is_skipped_rather_than_blanking_the_queue() {
-        let dir = tempfile::tempdir().unwrap();
-        save(dir.path(), &gate(Kind::Plan)).unwrap();
-        std::fs::write(dir.path().join("broken.json"), "{ not json").unwrap();
-        assert_eq!(list(dir.path()).len(), 1);
+        let (_sandbox, ctx) = hub();
+        save(&ctx, Shelf::Open, &gate(Kind::Plan)).unwrap();
+        std::fs::write(dir_of(&ctx, Shelf::Open).join("broken.json"), "{ not json").unwrap();
+        assert_eq!(list(&ctx.state, &ctx.repo.slug, Shelf::Open).len(), 1);
     }
 
     /// The identifier leads, because it is the only thing an agent reading its outbox can
@@ -963,9 +1099,9 @@ mod tests {
 
     #[test]
     fn a_record_s_id_is_told_apart_from_a_gate_s() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         assert_eq!(
-            claim_record_id(dir.path(), "20260922T041233Z", Kind::Diff).unwrap(),
+            claim_id(&ctx, Shelf::Record, "20260922T041233Z", Kind::Diff).unwrap(),
             "20260922T041233Z-diff-record"
         );
     }
@@ -974,7 +1110,7 @@ mod tests {
     /// back out exactly as the worker wrote them.
     #[test]
     fn a_record_with_its_structured_fields_reads_back_the_same() {
-        let dir = tempfile::tempdir().unwrap();
+        let (_sandbox, ctx) = hub();
         let mut gate = gate(Kind::Diff);
         gate.wait = false;
         gate.review_rounds = vec![ReviewRound {
@@ -996,8 +1132,11 @@ mod tests {
             comment: Some("Please look at it again".to_string()),
             answered_at: "20260922T050000Z".to_string(),
         }];
-        save(dir.path(), &gate).unwrap();
-        assert_eq!(load(dir.path(), &gate.id).unwrap(), gate);
+        save(&ctx, Shelf::Record, &gate).unwrap();
+        assert_eq!(
+            load(&ctx.state, &ctx.repo.slug, Shelf::Record, &gate.id).unwrap(),
+            gate
+        );
 
         let json = serde_json::to_value(&gate).unwrap();
         assert_eq!(json["wait"], false);

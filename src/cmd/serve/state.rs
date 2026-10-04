@@ -117,9 +117,15 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
     let repo = &server.ctx.repo;
     let tasks = with_records(
         task::list(&server.ctx.state, &server.ctx.repo.slug),
-        gate::list(&crate::cmd::gate::records_dir(&server.ctx)),
+        gate::list(
+            &server.ctx.state,
+            &server.ctx.repo.slug,
+            gate::Shelf::Record,
+        ),
         gate::list_of_kind(
-            &crate::cmd::gate::answered_dir(&server.ctx),
+            &server.ctx.state,
+            &server.ctx.repo.slug,
+            gate::Shelf::Answered,
             gate::Kind::Plan,
         ),
     );
@@ -309,7 +315,7 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         "configPath": crate::kernel::config::config_path().to_string_lossy(),
         "now": now,
         "pending": pending,
-        "gates": gate::list(&crate::cmd::gate::dir(&server.ctx)),
+        "gates": gate::list(&server.ctx.state, &server.ctx.repo.slug, gate::Shelf::Open),
     })
 }
 
@@ -464,16 +470,10 @@ pub(super) struct HubGates {
 
 impl HubGates {
     fn read(state_dir: &Path, slug: &str) -> Self {
-        let dir = gate::dir(state_dir, slug);
-        let open = gate::list(&dir);
+        let open = gate::list(state_dir, slug, gate::Shelf::Open);
         // Left unread when nothing waits on a worker: the archives only grow.
         let signals = if open.iter().any(|g| g.wait && !g.answered_by_hub()) {
-            gate::resume_signals(
-                &open,
-                &dir,
-                &gate::records_dir(state_dir, slug),
-                &gate::answered_dir(state_dir, slug),
-            )
+            gate::resume_signals(state_dir, slug, &open)
         } else {
             Vec::new()
         };
@@ -631,8 +631,16 @@ pub(super) fn task_history(server: &Server, path: &str) -> Result<Value, String>
     let id = history_id(path).ok_or("no such task")?;
     Ok(history_of(
         id,
-        gate::list(&crate::cmd::gate::answered_dir(&server.ctx)),
-        gate::list(&crate::cmd::gate::records_dir(&server.ctx)),
+        gate::list(
+            &server.ctx.state,
+            &server.ctx.repo.slug,
+            gate::Shelf::Answered,
+        ),
+        gate::list(
+            &server.ctx.state,
+            &server.ctx.repo.slug,
+            gate::Shelf::Record,
+        ),
     ))
 }
 
