@@ -7,12 +7,8 @@
 
 use serde_json::{Value, json};
 
-use crate::jules;
+use crate::jules::{self, Chosen, findings, read_plan, relay};
 use crate::task;
-
-// `cmd/mod.rs` passes these on to `lib.rs` and the board's handlers, and `relay_cmd` calls
-// them; #363 takes them out.
-pub use crate::jules::{Chosen, findings, read_plan, relay};
 
 pub struct StartArgs<'a> {
     pub repo: Option<&'a str>,

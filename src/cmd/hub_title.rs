@@ -119,11 +119,9 @@ impl HubTitles {
     }
 
     fn ask(&self, ctx: &Context, slug: &str, slugs: &[String], url: &str) {
-        let answer = super::task::known_title(&ctx.state, slugs, url)
+        let answer = task::known_title(&ctx.state, slugs, url)
             .ok_or(())
-            .or_else(|()| {
-                super::task::read_issue(&ctx.repo.main, url).map(|snapshot| snapshot.title)
-            });
+            .or_else(|()| task::read_issue(&ctx.repo.main, url).map(|snapshot| snapshot.title));
         // The title is good whether or not it could be written down: only a restart loses it.
         if let Ok(title) = &answer
             && let Err(e) = crate::infra::fs::write_json(

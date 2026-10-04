@@ -10,16 +10,7 @@ use serde_json::{Value, json};
 
 use crate::mail::{DeliveryOutcome, Reached};
 use crate::registry::Context;
-use crate::task::{self, Status, Task};
-
-// Old paths, kept until #363: `hub_title` calls `read_issue` through here.
-pub(super) use crate::task::{PrState, read_issue};
-// Old paths, kept until #363: the board, the MCP server, `session`, `pr_poll` and `hub_title`
-// call the task operations through here.
-pub use crate::task::{
-    Checked, apply, candidates, check_worktree_name, create, fetch_issue, known_title, nudge,
-    pr_refs, refresh, update, update_checked,
-};
+use crate::task::{self, Checked, PrState, Status, Task, create, fetch_issue, refresh, update};
 
 /// Read the issue of a task that has just started and has none kept. A failure is reported
 /// on stderr and nothing more: the command that got here did what it was asked, and the

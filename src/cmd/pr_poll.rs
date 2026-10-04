@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::gh::{self, Notified};
-use super::task as cmd_task;
 use crate::registry::Context;
 use crate::task::{self, PrRef, PrTurn, Task};
 
@@ -222,8 +221,8 @@ impl PrPoll {
     fn round(&self, boards: &[Context], tried: &mut HashSet<PrRef>) -> Duration {
         let mut cards: Vec<Card> = Vec::new();
         for (board, ctx) in boards.iter().enumerate() {
-            let tasks = cmd_task::candidates(ctx);
-            let refs = cmd_task::pr_refs(ctx, &tasks);
+            let tasks = task::candidates(ctx);
+            let refs = task::pr_refs(ctx, &tasks);
             for (task, pr) in tasks.into_iter().zip(refs) {
                 if let Some(pr) = pr.filter(|r| r.host == HOST) {
                     cards.push(Card { board, task, pr });
@@ -290,7 +289,7 @@ impl PrPoll {
         let mut unread = None;
         if !read.is_empty() {
             let ask: Vec<PrRef> = read.iter().map(|&i| refs[i].clone()).collect();
-            let read_now = gh::read_prs(&ask, Instant::now() + ROUND_TIMEOUT);
+            let read_now = task::read_prs(&ask, Instant::now() + ROUND_TIMEOUT);
             remember(tried, ask, &read_now.failed);
             // Only a read that could not be made at all is the poll failing. A PR that cannot
             // be found is that card's business, and is reported on it, not on the column.
@@ -307,7 +306,7 @@ impl PrPoll {
             }
             for (ctx, (tasks, answers)) in boards.iter().zip(per_board) {
                 if !tasks.is_empty() {
-                    cmd_task::apply(ctx, tasks, answers);
+                    task::apply(ctx, tasks, answers);
                 }
             }
         }
