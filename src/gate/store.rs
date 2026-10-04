@@ -148,10 +148,10 @@ pub(super) fn archive(ctx: &Context, gate: &Gate) -> Result<PathBuf, String> {
 }
 
 /// Hold the write lock of one gate or record until the returned handle is dropped. The same
-/// advisory lock `task::lock` takes, for the same reason: appending an answer is a read
-/// and a write of the whole file, and two at once would each write back what they read. On
-/// an open gate it is what lets only one of the board's answer, the worker's close and the
-/// board's own sweep decide it.
+/// advisory lock a task record is changed under (`task::edit`, `task::update`), for the same
+/// reason: appending an answer is a read and a write of the whole file, and two at once would
+/// each write back what they read. On an open gate it is what lets only one of the board's
+/// answer, the worker's close and the board's own sweep decide it.
 pub(super) fn lock(ctx: &Context, shelf: Shelf, id: &str) -> Result<std::fs::File, String> {
     crate::infra::fs::lock(&lock_path(&dir_of(ctx, shelf), id))
 }

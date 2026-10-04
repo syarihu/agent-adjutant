@@ -117,8 +117,6 @@ pub struct Finding {
     pub relayed: bool,
 }
 
-/// Post the chosen comments to the pull request as one comment in the person's own name, for
-/// Jules to act on, and note them as passed on.
 /// A review comment chosen to be passed on, with what the person — or the hub, preparing it for
 /// them — wants Jules to know about it: where the change really belongs, what to leave alone.
 /// A review bot can only comment on lines the diff touches, so the place it names is not always
@@ -185,17 +183,6 @@ pub fn read_plan(plan: &Value) -> Result<(Vec<Chosen>, Option<String>), String> 
         .filter(|n| !n.is_empty())
         .map(str::to_string);
     Ok((chosen, note))
-}
-
-/// The number of a pull request URL, when it is a pull request of `nwo`.
-pub(super) fn pr_number<'a>(url: &'a str, nwo: &str) -> Option<&'a str> {
-    let path = url.strip_prefix("https://github.com/")?;
-    let (repo, rest) = path.split_once("/pull/")?;
-    if !repo.eq_ignore_ascii_case(nwo) {
-        return None;
-    }
-    let number = rest.split(['/', '?', '#']).next()?;
-    (!number.is_empty() && number.chars().all(|c| c.is_ascii_digit())).then_some(number)
 }
 
 /// `gh api --jq` prints one object per line.

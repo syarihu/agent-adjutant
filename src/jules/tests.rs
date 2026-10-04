@@ -131,19 +131,25 @@ fn first_comments_by_anyone_but_jules_and_the_person_are_findings() {
 }
 
 #[test]
-fn a_pr_number_is_read_from_its_url() {
-    assert_eq!(
-        pr_number("https://github.com/a/b/pull/12", "a/b"),
-        Some("12")
-    );
-    assert_eq!(
-        pr_number("https://github.com/A/B/pull/12/files", "a/b"),
-        Some("12")
-    );
-    assert_eq!(pr_number("https://github.com/a/b/issues/12", "a/b"), None);
-    assert_eq!(pr_number("https://github.com/a/b/pull/x;y", "a/b"), None);
-    // Another repository's PR is not this one's, whatever its number.
-    assert_eq!(pr_number("https://github.com/a/other/pull/12", "a/b"), None);
+fn only_a_pull_request_of_this_repository_gives_its_number() {
+    for (pr, number) in [
+        ("https://github.com/a/b/pull/12", 12),
+        ("https://github.com/A/B/pull/12/files", 12),
+        ("12", 12),
+        ("#12", 12),
+        ("http://github.com/a/b/pull/12", 12),
+    ] {
+        assert_eq!(this_repos_pr(pr, "a/b"), Some(number), "{pr}");
+    }
+    for pr in [
+        "https://github.com/a/b/issues/12",
+        "https://github.com/a/b/pull/x;y",
+        // Another repository's PR is not this one's, whatever its number.
+        "https://github.com/a/other/pull/12",
+        "https://ghe.example.com/a/b/pull/12",
+    ] {
+        assert_eq!(this_repos_pr(pr, "a/b"), None, "{pr}");
+    }
 }
 
 #[test]

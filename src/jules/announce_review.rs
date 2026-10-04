@@ -30,42 +30,44 @@ pub fn announce_review(
         return Ok(());
     }
     let listed = findings(ctx, task_id)?;
-    let lock = task::lock(ctx, task_id)?;
-    let mut task = task::get(&ctx.state, &ctx.repo.slug, task_id)?;
-    if !eligible(&task) {
-        return Ok(());
+    let edited = task::edit(ctx, task_id, |task| {
+        if !eligible(task) {
+            return Ok(task::Edit::Keep(None));
+        }
+        let new: Vec<&Finding> = listed
+            .iter()
+            .filter(|f| {
+                !f.relayed && !task.relayed.contains(&f.id) && !task.announced.contains(&f.id)
+            })
+            .collect();
+        if new.is_empty() {
+            return Ok(task::Edit::Keep(None));
+        }
+        let round = task.relay_rounds + 1;
+        let ids: Vec<&str> = new.iter().map(|f| f.id.as_str()).collect();
+        let message = crate::mail::Message {
+            from: "jules".to_string(),
+            // None, for the reason `task::hand_over` gives.
+            worktree: None,
+            kind: "jules-review".to_string(),
+            subject: task.title.clone(),
+            body: format!(
+                "## task        {}\n## pr          {}\n## session     {}\n## round       {round}/{RELAY_ROUNDS}\n## comments    {}\n",
+                task.id,
+                task.pr.as_deref().unwrap_or_default(),
+                session.id,
+                ids.join(" ")
+            ),
+        };
+        // Posted first and written after, under the lock; woken and notified after it, for the
+        // reasons `follow` gives.
+        let posted = crate::mail::post_to_hub(ctx, &message)?;
+        task.announced.extend(ids.iter().map(|id| id.to_string()));
+        task.relay_rounds = round;
+        Ok(task::Edit::Write(Some(posted)))
+    })?;
+    if let Some(posted) = edited.value {
+        posted.follow_up(ctx, true);
     }
-    let new: Vec<&Finding> = listed
-        .iter()
-        .filter(|f| !f.relayed && !task.relayed.contains(&f.id) && !task.announced.contains(&f.id))
-        .collect();
-    if new.is_empty() {
-        return Ok(());
-    }
-    let round = task.relay_rounds + 1;
-    let ids: Vec<&str> = new.iter().map(|f| f.id.as_str()).collect();
-    let message = crate::mail::Message {
-        from: "jules".to_string(),
-        // None, for the reason `task::hand_over` gives.
-        worktree: None,
-        kind: "jules-review".to_string(),
-        subject: task.title.clone(),
-        body: format!(
-            "## task        {}\n## pr          {}\n## session     {}\n## round       {round}/{RELAY_ROUNDS}\n## comments    {}\n",
-            task.id,
-            task.pr.as_deref().unwrap_or_default(),
-            session.id,
-            ids.join(" ")
-        ),
-    };
-    // Posted first and written after, under the lock; woken and notified after it, for the
-    // reasons `follow` gives.
-    let posted = crate::mail::post_to_hub(ctx, &message)?;
-    task.announced.extend(ids.iter().map(|id| id.to_string()));
-    task.relay_rounds = round;
-    task.updated_at = crate::infra::clock::utc_stamp(crate::infra::clock::now_secs());
-    let saved = task::save(ctx, &task);
-    drop(lock);
-    posted.follow_up(ctx, true);
-    saved.map(|_| ())
+    edited.saved
 }
