@@ -35,6 +35,10 @@ TOP=(cmd mcp cli_args lib main)
 # `testing` is `#[cfg(test)]` scaffolding in lib.rs, not a layer: it ships in no binary, so
 # naming it says nothing about the direction of the arrows at run time.
 ANYWHERE=(testing)
+# `messaging` and `session` re-export what moved to `registry` and `mail`, so that callers keep
+# the old paths until #331 removes those `pub use` lines and this with them.
+REEXPORTING=(messaging session)
+REEXPORTED=(registry mail)
 # Names that say nothing about what a file is for.
 FORBIDDEN_FILES=(usecase.rs util.rs common.rs)
 
@@ -205,6 +209,8 @@ for name in $on_disk; do
       [ -z "$line" ] && continue
       why=""
       if [ "$target" = "$name" ] || in_list "$target" "${ANYWHERE[@]}"; then
+        continue
+      elif in_list "$name" "${REEXPORTING[@]}" && in_list "$target" "${REEXPORTED[@]}"; then
         continue
       elif [ "$target" = "{root}" ]; then
         why="names the crate root; write one \`use crate::<module>::...\` per module"

@@ -14,34 +14,26 @@
 //! so `present: false` is information for the sender, not an error.
 
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::infra::clock::{now_secs, utc_stamp};
-use crate::infra::env::HUB_ENV;
-use crate::infra::fs::{
-    CLAIM_ATTEMPTS, CreateError, create_new_json, read_json, record_exists, remove_if_present,
-    stage, write_json,
-};
+use crate::infra::fs::{CLAIM_ATTEMPTS, remove_if_present, stage};
 use crate::infra::paths::state_dir;
-use crate::kernel::identity::current_worktree;
 
 mod board_view;
 mod hub_record;
 mod inbox;
 mod paths;
-mod proc;
-mod saved_session;
 mod worker_record;
 
 pub use board_view::*;
 pub use hub_record::*;
 pub use inbox::*;
 pub use paths::*;
-pub use proc::*;
-pub use saved_session::*;
 pub use worker_record::*;
+
+// Moved to `registry`; re-exported until #331 so that `messaging::` paths still resolve.
+pub use crate::registry::*;
 
 #[cfg(test)]
 mod tests;

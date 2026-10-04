@@ -1,9 +1,5 @@
 use super::*;
 
-pub fn hub_record_path(slug: &str) -> PathBuf {
-    state_dir().join("hubs").join(format!("{slug}.json"))
-}
-
 /// Where messages for this hub wait. One directory, whether or not the hub is running: two
 /// would mean the hub has to remember to read both, and the one it forgets is the one that
 /// silently swallows reports.

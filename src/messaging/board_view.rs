@@ -1,30 +1,5 @@
 use super::*;
 
-/// The hub a checkout's worker reports to: the key its record says, and failing that the one
-/// its saved session says. The record wins because `adj worker --hub` rewrites it on a
-/// resume, while the session is only written when a session starts.
-pub fn worker_hub_key(worktree: &Path) -> Option<String> {
-    let clean = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
-    match read_worker_record(worktree) {
-        Recorded::Found(record) => record.hub.as_deref().and_then(clean),
-        _ => None,
-    }
-    .or_else(|| worker_session(worktree).and_then(|saved| saved.hub.as_deref().and_then(clean)))
-}
-
-/// The task a checkout's worker is on: what its record says, and only when it has no record
-/// what its saved session says. A record without a task is a session that has none, and a
-/// session saved before it was linked must not give it back one it has since been moved off.
-pub fn worker_task(worktree: &Path) -> Option<String> {
-    let clean = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
-    match read_worker_record(worktree) {
-        Recorded::Found(record) => record.task.as_deref().and_then(clean),
-        Recorded::Absent | Recorded::Unreadable => {
-            worker_session(worktree).and_then(|saved| saved.task.as_deref().and_then(clean))
-        }
-    }
-}
-
 /// How many waiting messages `hubs[].inbox` lists, newest first. The count is the whole inbox.
 const INBOX_LISTED: usize = 20;
 

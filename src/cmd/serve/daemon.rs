@@ -10,9 +10,14 @@ use crate::{messaging, task};
 
 use super::auth::{stored_token, token};
 use super::index::{boards_json, checkout_here, seed_boards};
-use super::registry::{addresses, board_url, live_at, note_board, resident_board_url};
+use super::registry::{addresses, board_url, note_board, resident_board_url};
 use super::resident::{Resident, handle_resident};
 use super::{DEFAULT_PORT, bind_preferring};
+
+// Moved to `registry`; re-exported until #331 so the `serve` callers keep their paths.
+pub(super) use crate::registry::live_resident;
+pub use crate::registry::resident_running;
+use crate::registry::{recorded_version, server_record_path};
 
 // ── the resident server ──────────────────────────────────────────────
 //
@@ -25,24 +30,8 @@ fn server_lock_path() -> PathBuf {
     crate::infra::paths::state_dir().join("server.lock")
 }
 
-fn server_record_path() -> PathBuf {
-    crate::infra::paths::state_dir().join("server.json")
-}
-
 fn server_log_path() -> PathBuf {
     crate::infra::paths::state_dir().join("server.log")
-}
-
-/// The pid and port of the resident server, when one is running. Anchored on the recorded
-/// process start time like every other record here, so a killed server leaves a file that
-/// reads as absent.
-pub(super) fn live_resident() -> Option<(u32, u16)> {
-    live_at(&server_record_path())
-}
-
-/// Whether a resident server is running.
-pub fn resident_running() -> bool {
-    live_resident().is_some()
 }
 
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
@@ -367,14 +356,6 @@ pub fn server_stop() -> Result<i32, String> {
         None => println!("adj server is not running"),
     }
     Ok(0)
-}
-
-/// The version `server.json` names, if any.
-fn recorded_version() -> Option<String> {
-    crate::infra::fs::read_json(&server_record_path())?
-        .get("version")
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 /// `adj server restart`: stop the resident and start it again, on the port it had unless
