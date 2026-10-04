@@ -13,7 +13,13 @@ use crate::registry::forget_board;
 
 pub(super) fn create_task(server: &Server, body: &[u8]) -> Result<Value, String> {
     let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
-    let (task, handed) = crate::cmd::task::create(&server.ctx, &input)?;
+    // An instruction to `create`, not a field of the task.
+    let hand_over = input
+        .get("handOver")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let new = crate::task::NewTask::from_json(&input)?;
+    let (task, handed) = crate::cmd::task::create(&server.ctx, new, hand_over)?;
     Ok(json!({ "task": task, "handed": handed_json(handed) }))
 }
 
