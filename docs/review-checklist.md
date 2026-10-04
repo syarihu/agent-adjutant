@@ -1,7 +1,12 @@
 # Review checklist
 
-What to look for when reviewing a change to agent-adjutant. It is written for the self-review loop
-(either engine), but a person reviewing a PR can use it the same way.
+Extra things to look for when reviewing a change to agent-adjutant. It is written for the
+self-review loop (either engine), but a person reviewing a PR can use it the same way.
+
+This is an addition to the usual review, not a replacement. Every round still checks correctness,
+the task's acceptance criteria, compatibility, tests and whatever else the change calls for; a diff
+that passes every item here can still be wrong. The checklist only names the kinds of defect that
+the usual review has kept missing in this repository.
 
 The list comes from the review bots' history on this repository: 316 inline findings from
 CodeRabbit and Copilot on PRs up to #332, each checked against the commits that followed it.
@@ -146,7 +151,8 @@ says the opposite.
 ## Do not raise
 
 These were raised by the bots and left as they are on purpose. Do not report them unless the change
-in front of you makes them newly reachable.
+in front of you makes them newly reachable. The list covers only these kinds; it does not hold back
+anything else the usual review finds.
 
 - **Strict mutual exclusion between board clients or between processes starting up.** For example,
   making queue insertion atomic across browser tabs (#81) or claiming the dashboard record before the
