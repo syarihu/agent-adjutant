@@ -6,6 +6,8 @@
 //! without a browser. So the verbs live here and the HTTP layer calls them, rather than the
 //! other way round.
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use crate::kernel::config;
@@ -16,12 +18,6 @@ use crate::task::{self, PrRef, PrStatus, Status, Task, stamp};
 
 // Old paths, kept until #363: `hub_title` calls `read_issue` through here.
 pub(super) use crate::task::{PrState, read_issue};
-
-use std::path::{Path, PathBuf};
-
-pub fn dir(ctx: &Context) -> PathBuf {
-    task::dir(&ctx.state, &ctx.repo.slug)
-}
 
 /// Derive a card title from the input title or the first non-empty line of the body.
 fn derive_title(input: &Value) -> Option<String> {
@@ -180,7 +176,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<DeliveryOutc
     } else {
         return Err("a task needs content or a title".to_string());
     };
-    let id = task::claim_id(&dir(ctx), &stamp, &title)?;
+    let id = task::claim_id(ctx, &stamp, &title)?;
     let mut defaults = with_defaults(input, &id, &stamp)?;
     defaults["title"] = json!(title);
     // An instruction to this function rather than part of the record.
@@ -201,7 +197,7 @@ pub fn create(ctx: &Context, input: &Value) -> Result<(Task, Option<DeliveryOutc
     // Written before the message is sent, and never the other way round: the record is what
     // the hub checks when it is about to act, so a message that arrived first would name a
     // task nothing can look up.
-    task::save(&dir(ctx), &task)?;
+    task::save(ctx, &task)?;
     let handed = match task.status {
         Status::Queued if hand => Some(hand_over(ctx, &task)?),
         _ => None,
@@ -270,22 +266,6 @@ fn text_field(key: &str, value: &Value) -> Result<Option<String>, String> {
 }
 
 /// Change a record, and hand it over if this is the change that queued it.
-/// Hold the write lock of one task record until the returned handle is dropped.
-///
-/// A change is a read of the whole record and a write of the whole record, and two of them
-/// at once — the hub updating a task while a gate for it is answered on the board — would
-/// each write back what they read, and the later would undo the earlier. An advisory lock
-/// on an open file, like the dispatch lock: the system lets it go if its holder dies, so
-/// there is nothing to clear by hand. Held only across a load and a save, so waiting on it
-/// is short.
-pub fn lock_task(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
-    if !task::is_plain_id(id) {
-        return Err(format!("no such task: {id}"));
-    }
-    // Beside the record, and not named `.json`, so the listing never reads it as a task.
-    crate::infra::fs::lock(&dir(ctx).join(format!("{id}.lock")))
-}
-
 pub fn update(
     ctx: &Context,
     id: &str,
@@ -302,8 +282,8 @@ pub fn update_checked(
     input: &Value,
     check: impl FnOnce(&Task) -> Result<(), String>,
 ) -> Result<(Task, Option<DeliveryOutcome>), String> {
-    let lock = lock_task(ctx, id)?;
-    let mut task = task::load(&dir(ctx), id)?;
+    let lock = task::lock(ctx, id)?;
+    let mut task = task::get(&ctx.state, &ctx.repo.slug, id)?;
     check(&task)?;
     let was = task.status;
 
@@ -358,7 +338,7 @@ pub fn update_checked(
         task.worktree = task.worktree.as_deref().map(resolved_worktree);
     }
     task.updated_at = stamp();
-    task::save(&dir(ctx), &task)?;
+    task::save(ctx, &task)?;
     drop(lock);
 
     // Handing over is a *transition*, not a status: re-sending on every save would put one
@@ -421,9 +401,7 @@ const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// the snapshot read for a task whose issue it is, else the title of the task made from it.
 /// Looked at before `gh` is asked, so an issue the board has already read is not read again.
 pub(super) fn known_title(root: &Path, slugs: &[String], url: &str) -> Option<String> {
-    let tasks = slugs
-        .iter()
-        .flat_map(|slug| task::list(&task::dir(root, slug)));
+    let tasks = slugs.iter().flat_map(|slug| task::list(root, slug));
     let mut fallback = None;
     for t in tasks {
         if let Some(snapshot) = t.issue_snapshot.as_ref().filter(|s| s.url == url) {
@@ -446,14 +424,13 @@ pub(super) fn known_title(root: &Path, slugs: &[String], url: &str) -> Option<St
 /// lock and written only if it still points at the issue that was read, the way `refresh`
 /// treats a merged PR. On failure the record is left as it was, an earlier snapshot included.
 pub fn fetch_issue(ctx: &Context, id: &str) -> Result<Task, String> {
-    let dir = dir(ctx);
-    let before = task::load(&dir, id)?;
+    let before = task::get(&ctx.state, &ctx.repo.slug, id)?;
     let url = task::issue_to_fetch(&before)
         .ok_or("no GitHub issue to read")?
         .to_string();
     let snapshot = read_issue(&ctx.repo.main, &url)?;
-    let _lock = lock_task(ctx, id)?;
-    let mut now = task::load(&dir, id)?;
+    let _lock = task::lock(ctx, id)?;
+    let mut now = task::get(&ctx.state, &ctx.repo.slug, id)?;
     if task::issue_to_fetch(&now) != Some(url.as_str()) {
         return Err("the task's issue changed while it was being read".to_string());
     }
@@ -464,7 +441,7 @@ pub fn fetch_issue(ctx: &Context, id: &str) -> Result<Task, String> {
     }
     now.issue_snapshot = Some(snapshot);
     now.updated_at = stamp();
-    task::save(&dir, &now)?;
+    task::save(ctx, &now)?;
     Ok(now)
 }
 
@@ -503,7 +480,7 @@ pub struct Checked {
 
 /// The records a refresh looks at: every one with a `pr` that is not finished.
 pub(super) fn candidates(ctx: &Context) -> Vec<Task> {
-    task::list(&dir(ctx))
+    task::list(&ctx.state, &ctx.repo.slug)
         .into_iter()
         .filter(|t| !matches!(t.status, Status::Done | Status::Cancelled))
         .filter(|t| t.pr.is_some())
@@ -581,7 +558,6 @@ pub(super) fn apply(
     candidates: Vec<Task>,
     answers: Vec<(PrState, Option<PrStatus>)>,
 ) -> Vec<Checked> {
-    let dir = dir(ctx);
     let mut checked = Vec::new();
     for (task, (state, summary)) in candidates.into_iter().zip(answers) {
         if state != PrState::Merged {
@@ -603,14 +579,14 @@ pub(super) fn apply(
         // Read again under the lock: `gh` took a while, and a record somebody moved or
         // pointed at another PR in the meantime is theirs, not this answer's.
         let move_it = || -> Result<(Task, bool), String> {
-            let _lock = lock_task(ctx, &task.id)?;
-            let mut now = task::load(&dir, &task.id)?;
+            let _lock = task::lock(ctx, &task.id)?;
+            let mut now = task::get(&ctx.state, &ctx.repo.slug, &task.id)?;
             let moved = now.pr == task.pr && now.status == task.status;
             if moved {
                 now.status = Status::Done;
                 now.pr_status = summary.clone().or(now.pr_status);
                 now.updated_at = stamp();
-                task::save(&dir, &now)?;
+                task::save(ctx, &now)?;
             }
             Ok((now, moved))
         };
@@ -638,13 +614,13 @@ pub(super) fn apply(
 /// task, and the board reads that stamp as the last time somebody did.
 fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus) -> Task {
     let write = || -> Result<Option<Task>, String> {
-        let _lock = lock_task(ctx, &task.id)?;
-        let mut now = task::load(&dir(ctx), &task.id)?;
+        let _lock = task::lock(ctx, &task.id)?;
+        let mut now = task::get(&ctx.state, &ctx.repo.slug, &task.id)?;
         if now.pr != task.pr || now.pr_status.as_ref() == Some(&summary) {
             return Ok(None);
         }
         now.pr_status = Some(summary);
-        task::save(&dir(ctx), &now)?;
+        task::save(ctx, &now)?;
         Ok(Some(now))
     };
     match write() {
@@ -694,7 +670,7 @@ pub fn refresh_json(checked: &[Checked]) -> Value {
 }
 
 fn next_order(ctx: &Context) -> u32 {
-    task::list(&dir(ctx))
+    task::list(&ctx.state, &ctx.repo.slug)
         .iter()
         .map(|t| t.order)
         .max()
@@ -863,7 +839,7 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     }
     // Read without the lock and `.ok()`: a failed or raced read can only cost one extra fetch
     // attempt, since `needs_snapshot` still guards it.
-    let before = task::load(&dir(&ctx), args.id).ok();
+    let before = task::get(&ctx.state, &ctx.repo.slug, args.id).ok();
     let (task, handed) = update(&ctx, args.id, &input)?;
     let changed = before.is_none_or(|b| {
         !matches!(b.status, Status::Dispatched | Status::Pr)
@@ -893,7 +869,7 @@ pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<
             .into_iter()
             .filter_map(|g| g.task)
             .collect();
-    let next = task::next(task::list(&dir(&ctx)), &gated);
+    let next = task::next(task::list(&ctx.state, &ctx.repo.slug), &gated);
     if as_json {
         println!("{}", json!(next));
         return Ok(());
@@ -927,7 +903,7 @@ pub fn list(
         path.canonicalize().unwrap_or(path)
     };
     let at = worktree.map(resolved);
-    let tasks: Vec<Task> = task::list(&dir(&ctx))
+    let tasks: Vec<Task> = task::list(&ctx.state, &ctx.repo.slug)
         .into_iter()
         .filter(|t| wanted.is_none_or(|w| t.status == w))
         .filter(|t| {
@@ -958,7 +934,7 @@ pub fn list(
 
 pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
     let ctx = crate::registry::context(repo, hub)?;
-    let task = task::load(&dir(&ctx), id)?;
+    let task = task::get(&ctx.state, &ctx.repo.slug, id)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?
@@ -1145,7 +1121,7 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
             if let Some(key) = key_arg.filter(|key| *key != "-" && !text::is_key(key)) {
                 return Err(format!("not a tracker key: {key} (like ABC-123)"));
             }
-            let record = task::load(&dir(&ctx), id)?;
+            let record = task::get(&ctx.state, &ctx.repo.slug, id)?;
             if record.executor == task::Executor::Jules {
                 return Err(format!(
                     "task {id} is handed to Jules: no worker is started, so no brief is written"

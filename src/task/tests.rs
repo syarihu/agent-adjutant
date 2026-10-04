@@ -41,6 +41,27 @@ impl Task {
     }
 }
 
+/// A hub's context in a sandboxed state directory. Hold the sandbox for the whole test.
+fn hub() -> (crate::testing::Sandbox, crate::registry::Context) {
+    let sandbox = crate::testing::Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    (sandbox, ctx)
+}
+
+/// Where hub `ctx`'s record `id` lives.
+fn record_path(ctx: &crate::registry::Context, id: &str) -> std::path::PathBuf {
+    store::path_of(&dir(&ctx.state, &ctx.repo.slug), id)
+}
+
 fn sample() -> Task {
     let mut task = Task::new(
         new_id("20260922T041233Z", "Fix the login retry"),
@@ -55,18 +76,18 @@ fn sample() -> Task {
 
 #[test]
 fn a_key_this_binary_does_not_know_survives_a_load_and_save() {
-    let dir = tempfile::tempdir().unwrap();
+    let (_sandbox, ctx) = hub();
     let task = sample();
     let mut raw = serde_json::to_value(&task).unwrap();
     raw["futureField"] = serde_json::json!({"n": 1});
-    std::fs::create_dir_all(dir.path()).unwrap();
-    std::fs::write(path_of(dir.path(), &task.id), raw.to_string()).unwrap();
+    std::fs::create_dir_all(dir(&ctx.state, &ctx.repo.slug)).unwrap();
+    std::fs::write(record_path(&ctx, &task.id), raw.to_string()).unwrap();
 
-    let loaded = load(dir.path(), &task.id).unwrap();
+    let loaded = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
     assert_eq!(loaded.extra["futureField"], serde_json::json!({"n": 1}));
-    save(dir.path(), &loaded).unwrap();
+    save(&ctx, &loaded).unwrap();
 
-    let text = std::fs::read_to_string(path_of(dir.path(), &task.id)).unwrap();
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
     let back: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(back["futureField"], serde_json::json!({"n": 1}));
     assert!(back.get("issueSnapshot").is_none(), "{text}");
@@ -84,22 +105,26 @@ fn snap(url: &str) -> IssueSnapshot {
 
 #[test]
 fn a_snapshot_survives_a_save_and_load_and_an_absent_one_is_not_written() {
-    let dir = std::env::temp_dir().join(format!("adj-snap-{}", std::process::id()));
+    let (_sandbox, ctx) = hub();
     let mut task = sample();
     task.issue_snapshot = Some(snap("https://github.com/a/b/issues/1"));
-    save(&dir, &task).unwrap();
-    assert_eq!(load(&dir, &task.id).unwrap(), task);
-    let text = std::fs::read_to_string(path_of(&dir, &task.id)).unwrap();
+    save(&ctx, &task).unwrap();
+    assert_eq!(get(&ctx.state, &ctx.repo.slug, &task.id).unwrap(), task);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
     assert!(text.contains("\"issueSnapshot\""), "{text}");
     assert!(text.contains("\"fetchedAt\""), "{text}");
     assert!(!text.contains("truncated"), "{text}");
 
     task.issue_snapshot = None;
-    save(&dir, &task).unwrap();
-    let text = std::fs::read_to_string(path_of(&dir, &task.id)).unwrap();
+    save(&ctx, &task).unwrap();
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
     assert!(!text.contains("issueSnapshot"), "{text}");
-    assert_eq!(load(&dir, &task.id).unwrap().issue_snapshot, None);
-    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &task.id)
+            .unwrap()
+            .issue_snapshot,
+        None
+    );
 }
 
 #[test]
@@ -381,9 +406,9 @@ fn slug_does_not_run_past_its_cap_or_end_on_a_separator() {
 /// land on the same file — which is what filling the form twice in a row looks like.
 #[test]
 fn ids_claimed_in_the_same_second_do_not_collide() {
-    let dir = tempfile::tempdir().unwrap();
+    let (_sandbox, ctx) = hub();
     let ids: Vec<String> = (0..3)
-        .map(|_| claim_id(dir.path(), "20260922T041233Z", "ログインのリトライ").unwrap())
+        .map(|_| claim_id(&ctx, "20260922T041233Z", "ログインのリトライ").unwrap())
         .collect();
     assert_eq!(
         ids,
@@ -399,46 +424,110 @@ fn ids_claimed_in_the_same_second_do_not_collide() {
 /// caller can take the name in between.
 #[test]
 fn a_claimed_id_is_held_before_anything_is_written_to_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let id = claim_id(dir.path(), "20260922T041233Z", "x").unwrap();
-    assert!(path_of(dir.path(), &id).exists());
+    let (_sandbox, ctx) = hub();
+    let id = claim_id(&ctx, "20260922T041233Z", "x").unwrap();
+    assert!(record_path(&ctx, &id).exists());
 }
 
 #[test]
 fn a_saved_task_reads_back_the_same() {
-    let dir = tempfile::tempdir().unwrap();
+    let (_sandbox, ctx) = hub();
     let task = sample();
-    save(dir.path(), &task).unwrap();
-    assert_eq!(load(dir.path(), &task.id).unwrap(), task);
+    save(&ctx, &task).unwrap();
+    assert_eq!(get(&ctx.state, &ctx.repo.slug, &task.id).unwrap(), task);
 }
 
 #[test]
 fn listing_is_in_queue_order() {
-    let dir = tempfile::tempdir().unwrap();
+    let (_sandbox, ctx) = hub();
     for (id, order) in [("a", 3u32), ("b", 1), ("c", 2)] {
         let mut task = sample();
         task.id = id.to_string();
         task.order = order;
-        save(dir.path(), &task).unwrap();
+        save(&ctx, &task).unwrap();
     }
-    let ids: Vec<String> = list(dir.path()).into_iter().map(|t| t.id).collect();
+    let ids: Vec<String> = list(&ctx.state, &ctx.repo.slug)
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
     assert_eq!(ids, ["b", "c", "a"]);
 }
 
 /// One unreadable file must not blank the board.
 #[test]
 fn a_file_that_will_not_parse_is_skipped_rather_than_fatal() {
-    let dir = tempfile::tempdir().unwrap();
+    let (_sandbox, ctx) = hub();
     let task = sample();
-    save(dir.path(), &task).unwrap();
-    std::fs::write(dir.path().join("broken.json"), "{ not json").unwrap();
-    assert_eq!(list(dir.path()).len(), 1);
+    save(&ctx, &task).unwrap();
+    std::fs::write(record_path(&ctx, "broken"), "{ not json").unwrap();
+    assert_eq!(list(&ctx.state, &ctx.repo.slug).len(), 1);
 }
 
 #[test]
 fn listing_a_directory_that_is_not_there_is_empty_rather_than_an_error() {
-    let dir = tempfile::tempdir().unwrap();
-    assert!(list(&dir.path().join("nope")).is_empty());
+    let (_sandbox, ctx) = hub();
+    assert!(list(&ctx.state, "nope").is_empty());
+}
+
+#[test]
+fn a_record_reads_back_through_get_and_list_by_root_and_slug() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    assert_eq!(get(&ctx.state, &ctx.repo.slug, &task.id).unwrap(), task);
+    let ids: Vec<String> = list(&ctx.state, &ctx.repo.slug)
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(ids, std::slice::from_ref(&task.id));
+    assert!(list(&ctx.state, "other-hub").is_empty());
+
+    // Pins where the records are on disk: another hub's directory under the same root.
+    let other = ctx.state.join("tasks").join("other-hub");
+    std::fs::create_dir_all(&other).unwrap();
+    let mut written = sample();
+    written.id = "x".to_string();
+    std::fs::write(
+        other.join("x.json"),
+        serde_json::to_string(&written).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(get(&ctx.state, "other-hub", "x").unwrap(), written);
+
+    let err = get(&ctx.state, &ctx.repo.slug, "../x").unwrap_err();
+    assert!(err.starts_with("no such task"), "{err}");
+    std::fs::write(other.join("broken.json"), "{ not json").unwrap();
+    let err = get(&ctx.state, "other-hub", "broken").unwrap_err();
+    assert!(err.starts_with("cannot read"), "{err}");
+}
+
+#[test]
+fn remove_deletes_the_record_and_leaves_its_lock() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    drop(lock(&ctx, &task.id).unwrap());
+    remove(&ctx, &task.id).unwrap();
+    assert!(!record_path(&ctx, &task.id).exists());
+    let lock_file = dir(&ctx.state, &ctx.repo.slug).join(format!("{}.lock", task.id));
+    assert!(lock_file.exists());
+    let err = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap_err();
+    assert!(err.starts_with("no such task"), "{err}");
+    assert!(remove(&ctx, "../x").is_err());
+}
+
+#[test]
+fn note_gate_answered_stamps_the_record_and_leaves_a_missing_one_alone() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    note_gate_answered(&ctx, &task.id, "20260922T050000Z");
+    let after = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(after.gate_answered_at.as_deref(), Some("20260922T050000Z"));
+
+    // Best effort: no record, and no panic, and nothing written.
+    note_gate_answered(&ctx, "nothing-here", "20260922T050000Z");
+    assert!(!record_path(&ctx, "nothing-here").exists());
 }
 
 /// The message the hub reads has to carry everything the form asked for; otherwise the

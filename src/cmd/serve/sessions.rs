@@ -512,9 +512,7 @@ pub(in crate::cmd) fn git_state_of(
     // because it is in the default branch.
     let base = session.task.as_deref().and_then(|task_id| {
         let slug = worker_hub_slug(&server.ctx.repo, Path::new(&session.worktree));
-        task::load(&task::dir(&server.ctx.state, &slug), task_id)
-            .ok()?
-            .base
+        task::get(&server.ctx.state, &slug, task_id).ok()?.base
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(GIT_CHECK_SECS);
     crate::kernel::worktree_state::worktree_git_state(

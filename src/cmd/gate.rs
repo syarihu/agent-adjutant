@@ -40,7 +40,7 @@ fn find(ctx: &Context, id: &str) -> Result<Gate, String> {
 }
 
 /// Hold the write lock of one gate or record until the returned handle is dropped. The same
-/// advisory lock `task::lock_task` takes, for the same reason: appending an answer is a read
+/// advisory lock `task::lock` takes, for the same reason: appending an answer is a read
 /// and a write of the whole file, and two at once would each write back what they read. On
 /// an open gate it is what lets only one of the board's answer, the worker's close and the
 /// board's own sweep decide it.
@@ -468,22 +468,10 @@ pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
     closed
 }
 
-/// Write the answer's time onto the gate's task, for the board's stuck badge. Best effort:
-/// the answer has been delivered and archived by now, and a task record that is missing or
-/// unwritable must not turn that into a failure.
+/// Note the answer on the gate's task, if it has one.
 fn note_answered(ctx: &Context, task: Option<&str>, at: &str) {
-    let Some(id) = task else {
-        return;
-    };
-    let dir = super::task::dir(ctx);
-    // Under the task's lock, like `task::update`: a whole-record write racing another would
-    // undo whichever landed first.
-    let Ok(_lock) = super::task::lock_task(ctx, id) else {
-        return;
-    };
-    if let Ok(mut task) = crate::task::load(&dir, id) {
-        task.gate_answered_at = Some(at.to_string());
-        let _ = crate::task::save(&dir, &task);
+    if let Some(id) = task {
+        crate::task::note_gate_answered(ctx, id, at);
     }
 }
 

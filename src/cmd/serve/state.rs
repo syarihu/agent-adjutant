@@ -72,7 +72,7 @@ pub(super) fn parent_hub_id(
 /// Read here rather than taken from the page's own task list so that a worker under another
 /// hub names its task as well.
 pub(super) fn linked_task_title(state_dir: &Path, slug: &str, id: &str) -> Option<String> {
-    let title = task::load(&task::dir(state_dir, slug), id).ok()?.title;
+    let title = task::get(state_dir, slug, id).ok()?.title;
     Some(title.trim().to_string()).filter(|t| !t.is_empty())
 }
 
@@ -116,7 +116,7 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
     let _ = crate::cmd::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
     let tasks = with_records(
-        task::list(&crate::cmd::task::dir(&server.ctx)),
+        task::list(&server.ctx.state, &server.ctx.repo.slug),
         gate::list(&crate::cmd::gate::records_dir(&server.ctx)),
         gate::list_of_kind(
             &crate::cmd::gate::answered_dir(&server.ctx),

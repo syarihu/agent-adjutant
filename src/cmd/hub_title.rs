@@ -51,8 +51,7 @@ pub(super) fn cached_title(root: &std::path::Path, slug: &str) -> Option<String>
 /// the one its key stands for in `issueKeys`. None for a key that matches neither, which is
 /// never asked about.
 fn issue_of(ctx: &Context, hub: &RepoHub, key: &str) -> Option<String> {
-    let dir = task::dir(&ctx.state, &hub.slug);
-    let named = task::list(&dir)
+    let named = task::list(&ctx.state, &hub.slug)
         .into_iter()
         .filter_map(|t| t.parent)
         .map(|p| p.trim().to_string())

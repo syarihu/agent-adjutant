@@ -2,14 +2,21 @@
 
 use super::*;
 
+use crate::registry::Context;
+
 /// Where this hub's tasks live. Beside the inbox rather than inside it: the inbox is a
 /// queue that drains, and a task record has to still be there after its message is acked.
-pub fn dir(state_dir: &Path, slug: &str) -> PathBuf {
+pub(crate) fn dir(state_dir: &Path, slug: &str) -> PathBuf {
     state_dir.join("tasks").join(slug)
 }
 
-pub fn path_of(dir: &Path, id: &str) -> PathBuf {
+pub(super) fn path_of(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
+}
+
+/// The directory of the hub `ctx` is for.
+pub(super) fn dir_of(ctx: &Context) -> PathBuf {
+    dir(&ctx.state, &ctx.repo.slug)
 }
 
 /// Take an id nobody else holds, and hold it.
@@ -21,7 +28,8 @@ pub fn path_of(dir: &Path, id: &str) -> PathBuf {
 /// Claimed with `create_new` rather than checked with `exists` first: the dashboard and the
 /// command line can both be creating one, and check-then-write leaves a window where both
 /// see the name free. `mail::send` names inbox files the same way, for the same reason.
-pub fn claim_id(dir: &Path, stamp: &str, title: &str) -> Result<String, String> {
+pub fn claim_id(ctx: &Context, stamp: &str, title: &str) -> Result<String, String> {
+    let dir = &dir_of(ctx);
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let base = new_id(stamp, title);
     for seq in 1..1000 {
@@ -54,17 +62,17 @@ pub fn claim_id(dir: &Path, stamp: &str, title: &str) -> Result<String, String> 
 /// server's PR poll writes records while `adj task show` and the board read them: a plain
 /// write truncates first, and a reader in between sees an empty file. `list` skips the
 /// staged name, so it never picks one up.
-pub fn save(dir: &Path, task: &Task) -> Result<PathBuf, String> {
-    let path = path_of(dir, &task.id);
+pub fn save(ctx: &Context, task: &Task) -> Result<PathBuf, String> {
+    let path = path_of(&dir_of(ctx), &task.id);
     crate::infra::fs::write_json(&path, task)?;
     Ok(path)
 }
 
-pub fn load(dir: &Path, id: &str) -> Result<Task, String> {
+pub(super) fn load(root: &Path, slug: &str, id: &str) -> Result<Task, String> {
     if !is_plain_id(id) {
         return Err(format!("no such task: {id}"));
     }
-    let path = path_of(dir, id);
+    let path = path_of(&dir(root, slug), id);
     let text = std::fs::read_to_string(&path).map_err(|_| format!("no such task: {id}"))?;
     serde_json::from_str(&text).map_err(|e| format!("cannot read {}: {e}", path.display()))
 }
@@ -73,8 +81,8 @@ pub fn load(dir: &Path, id: &str) -> Result<Task, String> {
 ///
 /// A file that will not parse is skipped rather than fatal. The board is a view of a
 /// directory somebody may have hand-edited, and one bad file must not blank the page.
-pub fn list(dir: &Path) -> Vec<Task> {
-    let mut tasks: Vec<Task> = match std::fs::read_dir(dir) {
+pub(super) fn list(root: &Path, slug: &str) -> Vec<Task> {
+    let mut tasks: Vec<Task> = match std::fs::read_dir(dir(root, slug)) {
         Ok(entries) => entries
             .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
@@ -89,6 +97,22 @@ pub fn list(dir: &Path) -> Vec<Task> {
             .then_with(|| a.created_at.cmp(&b.created_at))
     });
     tasks
+}
+
+/// Hold the write lock of one task record until the returned handle is dropped.
+///
+/// A change is a read of the whole record and a write of the whole record, and two of them
+/// at once — the hub updating a task while a gate for it is answered on the board — would
+/// each write back what they read, and the later would undo the earlier. An advisory lock
+/// on an open file, like the dispatch lock: the system lets it go if its holder dies, so
+/// there is nothing to clear by hand. Held only across a load and a save, so waiting on it
+/// is short.
+pub fn lock(ctx: &Context, id: &str) -> Result<std::fs::File, String> {
+    if !is_plain_id(id) {
+        return Err(format!("no such task: {id}"));
+    }
+    // Beside the record, and not named `.json`, so the listing never reads it as a task.
+    crate::infra::fs::lock(&dir_of(ctx).join(format!("{id}.lock")))
 }
 
 pub fn stamp() -> String {
