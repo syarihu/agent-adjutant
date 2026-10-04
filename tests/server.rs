@@ -1945,6 +1945,32 @@ fn a_parent_hubs_board_gives_the_sidebar_its_tasks_and_history() {
 }
 
 #[test]
+fn a_queued_task_from_the_board_says_which_inbox_file_it_was_handed_in() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/tasks"),
+        &serde_json::json!({"title": "Goes to the hub", "status": "queued"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(answer["handed"]["present"].is_boolean(), "{body}");
+    let path = std::path::PathBuf::from(answer["handed"]["path"].as_str().expect(&body));
+    assert!(path.is_file(), "{body}");
+    assert_eq!(
+        path.parent().unwrap(),
+        fixture.state.join("inbox").join(SLUG),
+        "{body}"
+    );
+    let pending = fixture.json(&["pending", "--json"]);
+    assert_eq!(
+        pending["messages"][0]["name"].as_str().unwrap(),
+        path.file_name().unwrap().to_str().unwrap(),
+        "{pending}"
+    );
+}
+
+#[test]
 fn the_polled_state_carries_no_diffs_and_the_history_still_does() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);

@@ -20,7 +20,7 @@ pub(super) fn create_task(server: &Server, body: &[u8]) -> Result<Value, String>
         .unwrap_or(true);
     let new = crate::task::NewTask::from_json(&input)?;
     let (task, handed) = crate::cmd::task::create(&server.ctx, new, hand_over)?;
-    Ok(json!({ "task": task, "handed": handed_json(handed) }))
+    Ok(json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) }))
 }
 
 pub(super) fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
@@ -32,7 +32,7 @@ pub(super) fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         .unwrap_or(true);
     let patch = crate::task::TaskPatch::from_json(&input)?;
     let (task, handed) = crate::cmd::task::update(&server.ctx, id, &patch, hand_over)?;
-    Ok(json!({ "task": task, "handed": handed_json(handed) }))
+    Ok(json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) }))
 }
 
 /// The three buttons a card has for the worker behind it: raise its tab, open its worktree in
@@ -305,7 +305,7 @@ pub(super) fn refresh_tasks(server: &Server) -> Result<Value, String> {
 
 pub(super) fn nudge_hub(server: &Server) -> Result<Value, String> {
     let handed = crate::cmd::task::nudge(&server.ctx)?;
-    Ok(json!({ "handed": handed_json(Some(handed)) }))
+    Ok(json!({ "handed": crate::mail::Handed::from(&handed) }))
 }
 
 pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
@@ -331,17 +331,4 @@ pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         input.get("comment").and_then(Value::as_str),
     )?;
     Ok(json!({ "gate": gate, "present": told.is_present(), "woken": told.was_woken() }))
-}
-
-/// What the page is told about the hand-over: whether the hub was there, and whether its
-/// tab was poked. Both matter to the person — a hub that is down is not an error, it just
-/// means the task waits.
-fn handed_json(handed: Option<crate::mail::DeliveryOutcome>) -> Value {
-    match handed {
-        Some(d) => json!({
-            "present": d.is_present(),
-            "woken": d.was_woken(),
-        }),
-        None => Value::Null,
-    }
 }

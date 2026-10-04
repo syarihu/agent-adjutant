@@ -239,6 +239,26 @@ impl DeliveryOutcome {
     }
 }
 
+/// What a caller is told about a hand-over: whether the hub was there, whether its tab was
+/// poked, and which inbox file the message became. A hub that is down is not an error, it just
+/// means the task waits, so the person needs the first two to tell the cases apart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Handed {
+    pub present: bool,
+    pub woken: bool,
+    pub path: String,
+}
+
+impl From<&DeliveryOutcome> for Handed {
+    fn from(d: &DeliveryOutcome) -> Self {
+        Handed {
+            present: d.is_present(),
+            woken: d.was_woken(),
+            path: d.path.display().to_string(),
+        }
+    }
+}
+
 /// Whether the message reached a running receiver, and if so whether it was woken.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reached {
