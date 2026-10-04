@@ -527,7 +527,8 @@ impl Default for NewTask {
 
 impl NewTask {
     /// Read a request's JSON. Keys this does not name are ignored, whatever they are. A value
-    /// of the wrong type is refused here, before anything is claimed or read from `gh`.
+    /// of the wrong type is refused here (a title aside), before anything is claimed or read
+    /// from `gh`.
     pub fn from_json(input: &serde_json::Value) -> Result<NewTask, String> {
         use serde_json::Value;
         let fields = input.as_object().ok_or("expected an object")?;
@@ -557,6 +558,8 @@ impl NewTask {
         };
         let defaults = NewTask::default();
         Ok(NewTask {
+            // The one exception to the types above: a title that is not a string has always
+            // been passed over for one derived from the body rather than refused.
             title: fields
                 .get("title")
                 .and_then(Value::as_str)
