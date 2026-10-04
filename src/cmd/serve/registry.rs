@@ -129,14 +129,9 @@ pub(super) fn record(slug: &str, port: u16) -> Result<bool, String> {
         return Ok(false);
     }
     let path = record_path(slug);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
     let pid = std::process::id();
     let record = json!({ "pid": pid, "port": port, "psStarted": messaging::ps_started(pid) });
-    std::fs::write(&path, format!("{record:#}\n"))
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    crate::infra::fs::write_json(&path, &record)?;
     Ok(true)
 }
 

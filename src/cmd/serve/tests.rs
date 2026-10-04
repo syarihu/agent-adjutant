@@ -35,6 +35,26 @@ fn forgetting_a_board_removes_only_that_slug() {
 }
 
 #[test]
+fn the_dashboards_record_is_written_whole() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    assert_eq!(record("acme-widget", 4321), Ok(true));
+    let dir = crate::infra::paths::state_dir().join("dashboards");
+    let names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["acme-widget.json"]);
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("acme-widget.json")).unwrap())
+            .unwrap();
+    let pid = std::process::id();
+    assert_eq!(written["pid"], pid);
+    assert_eq!(written["port"], 4321);
+    assert_eq!(written["psStarted"], json!(messaging::ps_started(pid)));
+    assert_eq!(dashboards_running("acme-widget"), Some(4321));
+}
+
+#[test]
 fn a_pane_is_read_again_only_when_it_has_moved_and_the_last_read_is_old() {
     let lines = LastLines::default();
     let t0 = Instant::now();
