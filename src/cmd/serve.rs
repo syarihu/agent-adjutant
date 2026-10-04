@@ -28,6 +28,8 @@ mod state;
 
 use auth::token;
 use daemon::open_browser;
+#[cfg(test)]
+pub(super) use daemon::resident_command;
 pub use daemon::{resident_running, server_restart, server_start, server_status, server_stop};
 pub(super) use handlers::hub_start_of;
 pub(super) use registry::forget_board;

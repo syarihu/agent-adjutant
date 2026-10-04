@@ -333,7 +333,9 @@ tab `hub --tab` and `work` open, when this process was given them. `ADJUTANT_HUB
 travels as a flag; these two have none, and losing them does not fail — it splits. The tab
 reads the default config and the default state directory, so the worker it starts registers
 in one world while the hub that dispatched it waits in another, and both halves look healthy
-from where they stand.
+from where they stand. A relative `ADJUTANT_STATE_DIR` is forwarded as an absolute path,
+resolved against the directory of the process that opens the tab (and the resident server gets
+it the same way).
 
 `{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
 terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A
