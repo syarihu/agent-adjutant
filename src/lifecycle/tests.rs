@@ -202,3 +202,21 @@ fn waiting_for_a_worker_to_go_looks_again_but_not_forever() {
         Liveness::Alive
     );
 }
+
+/// With no hub record there is no hub to raise: `focus` answers `None` before any
+/// terminal is asked to do anything.
+#[test]
+fn focusing_a_hub_with_no_record_raises_nothing() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    assert!(hub::focus(&ctx, false).unwrap().is_none());
+}

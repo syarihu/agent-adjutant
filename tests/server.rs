@@ -767,6 +767,21 @@ fn hub_start_is_not_a_route_on_a_hub_s_own_board() {
     assert_eq!(state["resident"], false);
 }
 
+/// 「タブで話す」 on a board whose hub is not running: nothing to raise, and the page is told
+/// so rather than handed an error.
+#[test]
+fn hub_focus_on_a_board_whose_hub_is_not_running_raises_nothing() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hub/focus"), "{}");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        answer,
+        serde_json::json!({ "present": false, "ran": false })
+    );
+}
+
 #[test]
 fn hub_start_runs_adj_hub_in_a_tmux_window() {
     let fixture = Fixture::new(QUIET);

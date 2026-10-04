@@ -16,9 +16,9 @@ fn go_to_running_hub(
         ctx.repo.hub_name,
         status.pid.unwrap_or(0)
     );
-    if let Some(pid) = status.pid {
-        let _ = terminal::focus(&ctx.settings.terminal, pid, &ctx.repo.hub_name, dry_run);
-    }
+    // Raising is a courtesy: the hub is up either way, and a tab that cannot be raised is not
+    // this command failing.
+    let _ = crate::lifecycle::hub::focus(ctx, dry_run);
     Ok(())
 }
 
