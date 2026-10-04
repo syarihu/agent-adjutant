@@ -26,69 +26,83 @@ use crate::registry::{recorded_version, server_record_path};
 // address book — `boards/<slug>.json`, written by whoever learns where a repository is —
 // and builds each board's context from that on first use.
 
-fn server_lock_path() -> PathBuf {
-    crate::infra::paths::state_dir().join("server.lock")
+fn server_lock_path(root: &Path) -> PathBuf {
+    root.join("server.lock")
 }
 
-fn server_log_path() -> PathBuf {
-    crate::infra::paths::state_dir().join("server.log")
+fn server_log_path(root: &Path) -> PathBuf {
+    root.join("server.log")
+}
+
+/// The state directory the resident commands read: a relative `ADJUTANT_STATE_DIR` is taken
+/// against the main checkout of the repository this was typed in, as every command of that
+/// repository takes it, and outside any against the working directory.
+pub(super) fn resident_root(here: Option<&crate::kernel::identity::RepoInfo>) -> PathBuf {
+    crate::registry::state_root(here.map(|repo| Path::new(&repo.main)))
 }
 
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
 /// tests run.
 pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, String> {
-    if foreground {
-        return serve_resident(port, open);
-    }
     let here = checkout_here();
-    if let Some((pid, port)) = live_resident() {
+    let root = resident_root(here.as_ref());
+    if foreground {
+        return serve_resident(&root, port, open);
+    }
+    if let Some((pid, port)) = live_resident(&root) {
         if let Some(repo) = &here {
-            note_board(repo);
+            note_board(&root, repo);
         }
-        let shown = shown_url(port, here.as_ref())?;
+        let shown = shown_url(&root, port, here.as_ref())?;
         println!("adj server: already running (pid {pid}) — {shown}");
         return Ok(0);
     }
-    start_detached(port, open, here.as_ref())
+    start_detached(&root, port, open, here.as_ref())
 }
 
 /// Start the resident detached and say where it is. The caller has already found none running.
 fn start_detached(
+    root: &Path,
     port: u16,
     open: bool,
     here: Option<&crate::kernel::identity::RepoInfo>,
 ) -> Result<i32, String> {
-    let port = launch_resident(port)?;
-    let index = resident_index_url(port)?;
+    let port = launch_resident(root, port)?;
+    let index = resident_index_url(root, port)?;
     println!("adj server: serving on {index}");
     if let Some(repo) = here {
-        note_board(repo);
-        println!("adj server: {} — {}", repo.nwo, shown_url(port, here)?);
+        note_board(root, repo);
+        println!(
+            "adj server: {} — {}",
+            repo.nwo,
+            shown_url(root, port, here)?
+        );
     }
     if open {
-        open_browser(&shown_url(port, here)?);
+        open_browser(&shown_url(root, port, here)?);
     }
     Ok(0)
 }
 
 /// Spawn the resident and wait until it says where it is: the port it bound.
-fn launch_resident(port: u16) -> Result<u16, String> {
-    let child = spawn_resident(port)?;
-    wait_for_resident(child)
+fn launch_resident(root: &Path, port: u16) -> Result<u16, String> {
+    let child = spawn_resident(root, port)?;
+    wait_for_resident(root, child)
 }
 
-fn resident_index_url(port: u16) -> Result<String, String> {
-    Ok(board_url(port, &token()?))
+fn resident_index_url(root: &Path, port: u16) -> Result<String, String> {
+    Ok(board_url(port, &token(root)?))
 }
 
 /// The URL worth showing: the board of the checkout this stands in, else the index.
 fn shown_url(
+    root: &Path,
     port: u16,
     here: Option<&crate::kernel::identity::RepoInfo>,
 ) -> Result<String, String> {
     match here {
-        Some(repo) => Ok(resident_board_url(port, &repo.slug, &token()?)),
-        None => resident_index_url(port),
+        Some(repo) => Ok(resident_board_url(port, &repo.slug, &token(root)?)),
+        None => resident_index_url(root, port),
     }
 }
 
@@ -111,25 +125,26 @@ pub(super) fn private_log(path: &Path) -> Result<std::fs::File, String> {
 
 /// The resident, started in a process group of its own so that closing the terminal it was
 /// started from does not take it along, with what it says written to `server.log`.
-fn spawn_resident(port: u16) -> Result<std::process::Child, String> {
-    let log = server_log_path();
+fn spawn_resident(root: &Path, port: u16) -> Result<std::process::Child, String> {
+    let log = server_log_path(root);
     if let Some(parent) = log.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let open_log = || private_log(&log);
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-    resident_command(&exe, port, open_log()?.into(), open_log()?.into())
+    resident_command(&exe, port, root, open_log()?.into(), open_log()?.into())
         .spawn()
         .map_err(|e| format!("cannot start adj server: {e}"))
 }
 
 /// The command that starts the resident, built apart from the spawn so its environment can be
 /// read. The resident is detached and stands elsewhere, so a relative `ADJUTANT_STATE_DIR` is
-/// handed to it as the absolute directory this process reads now.
+/// handed to it as `root`, the absolute directory this process reads.
 pub(in crate::cmd) fn resident_command(
     exe: &Path,
     port: u16,
+    root: &Path,
     stdout: std::process::Stdio,
     stderr: std::process::Stdio,
 ) -> std::process::Command {
@@ -152,19 +167,16 @@ pub(in crate::cmd) fn resident_command(
         command.env_remove(name);
     }
     if std::env::var_os(crate::infra::env::STATE_DIR_ENV).is_some_and(|v| !v.is_empty()) {
-        command.env(
-            crate::infra::env::STATE_DIR_ENV,
-            crate::infra::paths::state_dir_absolute(),
-        );
+        command.env(crate::infra::env::STATE_DIR_ENV, root);
     }
     command
 }
 
 /// Wait for the resident to say where it is — it writes `server.json` once it is listening.
-fn wait_for_resident(mut child: std::process::Child) -> Result<u16, String> {
+fn wait_for_resident(root: &Path, mut child: std::process::Child) -> Result<u16, String> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        if let Some((_, port)) = live_resident() {
+        if let Some((_, port)) = live_resident(root) {
             return Ok(port);
         }
         // A child that has exited is not yet a failure: it exits when another resident holds
@@ -174,7 +186,7 @@ fn wait_for_resident(mut child: std::process::Child) -> Result<u16, String> {
         if std::time::Instant::now() >= deadline {
             return Err(format!(
                 "adj server did not start; see {}",
-                server_log_path().display()
+                server_log_path(root).display()
             ));
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -183,12 +195,12 @@ fn wait_for_resident(mut child: std::process::Child) -> Result<u16, String> {
 
 /// The resident itself: holds `server.lock` for as long as it runs, binds, says where it is,
 /// and answers.
-fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
-    let lock_path = server_lock_path();
+fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
+    let lock_path = server_lock_path(root);
     // Held for the process's lifetime and released by the system when it ends, however it
     // ends — the same lock `messaging::take_over` takes, for the same reason.
     let Some(lock) = crate::infra::fs::try_lock(&lock_path)? else {
-        return Err(match live_resident() {
+        return Err(match live_resident(root) {
             Some((pid, _)) => format!("another adj server is running (pid {pid})"),
             None => "another adj server is running".to_string(),
         });
@@ -202,7 +214,7 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
     if port != 0 && bound != port {
         eprintln!("adj server: 127.0.0.1:{port} is taken; serving on {bound} instead");
     }
-    let token = token()?;
+    let token = token(root)?;
     let pid = std::process::id();
     let record = json!({
         "pid": pid,
@@ -211,8 +223,8 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
         "startedAt": crate::infra::clock::utc_stamp(crate::infra::clock::now_secs()),
         "version": env!("CARGO_PKG_VERSION"),
     });
-    crate::infra::fs::write_json(&server_record_path(), &record)?;
-    seed_boards();
+    crate::infra::fs::write_json(&server_record_path(root), &record)?;
+    seed_boards(root);
     let index = board_url(bound, &token);
     // The token goes to a terminal and nowhere else: detached, or under a service manager,
     // stdout is a log file, and a log is kept, attached to bug reports and read by others. The
@@ -226,6 +238,7 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
         open_browser(&index);
     }
     let resident = Arc::new(Resident {
+        root: root.to_path_buf(),
         token,
         port: bound,
         boards: Mutex::default(),
@@ -241,14 +254,18 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
                 // Only a board with a card on a PR is opened for it: opening one asks git where
                 // the checkout is, which is not worth doing every round for a board with nothing
                 // to look after.
-                let state_dir = crate::infra::paths::state_dir();
-                addresses()
+                addresses(&resident.root)
                     .iter()
                     .filter(|a| {
-                        task::list(&task::dir(&state_dir, &a.slug)).iter().any(|t| {
-                            t.pr.is_some()
-                                && !matches!(t.status, task::Status::Done | task::Status::Cancelled)
-                        })
+                        task::list(&task::dir(&resident.root, &a.slug))
+                            .iter()
+                            .any(|t| {
+                                t.pr.is_some()
+                                    && !matches!(
+                                        t.status,
+                                        task::Status::Done | task::Status::Cancelled
+                                    )
+                            })
                     })
                     .filter_map(|a| resident.board(&a.slug))
                     .map(|server| server.ctx.clone())
@@ -275,8 +292,8 @@ fn serve_resident(port: u16, open: bool) -> Result<i32, String> {
 }
 
 /// What `server.json` names, whether or not that process is still there.
-fn recorded_resident() -> Option<(u32, Option<String>)> {
-    let record = crate::infra::fs::read_json(&server_record_path())?;
+fn recorded_resident(root: &Path) -> Option<(u32, Option<String>)> {
+    let record = crate::infra::fs::read_json(&server_record_path(root))?;
     let pid = record.get("pid").and_then(Value::as_u64)? as u32;
     let started = record
         .get("psStarted")
@@ -296,9 +313,9 @@ pub(super) fn names_resident(
     record.is_some_and(|(p, s)| *p == pid && s.as_deref() == started)
 }
 
-fn forget_resident(pid: u32, started: Option<&str>) {
-    if names_resident(recorded_resident().as_ref(), pid, started) {
-        let _ = std::fs::remove_file(server_record_path());
+fn forget_resident(root: &Path, pid: u32, started: Option<&str>) {
+    if names_resident(recorded_resident(root).as_ref(), pid, started) {
+        let _ = std::fs::remove_file(server_record_path(root));
     }
 }
 
@@ -308,11 +325,11 @@ const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Ask the resident to exit and wait for it. The pid and bound port of what was stopped, or
 /// `None` when nothing was running — a record left by a killed server is forgotten on the way.
 /// `restarting` only changes the timeout message, which then says no other is started.
-fn stop_resident(restarting: bool) -> Result<Option<(u32, u16)>, String> {
-    let named = recorded_resident();
-    let Some((pid, port)) = live_resident() else {
+fn stop_resident(root: &Path, restarting: bool) -> Result<Option<(u32, u16)>, String> {
+    let named = recorded_resident(root);
+    let Some((pid, port)) = live_resident(root) else {
         if let Some((pid, started)) = &named {
-            forget_resident(*pid, started.as_deref());
+            forget_resident(root, *pid, started.as_deref());
         }
         return Ok(None);
     };
@@ -329,7 +346,7 @@ fn stop_resident(restarting: bool) -> Result<Option<(u32, u16)>, String> {
     // already have started the next one.
     let still_there = || match &started {
         Some(started) => messaging::ps_started(pid).as_deref() == Some(started.as_str()),
-        None => live_resident().is_some_and(|(p, _)| p == pid),
+        None => live_resident(root).is_some_and(|(p, _)| p == pid),
     };
     while still_there() {
         if std::time::Instant::now() >= deadline {
@@ -345,13 +362,14 @@ fn stop_resident(restarting: bool) -> Result<Option<(u32, u16)>, String> {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    forget_resident(pid, started.as_deref());
+    forget_resident(root, pid, started.as_deref());
     Ok(Some((pid, port)))
 }
 
 /// `adj server stop`. Only the server: a hub is a session of its own and goes on running.
 pub fn server_stop() -> Result<i32, String> {
-    match stop_resident(false)? {
+    let root = resident_root(checkout_here().as_ref());
+    match stop_resident(&root, false)? {
         Some((pid, _)) => println!("stopped adj server (pid {pid})"),
         None => println!("adj server is not running"),
     }
@@ -364,30 +382,31 @@ pub fn server_stop() -> Result<i32, String> {
 /// themselves, which is why the browser is opened only on request.
 pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
     let here = checkout_here();
-    let old_version = recorded_version();
-    let Some((old_pid, old_port)) = stop_resident(true)? else {
+    let root = resident_root(here.as_ref());
+    let old_version = recorded_version(&root);
+    let Some((old_pid, old_port)) = stop_resident(&root, true)? else {
         println!("adj server was not running; starting it");
-        return start_detached(port.unwrap_or(DEFAULT_PORT), open, here.as_ref());
+        return start_detached(&root, port.unwrap_or(DEFAULT_PORT), open, here.as_ref());
     };
     println!("adj server: stopped pid {old_pid}");
     // Catches a supervisor that was quicker than this check and nothing more: one that
     // respawns after it still races the start below, so restart is not for a supervised server.
-    if let Some((current, _)) = live_resident() {
+    if let Some((current, _)) = live_resident(&root) {
         println!("adj server: its supervisor already started it again (pid {current})");
         return Ok(0);
     }
     let wanted = port.unwrap_or(old_port);
-    let bound = launch_resident(wanted).map_err(|e| {
+    let bound = launch_resident(&root, wanted).map_err(|e| {
         format!(
             "stopped pid {old_pid}, but the new server did not start; nothing is running now: {e}"
         )
     })?;
-    let new_pid = live_resident().map_or(0, |(pid, _)| pid);
+    let new_pid = live_resident(&root).map_or(0, |(pid, _)| pid);
     if let Some(repo) = &here {
-        note_board(repo);
+        note_board(&root, repo);
     }
-    let shown = shown_url(bound, here.as_ref())?;
-    let version = match (old_version, recorded_version()) {
+    let shown = shown_url(&root, bound, here.as_ref())?;
+    let version = match (old_version, recorded_version(&root)) {
         (Some(old), Some(new)) if old != new => format!(" ({old} -> {new})"),
         _ => String::new(),
     };
@@ -404,7 +423,8 @@ pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
 
 /// `adj server status`. Exit 1 when there is no resident, so a script can ask.
 pub fn server_status(as_json: bool) -> Result<i32, String> {
-    let Some((pid, port)) = live_resident() else {
+    let root = resident_root(checkout_here().as_ref());
+    let Some((pid, port)) = live_resident(&root) else {
         if as_json {
             println!("{}", json!({ "running": false }));
         } else {
@@ -412,9 +432,9 @@ pub fn server_status(as_json: bool) -> Result<i32, String> {
         }
         return Ok(1);
     };
-    let token = stored_token().ok_or("the dashboard token is missing")?;
+    let token = stored_token(&root).ok_or("the dashboard token is missing")?;
     let index = board_url(port, &token);
-    let boards = boards_json(port, &token);
+    let boards = boards_json(&root, port, &token);
     if as_json {
         let out = json!({
             "running": true,

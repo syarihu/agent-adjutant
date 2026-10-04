@@ -94,14 +94,12 @@ pub(super) fn read_session(path: &Path) -> Option<SavedSession> {
 
 // ── is anybody serving? ──────────────────────────────────────────────
 
-pub(super) fn record_path(slug: &str) -> PathBuf {
-    crate::infra::paths::state_dir()
-        .join("dashboards")
-        .join(format!("{slug}.json"))
+pub(super) fn record_path(root: &Path, slug: &str) -> PathBuf {
+    root.join("dashboards").join(format!("{slug}.json"))
 }
 
-pub(crate) fn boards_dir() -> PathBuf {
-    crate::infra::paths::state_dir().join("boards")
+pub(crate) fn boards_dir(root: &Path) -> PathBuf {
+    root.join("boards")
 }
 
 /// Read first, and only when that fails ask whether anything is there, so a record removed

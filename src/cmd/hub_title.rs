@@ -34,16 +34,14 @@ struct Seen {
     failed: Option<(String, Instant)>,
 }
 
-fn file_of(slug: &str) -> std::path::PathBuf {
-    crate::infra::paths::state_dir()
-        .join("hub-titles")
-        .join(format!("{slug}.json"))
+fn file_of(root: &std::path::Path, slug: &str) -> std::path::PathBuf {
+    root.join("hub-titles").join(format!("{slug}.json"))
 }
 
 /// The title kept for the hub's parent task, if one has been read. Only the file is looked at,
 /// so the board list can use it on every poll.
-pub(super) fn cached_title(slug: &str) -> Option<String> {
-    crate::infra::fs::read_json(&file_of(slug))?
+pub(super) fn cached_title(root: &std::path::Path, slug: &str) -> Option<String> {
+    crate::infra::fs::read_json(&file_of(root, slug))?
         .get("title")?
         .as_str()
         .map(str::to_string)
@@ -94,12 +92,13 @@ impl HubTitles {
         let entry = seen.entry(hub.slug.clone()).or_default();
         if !entry.loaded {
             entry.loaded = true;
-            entry.found = crate::infra::fs::read_json(&file_of(&hub.slug)).and_then(|v| {
-                Some((
-                    v.get("url")?.as_str()?.to_string(),
-                    v.get("title")?.as_str()?.to_string(),
-                ))
-            });
+            entry.found =
+                crate::infra::fs::read_json(&file_of(&ctx.state, &hub.slug)).and_then(|v| {
+                    Some((
+                        v.get("url")?.as_str()?.to_string(),
+                        v.get("title")?.as_str()?.to_string(),
+                    ))
+                });
         }
         if let Some((found, title)) = &entry.found
             && *found == url
@@ -129,15 +128,17 @@ impl HubTitles {
     }
 
     fn ask(&self, ctx: &Context, slug: &str, slugs: &[String], url: &str) {
-        let answer = super::task::known_title(slugs, url)
+        let answer = super::task::known_title(&ctx.state, slugs, url)
             .ok_or(())
             .or_else(|()| {
                 super::task::read_issue(&ctx.repo.main, url).map(|snapshot| snapshot.title)
             });
         // The title is good whether or not it could be written down: only a restart loses it.
         if let Ok(title) = &answer
-            && let Err(e) =
-                crate::infra::fs::write_json(&file_of(slug), &json!({ "url": url, "title": title }))
+            && let Err(e) = crate::infra::fs::write_json(
+                &file_of(&ctx.state, slug),
+                &json!({ "url": url, "title": title }),
+            )
         {
             eprintln!("adj serve: could not keep the title of {url}: {e}");
         }

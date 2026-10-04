@@ -524,7 +524,7 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
         }
         messaging::mark_worktree_removing(main, Path::new(worktree))
     })??;
-    let removed = remove_worktree(&repo.main, worktree, force);
+    let removed = remove_worktree(&server.ctx.state, &repo.main, worktree, force);
     // Released only now, whatever the removal came to.
     drop(removing);
     removed?;
@@ -627,7 +627,7 @@ fn loss_reasons(state: &Result<Option<GitState>, String>) -> Vec<Value> {
 /// of the way for a second try, and they are put back if that fails too: until the worktree is
 /// gone they are what lets the session be seen and resumed. A directory that is already gone
 /// is removed by name, which drops git's record of that one worktree and no other.
-fn remove_worktree(main: &str, worktree: &str, force: bool) -> Result<(), String> {
+fn remove_worktree(root: &Path, main: &str, worktree: &str, force: bool) -> Result<(), String> {
     let mut args = vec!["-C", main, "worktree", "remove"];
     if force || !Path::new(worktree).is_dir() {
         args.push("--force");
@@ -639,7 +639,7 @@ fn remove_worktree(main: &str, worktree: &str, force: bool) -> Result<(), String
         Err(e) => e,
     };
     // git's own message is the one that says why, so it is what is returned.
-    let aside = set_aside_own_files(worktree)
+    let aside = set_aside_own_files(root, worktree)
         .map_err(|e| format!("{first} (and adjutant's files could not be moved aside: {e})"))?;
     match git_ok(&args) {
         Ok(()) => {
@@ -713,7 +713,7 @@ fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Move `.claude/adjutant-*` and `.claude/task-brief.md` out of `worktree` unless git tracks
 /// them, into a directory of the state directory made when the first one is moved.
-fn set_aside_own_files(worktree: &str) -> Result<Aside, String> {
+fn set_aside_own_files(root: &Path, worktree: &str) -> Result<Aside, String> {
     let listed =
         crate::infra::git::git(&["-C", worktree, "ls-files", "-z", "--", ".claude"], None)?;
     if !listed.status.success() {
@@ -731,7 +731,7 @@ fn set_aside_own_files(worktree: &str) -> Result<Aside, String> {
     // Read to the end before anything is moved, so that the listing is not of a directory
     // that is changing under it.
     let entries: Vec<_> = entries.flatten().collect();
-    let dir = crate::infra::paths::state_dir().join(format!(
+    let dir = root.join(format!(
         "cleanup-{}-{}-{}",
         std::process::id(),
         crate::infra::clock::now_secs(),

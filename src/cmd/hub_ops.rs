@@ -362,9 +362,8 @@ pub fn hub(
             ctx.repo.nwo
         );
     }
-    // The directory move comes first: the hub runs in the main checkout, and the board's
-    // records below still read the state dir against the working directory until #327.
-    // `ctx.state` itself is taken against the main checkout, so the hub's own records are the
+    // The directory move comes first: the hub runs in the main checkout.
+    // `ctx.state` is taken against the main checkout, so the hub's own records are the
     // same wherever this was typed. Nothing has been written at this point, so a failure here
     // has nothing to undo.
     std::env::set_current_dir(&ctx.repo.main)
@@ -486,7 +485,7 @@ pub fn hub(
     }
     // Where this repository is, for a resident server that may serve its board without
     // being told anything else. Only the address: nothing here needs the server to be up.
-    serve::note_board(&ctx.repo);
+    serve::note_board(&ctx.state, &ctx.repo);
     // A hub that cannot be resumed later is still a hub, so failing to write this down is
     // said and then got past — refusing to start over it would trade a working hub for a
     // convenience.
@@ -755,7 +754,7 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
     if !removed {
         return Err(format!("{} changed while it was being closed", hub.name));
     }
-    serve::forget_board(&hub.slug)?;
+    serve::forget_board(&root, &hub.slug)?;
     println!("closed {}", hub.name);
     if hub.inbox_count > 0 {
         println!(

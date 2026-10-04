@@ -13,7 +13,7 @@ use crate::kernel::config;
 use crate::messaging::Message;
 use crate::task::{self, PrRef, PrStatus, Status, Task};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn dir(ctx: &Context) -> PathBuf {
     task::dir(&ctx.state, &ctx.repo.slug)
@@ -474,11 +474,10 @@ pub(super) fn read_issue(main: &str, url: &str) -> Result<task::IssueSnapshot, S
 /// The title of the issue at `url` when a task record of one of these hubs already holds it:
 /// the snapshot read for a task whose issue it is, else the title of the task made from it.
 /// Looked at before `gh` is asked, so an issue the board has already read is not read again.
-pub(super) fn known_title(slugs: &[String], url: &str) -> Option<String> {
-    let state_dir = crate::infra::paths::state_dir();
+pub(super) fn known_title(root: &Path, slugs: &[String], url: &str) -> Option<String> {
     let tasks = slugs
         .iter()
-        .flat_map(|slug| task::list(&task::dir(&state_dir, slug)));
+        .flat_map(|slug| task::list(&task::dir(root, slug)));
     let mut fallback = None;
     for t in tasks {
         if let Some(snapshot) = t.issue_snapshot.as_ref().filter(|s| s.url == url) {

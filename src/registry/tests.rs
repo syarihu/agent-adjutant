@@ -1667,3 +1667,25 @@ fn a_context_takes_a_relative_state_dir_under_its_main_checkout() {
         std::env::current_dir().unwrap().join("state-here")
     );
 }
+
+/// A caller that already holds the root it reads gets a context over exactly that.
+#[test]
+fn a_context_at_a_root_reads_that_root() {
+    let sandbox = Sandbox::empty();
+    let checkout = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let _state =
+        crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "state-here");
+    let repo = crate::kernel::identity::RepoInfo {
+        main: checkout.path().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let other_dir = other.path().join("elsewhere");
+    let ctx = context_at(repo, other_dir.clone()).unwrap();
+    assert_eq!(ctx.state, other_dir);
+}

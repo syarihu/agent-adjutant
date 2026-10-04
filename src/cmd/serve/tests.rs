@@ -9,7 +9,7 @@ use crate::{gate, messaging, task};
 
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{is_own_origin, refuse};
-use super::daemon::{names_resident, private_log};
+use super::daemon::{names_resident, private_log, resident_root};
 use super::index::{WorkerSeen, board_counts};
 use super::registry::{Served, boards_dir, prefer, resident_board_url};
 use super::resident::split_board_path;
@@ -22,22 +22,50 @@ use super::*;
 
 #[test]
 fn forgetting_a_board_removes_only_that_slug() {
-    let _sandbox = crate::testing::Sandbox::empty();
-    std::fs::create_dir_all(boards_dir()).unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    std::fs::create_dir_all(boards_dir(&root)).unwrap();
     for slug in ["acme-widget-a", "acme-widget-b"] {
-        std::fs::write(boards_dir().join(format!("{slug}.json")), "{}").unwrap();
+        std::fs::write(boards_dir(&root).join(format!("{slug}.json")), "{}").unwrap();
     }
-    forget_board("acme-widget-a").unwrap();
-    assert!(!boards_dir().join("acme-widget-a.json").exists());
-    assert!(boards_dir().join("acme-widget-b.json").exists());
+    forget_board(&root, "acme-widget-a").unwrap();
+    assert!(!boards_dir(&root).join("acme-widget-a.json").exists());
+    assert!(boards_dir(&root).join("acme-widget-b.json").exists());
     // Nothing to forget is not an error.
-    forget_board("acme-widget-a").unwrap();
+    forget_board(&root, "acme-widget-a").unwrap();
+}
+
+/// A relative state directory is the main checkout's of the repository the server command was
+/// typed in, and outside any repository the working directory's.
+#[test]
+fn the_resident_root_is_taken_against_the_checkout_it_was_typed_in() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let _state =
+        crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "relative-state");
+    let checkout = tempfile::tempdir().unwrap();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: checkout.path().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    assert_eq!(
+        resident_root(Some(&repo)),
+        checkout.path().join("relative-state")
+    );
+    assert_eq!(
+        resident_root(None),
+        std::env::current_dir().unwrap().join("relative-state")
+    );
 }
 
 #[test]
 fn the_dashboards_record_is_written_whole() {
     let sandbox = crate::testing::Sandbox::empty();
-    assert_eq!(record("acme-widget", 4321), Ok(true));
+    assert_eq!(record(&sandbox.state(), "acme-widget", 4321), Ok(true));
     let dir = sandbox.state().join("dashboards");
     let names: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
@@ -51,7 +79,10 @@ fn the_dashboards_record_is_written_whole() {
     assert_eq!(written["pid"], pid);
     assert_eq!(written["port"], 4321);
     assert_eq!(written["psStarted"], json!(messaging::ps_started(pid)));
-    assert_eq!(dashboards_running("acme-widget"), Some(4321));
+    assert_eq!(
+        dashboards_running(&sandbox.state(), "acme-widget"),
+        Some(4321)
+    );
 }
 
 #[test]

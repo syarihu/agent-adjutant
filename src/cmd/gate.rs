@@ -228,7 +228,7 @@ pub fn open(ctx: &Context, payload: &Value) -> Result<(Gate, bool), String> {
     gate.extra.clear();
 
     gate::save(&home, &gate)?;
-    Ok((gate, super::serve::running(&ctx.repo).is_some()))
+    Ok((gate, super::serve::running(&ctx.state, &ctx.repo).is_some()))
 }
 
 /// Hand the ball back. The gate leaves the queue and the answer lands in the outbox.
