@@ -268,10 +268,10 @@ fn a_record_that_vanished_is_not_evidence_the_worker_died() {
 
 #[test]
 fn a_record_with_no_start_time_is_not_acted_on() {
-    // `register_worker` writes `psStarted: null` when `ps` would not answer at that moment.
-    // Without it there is nothing to tell this worker from the next process to be handed
-    // that pid — and a tab is closed on the answer, so "the number is in use, close it" is
-    // not good enough.
+    // `register_worker` leaves `psStarted` out when `ps` would not answer at that moment;
+    // older versions wrote it as null, and the test covers both. Without it there is nothing
+    // to tell this worker from the next process to be handed that pid — and a tab is closed
+    // on the answer, so "the number is in use, close it" is not good enough.
     let fixture = Fixture::new(&closing_with("true"));
     let worker = Sleeper::new();
     let worktree = fixture.repo.to_str().unwrap().to_string();

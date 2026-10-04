@@ -91,13 +91,13 @@ pub fn close(
     let worker = match messaging::read_worker(&worktree) {
         // Nothing registered here is the job already done. A hub that calls this twice, or
         // calls it on a worker that stopped on its own, has to get on with the cleanup.
-        messaging::WorkerRecord::Absent => {
+        messaging::Recorded::Absent => {
             if !quiet {
                 println!("no worker is running in {}", worktree.display());
             }
             return Ok(true);
         }
-        messaging::WorkerRecord::Unreadable => {
+        messaging::Recorded::Unreadable => {
             if !quiet {
                 println!(
                     "the worker record in {} cannot be read as naming a worker, so nothing was cleared",
@@ -106,7 +106,7 @@ pub fn close(
             }
             return Ok(false);
         }
-        messaging::WorkerRecord::Named(worker) => worker,
+        messaging::Recorded::Found(worker) => worker,
     };
     let pid = worker.pid;
     match messaging::worker_liveness(&worker) {

@@ -13,8 +13,8 @@ use crate::task;
 
 use super::Server;
 use super::state::{
-    GateCache, Listing, linked_task_title, parent_hub_id, recorded_terminal, session_terminal,
-    settings_now, socket_key, split_main, waiting_hub, waiting_worker, worker_session_ids,
+    GateCache, Listing, linked_task_title, parent_hub_id, session_terminal, settings_now,
+    socket_key, split_main, waiting_hub, waiting_worker, worker_session_ids,
 };
 
 /// What one tmux server said about its panes and clients in one poll.
@@ -226,10 +226,10 @@ pub(super) fn sessions_of(
     // 2. Worker sessions from linked worktrees
     // Whether the main checkout is listed below as `worker-main`, which a worktree of that
     // name would otherwise collide with.
-    let main_listed =
-        crate::infra::fs::read_json(&messaging::worker_record_path(Path::new(&repo.main)))
-            .is_some()
-            || messaging::worker_session(Path::new(&repo.main)).is_some();
+    let main_listed = matches!(
+        messaging::read_worker_record(Path::new(&repo.main)),
+        messaging::Recorded::Found(_)
+    ) || messaging::worker_session(Path::new(&repo.main)).is_some();
     let worker_ids = worker_session_ids(linked_paths, main_listed);
     for (index, (path, id)) in linked_paths.iter().zip(worker_ids).enumerate() {
         if skipped(&id) {
@@ -237,18 +237,20 @@ pub(super) fn sessions_of(
         }
         let (status, branch) = worker_data(index, path);
         let wt_path = Path::new(path);
-        let record_json = crate::infra::fs::read_json(&messaging::worker_record_path(wt_path));
+        let record = match messaging::read_worker_record(wt_path) {
+            messaging::Recorded::Found(record) => Some(record),
+            _ => None,
+        };
         let saved_session = messaging::worker_session(wt_path);
         let parent_hub = parent_hub_id(repo, hubs, messaging::worker_hub_key(wt_path).as_deref());
-        let started_at = record_json
-            .as_ref()
-            .and_then(|r| r.get("startedAt"))
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let started_at = record.as_ref().and_then(|r| r.started_at.clone());
         let conversation = saved_session.as_ref().map(|s| s.session_id.clone());
 
         let terminal = session_terminal(
-            recorded_terminal(record_json.as_ref()).as_ref(),
+            record
+                .as_ref()
+                .and_then(messaging::WorkerRecord::terminal)
+                .as_ref(),
             terminal_settings,
             &mut views,
             status.pid,
@@ -309,24 +311,21 @@ pub(super) fn sessions_of(
     }
 
     // Also check worker in main checkout if one exists
-    let main_record_path = messaging::worker_record_path(Path::new(&repo.main));
     if skipped("worker-main") {
         return sessions;
     }
-    if let Some(record_json) = crate::infra::fs::read_json(&main_record_path) {
+    if let messaging::Recorded::Found(record) = messaging::read_worker_record(Path::new(&repo.main))
+    {
         let status = messaging::worker_status_with(processes, Path::new(&repo.main));
         let parent_hub = parent_hub_id(
             repo,
             hubs,
             messaging::worker_hub_key(Path::new(&repo.main)).as_deref(),
         );
-        let started_at = record_json
-            .get("startedAt")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let started_at = record.started_at.clone();
 
         let terminal = session_terminal(
-            recorded_terminal(Some(&record_json)).as_ref(),
+            record.terminal().as_ref(),
             terminal_settings,
             &mut views,
             status.pid,
@@ -347,10 +346,7 @@ pub(super) fn sessions_of(
             status.phase_at,
         );
 
-        let task_id = record_json
-            .get("task")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let task_id = record.task.clone();
 
         let task_title = task_id.as_deref().and_then(|id| {
             let slug = crate::kernel::identity::slug_for(

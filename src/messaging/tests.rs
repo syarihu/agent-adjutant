@@ -349,7 +349,7 @@ fn a_blank_start_time_is_no_anchor_in_any_of_the_four_readers() {
 
         // And the reader that is about to delete something wants more than a pid that
         // exists: with no anchor it declines to act at all.
-        let WorkerRecord::Named(worker) = read_worker(worktree) else {
+        let Recorded::Found(worker) = read_worker(worktree) else {
             panic!("{blank:?} still names a pid and should be read as naming one");
         };
         assert_eq!(worker.started, None, "{blank:?}");
@@ -361,7 +361,7 @@ fn a_blank_start_time_is_no_anchor_in_any_of_the_four_readers() {
 fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path();
-    assert!(matches!(read_worker(worktree), WorkerRecord::Absent));
+    assert!(matches!(read_worker(worktree), Recorded::Absent));
 
     let record = worker_record_path(worktree);
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
@@ -379,13 +379,13 @@ fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
     ] {
         std::fs::write(&record, &content).unwrap();
         assert!(
-            matches!(read_worker(worktree), WorkerRecord::Unreadable),
+            matches!(read_worker(worktree), Recorded::Unreadable),
             "{content} was read as an answer"
         );
     }
 
     register_worker(worktree, "WID-957", None, None, None).unwrap();
-    let WorkerRecord::Named(worker) = read_worker(worktree) else {
+    let Recorded::Found(worker) = read_worker(worktree) else {
         panic!("a record this process just wrote does not name it");
     };
     assert_eq!(worker.pid, std::process::id());
@@ -425,7 +425,7 @@ fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
         json!({"pid": std::process::id(), "psStarted": "   "}).to_string(),
     ] {
         std::fs::write(&record, &content).unwrap();
-        let WorkerRecord::Named(read_back) = read_worker(worktree) else {
+        let Recorded::Found(read_back) = read_worker(worktree) else {
             panic!("{content} names a pid and should be read as naming one");
         };
         assert_eq!(read_back.started, None);
@@ -442,7 +442,7 @@ fn a_record_is_only_cleared_while_it_still_names_the_worker_it_was_read_from() {
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path();
     register_worker(worktree, "WID-957", None, None, None).unwrap();
-    let WorkerRecord::Named(worker) = read_worker(worktree) else {
+    let Recorded::Found(worker) = read_worker(worktree) else {
         panic!("a record this process just wrote does not name it");
     };
 
@@ -461,7 +461,7 @@ fn a_record_is_only_cleared_while_it_still_names_the_worker_it_was_read_from() {
 
     // Its own record it may clear, and a record already gone is the outcome it wanted.
     register_worker(worktree, "WID-957", None, None, None).unwrap();
-    let WorkerRecord::Named(worker) = read_worker(worktree) else {
+    let Recorded::Found(worker) = read_worker(worktree) else {
         panic!("a record this process just wrote does not name it");
     };
     assert!(matches!(
@@ -1536,7 +1536,151 @@ fn a_worker_record_that_is_a_broken_symlink_is_unreadable_not_absent() {
     let record = worker_record_path(worktree);
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(worktree.join("gone.json"), &record).unwrap();
-    assert!(matches!(read_worker(worktree), WorkerRecord::Unreadable));
+    assert!(matches!(read_worker(worktree), Recorded::Unreadable));
+}
+
+#[test]
+fn a_worker_record_rewrite_keeps_unknown_keys_and_unreadable_phases() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    let original = json!({
+        "pid": 4242,
+        "title": "t",
+        "psStarted": null,
+        "hub": null,
+        "task": 7,
+        "x-unknown": {"a": [1]},
+        "phases": [["plan", 1], {"newer": "shape"}, "x"],
+        "terminal": {"backend": "tmux", "socket": null, "x-newer": 1},
+    });
+    write_json(&worker_record_path(worktree), &original).unwrap();
+    set_worker_phase(worktree, "verify").unwrap();
+
+    let after = read_json(&worker_record_path(worktree)).unwrap();
+    assert_eq!(after["x-unknown"], original["x-unknown"]);
+    assert_eq!(after["psStarted"], Value::Null);
+    assert_eq!(after["hub"], Value::Null);
+    assert_eq!(after["task"], 7);
+    assert_eq!(after["terminal"], original["terminal"]);
+    for i in 0..3 {
+        assert_eq!(after["phases"][i], original["phases"][i]);
+    }
+    assert_eq!(after["phases"][3][0], "verify");
+    let phases = worker_status(worktree).phases;
+    assert_eq!(phases.len(), 2);
+    assert_eq!(phases[0], ("plan".to_string(), 1));
+    assert_eq!(phases[1].0, "verify");
+}
+
+#[test]
+fn a_worker_record_key_of_the_wrong_type_reads_as_absent_and_the_rest_still_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    write_json(
+        &worker_record_path(worktree),
+        &json!({"pid": "4242", "title": "t", "hub": 5}),
+    )
+    .unwrap();
+    let Recorded::Found(record) = read_worker_record(worktree) else {
+        panic!("a record with one bad key is still a record");
+    };
+    assert_eq!(record.pid, None);
+    assert_eq!(record.other["pid"], "4242");
+    assert_eq!(record.title.as_deref(), Some("t"));
+    assert!(record.hub_is_not_a_name());
+    assert!(matches!(read_worker(worktree), Recorded::Unreadable));
+
+    write_json(&worker_record_path(worktree), &json!({"hub": null})).unwrap();
+    let Recorded::Found(record) = read_worker_record(worktree) else {
+        panic!("a record with a null hub is still a record");
+    };
+    assert!(!record.hub_is_not_a_name());
+}
+
+#[test]
+fn relinking_to_the_repository_hub_drops_a_hub_of_any_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    write_json(&worker_record_path(worktree), &json!({"pid": 1, "hub": 5})).unwrap();
+    relink_worker(worktree, None, "t", None).unwrap();
+    let after = read_json(&worker_record_path(worktree)).unwrap();
+    assert!(after.get("hub").is_none(), "{after}");
+    assert_eq!(after["phase"], "implement");
+}
+
+#[test]
+fn a_worker_record_that_is_not_an_object_is_unreadable_not_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    assert!(matches!(read_worker_record(worktree), Recorded::Absent));
+    let path = worker_record_path(worktree);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for text in ["[1,2]", "{ not json"] {
+        std::fs::write(&path, text).unwrap();
+        assert!(
+            matches!(read_worker_record(worktree), Recorded::Unreadable),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_record_that_is_not_json_is_not_reported_as_no_worker() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    let path = worker_record_path(worktree);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ not json").unwrap();
+    for error in [
+        set_worker_phase(worktree, "verify").unwrap_err(),
+        relink_worker(worktree, None, "t", None).unwrap_err(),
+    ] {
+        assert!(error.contains("cannot read the worker record"), "{error}");
+        assert!(!error.contains("no worker is registered"), "{error}");
+    }
+}
+
+#[test]
+fn register_worker_writes_the_keys_it_always_wrote() {
+    let _sandbox = Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    register_worker(worktree, "t", None, None, None).unwrap();
+    let written = read_json(&worker_record_path(worktree)).unwrap();
+    // `psStarted` is there only when `ps` could say when this process started.
+    let keys: Vec<&str> = written
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let expected: &[&str] = match ps_started(std::process::id()) {
+        Some(_) => &["pid", "psStarted", "startedAt", "title"],
+        None => &["pid", "startedAt", "title"],
+    };
+    assert_eq!(keys, expected);
+    let Recorded::Found(record) = read_worker_record(worktree) else {
+        panic!("just registered");
+    };
+    assert_eq!(record.to_value(), written);
+}
+
+#[test]
+fn a_restarted_worker_carries_phases_it_cannot_read() {
+    let _sandbox = Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    let old = json!({"pid": 1, "task": "t", "phases": [["plan", 1], {"x": 1}]});
+    write_json(&worker_record_path(worktree), &old).unwrap();
+    register_worker(worktree, "w", None, Some("t"), None).unwrap();
+    let after = read_json(&worker_record_path(worktree)).unwrap();
+    assert_eq!(after["phases"], old["phases"]);
+    assert!(after.get("phase").is_none());
+
+    write_json(&worker_record_path(worktree), &old).unwrap();
+    register_worker(worktree, "w", None, Some("other"), None).unwrap();
+    let after = read_json(&worker_record_path(worktree)).unwrap();
+    assert!(after.get("phases").is_none());
 }
 
 #[test]

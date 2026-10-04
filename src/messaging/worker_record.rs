@@ -1,4 +1,6 @@
 use super::*;
+use crate::infra::terminal::SessionTerminal;
+use serde_json::Map;
 
 // ── the other direction: a worker in a worktree ──────────────────────
 
@@ -13,6 +15,134 @@ pub fn worker_record_path(worktree: &Path) -> PathBuf {
 /// message, because the worker reads it with its eyes as often as with a tool.
 pub fn outbox_path(worktree: &Path) -> PathBuf {
     worktree.join(".claude").join("adjutant-outbox.md")
+}
+
+/// What `.claude/adjutant-worker.json` says, read leniently, and rewritten with every key it had.
+///
+/// A worker record is written back (a phase said, a task linked), so unlike `HubRecord` what
+/// this cannot read must survive the round trip: a key of another type, one this version does
+/// not know, and the entries of `phases` it cannot read all stay as they were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerRecord {
+    pub pid: Option<u64>,
+    pub title: Option<String>,
+    pub started_at: Option<String>,
+    /// As written: untrimmed, possibly blank. `anchor` is the reading of it.
+    pub ps_started: Option<String>,
+    /// Untrimmed, and only when a string. Null or another type stays in `other`, which is
+    /// how `hub_is_not_a_name` tells them apart.
+    pub hub: Option<String>,
+    /// Untrimmed, as the readers trim it.
+    pub task: Option<String>,
+    pub phase: Option<String>,
+    pub phase_at: Option<i64>,
+    /// Entries as they are, readable or not, so a rewrite keeps one this version cannot read.
+    pub phases: Option<Vec<Value>>,
+    /// Every key not read into a field above: unknown ones, known ones that are null or of
+    /// another type, and `terminal`, kept raw because `SessionTerminal` drops keys inside it
+    /// that it does not know.
+    pub other: Map<String, Value>,
+}
+
+impl WorkerRecord {
+    /// `None` only for something that is not a JSON object.
+    pub(super) fn from_value(value: Value) -> Option<WorkerRecord> {
+        let Value::Object(mut fields) = value else {
+            return None;
+        };
+        let text = |value: &Value| value.as_str().map(str::to_string);
+        Some(WorkerRecord {
+            pid: lift(&mut fields, "pid", Value::as_u64),
+            title: lift(&mut fields, "title", text),
+            started_at: lift(&mut fields, "startedAt", text),
+            ps_started: lift(&mut fields, "psStarted", text),
+            hub: lift(&mut fields, "hub", text),
+            task: lift(&mut fields, "task", text),
+            phase: lift(&mut fields, "phase", text),
+            phase_at: lift(&mut fields, "phaseAt", Value::as_i64),
+            phases: lift(&mut fields, "phases", |v| v.as_array().cloned()),
+            other: fields,
+        })
+    }
+
+    /// The JSON to write back: `other` as it was, and each field that has a value.
+    ///
+    /// Not what `HubRecord::to_value` does, which writes `null` for a field with none. A
+    /// worker record is read and written again, so a key that was absent has to stay absent,
+    /// and one that was null or of another type is in `other` and has to survive.
+    pub(super) fn to_value(&self) -> Value {
+        let mut fields = self.other.clone();
+        if let Some(pid) = self.pid {
+            fields.insert("pid".to_string(), Value::from(pid));
+        }
+        let texts = [
+            ("title", &self.title),
+            ("startedAt", &self.started_at),
+            ("psStarted", &self.ps_started),
+            ("hub", &self.hub),
+            ("task", &self.task),
+            ("phase", &self.phase),
+        ];
+        for (key, text) in texts {
+            if let Some(text) = text {
+                fields.insert(key.to_string(), json!(text));
+            }
+        }
+        if let Some(at) = self.phase_at {
+            fields.insert("phaseAt".to_string(), json!(at));
+        }
+        if let Some(phases) = &self.phases {
+            fields.insert("phases".to_string(), Value::Array(phases.clone()));
+        }
+        Value::Object(fields)
+    }
+
+    /// Where the worker runs, as a record has always been read for it: a `terminal` that does
+    /// not read as one is none.
+    pub fn terminal(&self) -> Option<SessionTerminal> {
+        self.other
+            .get("terminal")
+            .and_then(|t| serde_json::from_value(t.clone()).ok())
+    }
+
+    /// When the process started, for telling it from whatever is handed its pid later. Blank
+    /// counts as absent.
+    pub(super) fn anchor(&self) -> Option<&str> {
+        anchor_of(self.ps_started.as_deref())
+    }
+
+    /// The pid as a process id that can be asked about: in range, and not 0. Out of range
+    /// is refused rather than truncated, because a truncated pid names a live process that
+    /// nobody asked about.
+    pub(super) fn usable_pid(&self) -> Option<u32> {
+        self.pid
+            .and_then(|pid| u32::try_from(pid).ok())
+            .filter(|pid| *pid > 0)
+    }
+
+    /// Whether `hub` says something but not a name: a record that was dispatched and has lost
+    /// its address, as opposed to one with no `hub` or a null one, which is the repository's
+    /// own hub.
+    pub(super) fn hub_is_not_a_name(&self) -> bool {
+        self.hub.is_none() && self.other.get("hub").is_some_and(|hub| !hub.is_null())
+    }
+}
+
+pub fn read_worker_record(worktree: &Path) -> Recorded<WorkerRecord> {
+    read_record(&worker_record_path(worktree), WorkerRecord::from_value)
+}
+
+/// A record that is there and cannot be rewritten, which is not the same news as no record:
+/// the worker is registered and its file is damaged.
+fn unreadable_worker_record(worktree: &Path) -> String {
+    format!(
+        "cannot read the worker record at {}: it is not the JSON this tool writes",
+        worker_record_path(worktree).display()
+    )
+}
+
+pub(super) fn write_worker_record(worktree: &Path, record: &WorkerRecord) -> Result<(), String> {
+    write_json(&worker_record_path(worktree), &record.to_value())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,30 +165,27 @@ pub(super) const PHASES_KEPT: usize = 64;
 
 /// The history a record has: its `phases`, or the one entry its `phase` and `phaseAt` make
 /// for a record written before it kept a history.
-fn recorded_phases(fields: &serde_json::Map<String, Value>) -> Vec<Value> {
-    if let Some(phases) = fields.get("phases").and_then(Value::as_array) {
+fn recorded_phases(record: &WorkerRecord) -> Vec<Value> {
+    if let Some(phases) = &record.phases {
         return phases.clone();
     }
-    match (
-        fields.get("phase").and_then(Value::as_str),
-        fields.get("phaseAt").and_then(Value::as_i64),
-    ) {
+    match (&record.phase, record.phase_at) {
         (Some(phase), Some(at)) => vec![json!([phase, at])],
         _ => Vec::new(),
     }
 }
 
-/// Enter `phase` at `at` in the record's fields: the current phase, and one more entry in the
+/// Enter `phase` at `at` in the record: the current phase, and one more entry in the
 /// history — even for a phase already said, because the time it was said again is a fact too.
-fn append_phase(fields: &mut serde_json::Map<String, Value>, phase: &str, at: i64) {
-    let mut phases = recorded_phases(fields);
+fn append_phase(record: &mut WorkerRecord, phase: &str, at: i64) {
+    let mut phases = recorded_phases(record);
     phases.push(json!([phase, at]));
     if phases.len() > PHASES_KEPT {
         phases.drain(..phases.len() - PHASES_KEPT);
     }
-    fields.insert("phase".to_string(), json!(phase));
-    fields.insert("phaseAt".to_string(), json!(at));
-    fields.insert("phases".to_string(), Value::Array(phases));
+    record.phase = Some(phase.to_string());
+    record.phase_at = Some(at);
+    record.phases = Some(phases);
 }
 
 /// The steps a worker says it is in. A fixed list so the board can show them in order and a
@@ -87,18 +214,18 @@ pub fn set_worker_phase(worktree: &Path, phase: &str) -> Result<(), String> {
             PHASES.join(", ")
         ));
     }
-    let path = worker_record_path(worktree);
-    let Some(mut record) = read_json(&path) else {
-        return Err(format!(
-            "no worker is registered in {}: `adj phase` is for the worker running there",
-            worktree.display()
-        ));
+    let mut record = match read_worker_record(worktree) {
+        Recorded::Found(record) => record,
+        Recorded::Unreadable => return Err(unreadable_worker_record(worktree)),
+        Recorded::Absent => {
+            return Err(format!(
+                "no worker is registered in {}: `adj phase` is for the worker running there",
+                worktree.display()
+            ));
+        }
     };
-    let fields = record
-        .as_object_mut()
-        .ok_or_else(|| format!("cannot read the worker record at {}", path.display()))?;
-    append_phase(fields, phase, now_secs());
-    write_json(&path, &record)
+    append_phase(&mut record, phase, now_secs());
+    write_worker_record(worktree, &record)
 }
 
 /// Join the worker in `worktree` to a task and to the hub that task belongs to.
@@ -119,23 +246,22 @@ pub fn relink_worker(
     task: &str,
     phase: Option<&str>,
 ) -> Result<(), String> {
-    let path = worker_record_path(worktree);
-    let Some(mut record) = read_json(&path) else {
-        return Err(format!("no worker is registered in {}", worktree.display()));
-    };
-    let fields = record
-        .as_object_mut()
-        .ok_or_else(|| format!("cannot read the worker record at {}", path.display()))?;
-    fields.insert("task".to_string(), json!(task));
-    match said(hub) {
-        Some(hub) => fields.insert("hub".to_string(), json!(hub)),
-        None => fields.remove("hub"),
-    };
-    match phase {
-        Some(phase) => append_phase(fields, phase, now_secs()),
-        None if fields.get("phase").and_then(Value::as_str).is_none() => {
-            append_phase(fields, "implement", now_secs());
+    let mut record = match read_worker_record(worktree) {
+        Recorded::Found(record) => record,
+        Recorded::Unreadable => return Err(unreadable_worker_record(worktree)),
+        Recorded::Absent => {
+            return Err(format!("no worker is registered in {}", worktree.display()));
         }
+    };
+    record.task = Some(task.to_string());
+    record.hub = said(hub);
+    if record.hub.is_none() {
+        // A hub of another type is in `other`, and the repository's own hub is no key at all.
+        record.other.remove("hub");
+    }
+    match phase {
+        Some(phase) => append_phase(&mut record, phase, now_secs()),
+        None if record.phase.is_none() => append_phase(&mut record, "implement", now_secs()),
         None => {}
     }
     // The saved session first and the record last: the record is what the board and the
@@ -152,7 +278,7 @@ pub fn relink_worker(
             &saved.session_id,
         )?;
     }
-    if let Err(e) = write_json(&path, &record) {
+    if let Err(e) = write_worker_record(worktree, &record) {
         if let Some(previous) = previous {
             let _ = std::fs::write(&saved_path, previous);
         }
@@ -175,48 +301,39 @@ pub fn register_worker(
     task: Option<&str>,
     terminal: Option<&crate::infra::terminal::SessionTerminal>,
 ) -> Result<PathBuf, String> {
-    let path = worker_record_path(worktree);
-    let mut record = json!({
-        "pid": std::process::id(),
-        "title": title,
-        "startedAt": utc_stamp(now_secs()),
-        "psStarted": ps_started(std::process::id()),
-    });
     // A worker started again in the same worktree for the same task keeps the timeline of the
     // run before it, though not its current phase: that belongs to the run that said it. A
     // worktree reused for another task starts a timeline of its own.
-    let carried = read_json(&path)
-        .filter(|old| old.get("task").and_then(Value::as_str).map(str::to_string) == said(task))
-        .and_then(|old| old.as_object().map(recorded_phases))
-        .unwrap_or_default();
-    if !carried.is_empty()
-        && let Some(fields) = record.as_object_mut()
-    {
-        fields.insert("phases".to_string(), Value::Array(carried));
-    }
-    if let Some(hub) = said(hub)
-        && let Some(fields) = record.as_object_mut()
-    {
-        fields.insert("hub".to_string(), json!(hub));
-    }
-    if let Some(task) = said(task)
-        && let Some(fields) = record.as_object_mut()
-    {
-        fields.insert("task".to_string(), json!(task));
-    }
+    let carried = match read_worker_record(worktree) {
+        Recorded::Found(old) if old.task == said(task) => recorded_phases(&old),
+        _ => Vec::new(),
+    };
     // Where the worker runs, read at the moment it starts. Settings and live lookups say
     // where a new tab would go or where some pane is now, not where this one was opened.
+    let mut other = Map::new();
     if let Some(terminal) = terminal
         && let Ok(value) = serde_json::to_value(terminal)
-        && let Some(fields) = record.as_object_mut()
     {
-        fields.insert("terminal".to_string(), value);
+        other.insert("terminal".to_string(), value);
     }
-    write_json(&path, &record)?;
+    let pid = std::process::id();
+    let record = WorkerRecord {
+        pid: Some(u64::from(pid)),
+        title: Some(title.to_string()),
+        started_at: Some(utc_stamp(now_secs())),
+        ps_started: ps_started(pid),
+        hub: said(hub),
+        task: said(task),
+        phase: None,
+        phase_at: None,
+        phases: (!carried.is_empty()).then_some(carried),
+        other,
+    };
+    write_worker_record(worktree, &record)?;
     // The slot is held by the record from here on. Failing to drop the marker only keeps it
     // counted until the grace runs out, which the record would have done anyway.
     let _ = unmark_worker_starting(worktree);
-    Ok(path)
+    Ok(worker_record_path(worktree))
 }
 
 pub fn unregister_worker(worktree: &Path) -> Result<(), String> {
@@ -265,9 +382,9 @@ pub fn holds_worker_slot(worktree: &Path, now: i64) -> bool {
 /// `holds_worker_slot`, asking `table` when the worker's process started.
 pub fn holds_worker_slot_with(table: &ProcessTable, worktree: &Path, now: i64) -> bool {
     let registered = match read_worker(worktree) {
-        WorkerRecord::Named(worker) => worker_liveness_with(table, &worker) != Liveness::Gone,
+        Recorded::Found(worker) => worker_liveness_with(table, &worker) != Liveness::Gone,
         // Neither names a process that could be running.
-        WorkerRecord::Absent | WorkerRecord::Unreadable => false,
+        Recorded::Absent | Recorded::Unreadable => false,
     };
     registered || is_starting(worktree, now)
 }
@@ -419,37 +536,26 @@ pub fn worker_status_with(table: &ProcessTable, worktree: &Path) -> WorkerStatus
         phase_at: None,
         phases: Vec::new(),
     };
-    let Some(record) = read_json(&worker_record_path(worktree)) else {
+    let Recorded::Found(record) = read_worker_record(worktree) else {
         return status;
     };
     // Checked, as `read_worker` checks it: truncated, `4294967297` would be pid 1 and read
     // as a worker that is there, while the slot count reads the same record as nobody.
-    status.pid = record
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|p| u32::try_from(p).ok());
-    status.title = record
-        .get("title")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    status.phase = record
-        .get("phase")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    status.phase_at = record.get("phaseAt").and_then(Value::as_i64);
-    if let Some(fields) = record.as_object() {
-        status.phases = recorded_phases(fields)
-            .iter()
-            .filter_map(|entry| {
-                let pair = entry.as_array()?;
-                Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_i64()?))
-            })
-            .collect();
-    }
+    status.pid = record.pid.and_then(|p| u32::try_from(p).ok());
+    status.title = record.title.clone();
+    status.phase = record.phase.clone();
+    status.phase_at = record.phase_at;
+    status.phases = recorded_phases(&record)
+        .iter()
+        .filter_map(|entry| {
+            let pair = entry.as_array()?;
+            Some((pair.first()?.as_str()?.to_string(), pair.get(1)?.as_i64()?))
+        })
+        .collect();
     // A worker's command line carries nothing distinctive — it is whatever agent the config
     // names — so the start time is the only anchor available here, and with none the
     // question narrows to whether that pid is there at all.
-    let ps_started = anchor_of(record.get("psStarted").and_then(Value::as_str));
+    let ps_started = record.anchor();
     match status.pid {
         Some(pid) if process_matches_with(table, pid, None, ps_started) => status.present = true,
         _ => status.stale = true,
@@ -481,59 +587,36 @@ pub struct WorkerIdentity {
 }
 
 /// What a worktree's record says, for a caller that is going to act destructively on it.
-pub enum WorkerRecord {
-    /// No record at all. Nobody registered here, or it has already been cleared.
-    ///
-    /// The hole this leaves, and it is a real one: a worker started by hand rather than
-    /// through `adj work` never wrote a record, so it reads as free too. Nothing here can
-    /// see such a process — a caller's own check for uncommitted and unpushed work is the
-    /// only net under it.
-    Absent,
-    Named(WorkerIdentity),
-    /// A record is there and cannot be read as naming a worker — unparseable, or parseable
-    /// with no usable pid in it.
-    ///
-    /// `holder` reads a pid-less record as naming nobody, and that is the right reading of
-    /// the question *it* asks: whether a hub's name is free to take. It is the wrong
-    /// reading of "may this worktree be deleted", so the strict one lives here, beside the
-    /// caller that needs it, and `holder` is left as it is.
-    Unreadable,
-}
-
-/// Read a worktree's worker record once.
-pub fn read_worker(worktree: &Path) -> WorkerRecord {
-    let path = worker_record_path(worktree);
-    // `record_exists` rather than `exists`, which answers "no" to every error it meets. A
-    // symlink pointing nowhere is something here, and reading it fails below.
-    match record_exists(&path) {
-        Ok(false) => return WorkerRecord::Absent,
-        Err(_) => return WorkerRecord::Unreadable,
-        Ok(true) => {}
+///
+/// `Absent` is no record at all: nobody registered here, or it has already been cleared. The
+/// hole this leaves is a real one: a worker started by hand rather than through `adj work`
+/// never wrote a record, so it reads as free too. Nothing here can see such a process — a
+/// caller's own check for uncommitted and unpushed work is the only net under it.
+///
+/// `Unreadable` is a record that is there and cannot be read as naming a worker —
+/// unparseable, or parseable with no usable pid in it. `holder` reads a pid-less record as
+/// naming nobody, and that is the right reading of the question *it* asks: whether a hub's
+/// name is free to take. It is the wrong reading of "may this worktree be deleted", so the
+/// strict one lives here, beside the caller that needs it, and `holder` is left as it is.
+pub fn read_worker(worktree: &Path) -> Recorded<WorkerIdentity> {
+    match read_worker_record(worktree) {
+        Recorded::Absent => Recorded::Absent,
+        Recorded::Unreadable => Recorded::Unreadable,
+        // A pid out of range as well as absent or the wrong type is unreadable: `as u32` on a
+        // number this large silently truncates, and a truncated pid names a live process that
+        // nobody asked about.
+        Recorded::Found(record) => match record.usable_pid() {
+            None => Recorded::Unreadable,
+            Some(pid) => Recorded::Found(WorkerIdentity {
+                pid,
+                // Blank counts as absent, like everywhere else. Here the fallback for a
+                // record with no anchor is `CannotTell`, which is what stops a worktree
+                // being deleted on the strength of a pid number alone.
+                started: record.anchor().map(str::to_string),
+                title: record.title.clone(),
+            }),
+        },
     }
-    let Some(record) = read_json(&path) else {
-        return WorkerRecord::Unreadable;
-    };
-    // Out of range as well as absent or the wrong type: `as u32` on a number this large
-    // silently truncates, and a truncated pid names a live process that nobody asked about.
-    let Some(pid) = record
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|pid| u32::try_from(pid).ok())
-        .filter(|pid| *pid > 0)
-    else {
-        return WorkerRecord::Unreadable;
-    };
-    WorkerRecord::Named(WorkerIdentity {
-        pid,
-        // Blank counts as absent, like everywhere else. Here the fallback for a record
-        // with no anchor is `CannotTell`, which is what stops a worktree being deleted on
-        // the strength of a pid number alone.
-        started: anchor_of(record.get("psStarted").and_then(Value::as_str)).map(str::to_string),
-        title: record
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    })
 }
 
 /// Is this exact process still there, with "cannot tell" kept apart from "no"?
@@ -603,14 +686,14 @@ pub enum Cleared {
 /// rewrites; what a lock would cost is that settlement.
 pub fn unregister_worker_if(worktree: &Path, worker: &WorkerIdentity) -> Result<Cleared, String> {
     match read_worker(worktree) {
-        WorkerRecord::Named(named) if &named == worker => {
+        Recorded::Found(named) if &named == worker => {
             unregister_worker(worktree)?;
             Ok(Cleared::Yes)
         }
         // Already gone: whoever removed it wanted what this call wanted.
-        WorkerRecord::Absent => Ok(Cleared::Yes),
-        WorkerRecord::Named(_) => Ok(Cleared::AnotherWorker),
-        WorkerRecord::Unreadable => Ok(Cleared::Unreadable),
+        Recorded::Absent => Ok(Cleared::Yes),
+        Recorded::Found(_) => Ok(Cleared::AnotherWorker),
+        Recorded::Unreadable => Ok(Cleared::Unreadable),
     }
 }
 

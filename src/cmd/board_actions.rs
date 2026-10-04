@@ -489,9 +489,9 @@ pub(super) fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     // Only when something may be running: closing a worker that is gone clears its record, and
     // a removal that then fails would have taken the session's phase history for nothing.
     let may_run = match messaging::read_worker(Path::new(worktree)) {
-        messaging::WorkerRecord::Absent => false,
-        messaging::WorkerRecord::Unreadable => true,
-        messaging::WorkerRecord::Named(worker) => {
+        messaging::Recorded::Absent => false,
+        messaging::Recorded::Unreadable => true,
+        messaging::Recorded::Found(worker) => {
             messaging::worker_liveness(&worker) != messaging::Liveness::Gone
         }
     };

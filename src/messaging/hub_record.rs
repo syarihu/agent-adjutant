@@ -26,7 +26,7 @@ pub enum Claim {
     Taken(Box<HubStatus>),
 }
 
-/// What a record file can be. Shared with worker records (#323).
+/// What a record file can be: a hub's, a worker's, or the identity read out of a worker's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Recorded<T> {
     /// Nothing is there.
@@ -61,6 +61,17 @@ pub struct HubRecord {
     pub other: Map<String, Value>,
 }
 
+/// Take `key` out of `fields` when its value reads as `T`, and leave it there when it does not.
+pub(super) fn lift<T>(
+    fields: &mut Map<String, Value>,
+    key: &str,
+    read: impl Fn(&Value) -> Option<T>,
+) -> Option<T> {
+    let read = fields.get(key).and_then(read)?;
+    fields.remove(key);
+    Some(read)
+}
+
 impl HubRecord {
     /// `None` only for something that is not a JSON object.
     pub(super) fn from_value(value: Value) -> Option<HubRecord> {
@@ -69,15 +80,6 @@ impl HubRecord {
         };
         // A key leaves `fields` only when its value reads as the field's type, so what is
         // left over is exactly what the typed fields do not account for.
-        fn lift<T>(
-            fields: &mut Map<String, Value>,
-            key: &str,
-            read: impl Fn(&Value) -> Option<T>,
-        ) -> Option<T> {
-            let read = fields.get(key).and_then(read)?;
-            fields.remove(key);
-            Some(read)
-        }
         let text = |value: &Value| value.as_str().map(str::to_string);
         Some(HubRecord {
             pid: lift(&mut fields, "pid", Value::as_u64),
@@ -614,29 +616,25 @@ fn worker_hub(start: Option<&Path>) -> Result<Option<RecordedHub>, String> {
         Err(e) => return Err(unreadable_record(&path, &e.to_string())),
         Ok(true) => {}
     }
-    let Some(record) = read_json(&path) else {
-        return Err(unreadable_record(
-            &path,
-            "it is not the JSON this tool writes",
-        ));
+    let record = match read_worker_record(Path::new(&worktree)) {
+        Recorded::Absent => return Ok(None),
+        Recorded::Unreadable => {
+            return Err(unreadable_record(
+                &path,
+                "it is not the JSON this tool writes",
+            ));
+        }
+        Recorded::Found(record) => record,
     };
-    let Some(record) = record.as_object() else {
-        return Err(unreadable_record(&path, "it is not an object"));
-    };
-    let hub = match record.get("hub") {
-        // Absent is a worker the repository's own hub dispatched, which records no
-        // identifier at all. Null is read the same way rather than refused: the key is
-        // absent in what this version writes, and a record has to read the same to every
-        // other version of this tool on the machine.
-        None | Some(Value::Null) => None,
-        Some(Value::String(hub)) => said(Some(hub)),
-        Some(_) => return Err(unreadable_record(&path, "its hub is not a name")),
-    };
-    let pid = record
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|pid| u32::try_from(pid).ok())
-        .filter(|pid| *pid > 0);
+    if record.hub_is_not_a_name() {
+        return Err(unreadable_record(&path, "its hub is not a name"));
+    }
+    // Absent is a worker the repository's own hub dispatched, which records no identifier at
+    // all. Null is read the same way rather than refused: the key is absent in what this
+    // version writes, and a record has to read the same to every other version of this tool
+    // on the machine.
+    let hub = said(record.hub.as_deref());
+    let pid = record.usable_pid();
     Ok(Some(RecordedHub { hub, pid }))
 }
 
