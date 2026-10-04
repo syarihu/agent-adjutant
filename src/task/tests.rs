@@ -459,7 +459,7 @@ fn a_file_that_will_not_parse_is_skipped_rather_than_fatal() {
     let (_sandbox, ctx) = hub();
     let task = sample();
     save(&ctx, &task).unwrap();
-    std::fs::write(record_path(&ctx, "broken"), "{ not json").unwrap();
+    std::fs::write(record_path(&ctx, "broken"), "{ not json }").unwrap();
     assert_eq!(list(&ctx.state, &ctx.repo.slug).len(), 1);
 }
 
@@ -496,7 +496,7 @@ fn a_record_reads_back_through_get_and_list_by_root_and_slug() {
 
     let err = get(&ctx.state, &ctx.repo.slug, "../x").unwrap_err();
     assert!(err.starts_with("no such task"), "{err}");
-    std::fs::write(other.join("broken.json"), "{ not json").unwrap();
+    std::fs::write(other.join("broken.json"), "{ not json }").unwrap();
     let err = get(&ctx.state, "other-hub", "broken").unwrap_err();
     assert!(err.starts_with("cannot read"), "{err}");
 }
