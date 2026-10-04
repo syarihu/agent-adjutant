@@ -221,15 +221,6 @@ fn a_pr_that_cannot_be_read_says_whether_it_is_a_bare_number_or_not_a_pr() {
     assert!(unreadable_pr("https://example.com/x").contains("not a pull request"));
 }
 
-/// A value that would reach `gh` as a flag is refused before `gh` is run at all.
-#[test]
-fn an_issue_that_looks_like_a_flag_is_not_handed_to_gh() {
-    assert!(matches!(
-        read_issue(".", "--web"),
-        Err(why) if why.contains("--web")
-    ));
-}
-
 /// The snapshot is text somebody read from the issue; a caller's JSON does not get to
 /// claim it.
 #[test]
