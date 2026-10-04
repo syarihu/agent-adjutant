@@ -232,7 +232,8 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         Vec::new()
     };
 
-    let pending: Vec<Value> = messaging::list(&server.ctx.state, &repo.slug)
+    let pending: Vec<Value> = messaging::pending(&server.ctx.state, &repo.slug)
+        .messages
         .iter()
         .map(|entry| {
             json!({

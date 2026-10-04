@@ -21,13 +21,8 @@ pub struct PendingArgs<'a> {
 pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
     let info = resolve(args.repo, args.hub)?;
     let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
-    let dir = messaging::inbox_dir(&root, &info.slug);
     if args.path_only {
-        // A caller asking for the path is about to write into it, so hand back a directory
-        // that exists.
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        println!("{}", dir.display());
+        println!("{}", messaging::open_inbox(&root, &info.slug)?.display());
         return Ok(());
     }
     if let Some(name) = args.read {
@@ -40,7 +35,10 @@ pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
         return Ok(());
     }
 
-    let entries = messaging::list(&root, &info.slug);
+    let messaging::Pending {
+        dir,
+        messages: entries,
+    } = messaging::pending(&root, &info.slug);
     if args.as_json {
         let items: Vec<Value> = entries
             .iter()

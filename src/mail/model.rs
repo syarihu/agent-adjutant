@@ -25,6 +25,20 @@ pub struct Message {
     pub body: String,
 }
 
+/// What waits in a hub's inbox, oldest first, and where it waits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    pub dir: PathBuf,
+    pub messages: Vec<Entry>,
+}
+
+/// What the hub has left for a worker, and the file it is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outbox {
+    pub path: PathBuf,
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Delivery {
     pub path: PathBuf,

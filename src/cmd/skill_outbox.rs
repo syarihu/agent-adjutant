@@ -40,7 +40,7 @@ pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {
         println!("cleared the outbox");
         return Ok(());
     }
-    let text = messaging::read_outbox(&worktree);
+    let text = messaging::read_outbox(&worktree).text;
     if text.trim().is_empty() {
         println!("(empty)");
         return Ok(());
