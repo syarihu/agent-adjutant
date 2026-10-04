@@ -1062,7 +1062,7 @@ mod tests {
     fn a_broken_file_is_skipped_rather_than_blanking_the_queue() {
         let (_sandbox, ctx) = hub();
         save(&ctx, Shelf::Open, &gate(Kind::Plan)).unwrap();
-        std::fs::write(dir_of(&ctx, Shelf::Open).join("broken.json"), "{ not json").unwrap();
+        std::fs::write(dir_of(&ctx, Shelf::Open).join("broken.json"), "{ not json }").unwrap();
         assert_eq!(list(&ctx.state, &ctx.repo.slug, Shelf::Open).len(), 1);
     }
 
