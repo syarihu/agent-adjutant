@@ -367,7 +367,7 @@ fn a_worker_record_is_only_read_as_nobody_there_when_it_says_so() {
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     for content in [
         // Not JSON at all.
-        "{ this is not json".to_string(),
+        "{ this is not json }".to_string(),
         // Parseable, and naming nobody. `holder` calls this `Gone` for the hub's
         // question; for this one it is a fail-open.
         "{}".to_string(),
@@ -762,7 +762,7 @@ fn a_record_that_cannot_be_read_is_not_read_as_the_repository_s_own_hub() {
     // Truncated, the wrong shape, and the right shape with the wrong kind of name in
     // it: three ways a record stops naming a hub, none of them a repository's own.
     for damaged in [
-        "{\"pid\": 1, \"hub\": \"wid-957",
+        "{\"pid\": 1, \"hub\": \"wid-957}",
         "[\"wid-957\"]",
         "{\"pid\": 1, \"hub\": 957}",
     ] {
@@ -1615,7 +1615,7 @@ fn a_worker_record_that_is_not_an_object_is_unreadable_not_absent() {
     assert!(matches!(read_worker_record(worktree), Recorded::Absent));
     let path = worker_record_path(worktree);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    for text in ["[1,2]", "{ not json"] {
+    for text in ["[1,2]", "{ not json }"] {
         std::fs::write(&path, text).unwrap();
         assert!(
             matches!(read_worker_record(worktree), Recorded::Unreadable),
@@ -1630,7 +1630,7 @@ fn a_record_that_is_not_json_is_not_reported_as_no_worker() {
     let worktree = dir.path();
     let path = worker_record_path(worktree);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, "{ not json").unwrap();
+    std::fs::write(&path, "{ not json }").unwrap();
     for error in [
         set_worker_phase(worktree, "verify").unwrap_err(),
         relink_worker(worktree, None, "t", None).unwrap_err(),
@@ -2235,7 +2235,7 @@ fn a_hub_record_that_is_not_an_object_is_unreadable_not_absent() {
     );
     assert!(!hub_status("acme-widget", "adjutant-acme-widget").stale);
 
-    write_hub_record("acme-widget", "{ not json");
+    write_hub_record("acme-widget", "{ not json }");
     assert_eq!(read_hub_record("acme-widget"), Recorded::Unreadable);
 
     write_hub_record("other", r#"{"cwd":"/src/other"}"#);
