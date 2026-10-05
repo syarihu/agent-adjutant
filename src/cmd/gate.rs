@@ -7,8 +7,7 @@
 
 use serde_json::{Value, json};
 
-use crate::gate::{self, Gate, GateRequest, Shelf, answer, close, open};
-use crate::registry::Context;
+use crate::gate::{self, GateRequest, Shelf, answer, close, open};
 
 // ── the subcommands ──────────────────────────────────────────────────
 
@@ -89,43 +88,7 @@ fn with_body(request: &mut GateRequest, body: String) -> Result<(), String> {
     Ok(())
 }
 
-/// What a caller that kept a record is told. Said, because the procedure it follows has
-/// always ended its turn after opening a gate.
-const RECORDED: &str = "Kept as a record: nobody is asked to answer it. Do not wait; go on \
-                        with your work. If a person sends it back, the answer arrives in \
-                        `adj outbox`.";
-
-/// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
-/// branch on it the same way whichever it used.
-pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
-    let mut out = json!({ "gate": gate, "server": if served { "up" } else { "down" } });
-    if !gate.wait {
-        out["wait"] = json!(false);
-        out["note"] = json!(RECORDED);
-    } else {
-        let (wake, default_line) = if gate.answered_by_hub() {
-            (
-                &ctx.settings.hub_wake,
-                crate::infra::terminal::HUB_WAKE_LINE,
-            )
-        } else {
-            (
-                &ctx.settings.worker_wake,
-                crate::infra::terminal::WORKER_WAKE_LINE,
-            )
-        };
-        if !wake.hook.is_off() {
-            out["wakeLine"] = json!(wake.line_or(default_line));
-            // Said only where it holds: the built-in tmux wake reads the screen and holds
-            // its line back from a question, and a caller that knows that can end its turn
-            // at an empty prompt instead of asking the same thing in the terminal too.
-            if crate::mail::wake_looks_at_screen(&ctx.settings, gate.answered_by_hub()) {
-                out["wakeChecksScreen"] = json!(true);
-            }
-        }
-    }
-    out
-}
+pub use crate::transport::wording::{RECORDED, open_json};
 
 pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
     let ctx = crate::registry::context(repo, hub)?;

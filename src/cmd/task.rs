@@ -6,11 +6,11 @@
 //! without a browser. So the verbs live here and the HTTP layer calls them, rather than the
 //! other way round.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::mail::{DeliveryOutcome, Reached};
 use crate::registry::Context;
-use crate::task::{self, Checked, PrState, Status, Task, create, fetch_issue, refresh, update};
+use crate::task::{self, PrState, Status, Task, create, fetch_issue, refresh, update};
 
 /// Read the issue of a task that has just started and has none kept. A failure is reported
 /// on stderr and nothing more: the command that got here did what it was asked, and the
@@ -32,41 +32,7 @@ fn snapshot_if_started(ctx: &Context, task: Task, changed: bool) -> Task {
     }
 }
 
-/// `refresh`'s answer as the MCP tool and the board hand it on: sorted by what happened, so
-/// a reader finds what changed without going through what did not.
-pub fn refresh_json(checked: &[Checked]) -> Value {
-    let entry = |c: &Checked| {
-        let mut out = json!({
-            "id": c.task.id,
-            "title": c.task.title,
-            "pr": c.task.pr,
-            "status": c.task.status.as_str(),
-            "state": c.state.as_str(),
-            // Whose turn it is, read from the summary kept on the record; null until one was.
-            "turn": c.task.pr_status.as_ref().and_then(task::pr_turn),
-        });
-        if let PrState::Unreadable(why) = &c.state {
-            out["error"] = json!(why);
-        }
-        if let Some(why) = &c.failed {
-            out["error"] = json!(why);
-        }
-        out
-    };
-    let with = |pick: fn(&Checked) -> bool| -> Vec<Value> {
-        checked.iter().filter(|c| pick(c)).map(entry).collect()
-    };
-    json!({
-        "done": with(|c| c.moved),
-        "open": with(|c| c.state == PrState::Open),
-        "closed": with(|c| c.state == PrState::Closed),
-        "unreadable": with(|c| matches!(c.state, PrState::Unreadable(_))),
-        // Merged, but the record changed while `gh` was being asked, so it was left as it is.
-        "skipped": with(|c| c.state == PrState::Merged && !c.moved && c.failed.is_none()),
-        // Merged, but the record could not be moved. `error` says why.
-        "failed": with(|c| c.failed.is_some()),
-    })
-}
+pub use crate::transport::wording::refresh_json;
 
 // ── the subcommands ──────────────────────────────────────────────────
 

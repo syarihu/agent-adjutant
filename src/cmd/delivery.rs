@@ -85,14 +85,7 @@ pub struct SendArgs<'a> {
     pub wake: Option<bool>,
 }
 
-/// A wake note as a sentence for the person at the terminal.
-pub(crate) fn wake_note_sentence(note: &str) -> String {
-    let mut chars = note.chars();
-    match chars.next() {
-        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
-        None => String::new(),
-    }
-}
+pub(crate) use crate::transport::wording::wake_note_sentence;
 
 pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     let ctx = context(args.repo, args.hub)?;
