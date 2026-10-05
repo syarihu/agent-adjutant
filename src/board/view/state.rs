@@ -12,6 +12,7 @@ use crate::kernel::identity::Worktree;
 use crate::kernel::runner;
 use crate::task;
 
+use super::columns::{HumanCol, waits_on_person};
 use super::sessions::sessions_of;
 
 /// The state document `/api/state` sends. Every key the page reads is a field here, and the
@@ -65,7 +66,7 @@ pub struct BoardState {
     pub config_path: String,
     pub now: i64,
     pub pending: Vec<PendingRow>,
-    pub gates: Vec<gate::Gate>,
+    pub gates: Vec<GateCard>,
 }
 
 /// The repository's own hub. Unlike `mail::RepoHubState`, `pid` and `startedAt` are written
@@ -153,6 +154,9 @@ pub struct TaskCard {
     pub live: Option<LiveCard>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jules: Option<JulesSeen>,
+    /// Whether its PR is the person's ball, see `waits_on_person`. On every card, false on a
+    /// finished one; set by `state`, which has the worker rows and Jules's answer.
+    pub waits_on_person: bool,
 }
 
 /// What a live task's card carries beyond the record.
@@ -172,6 +176,7 @@ pub struct RecordCard {
     pub gate: gate::Gate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_size: Option<usize>,
+    pub answered_by_hub: bool,
 }
 
 impl RecordCard {
@@ -182,7 +187,39 @@ impl RecordCard {
             // A key kept from disk that the card writes itself: the card's value wins.
             gate.extra.remove("diffSize");
         }
-        RecordCard { gate, diff_size }
+        let answered_by_hub = gate.answered_by_hub();
+        // Written on every record, so a key kept from disk gives way to the card's value.
+        gate.extra.remove("answeredByHub");
+        RecordCard {
+            gate,
+            diff_size,
+            answered_by_hub,
+        }
+    }
+}
+
+/// An open gate as the board sends it. The column is on the gate rather than the card so that
+/// the page, dropping a gate it has just answered, moves the card at once.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateCard {
+    #[serde(flatten)]
+    pub gate: gate::Gate,
+    pub human_col: HumanCol,
+    pub answered_by_hub: bool,
+}
+
+impl GateCard {
+    pub fn of(mut gate: gate::Gate) -> Self {
+        // Keys kept from disk that the card writes itself: the card's value wins.
+        for key in ["humanCol", "answeredByHub"] {
+            gate.extra.remove(key);
+        }
+        GateCard {
+            human_col: HumanCol::of_gate(gate.kind),
+            answered_by_hub: gate.answered_by_hub(),
+            gate,
+        }
     }
 }
 
@@ -211,7 +248,7 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
     let settings = settings_now(server);
     // After the records are joined, from the same values the page gets: a card shows the last
     // answer about its session, and an old answer is asked again behind the page's back.
-    let tasks: Vec<TaskCard> = tasks
+    let mut tasks: Vec<TaskCard> = tasks
         .into_iter()
         .map(|mut card| {
             card.jules = server
@@ -300,6 +337,15 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
         workers_data.push((status, branch));
     }
 
+    for card in &mut tasks {
+        let row = worker_of(&card.task, &workers);
+        card.waits_on_person = waits_on_person(
+            &card.task,
+            row.map(|w| w.phase.as_deref()),
+            card.jules.as_ref(),
+        );
+    }
+
     let sessions = if with_sessions {
         sessions_of(
             server,
@@ -379,8 +425,20 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
             .to_string(),
         now,
         pending,
-        gates: gate::list(&server.ctx.state, &server.ctx.repo.slug, gate::Shelf::Open),
+        gates: gate::list(&server.ctx.state, &server.ctx.repo.slug, gate::Shelf::Open)
+            .into_iter()
+            .map(GateCard::of)
+            .collect(),
     }
+}
+
+/// The worker row the page joins a task to (`workerOf`): the first in the task's worktree that
+/// names no task or this one.
+pub fn worker_of<'a>(task: &task::Task, workers: &'a [WorkerRow]) -> Option<&'a WorkerRow> {
+    let worktree = task.worktree.as_deref()?;
+    workers
+        .iter()
+        .find(|w| w.worktree == worktree && w.task.as_deref().is_none_or(|id| id == task.id))
 }
 
 /// What one poll has already asked of the system, so `sessions_of` does not ask again: the
@@ -457,10 +515,13 @@ pub fn with_records(
                     t.extra.remove(key);
                 }
             }
+            // Written on every card, finished ones too.
+            t.extra.remove("waitsOnPerson");
             TaskCard {
                 task: t,
                 live,
                 jules: None,
+                waits_on_person: false,
             }
         })
         .collect()
