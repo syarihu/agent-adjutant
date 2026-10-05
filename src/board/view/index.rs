@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::board::resident_board_url;
 use crate::gate;
@@ -96,11 +96,49 @@ pub fn board_counts(
     (waiting, working)
 }
 
+/// A gate waiting on the person, as the boards index lists it. The fields are in alphabetical
+/// order of their JSON names because the index used to be written with its keys sorted and
+/// `/api/boards` serializes in field order.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateSummary {
+    pub id: String,
+    pub kind: crate::gate::Kind,
+    pub opened_at: String,
+    // Serialized as `null` when there is none, as it always was.
+    pub task: Option<String>,
+    pub title: String,
+    pub worktree: String,
+}
+
+/// One board of the index. The fields are in alphabetical order of their JSON names because
+/// the index used to be written with its keys sorted and `/api/boards` serializes in field
+/// order.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardSummary {
+    pub finished: bool,
+    pub gates: Vec<GateSummary>,
+    pub hub: Option<String>,
+    pub hub_id: String,
+    pub hub_last_alive: Option<i64>,
+    pub hub_present: bool,
+    pub hub_stale: bool,
+    pub hub_started_at: Option<String>,
+    pub nwo: String,
+    pub queued: usize,
+    pub slug: String,
+    pub title: Option<String>,
+    pub url: String,
+    pub waiting: usize,
+    pub working: usize,
+}
+
 /// The board list as `/api/boards` and `adj server status` give it. The counts (waiting,
 /// working, and queued: tasks still to be started) are read from
 /// each board's records (see `board_counts`), so one `ps` and one `git worktree list` per
 /// repository serve every board.
-pub fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
+pub fn boards(root: &Path, port: u16, token: &str) -> Vec<BoardSummary> {
     let addresses = addresses(root);
     let table = crate::registry::ProcessTable::snapshot();
     // Workers per parent-task hub, counted by the hub their record reports to. Only asked of
@@ -142,17 +180,15 @@ pub fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
                 .filter(|t| t.status == task::Status::Queued)
                 .count();
             gates.sort_by(|x, y| x.opened_at.cmp(&y.opened_at));
-            let gates: Vec<Value> = gates
+            let gates: Vec<GateSummary> = gates
                 .iter()
-                .map(|g| {
-                    json!({
-                        "id": g.id,
-                        "kind": g.kind,
-                        "title": g.title,
-                        "openedAt": g.opened_at,
-                        "task": g.task,
-                        "worktree": g.worktree,
-                    })
+                .map(|g| GateSummary {
+                    id: g.id.clone(),
+                    kind: g.kind,
+                    opened_at: g.opened_at.clone(),
+                    task: g.task.clone(),
+                    title: g.title.clone(),
+                    worktree: g.worktree.clone(),
                 })
                 .collect();
             // When the hub is not there, when it was last seen alive: the session it would
@@ -175,26 +211,29 @@ pub fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
                 && tasks
                     .iter()
                     .all(|t| matches!(t.status, task::Status::Done | task::Status::Cancelled));
-            json!({
-                "slug": a.slug,
-                "nwo": a.nwo,
-                "hub": a.hub,
-                "url": resident_board_url(port, &a.slug, token),
-                "hubPresent": present,
-                "hubId": match &a.hub {
+            BoardSummary {
+                finished,
+                gates,
+                hub: a.hub.clone(),
+                hub_id: match &a.hub {
                     Some(key) => format!("hub-{}", key.trim()),
                     None => "hub".to_string(),
                 },
-                "hubStale": status.as_ref().is_some_and(|s| s.stale),
-                "hubStartedAt": status.as_ref().and_then(|s| s.started_at.clone()),
-                "hubLastAlive": last_alive,
-                "title": a.hub.as_ref().and_then(|_| crate::board::jobs::cached_title(root, &a.slug)),
-                "waiting": waiting,
-                "working": working,
-                "queued": queued,
-                "gates": gates,
-                "finished": finished,
-            })
+                hub_last_alive: last_alive,
+                hub_present: present,
+                hub_stale: status.as_ref().is_some_and(|s| s.stale),
+                hub_started_at: status.as_ref().and_then(|s| s.started_at.clone()),
+                nwo: a.nwo.clone(),
+                queued,
+                slug: a.slug.clone(),
+                title: a
+                    .hub
+                    .as_ref()
+                    .and_then(|_| crate::board::jobs::cached_title(root, &a.slug)),
+                url: resident_board_url(port, &a.slug, token),
+                waiting,
+                working,
+            }
         })
         .collect()
 }

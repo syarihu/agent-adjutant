@@ -1,6 +1,6 @@
 //! The resident server request handling.
 
-use serde_json::{Value, json};
+use serde_json::json;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
@@ -11,7 +11,7 @@ use super::assets::UI_HTML;
 use super::auth::refuse;
 use super::routes::{is_page_path, route, terminal_route};
 use crate::board::Resident;
-use crate::board::view::boards_json;
+use crate::board::view::boards;
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -89,7 +89,8 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         ("GET", "/api/boards") => http::json(
             out,
             200,
-            &Value::Array(boards_json(&resident.root, resident.port, &resident.token)).to_string(),
+            &serde_json::to_string(&boards(&resident.root, resident.port, &resident.token))
+                .unwrap_or_default(),
         ),
         _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
     }
