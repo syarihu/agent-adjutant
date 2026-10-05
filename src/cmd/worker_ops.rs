@@ -1,4 +1,7 @@
 use super::*;
+use crate::lifecycle::worker::{
+    Planned, SessionNote, WorkerRequest, exec_launch, plan_launch, register_launch,
+};
 
 pub fn spawn(
     repo_arg: Option<&str>,
@@ -177,11 +180,7 @@ pub fn phase(worktree: Option<&str>, set: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Start the worker agent in the tab `work` just opened.
-///
-/// The mirror image of `hub`: write down who we are, then become the agent. Running the
-/// agent as a child instead would record a PID that exits the moment the agent does
-/// anything, and waking a dead launcher wakes nobody.
+/// What `adj worker` was typed with.
 pub struct WorkerArgs<'a> {
     pub repo: Option<&'a str>,
     pub hub: Option<&'a str>,
@@ -194,153 +193,41 @@ pub struct WorkerArgs<'a> {
 }
 
 pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
-    use std::os::unix::process::CommandExt;
-
-    let WorkerArgs {
-        repo: repo_arg,
-        hub: hub_arg,
-        worktree,
-        title,
-        task,
-        prompt,
-        resume,
-        dry_run,
-    } = *args;
-
-    let worktree = worker_worktree(worktree)?;
-    let resumed = match resume {
-        true => Some(saved_worker_session(&worktree)?),
-        false => None,
+    let request = WorkerRequest {
+        repo: args.repo.map(str::to_string),
+        hub: args.hub.map(str::to_string),
+        worktree: args.worktree.map(str::to_string),
+        title: args.title.map(str::to_string),
+        task: args.task.map(str::to_string),
+        prompt: args.prompt.map(str::to_string),
+        resume: args.resume,
     };
-    let task = task.or_else(|| resumed.as_ref().and_then(|saved| saved.task.as_deref()));
-    // This tab was opened *at* the worktree, so `context` would read the record this is
-    // about to replace. A worker that crashed without being closed leaves one behind, and
-    // re-dispatching that task would file the new worker under the hub that ran the old.
-    //
-    // A resumed worker goes back under the hub that dispatched it, which the saved session
-    // remembers — ahead of `ADJUTANT_HUB`, because the tab someone types `--resume` into
-    // may have inherited that from a different hub entirely. Only an explicit `--hub`
-    // outranks it.
-    let ctx = match &resumed {
-        Some(saved) => {
-            let told = hub_arg.map(str::trim).filter(|hub| !hub.is_empty());
-            context_of(identity::resolve(repo_arg, told.or(saved.hub.as_deref()))?)?
+    let launch = match plan_launch(&request)? {
+        Planned::Running { pid } => {
+            println!(
+                "a worker is already running in this worktree (pid {})",
+                pid.unwrap_or(0)
+            );
+            return Ok(());
         }
-        None => context_as(repo_arg, hub_arg)?,
+        Planned::Launch(launch) => launch,
     };
-    let status = registry::worker_status(&worktree);
-    if status.present {
+    if args.dry_run {
         println!(
-            "a worker is already running in this worktree (pid {})",
-            status.pid.unwrap_or(0)
+            "cd {}",
+            crate::infra::template::sh_quote(&launch.worktree.to_string_lossy())
         );
-        // `adj work` marked this worktree on the way here, and nobody is going to register
-        // over it. Left, it would hold a second slot for the grace period after the running
-        // worker ends.
-        let _ = registry::unmark_worker_starting(&worktree);
+        println!("{}", launch.command);
         return Ok(());
     }
-
-    let worktree_text = worktree.to_string_lossy().to_string();
-    let title = title
-        .filter(|title| !title.is_empty())
-        .or(resumed.as_ref().and_then(|saved| saved.title.as_deref()))
-        .unwrap_or("")
-        .to_string();
-    let (command, fresh_session) = match &resumed {
-        Some(saved) => {
-            let template = resume_template(
-                ctx.settings.agent_resume_runner.as_deref(),
-                "agentResumeRunner",
-            )?;
-            let command = runner::worker_resume_command(
-                template,
-                &agent_env(&ctx),
-                &saved.session_id,
-                prompt.unwrap_or(runner::WORKER_RESUME_PROMPT),
-                &worktree_text,
-                &title,
-            );
-            (command, None)
-        }
-        None => {
-            let session = registry::new_session_id()?;
-            let command = runner::worker_command(
-                ctx.settings.agent_runner.as_deref(),
-                &agent_env(&ctx),
-                &session,
-                prompt.unwrap_or(runner::WORKER_STARTUP_PROMPT),
-                &worktree_text,
-                &title,
-            );
-            let records = runner::records_session(
-                ctx.settings.agent_runner.as_deref(),
-                runner::DEFAULT_AGENT_RUNNER,
-            );
-            (command, records.then_some(session))
-        }
-    };
-    if dry_run {
-        println!("cd {}", crate::infra::template::sh_quote(&worktree_text));
-        println!("{command}");
-        return Ok(());
-    }
-
-    std::env::set_current_dir(&worktree)
-        .map_err(|e| format!("cannot change directory to {}: {e}", worktree.display()))?;
-    // The address goes into the record here, at the last moment before this process stops
-    // being a launcher. Everything the worker's agent later sends is addressed from it.
-    let location = terminal::own_location(&ctx.settings.terminal);
-    registry::register_worker(
-        &worktree,
-        &title,
-        ctx.repo.hub.as_deref(),
-        task,
-        Some(&location),
-    )?;
-    // Said and got past, as for the hub: a worker that cannot be resumed still works. And as
-    // for the hub, a fresh start with nothing to record clears what an earlier worker saved.
-    if resumed.is_none() {
-        let saved = match &fresh_session {
-            Some(session) => registry::save_worker_session(
-                &worktree,
-                &title,
-                ctx.repo.hub.as_deref(),
-                task,
-                session,
-            )
-            .map(|_| ()),
-            None => registry::forget_worker_session(&worktree),
-        };
-        if let Err(e) = saved {
+    match register_launch(&launch)?.session {
+        Some(SessionNote::NotSaved(e)) => {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
-    } else if let Some(saved) = &resumed {
-        // Reopened under another hub than the session remembers: say so there too, or the
-        // worker would count for the old hub once it has ended and its record is gone.
-        let slug_of = |hub: Option<&str>| identity::slug_for(&ctx.repo.nwo, hub);
-        if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
-            && let Err(e) = registry::save_worker_session(
-                &worktree,
-                &title,
-                ctx.repo.hub.as_deref(),
-                task,
-                &saved.session_id,
-            )
-        {
+        Some(SessionNote::StillUnderOldHub(e)) => {
             eprintln!("adjutant: {e}; the worker may still be counted for its old hub");
         }
+        None => {}
     }
-
-    // A worker is not a hub. A tab opened by a spawn command that passes its environment on
-    // would otherwise hand the hub's session to this agent's MCP server, which would then
-    // keep saying the hub is alive for as long as the worker runs — and the hub's board
-    // marker, which would have it try to serve the hub's board.
-    //
-    // Nor is it whichever hub opened the tab. `ADJUTANT_HUB` outranks the record written
-    // above, so an inherited one would send every report to the hub that dispatched the
-    // tab rather than the one this worker registered under; the line carries the right one.
-    let error = agent_command(&command).exec();
-    let _ = registry::unregister_worker(&worktree);
-    Err(format!("cannot start the worker: {error}"))
+    Err(exec_launch(&launch))
 }
