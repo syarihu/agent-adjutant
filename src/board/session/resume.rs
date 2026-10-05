@@ -1,9 +1,7 @@
 use std::path::Path;
 
-use serde_json::{Value, json};
-
 use crate::board::view::find_session;
-use crate::board::{Server, input_of, resume_refusal, settings_now};
+use crate::board::{Server, resume_refusal, settings_now};
 use crate::lifecycle::worker::{Started, resume_worker};
 use crate::mail;
 use crate::registry::{self, Context};
@@ -23,14 +21,20 @@ pub(super) fn own_hub_context(
     })
 }
 
+/// What reopening a worker came to.
+pub struct Resumed {
+    pub description: String,
+    pub hub: Option<String>,
+    pub hub_running: bool,
+}
+
 /// Reopen the worker session `id` in a new tab, as `adj work --resume` does.
 ///
 /// The worker goes back under the hub that dispatched it without being told which: the saved
 /// session remembers it (rewritten on every link), and `adj worker --resume` reads it there.
 /// Forwarding this server's own hub would re-file the worker under whichever hub the board
 /// happens to be for.
-pub fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
-    input_of(body)?;
+pub fn resume(server: &Server, id: &str) -> Result<Resumed, String> {
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
     if session.kind != "worker" {
@@ -55,10 +59,9 @@ pub fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
     let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
-    Ok(json!({
-        "resumed": true,
-        "description": done.description,
-        "hub": session.hub,
-        "hubRunning": hub_running,
-    }))
+    Ok(Resumed {
+        description: done.description,
+        hub: session.hub,
+        hub_running,
+    })
 }

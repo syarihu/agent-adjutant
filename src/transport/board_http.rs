@@ -7,6 +7,7 @@ mod auth;
 mod handlers;
 mod resident;
 mod routes;
+mod sessions;
 mod terminal;
 
 pub use resident::handle_resident;
