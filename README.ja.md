@@ -359,12 +359,19 @@ hub では受信箱、起動した worker、親タスクの hub の子タスク�
 ## レイヤ構成
 
 ```
-repo  config  template  prompts        末端（標準ライブラリと自身の入力のみ）
-terminal  runner  notify  ide  messaging   下位層のみ参照可能（横の参照は不可）
-cmd/  mcp                                  各モジュールを結合する最上位層
+infra      ファイル操作・時計・パス・環境変数・シェル・git と gh の実行、端末の操作とその設定、エージェントの種類、通知、IDE、テンプレート、pty、HTTP、WebSocket
+kernel     設定、リポジトリの識別、worktree の git の状態、手順書とスキルの描画、ランナー、指示書
+registry   Context と宛先の解決、hub と worker の記録、保存した会話、生存確認、worker の枠、ロック、ボードの宛先帳とサーバーの記録
+mail       受信箱、送信箱、配達と起こし、エージェントの画面の読み取り
+task       タスクの記録とその操作、GitHub からの読み取り
+gate       gate の記録とその操作
+jules      Jules のセッション（開始、追跡、レビューコメントの中継）
+lifecycle  hub と worker の起動・停止・再開・終了・フォーカス・紐づけ
+board      常駐デーモンとサーバー、読み取りモデル、バックグラウンドの処理、ページから行うセッションと hub の操作
+transport  cli・mcp・board_http（入力を読み、操作を呼び、結果を言葉にする）
 ```
 
-モジュール間の依存方向は `scripts/check-layering.sh` で強制され、CI でも検証されます。
+各モジュールはこの一覧で上にあるモジュールだけを参照でき、下のモジュールは参照できません。`lib.rs` と `main.rs` は10個すべての上に立つクレートのルートです。モジュール間の依存方向は `scripts/check-layering.sh` で強制され、CI でも検証されます。
 
 ## 開発
 
