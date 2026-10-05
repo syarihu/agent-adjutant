@@ -11,7 +11,7 @@
     </div>
   </div>
 
-  <button class="m3-fab-extended" onclick="openForm()">
+  <button class="m3-fab-extended" data-action="new-task">
     <span class="material-symbols-outlined" aria-hidden="true">add</span>
     <span>新しいタスク</span>
   </button>
@@ -19,7 +19,7 @@
   <div class="rail-destinations">
     <div class="rail-global">
       <div class="rail-section-label">全体</div>
-      <button class="rail-item" id="nav-review" title="要対応レビュー" onclick="goToQueue()">
+      <button class="rail-item" id="nav-review" title="要対応レビュー" data-action="queue">
         <span class="material-symbols-outlined">mark_chat_unread</span>
         <span class="rail-label">要対応レビュー</span>
         <span class="rail-badge" id="gate-count">0</span>
@@ -32,10 +32,10 @@
 
   <div class="rail-footer">
     <div class="rail-tools">
-      <button class="tool-btn" id="btn-notify" onclick="toggleNotify()" title="デスクトップ通知を設定">
+      <button class="tool-btn" id="btn-notify" data-action="notify" title="デスクトップ通知を設定">
         <span class="material-symbols-outlined">notifications</span>
       </button>
-      <button class="tool-btn" onclick="toggleTheme()" title="テーマ切替">
+      <button class="tool-btn" data-action="theme" title="テーマ切替">
         <span class="material-symbols-outlined">dark_mode</span>
       </button>
     </div>
@@ -72,11 +72,11 @@
     </div>
 
     <div class="top-bar-actions" style="margin-left:auto;">
-      <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" onclick="openOwnHub()" title="このボードの hub を開く">
+      <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" data-action="own-hub" title="このボードの hub を開く">
         <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
         <span>hub</span>
       </button>
-      <button class="tool-btn" id="btn-resync" onclick="refreshAll()" title="再同期 (adj refresh)">
+      <button class="tool-btn" id="btn-resync" data-action="resync" title="再同期 (adj refresh)">
         <span class="material-symbols-outlined">refresh</span>
       </button>
     </div>
@@ -89,12 +89,12 @@
       </nav>
       <div class="view-tools" id="view-tools">
         <div class="m3-segmented-tabs" id="layout-switch">
-          <button type="button" class="m3-seg-tab" data-layout="tabs" onclick="setBoardLayout('tabs')" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
-          <button type="button" class="m3-seg-tab" data-layout="split" onclick="setBoardLayout('split')" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
+          <button type="button" class="m3-seg-tab" data-layout="tabs" data-action="layout" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
+          <button type="button" class="m3-seg-tab" data-layout="split" data-action="layout" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
         </div>
         <div class="m3-segmented-tabs" id="arrange-switch">
-          <button type="button" class="m3-seg-tab" data-arrange="top" onclick="setBoardArrange('top')" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
-          <button type="button" class="m3-seg-tab" data-arrange="left" onclick="setBoardArrange('left')" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
+          <button type="button" class="m3-seg-tab" data-arrange="top" data-action="arrange" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
+          <button type="button" class="m3-seg-tab" data-arrange="left" data-action="arrange" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
         </div>
       </div>
     </div>
@@ -165,7 +165,7 @@
   </main>
 
   <footer id="m3-bottom-sheet">
-    <button type="button" class="sheet-handle-bar" aria-expanded="false" onclick="toggleBottomSheet()">
+    <button type="button" class="sheet-handle-bar" aria-expanded="false" data-action="sheet">
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
         <strong style="font-size:12px;">CLI連携コンソール</strong>
@@ -184,13 +184,13 @@
 </div>
 
 <dialog id="form">
-  <form method="dialog" onsubmit="submitForm(event)">
+  <form method="dialog">
     <div class="head">
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">add_task</span>
         <span>タスクを渡す</span>
       </div>
-      <button type="button" class="m3-icon-button" style="padding:4px;" onclick="document.getElementById('form').close()" title="閉じる">
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="form" title="閉じる">
         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
       </button>
     </div>
@@ -198,9 +198,9 @@
       <fieldset>
         <legend>種類</legend>
         <div class="radios">
-          <label><input type="radio" name="kind" value="start" checked onchange="syncForm()">Issue に着手</label>
-          <label><input type="radio" name="kind" value="file-and-start" onchange="syncForm()">起票して着手</label>
-          <label><input type="radio" name="kind" value="investigate" onchange="syncForm()">調査だけ</label>
+          <label><input type="radio" name="kind" value="start" checked>Issue に着手</label>
+          <label><input type="radio" name="kind" value="file-and-start">起票して着手</label>
+          <label><input type="radio" name="kind" value="investigate">調査だけ</label>
         </div>
       </fieldset>
       <label class="field" id="f-board" hidden><span>作り先</span>
@@ -208,7 +208,7 @@
       <label class="field"><span>内容</span>
         <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力(Issue URL を入れるなら空でもよい)"></textarea></label>
       <label class="field" id="f-issue"><span>Issue URL</span>
-        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233" oninput="syncForm()" onchange="syncForm()"></label>
+        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233"></label>
       <details class="more">
         <summary>詳細(省略可)</summary>
         <div class="grid">
@@ -251,7 +251,7 @@
       </details>
     </div>
     <div class="foot">
-      <button type="button" class="btn-m3-text" onclick="document.getElementById('form').close()">やめる</button>
+      <button type="button" class="btn-m3-text" data-dialog-close="form">やめる</button>
       <button type="submit" class="btn-m3-tonal" name="act" value="backlog">Backlog に置く</button>
       <button type="submit" class="btn-m3-primary" name="act" value="queued">
         <span class="material-symbols-outlined" style="font-size:16px;">send</span>
@@ -262,13 +262,13 @@
 </dialog>
 
 <dialog id="handover-dialog">
-  <form method="dialog" id="handover-form" onsubmit="submitHandover(event)">
+  <form method="dialog" id="handover-form">
     <div class="head" style="justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="material-symbols-outlined" style="font-size:22px;color:var(--md-sys-color-primary);">forward_to_inbox</span>
         <span>キューに渡す</span>
       </div>
-      <button type="button" class="m3-icon-button" style="padding:4px;" id="handover-close-btn" onclick="closeHandoverDialog()" title="閉じる">
+      <button type="button" class="m3-icon-button" style="padding:4px;" id="handover-close-btn" data-action="handover-close" title="閉じる">
         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
       </button>
     </div>
@@ -281,7 +281,7 @@
       </label>
     </div>
     <div class="foot">
-      <button type="button" class="btn-m3-text" id="handover-cancel-btn" onclick="closeHandoverDialog()">キャンセル</button>
+      <button type="button" class="btn-m3-text" id="handover-cancel-btn" data-action="handover-close">キャンセル</button>
       <button type="submit" class="btn-m3-primary" id="handover-submit-btn">
         <span class="material-symbols-outlined" style="font-size:16px;">send</span>
         <span>キューに渡す</span>

@@ -606,6 +606,7 @@ async function submitHandover(e) {
     if (submit) submit.disabled = false;
   }
 }
+document.getElementById('handover-form').addEventListener('submit', submitHandover);
 
 async function submitHandoverNow() {
   const textarea = document.getElementById('handover-instruction');
@@ -767,6 +768,9 @@ async function submitForm(e) {
     note(`${line} → ${err.message}`, true);
   }
 }
+document.querySelector('#form form').addEventListener('submit', submitForm);
+for (const r of document.querySelectorAll('#form input[name=kind]')) r.addEventListener('change', syncForm);
+for (const ev of ['input', 'change']) document.querySelector('#f-issue input[name=issueUrl]').addEventListener(ev, syncForm);
 
 function note(line, isError, why) {
   log.unshift({ line, isError, why });

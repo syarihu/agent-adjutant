@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::infra::http::{self, Request};
 
 use super::assets::{UI_HTML, vendor_asset};
@@ -79,6 +81,32 @@ fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
     let at = |piece: &str| UI_HTML.find(piece).unwrap();
     assert!(at("function mountSessionTerminal") < at("function sessionState"));
     assert!(at("function sessionState") < at("setInterval(refresh, 2000)"));
+}
+
+#[test]
+fn the_page_wires_no_inline_handlers() {
+    // A name in an attribute string only fails when clicked; the table is checked in one place.
+    for attr in ["onclick=\"", "onchange=\"", "oninput=\"", "onsubmit=\""] {
+        assert!(!UI_HTML.contains(attr), "{attr}");
+    }
+    assert_eq!(UI_HTML.matches("const ACTIONS = {").count(), 1);
+    let table = UI_HTML.split("const ACTIONS = {").nth(1).unwrap();
+    let table = &table[..table.find("\n};").unwrap()];
+    let keys: Vec<&str> = table
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("//"))
+        .map(|l| l.split(':').next().unwrap().trim().trim_matches('\''))
+        .collect();
+    assert!(!keys.is_empty());
+    let keys_set: BTreeSet<&str> = keys.iter().copied().collect();
+    assert_eq!(keys.len(), keys_set.len(), "a key twice");
+    let used: BTreeSet<&str> = UI_HTML
+        .split("data-action=\"")
+        .skip(1)
+        .map(|s| &s[..s.find('"').unwrap()])
+        .collect();
+    assert_eq!(keys_set, used);
 }
 
 #[test]

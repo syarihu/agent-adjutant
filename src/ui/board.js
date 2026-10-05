@@ -71,7 +71,7 @@ function julesLine(task) {
   return `
     <div class="card-worker-status" title="${esc(j.error || `session ${j.session}`)}">
       ${j.working ? '<span class="pulse-dot"></span>' : '<span class="material-symbols-outlined" style="font-size:14px;">smart_toy</span>'}
-      ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;">${label}</a>` : label}
+      ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">${label}</a>` : label}
     </div>
   `;
 }
@@ -470,7 +470,7 @@ function renderColumns(force = false) {
       col.dataset.col = def.id;
 
       const nextBtn = def.id === 'before' && !scopeAll()
-        ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" onclick="nudgeHub()"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
+        ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" data-action="nudge-hub"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
         : '';
 
       const headerHtml = `
