@@ -1,6 +1,6 @@
 /* The セッション tab of a board: its hubs, each with its sessions, in a list. A session opens in
-   the task panel, as a task does (board.js). The first half is pure (it reads `state` and
-   returns); the second draws the list and drives what can be done to a session. */
+   the task panel, as a task does (task-panel.js). The first half is pure (it reads `state` and
+   returns); the second draws the list. What can be done to a session is in session-actions.js. */
 
 /* A worker whose tmux window has been quiet this long reads as idle (seconds; window_activity
    is the only clock there is, so this is a guess at what "quiet" means). */
