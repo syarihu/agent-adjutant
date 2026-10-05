@@ -538,8 +538,7 @@ fn the_board_shows_the_session_and_moves_its_task_to_review_once_the_pr_is_open(
     let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     // The first answer is asked for in the background; the card says so until it lands.
-    let mut seen = serde_json::Value::Null;
-    for _ in 0..100 {
+    let seen = wait_until("the board showed the session and its PR", || {
         let state = fetch_state(&url);
         let task = state["tasks"]
             .as_array()
@@ -548,12 +547,11 @@ fn the_board_shows_the_session_and_moves_its_task_to_review_once_the_pr_is_open(
             .find(|t| t["id"] == id.as_str())
             .unwrap()
             .clone();
-        if task["jules"]["state"].is_string() && task["pr"].is_string() {
-            seen = task;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+        (
+            task["jules"]["state"].is_string() && task["pr"].is_string(),
+            task,
+        )
+    });
     board.kill().unwrap();
     board.wait().unwrap();
 
@@ -598,19 +596,13 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
     let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
     // The state shows once the answer is stored, and the answer is stored after it has been
     // acted on — so from here on, a message would already be in the inbox.
-    let mut answered = false;
-    for _ in 0..100 {
-        if fetch_state(&url)["tasks"][0]["jules"]["state"] == "COMPLETED" {
-            answered = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    eventually("the board got the session's answer", || {
+        fetch_state(&url)["tasks"][0]["jules"]["state"] == "COMPLETED"
+    });
     board.kill().unwrap();
     board.wait().unwrap();
 
     assert!(args.exists(), "the session was never asked about");
-    assert!(answered, "the board never got the session's answer");
     let listed = fixture.json(&["pending", "--json"]);
     assert_eq!(listed["count"], 0, "{listed}");
 }
@@ -799,26 +791,29 @@ fn new_review_comments_on_a_jules_pr_are_brought_to_the_hub_once() {
     let (path, _) = stub_gh(&fixture);
     let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
-    let mut told = None;
-    for _ in 0..100 {
+    // The board read drives the work, so it stays in the wait.
+    let listed = wait_until("the hub was told about the review", || {
         let _ = fetch_state(&url);
         let listed = fixture.json(&["pending", "--json"]);
-        if let Some(m) = listed["messages"]
+        let told = listed["messages"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|m| m["kind"] == "jules-review")
-        {
-            told = Some(m["name"].as_str().unwrap().to_string());
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+            .any(|m| m["kind"] == "jules-review");
+        (told, listed)
+    });
     board.kill().unwrap();
     board.wait().unwrap();
 
-    let name = told.expect("the hub was never told about the review");
-    let body = fixture.ok(&["pending", "--read", &name]);
+    let name = listed["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["kind"] == "jules-review")
+        .unwrap()["name"]
+        .as_str()
+        .unwrap();
+    let body = fixture.ok(&["pending", "--read", name]);
     assert!(body.contains(&id), "{body}");
     assert!(body.contains("## round       1/2"), "{body}");
     // The CodeRabbit comment, and not the reply or the signed-in person's own.

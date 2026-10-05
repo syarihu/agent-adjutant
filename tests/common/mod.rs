@@ -769,18 +769,27 @@ pub fn serve_board(fixture: &Fixture, env: &[(&str, &str)]) -> (Reaped, String) 
     (by_hand, url)
 }
 
-/// Polls until `done` holds, or panics after about ten seconds with what was last seen.
+/// Polls every 50 ms until `seen` says it is done and returns what it saw then, or panics with
+/// what it last saw after a minute. A minute is `tests/board_terminal.rs`' `PATIENCE`, the
+/// longest any test here waited: a passing test returns as soon as its condition holds, so
+/// this only bounds a real hang.
 pub fn wait_until<T: std::fmt::Debug>(what: &str, mut seen: impl FnMut() -> (bool, T)) -> T {
-    let mut last = None;
-    for _ in 0..100 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
         let (done, value) = seen();
         if done {
             return value;
         }
-        last = Some(value);
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        if std::time::Instant::now() >= deadline {
+            panic!("{what}: last saw {value:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    panic!("{what}: last saw {last:?}");
+}
+
+/// `wait_until` for a bare condition, with nothing to show when it never holds.
+pub fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    wait_until(what, || (check(), ()));
 }
 
 /// A stand-in for the tool `name`: `script` written to `dir/name` and made executable, `dir`

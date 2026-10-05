@@ -331,14 +331,10 @@ fn screen_of(tmux: &IsolatedTmux, pane_id: &str) -> String {
 
 /// Drawn until the last line of its text is on screen, whatever the machine is doing.
 fn wait_for_screen(tmux: &IsolatedTmux, pane_id: &str, needle: &str) -> String {
-    for _ in 0..50 {
+    wait_until(&format!("{needle:?} to appear on screen"), || {
         let screen = screen_of(tmux, pane_id);
-        if screen.contains(needle) {
-            return screen;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    panic!("{needle:?} never appeared:\n{}", screen_of(tmux, pane_id));
+        (screen.contains(needle), screen)
+    })
 }
 
 #[test]

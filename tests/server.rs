@@ -462,15 +462,10 @@ fn stopping_the_resident_leaves_no_board() {
         let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         // The server writes its record just before it says where it is.
-        let mut text = String::new();
-        for _ in 0..40 {
-            text = std::fs::read_to_string(&log).unwrap();
-            if text.contains("serving on") {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        assert!(text.contains("serving on"), "{text}");
+        let text = wait_until("server.log to say where it serves", || {
+            let text = std::fs::read_to_string(&log).unwrap();
+            (text.contains("serving on"), text)
+        });
         assert!(!text.contains("token"), "{text}");
     }
     let status = fixture.json(&["server", "status", "--json"]);
@@ -912,28 +907,6 @@ fn hub_stop_is_refused_for_a_record_with_no_start_time() {
     assert!(!ps_started(sleeper).is_empty(), "the process was killed");
 }
 
-/// A process that is nobody's child but init's, killed when the guard goes.
-struct Sleeper(u32);
-
-impl Sleeper {
-    fn start() -> Sleeper {
-        let out = Command::new("sh")
-            .args(["-c", "sleep 300 >/dev/null 2>&1 & echo $!"])
-            .output()
-            .unwrap();
-        Sleeper(String::from_utf8_lossy(&out.stdout).trim().parse().unwrap())
-    }
-}
-
-impl Drop for Sleeper {
-    fn drop(&mut self) {
-        let _ = Command::new("kill")
-            .arg(self.0.to_string())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
 /// A running parent-task hub `FEATURE`, as `adj hub --hub` leaves it: its record, its board
 /// address, its saved session and a task, with a pane in the fake tmux to close.
 fn running_parent_hub(fixture: &Fixture, tmux: &FakeTmux, sleeper: u32) -> (PathBuf, PathBuf) {
@@ -1035,8 +1008,8 @@ fn hub_reset_stops_the_running_hub_and_starts_a_new_conversation() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
     // The conversation the old hub had: the server must leave it where it is.
     let saved = fixture.state.join("sessions").join(format!("{SLUG}.json"));
     std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
@@ -1047,7 +1020,7 @@ fn hub_reset_stops_the_running_hub_and_starts_a_new_conversation() {
     })
     .to_string();
     std::fs::write(&saved, &saved_text).unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
     assert_eq!(status, 200, "{body}");
@@ -1071,7 +1044,7 @@ fn hub_reset_stops_the_running_hub_and_starts_a_new_conversation() {
     assert!(window.contains("--new"), "{window}");
     assert!(!window.contains("--hub="), "{window}");
     assert!(!record.exists(), "the old record was left behind");
-    assert_eq!(ps_started(sleeper.0), "", "the hub is still running");
+    assert_eq!(ps_started(sleeper.pid()), "", "the hub is still running");
     assert_eq!(std::fs::read_to_string(&saved).unwrap(), saved_text);
 }
 
@@ -1102,9 +1075,9 @@ fn hub_reset_of_a_parent_hub_names_its_key() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let (record, _board) = running_parent_hub(&fixture, &tmux, sleeper.0);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let sleeper = Sleeper::new();
+    let (record, _board) = running_parent_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/reset"), "{}");
     assert_eq!(status, 200, "{body}");
@@ -1146,10 +1119,10 @@ fn hub_reset_says_so_when_the_hub_was_stopped_but_could_not_start() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
     std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
     assert_eq!(status, 400, "{body}");
@@ -1168,9 +1141,9 @@ fn hub_reset_is_refused_before_anything_is_stopped() {
         config["terminal"] = serde_json::json!({"preset": "iterm2"});
     });
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/reset"), "{}");
     assert_eq!(status, 400, "{body}");
@@ -1181,7 +1154,10 @@ fn hub_reset_is_refused_before_anything_is_stopped() {
     );
     assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
     assert!(record.exists());
-    assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
+    assert!(
+        !ps_started(sleeper.pid()).is_empty(),
+        "the process was killed"
+    );
 }
 
 /// The conversation a running hub had, saved where `adj hub --resume` reads it.
@@ -1203,10 +1179,10 @@ fn hub_restart_stops_the_running_hub_and_resumes_its_conversation() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
     let (saved, saved_text) = saved_hub_conversation(&fixture, SLUG);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/restart"), "{}");
     assert_eq!(status, 200, "{body}");
@@ -1231,7 +1207,7 @@ fn hub_restart_stops_the_running_hub_and_resumes_its_conversation() {
     assert!(!window.contains("--new"), "{window}");
     assert!(!window.contains("--hub="), "{window}");
     assert!(!record.exists(), "the old record was left behind");
-    assert_eq!(ps_started(sleeper.0), "", "the hub is still running");
+    assert_eq!(ps_started(sleeper.pid()), "", "the hub is still running");
     assert_eq!(std::fs::read_to_string(&saved).unwrap(), saved_text);
 }
 
@@ -1240,9 +1216,9 @@ fn hub_restart_of_a_parent_hub_names_its_key() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let (record, _board) = running_parent_hub(&fixture, &tmux, sleeper.0);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let sleeper = Sleeper::new();
+    let (record, _board) = running_parent_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/restart"), "{}");
     assert_eq!(status, 200, "{body}");
@@ -1273,9 +1249,9 @@ fn hub_restart_is_refused_before_anything_is_stopped() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
     let restart = format!("/b/{SLUG}/api/hubs/hub/restart");
     let refused = |expected: &str| {
         let (status, body) = resident.post(&restart, "{}");
@@ -1283,7 +1259,10 @@ fn hub_restart_is_refused_before_anything_is_stopped() {
         assert!(body.contains(expected), "{expected}: {body}");
         assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
         assert!(record.exists());
-        assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
+        assert!(
+            !ps_started(sleeper.pid()).is_empty(),
+            "the process was killed"
+        );
     };
 
     // Nothing saved to come back to.
@@ -1313,15 +1292,15 @@ fn hub_restart_of_a_parent_hub_with_an_unknown_key_stops_nothing() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
+    let sleeper = Sleeper::new();
     // A record that carries no key, under a name the key cannot be read back from.
     let record = fixture.state.join("hubs").join("oddstem.json");
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     std::fs::write(
         &record,
         serde_json::json!({
-            "pid": sleeper.0,
-            "psStarted": ps_started(sleeper.0),
+            "pid": sleeper.pid(),
+            "psStarted": ps_started(sleeper.pid()),
             "hubName": "hub-oddstem",
             "cwd": fixture.repo.to_str().unwrap(),
             "terminal": {"backend": "tmux", "socket": "scratch", "pane": "%3"},
@@ -1333,18 +1312,21 @@ fn hub_restart_of_a_parent_hub_with_an_unknown_key_stops_nothing() {
         &tmux.panes,
         format!(
             "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tmain\n",
-            sleeper.0
+            sleeper.pid()
         ),
     )
     .unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-oddstem/restart"), "{}");
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("key of this hub is not known"), "{body}");
     assert!(!tmux.logged().contains("kill-pane"), "{}", tmux.logged());
     assert!(record.exists());
-    assert!(!ps_started(sleeper.0).is_empty(), "the process was killed");
+    assert!(
+        !ps_started(sleeper.pid()).is_empty(),
+        "the process was killed"
+    );
 }
 
 #[test]
@@ -1352,8 +1334,8 @@ fn hub_restart_keeps_the_hub_that_will_not_stop() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
     let (saved, saved_text) = saved_hub_conversation(&fixture, SLUG);
     // Nothing kills the process, as a hub waiting for an answer would not die.
     let resident = resident_with_tmux(&fixture, &tmux, None);
@@ -1378,11 +1360,11 @@ fn hub_restart_says_so_when_the_hub_was_stopped_but_could_not_start() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let record = running_repo_hub(&fixture, &tmux, sleeper.0);
+    let sleeper = Sleeper::new();
+    let record = running_repo_hub(&fixture, &tmux, sleeper.pid());
     let (saved, saved_text) = saved_hub_conversation(&fixture, SLUG);
     std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/restart"), "{}");
     assert_eq!(status, 400, "{body}");
@@ -1438,9 +1420,9 @@ fn closing_a_parent_hub_with_no_workers_stops_it_and_takes_it_off_the_list() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let (record, board) = running_parent_hub(&fixture, &tmux, sleeper.0);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let sleeper = Sleeper::new();
+    let (record, board) = running_parent_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
     assert!(hub_ids(&resident).contains(&"hub-wid-957".to_string()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/close"), "{}");
@@ -1456,7 +1438,7 @@ fn closing_a_parent_hub_with_no_workers_stops_it_and_takes_it_off_the_list() {
     );
     assert!(!record.exists(), "the record was left behind");
     assert!(!board.exists(), "the board address was left behind");
-    assert_eq!(ps_started(sleeper.0), "", "the hub is still running");
+    assert_eq!(ps_started(sleeper.pid()), "", "the hub is still running");
     assert!(!hub_ids(&resident).contains(&"hub-wid-957".to_string()));
     // What the hub knew is kept, so the same key picks it up again.
     assert!(
@@ -1481,8 +1463,8 @@ fn a_parent_hub_with_a_worker_is_not_closed_from_the_board() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let sleeper = Sleeper::start();
-    let (record, board) = running_parent_hub(&fixture, &tmux, sleeper.0);
+    let sleeper = Sleeper::new();
+    let (record, board) = running_parent_hub(&fixture, &tmux, sleeper.pid());
 
     // A worker that has ended: only its saved session in a linked worktree names the hub.
     let worktree = fixture._dir.path().join("widget-wid-957");
@@ -1504,7 +1486,7 @@ fn a_parent_hub_with_a_worker_is_not_closed_from_the_board() {
         serde_json::json!({"sessionId": "sid-1", "hub": FEATURE}).to_string(),
     )
     .unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(sleeper.pid()));
 
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/close"), "{}");
     assert_eq!(status, 400, "{body}");
@@ -2190,8 +2172,8 @@ fn a_session_request_is_refused_when_no_worker_slot_is_free() {
         r#"{"notification": "true", "defaults": {"ide": "code", "maxWorkers": 1},
             "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"}}}"#,
     );
-    let running = Sleeper::start();
-    session_worktree(&fixture, "busy", None, None, running.0);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "busy", None, None, running.pid());
     let resident = Resident::start(&fixture);
     let (status, body) = resident.post(
         &sessions_url(""),
@@ -2205,8 +2187,8 @@ fn a_session_request_is_refused_when_no_worker_slot_is_free() {
 #[test]
 fn linking_a_taskless_session_to_a_task_gives_it_a_card() {
     let fixture = Fixture::new(QUIET);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
     let resident = Resident::start(&fixture);
     let task = made_task(&resident, serde_json::json!({"title": "Retry the upload"}));
     let id = task["id"].as_str().unwrap();
@@ -2240,7 +2222,7 @@ fn linking_a_taskless_session_to_a_task_gives_it_a_card() {
     assert_eq!(record["phase"], "implement");
     assert!(record.get("hub").is_none(), "{record}");
     // What says it is the same worker is untouched.
-    assert_eq!(record["pid"], running.0);
+    assert_eq!(record["pid"], running.pid());
     assert_eq!(saved_session(&worktree)["task"], id);
 
     let after = state_of(&resident);
@@ -2277,8 +2259,8 @@ fn linking_a_taskless_session_to_a_task_gives_it_a_card() {
 fn linking_a_new_task_on_a_parent_hubs_board_moves_the_worker_to_that_hub() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
     let resident = Resident::start(&fixture);
     assert_eq!(children_of(&state_of(&resident), "hub-wid-957"), 0);
 
@@ -2393,8 +2375,8 @@ fn a_file_issue_request_starts_a_stopped_target_hub_and_reports_when_it_cannot()
         if refuse {
             tmux_refuses_windows(&tmux);
         }
-        let running = Sleeper::start();
-        let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+        let running = Sleeper::new();
+        let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
         let resident = resident_with_tmux(&fixture, &tmux, None);
         let (status, body) = resident.post(
             &sessions_url("/worker-try-retry/link"),
@@ -2427,9 +2409,9 @@ fn a_file_issue_request_starts_a_stopped_target_hub_and_reports_when_it_cannot()
 fn linking_a_new_task_that_needs_an_issue_asks_the_hub_to_file_it() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
-    let plain = session_worktree(&fixture, "plain", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
+    let plain = session_worktree(&fixture, "plain", None, None, running.pid());
     let resident = Resident::start(&fixture);
 
     // Without the ask, the hub hears nothing.
@@ -2491,8 +2473,8 @@ fn linking_a_new_task_that_needs_an_issue_asks_the_hub_to_file_it() {
 fn a_hub_that_cannot_be_told_to_file_an_issue_leaves_the_link_and_tells_the_worker() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
     // A file where the hub's inbox directory would be: nothing can be delivered there.
     let inbox = fixture.state.join("inbox");
     std::fs::create_dir_all(&inbox).unwrap();
@@ -2519,8 +2501,8 @@ fn a_hub_that_cannot_be_told_to_file_an_issue_leaves_the_link_and_tells_the_work
 #[test]
 fn linking_an_existing_file_and_start_task_files_nothing_again() {
     let fixture = Fixture::new(QUIET);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
     let resident = Resident::start(&fixture);
     let task = made_task(
         &resident,
@@ -2542,8 +2524,8 @@ fn linking_an_existing_file_and_start_task_files_nothing_again() {
 #[test]
 fn linking_an_existing_task_is_refused_when_asked_to_file_an_issue_for_it() {
     let fixture = Fixture::new(QUIET);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
     let resident = Resident::start(&fixture);
     let task = made_task(&resident, serde_json::json!({"title": "Already there"}));
     let (status, body) = resident.post(
@@ -2559,8 +2541,8 @@ fn linking_an_existing_task_is_refused_when_asked_to_file_an_issue_for_it() {
 fn linking_to_a_repository_task_moves_a_parent_hub_worker_back_so_its_hub_can_close() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", Some(FEATURE), None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", Some(FEATURE), None, running.pid());
     let resident = Resident::start(&fixture);
     assert_eq!(children_of(&state_of(&resident), "hub-wid-957"), 1);
     let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub-wid-957/close"), "{}");
@@ -2588,9 +2570,9 @@ fn linking_to_a_repository_task_moves_a_parent_hub_worker_back_so_its_hub_can_cl
 fn a_link_is_refused_for_a_hub_a_session_not_started_a_finished_task_or_one_held_by_another_worker()
 {
     let fixture = Fixture::new(QUIET);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
-    let other = session_worktree(&fixture, "other", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
+    let other = session_worktree(&fixture, "other", None, None, running.pid());
     // A worktree the board lists that no worker ever registered in.
     let unstarted = fixture.repo.parent().unwrap().join("unstarted");
     let out = Command::new("git")
@@ -2700,7 +2682,7 @@ fn a_link_is_refused_for_a_hub_a_session_not_started_a_finished_task_or_one_held
     // A session that already has a task keeps it.
     std::fs::write(
         worktree.join(".claude").join("adjutant-worker.json"),
-        serde_json::json!({"pid": running.0, "psStarted": ps_started(running.0), "task": "task-x"})
+        serde_json::json!({"pid": running.pid(), "psStarted": ps_started(running.pid()), "task": "task-x"})
             .to_string(),
     )
     .unwrap();
@@ -2750,10 +2732,10 @@ fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let one = session_worktree(&fixture, "one", None, None, running.0);
-    let two = session_worktree(&fixture, "two", None, None, running.0);
-    let elsewhere = session_worktree(&fixture, "elsewhere", None, None, running.0);
+    let running = Sleeper::new();
+    let one = session_worktree(&fixture, "one", None, None, running.pid());
+    let two = session_worktree(&fixture, "two", None, None, running.pid());
+    let elsewhere = session_worktree(&fixture, "elsewhere", None, None, running.pid());
     place_worker(&one, "@5");
     place_worker(&two, "@6");
     place_worker(&elsewhere, "@9");
@@ -2805,8 +2787,8 @@ fn a_session_says_what_its_pane_last_showed_only_when_asked() {
         include_str!("../src/fixtures/panes/claude-idle-after-turn.txt"),
     )
     .unwrap();
-    let running = Sleeper::start();
-    let one = session_worktree(&fixture, "one", None, None, running.0);
+    let running = Sleeper::new();
+    let one = session_worktree(&fixture, "one", None, None, running.pid());
     place_worker(&one, "@5");
     let panes = |activity: i64| {
         std::fs::write(
@@ -3051,8 +3033,8 @@ fn the_git_route_reports_a_dirty_worktree_and_refuses_a_session_it_does_not_know
 #[test]
 fn the_git_route_looks_at_its_own_worktree_and_no_other() {
     let fixture = Fixture::new(QUIET);
-    let mine = Sleeper::start();
-    session_worktree(&fixture, "spy-target", None, Some("WID-7"), mine.0);
+    let mine = Sleeper::new();
+    session_worktree(&fixture, "spy-target", None, Some("WID-7"), mine.pid());
     session_worktree(&fixture, "spy-other-a", None, None, 1);
     session_worktree(&fixture, "spy-other-b", None, None, 2);
     let spy = Spy::new(fixture._dir.path());
@@ -3084,7 +3066,9 @@ fn the_git_route_looks_at_its_own_worktree_and_no_other() {
     let asked: Vec<&String> = calls.iter().filter(|c| c.starts_with("ps ")).collect();
     assert!(!asked.is_empty(), "{calls:?}");
     assert!(
-        asked.iter().all(|c| c.ends_with(&format!("-p {}", mine.0))),
+        asked
+            .iter()
+            .all(|c| c.ends_with(&format!("-p {}", mine.pid()))),
         "{calls:?}"
     );
 }
@@ -3188,8 +3172,8 @@ fn resuming_is_refused_without_the_tmux_preset_for_a_running_session_a_hub_or_no
     assert!(body.contains("tmux"), "{body}");
 
     write_tmux_config(&fixture);
-    let running = Sleeper::start();
-    session_worktree(&fixture, "busy", None, None, running.0);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "busy", None, None, running.pid());
     let (status, body) = resident.post(&sessions_url("/worker-busy/resume"), "{}");
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("running"), "{body}");
@@ -3374,11 +3358,11 @@ fn restarting_a_worker_closes_its_window_and_resumes_it() {
     let fixture = Fixture::new(QUIET);
     resume_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", Some(FEATURE), None, running.0);
-    worker_pane(&tmux, running.0, "live");
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", Some(FEATURE), None, running.pid());
+    worker_pane(&tmux, running.pid(), "live");
     let saved_before = saved_session(&worktree);
-    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.pid()));
 
     let answer = reply_of(
         resident.post(&sessions_url("/worker-live/restart"), "{}"),
@@ -3406,7 +3390,7 @@ fn restarting_a_worker_closes_its_window_and_resumes_it() {
         )),
         "{log}"
     );
-    assert_eq!(ps_started(running.0), "", "the worker is still running");
+    assert_eq!(ps_started(running.pid()), "", "the worker is still running");
     assert_eq!(saved_session(&worktree), saved_before);
 }
 
@@ -3415,10 +3399,10 @@ fn a_worker_restart_is_refused_before_anything_is_closed() {
     let fixture = Fixture::new(QUIET);
     resume_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", None, None, running.0);
-    worker_pane(&tmux, running.0, "live");
-    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", None, None, running.pid());
+    worker_pane(&tmux, running.pid(), "live");
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.pid()));
     let restart = sessions_url("/worker-live/restart");
     let refused = |expected: &str| {
         let (status, body) = resident.post(&restart, "{}");
@@ -3426,7 +3410,10 @@ fn a_worker_restart_is_refused_before_anything_is_closed() {
         assert!(body.contains(expected), "{expected}: {body}");
         assert!(!tmux.logged().contains("kill-window"), "{}", tmux.logged());
         assert!(worker_record(&worktree)["pid"].as_u64().is_some());
-        assert!(!ps_started(running.0).is_empty(), "the process was killed");
+        assert!(
+            !ps_started(running.pid()).is_empty(),
+            "the process was killed"
+        );
     };
 
     // It is starting: a second worker would be opened beside the one being opened.
@@ -3480,9 +3467,9 @@ fn a_worker_restart_keeps_a_worker_that_would_not_stop() {
     let fixture = Fixture::new(QUIET);
     resume_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "stubborn", None, None, running.0);
-    worker_pane(&tmux, running.0, "stubborn");
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "stubborn", None, None, running.pid());
+    worker_pane(&tmux, running.pid(), "stubborn");
     // Nothing kills the process, as a terminal waiting for an answer would not.
     let resident = resident_with_tmux(&fixture, &tmux, None);
 
@@ -3502,11 +3489,11 @@ fn a_worker_restart_that_cannot_start_again_keeps_the_session() {
     let fixture = Fixture::new(QUIET);
     resume_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", None, None, running.0);
-    worker_pane(&tmux, running.0, "live");
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", None, None, running.pid());
+    worker_pane(&tmux, running.pid(), "live");
     std::fs::write(format!("{}.failnew", tmux.log.display()), "").unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.pid()));
 
     let (status, body) = resident.post(&sessions_url("/worker-live/restart"), "{}");
     assert_eq!(status, 400, "{body}");
@@ -3590,8 +3577,8 @@ fn opening_a_session_makes_a_grouped_session_and_hands_it_to_the_attach_template
     );
     let tmux = FakeTmux::new(&fixture);
     std::fs::write(&tmux.home, "adjutant-test\n").unwrap();
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", None, None, running.pid());
     place_worker(&worktree, "@5");
     session_worktree(&fixture, "ended", None, None, dead_pid());
     let resident = resident_with_tmux(&fixture, &tmux, None);
@@ -3644,8 +3631,8 @@ fn a_session_made_for_an_attach_that_failed_is_taken_down_again() {
     attach_config(&fixture, "false");
     let tmux = FakeTmux::new(&fixture);
     std::fs::write(&tmux.home, "adjutant-test\n").unwrap();
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", None, None, running.pid());
     place_worker(&worktree, "@5");
     let resident = resident_with_tmux(&fixture, &tmux, None);
 
@@ -3673,8 +3660,8 @@ fn opening_a_session_without_an_attach_template_says_which_key_is_missing() {
     write_tmux_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
     std::fs::write(&tmux.home, "adjutant-test\n").unwrap();
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", None, None, running.pid());
     place_worker(&worktree, "@5");
     let resident = resident_with_tmux(&fixture, &tmux, None);
 
@@ -3806,18 +3793,18 @@ fn cleanup_of_a_running_session_closes_it_first() {
     let fixture = Fixture::new(QUIET);
     cleanup_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "live", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "live", None, None, running.pid());
     pushed(&worktree, "live");
     std::fs::write(
         &tmux.panes,
         format!(
             "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tlive\n",
-            running.0
+            running.pid()
         ),
     )
     .unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.pid()));
 
     let answer = reply_of(resident.post(&cleanup_url("live"), "{}"), 200);
     assert_eq!(answer["removed"], true, "{answer}");
@@ -3828,7 +3815,7 @@ fn cleanup_of_a_running_session_closes_it_first() {
         tmux.logged()
     );
     assert!(!worktree.exists());
-    assert_eq!(ps_started(running.0), "", "the worker is still running");
+    assert_eq!(ps_started(running.pid()), "", "the worker is still running");
 }
 
 #[test]
@@ -3836,14 +3823,14 @@ fn cleanup_keeps_a_session_whose_worker_would_not_stop() {
     let fixture = Fixture::new(QUIET);
     cleanup_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "stubborn", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "stubborn", None, None, running.pid());
     pushed(&worktree, "stubborn");
     std::fs::write(
         &tmux.panes,
         format!(
             "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tstubborn\n",
-            running.0
+            running.pid()
         ),
     )
     .unwrap();
@@ -3980,8 +3967,8 @@ fn starting_a_parent_hub_needs_the_tmux_preset() {
 #[test]
 fn linking_can_name_the_phase_the_session_is_in() {
     let fixture = Fixture::new(QUIET);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "try-retry", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "try-retry", None, None, running.pid());
     let resident = Resident::start(&fixture);
     let task = made_task(&resident, serde_json::json!({"title": "Retry the upload"}));
     let id = task["id"].as_str().unwrap();
@@ -4023,14 +4010,14 @@ fn cleanup_looks_again_after_closing_and_keeps_what_the_worker_committed_meanwhi
     let fixture = Fixture::new(QUIET);
     cleanup_config(&fixture);
     let tmux = FakeTmux::new(&fixture);
-    let running = Sleeper::start();
-    let worktree = session_worktree(&fixture, "busy-one", None, None, running.0);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "busy-one", None, None, running.pid());
     pushed(&worktree, "busy-one");
     std::fs::write(
         &tmux.panes,
         format!(
             "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tbusy\n",
-            running.0
+            running.pid()
         ),
     )
     .unwrap();
@@ -4043,7 +4030,7 @@ fn cleanup_looks_again_after_closing_and_keeps_what_the_worker_committed_meanwhi
         ),
     )
     .unwrap();
-    let resident = resident_with_tmux(&fixture, &tmux, Some(running.0));
+    let resident = resident_with_tmux(&fixture, &tmux, Some(running.pid()));
 
     let answer = reply_of(resident.post(&cleanup_url("busy-one"), "{}"), 200);
     assert_eq!(answer["removed"], false, "{answer}");
@@ -4218,16 +4205,12 @@ fn feature_title(resident: &Resident) -> serde_json::Value {
         .clone()
 }
 
-/// Polls until the hub has a title, or says so after a few seconds.
+/// Polls until the hub has a title, or panics with what it last saw.
 fn wait_for_feature_title(resident: &Resident) -> serde_json::Value {
-    for _ in 0..50 {
+    wait_until("the parent hub to have a title", || {
         let title = feature_title(resident);
-        if !title.is_null() {
-            return title;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    serde_json::Value::Null
+        (!title.is_null(), title)
+    })
 }
 
 /// Polls long enough for a read that was going to start to have started and finished.
@@ -4310,13 +4293,11 @@ fn an_issue_that_could_not_be_read_is_not_asked_for_again_on_the_next_poll() {
     let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
     // Wait for the one read to have happened, so a slow machine does not pass with none.
     // Generous: the read starts on a thread of its own, and a loaded machine is slow to run it.
-    for _ in 0..300 {
-        if !gh_asked(&asked).is_empty() {
-            break;
-        }
+    wait_until("the stub gh to be asked", || {
         let _ = feature_title(&resident);
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+        let lines = gh_asked(&asked);
+        (!lines.is_empty(), lines)
+    });
     poll_feature_title(&resident, 10);
     assert!(feature_title(&resident).is_null());
     assert_eq!(gh_asked(&asked).len(), 1, "{:?}", gh_asked(&asked));
@@ -4548,9 +4529,14 @@ fn a_pr_that_cannot_be_found_is_not_the_poll_failing() {
         let ran = gh_ran(&fixture, "graphql");
         (ran >= 1, ran)
     });
-    // Let the round finish and a few more go by.
-    std::thread::sleep(std::time::Duration::from_millis(2500));
-    assert!(state_of(&resident)["prPoll"]["error"].is_null());
+    // The first round asked for news once, so a third ask means that round (which read the PR)
+    // and the `304` one after it have both been recorded.
+    wait_until("two rounds were recorded", || {
+        let asked = gh_ran(&fixture, "notifications");
+        (asked >= 3, asked)
+    });
+    let poll = state_of(&resident)["prPoll"].clone();
+    assert!(poll["error"].is_null(), "{poll}");
 }
 
 #[test]
