@@ -1,4 +1,4 @@
-//! What the board reads: the state document and the caches behind it.
+//! What the board reads: the state document and what it is joined from.
 
 use std::path::Path;
 
