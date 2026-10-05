@@ -770,14 +770,12 @@ fn a_running_worker_addresses_the_hub_its_record_was_moved_to() {
         shell_quoted(&script.to_string_lossy())
     );
     set_config(&fixture, "agentRunner", runner.into());
+    // For a line in the file, not the file: the shell makes it before `echo` writes to it.
     let waited = |path: &Path| {
-        for _ in 0..200 {
-            if path.exists() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        panic!("{} never appeared", path.display());
+        wait_until(&format!("{} to hold a line", path.display()), || {
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            (!text.trim().is_empty(), text)
+        });
     };
 
     // Written and killed on the way out, so that a failing assertion does not leave the agent

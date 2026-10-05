@@ -219,12 +219,7 @@ fn a_running_hub_is_not_closed_from_outside_but_a_dead_one_is() {
 
     // Once the process is gone, the record it left is closed like any other.
     drop(_reap);
-    for _ in 0..50 {
-        if ps_started(sleeper).is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    eventually("the stand-in to be gone", || ps_started(sleeper).is_empty());
     let said = fixture.ok(&["hub-close", "--hub", FEATURE]);
     assert!(said.contains("closed"), "{said}");
     assert!(!record.exists());

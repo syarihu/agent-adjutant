@@ -113,15 +113,6 @@ impl IsolatedTmux {
     }
 }
 
-/// Wait for `check` to hold, for as long as tmux and the server can reasonably take.
-fn eventually(what: &str, mut check: impl FnMut() -> bool) {
-    let deadline = Instant::now() + PATIENCE;
-    while !check() {
-        assert!(Instant::now() < deadline, "never: {what}");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
 /// The main checkout's worker, recorded as running in `layout`'s target window. The pid is the
 /// test's own, which is alive and started when the record says.
 fn forge_worker(fixture: &Fixture, layout: &Layout) {
