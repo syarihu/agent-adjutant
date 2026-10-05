@@ -3,7 +3,7 @@ use crate::infra::http::{self, Request};
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{is_own_origin, refuse};
 use super::resident::split_board_path;
-use super::routes::{hub_route, is_page_path, session_route, session_route_for, terminal_route};
+use super::routes::{HubAction, Route, SessionAction};
 
 #[test]
 fn the_page_pieces_join_into_one_document() {
@@ -240,6 +240,10 @@ fn request(method: &str, path: &str, headers: &[(&str, &str)]) -> Request {
     }
 }
 
+fn parsed(method: &str, path: &str) -> Result<Option<Route>, String> {
+    Route::parse(&request(method, path, &[]))
+}
+
 #[test]
 fn a_board_path_names_one_slug() {
     assert_eq!(
@@ -283,53 +287,67 @@ fn a_post_to_a_board_path_needs_the_same_origin() {
 
 #[test]
 fn a_hub_route_names_an_id_and_an_action() {
-    fn route(path: &str) -> Option<(String, &str)> {
-        hub_route(path).map(|(id, action)| (id.unwrap(), action))
+    fn route(path: &str) -> Option<(String, HubAction)> {
+        match parsed("POST", path) {
+            Ok(Some(Route::Hub(id, action))) => Some((id, action)),
+            _ => None,
+        }
     }
-    assert_eq!(route("/api/hubs/hub/start"), Some(("hub".into(), "start")));
+    assert_eq!(
+        route("/api/hubs/hub/start"),
+        Some(("hub".into(), HubAction::Start))
+    );
     assert_eq!(
         route("/api/hubs/hub-wid-957/stop"),
-        Some(("hub-wid-957".into(), "stop"))
+        Some(("hub-wid-957".into(), HubAction::Stop))
     );
     // As `encodeURIComponent` sends them.
     assert_eq!(
         route("/api/hubs/hub-foo%2Fbar/start"),
-        Some(("hub-foo/bar".into(), "start"))
+        Some(("hub-foo/bar".into(), HubAction::Start))
     );
     assert_eq!(
         route("/api/hubs/hub-%E8%A6%AA%20%E3%82%AD%E3%83%BC/stop"),
-        Some(("hub-親 キー".into(), "stop"))
+        Some(("hub-親 キー".into(), HubAction::Stop))
     );
     assert_eq!(
         route("/api/hubs/hub-wid-957/close"),
-        Some(("hub-wid-957".into(), "close"))
+        Some(("hub-wid-957".into(), HubAction::Close))
     );
     assert_eq!(
         route("/api/hubs/hub-wid-957/reset"),
-        Some(("hub-wid-957".into(), "reset"))
+        Some(("hub-wid-957".into(), HubAction::Reset))
     );
     assert_eq!(
         route("/api/hubs/hub-wid-957/restart"),
-        Some(("hub-wid-957".into(), "restart"))
+        Some(("hub-wid-957".into(), HubAction::Restart))
     );
-    assert_eq!(route("/api/hubs/a+b/start"), Some(("a+b".into(), "start")));
+    assert_eq!(
+        route("/api/hubs/a+b/start"),
+        Some(("a+b".into(), HubAction::Start))
+    );
     // An encoding that is wrong is the caller's mistake to be told, not another route.
     for bad in [
         "/api/hubs/hub-%zz/start",
         "/api/hubs/hub-%2/start",
         "/api/hubs/%FF/start",
     ] {
-        assert!(hub_route(bad).is_some_and(|(id, _)| id.is_err()), "{bad}");
+        assert!(parsed("POST", bad).is_err(), "{bad}");
     }
     for refused in [
         "/api/hubs/hub/rewind",
         "/api/hubs//start",
         "/api/hubs/a/b/start",
         "/api/hubs/hub",
-        "/api/tasks/hub/start",
     ] {
-        assert!(hub_route(refused).is_none(), "{refused}");
+        assert_eq!(parsed("POST", refused), Ok(None), "{refused}");
     }
+    assert_eq!(
+        parsed("POST", "/api/tasks/hub/start"),
+        Ok(Some(Route::UpdateTask("start".into())))
+    );
+    // The hub actions are posts.
+    assert_eq!(parsed("GET", "/api/hubs/hub/start"), Ok(None));
 }
 
 #[test]
@@ -352,11 +370,15 @@ fn the_page_places_a_pr_by_its_turn_and_says_when_the_poll_has_stopped() {
 #[test]
 fn the_page_paths_are_the_page_and_nothing_under_them() {
     for path in ["/", "/index.html", "/review"] {
-        assert!(is_page_path(path), "{path}");
+        assert_eq!(parsed("GET", path), Ok(Some(Route::Page)), "{path}");
     }
-    for path in ["/api/state", "/api/boards", "/review/x", "/b/x/"] {
-        assert!(!is_page_path(path), "{path}");
+    for path in ["/api/boards", "/review/x", "/b/x/"] {
+        assert_eq!(parsed("GET", path), Ok(None), "{path}");
     }
+    assert!(matches!(
+        parsed("GET", "/api/state"),
+        Ok(Some(Route::State { .. }))
+    ));
 }
 
 #[test]
@@ -568,7 +590,10 @@ fn a_plain_get_is_still_asked_for_no_origin() {
 #[test]
 fn a_terminal_route_names_a_session_id() {
     fn id(path: &str) -> Option<String> {
-        terminal_route(path).map(|id| id.unwrap())
+        match parsed("GET", path) {
+            Ok(Some(Route::Terminal(id))) => Some(id),
+            _ => None,
+        }
     }
     assert_eq!(id("/api/sessions/hub/terminal"), Some("hub".into()));
     assert_eq!(
@@ -588,7 +613,7 @@ fn a_terminal_route_names_a_session_id() {
         "/api/sessions/hub-%zz/terminal",
         "/api/sessions/%FF/terminal",
     ] {
-        assert!(terminal_route(bad).is_some_and(|id| id.is_err()), "{bad}");
+        assert!(parsed("GET", bad).is_err(), "{bad}");
     }
     for other in [
         "/api/sessions//terminal",
@@ -597,55 +622,146 @@ fn a_terminal_route_names_a_session_id() {
         "/api/sessions/hub/terminal/x",
         "/api/hubs/hub/terminal",
         "/terminal",
-        "/",
     ] {
-        assert!(terminal_route(other).is_none(), "{other}");
+        assert_eq!(parsed("GET", other), Ok(None), "{other}");
     }
+    assert_eq!(parsed("GET", "/"), Ok(Some(Route::Page)));
+    // Any method: the handshake never looked at it.
+    assert!(matches!(
+        parsed("POST", "/api/sessions/hub/terminal"),
+        Ok(Some(Route::Terminal(_)))
+    ));
 }
 
 #[test]
 fn a_session_route_names_a_session_id_and_an_action() {
-    fn id(path: &str, action: &str) -> Option<String> {
-        session_route_for(path, action).map(|id| id.unwrap())
+    fn method(action: &str) -> &'static str {
+        if action == "git" { "GET" } else { "POST" }
+    }
+    fn route(id: String, action: &str) -> Route {
+        match action {
+            "link" => Route::LinkSession(id),
+            "git" => Route::SessionGit(id),
+            "resume" => Route::Session(id, SessionAction::Resume),
+            "restart" => Route::Session(id, SessionAction::Restart),
+            "open" => Route::Session(id, SessionAction::Open),
+            _ => Route::Session(id, SessionAction::CleanUp),
+        }
     }
     for action in ["link", "git", "resume", "restart", "open", "cleanup"] {
+        let method = method(action);
         assert_eq!(
-            id(&format!("/api/sessions/worker-x/{action}"), action),
-            Some("worker-x".into()),
+            parsed(method, &format!("/api/sessions/worker-x/{action}")),
+            Ok(Some(route("worker-x".into(), action))),
             "{action}"
         );
         // As `encodeURIComponent` sends an id with a slash or a space in it.
         assert_eq!(
-            id(&format!("/api/sessions/worker-a%2Fb%20c/{action}"), action),
-            Some("worker-a/b c".into()),
+            parsed(method, &format!("/api/sessions/worker-a%2Fb%20c/{action}")),
+            Ok(Some(route("worker-a/b c".into(), action))),
             "{action}"
         );
         assert!(
-            session_route_for(&format!("/api/sessions/%FF/{action}"), action)
-                .is_some_and(|id| id.is_err()),
+            parsed(method, &format!("/api/sessions/%FF/{action}")).is_err(),
             "{action}"
         );
         for other in [
-            "/api/sessions".to_string(),
             format!("/api/sessions//{action}"),
             format!("/api/sessions/a/b/{action}"),
             format!("/api/sessions/worker-x/{action}/x"),
-            format!("/api/tasks/x/{action}"),
         ] {
-            assert!(session_route(&other).is_none(), "{other}");
+            for method in ["GET", "POST"] {
+                assert_eq!(parsed(method, &other), Ok(None), "{method} {other}");
+            }
         }
+        let task_path = format!("/api/tasks/x/{action}");
+        assert_eq!(parsed("GET", &task_path), Ok(None), "{task_path}");
+        assert_eq!(
+            parsed("POST", &task_path),
+            Ok(Some(Route::UpdateTask(action.into()))),
+            "{task_path}"
+        );
     }
+    assert_eq!(parsed("GET", "/api/sessions"), Ok(None));
+    assert_eq!(
+        parsed("POST", "/api/sessions"),
+        Ok(Some(Route::StartSession))
+    );
     // An action is not another's route, and the terminal is not one of these.
-    assert!(session_route_for("/api/sessions/worker-x/git", "link").is_none());
-    assert!(session_route("/api/sessions/worker-x/terminal").is_none());
-    assert!(session_route("/api/sessions/worker-x/remove").is_none());
+    assert_eq!(parsed("POST", "/api/sessions/worker-x/git"), Ok(None));
+    assert_eq!(
+        parsed("POST", "/api/sessions/worker-x/terminal"),
+        Ok(Some(Route::Terminal("worker-x".into())))
+    );
+    assert_eq!(parsed("POST", "/api/sessions/worker-x/remove"), Ok(None));
+}
+
+#[test]
+fn a_task_route_names_a_task_id() {
+    assert_eq!(
+        parsed("GET", "/api/tasks/t1/history"),
+        Ok(Some(Route::TaskHistory("t1".into())))
+    );
+    for bad in ["/api/tasks//history", "/api/tasks/a/b/history"] {
+        assert_eq!(parsed("GET", bad), Err("no such task".to_string()), "{bad}");
+    }
+    assert_eq!(parsed("GET", "/api/tasks/t1"), Ok(None));
+    // The id is the segment as written, never decoded.
+    assert_eq!(
+        parsed("GET", "/api/tasks/a%2Fb/history"),
+        Ok(Some(Route::TaskHistory("a%2Fb".into())))
+    );
+    assert_eq!(
+        parsed("POST", "/api/tasks/a/b"),
+        Ok(Some(Route::UpdateTask("b".into())))
+    );
+    assert_eq!(
+        parsed("POST", "/api/worktrees/a/b"),
+        Ok(Some(Route::Worktree("b".into())))
+    );
+}
+
+#[test]
+fn only_the_resident_serves_what_reaches_outside_the_repository() {
+    for (method, path) in [
+        ("POST", "/api/sessions/x/resume"),
+        ("POST", "/api/sessions/x/open"),
+        ("POST", "/api/hubs"),
+        ("POST", "/api/hubs/x/start"),
+        ("GET", "/api/sessions/x/terminal"),
+        ("GET", "/vendor/xterm.js"),
+    ] {
+        let route = parsed(method, path).unwrap().unwrap();
+        assert!(route.resident_only(), "{path}");
+    }
+    for (method, path) in [
+        ("GET", "/"),
+        ("GET", "/api/state"),
+        ("GET", "/api/tasks/t1/history"),
+        ("POST", "/api/tasks"),
+        ("POST", "/api/sessions"),
+        ("POST", "/api/sessions/x/link"),
+        ("GET", "/api/sessions/x/git"),
+        ("POST", "/api/hub/next"),
+        ("POST", "/api/worktrees/focus"),
+        ("POST", "/api/gates/g"),
+    ] {
+        let route = parsed(method, path).unwrap().unwrap();
+        assert!(!route.resident_only(), "{path}");
+    }
 }
 
 #[test]
 fn the_terminal_assets_are_only_served_by_the_resident_server() {
-    assert!(vendor_asset("/vendor/xterm.js", false).is_none());
-    assert!(vendor_asset("/vendor/xterm.css", false).is_none());
-    let (kind, js) = vendor_asset("/vendor/xterm.js", true).unwrap();
+    assert!(matches!(
+        parsed("GET", "/vendor/xterm.js"),
+        Ok(Some(r @ Route::Asset(..))) if r.resident_only()
+    ));
+    assert!(matches!(
+        parsed("GET", "/vendor/xterm.css"),
+        Ok(Some(r @ Route::Asset(..))) if r.resident_only()
+    ));
+    let (kind, js) = vendor_asset("/vendor/xterm.js").unwrap();
     assert!(kind.starts_with("text/javascript"));
     assert!(js.starts_with("/*! xterm.js - MIT License"));
     assert!(js.contains("Permission is hereby granted"));
@@ -654,11 +770,12 @@ fn the_terminal_assets_are_only_served_by_the_resident_server() {
         assert!(js.contains(global), "{global}");
     }
     assert!(!js.contains("sourceMappingURL"));
-    let (kind, css) = vendor_asset("/vendor/xterm.css", true).unwrap();
+    let (kind, css) = vendor_asset("/vendor/xterm.css").unwrap();
     assert!(kind.starts_with("text/css"));
     assert!(css.starts_with("/*! xterm.js - MIT License"));
     assert!(css.contains(".xterm"));
-    assert!(vendor_asset("/vendor/other.js", true).is_none());
+    assert!(vendor_asset("/vendor/other.js").is_none());
+    assert_eq!(parsed("GET", "/vendor/other.js"), Ok(None));
 }
 
 /// The library is fetched by a page that opens a terminal, not carried by every page.

@@ -52,12 +52,12 @@ const XTERM_CSS: &str = concat!(
     include_str!("../../ui/vendor/xterm/xterm.css"),
 );
 
-/// The scripts and styles the board terminal loads, as `(content type, body)`. Only the
-/// resident server has them to give, and a page fetches them only when it opens a terminal.
-pub(super) fn vendor_asset(path: &str, resident: bool) -> Option<(&'static str, &'static str)> {
+/// The scripts and styles the board terminal loads, as `(content type, body)`. A page fetches
+/// them only when it opens a terminal.
+pub(super) fn vendor_asset(path: &str) -> Option<(&'static str, &'static str)> {
     match path {
-        "/vendor/xterm.js" if resident => Some(("text/javascript; charset=utf-8", XTERM_JS)),
-        "/vendor/xterm.css" if resident => Some(("text/css; charset=utf-8", XTERM_CSS)),
+        "/vendor/xterm.js" => Some(("text/javascript; charset=utf-8", XTERM_JS)),
+        "/vendor/xterm.css" => Some(("text/css; charset=utf-8", XTERM_CSS)),
         _ => None,
     }
 }

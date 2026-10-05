@@ -19,9 +19,8 @@ pub struct TaskHistory {
 /// archive only grows, and reading all of it on every poll would cost more each day. The
 /// records are here as well as on the task in `/api/state` because a finished task's are not
 /// there, and a review is meant to stay readable after the work is done.
-pub fn task_history(server: &Server, path: &str) -> Result<TaskHistory, String> {
-    let id = history_id(path).ok_or("no such task")?;
-    Ok(history_of(
+pub fn task_history(server: &Server, id: &str) -> TaskHistory {
+    history_of(
         id,
         gate::list(
             &server.ctx.state,
@@ -33,14 +32,7 @@ pub fn task_history(server: &Server, path: &str) -> Result<TaskHistory, String> 
             &server.ctx.repo.slug,
             gate::Shelf::Record,
         ),
-    ))
-}
-
-/// The task id in `/api/tasks/{id}/history`, when there is exactly one.
-pub fn history_id(path: &str) -> Option<&str> {
-    path.strip_prefix("/api/tasks/")
-        .and_then(|rest| rest.strip_suffix("/history"))
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+    )
 }
 
 pub fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate::Gate>) -> TaskHistory {

@@ -11,8 +11,8 @@ use crate::infra::terminal::SessionTerminal;
 use crate::task;
 
 use super::view::{
-    WorkerSeen, board_counts, board_session, branch_of, cut_chars, history_id, history_of,
-    socket_key_in, state, with_records, worker_session_ids,
+    WorkerSeen, board_counts, board_session, branch_of, cut_chars, history_of, socket_key_in,
+    state, with_records, worker_session_ids,
 };
 use super::*;
 
@@ -572,18 +572,6 @@ fn a_task_s_history_is_its_own_answered_gates_and_records_of_every_kind() {
         ["20260922T000000Z-plan", "20260922T010000Z-diff"]
     );
     assert_eq!(ids("records"), ["20260922T030000Z-verify-record"]);
-}
-
-#[test]
-fn a_history_path_names_one_task() {
-    assert_eq!(history_id("/api/tasks/t1/history"), Some("t1"));
-    for bad in [
-        "/api/tasks//history",
-        "/api/tasks/a/b/history",
-        "/api/tasks/t1",
-    ] {
-        assert_eq!(history_id(bad), None, "{bad}");
-    }
 }
 
 /// Reading the state closes nothing: a gate whose worker has moved on stays open on disk until
