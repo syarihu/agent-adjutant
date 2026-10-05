@@ -811,3 +811,61 @@ fn the_terminal_assets_are_only_served_by_the_resident_server() {
 fn the_page_does_not_carry_the_terminal_library() {
     assert!(!UI_HTML.contains("Permission is hereby granted"));
 }
+
+#[test]
+fn the_views_register_themselves() {
+    // `render` and `switchBoard` go through the views' table, never their functions or caches.
+    fn body_of(head: &str) -> &'static str {
+        assert_eq!(UI_HTML.matches(head).count(), 1, "{head}");
+        let rest = UI_HTML.split(head).nth(1).unwrap();
+        &rest[..rest.find("\n\u{7d}\n").unwrap()]
+    }
+    let bodies = [
+        body_of("function render() {"),
+        body_of("function switchBoard() {"),
+    ];
+    for name in [
+        "renderColumns",
+        "renderBoardRows",
+        "renderTitle",
+        "renderSessionsTab",
+        "openPendingSession",
+        "renderSessionsView",
+        "renderTaskPanel",
+        "redrawReview",
+        "redrawTaskView",
+        "hideTaskPanelState",
+        "disposeTermSlot",
+        "sessView",
+        "histories",
+        "historyFailed",
+        "openReplies",
+    ] {
+        for body in bodies {
+            assert!(!body.contains(name), "{name}");
+        }
+    }
+    assert_eq!(UI_HTML.matches("const VIEW_ORDER = [").count(), 1);
+    let order = UI_HTML.split("const VIEW_ORDER = [").nth(1).unwrap();
+    let order = &order[..order.find(']').unwrap()];
+    let names: Vec<&str> = order
+        .split(',')
+        .map(|n| n.trim().trim_matches('\''))
+        .filter(|n| !n.is_empty())
+        .collect();
+    assert_eq!(names.len(), 12);
+    assert_eq!(
+        names.iter().collect::<BTreeSet<_>>().len(),
+        names.len(),
+        "a name twice"
+    );
+    for name in &names {
+        assert_eq!(
+            UI_HTML.matches(&format!("registerView('{name}'")).count(),
+            1,
+            "{name}"
+        );
+    }
+    // No registration outside the order (it would throw at load).
+    assert_eq!(UI_HTML.matches("registerView('").count(), names.len());
+}

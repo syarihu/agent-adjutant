@@ -625,11 +625,8 @@ function renderGateCount() {
   }
 }
 
-function render() {
-  document.body.classList.toggle('ide-unset', !ideReady());
-
-  renderColumns();
-
+/* The header's three counts: what waits on the person, the gates, and the workers at work. */
+function renderCounts() {
   const totalHuman = waitingIn();
   const humanBadge = document.getElementById('human-badge');
   if (humanBadge) {
@@ -645,17 +642,35 @@ function render() {
   if (agentCount) {
     agentCount.textContent = activeWorkers;
   }
-
-  // The ball count belongs in the tab title: you should know it is your turn without
-  // having to look at the page. The board's name follows it, so tabs of several boards differ.
-  renderBoardRows();
-  renderTitle();
-  updateNotifyButton();
-  renderSessionsTab();
-  openPendingSession();
-  renderSessionsView();
-  renderTaskPanel();
-  redrawReview();
-  redrawTaskView();
-  applyLayout();
 }
+
+/* The parts of the page, in the order `render` draws them and `resetViews` resets them. Each
+   script registers its own parts at its end. The order of the resets matters once: the sessions
+   tab lets go of the address it waits on before the panel's terminal goes, whose going redraws
+   that tab. */
+const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'sessions-tab', 'pending-session',
+  'sessions-view', 'task-panel', 'review', 'task-view', 'layout'];
+const viewsByName = new Map();
+
+/* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets
+   what the part keeps for the board being left. A name not in VIEW_ORDER, or one registered
+   twice, throws, so a typo shows at load. */
+function registerView(name, part) {
+  if (!VIEW_ORDER.includes(name)) throw new Error(`unknown view: ${name}`);
+  if (viewsByName.has(name)) throw new Error(`view registered twice: ${name}`);
+  viewsByName.set(name, part);
+}
+
+function render() {
+  document.body.classList.toggle('ide-unset', !ideReady());
+  // A part whose script has not registered it yet is skipped.
+  for (const name of VIEW_ORDER) viewsByName.get(name)?.render(state);
+}
+
+function resetViews() {
+  for (const name of VIEW_ORDER) viewsByName.get(name)?.reset?.();
+}
+
+registerView('counts', { render: () => renderCounts() });
+registerView('notify', { render: () => updateNotifyButton() });
+registerView('layout', { render: () => applyLayout() });

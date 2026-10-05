@@ -568,3 +568,11 @@ function renderSessionsView() {
   renderSessionList();
   applySessionSelection();
 }
+
+registerView('sessions-tab', { render: () => renderSessionsTab() });
+registerView('pending-session', {
+  render: () => openPendingSession(),
+  // Before the task panel's reset: the panel's terminal going away redraws the tab.
+  reset: () => { sessView.pending = null; },
+});
+registerView('sessions-view', { render: () => renderSessionsView() });

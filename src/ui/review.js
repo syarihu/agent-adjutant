@@ -504,3 +504,5 @@ document.getElementById('review').addEventListener('change', e => {
 function taskOfGate(g) {
   return (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
 }
+
+registerView('review', { render: () => redrawReview(), reset: () => disposeTermSlot(reviewTerm) });

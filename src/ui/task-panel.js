@@ -739,3 +739,5 @@ function renderHandForm(task) {
     }
   });
 }
+
+registerView('task-panel', { render: () => renderTaskPanel(), reset: () => hideTaskPanelState() });

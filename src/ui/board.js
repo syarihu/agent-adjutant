@@ -733,3 +733,9 @@ document.getElementById('boards')?.addEventListener('focusout', e => {
     renderColumns();
   });
 });
+
+registerView('columns', {
+  render: () => renderColumns(),
+  // Keyed by a bare task id: they belong to the board being left.
+  reset: () => { for (const k of Object.keys(openReplies)) delete openReplies[k]; },
+});

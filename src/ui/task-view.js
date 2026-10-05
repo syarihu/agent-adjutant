@@ -725,3 +725,11 @@ function gateShownIn(task, tab, all) {
   return gateForTab(task, tab, all);
 }
 
+registerView('task-view', {
+  render: () => redrawTaskView(),
+  // Keyed by a bare task id: they belong to the board being left.
+  reset: () => {
+    for (const k of Object.keys(histories)) delete histories[k];
+    historyFailed.clear();
+  },
+});
