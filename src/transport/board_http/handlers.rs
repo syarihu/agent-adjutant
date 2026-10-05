@@ -5,9 +5,10 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::routes::{hub_route, task_id_in};
-use crate::board::Server;
-use crate::board::{hub_start_of, settings_now};
+use crate::board::hub::{Reopened, close, find, reset, restart, start, start_for_key, stop};
+use crate::board::{Server, input_of, settings_now, text};
 use crate::jules::{findings as jules_findings, relay as jules_relay};
+use crate::lifecycle::hub::{HubStart, TabOutcome};
 
 // ── the two things the board can change ──────────────────────────────
 
@@ -89,169 +90,92 @@ pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
     }))
 }
 
-/// The context that starts `hub`: addressed by its key, refused when a parent hub's key is not
-/// known (it could only be started as some other hub).
-fn hub_start_context(
-    server: &Server,
-    hub: &crate::mail::RepoHub,
-    settings: crate::kernel::config::Settings,
-) -> Result<crate::registry::Context, String> {
-    if hub.parent && hub.key.is_none() {
-        return Err(
-            "the key of this hub is not known; start it with adj hub --hub <key>".to_string(),
-        );
-    }
-    Ok(crate::registry::Context {
-        repo: server.ctx.repo.clone().addressed(hub.key.as_deref())?,
-        resolved: server.ctx.resolved.clone(),
-        state: server.ctx.state.clone(),
-        settings,
-    })
-}
-
-/// The context that stops `hub`. Addressed by the slug the hub was listed under: a hub whose
-/// key cannot be told can still be stopped, and nothing here needs the key for it.
-fn hub_stop_context(
-    server: &Server,
-    hub: &crate::mail::RepoHub,
-    settings: crate::kernel::config::Settings,
-) -> crate::registry::Context {
-    let mut stopping = server.ctx.repo.clone();
-    stopping.slug = hub.slug.clone();
-    stopping.hub_name = hub.name.clone();
-    crate::registry::Context {
-        repo: stopping,
-        resolved: server.ctx.resolved.clone(),
-        state: server.ctx.state.clone(),
-        settings,
-    }
-}
-
 /// Start, stop, close, reset or restart one of the repository's hubs from the board. `id` is the
 /// `hubs[].id` the page was given, so the page can only name a hub this repository was found to
 /// have.
 pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
     let (id, action) = hub_route(path).ok_or("no such route")?;
     let id = id?;
-    let id = id.as_str();
     let input: Value = match body.is_empty() {
         true => json!({}),
         false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
     };
-    let repo = &server.ctx.repo;
-    let hub = crate::mail::all_repo_hubs(&server.ctx.state, repo)
-        .into_iter()
-        .find(|h| h.id == id)
-        .ok_or_else(|| format!("no such hub: {id}"))?;
-    let settings = settings_now(server);
+    let hub = find(server, &id)?;
     match action {
         "start" => {
-            let start = hub_start_of(&input)?;
-            let ctx = hub_start_context(server, &hub, settings)?;
-            match crate::lifecycle::hub::start_hub(&ctx, start)? {
-                crate::lifecycle::hub::TabOutcome::Opened(done) => {
-                    Ok(json!({ "started": true, "description": done.description }))
+            let how = hub_start_of(&input)?;
+            Ok(match start(server, &hub, how)? {
+                TabOutcome::Opened(done) => {
+                    json!({ "started": true, "description": done.description })
                 }
-                crate::lifecycle::hub::TabOutcome::AlreadyRunning(status) => {
-                    Ok(json!({ "alreadyRunning": true, "pid": status.pid }))
+                TabOutcome::AlreadyRunning(status) => {
+                    json!({ "alreadyRunning": true, "pid": status.pid })
                 }
-            }
+            })
         }
-        "reset" => {
-            // Everything start would refuse is refused before the hub is stopped: a reset that
-            // could not start again would only have taken the hub down.
-            if !crate::lifecycle::hub::hub_startable(&settings.terminal) {
-                return Err(
-                    "starting a hub from the board needs terminal.preset \"tmux\"".to_string(),
-                );
-            }
-            let start_ctx = hub_start_context(server, &hub, settings.clone())?;
-            let was_running =
-                crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
-            match crate::lifecycle::hub::start_hub(&start_ctx, crate::lifecycle::hub::HubStart::New)
-            {
-                Ok(crate::lifecycle::hub::TabOutcome::Opened(done)) => Ok(json!({
-                    "reset": true,
-                    "wasRunning": was_running,
-                    "started": true,
-                    "description": done.description,
-                })),
-                // A hub is up that this request did not start (nothing was running, or another
-                // start won the race after the stop), so it is not a new conversation, and
-                // the answer must not say it is.
-                Ok(crate::lifecycle::hub::TabOutcome::AlreadyRunning(status)) => Ok(json!({
-                    "reset": false,
-                    "wasRunning": was_running,
-                    "alreadyRunning": true,
-                    "pid": status.pid,
-                })),
-                Err(e) if was_running => Err(format!(
-                    "stopped {}, but could not start it again: {e}",
-                    hub.name
-                )),
-                Err(e) => Err(e),
-            }
+        "reset" => Ok(reopened("reset", reset(server, &hub)?)),
+        "restart" => Ok(reopened("restarted", restart(server, &hub)?)),
+        "stop" => {
+            let was_running = stop(server, &hub)?;
+            Ok(json!({ "stopped": true, "wasRunning": was_running }))
         }
-        "restart" => {
-            // Everything the start would refuse is refused before the hub is stopped, the
-            // saved conversation included: a restart that cannot reopen it has only taken the
-            // hub down. The saved session file is not touched; `--resume` reads it as it is.
-            if let Some(refusal) = crate::board::hub_resume_refusal(&settings) {
-                return Err(refusal);
-            }
-            let start_ctx = hub_start_context(server, &hub, settings.clone())?;
-            crate::lifecycle::hub::hub_resume_check(&start_ctx)?;
-            let restarting = crate::board::Restarting::claim(&hub.slug, &hub.name)?;
-            let was_running =
-                crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
-            match crate::lifecycle::hub::start_hub(
-                &start_ctx,
-                crate::lifecycle::hub::HubStart::Resume,
-            ) {
-                Ok(crate::lifecycle::hub::TabOutcome::Opened(done)) => {
-                    // The window is open but the new hub has not registered yet: another
-                    // restart now would stop it or open a second window beside it.
-                    restarting.hold();
-                    Ok(json!({
-                        "restarted": true,
-                        "wasRunning": was_running,
-                        "started": true,
-                        "description": done.description,
-                    }))
-                }
-                // As for a reset: a hub is up that this request did not start, so the
-                // answer must not say it was restarted.
-                Ok(crate::lifecycle::hub::TabOutcome::AlreadyRunning(status)) => Ok(json!({
-                    "restarted": false,
-                    "wasRunning": was_running,
-                    "alreadyRunning": true,
-                    "pid": status.pid,
-                })),
-                Err(e) if was_running => Err(format!(
-                    "stopped {}, but could not start it again: {e}",
-                    hub.name
-                )),
-                Err(e) => Err(e),
-            }
-        }
-        "stop" | "close" => {
-            let closing = action == "close";
-            if closing {
-                crate::lifecycle::hub::closable_check(repo, &hub)?;
-            }
-            // A hub that will not stop is not closed: nothing is forgotten until it is gone.
-            let was_running =
-                crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
-            if closing {
-                // `stop_hub` cleared a record naming the process it stopped; a hub that
-                // registered in the meantime stays, and `close` refuses it as still running.
-                let closed = crate::lifecycle::hub::close(&server.ctx.state, repo, &hub)?;
-                Ok(json!({ "closed": true, "wasRunning": was_running, "unread": closed.unread }))
-            } else {
-                Ok(json!({ "stopped": true, "wasRunning": was_running }))
-            }
+        "close" => {
+            let closed = close(server, &hub)?;
+            Ok(json!({ "closed": true, "wasRunning": closed.was_running, "unread": closed.unread }))
         }
         other => Err(format!("no such action: {other}")),
+    }
+}
+
+/// A reset's or a restart's answer, `word` saying which. When a hub is up that this request
+/// did not start (nothing was running, or another start won the race after the stop), it is
+/// not the conversation that was asked for, and the answer must not say it is.
+fn reopened(word: &str, done: Reopened) -> Value {
+    match done.outcome {
+        TabOutcome::Opened(opened) => json!({
+            word: true,
+            "wasRunning": done.was_running,
+            "started": true,
+            "description": opened.description,
+        }),
+        TabOutcome::AlreadyRunning(status) => json!({
+            word: false,
+            "wasRunning": done.was_running,
+            "alreadyRunning": true,
+            "pid": status.pid,
+        }),
+    }
+}
+
+/// Start the hub for the parent-task key a request names (`POST /api/hubs`), and say where it
+/// is listed.
+pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, String> {
+    let input = input_of(body)?;
+    let key = text(&input, "key")?.ok_or("a key is required")?;
+    let how = hub_start_of(&input)?;
+    let (at, outcome) = start_for_key(server, key, how)?;
+    let hub = json!({ "id": at.id, "slug": at.slug });
+    Ok(match outcome {
+        TabOutcome::Opened(done) => json!({
+            "started": true,
+            "description": done.description,
+            "hub": hub,
+        }),
+        TabOutcome::AlreadyRunning(status) => json!({
+            "alreadyRunning": true,
+            "pid": status.pid,
+            "hub": hub,
+        }),
+    })
+}
+
+/// How a hub is to be started, from the `start` a request names: `auto` when it names none.
+fn hub_start_of(input: &Value) -> Result<HubStart, String> {
+    match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
+        "auto" => Ok(HubStart::Auto),
+        "resume" => Ok(HubStart::Resume),
+        "new" => Ok(HubStart::New),
+        other => Err(format!("no such start: {other}")),
     }
 }
 

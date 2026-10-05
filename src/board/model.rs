@@ -6,7 +6,7 @@
 //!
 //! Pure data structures with serde serialization, and the two board-wide refusals to resume
 //! a session or a hub, which read only the settings. Until the transport takes the parsing
-//! (#412–#415), it also holds the request-body readers `input_of`, `text` and `hub_start_of`,
+//! (#412–#415), it also holds the request-body readers `input_of` and `text`,
 //! and `is_window_id` and `target_of`, which name the tmux window a session is opened in.
 
 use serde::{Deserialize, Serialize};
@@ -228,16 +228,6 @@ pub fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> 
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(v)) => Ok(Some(v.trim()).filter(|s| !s.is_empty())),
         Some(other) => Err(format!("{key} has to be a string, not {other}")),
-    }
-}
-
-/// How a hub is to be started, from the `start` a request names: `auto` when it names none.
-pub fn hub_start_of(input: &Value) -> Result<crate::lifecycle::hub::HubStart, String> {
-    match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
-        "auto" => Ok(crate::lifecycle::hub::HubStart::Auto),
-        "resume" => Ok(crate::lifecycle::hub::HubStart::Resume),
-        "new" => Ok(crate::lifecycle::hub::HubStart::New),
-        other => Err(format!("no such start: {other}")),
     }
 }
 
