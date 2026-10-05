@@ -2,8 +2,6 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::cmd;
-
 #[derive(Parser)]
 #[command(
     name = "adjutant",
@@ -359,7 +357,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         hub: Option<String>,
         /// 0 picks a free port, for a second dashboard on the same machine
-        #[arg(long, default_value_t = cmd::DEFAULT_PORT)]
+        #[arg(long, default_value_t = crate::board::DEFAULT_PORT)]
         port: u16,
         /// Print the URL without opening a browser
         #[arg(long)]
@@ -403,7 +401,7 @@ pub(crate) enum ServerAction {
     /// Start the resident server, detached unless --foreground
     Start {
         /// 0 picks a free port; a taken port falls back to a free one
-        #[arg(long, default_value_t = cmd::DEFAULT_PORT)]
+        #[arg(long, default_value_t = crate::board::DEFAULT_PORT)]
         port: u16,
         /// Stay in this process, for a service manager
         #[arg(long)]

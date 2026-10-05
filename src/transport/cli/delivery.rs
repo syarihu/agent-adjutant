@@ -85,8 +85,6 @@ pub struct SendArgs<'a> {
     pub wake: Option<bool>,
 }
 
-pub(crate) use crate::transport::wording::wake_note_sentence;
-
 pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
     let ctx = context(args.repo, args.hub)?;
     let body = read_body(args.body)?;

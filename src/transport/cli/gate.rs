@@ -88,7 +88,7 @@ fn with_body(request: &mut GateRequest, body: String) -> Result<(), String> {
     Ok(())
 }
 
-pub use crate::transport::wording::{RECORDED, open_json};
+use crate::transport::wording::{RECORDED, open_json};
 
 pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
     let ctx = crate::registry::context(repo, hub)?;
