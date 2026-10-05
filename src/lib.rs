@@ -324,9 +324,9 @@ pub fn run() -> ! {
             &strip_separator(extra),
             *tab,
             match (*resume, *new) {
-                (true, _) => cmd::HubStart::Resume,
-                (_, true) => cmd::HubStart::New,
-                _ => cmd::HubStart::Auto,
+                (true, _) => crate::lifecycle::hub::HubStart::Resume,
+                (_, true) => crate::lifecycle::hub::HubStart::New,
+                _ => crate::lifecycle::hub::HubStart::Auto,
             },
             // Two flags, three answers. `None` is "nobody said", and it has to stay distinct
             // from both: it is what leaves the configured value standing, and what keeps a

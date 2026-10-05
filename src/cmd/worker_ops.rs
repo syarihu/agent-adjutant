@@ -1,6 +1,8 @@
 use super::*;
+use crate::lifecycle::title_command;
 use crate::lifecycle::worker::{
-    Planned, SessionNote, WorkerRequest, exec_launch, plan_launch, register_launch,
+    Planned, SessionNote, StartRequest, Started, WorkerRequest, exec_launch, focus_worker,
+    plan_launch, register_launch, resume_worker, worker_worktree,
 };
 
 pub fn spawn(

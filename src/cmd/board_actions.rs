@@ -19,11 +19,14 @@ use serde_json::{Value, json};
 use super::board_terminal::target_of;
 use super::serve::{Server, find_session, git_state_of, hub_start_of, settings_now};
 use super::session::{input_of, text};
-use super::{Started, TabOutcome, same_path};
+use crate::infra::paths::same_path;
 use crate::infra::template::{Sub, render, sh_join, sh_quote};
 use crate::infra::terminal;
 use crate::kernel::runner;
 use crate::kernel::worktree_state::GitState;
+use crate::lifecycle::hub::{TabOutcome, hub_startable, own_hub_runner_refusal, start_hub};
+use crate::lifecycle::resume_template;
+use crate::lifecycle::worker::{Started, resume_worker, saved_worker_session};
 use crate::mail;
 use crate::registry::{self, Context};
 use crate::task::{self, Executor, Status};
@@ -48,7 +51,7 @@ fn own_hub_context(
 /// Why no session can be resumed from the board with these settings, or `None` when one can.
 /// The board-wide half of `resume`'s refusals, known without looking at a session.
 pub(super) fn resume_refusal(settings: &crate::kernel::config::Settings) -> Option<String> {
-    if !super::hub_startable(&settings.terminal) {
+    if !hub_startable(&settings.terminal) {
         return Some(
             "resuming a session from the board needs terminal.preset \"tmux\" and no terminal.spawn"
                 .to_string(),
@@ -70,7 +73,7 @@ pub(super) fn resume_refusal(settings: &crate::kernel::config::Settings) -> Opti
     // The same refusal the resume itself would end in, so the page never offers a button that
     // can only fail.
     if let Err(refusal) =
-        super::resume_template(settings.agent_resume_runner.as_deref(), "agentResumeRunner")
+        resume_template(settings.agent_resume_runner.as_deref(), "agentResumeRunner")
     {
         return Some(refusal);
     }
@@ -108,11 +111,10 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
     }
     let ctx = own_hub_context(server, settings)?;
     let repo = ctx.repo.nwo.clone();
-    let done =
-        match super::resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false)? {
-            Started::Opened(done) => done,
-            Started::Full(refusal) => return Err(refusal),
-        };
+    let done = match resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false)? {
+        Started::Opened(done) => done,
+        Started::Full(refusal) => return Err(refusal),
+    };
     let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
@@ -128,18 +130,17 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
 /// `hub_startable` and `hubResumeRunner` say, known without looking at a hub. The per-hub half
 /// (a saved conversation, a parent key that is known) is checked by the restart itself.
 pub(super) fn hub_resume_refusal(settings: &crate::kernel::config::Settings) -> Option<String> {
-    if !super::hub_startable(&settings.terminal) {
+    if !hub_startable(&settings.terminal) {
         return Some(
             "restarting a hub from the board needs terminal.preset \"tmux\" and no terminal.spawn"
                 .to_string(),
         );
     }
-    if let Err(refusal) =
-        super::resume_template(settings.hub_resume_runner.as_deref(), "hubResumeRunner")
+    if let Err(refusal) = resume_template(settings.hub_resume_runner.as_deref(), "hubResumeRunner")
     {
         return Some(refusal);
     }
-    super::own_hub_runner_refusal(settings)
+    own_hub_runner_refusal(settings)
 }
 
 /// What `state` says about resuming a hub: `available`, and the reason when it is not.
@@ -246,7 +247,7 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     if let Some(refusal) = resume_refusal(&settings) {
         return Err(refusal);
     }
-    super::saved_worker_session(worktree)?;
+    saved_worker_session(worktree)?;
     // Without a way to close the window the restart would end up starting a second worker
     // beside the one it could not stop.
     if settings.terminal.close.is_off() {
@@ -267,17 +268,16 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
                 .to_string(),
         );
     }
-    let done =
-        match super::resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false) {
-            Ok(Started::Opened(done)) => done,
-            Ok(Started::Full(refusal)) | Err(refusal) => {
-                // Nothing was closed when nothing was running, and saying so would be false.
-                return Err(match was_running {
-                    true => format!("closed the session, but could not start it again: {refusal}"),
-                    false => format!("could not start the session again: {refusal}"),
-                });
-            }
-        };
+    let done = match resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false) {
+        Ok(Started::Opened(done)) => done,
+        Ok(Started::Full(refusal)) | Err(refusal) => {
+            // Nothing was closed when nothing was running, and saying so would be false.
+            return Err(match was_running {
+                true => format!("closed the session, but could not start it again: {refusal}"),
+                false => format!("could not start the session again: {refusal}"),
+            });
+        }
+    };
     let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
@@ -852,7 +852,7 @@ pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, St
         settings,
     };
     let hub = json!({ "id": format!("hub-{key}"), "slug": ctx.repo.slug });
-    match super::start_hub(&ctx, start)? {
+    match start_hub(&ctx, start)? {
         TabOutcome::Opened(done) => Ok(json!({
             "started": true,
             "description": done.description,

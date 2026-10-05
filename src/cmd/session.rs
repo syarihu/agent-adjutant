@@ -13,8 +13,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::serve::{Server, find_session, settings_now};
-use super::{HubStart, TabOutcome};
 use crate::kernel::runner;
+use crate::lifecycle::hub::{HubStart, TabOutcome, hub_startable, start_hub};
 use crate::lifecycle::worker::{LinkRequest, LinkTo, Linked};
 use crate::mail::RepoHub;
 use crate::mail::{self, Message};
@@ -110,10 +110,10 @@ fn start_if_stopped(
     ctx: &Context,
     delivered: &crate::mail::DeliveryOutcome,
 ) -> (bool, Option<String>) {
-    if delivered.is_present() || !server.resident || !super::hub_startable(&ctx.settings.terminal) {
+    if delivered.is_present() || !server.resident || !hub_startable(&ctx.settings.terminal) {
         return (false, None);
     }
-    match super::start_hub(ctx, HubStart::Auto) {
+    match start_hub(ctx, HubStart::Auto) {
         Ok(TabOutcome::Opened(_)) => (true, None),
         Ok(TabOutcome::AlreadyRunning(_)) => (false, None),
         Err(e) => (false, Some(e)),
