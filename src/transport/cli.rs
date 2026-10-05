@@ -55,9 +55,9 @@ pub use server::{server_restart, server_start, server_status, server_stop};
 pub use skill_outbox::{outbox, skill};
 use stdin::{dash_is_stdin, read_body};
 pub use task::{
-    AddArgs, BriefArgs, UpdateArgs, add as task_add, brief as task_brief,
-    fetch_issue_cmd as task_fetch_issue_cmd, list as task_list, next_cmd as task_next,
-    refresh_cmd as task_refresh_cmd, show as task_show, update_cmd as task_update,
+    add as task_add, brief as task_brief, fetch_issue_cmd as task_fetch_issue_cmd,
+    list as task_list, next_cmd as task_next, refresh_cmd as task_refresh_cmd, show as task_show,
+    update_cmd as task_update,
 };
 pub use tell::{TellArgs, tell};
 pub use worker::{WorkArgs, WorkerArgs, focus, focus_worker_cmd, phase, spawn, work, worker};
