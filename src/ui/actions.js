@@ -785,3 +785,7 @@ function note(line, isError, why) {
   }
 }
 
+// The ball count belongs in the tab title: you should know it is your turn without
+// having to look at the page. The board's name follows it, so tabs of several boards differ.
+registerView('board-rows', { render: () => renderBoardRows() });
+registerView('title', { render: () => renderTitle() });

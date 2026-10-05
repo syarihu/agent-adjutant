@@ -69,14 +69,9 @@ function switchBoard() {
   lastStateJson = '';
   lastMinute = null;
   if (!multiBoard) seenGateIds = null;
-  disposeTermSlot(reviewTerm);
-  sessView.pending = null;
-  // After the sessions tab let go: the panel's terminal going away redraws that tab.
-  hideTaskPanelState();
+  // Each view forgets what it kept for the board being left.
+  resetViews();
   boardJob = null;
-  // Caches keyed by a bare task id belong to the board being left.
-  for (const cache of [histories, openReplies]) for (const k of Object.keys(cache)) delete cache[k];
-  historyFailed.clear();
   // 「すべて」 shows what it last read while the new round is on its way; the review queue
   // keeps the gate it was asked for until that round is in (see renderReview).
   allRound = false;
