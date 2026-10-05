@@ -1,29 +1,20 @@
+use super::args::{PendingArgs, SendArgs};
 use super::*;
 
 // ── pending ──────────────────────────────────────────────────────────
 
-pub struct PendingArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub path_only: bool,
-    pub limit: usize,
-    pub as_json: bool,
-    pub read: Option<&'a str>,
-    pub ack: Option<&'a str>,
-}
-
-pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
-    let info = resolve(args.repo, args.hub)?;
+pub fn pending(args: &PendingArgs) -> Result<(), String> {
+    let info = resolve(args.repo.as_deref(), args.hub.as_deref())?;
     let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
-    if args.path_only {
+    if args.path {
         println!("{}", mail::open_inbox(&root, &info.slug)?.display());
         return Ok(());
     }
-    if let Some(name) = args.read {
+    if let Some(name) = args.read.as_deref() {
         print!("{}", mail::read(&root, &info.slug, name)?);
         return Ok(());
     }
-    if let Some(name) = args.ack {
+    if let Some(name) = args.ack.as_deref() {
         let moved = mail::ack(&root, &info.slug, name)?;
         println!("filed {} ({})", name, moved.display());
         return Ok(());
@@ -33,7 +24,7 @@ pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
         dir,
         messages: entries,
     } = mail::pending(&root, &info.slug);
-    if args.as_json {
+    if args.json {
         let items: Vec<Value> = entries
             .iter()
             .map(|e| {
@@ -74,30 +65,19 @@ pub fn pending(args: &PendingArgs<'_>) -> Result<(), String> {
 
 // ── send ─────────────────────────────────────────────────────────────
 
-pub struct SendArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub from: Option<&'a str>,
-    pub kind: &'a str,
-    pub subject: Option<&'a str>,
-    pub body: Option<&'a str>,
-    pub quiet: bool,
-    pub wake: Option<bool>,
-}
-
-pub fn send(args: &SendArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo, args.hub)?;
-    let body = read_body(args.body)?;
+pub fn send(args: &SendArgs) -> Result<(), String> {
+    let ctx = context(args.repo.as_deref(), args.hub.as_deref())?;
+    let body = read_body(args.body.as_deref())?;
     let message = Message {
-        from: args.from.unwrap_or("unknown").to_string(),
+        from: args.from.as_deref().unwrap_or("unknown").to_string(),
         // Where this is being sent from, taken from the same directory the repository was
         // resolved in rather than from anything the sender says about itself.
         worktree: identity::current_worktree(None),
-        kind: args.kind.to_string(),
-        subject: args.subject.unwrap_or("").to_string(),
+        kind: args.kind.clone(),
+        subject: args.subject.as_deref().unwrap_or("").to_string(),
         body,
     };
-    let outcome = deliver_to_hub_with_wake(&ctx, &message, true, args.wake)?;
+    let outcome = deliver_to_hub_with_wake(&ctx, &message, true, args.wake())?;
 
     if args.quiet {
         return Ok(());

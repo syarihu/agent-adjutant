@@ -1,25 +1,19 @@
+use super::args::TellArgs;
 use super::*;
 
-pub struct TellArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub worktree: &'a str,
-    pub subject: &'a str,
-    pub body: Option<&'a str>,
-    pub from: Option<&'a str>,
-    pub quiet: bool,
-    pub wake: Option<bool>,
-}
-
-pub fn tell(args: &TellArgs<'_>) -> Result<(), String> {
-    let ctx = context(args.repo, args.hub)?;
-    let worktree = crate::infra::paths::expand_home(args.worktree);
+pub fn tell(args: &TellArgs) -> Result<(), String> {
+    let ctx = context(args.repo.as_deref(), args.hub.as_deref())?;
+    let worktree = crate::infra::paths::expand_home(&args.worktree);
     if !worktree.is_dir() {
         return Err(format!("no such worktree: {}", worktree.display()));
     }
-    let body = read_body(args.body)?;
-    let from = args.from.unwrap_or(&ctx.repo.hub_name).to_string();
-    let outcome = deliver_to_worker(&ctx, &worktree, &from, args.subject, &body, args.wake)?;
+    let body = read_body(args.body.as_deref())?;
+    let from = args
+        .from
+        .as_deref()
+        .unwrap_or(&ctx.repo.hub_name)
+        .to_string();
+    let outcome = deliver_to_worker(&ctx, &worktree, &from, &args.subject, &body, args.wake())?;
 
     if args.quiet {
         return Ok(());
