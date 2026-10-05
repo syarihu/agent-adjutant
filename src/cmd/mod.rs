@@ -13,9 +13,7 @@ use crate::kernel::config::{self, Settings};
 use crate::kernel::identity;
 use crate::kernel::runner;
 pub use crate::lifecycle::hub::{HubStart, TabOutcome, hub_startable, start_hub, stop_hub};
-use crate::lifecycle::hub::{
-    asked_session, closable_check, hub_env, hub_in_tab, hub_resume_check, own_hub_runner_refusal,
-};
+use crate::lifecycle::hub::{closable_check, hub_in_tab, hub_resume_check, own_hub_runner_refusal};
 pub use crate::lifecycle::worker::focus_worker;
 use crate::lifecycle::worker::{
     StartRequest, Started, resume_worker, saved_worker_session, worker_worktree,
