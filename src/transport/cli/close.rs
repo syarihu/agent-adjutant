@@ -1,3 +1,4 @@
+use super::args::CloseArgs;
 use super::*;
 use crate::lifecycle::worker::WorkerClose;
 
@@ -27,19 +28,14 @@ fn left_alone(cleared: &registry::Cleared, worktree: &std::path::Path) -> Option
 ///
 /// `false` is `WorkerClose::is_free` saying a worker may still be sitting there, which has
 /// to reach a shell as an exit code rather than as a sentence in the output.
-pub fn close(
-    repo_arg: Option<&str>,
-    worktree: &str,
-    quiet: bool,
-    dry_run: bool,
-) -> Result<bool, String> {
+pub fn close(args: &CloseArgs) -> Result<bool, String> {
     // Settings rather than a whole `Context`, like `spawn` and `title`: which config to
     // read is the only thing the repository is asked for here, and this is the command most
     // likely to be run while the repository it belongs to is being taken apart.
-    let settings = settings_for(repo_arg);
-    let worktree = crate::infra::paths::expand_home(worktree);
-    let outcome = crate::lifecycle::worker::close(&settings, &worktree, dry_run)?;
-    say(&outcome, &worktree, quiet);
+    let settings = settings_for(args.repo.as_deref());
+    let worktree = crate::infra::paths::expand_home(&args.worktree);
+    let outcome = crate::lifecycle::worker::close(&settings, &worktree, args.dry_run)?;
+    say(&outcome, &worktree, args.quiet);
     Ok(outcome.is_free())
 }
 
