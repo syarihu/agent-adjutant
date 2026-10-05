@@ -1140,9 +1140,9 @@ board      the daemon, the resident server, the read model, the background jobs,
 transport  cli, mcp and board_http: read input, call an operation, word the result
 ```
 
-A module may use the ones above it in this list, never one below it; `lib.rs` and `main.rs` are the
-crate roots over all ten. `scripts/check-layering.sh` enforces the arrows, and CI runs it. As long
-as it passes, splitting into a Cargo workspace later stays a mechanical move.
+The list is bottom first: a module may use the ones above it, never one below it; `lib.rs` and
+`main.rs` are the crate roots over all ten. `scripts/check-layering.sh` enforces the arrows, and CI
+runs it. As long as it passes, splitting into a Cargo workspace later stays a mechanical move.
 
 ## Development
 
