@@ -41,8 +41,8 @@ pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
 
     // Before anything is made: a window that is gone must not start a server or leave a
     // session behind.
-    let home =
-        terminal::run_shell(&terminal::tmux_window_home_script(socket, &window)).map_err(|e| {
+    let home = crate::infra::shell::run_shell(&terminal::tmux_window_home_script(socket, &window))
+        .map_err(|e| {
             let lower = e.to_ascii_lowercase();
             match lower.contains("can't find")
                 || lower.contains("no server running")
@@ -54,14 +54,14 @@ pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
         })?;
     let group = terminal::parse_window_home(&home).ok_or("the tmux window is gone")?;
 
-    let _ = terminal::run_shell(&terminal::board_sweep_script(socket));
+    let _ = crate::infra::shell::run_shell(&terminal::board_sweep_script(socket));
     let name = format!(
         "{}{}-{}",
         terminal::OPEN_SESSION_PREFIX,
         std::process::id(),
         NEXT.fetch_add(1, Ordering::SeqCst)
     );
-    terminal::run_shell(&terminal::board_attach_prepare_script(
+    crate::infra::shell::run_shell(&terminal::board_attach_prepare_script(
         socket, &group, &name, &window,
     ))?;
 
@@ -78,7 +78,7 @@ pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
                     ("window", Sub::Quoted(&window)),
                 ],
             );
-            terminal::run_shell(&command)
+            crate::infra::shell::run_shell(&command)
                 .map(|_| OpenedIn::Attach)
                 .map_err(|e| format!("terminal.attach failed: {e}"))
         }
@@ -99,7 +99,7 @@ pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
         }),
         Err(e) => {
             // Nothing attached to it, so nothing else is holding the group's windows.
-            let _ = terminal::run_shell(&format!(
+            let _ = crate::infra::shell::run_shell(&format!(
                 "{} kill-session -t {}",
                 terminal::tmux_cmd_prefix(socket),
                 sh_quote(&format!("={name}"))

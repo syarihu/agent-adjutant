@@ -1,9 +1,8 @@
-use crate::board::{Server, settings_now};
+use crate::board::{Server, SessionRequest, settings_now};
 use crate::kernel::runner;
 use crate::lifecycle::hub::{HubStart, TabOutcome, hub_startable, start_hub};
 use crate::mail::{self, DeliveryOutcome, Message, RepoHub};
 use crate::registry::{self, Context};
-use crate::session::SessionRequest;
 use crate::task;
 
 /// The hub named by `hub` (a `hubs[].id`), or this board's own when none is named, with the

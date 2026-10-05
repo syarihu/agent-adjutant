@@ -159,7 +159,7 @@ impl Posted {
                 &subject,
             )
         {
-            let _ = terminal::run_shell(&command);
+            let _ = crate::infra::shell::run_shell(&command);
         }
         DeliveryOutcome {
             path: delivery.path,
@@ -210,7 +210,7 @@ pub fn deliver_to_worker(
             subject,
         )
     {
-        let _ = terminal::run_shell(&command);
+        let _ = crate::infra::shell::run_shell(&command);
     }
     Ok(DeliveryOutcome { path, reached })
 }

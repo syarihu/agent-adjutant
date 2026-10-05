@@ -67,7 +67,7 @@ pub fn stop_hub(ctx: &Context) -> Result<bool, String> {
                 socket.as_deref().unwrap_or("default")
             )
         })?;
-    terminal::run_shell(&terminal::tmux_kill_pane_script(
+    crate::infra::shell::run_shell(&terminal::tmux_kill_pane_script(
         socket.as_deref(),
         &pane.pane_id,
     ))?;

@@ -218,7 +218,7 @@ pub fn is_window_id(window: &str) -> bool {
 /// The socket and window of `session`, if it is one a terminal can be opened on: it runs in
 /// tmux, was recorded with a window, and is running. Shared with the board's action that opens
 /// the session in the person's own terminal.
-pub fn target_of(session: &crate::session::Session) -> Option<(Option<String>, String)> {
+pub fn target_of(session: &crate::board::Session) -> Option<(Option<String>, String)> {
     let terminal = &session.terminal;
     let window = terminal.window.as_deref().filter(|w| is_window_id(w))?;
     (terminal.backend == "tmux" && session.present)

@@ -16,7 +16,6 @@ mod kernel;
 mod lifecycle;
 mod mail;
 mod registry;
-mod session;
 mod task;
 mod transport;
 

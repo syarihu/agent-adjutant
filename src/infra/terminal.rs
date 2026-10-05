@@ -16,7 +16,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-pub use crate::infra::shell::run_shell;
+use crate::infra::shell::run_shell;
 use crate::infra::template::{Sub, contains_placeholder, render, sh_quote};
 
 pub struct SpawnRequest<'a> {
