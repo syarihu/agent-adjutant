@@ -53,10 +53,8 @@ fn answer_for(pr: &str) -> String {
 /// cannot find: an answer with the errors in it, and a non-zero exit.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let asked = fixture.repo.join("gh-asked");
     let calls = fixture.repo.join("gh-calls");
-    let gh = stubs.join("gh");
     // `-F pK=N` is how the query is given each pull request's number.
     let script = r#"#!/bin/sh
 echo call >> @CALLS@
@@ -94,15 +92,9 @@ echo "{\"data\":{$data}}"
     .replace("@MERGED@", &pr_json("MERGED", false, "", &[]))
     .replace("@OPEN@", &pr_json("OPEN", false, "", &[]))
     .replace("@CLOSED@", &pr_json("CLOSED", false, "", &[]));
-    std::fs::write(&gh, script).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stub_bin(&stubs, "gh", &script);
     // Prepended rather than replacing: the binary still has to find the real `git`.
-    let path = format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let path = path_with(&stubs);
     (path, asked)
 }
 
@@ -357,22 +349,14 @@ fn the_tool_does_what_the_command_does() {
 /// longer than a pipe holds is no trouble to write.
 fn stub_gh_answering(fixture: &Fixture, answer: &str) -> String {
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let said = fixture.repo.join("gh-answer");
     std::fs::write(&said, answer_for(answer)).unwrap();
-    let gh = stubs.join("gh");
-    std::fs::write(
-        &gh,
-        format!("#!/bin/sh\ncat {}\n", shell_quoted(&said.to_string_lossy())),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
-    )
+    stub_bin(
+        &stubs,
+        "gh",
+        &format!("#!/bin/sh\ncat {}\n", shell_quoted(&said.to_string_lossy())),
+    );
+    path_with(&stubs)
 }
 
 fn record_file(fixture: &Fixture, id: &str) -> PathBuf {

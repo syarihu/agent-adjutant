@@ -82,24 +82,6 @@ fn git_worktree(fixture: &Fixture, path: &Path, name: &str) {
     );
 }
 
-fn get_with_query(resident: &Resident, path: &str, query: &str) -> (u16, String) {
-    use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", resident.port)).unwrap();
-    write!(
-        stream,
-        "GET {path}?{query}&token={} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-        resident.token
-    )
-    .unwrap();
-    let mut answer = String::new();
-    stream.read_to_string(&mut answer).unwrap();
-    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
-    (
-        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
-        body.to_string(),
-    )
-}
-
 /// A board with a hub that is not running, a parent-task hub, a worker that is, one that
 /// is not, a worker on the main checkout, three tasks, and the gates and mail around them.
 ///
@@ -129,14 +111,11 @@ fn board() -> (Fixture, Resident) {
     // A tmux that answers `-V` and nothing else, so every terminal feature is available and
     // no pane exists.
     let bin = fixture._dir.path().join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(
-        bin.join("tmux"),
+    stub_bin(
+        &bin,
+        "tmux",
         "#!/bin/sh\ncase \"$*\" in -V) echo \"tmux 3.4\";; esac\nexit 0\n",
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(bin.join("tmux"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     // The parent-task hub is known only through its record, of a process that is gone.
     write(
@@ -264,11 +243,7 @@ fn board() -> (Fixture, Resident) {
     )
     .unwrap();
 
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let path = path_with(&bin);
     let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
     (fixture, resident)
 }

@@ -230,25 +230,6 @@ fn a_parent_task_hub_s_board_is_served_at_its_own_path() {
     assert!(repository["key"].is_null(), "{repository}");
 }
 
-/// A GET whose own query is `query`, with the token added after it.
-fn get_with_query(resident: &Resident, path: &str, query: &str) -> (u16, String) {
-    use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", resident.port)).unwrap();
-    write!(
-        stream,
-        "GET {path}?{query}&token={} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-        resident.token
-    )
-    .unwrap();
-    let mut answer = String::new();
-    stream.read_to_string(&mut answer).unwrap();
-    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
-    (
-        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
-        body.to_string(),
-    )
-}
-
 /// `/api/boards`, as a list of objects.
 fn boards_of(resident: &Resident) -> Vec<serde_json::Value> {
     let (status, body) = resident.get("/api/boards");
@@ -632,10 +613,9 @@ impl FakeTmux {
     fn new(fixture: &Fixture) -> FakeTmux {
         let root = fixture._dir.path();
         let bin = root.join("fakebin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let tmux = bin.join("tmux");
-        std::fs::write(
-            &tmux,
+        stub_bin(
+            &bin,
+            "tmux",
             "#!/bin/sh\n\
              echo \"$@\" >> \"$FAKE_TMUX_LOG\"\n\
              case \"$*\" in\n\
@@ -648,10 +628,7 @@ impl FakeTmux {
              *kill-pane*|*kill-window*) [ -f \"$FAKE_TMUX_LOG.onkill\" ] && sh \"$FAKE_TMUX_LOG.onkill\"; [ -n \"$FAKE_TMUX_KILL\" ] && kill \"$FAKE_TMUX_KILL\" ;;\n\
              esac\n\
              exit 0\n",
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let panes = root.join("panes.txt");
         std::fs::write(&panes, "").unwrap();
         let clients = root.join("clients.txt");
@@ -671,11 +648,7 @@ impl FakeTmux {
     }
 
     fn path(&self) -> String {
-        format!(
-            "{}:{}",
-            self.bin.display(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        path_with(&self.bin)
     }
 
     fn logged(&self) -> String {
@@ -4206,15 +4179,13 @@ fn a_worktree_git_cannot_read_is_a_reason_of_its_own() {
 /// writes down the URL of each issue it is asked about. Returns the `PATH` to run the server
 /// with and that log.
 fn stub_gh_for_titles(fixture: &Fixture) -> (String, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let asked = fixture.repo.join("gh-asked");
     let fail = fixture.repo.join("gh-fail");
-    let gh = stubs.join("gh");
-    std::fs::write(
-        &gh,
-        format!(
+    stub_bin(
+        &stubs,
+        "gh",
+        &format!(
             "#!/bin/sh\n\
              for a; do u=$a; done\n\
              echo \"$u\" >> {asked}\n\
@@ -4223,14 +4194,8 @@ fn stub_gh_for_titles(fixture: &Fixture) -> (String, PathBuf) {
             asked = shell_quoted(&asked.to_string_lossy()),
             fail = shell_quoted(&fail.to_string_lossy()),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
     );
+    let path = path_with(&stubs);
     (path, asked)
 }
 
@@ -4395,9 +4360,7 @@ fn graphql_of_pr(state: &str, decision: &str) -> String {
 /// taken away. GraphQL answers with `gh-graphql`. Every call is written down in `gh-calls`,
 /// whole, so a test can see what was sent.
 fn stub_gh_for_polling(fixture: &Fixture, interval: u64) -> String {
-    use std::os::unix::fs::PermissionsExt;
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let dir = fixture.repo.to_string_lossy().to_string();
     let script = r#"#!/bin/sh
 D=@DIR@
@@ -4425,19 +4388,13 @@ printf '[{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/ac
 "#
     .replace("@DIR@", &shell_quoted(&dir))
     .replace("@INTERVAL@", &interval.to_string());
-    let gh = stubs.join("gh");
-    std::fs::write(&gh, script).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stub_bin(&stubs, "gh", &script);
     std::fs::write(
         fixture.repo.join("gh-graphql"),
         graphql_of_pr("OPEN", "APPROVED"),
     )
     .unwrap();
-    format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
-    )
+    path_with(&stubs)
 }
 
 /// How many times the stub `gh` was run for `kind`: `notifications` or `graphql`.
@@ -4447,20 +4404,6 @@ fn gh_ran(fixture: &Fixture, kind: &str) -> usize {
         .lines()
         .filter(|line| *line == kind)
         .count()
-}
-
-/// Polls until `done` holds, or panics after about ten seconds with what was last seen.
-fn wait_until<T: std::fmt::Debug>(what: &str, mut seen: impl FnMut() -> (bool, T)) -> T {
-    let mut last = None;
-    for _ in 0..100 {
-        let (done, value) = seen();
-        if done {
-            return value;
-        }
-        last = Some(value);
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    panic!("{what}: last saw {last:?}");
 }
 
 fn turn_of(resident: &Resident, id: &str) -> serde_json::Value {

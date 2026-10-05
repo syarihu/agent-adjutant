@@ -14,15 +14,14 @@ const ISSUE: &str = "https://github.com/acme/widget/issues";
 /// find. Once `gh-fail` exists, everything does.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let asked = fixture.repo.join("gh-asked");
     let title = fixture.repo.join("gh-title");
     let fail = fixture.repo.join("gh-fail");
     std::fs::write(&title, "T").unwrap();
-    let gh = stubs.join("gh");
-    std::fs::write(
-        &gh,
-        format!(
+    stub_bin(
+        &stubs,
+        "gh",
+        &format!(
             "#!/bin/sh\n\
              for a; do u=$a; done\n\
              echo \"$u\" >> {asked}\n\
@@ -36,15 +35,8 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
             title = shell_quoted(&title.to_string_lossy()),
             fail = shell_quoted(&fail.to_string_lossy()),
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
     );
+    let path = path_with(&stubs);
     (path, asked)
 }
 
