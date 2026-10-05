@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 
 use crate::{gate, task};
 
-use super::registry::resident_board_url;
-use crate::registry::{addresses, note_board};
+use crate::board::resident_board_url;
+use crate::registry::addresses;
 
 /// What a worker's record says about the task it is on, for `board_counts`.
 pub(super) struct WorkerSeen {
@@ -197,30 +197,4 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
             })
         })
         .collect()
-}
-
-/// The repository this process stands in, if it stands in one. Whether it is one is not the
-/// business of the commands that ask.
-pub(super) fn checkout_here() -> Option<crate::kernel::identity::RepoInfo> {
-    crate::registry::resolve(None, None).ok()
-}
-
-/// Seed the address book from where this process stands and from the hub records already on
-/// disk, so that the boards of hubs started before the resident are there from the first
-/// request.
-pub(super) fn seed_boards(root: &Path) {
-    if let Some(repo) = checkout_here() {
-        note_board(root, &repo);
-    }
-    for (slug, record) in crate::registry::hub_records(root) {
-        let Some(cwd) = record.cwd.as_deref() else {
-            continue;
-        };
-        if let Ok(repo) =
-            crate::kernel::identity::resolve_in(Some(Path::new(cwd)), None, record.hub.as_deref())
-            && repo.slug == slug
-        {
-            note_board(root, &repo);
-        }
-    }
 }

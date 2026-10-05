@@ -1707,3 +1707,52 @@ fn a_record_is_removed_only_while_it_names_the_stopped_server() {
     assert!(!names_resident(Some(&old), 7, Some("later")));
     assert!(!names_resident(None, 7, None));
 }
+
+#[test]
+fn forgetting_a_board_removes_only_that_slug() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    std::fs::create_dir_all(boards_dir(&root)).unwrap();
+    for slug in ["acme-widget-a", "acme-widget-b"] {
+        std::fs::write(boards_dir(&root).join(format!("{slug}.json")), "{}").unwrap();
+    }
+    forget_board(&root, "acme-widget-a").unwrap();
+    assert!(!boards_dir(&root).join("acme-widget-a.json").exists());
+    assert!(boards_dir(&root).join("acme-widget-b.json").exists());
+    // Nothing to forget is not an error.
+    forget_board(&root, "acme-widget-a").unwrap();
+}
+
+#[test]
+fn the_dashboards_record_is_written_whole() {
+    let sandbox = crate::testing::Sandbox::empty();
+    assert_eq!(record(&sandbox.state(), "acme-widget", 4321), Ok(true));
+    let dir = sandbox.state().join("dashboards");
+    let names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["acme-widget.json"]);
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("acme-widget.json")).unwrap())
+            .unwrap();
+    let pid = std::process::id();
+    assert_eq!(written["pid"], pid);
+    assert_eq!(written["port"], 4321);
+    assert_eq!(
+        written["psStarted"],
+        json!(crate::registry::ps_started(pid))
+    );
+    assert_eq!(
+        dashboards_running(&sandbox.state(), "acme-widget"),
+        Some(4321)
+    );
+}
+
+#[test]
+fn the_resident_is_preferred_over_a_dedicated_board() {
+    assert_eq!(prefer(Some(1), Some(2)), Some(Served::Resident(1)));
+    assert_eq!(prefer(Some(1), None), Some(Served::Resident(1)));
+    assert_eq!(prefer(None, Some(2)), Some(Served::Dedicated(2)));
+    assert_eq!(prefer(None, None), None);
+}

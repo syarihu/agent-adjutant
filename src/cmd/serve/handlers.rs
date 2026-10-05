@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::Server;
 use super::routes::{hub_route, task_id_in};
-use super::state::settings_now;
+use crate::board::settings_now;
 use crate::jules::{findings as jules_findings, relay as jules_relay};
 
 // ── the two things the board can change ──────────────────────────────
