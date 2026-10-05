@@ -272,7 +272,7 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         // couple of seconds and must not reach GitHub.
         "prPoll": server.pr_poll.as_ref().map(|p| p.health_json()),
         // Whether the board may start a hub: only where the settings mean a tmux window.
-        "hubStart": { "available": crate::cmd::hub_startable(&settings.terminal) },
+        "hubStart": { "available": crate::lifecycle::hub::hub_startable(&settings.terminal) },
         // Whether the board can open a terminal on a session that runs in tmux: the resident
         // server, on a machine that has tmux. Which sessions is for the page to read from
         // `sessions[].terminal` and `present`.

@@ -1,6 +1,7 @@
 use super::*;
 use crate::lifecycle::hub::{
-    AutoResume, Claimed, HubRequest, Planned, Skip, claim_launch, exec_launch, plan_launch,
+    AutoResume, Claimed, HubRequest, HubStart, Planned, Skip, TabOutcome, claim_launch,
+    exec_launch, hub_in_tab, plan_launch,
 };
 
 // ── hub (the launcher) ─────────────────────────────────────────

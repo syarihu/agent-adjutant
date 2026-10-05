@@ -55,7 +55,7 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
     let settings = settings_now(server);
     match action {
         "focus" => {
-            let done = crate::cmd::focus_worker(&settings, path, false)?;
+            let done = crate::lifecycle::worker::focus_worker(&settings, path, false)?;
             Ok(json!({
                 "present": done.is_some(),
                 "ran": done.as_ref().is_some_and(|d| d.ran),
@@ -90,11 +90,13 @@ pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
 }
 
 /// How a hub is to be started, from the `start` a request names: `auto` when it names none.
-pub(in crate::cmd) fn hub_start_of(input: &Value) -> Result<crate::cmd::HubStart, String> {
+pub(in crate::cmd) fn hub_start_of(
+    input: &Value,
+) -> Result<crate::lifecycle::hub::HubStart, String> {
     match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
-        "auto" => Ok(crate::cmd::HubStart::Auto),
-        "resume" => Ok(crate::cmd::HubStart::Resume),
-        "new" => Ok(crate::cmd::HubStart::New),
+        "auto" => Ok(crate::lifecycle::hub::HubStart::Auto),
+        "resume" => Ok(crate::lifecycle::hub::HubStart::Resume),
+        "new" => Ok(crate::lifecycle::hub::HubStart::New),
         other => Err(format!("no such start: {other}")),
     }
 }
@@ -158,11 +160,11 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
         "start" => {
             let start = hub_start_of(&input)?;
             let ctx = hub_start_context(server, &hub, settings)?;
-            match crate::cmd::start_hub(&ctx, start)? {
-                crate::cmd::TabOutcome::Opened(done) => {
+            match crate::lifecycle::hub::start_hub(&ctx, start)? {
+                crate::lifecycle::hub::TabOutcome::Opened(done) => {
                     Ok(json!({ "started": true, "description": done.description }))
                 }
-                crate::cmd::TabOutcome::AlreadyRunning(status) => {
+                crate::lifecycle::hub::TabOutcome::AlreadyRunning(status) => {
                     Ok(json!({ "alreadyRunning": true, "pid": status.pid }))
                 }
             }
@@ -170,15 +172,17 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
         "reset" => {
             // Everything start would refuse is refused before the hub is stopped: a reset that
             // could not start again would only have taken the hub down.
-            if !crate::cmd::hub_startable(&settings.terminal) {
+            if !crate::lifecycle::hub::hub_startable(&settings.terminal) {
                 return Err(
                     "starting a hub from the board needs terminal.preset \"tmux\"".to_string(),
                 );
             }
             let start_ctx = hub_start_context(server, &hub, settings.clone())?;
-            let was_running = crate::cmd::stop_hub(&hub_stop_context(server, &hub, settings))?;
-            match crate::cmd::start_hub(&start_ctx, crate::cmd::HubStart::New) {
-                Ok(crate::cmd::TabOutcome::Opened(done)) => Ok(json!({
+            let was_running =
+                crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
+            match crate::lifecycle::hub::start_hub(&start_ctx, crate::lifecycle::hub::HubStart::New)
+            {
+                Ok(crate::lifecycle::hub::TabOutcome::Opened(done)) => Ok(json!({
                     "reset": true,
                     "wasRunning": was_running,
                     "started": true,
@@ -187,7 +191,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
                 // A hub is up that this request did not start (nothing was running, or another
                 // start won the race after the stop), so it is not a new conversation, and
                 // the answer must not say it is.
-                Ok(crate::cmd::TabOutcome::AlreadyRunning(status)) => Ok(json!({
+                Ok(crate::lifecycle::hub::TabOutcome::AlreadyRunning(status)) => Ok(json!({
                     "reset": false,
                     "wasRunning": was_running,
                     "alreadyRunning": true,
@@ -208,11 +212,15 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
                 return Err(refusal);
             }
             let start_ctx = hub_start_context(server, &hub, settings.clone())?;
-            crate::cmd::hub_resume_check(&start_ctx)?;
+            crate::lifecycle::hub::hub_resume_check(&start_ctx)?;
             let restarting = crate::cmd::board_actions::Restarting::claim(&hub.slug, &hub.name)?;
-            let was_running = crate::cmd::stop_hub(&hub_stop_context(server, &hub, settings))?;
-            match crate::cmd::start_hub(&start_ctx, crate::cmd::HubStart::Resume) {
-                Ok(crate::cmd::TabOutcome::Opened(done)) => {
+            let was_running =
+                crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
+            match crate::lifecycle::hub::start_hub(
+                &start_ctx,
+                crate::lifecycle::hub::HubStart::Resume,
+            ) {
+                Ok(crate::lifecycle::hub::TabOutcome::Opened(done)) => {
                     // The window is open but the new hub has not registered yet: another
                     // restart now would stop it or open a second window beside it.
                     restarting.hold();
@@ -225,7 +233,7 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
                 }
                 // As for a reset: a hub is up that this request did not start, so the
                 // answer must not say it was restarted.
-                Ok(crate::cmd::TabOutcome::AlreadyRunning(status)) => Ok(json!({
+                Ok(crate::lifecycle::hub::TabOutcome::AlreadyRunning(status)) => Ok(json!({
                     "restarted": false,
                     "wasRunning": was_running,
                     "alreadyRunning": true,
@@ -244,7 +252,8 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
                 crate::lifecycle::hub::closable_check(repo, &hub)?;
             }
             // A hub that will not stop is not closed: nothing is forgotten until it is gone.
-            let was_running = crate::cmd::stop_hub(&hub_stop_context(server, &hub, settings))?;
+            let was_running =
+                crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
             if closing {
                 // `stop_hub` cleared a record naming the process it stopped; a hub that
                 // registered in the meantime stays, and `close` refuses it as still running.
