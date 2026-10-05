@@ -11,7 +11,7 @@ pub fn skill(name: &str, arguments: &str, agent: Option<&str>) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) use crate::transport::wording::skill_text;
+use crate::transport::wording::skill_text;
 
 /// What the hub has left for the worker in this worktree.
 pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {

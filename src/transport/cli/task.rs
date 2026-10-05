@@ -32,7 +32,7 @@ fn snapshot_if_started(ctx: &Context, task: Task, changed: bool) -> Task {
     }
 }
 
-pub use crate::transport::wording::refresh_json;
+use crate::transport::wording::refresh_json;
 
 // ── the subcommands ──────────────────────────────────────────────────
 

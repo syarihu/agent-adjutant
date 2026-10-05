@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use crate::cmd::settings_for;
+use super::settings_for;
 use crate::infra::terminal;
 
 pub fn pane(

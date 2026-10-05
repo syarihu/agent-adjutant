@@ -100,7 +100,7 @@ fn the_pr_step_takes_its_base_from_the_brief() {
         "the base is checked after the review is requested"
     );
 
-    // The writer's side of the label is held by the label tests in `cmd::task`, which
+    // The writer's side of the label is held by the label tests in `transport::cli::task`, which
     // may see both the brief and this procedure.
 }
 
@@ -135,7 +135,7 @@ fn the_copilot_review_request_follows_the_brief() {
         "the Copilot branch is not between the base check and the request"
     );
 
-    // The writer's side of the label is held by the label tests in `cmd::task`.
+    // The writer's side of the label is held by the label tests in `transport::cli::task`.
 }
 
 /// A `gh pr create` with nothing to base it on is the defect itself, not just one
@@ -241,7 +241,7 @@ fn the_worktree_step_takes_a_base_meant_for_one_dispatch() {
 /// re-derives from one subtask the design the siblings already settled.
 #[test]
 fn the_parent_task_line_is_written_by_the_hub_and_read_by_the_worker() {
-    // The writer's side of the label is held by the label tests in `cmd::task`.
+    // The writer's side of the label is held by the label tests in `transport::cli::task`.
     let plan = section(find("adj-worker").unwrap().raw_content, "## 1. ");
     let flowed: String = flow(&plan);
     assert!(
@@ -354,7 +354,7 @@ fn a_report_carries_the_task_it_was_found_in_and_that_task_s_parent() {
         "the report does not say what to write when there is no parent: {compose}"
     );
 
-    // The brief's side of the labels is held by the label tests in `cmd::task`; this
+    // The brief's side of the labels is held by the label tests in `transport::cli::task`; this
     // side is the report heading the hub reads.
     let hub = find("adj-hub").unwrap().raw_content;
     // A report whose parent is `-` is complete, not short of a field. Without this the
@@ -2685,7 +2685,7 @@ fn a_worker_whose_wake_reads_the_screen_ends_its_turn_after_opening_a_gate() {
 
 /// The hub writes this note when a start fails, and `adj task next` skips a task by it. Two
 /// copies of one string drift apart silently; this pins the procedure's wording, and a test
-/// in `cmd::task` holds `task::COULD_NOT_START` to it (a leaf cannot name the constant).
+/// in `transport::cli::task` holds `task::COULD_NOT_START` to it (a leaf cannot name the constant).
 #[test]
 fn the_note_a_failed_start_leaves_is_the_one_the_queue_skips() {
     let hub = find("adj-hub").unwrap().raw_content;
