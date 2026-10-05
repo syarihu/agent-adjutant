@@ -223,8 +223,8 @@ pub(super) fn bind_resident(root: &Path, port: u16) -> Result<BoundResident, Str
         .map(|a| a.port())
         .map_err(|e| format!("cannot read the server's port: {e}"))?;
     let token = token(root)?;
-    record_server(root, bound)?;
-    seed_boards(root);
+    // Built before the record is written, so asking tmux for its version does not stand
+    // between the record and the serving line, which whoever sees the record waits for.
     let resident = Arc::new(Resident {
         root: root.to_path_buf(),
         token,
@@ -234,6 +234,8 @@ pub(super) fn bind_resident(root: &Path, port: u16) -> Result<BoundResident, Str
         terminals: Arc::default(),
         pr_poll: Arc::default(),
     });
+    record_server(root, bound)?;
+    seed_boards(root);
     Ok(BoundResident {
         lock,
         listener,

@@ -181,6 +181,7 @@ pub(crate) fn names_resident(
     record.is_some_and(|(p, s)| *p == pid && s.as_deref() == started)
 }
 
+/// Remove `server.json` while it still names the stopped process.
 pub(crate) fn forget_server(root: &Path, pid: u32, started: Option<&str>) {
     if names_resident(recorded_server(root).as_ref(), pid, started) {
         let _ = std::fs::remove_file(server_record_path(root));
