@@ -1,10 +1,10 @@
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::board::view::{find_session, git_state_of};
-use crate::board::{NEXT, Server, input_of, settings_now, text};
+use crate::board::{NEXT, Server, settings_now};
 use crate::infra::paths::same_path;
 use crate::infra::template::{Sub, render};
 use crate::kernel::worktree_state::GitState;
@@ -14,23 +14,77 @@ use crate::task::{self, Executor, Status};
 
 // ── cleanup ──────────────────────────────────────────────────────────
 
+/// What the person asked for when removing a session's worktree.
+pub struct CleanUpRequest {
+    /// Remove although there is work that would be lost.
+    pub force: bool,
+    /// The worktree's name typed back; a forced removal needs it.
+    pub confirm: Option<String>,
+}
+
+/// How a clean-up came out when nothing refused it outright.
+pub enum CleanUp {
+    /// Nothing was removed because there is work that would be lost.
+    Kept {
+        reasons: Vec<Loss>,
+        git: Option<GitState>,
+        /// Whether the session was running and has been closed; `None` on the first look, which
+        /// closes nothing.
+        closed: Option<bool>,
+    },
+    Removed(Removed),
+}
+
+/// What a removal did.
+pub struct Removed {
+    pub forced: bool,
+    /// Whether the session was running and has been closed.
+    pub closed: bool,
+    /// `None` when no branch is known for the session.
+    pub branch: Option<BranchRemoval>,
+    /// The tasks finished with the worktree.
+    pub tasks: Vec<String>,
+    /// The tasks that could not be finished, as (id, error).
+    pub task_errors: Vec<(String, String)>,
+    pub hooks: Vec<HookRun>,
+}
+
+/// The local branch's removal: it can fail without undoing the worktree's.
+pub struct BranchRemoval {
+    pub name: String,
+    pub deleted: Result<(), String>,
+}
+
+/// One `onWorktreeRemove` command and how it ended, as the error text when it failed.
+pub struct HookRun {
+    pub command: String,
+    pub result: Result<(), String>,
+}
+
+/// Work that removing the worktree would lose.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Loss {
+    /// A git that could not answer: not knowing is not the same as nothing to lose.
+    Git(String),
+    Uncommitted {
+        files: usize,
+        insertions: usize,
+        deletions: usize,
+    },
+    Untracked(usize),
+    Unpushed(usize),
+}
+
 /// Remove the worktree of the worker session `id` and its local branch, closing the session
 /// first if it runs.
 ///
 /// The hub's procedure says it is the only route by which anything is removed; from here the
 /// board is a second one, and makes the same checks itself rather than asking the hub, which
 /// may not be running. Refusals that cannot be forced (the ground under a worker still to
-/// come) are errors. What would be lost is a `removed: false` with the reasons, answered 200
-/// like `closed: false` is: the page keeps only `error` from a non-2xx answer, and the reasons
-/// are what the person needs to decide whether to force.
-pub fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
-    let input = input_of(body)?;
-    let force = match input.get("force") {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(force)) => *force,
-        Some(other) => return Err(format!("force has to be true or false, not {other}")),
-    };
-    let confirm = text(&input, "confirm")?;
+/// come) are errors. What would be lost is `Kept` with the reasons, not an error: the reasons
+/// are what the person needs to decide whether to force. `Removed` says what was done.
+pub fn clean_up(server: &Server, id: &str, request: CleanUpRequest) -> Result<CleanUp, String> {
+    let CleanUpRequest { force, confirm } = request;
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
     let repo = &server.ctx.repo;
@@ -49,7 +103,7 @@ pub fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    if force && confirm != Some(name.as_str()) {
+    if force && confirm.as_deref() != Some(name.as_str()) {
         return Err(format!("confirm has to be the worktree's name: {name}"));
     }
 
@@ -82,11 +136,11 @@ pub fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
     let state = git_state_of(server, &session);
     let reasons = loss_reasons(&state);
     if !reasons.is_empty() && !force {
-        return Ok(json!({
-            "removed": false,
-            "reasons": reasons,
-            "git": state.as_ref().ok().and_then(|s| s.as_ref()),
-        }));
+        return Ok(CleanUp::Kept {
+            reasons,
+            git: state.ok().flatten(),
+            closed: None,
+        });
     }
     let state = state.ok().flatten();
 
@@ -117,12 +171,11 @@ pub fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
         let again = git_state_of(server, &session);
         let reasons = loss_reasons(&again);
         if !reasons.is_empty() {
-            return Ok(json!({
-                "removed": false,
-                "closed": was_running,
-                "reasons": reasons,
-                "git": again.ok().flatten(),
-            }));
+            return Ok(CleanUp::Kept {
+                reasons,
+                git: again.ok().flatten(),
+                closed: Some(was_running),
+            });
         }
     }
     // The lock covers only the last look at the worker slots and the marker that says the
@@ -147,13 +200,10 @@ pub fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
         .as_ref()
         .and_then(|s| s.branch.clone())
         .or(session.branch.clone());
-    let branch = match &branch_name {
-        Some(branch) => match delete_branch(&repo.main, branch) {
-            Ok(()) => json!({ "name": branch, "deleted": true }),
-            Err(e) => json!({ "name": branch, "deleted": false, "error": e }),
-        },
-        None => json!({ "name": Value::Null, "deleted": false }),
-    };
+    let branch = branch_name.map(|name| {
+        let deleted = delete_branch(&repo.main, &name);
+        BranchRemoval { name, deleted }
+    });
 
     let hooks = run_remove_hooks(server, worktree, &name);
 
@@ -183,28 +233,23 @@ pub fn cleanup(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
         };
         match task::update(&ctx, &t.id, &done_patch, false) {
             Ok(_) => done.push(t.id.clone()),
-            Err(e) => task_errors.push(json!({ "id": t.id, "error": e })),
+            Err(e) => task_errors.push((t.id.clone(), e)),
         }
     }
-    let mut reply = json!({
-        "removed": true,
-        "forced": force,
-        "closed": was_running,
-        "branch": branch,
-        "tasks": done,
-        "hooks": hooks,
-    });
-    if !task_errors.is_empty() {
-        reply["taskErrors"] = json!(task_errors);
-    }
-    Ok(reply)
+    Ok(CleanUp::Removed(Removed {
+        forced: force,
+        closed: was_running,
+        branch,
+        tasks: done,
+        task_errors,
+        hooks,
+    }))
 }
 
-/// What removing the worktree would lose, as `{kind, detail}` for the page to list. A git that
-/// could not answer is a reason of its own: not knowing is not the same as nothing to lose.
-fn loss_reasons(state: &Result<Option<GitState>, String>) -> Vec<Value> {
+/// What removing the worktree would lose. A git that could not answer is a reason of its own.
+fn loss_reasons(state: &Result<Option<GitState>, String>) -> Vec<Loss> {
     let state = match state {
-        Err(e) => return vec![json!({ "kind": "git", "detail": e })],
+        Err(e) => return vec![Loss::Git(e.clone())],
         // The directory is gone: there is nothing left to lose.
         Ok(None) => return Vec::new(),
         Ok(Some(state)) => state,
@@ -212,25 +257,17 @@ fn loss_reasons(state: &Result<Option<GitState>, String>) -> Vec<Value> {
     let mut reasons = Vec::new();
     let uncommitted = &state.uncommitted;
     if uncommitted.files > 0 {
-        reasons.push(json!({
-            "kind": "uncommitted",
-            "detail": format!(
-                "{} changed file(s), +{} -{} lines",
-                uncommitted.files, uncommitted.insertions, uncommitted.deletions
-            ),
-        }));
+        reasons.push(Loss::Uncommitted {
+            files: uncommitted.files,
+            insertions: uncommitted.insertions,
+            deletions: uncommitted.deletions,
+        });
     }
     if uncommitted.untracked > 0 {
-        reasons.push(json!({
-            "kind": "untracked",
-            "detail": format!("{} untracked path(s)", uncommitted.untracked),
-        }));
+        reasons.push(Loss::Untracked(uncommitted.untracked));
     }
     if state.unpushed.count > 0 {
-        reasons.push(json!({
-            "kind": "unpushed",
-            "detail": format!("{} commit(s) no remote has", state.unpushed.count),
-        }));
+        reasons.push(Loss::Unpushed(state.unpushed.count));
     }
     reasons
 }
@@ -406,7 +443,7 @@ fn delete_branch(main: &str, branch: &str) -> Result<(), String> {
 /// with `{worktree}` and `{name}` filled in, as the hub does. Read from the config now, not
 /// from the settings the server started with. A hook that fails is reported and does not
 /// undo anything.
-fn run_remove_hooks(server: &Server, worktree: &str, name: &str) -> Vec<Value> {
+fn run_remove_hooks(server: &Server, worktree: &str, name: &str) -> Vec<HookRun> {
     let hooks = crate::kernel::config::resolve_config(&server.ctx.repo.nwo)
         .ok()
         .and_then(|resolved| resolved.config)
@@ -430,17 +467,82 @@ fn run_remove_hooks(server: &Server, worktree: &str, name: &str) -> Vec<Value> {
                 .current_dir(&server.ctx.repo.main)
                 .output();
             match ran {
-                Ok(out) if out.status.success() => json!({ "command": command, "ok": true }),
+                Ok(out) if out.status.success() => HookRun {
+                    command,
+                    result: Ok(()),
+                },
                 Ok(out) => {
                     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                     let error = match stderr.is_empty() {
                         true => format!("exited with {}", out.status),
                         false => stderr,
                     };
-                    json!({ "command": command, "ok": false, "error": error })
+                    HookRun {
+                        command,
+                        result: Err(error),
+                    }
                 }
-                Err(e) => json!({ "command": command, "ok": false, "error": e.to_string() }),
+                Err(e) => HookRun {
+                    command,
+                    result: Err(e.to_string()),
+                },
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::worktree_state::{MergedInto, Uncommitted, Unpushed};
+
+    fn state(uncommitted: Uncommitted, unpushed: usize) -> GitState {
+        GitState {
+            branch: Some("retry-upload".to_string()),
+            head: Some("abc1234".to_string()),
+            uncommitted,
+            upstream: None,
+            unpushed: Unpushed {
+                count: unpushed,
+                commits: Vec::new(),
+                against: "remotes",
+            },
+            merged: MergedInto {
+                base: None,
+                reference: None,
+                merged: None,
+                reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn uncommitted_untracked_and_unpushed_work_are_three_losses() {
+        let dirty = state(
+            Uncommitted {
+                files: 3,
+                untracked: 1,
+                insertions: 10,
+                deletions: 2,
+            },
+            2,
+        );
+        assert_eq!(
+            loss_reasons(&Ok(Some(dirty))),
+            vec![
+                Loss::Uncommitted {
+                    files: 3,
+                    insertions: 10,
+                    deletions: 2
+                },
+                Loss::Untracked(1),
+                Loss::Unpushed(2)
+            ]
+        );
+        assert_eq!(
+            loss_reasons(&Err("no git".to_string())),
+            vec![Loss::Git("no git".to_string())]
+        );
+        assert_eq!(loss_reasons(&Ok(None)), Vec::new());
+    }
 }
