@@ -31,4 +31,4 @@ check:
 	for f in src/ui/*.js; do node --check "$$f" || exit 1; done
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
-	cargo test
+	./scripts/check-test-leaks.sh cargo test

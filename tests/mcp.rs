@@ -7,12 +7,14 @@ use common::*;
 /// The same driver as `common::mcp`, but the input is bytes — a line that is not valid UTF-8
 /// cannot be written any other way, and that is the whole point of the test below.
 fn mcp_raw(fixture: &Fixture, lines: &[&[u8]]) -> Vec<serde_json::Value> {
-    let mut child = fixture
-        .command(["mcp"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = Reaped(
+        fixture
+            .command(["mcp"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     {
         let stdin = child.stdin.as_mut().unwrap();
         for line in lines {
@@ -20,7 +22,7 @@ fn mcp_raw(fixture: &Fixture, lines: &[&[u8]]) -> Vec<serde_json::Value> {
             stdin.write_all(b"\n").unwrap();
         }
     }
-    let out = child.wait_with_output().unwrap();
+    let out = child.wait_with_output();
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -597,27 +599,25 @@ fn a_gate_says_when_its_wake_looks_at_the_screen_first() {
 
 /// An MCP server started with a hub's line, talked to until it has said where the board is.
 /// Returns the child, still running, and what `adjutant_config` answered.
-fn hub_mcp(fixture: &Fixture, slug: &str) -> (std::process::Child, serde_json::Value) {
+fn hub_mcp(fixture: &Fixture, slug: &str) -> (Reaped, serde_json::Value) {
     hub_mcp_as(fixture, None, slug)
 }
 
 /// The same, for a hub named `hub` — `adj hub --hub` puts it on the line as `ADJUTANT_HUB`.
-fn hub_mcp_as(
-    fixture: &Fixture,
-    hub: Option<&str>,
-    slug: &str,
-) -> (std::process::Child, serde_json::Value) {
+fn hub_mcp_as(fixture: &Fixture, hub: Option<&str>, slug: &str) -> (Reaped, serde_json::Value) {
     let mut command = fixture.command(["mcp"]);
     if let Some(hub) = hub {
         command.env("ADJUTANT_HUB", hub);
     }
-    let mut child = command
-        .env("ADJUTANT_HUB_SERVE", slug)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = Reaped(
+        command
+            .env("ADJUTANT_HUB_SERVE", slug)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let call = request(
         1,
         "tools/call",
@@ -907,12 +907,18 @@ fn a_hub_s_mcp_server_serves_its_board_for_as_long_as_it_runs() {
 
     // The session ends: the pipe closes, the server exits, and the board goes with it.
     drop(child.stdin.take());
-    let out = child.wait_with_output().unwrap();
-    assert!(
-        out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    // Piped for `hub_mcp`'s sake and never read otherwise; drained alongside stdout so it
+    // cannot fill while stdout is being read.
+    let mut stderr = child.stderr.take().unwrap();
+    let noise = std::thread::spawn(move || {
+        let mut noise = Vec::new();
+        let _ = stderr.read_to_end(&mut noise);
+    });
+    let mut said = Vec::new();
+    child.stdout.take().unwrap().read_to_end(&mut said).unwrap();
+    noise.join().unwrap();
+    child.wait().unwrap();
+    assert!(said.is_empty(), "{}", String::from_utf8_lossy(&said));
     assert!(fixture.json(&["config"])["board"].is_null());
     assert!(std::net::TcpStream::connect(url.split('/').nth(2).unwrap()).is_err());
 }
@@ -966,12 +972,14 @@ fn a_hub_for_a_parent_task_serves_a_board_of_its_own() {
     child.wait().unwrap();
 }
 
-fn start_board(fixture: &Fixture) -> (std::process::Child, String) {
-    let mut by_hand = fixture
-        .command(["serve", "--port", "0", "--no-open"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+fn start_board(fixture: &Fixture) -> (Reaped, String) {
+    let mut by_hand = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut said = String::new();
     std::io::BufReader::new(by_hand.stdout.as_mut().unwrap())
         .read_line(&mut said)

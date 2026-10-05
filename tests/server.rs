@@ -124,14 +124,16 @@ fn a_hub_s_mcp_server_does_not_start_a_second_board_while_a_resident_serves() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);
 
-    let mut child = fixture
-        .command(["mcp"])
-        .env("ADJUTANT_HUB_SERVE", SLUG)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = Reaped(
+        fixture
+            .command(["mcp"])
+            .env("ADJUTANT_HUB_SERVE", SLUG)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     writeln!(
         child.stdin.as_mut().unwrap(),
         "{}",
@@ -143,7 +145,7 @@ fn a_hub_s_mcp_server_does_not_start_a_second_board_while_a_resident_serves() {
     )
     .unwrap();
     drop(child.stdin.take());
-    let out = child.wait_with_output().unwrap();
+    let out = child.wait_with_output();
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -280,11 +282,13 @@ fn patch_task(fixture: &Fixture, slug: &str, id: &str, patch: serde_json::Value)
 #[test]
 fn a_dedicated_board_has_no_board_list() {
     let fixture = Fixture::new(QUIET);
-    let mut board = fixture
-        .command(["serve", "--port", "0", "--no-open"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut board = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut said = String::new();
     std::io::BufReader::new(board.stdout.as_mut().unwrap())
         .read_line(&mut said)
@@ -737,11 +741,13 @@ fn hub_start_is_refused_without_the_tmux_preset() {
 #[test]
 fn hub_start_is_not_a_route_on_a_hub_s_own_board() {
     let fixture = Fixture::new(QUIET);
-    let mut board = fixture
-        .command(["serve", "--port", "0", "--no-open"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut board = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut said = String::new();
     std::io::BufReader::new(board.stdout.as_mut().unwrap())
         .read_line(&mut said)
@@ -3542,11 +3548,13 @@ fn a_worker_restart_that_cannot_start_again_keeps_the_session() {
 fn the_session_actions_and_starting_a_hub_are_not_routes_on_a_hub_s_own_board() {
     let fixture = Fixture::new(QUIET);
     session_worktree(&fixture, "ended", None, None, dead_pid());
-    let mut board = fixture
-        .command(["serve", "--port", "0", "--no-open"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut board = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut said = String::new();
     std::io::BufReader::new(board.stdout.as_mut().unwrap())
         .read_line(&mut said)

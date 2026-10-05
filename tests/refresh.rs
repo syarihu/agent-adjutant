@@ -320,13 +320,15 @@ fn the_tool_does_what_the_command_does() {
     let open = task_with_pr(&fixture, "open", "pr", &format!("{PULL}/2"));
     let (path, _) = stub_gh(&fixture);
 
-    let mut child = fixture
-        .command(["mcp"])
-        .env("PATH", &path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = Reaped(
+        fixture
+            .command(["mcp"])
+            .env("PATH", &path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     writeln!(
         child.stdin.as_mut().unwrap(),
         "{}",
@@ -339,7 +341,7 @@ fn the_tool_does_what_the_command_does() {
         )
     )
     .unwrap();
-    let out = child.wait_with_output().unwrap();
+    let out = child.wait_with_output();
     let reply: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).lines().next().unwrap()).unwrap();
     let text = reply["result"]["content"][0]["text"].as_str().unwrap();

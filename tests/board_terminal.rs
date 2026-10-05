@@ -8,7 +8,6 @@ mod common;
 
 use common::*;
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long to wait for anything the server or tmux has to start processes for. Under load a
@@ -34,17 +33,6 @@ fn config(tmux: &IsolatedTmux) -> String {
         }
     })
     .to_string()
-}
-
-/// A tmux name no other test, or copy of this binary, shares: `IsolatedTmux` derives its socket
-/// from the clock alone, which can tie on parallel starts.
-fn unique(name: &str) -> String {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    format!(
-        "{name}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
 }
 
 /// What the isolated tmux holds: a session showing `main`, and a window running `cat` that
@@ -322,7 +310,7 @@ fn read_until(stream: &mut TcpStream, seen: &mut String, wanted: &str) {
 
 #[test]
 fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_session() {
-    let Some(tmux) = IsolatedTmux::new(&unique("board")) else {
+    let Some(tmux) = IsolatedTmux::new("board") else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -418,7 +406,7 @@ fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_sessio
 
 #[test]
 fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
-    let Some(tmux) = IsolatedTmux::new(&unique("board-one")) else {
+    let Some(tmux) = IsolatedTmux::new("board-one") else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -492,7 +480,7 @@ fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
 
 #[test]
 fn a_handshake_is_refused_unless_it_comes_from_the_board_itself() {
-    let Some(tmux) = IsolatedTmux::new(&unique("board-auth")) else {
+    let Some(tmux) = IsolatedTmux::new("board-auth") else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -517,7 +505,7 @@ fn a_handshake_is_refused_unless_it_comes_from_the_board_itself() {
 
 #[test]
 fn a_session_that_is_not_in_tmux_is_closed_with_4404() {
-    let Some(tmux) = IsolatedTmux::new(&unique("board-none")) else {
+    let Some(tmux) = IsolatedTmux::new("board-none") else {
         eprintln!("tmux not available, skipping test");
         return;
     };
@@ -544,11 +532,13 @@ fn a_session_that_is_not_in_tmux_is_closed_with_4404() {
 #[test]
 fn the_terminal_is_not_a_route_on_a_dedicated_board() {
     let fixture = Fixture::new(QUIET);
-    let mut board = fixture
-        .command(["serve", "--port", "0", "--no-open"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut board = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut said = String::new();
     std::io::BufReader::new(board.stdout.as_mut().unwrap())
         .read_line(&mut said)
@@ -609,7 +599,7 @@ struct Open {
 }
 
 fn open_terminal(name: &str) -> Option<Open> {
-    let tmux = IsolatedTmux::new(&unique(name))?;
+    let tmux = IsolatedTmux::new(name)?;
     let layout = tmux.lay_out();
     let fixture = Fixture::new(&config(&tmux));
     forge_worker(&fixture, &layout);

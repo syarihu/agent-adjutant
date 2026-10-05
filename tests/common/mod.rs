@@ -335,7 +335,26 @@ impl Resident {
 
 impl Drop for Resident {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        // Its `sh -c "tmux …"` children in flight would outlive it and race the test's
+        // teardown, so they go with it. Collected first: once it is dead they are reparented.
+        let mut pids = vec![self.child.id() as i32];
+        let mut next = 0;
+        while next < pids.len() {
+            let out = Command::new("pgrep")
+                .args(["-P", &pids[next].to_string()])
+                .output();
+            if let Ok(out) = out {
+                pids.extend(
+                    String::from_utf8_lossy(&out.stdout)
+                        .split_whitespace()
+                        .filter_map(|p| p.parse::<i32>().ok()),
+                );
+            }
+            next += 1;
+        }
+        for pid in pids {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
         let _ = self.child.wait();
     }
 }
@@ -376,9 +395,89 @@ pub fn post(port: u16, token: &str, path: &str, body: &str) -> (u16, String) {
     (status, body.to_string())
 }
 
+/// A tmux server of its own, started here so that its panes can never be login shells.
+///
+/// A command-less pane (`new-session -d`, or the spawn template's `new-session` when the
+/// session is missing) runs the default shell as a login shell. When a test ends while such a
+/// pane is still being spawned, `kill-server` can take the server away under it, and the shell
+/// is left holding a pty for good. A pane that runs `cat` instead gets EIO from a slave with
+/// no master and exits, so even that orphan holds nothing.
 pub struct IsolatedTmux {
     pub socket: String,
     pub session: String,
+    // Under TMPDIR, so that the guard in `scripts/check-test-leaks.sh` sees a server that
+    // outlives its test. Dropped after `Drop::drop`, i.e. after the server is gone.
+    _cwd: tempfile::TempDir,
+}
+
+/// Where tmux puts a `-L` socket: `$TMUX_TMPDIR` (not `TMPDIR`), else `/tmp`.
+fn tmux_socket_dir() -> PathBuf {
+    let base = std::env::var_os("TMUX_TMPDIR")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "/tmp".into());
+    PathBuf::from(base).join(format!("tmux-{}", unsafe { libc::getuid() }))
+}
+
+/// A name no other test, or copy of this binary, shares. The pid is what lets a later run
+/// tell a socket left by a killed test process from one that is in use (see `sweep_dead`).
+fn unique(name: &str) -> String {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!(
+        "adj-test-{name}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
+/// Kill the servers of test processes that no longer exist, which `Drop` never got to.
+fn sweep_dead() {
+    let Ok(entries) = std::fs::read_dir(tmux_socket_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(rest) = name.strip_prefix("adj-test-") else {
+            continue;
+        };
+        let mut parts = rest.rsplitn(3, '-');
+        let (_, Some(pid)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let Ok(pid) = pid.parse::<i32>() else {
+            continue;
+        };
+        let alive = unsafe { libc::kill(pid, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        if !alive {
+            kill_server(&name);
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Run `kill-server` until nothing answers. A tmux client that was already on its way in can
+/// find the socket dead, remove it and start a fresh server after the first kill, so one
+/// attempt is not enough.
+fn kill_server(socket: &str) {
+    for _ in 0..10 {
+        // Its wording for "nothing there" differs between versions, its exit status does not.
+        let killed = Command::new("tmux")
+            .hermetic()
+            .args(["-L", socket, "kill-server"])
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if !killed {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    // A client that found the socket refusing removes it, which leaves a server that is still
+    // winding down with no way to be asked to stop. Only its command line or title names it,
+    // and a title (`tmux: server (<dir>/<socket>)`) ends the name differently, so the name is
+    // followed by a terminator that `-1` does not share with `-10`.
+    let _ = Command::new("pkill")
+        .args(["-KILL", "-f", &format!("{socket}([ )]|$)")])
+        .output();
 }
 
 impl IsolatedTmux {
@@ -387,17 +486,36 @@ impl IsolatedTmux {
         if !out.status.success() {
             return None;
         }
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let socket = format!("adj-test-{name}-{nanos}");
-        let session = "adjutant-test".to_string();
-        Some(IsolatedTmux { socket, session })
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(sweep_dead);
+        let socket = unique(name);
+        let cwd = tempfile::tempdir().unwrap();
+        let started = Command::new("tmux")
+            .hermetic()
+            .current_dir(cwd.path())
+            .args(["-L", &socket, "-f", "/dev/null", "start-server"])
+            .args([";", "set", "-s", "exit-empty", "off"])
+            .args([";", "set", "-g", "default-shell", "/bin/sh"])
+            .args([";", "set", "-g", "default-command", "exec cat"])
+            .output()
+            .unwrap();
+        assert!(
+            started.status.success(),
+            "tmux start-server: {}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        Some(IsolatedTmux {
+            socket,
+            session: "adjutant-test".to_string(),
+            _cwd: cwd,
+        })
     }
 
     pub fn tmux_cmd(&self, args: &[&str]) -> std::process::Output {
         Command::new("tmux")
+            .hermetic()
+            // Where the guard can see a session made through this, whatever it is started in.
+            .current_dir(self._cwd.path())
             .arg("-L")
             .arg(&self.socket)
             .args(args)
@@ -408,11 +526,42 @@ impl IsolatedTmux {
 
 impl Drop for IsolatedTmux {
     fn drop(&mut self) {
-        let _ = Command::new("tmux")
-            .arg("-L")
-            .arg(&self.socket)
-            .arg("kill-server")
-            .output();
+        kill_server(&self.socket);
+        let _ = std::fs::remove_file(tmux_socket_dir().join(&self.socket));
+    }
+}
+
+/// A raw `adjutant serve` (or any other child a test spawns by hand), killed when this goes
+/// out of scope so that a failing assertion leaves nothing listening.
+pub struct Reaped(pub std::process::Child);
+
+impl Reaped {
+    /// `Child::wait_with_output`, which needs the child by value.
+    pub fn wait_with_output(self) -> std::process::Output {
+        let this = std::mem::ManuallyDrop::new(self);
+        // Read out once and never dropped here, so `Drop` does not kill what is waited for.
+        let child = unsafe { std::ptr::read(&this.0) };
+        child.wait_with_output().unwrap()
+    }
+}
+
+impl std::ops::Deref for Reaped {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Reaped {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
