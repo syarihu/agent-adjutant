@@ -14,7 +14,7 @@ use crate::registry::{self, Context};
 /// waiting on it any more, and the board should not go on asking for an answer nobody is
 /// waiting for. Only gates a worker opened are considered (`gate::resumed_at` says which),
 /// and the same worker: the worktree's worker record must have started before the
-/// gate was opened. Best effort, and silent: this runs inside the board's poll, and in a hub
+/// gate was opened. Best effort, and silent: this runs on the board's gate sweep, and in a hub
 /// process whose stdout is the MCP stream.
 pub fn close_resumed(ctx: &Context) -> Vec<Gate> {
     let open = list(&ctx.state, &ctx.repo.slug, Shelf::Open);

@@ -586,6 +586,69 @@ fn a_history_path_names_one_task() {
     }
 }
 
+/// Reading the state closes nothing: a gate whose worker has moved on stays open on disk until
+/// the board's sweep closes it.
+#[test]
+fn reading_the_state_leaves_a_resumable_gate_open() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir_all(&main).unwrap();
+    // Started before the gate was opened, and in a later phase since: the worker has moved on.
+    let record = crate::registry::worker_record_path(&main);
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        record,
+        json!({"pid": std::process::id(), "startedAt": "20260922T040000Z",
+               "phase": "implement", "phaseAt": 1_790_051_400})
+        .to_string(),
+    )
+    .unwrap();
+    let gates = sandbox.state().join("gates").join("acme-widget");
+    std::fs::create_dir_all(&gates).unwrap();
+    std::fs::write(
+        gates.join("g1.json"),
+        json!({"id": "g1", "kind": "question", "worktree": main,
+               "title": "which", "openedAt": "20260922T041233Z", "wait": true})
+        .to_string(),
+    )
+    .unwrap();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: main.to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let server = Server {
+        ctx: crate::registry::context_of(repo).unwrap(),
+        token: String::new(),
+        port: 0,
+        resident: false,
+        jules: Arc::default(),
+        hub_titles: Arc::default(),
+        last_lines: Arc::default(),
+        tmux: None,
+        terminals: Arc::default(),
+        pr_poll: None,
+    };
+
+    let read = state(&server, false, false);
+    assert!(gates.join("g1.json").exists());
+    assert!(!gates.join("answered").join("g1.json").exists());
+    assert_eq!(read.gates.len(), 1);
+
+    // And it is resumable: the sweep's own call closes it, so the fixture does not stay open
+    // for some other reason.
+    let closed = gate::close_resumed(&server.ctx);
+    assert_eq!(
+        closed.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+        ["g1"]
+    );
+}
+
 /// One session asked for on its own is the entry the whole list holds for it, for every
 /// shape of id: the two can only differ if a field is gathered in one path and not the other.
 #[test]

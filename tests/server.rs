@@ -1703,6 +1703,12 @@ fn open_ids(resident: &Resident) -> Vec<String> {
         .collect()
 }
 
+/// Long enough for a sweep that starts after now to have run: every board sweeps its gates
+/// every two seconds.
+fn after_a_sweep() {
+    std::thread::sleep(std::time::Duration::from_millis(2_500));
+}
+
 fn archived_gate(fixture: &Fixture, id: &str) -> Option<serde_json::Value> {
     let path = fixture
         .state
@@ -1725,7 +1731,10 @@ fn a_gate_whose_worker_moved_to_a_later_phase_is_closed_as_answered_in_the_termi
     write_worker(&worktree, "20260922T040000Z", Some(LATER_SECS));
     let id = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
 
-    assert!(!open_ids(&resident).contains(&id));
+    wait_until("the gate closed by a sweep", || {
+        let open = open_ids(&resident);
+        (!open.contains(&id), open)
+    });
     let gate = archived_gate(&fixture, &id).expect("archived");
     assert_eq!(gate["decision"], "terminal", "{gate}");
     assert_eq!(gate["answeredAt"], LATER_STAMP, "{gate}");
@@ -1744,10 +1753,12 @@ fn a_gate_stays_open_unless_the_same_worker_visibly_moved_on() {
     // A worker started after the gate was opened is not the one that opened it.
     write_worker(&worktree, "20260922T045000Z", Some(LATER_SECS));
     let late_worker = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
+    after_a_sweep();
     assert!(open_ids(&resident).contains(&late_worker));
 
     // Nothing happened after it was opened.
     write_worker(&worktree, "20260922T040000Z", None);
+    after_a_sweep();
     assert!(open_ids(&resident).contains(&late_worker));
     std::fs::remove_file(
         fixture
@@ -1761,25 +1772,32 @@ fn a_gate_stays_open_unless_the_same_worker_visibly_moved_on() {
     // The hub's gates are never swept, whatever the worktree's worker did.
     write_worker(&worktree, "20260922T040000Z", Some(LATER_SECS));
     let dispatch = open_question_in(&fixture, &worktree, "dispatch", "20260922T041233Z");
+    after_a_sweep();
     assert!(open_ids(&resident).contains(&dispatch));
     assert!(archived_gate(&fixture, &dispatch).is_none());
 
     // No worker record at all.
     std::fs::remove_file(worktree.join(".claude").join("adjutant-worker.json")).unwrap();
     let orphan = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
+    after_a_sweep();
     assert!(open_ids(&resident).contains(&orphan));
 }
 
 #[test]
 fn opening_a_later_gate_closes_the_earlier_one_as_answered_in_the_terminal() {
     let fixture = Fixture::new(QUIET);
-    let resident = Resident::start(&fixture);
     let worktree = fixture.repo.clone();
     write_worker(&worktree, "20260922T040000Z", None);
     let first = open_question_in(&fixture, &worktree, "question", "20260922T041233Z");
     let second = open_question_in(&fixture, &worktree, "question", "20260922T042000Z");
+    // Started only now: a sweep between `adj gate open` stamping the time and the helper
+    // rewriting `openedAt` would close the first gate with a real answeredAt.
+    let resident = Resident::start(&fixture);
 
-    let open = open_ids(&resident);
+    let open = wait_until("the earlier gate closed by a sweep", || {
+        let open = open_ids(&resident);
+        (!open.contains(&first), open)
+    });
     assert!(!open.contains(&first), "{open:?}");
     assert!(open.contains(&second), "{open:?}");
     let gate = archived_gate(&fixture, &first).expect("archived");
@@ -2946,15 +2964,6 @@ fn a_session_shows_the_gate_it_waits_on_even_from_a_parent_hubs_directory() {
         session_of(&state, "worker-moved-on")
             .get("waiting")
             .is_none()
-    );
-    // Read only: the parent hub's own board is the one that closes its gate.
-    assert!(
-        fixture
-            .state
-            .join("gates")
-            .join(FEATURE_SLUG)
-            .join("g-moved.json")
-            .exists()
     );
     // What the repository hub opened for a person is what the hub is waiting on.
     assert_eq!(session_of(&state, "hub")["waiting"]["id"], "g-dispatch");

@@ -87,8 +87,8 @@ impl GateCache {
 
 /// The gate a worker is waiting to have answered: the oldest still open in its hub's gate
 /// directory that it opened from `worktree` and has not moved on from. "Moved on" is judged as
-/// `close_resumed` judges it, from the same signals, but only reads: a hub's directory is
-/// closed by that hub's board.
+/// the board's gate sweep judges it, from the same signals, but only reads: a hub's directory
+/// is closed by that hub's board.
 pub(super) fn waiting_worker(
     hub: &crate::mail::RepoHub,
     gates: &HubGates,
