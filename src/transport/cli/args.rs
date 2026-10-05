@@ -1,6 +1,6 @@
 //! The clap definitions of the command line.
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -648,181 +648,205 @@ pub(crate) enum TmuxAction {
 #[derive(Subcommand)]
 pub(crate) enum TaskAction {
     /// Write a task down, and hand it over if asked
-    Add {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        /// Short title for the card (inferred from body when omitted)
-        #[arg(long)]
-        title: Option<String>,
-        /// What is being asked for (may come on stdin as `-`)
-        #[arg(long)]
-        body: Option<String>,
-        /// start | file-and-start | investigate | tell-worker
-        #[arg(long, default_value = "start")]
-        kind: String,
-        /// report-only | verify | pr | review
-        #[arg(long, default_value = "pr")]
-        done_when: String,
-        /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify)
-        #[arg(long, default_value = "plan")]
-        stop_at: String,
-        /// Who implements once the plan is approved: worker | jules
-        #[arg(long, default_value = "worker")]
-        executor: String,
-        #[arg(long)]
-        issue_url: Option<String>,
-        /// What this one dispatch should branch from
-        #[arg(long)]
-        base: Option<String>,
-        /// The parent task's URL
-        #[arg(long)]
-        parent: Option<String>,
-        /// Needed only when there is no issue to take a name from
-        #[arg(long)]
-        worktree_name: Option<String>,
-        /// Have the hub confirm before it starts
-        #[arg(long)]
-        ask_first: bool,
-        /// Hand it to the hub now, rather than leaving it in the backlog
-        #[arg(long)]
-        queue: bool,
-        /// Queue it with this worktree already made, sending the hub nothing — for the hub
-        /// itself, writing down work it is about to start or that is waiting for a slot
-        #[arg(long, value_name = "WORKTREE", conflicts_with = "queue")]
-        waiting_in: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Add(TaskAddArgs),
     /// What this hub has been handed
-    List {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        /// backlog | queued | dispatched | pr | done | cancelled
-        #[arg(long)]
-        status: Option<String>,
-        /// Only the tasks being worked on in this worktree
-        #[arg(long)]
-        worktree: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    List(TaskListArgs),
     /// One task's record, as JSON
-    Show {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-    },
+    Show(TaskShowArgs),
     /// The queued task a free worker slot should take next, and the ones waiting on a
     /// confirmation nobody has been asked for
-    Next {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Next(TaskNextArgs),
     /// Move every task whose pull request was merged to done, and say what was left alone
-    Refresh {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Refresh(TaskRefreshArgs),
     /// Read the task's issue again and keep its title and body on the record
-    FetchIssue {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        json: bool,
-    },
+    FetchIssue(TaskFetchIssueArgs),
     /// Move a task on. This is how the hub reports back what it did with one
-    Update {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        status: Option<String>,
-        #[arg(long)]
-        order: Option<u32>,
-        #[arg(long)]
-        worktree: Option<String>,
-        #[arg(long)]
-        issue: Option<String>,
-        #[arg(long)]
-        pr: Option<String>,
-        /// The branch it is cut from, as `git worktree add` takes it ('' clears it)
-        #[arg(long)]
-        base: Option<String>,
-        /// The Jules session implementing it ('' clears it)
-        #[arg(long)]
-        jules_session: Option<String>,
-        /// Who implements once the plan is approved: worker | jules
-        #[arg(long)]
-        executor: Option<String>,
-        /// Why it could not be taken, when that is the answer ('' clears it, - reads stdin)
-        #[arg(long)]
-        note: Option<String>,
-        /// Handover instruction for the agent when queued ('' clears it, - reads stdin)
-        #[arg(long)]
-        instruction: Option<String>,
-        /// Whether the hub may start it without asking first
-        #[arg(long, value_name = "true|false")]
-        auto_start: Option<bool>,
-        /// Queue it without putting a request in the hub's inbox — for the hub itself
-        #[arg(long)]
-        no_hand_over: bool,
-        #[arg(long)]
-        json: bool,
-    },
+    Update(TaskUpdateArgs),
     /// Write the worker's .claude/task-brief.md from the task record and the config (no --id: a
     /// task-less session's brief)
-    Brief {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        /// The task the worker is for. Without it, a session with no task
-        #[arg(long)]
-        id: Option<String>,
-        /// The worktree the worker works in
-        #[arg(long, value_name = "PATH")]
-        worktree: String,
-        /// What the branch was cut from, as `git worktree add` took it (- when not known)
-        #[arg(long, value_name = "COMMIT-ISH")]
-        base: String,
-        /// The tracker's key, when it cannot be read from the issue URL
-        #[arg(long, requires = "id")]
-        key: Option<String>,
-        /// github | github-project | jira | linear, when it cannot be read from the issue URL
-        #[arg(long, requires = "id")]
-        tracker: Option<String>,
-        /// The parent task's URL (the record's own, when this is left out)
-        #[arg(long, requires = "id")]
-        parent: Option<String>,
-        /// What the person asked of a session with no task (- reads stdin)
-        #[arg(long, required_unless_present = "id", conflicts_with = "id")]
-        instruction: Option<String>,
-        /// Write here instead of {worktree}/.claude/task-brief.md
-        #[arg(long, value_name = "PATH")]
-        out: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Brief(TaskBriefArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct TaskAddArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Short title for the card (inferred from body when omitted)
+    #[arg(long)]
+    pub(crate) title: Option<String>,
+    /// What is being asked for (may come on stdin as `-`)
+    #[arg(long)]
+    pub(crate) body: Option<String>,
+    /// start | file-and-start | investigate | tell-worker
+    #[arg(long, default_value = "start")]
+    pub(crate) kind: String,
+    /// report-only | verify | pr | review
+    #[arg(long, default_value = "pr")]
+    pub(crate) done_when: String,
+    /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify)
+    #[arg(long, default_value = "plan")]
+    pub(crate) stop_at: String,
+    /// Who implements once the plan is approved: worker | jules
+    #[arg(long, default_value = "worker")]
+    pub(crate) executor: String,
+    #[arg(long)]
+    pub(crate) issue_url: Option<String>,
+    /// What this one dispatch should branch from
+    #[arg(long)]
+    pub(crate) base: Option<String>,
+    /// The parent task's URL
+    #[arg(long)]
+    pub(crate) parent: Option<String>,
+    /// Needed only when there is no issue to take a name from
+    #[arg(long)]
+    pub(crate) worktree_name: Option<String>,
+    /// Have the hub confirm before it starts
+    #[arg(long)]
+    pub(crate) ask_first: bool,
+    /// Hand it to the hub now, rather than leaving it in the backlog
+    #[arg(long)]
+    pub(crate) queue: bool,
+    /// Queue it with this worktree already made, sending the hub nothing — for the hub
+    /// itself, writing down work it is about to start or that is waiting for a slot
+    #[arg(long, value_name = "WORKTREE", conflicts_with = "queue")]
+    pub(crate) waiting_in: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskListArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// backlog | queued | dispatched | pr | done | cancelled
+    #[arg(long)]
+    pub(crate) status: Option<String>,
+    /// Only the tasks being worked on in this worktree
+    #[arg(long)]
+    pub(crate) worktree: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskShowArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskNextArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskRefreshArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskFetchIssueArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskUpdateArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    #[arg(long)]
+    pub(crate) status: Option<String>,
+    #[arg(long)]
+    pub(crate) order: Option<u32>,
+    #[arg(long)]
+    pub(crate) worktree: Option<String>,
+    #[arg(long)]
+    pub(crate) issue: Option<String>,
+    #[arg(long)]
+    pub(crate) pr: Option<String>,
+    /// The branch it is cut from, as `git worktree add` takes it ('' clears it)
+    #[arg(long)]
+    pub(crate) base: Option<String>,
+    /// The Jules session implementing it ('' clears it)
+    #[arg(long)]
+    pub(crate) jules_session: Option<String>,
+    /// Who implements once the plan is approved: worker | jules
+    #[arg(long)]
+    pub(crate) executor: Option<String>,
+    /// Why it could not be taken, when that is the answer ('' clears it, - reads stdin)
+    #[arg(long)]
+    pub(crate) note: Option<String>,
+    /// Handover instruction for the agent when queued ('' clears it, - reads stdin)
+    #[arg(long)]
+    pub(crate) instruction: Option<String>,
+    /// Whether the hub may start it without asking first
+    #[arg(long, value_name = "true|false")]
+    pub(crate) auto_start: Option<bool>,
+    /// Queue it without putting a request in the hub's inbox — for the hub itself
+    #[arg(long)]
+    pub(crate) no_hand_over: bool,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskBriefArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// The task the worker is for. Without it, a session with no task
+    #[arg(long)]
+    pub(crate) id: Option<String>,
+    /// The worktree the worker works in
+    #[arg(long, value_name = "PATH")]
+    pub(crate) worktree: String,
+    /// What the branch was cut from, as `git worktree add` took it (- when not known)
+    #[arg(long, value_name = "COMMIT-ISH")]
+    pub(crate) base: String,
+    /// The tracker's key, when it cannot be read from the issue URL
+    #[arg(long, requires = "id")]
+    pub(crate) key: Option<String>,
+    /// github | github-project | jira | linear, when it cannot be read from the issue URL
+    #[arg(long, requires = "id")]
+    pub(crate) tracker: Option<String>,
+    /// The parent task's URL (the record's own, when this is left out)
+    #[arg(long, requires = "id")]
+    pub(crate) parent: Option<String>,
+    /// What the person asked of a session with no task (- reads stdin)
+    #[arg(long, required_unless_present = "id", conflicts_with = "id")]
+    pub(crate) instruction: Option<String>,
+    /// Write here instead of {worktree}/.claude/task-brief.md
+    #[arg(long, value_name = "PATH")]
+    pub(crate) out: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
 }

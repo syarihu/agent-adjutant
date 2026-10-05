@@ -8,6 +8,10 @@
 
 use serde_json::json;
 
+use super::args::{
+    TaskAddArgs, TaskBriefArgs, TaskFetchIssueArgs, TaskListArgs, TaskNextArgs, TaskRefreshArgs,
+    TaskShowArgs, TaskUpdateArgs,
+};
 use crate::mail::{DeliveryOutcome, Reached};
 use crate::registry::Context;
 use crate::task::{self, PrState, Status, Task, create, fetch_issue, refresh, update};
@@ -36,44 +40,25 @@ use crate::transport::wording::refresh_json;
 
 // ── the subcommands ──────────────────────────────────────────────────
 
-pub struct AddArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub title: Option<&'a str>,
-    pub body: Option<&'a str>,
-    pub kind: &'a str,
-    pub done_when: &'a str,
-    pub stop_at: &'a str,
-    pub executor: &'a str,
-    pub issue_url: Option<&'a str>,
-    pub base: Option<&'a str>,
-    pub parent: Option<&'a str>,
-    pub worktree_name: Option<&'a str>,
-    pub ask_first: bool,
-    pub queue: bool,
-    pub waiting_in: Option<&'a str>,
-    pub json: bool,
-}
-
-pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
-    let body = super::read_body(args.body)?;
+pub fn add(args: &TaskAddArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let body = super::read_body(args.body.as_deref())?;
     let mut new = task::NewTask {
-        title: args.title.map(str::to_string),
+        title: args.title.clone(),
         body,
-        kind: task::Kind::parse(args.kind)?,
-        done_when: task::DoneWhen::parse(args.done_when)?,
+        kind: task::Kind::parse(&args.kind)?,
+        done_when: task::DoneWhen::parse(&args.done_when)?,
         stop_at: if args.stop_at.is_empty() {
             task::StopAt::default()
         } else {
-            task::StopAt::parse(args.stop_at)?
+            task::StopAt::parse(&args.stop_at)?
         },
-        executor: task::Executor::parse(args.executor)
+        executor: task::Executor::parse(&args.executor)
             .ok_or_else(|| format!("no such executor: {} (worker or jules)", args.executor))?,
-        issue_url: args.issue_url.map(str::to_string),
-        base: args.base.map(str::to_string),
-        parent: args.parent.map(str::to_string),
-        worktree_name: args.worktree_name.map(str::to_string),
+        issue_url: args.issue_url.clone(),
+        base: args.base.clone(),
+        parent: args.parent.clone(),
+        worktree_name: args.worktree_name.clone(),
         auto_start: !args.ask_first,
         status: if args.queue || args.waiting_in.is_some() {
             Status::Queued
@@ -88,7 +73,7 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
     // it would land in is the caller's own, and a hub that messages itself is woken mid-turn
     // to be told what it just did.
     let mut hand_over = true;
-    if let Some(worktree) = args.waiting_in {
+    if let Some(worktree) = &args.waiting_in {
         new.worktree = Some(
             crate::infra::paths::expand_home(worktree)
                 .to_string_lossy()
@@ -110,31 +95,16 @@ pub fn add(args: &AddArgs<'_>) -> Result<(), String> {
     Ok(())
 }
 
-pub struct UpdateArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub id: &'a str,
-    pub status: Option<&'a str>,
-    pub order: Option<u32>,
-    pub worktree: Option<&'a str>,
-    pub issue: Option<&'a str>,
-    pub pr: Option<&'a str>,
-    pub base: Option<&'a str>,
-    pub jules_session: Option<&'a str>,
-    pub executor: Option<&'a str>,
-    pub note: Option<&'a str>,
-    pub instruction: Option<&'a str>,
-    pub auto_start: Option<bool>,
-    pub no_hand_over: bool,
-    pub json: bool,
-}
-
-pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
+pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
     // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
     // comment typed on the board — and does not belong inside quotes on a command line.
-    let note = args.note.map(super::dash_is_stdin).transpose()?;
-    let instruction = args.instruction.map(super::dash_is_stdin).transpose()?;
+    let note = args.note.as_deref().map(super::dash_is_stdin).transpose()?;
+    let instruction = args
+        .instruction
+        .as_deref()
+        .map(super::dash_is_stdin)
+        .transpose()?;
     // Trimmed, and blank is no change, as the board's JSON has always been read.
     fn word(v: Option<&str>) -> Option<&str> {
         v.map(str::trim).filter(|s| !s.is_empty())
@@ -142,29 +112,29 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
     // An empty one clears: a command line has no way to say `null`.
     let text = |v: Option<&str>| v.map(|v| Some(v.to_string()).filter(|v| !v.is_empty()));
     let patch = task::TaskPatch {
-        status: word(args.status)
+        status: word(args.status.as_deref())
             .map(|s| Status::parse(s).ok_or(format!("no such status: {s}")))
             .transpose()?,
         order: args.order,
         auto_start: args.auto_start,
-        executor: word(args.executor)
+        executor: word(args.executor.as_deref())
             .map(|s| {
                 task::Executor::parse(s).ok_or(format!("no such executor: {s} (worker or jules)"))
             })
             .transpose()?,
-        worktree: text(args.worktree),
-        issue: text(args.issue),
-        pr: text(args.pr),
-        base: text(args.base),
-        jules_session: text(args.jules_session),
+        worktree: text(args.worktree.as_deref()),
+        issue: text(args.issue.as_deref()),
+        pr: text(args.pr.as_deref()),
+        base: text(args.base.as_deref()),
+        jules_session: text(args.jules_session.as_deref()),
         jules_by: None,
         note: text(note.as_deref()),
         instruction: text(instruction.as_deref()),
     };
     // Read without the lock and `.ok()`: a failed or raced read can only cost one extra fetch
     // attempt, since `needs_snapshot` still guards it.
-    let before = task::get(&ctx.state, &ctx.repo.slug, args.id).ok();
-    let (task, handed) = update(&ctx, args.id, &patch, !args.no_hand_over)?;
+    let before = task::get(&ctx.state, &ctx.repo.slug, &args.id).ok();
+    let (task, handed) = update(&ctx, &args.id, &patch, !args.no_hand_over)?;
     let changed = before.is_none_or(|b| {
         !matches!(b.status, Status::Dispatched | Status::Pr)
             || task::issue_to_fetch(&b) != task::issue_to_fetch(&task)
@@ -184,8 +154,8 @@ pub fn update_cmd(args: &UpdateArgs<'_>) -> Result<(), String> {
 
 /// `adj task next`: the queued task a free worker slot should take, and the queued tasks that
 /// ask first and have no `dispatch` gate open yet.
-pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
+pub fn next_cmd(args: &TaskNextArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
     // Open gates only: an answered one has gone to the archive, and its answer is the hub's
     // to act on from the inbox.
     let gated: std::collections::HashSet<String> = crate::gate::list_of_kind(
@@ -198,7 +168,7 @@ pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<
     .filter_map(|g| g.task)
     .collect();
     let next = task::next(task::list(&ctx.state, &ctx.repo.slug), &gated);
-    if as_json {
+    if args.json {
         println!("{}", json!(next));
         return Ok(());
     }
@@ -212,15 +182,9 @@ pub fn next_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<
     Ok(())
 }
 
-pub fn list(
-    repo: Option<&str>,
-    hub: Option<&str>,
-    status: Option<&str>,
-    worktree: Option<&str>,
-    as_json: bool,
-) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
-    let wanted = match status {
+pub fn list(args: &TaskListArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let wanted = match args.status.as_deref() {
         Some(text) => Some(Status::parse(text).ok_or(format!("no such status: {text}"))?),
         None => None,
     };
@@ -230,7 +194,7 @@ pub fn list(
         let path = crate::infra::paths::expand_home(path);
         path.canonicalize().unwrap_or(path)
     };
-    let at = worktree.map(resolved);
+    let at = args.worktree.as_deref().map(resolved);
     let tasks: Vec<Task> = task::list(&ctx.state, &ctx.repo.slug)
         .into_iter()
         .filter(|t| wanted.is_none_or(|w| t.status == w))
@@ -240,7 +204,7 @@ pub fn list(
         })
         .collect();
 
-    if as_json {
+    if args.json {
         println!("{}", json!(tasks));
         return Ok(());
     }
@@ -260,9 +224,9 @@ pub fn list(
     Ok(())
 }
 
-pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
-    let task = task::get(&ctx.state, &ctx.repo.slug, id)?;
+pub fn show(args: &TaskShowArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let task = task::get(&ctx.state, &ctx.repo.slug, &args.id)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&task).map_err(|e| e.to_string())?
@@ -271,15 +235,10 @@ pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), Strin
 }
 
 /// `adj task fetch-issue`: read the issue again, whatever the record holds.
-pub fn fetch_issue_cmd(
-    repo: Option<&str>,
-    hub: Option<&str>,
-    id: &str,
-    as_json: bool,
-) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
-    let task = fetch_issue(&ctx, id)?;
-    if as_json {
+pub fn fetch_issue_cmd(args: &TaskFetchIssueArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let task = fetch_issue(&ctx, &args.id)?;
+    if args.json {
         println!("{}", json!({ "task": task }));
         return Ok(());
     }
@@ -291,10 +250,10 @@ pub fn fetch_issue_cmd(
     Ok(())
 }
 
-pub fn refresh_cmd(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
+pub fn refresh_cmd(args: &TaskRefreshArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
     let checked = refresh(&ctx)?;
-    if as_json {
+    if args.json {
         println!("{}", refresh_json(&checked));
         return Ok(());
     }
@@ -360,22 +319,6 @@ fn say_where_it_went(ctx: &Context, task: &Task, handed: &Option<DeliveryOutcome
     }
 }
 
-/// What `adj task brief` is given.
-pub struct BriefArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    /// The task the worker is for. `None` writes the brief of a session with no task.
-    pub id: Option<&'a str>,
-    pub worktree: &'a str,
-    pub base: &'a str,
-    pub key: Option<&'a str>,
-    pub tracker: Option<&'a str>,
-    pub parent: Option<&'a str>,
-    pub instruction: Option<&'a str>,
-    pub out: Option<&'a str>,
-    pub json: bool,
-}
-
 /// A flag value that says something: a blank one is the same as not given.
 fn given(value: Option<&str>) -> Option<&str> {
     value.filter(|v| !v.trim().is_empty())
@@ -386,21 +329,22 @@ fn given(value: Option<&str>) -> Option<&str> {
 /// The hub used to fill the brief in from a template by hand. Written here, the lines come
 /// from the record the board shows, so the two cannot disagree, and the one thing the hub
 /// has to get right is the record.
-pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
-    let of = match args.id {
+pub fn brief(args: &TaskBriefArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let of = match args.id.as_deref() {
         Some(id) => task::BriefOf::Task {
             id: id.to_string(),
-            key: given(args.key).map(str::to_string),
+            key: given(args.key.as_deref()).map(str::to_string),
             // Before the record is read, in the words the list it replaces used.
-            tracker: given(args.tracker)
+            tracker: given(args.tracker.as_deref())
                 .map(crate::kernel::brief::Tracker::parse)
                 .transpose()?,
-            parent: given(args.parent).map(str::to_string),
+            parent: given(args.parent.as_deref()).map(str::to_string),
         },
         None => {
             let instruction = args
                 .instruction
+                .as_deref()
                 .ok_or("a brief with no --id needs --instruction")?;
             task::BriefOf::Session {
                 instruction: super::dash_is_stdin(instruction)?,
@@ -410,9 +354,9 @@ pub fn brief(args: &BriefArgs<'_>) -> Result<(), String> {
     let written = task::write_brief(
         &ctx,
         &task::BriefRequest {
-            worktree: args.worktree.to_string(),
-            base: args.base.to_string(),
-            out: args.out.map(str::to_string),
+            worktree: args.worktree.clone(),
+            base: args.base.clone(),
+            out: args.out.clone(),
             of,
         },
     )?;
