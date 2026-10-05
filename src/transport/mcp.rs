@@ -15,22 +15,19 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use crate::board::HubBoard;
-use crate::gate::{close as gate_close_payload, open as gate_open_payload};
+#[cfg(test)]
 use crate::kernel::config;
-use crate::kernel::identity;
 use crate::kernel::prompts;
 #[cfg(test)]
 use crate::kernel::runner::runner_for_procedure;
-use crate::mail::{self, Message};
-use crate::mail::{NotWoken, Reached};
 use crate::registry;
 use crate::registry::dashboards_running as board_running;
-use crate::task::refresh as task_refresh;
 use crate::transport::board_http::handle as board_connection;
-use crate::transport::wording::open_json as gate_open_json;
-use crate::transport::wording::refresh_json as task_refresh_json;
 
 mod schema;
+mod tools;
+#[cfg(test)]
+use tools::resolve_repo;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const SERVER_NAME: &str = "adjutant";
@@ -162,324 +159,20 @@ fn prompt_get(params: &Value) -> Result<Value, String> {
     }))
 }
 
-fn cwd_param(args: &Value) -> Option<PathBuf> {
-    args["cwd"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(crate::infra::paths::expand_home)
-}
-
-fn resolve_repo(args: &Value) -> Result<identity::RepoInfo, String> {
-    let cwd = cwd_param(args);
-    // `cwd` and not the server's own directory, for the same reason the repository is
-    // resolved from it: a worker's answer is written in the worktree it is standing in, and
-    // this server is started once and then asked about whichever checkout the session is
-    // sitting in.
-    let hub = registry::hub_id(args["hub"].as_str(), cwd.as_deref())?;
-    identity::resolve_in(
-        cwd.as_deref(),
-        args["repo"].as_str().filter(|s| !s.is_empty()),
-        hub.as_deref(),
-    )
-}
-
 pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
     match name {
-        "adjutant_config" => {
-            let info = resolve_repo(args)?;
-            let resolved = config::resolve_config(&info.nwo)?;
-            Ok(json!({
-                "repo": info.nwo,
-                "main": info.main,
-                "hub": info.hub,
-                "hubName": info.hub_name,
-                // The board running for this hub, or null, and whether the resident server
-                // serves it. Read from records, so one started by hand with `adj serve` is
-                // found as well as the hub's own.
-                "board": crate::board::located(
-                    &crate::registry::state_root(Some(Path::new(&info.main))),
-                    &info,
-                ),
-                "registered": resolved.registered,
-                "configPath": resolved.config_path,
-                "warnings": resolved.warnings,
-                "settings": resolved.settings,
-                "config": resolved.config,
-            }))
-        }
-        "adjutant_hub_status" => {
-            let info = resolve_repo(args)?;
-            let root = crate::registry::state_root(Some(Path::new(&info.main)));
-            let status = registry::hub_status(&root, &info.slug, &info.hub_name);
-            let pending = mail::pending(&root, &info.slug);
-            let mut out = status_json(&status, &pending.dir);
-            out["repo"] = json!(info.nwo);
-            out["hub"] = json!(info.hub);
-            out["main"] = json!(info.main);
-            out["waiting"] = json!(pending.messages.len());
-            Ok(out)
-        }
-        "adjutant_send" => {
-            let info = resolve_repo(args)?;
-            let body = args["body"].as_str().unwrap_or("").trim();
-            if body.is_empty() {
-                return Err("body is empty".to_string());
-            }
-            let message = Message {
-                from: args["from"].as_str().unwrap_or("unknown").to_string(),
-                // From the caller's own `cwd` when it gave one: this server is started once
-                // and then asked about whichever checkout the session is sitting in, so the
-                // process's own directory is not the sender's.
-                worktree: identity::current_worktree(cwd_param(args).as_deref()),
-                kind: args["kind"].as_str().unwrap_or("report").to_string(),
-                subject: args["subject"].as_str().unwrap_or("").to_string(),
-                body: body.to_string(),
-            };
-            let wake = args.get("wake").and_then(|v| v.as_bool());
-            let ctx = crate::registry::context_of(info)?;
-            let delivered = crate::mail::deliver_to_hub_with_wake(&ctx, &message, true, wake)?;
-            let (note, why) = match &delivered.reached {
-                Reached::Woken => (
-                    "Woke the hub; it will pick this up. Do not wait for a reply, go back to your own task.",
-                    None,
-                ),
-                Reached::Running {
-                    wake: NotWoken::NotNeeded,
-                } => (
-                    "The hub is running; waking was skipped because this message needs no action. It will pick this up the next time it checks its inbox.",
-                    None,
-                ),
-                Reached::Running {
-                    wake: NotWoken::Held { why },
-                } => (
-                    "The hub is running; it will pick this up the next time it checks its inbox. Do not wait for a reply, go back to your own task.",
-                    why.as_ref(),
-                ),
-                Reached::NotRunning => (
-                    "The hub is not running. Left in its inbox; it will be picked up the next time it starts. If this is urgent, ask the user to run `adj hub`.",
-                    None,
-                ),
-            };
-            let note = match why {
-                Some(why) => format!(
-                    "{} {note}",
-                    crate::transport::wording::wake_note_sentence(why)
-                ),
-                None => note.to_string(),
-            };
-            let mut out = json!({
-                "hubName": ctx.repo.hub_name,
-                "present": delivered.is_present(),
-                "woken": delivered.was_woken(),
-                "path": delivered.path.to_string_lossy(),
-                "note": note,
-            });
-            if let Some(why) = why {
-                out["wakeNote"] = json!(why);
-            }
-            Ok(out)
-        }
-        "adjutant_pending" => {
-            let info = resolve_repo(args)?;
-            let root = crate::registry::state_root(Some(Path::new(&info.main)));
-            let action = args["action"].as_str().unwrap_or("list");
-            match action {
-                "list" => {
-                    let pending = mail::pending(&root, &info.slug);
-                    let entries: Vec<Value> = pending
-                        .messages
-                        .into_iter()
-                        .map(|e| {
-                            json!({"name": e.name, "from": e.from, "worktree": e.worktree,
-                                   "kind": e.kind, "subject": e.subject})
-                        })
-                        .collect();
-                    Ok(json!({
-                        "hubName": info.hub_name,
-                        "dir": pending.dir.to_string_lossy(),
-                        "count": entries.len(),
-                        "messages": entries,
-                    }))
-                }
-                "read" => {
-                    let name = args["name"].as_str().unwrap_or("");
-                    Ok(json!({ "name": name, "content": mail::read(&root, &info.slug, name)? }))
-                }
-                "ack" => {
-                    let name = args["name"].as_str().unwrap_or("");
-                    let moved = mail::ack(&root, &info.slug, name)?;
-                    Ok(json!({ "name": name, "archived": moved.to_string_lossy() }))
-                }
-                other => Err(format!("action must be list, read or ack: {other}")),
-            }
-        }
-        "adjutant_tell" => {
-            let info = resolve_repo(args)?;
-            let worktree =
-                crate::infra::paths::expand_home(args["worktree"].as_str().unwrap_or(""));
-            if !worktree.is_dir() {
-                return Err(format!("no such worktree: {}", worktree.display()));
-            }
-            let subject = args["subject"].as_str().unwrap_or("").trim();
-            let body = args["body"].as_str().unwrap_or("").trim();
-            if subject.is_empty() || body.is_empty() {
-                return Err("subject and body are both required".to_string());
-            }
-            let ctx = crate::registry::context_of(info)?;
-            let from = args["from"]
-                .as_str()
-                .unwrap_or(&ctx.repo.hub_name)
-                .to_string();
-            let wake = args.get("wake").and_then(|v| v.as_bool());
-            let told = crate::mail::deliver_to_worker(&ctx, &worktree, &from, subject, body, wake)?;
-            let (note, why) = match &told.reached {
-                Reached::Woken => (
-                    "Woke the worker. Do not wait for a reply, go back to waiting.",
-                    None,
-                ),
-                Reached::Running {
-                    wake: NotWoken::NotNeeded,
-                } => (
-                    "The worker is running; waking was skipped because this message needs no action. It will read this the next time it checks its outbox.",
-                    None,
-                ),
-                Reached::Running {
-                    wake: NotWoken::Held { why },
-                } => (
-                    "The worker is running; it will read this the next time it checks its outbox.",
-                    why.as_ref(),
-                ),
-                Reached::NotRunning => (
-                    "The worker is not running; it will read this the next time it starts.",
-                    None,
-                ),
-            };
-            let note = match why {
-                Some(why) => format!(
-                    "{} {note}",
-                    crate::transport::wording::wake_note_sentence(why)
-                ),
-                None => note.to_string(),
-            };
-            let mut out = json!({
-                "worktree": worktree.to_string_lossy(),
-                "outbox": told.path.to_string_lossy(),
-                "present": told.is_present(),
-                "woken": told.was_woken(),
-                "note": note,
-            });
-            if let Some(why) = why {
-                out["wakeNote"] = json!(why);
-            }
-            Ok(out)
-        }
-        "adjutant_outbox" => {
-            let worktree = match args["worktree"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .or_else(|| args["cwd"].as_str())
-                .filter(|s| !s.is_empty())
-            {
-                Some(path) => crate::infra::paths::expand_home(path),
-                None => std::env::current_dir()
-                    .map_err(|e| format!("cannot determine the current directory: {e}"))?,
-            };
-            match args["action"].as_str().unwrap_or("read") {
-                "read" => {
-                    let outbox = mail::read_outbox(&worktree);
-                    Ok(json!({
-                        "path": outbox.path.to_string_lossy(),
-                        "empty": outbox.text.trim().is_empty(),
-                        "content": outbox.text,
-                    }))
-                }
-                "clear" => {
-                    mail::clear_outbox(&worktree)?;
-                    Ok(json!({ "cleared": true }))
-                }
-                other => Err(format!("action must be read or clear: {other}")),
-            }
-        }
-        "adjutant_gate_open" => {
-            let ctx = crate::registry::context_of(resolve_repo(args)?)?;
-            let mut payload = args.clone();
-            let fields = payload
-                .as_object_mut()
-                .ok_or("arguments must be an object")?;
-            for key in ["repo", "hub", "cwd"] {
-                fields.remove(key);
-            }
-            // From the caller's `cwd`, for the reason `adjutant_send` gives: the server's own
-            // directory is not where the worker is standing, and this is where the answer goes.
-            // A client that fills in every advertised property sends `null` or `""` for one it
-            // has no value for; either is as good as absent.
-            let given = fields
-                .get("worktree")
-                .and_then(Value::as_str)
-                .is_some_and(|w| !w.trim().is_empty());
-            if !given {
-                let here = identity::current_worktree(cwd_param(args).as_deref())
-                    .ok_or("not inside a worktree: pass worktree or cwd")?;
-                fields.insert("worktree".to_string(), json!(here));
-            }
-            let (gate, served) =
-                gate_open_payload(&ctx, crate::gate::GateRequest::from_json(&payload)?)?;
-            Ok(gate_open_json(&ctx, &gate, served))
-        }
-        "adjutant_gate_close" => {
-            let id = args["id"].as_str().ok_or("a gate needs an id")?;
-            let comment = args.get("comment").and_then(Value::as_str);
-            let ctx = crate::registry::context_of(resolve_repo(args)?)?;
-            let terminal = args
-                .get("terminal")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let gate = gate_close_payload(&ctx, id, comment, terminal)?;
-            let on_board = gate.answered_on_board();
-            Ok(json!({ "gate": gate, "closed": !on_board, "alreadyAnswered": on_board }))
-        }
-        "adjutant_refresh" => {
-            let ctx = crate::registry::context_of(resolve_repo(args)?)?;
-            let checked = task_refresh(&ctx)?;
-            Ok(task_refresh_json(&checked))
-        }
-        "adjutant_skill" => {
-            let worktree = args["worktree"]
-                .as_str()
-                .or_else(|| args["cwd"].as_str())
-                .filter(|s| !s.is_empty())
-                .map(crate::infra::paths::expand_home);
-            let client = client_name();
-            let rendered = prompts::render_skill(&prompts::SkillRequest {
-                name: args["name"].as_str().unwrap_or(""),
-                arguments: args["arguments"].as_str().unwrap_or(""),
-                agent: args["agent"].as_str(),
-                client_name: client.as_deref(),
-                runner_dir: worktree.as_deref(),
-            })
-            .map_err(|e| e.to_string())?;
-            Ok(json!({
-                "name": rendered.name,
-                "agent": rendered.agent.as_str(),
-                "description": rendered.description,
-                "content": rendered.text,
-            }))
-        }
+        "adjutant_config" => tools::config::call(args),
+        "adjutant_hub_status" => tools::hub_status::call(args),
+        "adjutant_send" => tools::send::call(args),
+        "adjutant_pending" => tools::pending::call(args),
+        "adjutant_tell" => tools::tell::call(args),
+        "adjutant_outbox" => tools::outbox::call(args),
+        "adjutant_gate_open" => tools::gate_open::call(args),
+        "adjutant_gate_close" => tools::gate_close::call(args),
+        "adjutant_refresh" => tools::refresh::call(args),
+        "adjutant_skill" => tools::skill::call(args),
         other => Err(format!("Unknown tool: {other}")),
     }
-}
-
-pub fn status_json(status: &registry::HubStatus, inbox: &Path) -> Value {
-    json!({
-        "hubName": status.hub_name,
-        "slug": status.slug,
-        "present": status.present,
-        "stale": status.stale,
-        "pid": status.pid,
-        "cwd": status.cwd,
-        "startedAt": status.started_at,
-        "inbox": inbox.to_string_lossy(),
-    })
 }
 
 // ── the loop ─────────────────────────────────────────────────────────
