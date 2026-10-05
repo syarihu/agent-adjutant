@@ -509,6 +509,25 @@ fn a_record_carries_the_size_of_its_diff_and_not_the_diff() {
 }
 
 #[test]
+fn a_stored_unknown_key_the_card_writes_itself_is_written_once_with_the_cards_value() {
+    let mut record = a_gate("r1", gate::Kind::Diff, "t1");
+    record.wait = false;
+    record.diff = Some("abc".to_string());
+    record.extra.insert("diffSize".to_string(), json!("stale"));
+    let mut live = a_task("t1", task::Status::Dispatched);
+    live.extra.insert("records".to_string(), json!("stale"));
+    let mut done = a_task("t2", task::Status::Done);
+    done.extra.insert("records".to_string(), json!("kept"));
+    let cards = with_records(vec![live, done], vec![record], Vec::new());
+    let body = serde_json::to_string(&cards).unwrap();
+    assert_eq!(body.matches("\"records\"").count(), 2, "{body}");
+    assert_eq!(body.matches("\"diffSize\"").count(), 1, "{body}");
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(parsed[0]["records"][0]["diffSize"], 3);
+    assert_eq!(parsed[1]["records"], "kept");
+}
+
+#[test]
 fn a_task_with_no_approved_plan_says_so_and_a_finished_one_carries_nothing() {
     let tasks = serde_json::to_value(with_records(
         vec![

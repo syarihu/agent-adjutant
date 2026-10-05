@@ -178,6 +178,10 @@ impl RecordCard {
     fn of(record: &gate::Gate) -> Self {
         let mut gate = record.clone();
         let diff_size = gate.diff.take().map(|d| d.len());
+        if diff_size.is_some() {
+            // A key kept from disk that the card writes itself: the card's value wins.
+            gate.extra.remove("diffSize");
+        }
         RecordCard { gate, diff_size }
     }
 }
@@ -216,6 +220,10 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
             card.jules = server
                 .jules
                 .look(&server.ctx, &settings.jules_key, &card.task);
+            if card.jules.is_some() {
+                // A key kept from disk that the card writes itself: the card's value wins.
+                card.task.extra.remove("jules");
+            }
             card
         })
         .collect();
@@ -445,6 +453,13 @@ pub fn with_records(
                         pr_turn: t.pr_status.as_ref().and_then(task::pr_turn),
                     }
                 });
+            let mut t = t;
+            if live.is_some() {
+                // Keys kept from disk that the card writes itself: the card's value wins.
+                for key in ["records", "approvedPlan", "prTurn"] {
+                    t.extra.remove(key);
+                }
+            }
             TaskCard {
                 task: t,
                 live,
