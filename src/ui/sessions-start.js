@@ -15,7 +15,7 @@ function datedName(d = new Date()) {
   return `session-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
 }
 
-/* The same four-word rule as `derived_name` in the server (src/cmd/session.rs). */
+/* The same four-word rule as `derived_name` in the server (src/board/session/start.rs). */
 function proposeName(instruction, d = new Date()) {
   const words = (instruction.match(/[A-Za-z0-9]+/g) || []).slice(0, 4).map(w => w.toLowerCase());
   // Cut at 32 characters like the server's (`derived_name`), with no separator left dangling.
