@@ -1,6 +1,6 @@
 //! The hub's lifecycle: starting it in a tab or from the board, planning, claiming and
 //! exec'ing its launch, reopening a saved session, bringing its tab to the front, stopping
-//! it and deciding whether it can be closed.
+//! it, and closing it once it can be.
 
 mod claim_launch;
 mod close;

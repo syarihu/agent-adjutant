@@ -186,67 +186,12 @@ pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), St
             inbox: Vec::new(),
             children: 0,
         });
-    closable_check(&info, &hub)?;
-    // This ends no process, so a hub that is still running would be left running with no
-    // record, and the next `adj hub` would start a second one beside it. Only the hub itself
-    // may clear its own record; from anywhere else it has to be stopped first.
-    let recorded = registry::read_hub_record(&root, &hub.slug);
-    let named = match &recorded {
-        registry::Recorded::Found(r) => r.pid.map(|pid| (pid as u32, r.ps_started.clone())),
-        _ => None,
-    };
-    if let Some((pid, started)) = &named {
-        let pid = *pid;
-        match registry::hub_process_liveness(pid, started.as_deref()) {
-            registry::Liveness::Gone => {}
-            registry::Liveness::CannotTell => {
-                return Err(registry::hub_cannot_tell(&root, &hub.slug));
-            }
-            registry::Liveness::Alive => {
-                if !registry::is_self_or_descendant_of(pid) {
-                    return Err(format!(
-                        "{} is still running (pid {pid}); close it from the board, or stop it first \
-                         (`adj hub-stop` from inside it, or the board's stop) and then close it",
-                        hub.name
-                    ));
-                }
-            }
-        }
-    } else if matches!(recorded, registry::Recorded::Unreadable) {
-        // A record that is there and cannot be read is asked the way `stop_hub` asks, and
-        // nobody can be told to be the hub itself. A readable one that names no process is
-        // `Gone` to `hub_liveness`, so it goes straight on to be cleared.
-        match registry::hub_liveness(&root, &hub.slug) {
-            registry::Liveness::Gone => {}
-            registry::Liveness::CannotTell => {
-                return Err(registry::hub_cannot_tell(&root, &hub.slug));
-            }
-            registry::Liveness::Alive => {
-                return Err(format!(
-                    "{} is still running; close it from the board, or stop it first \
-                     (`adj hub-stop` from inside it, or the board's stop) and then close it",
-                    hub.name
-                ));
-            }
-        }
-    }
-    // Under the claim lock and only while the record is still the one that was looked at:
-    // a hub that registered since is not this call's to unregister.
-    let removed = match &named {
-        Some((pid, started)) => {
-            registry::unregister_hub_if(&root, &hub.slug, *pid, started.as_deref())?
-        }
-        None => registry::unregister_hub_if_unnamed(&root, &hub.slug)?,
-    };
-    if !removed {
-        return Err(format!("{} changed while it was being closed", hub.name));
-    }
-    crate::registry::forget_board(&root, &hub.slug)?;
+    let closed = crate::lifecycle::hub::close(&root, &info, &hub)?;
     println!("closed {}", hub.name);
-    if hub.inbox_count > 0 {
+    if closed.unread > 0 {
         println!(
             "{} unread message(s) remain for it; starting the same key shows them",
-            hub.inbox_count
+            closed.unread
         );
     }
     Ok(())
