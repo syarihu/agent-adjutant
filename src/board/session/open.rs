@@ -1,7 +1,5 @@
 use std::sync::atomic::Ordering;
 
-use serde_json::{Value, json};
-
 use crate::board::view::find_session;
 use crate::board::{NEXT, Server, settings_now, target_of};
 use crate::infra::template::{Sub, render, sh_join, sh_quote};
@@ -11,12 +9,25 @@ use crate::infra::terminal;
 
 const NOT_SET: &str = "terminal.attach is not set: put the command that opens your terminal in the config's terminal.attach";
 
+/// The terminal a session was opened in.
+pub enum OpenedIn {
+    Attach,
+    ITerm2,
+}
+
+/// What opening a session in the person's terminal came to.
+pub struct Opened {
+    pub terminal: OpenedIn,
+    pub session: String,
+    pub window: String,
+}
+
 /// Open the session `id` in the person's terminal.
 ///
 /// Through a session of its own in the group of the original, as the board terminal does
 /// (`terminal::board_attach_prepare_script`): a plain attach to the shared session would move
 /// every other client's current window to this one.
-pub fn open(server: &Server, id: &str) -> Result<Value, String> {
+pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
     let version = server.tmux.ok_or("tmux 3.1 or later is not available")?;
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
@@ -68,7 +79,7 @@ pub fn open(server: &Server, id: &str) -> Result<Value, String> {
                 ],
             );
             terminal::run_shell(&command)
-                .map(|_| "terminal.attach".to_string())
+                .map(|_| OpenedIn::Attach)
                 .map_err(|e| format!("terminal.attach failed: {e}"))
         }
         None => {
@@ -76,17 +87,16 @@ pub fn open(server: &Server, id: &str) -> Result<Value, String> {
             // plain attach through its template.
             let line = terminal::native_attach_line(socket, &name, true, version >= (3, 4));
             terminal::iterm_attach(&line)
-                .map(|_| "iTerm2".to_string())
+                .map(|_| OpenedIn::ITerm2)
                 .map_err(|e| format!("iTerm2 could not open the session: {e}"))
         }
     };
     match opened {
-        Ok(terminal) => Ok(json!({
-            "opened": true,
-            "description": format!("opened {id} in {terminal}"),
-            "session": name,
-            "window": window,
-        })),
+        Ok(terminal) => Ok(Opened {
+            terminal,
+            session: name,
+            window,
+        }),
         Err(e) => {
             // Nothing attached to it, so nothing else is holding the group's windows.
             let _ = terminal::run_shell(&format!(

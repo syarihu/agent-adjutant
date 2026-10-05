@@ -1,13 +1,19 @@
 use std::path::Path;
 
-use serde_json::{Value, json};
-
 use super::resume::own_hub_context;
 use crate::board::view::find_session;
-use crate::board::{Restarting, Server, input_of, resume_refusal, settings_now};
+use crate::board::{Restarting, Server, resume_refusal, settings_now};
 use crate::lifecycle::worker::{Started, resume_worker, saved_worker_session};
 use crate::mail;
 use crate::registry;
+
+/// What restarting a worker came to.
+pub struct Restarted {
+    pub was_running: bool,
+    pub description: String,
+    pub hub: Option<String>,
+    pub hub_running: bool,
+}
 
 /// Stop the worker session `id` and start it again on the same conversation, in one step:
 /// what closing it and then resuming it would do, with every refusal made before anything is
@@ -16,8 +22,7 @@ use crate::registry;
 ///
 /// A worker that does not go is not forced: nothing is started, and its record stays. Starting
 /// beside it would be two workers in one worktree.
-pub fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
-    input_of(body)?;
+pub fn restart(server: &Server, id: &str) -> Result<Restarted, String> {
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
     if session.kind != "worker" {
@@ -64,11 +69,10 @@ pub fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> 
     let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
         .any(|h| Some(&h.id) == session.hub.as_ref() && h.state.present);
-    Ok(json!({
-        "restarted": true,
-        "wasRunning": was_running,
-        "description": done.description,
-        "hub": session.hub,
-        "hubRunning": hub_running,
-    }))
+    Ok(Restarted {
+        was_running,
+        description: done.description,
+        hub: session.hub,
+        hub_running,
+    })
 }

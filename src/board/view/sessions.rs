@@ -4,8 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use serde_json::Value;
-
 use crate::board::{Server, settings_now};
 use crate::kernel::runner;
 use crate::session;
@@ -675,14 +673,12 @@ pub fn git_state_of(
 }
 
 /// What one session's worktree holds that no remote has, asked when a person looks rather than
-/// on every poll.
-pub fn session_git(server: &Server, id: &str) -> Result<Value, String> {
+/// on every poll. `None` when the worktree is gone.
+pub fn session_git(
+    server: &Server,
+    id: &str,
+) -> Result<Option<crate::kernel::worktree_state::GitState>, String> {
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
-    match git_state_of(server, &session)? {
-        Some(state) => {
-            serde_json::to_value(state).map_err(|e| format!("cannot describe the worktree: {e}"))
-        }
-        None => Err(format!("{} does not exist", session.worktree)),
-    }
+    git_state_of(server, &session)
 }

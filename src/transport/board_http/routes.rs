@@ -15,8 +15,9 @@ use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
     refresh_tasks, relay_findings, review_findings, update_task,
 };
+use super::sessions::{git_of_session, open_session, restart_session, resume_session};
 use crate::board::Server;
-use crate::board::view::{session_git, state, task_history};
+use crate::board::view::{state, task_history};
 
 // ── routing ──────────────────────────────────────────────────────────
 
@@ -63,7 +64,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         ("GET", path) if session_route_for(path, "git").is_some() => {
             let result = session_route_for(path, "git")
                 .unwrap_or_else(|| Err("no such route".to_string()))
-                .and_then(|id| session_git(server, &id));
+                .and_then(|id| git_of_session(server, &id));
             reply(out, result)
         }
         ("POST", "/api/tasks") => reply(out, create_task(server, &req.body)),
@@ -95,9 +96,9 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         {
             let (id, action) = session_route(path).unwrap_or((Err("no such route".into()), ""));
             let result = id.and_then(|id| match action {
-                "resume" => crate::board::session::resume(server, &id, &req.body),
-                "restart" => crate::board::session::restart(server, &id, &req.body),
-                "open" => crate::board::session::open(server, &id),
+                "resume" => resume_session(server, &id, &req.body),
+                "restart" => restart_session(server, &id, &req.body),
+                "open" => open_session(server, &id),
                 _ => crate::board::session::cleanup(server, &id, &req.body),
             });
             reply(out, result)
