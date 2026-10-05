@@ -1,16 +1,5 @@
 use super::*;
 
-#[test]
-fn a_wake_note_reads_as_a_sentence() {
-    assert_eq!(
-        wake_note_sentence(
-            "the wake was not typed into the session (pid 7): its screen shows a question or a menu"
-        ),
-        "The wake was not typed into the session (pid 7): its screen shows a question or a menu."
-    );
-    assert_eq!(wake_note_sentence(""), "");
-}
-
 /// The resident is detached and stands elsewhere, so it is handed the root it was given, not
 /// whatever its own working directory would make of a relative one.
 #[test]

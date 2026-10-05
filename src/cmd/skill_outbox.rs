@@ -11,22 +11,7 @@ pub fn skill(name: &str, arguments: &str, agent: Option<&str>) -> Result<(), Str
     Ok(())
 }
 
-/// The text `skill` prints, rendered for the agent the override or the configured runner names.
-pub(crate) fn skill_text(
-    name: &str,
-    arguments: &str,
-    agent: Option<&str>,
-) -> Result<String, String> {
-    crate::kernel::prompts::render_skill(&crate::kernel::prompts::SkillRequest {
-        name,
-        arguments,
-        agent,
-        client_name: None,
-        runner_dir: None,
-    })
-    .map(|r| r.text)
-    .map_err(|e| e.to_string())
-}
+pub(crate) use crate::transport::wording::skill_text;
 
 /// What the hub has left for the worker in this worktree.
 pub fn outbox(worktree: Option<&str>, clear: bool) -> Result<(), String> {
