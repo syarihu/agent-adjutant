@@ -15,8 +15,7 @@ use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
     refresh_tasks, relay_findings, review_findings, update_task,
 };
-use super::sessions::session_git;
-use super::state::{state, task_history};
+use crate::board::view::{session_git, state, task_history};
 
 // ── routing ──────────────────────────────────────────────────────────
 

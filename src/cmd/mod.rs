@@ -20,7 +20,6 @@ mod context;
 mod delivery;
 mod gate;
 mod hub_ops;
-mod hub_title;
 mod ide_title_notify;
 mod jules;
 mod review_engine;

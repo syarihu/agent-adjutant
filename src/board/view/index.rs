@@ -5,15 +5,15 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::{gate, task};
-
 use crate::board::resident_board_url;
+use crate::gate;
 use crate::registry::addresses;
+use crate::task;
 
 /// What a worker's record says about the task it is on, for `board_counts`.
-pub(super) struct WorkerSeen {
-    pub(super) task: Option<String>,
-    pub(super) phase: Option<String>,
+pub struct WorkerSeen {
+    pub task: Option<String>,
+    pub phase: Option<String>,
 }
 
 /// The worker record in `worktree`, if there is one. The task is read the way `worker_task`
@@ -48,7 +48,7 @@ fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
 /// whose task is not on the board waits too. Workers at work are the dispatched and `pr` tasks that
 /// do not wait. The page's Jules check also looks at the session's live state, which only the
 /// board's own poll has, so a Jules task that is still working counts as waiting here.
-pub(super) fn board_counts(
+pub fn board_counts(
     tasks: &[task::Task],
     gates: &[gate::Gate],
     worker: impl Fn(&str) -> Option<WorkerSeen>,
@@ -100,7 +100,7 @@ pub(super) fn board_counts(
 /// working, and queued: tasks still to be started) are read from
 /// each board's records (see `board_counts`), so one `ps` and one `git worktree list` per
 /// repository serve every board.
-pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
+pub fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
     let addresses = addresses(root);
     let table = crate::registry::ProcessTable::snapshot();
     // Workers per parent-task hub, counted by the hub their record reports to. Only asked of
@@ -188,7 +188,7 @@ pub(super) fn boards_json(root: &Path, port: u16, token: &str) -> Vec<Value> {
                 "hubStale": status.as_ref().is_some_and(|s| s.stale),
                 "hubStartedAt": status.as_ref().and_then(|s| s.started_at.clone()),
                 "hubLastAlive": last_alive,
-                "title": a.hub.as_ref().and_then(|_| crate::cmd::hub_title::cached_title(root, &a.slug)),
+                "title": a.hub.as_ref().and_then(|_| crate::board::jobs::cached_title(root, &a.slug)),
                 "waiting": waiting,
                 "working": working,
                 "queued": queued,

@@ -6,16 +6,136 @@ use std::time::Instant;
 
 use serde_json::Value;
 
+use crate::board::{Server, settings_now};
 use crate::kernel::runner;
 use crate::session;
 use crate::task;
 
-use super::Server;
-use super::state::{
-    GateCache, Listing, linked_task_title, parent_hub_id, session_terminal, socket_key, split_main,
-    waiting_hub, waiting_worker, worker_session_ids,
-};
-use crate::board::settings_now;
+use super::state::{Listing, split_main};
+use super::waiting::{GateCache, waiting_hub, waiting_worker};
+
+// ── what the board reads ─────────────────────────────────────────────
+
+/// Where a session runs: what its record says it was started in (`recorded`), or — for a
+/// record written before it said so — the settings and a live look through tmux for the pid.
+pub(super) fn session_terminal(
+    recorded: Option<&crate::infra::terminal::SessionTerminal>,
+    terminal_settings: &crate::infra::terminal::TerminalSettings,
+    views: &mut HashMap<PathBuf, TmuxView>,
+    pid: Option<u32>,
+) -> crate::infra::terminal::SessionTerminal {
+    if let Some(recorded) = recorded {
+        return recorded.clone();
+    }
+    let backend = crate::infra::terminal::backend_name(terminal_settings);
+    let tmux = backend == "tmux";
+    // Asked of tmux only here: a session whose record says where it runs needs no look at the
+    // settings' own server.
+    let pane = pid.filter(|_| tmux).and_then(|p| {
+        let view = tmux_view(views, terminal_settings.tmux_socket());
+        crate::infra::terminal::find_matching_pane(&view.panes, Some(p), None)
+    });
+    crate::infra::terminal::SessionTerminal {
+        backend: backend.to_string(),
+        socket: terminal_settings
+            .tmux_socket()
+            .filter(|_| tmux)
+            .map(str::to_string),
+        session: tmux.then(|| terminal_settings.tmux_session().to_string()),
+        window: pane.map(|p| p.window_id.clone()),
+        pane: pane.map(|p| p.pane_id.clone()),
+    }
+}
+
+/// The `hubs[]` id of the hub a worker names by `key`: the repository's own hub when it
+/// names none, and one made from the key when no hub of that key was found.
+pub(super) fn parent_hub_id(
+    repo: &crate::kernel::identity::RepoInfo,
+    hubs: &[crate::mail::RepoHub],
+    key: Option<&str>,
+) -> String {
+    match key.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(key) => {
+            let slug = crate::kernel::identity::slug_for(&repo.nwo, Some(key));
+            hubs.iter()
+                .find(|h| h.slug == slug)
+                .map(|h| h.id.clone())
+                .unwrap_or_else(|| format!("hub-{key}"))
+        }
+        None => "hub".to_string(),
+    }
+}
+
+/// The title of task `id` in the task directory of the hub `slug`, if there is such a record.
+/// Read here rather than taken from the page's own task list so that a worker under another
+/// hub names its task as well.
+pub(super) fn linked_task_title(state_dir: &Path, slug: &str, id: &str) -> Option<String> {
+    let title = task::get(state_dir, slug, id).ok()?.title;
+    Some(title.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// The board ids of the workers in `paths`, in order: `worker-<name>` for the worktree's own
+/// name, and `worker-<name>-<digest of the path>` when another of them has that name. A
+/// worktree called `main` keeps `worker-main` unless the main checkout's own session
+/// (`main_listed`) is on the board and has it. A name that is not shared keeps the id it always
+/// had, so nothing that already holds one is told a new one.
+pub fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
+    let name_of = |path: &str| {
+        Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+    let names: Vec<String> = paths.iter().map(|p| name_of(p)).collect();
+    paths
+        .iter()
+        .zip(&names)
+        .map(|(path, name)| {
+            let shared = names.iter().filter(|other| *other == name).count() > 1
+                || (main_listed && name == "main");
+            match shared {
+                true => format!(
+                    "worker-{name}-{}",
+                    crate::kernel::identity::short_digest(path)
+                ),
+                false => format!("worker-{name}"),
+            }
+        })
+        .collect()
+}
+
+/// A tmux socket as a lookup key: the path of the server it names, so that no setting, a bare
+/// name and the path a record kept for the same server are one key and one pair of `list-*`
+/// calls. The directory is resolved when it can be, because `/tmp` is `/private/tmp` on a Mac.
+pub(super) fn socket_key(socket: Option<&str>) -> PathBuf {
+    #[cfg(unix)]
+    let uid = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let uid = 0;
+    socket_key_in(
+        socket,
+        std::env::var("TMUX").ok().as_deref(),
+        std::env::var("TMUX_TMPDIR").ok().as_deref(),
+        uid,
+    )
+}
+
+/// `socket_key` with the environment it reads handed in.
+pub fn socket_key_in(
+    socket: Option<&str>,
+    tmux_env: Option<&str>,
+    tmpdir: Option<&str>,
+    uid: u32,
+) -> PathBuf {
+    let path = crate::infra::terminal::tmux_socket_path(socket, tmux_env, tmpdir, uid);
+    match (
+        path.parent().and_then(|dir| dir.canonicalize().ok()),
+        path.file_name(),
+    ) {
+        (Some(dir), Some(leaf)) => dir.join(leaf),
+        _ => path,
+    }
+}
 
 /// What one tmux server said about its panes and clients in one poll.
 pub(super) struct TmuxView {
@@ -439,7 +559,7 @@ pub(super) fn sessions_of(
 
 /// The session `id` of this board, resolved without listing the others: no `ps` or `git` for
 /// another worktree, no gates of another hub. Equal to its entry in the list `state` carries.
-pub(in crate::cmd) fn board_session(
+pub fn board_session(
     server: &Server,
     settings: &crate::kernel::config::Settings,
     id: &str,
@@ -479,7 +599,7 @@ pub(in crate::cmd) fn board_session(
 const GIT_CHECK_SECS: u64 = 10;
 
 /// The session `id` of this board, from the board's own records.
-pub(in crate::cmd) fn find_session(
+pub fn find_session(
     server: &Server,
     settings: &crate::kernel::config::Settings,
     id: &str,
@@ -505,7 +625,7 @@ fn worker_hub_slug(repo: &crate::kernel::identity::RepoInfo, worktree: &Path) ->
 
 /// What one session's worktree holds that no remote has, `None` when the directory is gone.
 /// The path comes from the board's own record of the session, never from the request.
-pub(in crate::cmd) fn git_state_of(
+pub fn git_state_of(
     server: &Server,
     session: &session::Session,
 ) -> Result<Option<crate::kernel::worktree_state::GitState>, String> {
@@ -525,7 +645,7 @@ pub(in crate::cmd) fn git_state_of(
 
 /// What one session's worktree holds that no remote has, asked when a person looks rather than
 /// on every poll.
-pub(super) fn session_git(server: &Server, id: &str) -> Result<Value, String> {
+pub fn session_git(server: &Server, id: &str) -> Result<Value, String> {
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
     match git_state_of(server, &session)? {

@@ -5,8 +5,8 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::index::boards_json;
 use super::resident;
+use crate::board::view::boards_json;
 use crate::board::{
     DEFAULT_PORT, bind_resident, board_url, checkout_here, launch_resident, resident_board_url,
     resident_root, stop_resident, stored_token, token,

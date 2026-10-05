@@ -1,115 +1,23 @@
-//! What the board reads: the state document and the caches behind it.
+//! What the board reads: the state document and what it is joined from.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::board::{Server, hub_resume_refusal, resume_refusal, settings_now};
 use crate::gate;
+use crate::infra::terminal;
 use crate::kernel::identity::Worktree;
 use crate::kernel::runner;
-use crate::session;
 use crate::task;
 
-use super::Server;
-use super::sessions::{TmuxView, sessions_of, tmux_view};
-use crate::board::settings_now;
-
-// ── what the board reads ─────────────────────────────────────────────
-
-/// Where a session runs: what its record says it was started in (`recorded`), or — for a
-/// record written before it said so — the settings and a live look through tmux for the pid.
-pub(super) fn session_terminal(
-    recorded: Option<&crate::infra::terminal::SessionTerminal>,
-    terminal_settings: &crate::infra::terminal::TerminalSettings,
-    views: &mut HashMap<PathBuf, TmuxView>,
-    pid: Option<u32>,
-) -> crate::infra::terminal::SessionTerminal {
-    if let Some(recorded) = recorded {
-        return recorded.clone();
-    }
-    let backend = crate::infra::terminal::backend_name(terminal_settings);
-    let tmux = backend == "tmux";
-    // Asked of tmux only here: a session whose record says where it runs needs no look at the
-    // settings' own server.
-    let pane = pid.filter(|_| tmux).and_then(|p| {
-        let view = tmux_view(views, terminal_settings.tmux_socket());
-        crate::infra::terminal::find_matching_pane(&view.panes, Some(p), None)
-    });
-    crate::infra::terminal::SessionTerminal {
-        backend: backend.to_string(),
-        socket: terminal_settings
-            .tmux_socket()
-            .filter(|_| tmux)
-            .map(str::to_string),
-        session: tmux.then(|| terminal_settings.tmux_session().to_string()),
-        window: pane.map(|p| p.window_id.clone()),
-        pane: pane.map(|p| p.pane_id.clone()),
-    }
-}
-
-/// The `hubs[]` id of the hub a worker names by `key`: the repository's own hub when it
-/// names none, and one made from the key when no hub of that key was found.
-pub(super) fn parent_hub_id(
-    repo: &crate::kernel::identity::RepoInfo,
-    hubs: &[crate::mail::RepoHub],
-    key: Option<&str>,
-) -> String {
-    match key.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(key) => {
-            let slug = crate::kernel::identity::slug_for(&repo.nwo, Some(key));
-            hubs.iter()
-                .find(|h| h.slug == slug)
-                .map(|h| h.id.clone())
-                .unwrap_or_else(|| format!("hub-{key}"))
-        }
-        None => "hub".to_string(),
-    }
-}
-
-/// The title of task `id` in the task directory of the hub `slug`, if there is such a record.
-/// Read here rather than taken from the page's own task list so that a worker under another
-/// hub names its task as well.
-pub(super) fn linked_task_title(state_dir: &Path, slug: &str, id: &str) -> Option<String> {
-    let title = task::get(state_dir, slug, id).ok()?.title;
-    Some(title.trim().to_string()).filter(|t| !t.is_empty())
-}
-
-/// The board ids of the workers in `paths`, in order: `worker-<name>` for the worktree's own
-/// name, and `worker-<name>-<digest of the path>` when another of them has that name. A
-/// worktree called `main` keeps `worker-main` unless the main checkout's own session
-/// (`main_listed`) is on the board and has it. A name that is not shared keeps the id it always
-/// had, so nothing that already holds one is told a new one.
-pub(super) fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
-    let name_of = |path: &str| {
-        Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default()
-    };
-    let names: Vec<String> = paths.iter().map(|p| name_of(p)).collect();
-    paths
-        .iter()
-        .zip(&names)
-        .map(|(path, name)| {
-            let shared = names.iter().filter(|other| *other == name).count() > 1
-                || (main_listed && name == "main");
-            match shared {
-                true => format!(
-                    "worker-{name}-{}",
-                    crate::kernel::identity::short_digest(path)
-                ),
-                false => format!("worker-{name}"),
-            }
-        })
-        .collect()
-}
+use super::sessions::sessions_of;
 
 /// `with_sessions` false leaves `sessions` empty: the page that merges several boards has no
 /// use for them, and listing them is the dearest part of a poll. `with_lines` adds each
 /// session's last line of output (`lastLine`), which reads its tmux pane: only the page that
 /// shows it asks.
-pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
+pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
     // Before the gates are read: a gate whose worker has moved on is closed here rather than
     // by a timer, since nothing in the server polls on one.
     let _ = crate::gate::close_resumed(&server.ctx);
@@ -278,13 +186,13 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         "boardTerminal": { "available": server.resident && server.tmux.is_some() },
         // Whether the board can open a session in the person's own terminal, and through what:
         // `terminal.attach` when it is set, iTerm2 where that is installed.
-        "sessionOpen": crate::cmd::board_actions::open_state(server, &settings),
+        "sessionOpen": open_state(server, &settings),
         // Whether the board can resume a stopped worker, so the page offers it only where it
         // can work, and says why not where it cannot.
-        "sessionResume": crate::cmd::board_actions::resume_state(&settings),
+        "sessionResume": resume_state(&settings),
         // The same for restarting a running hub on its conversation, which needs the hub's own
         // resume line rather than the worker's.
-        "hubResume": crate::cmd::board_actions::hub_resume_state(&settings),
+        "hubResume": hub_resume_state(&settings),
         // The command line a hub runs, as configured: the server sends the template with its
         // placeholders in place, and the Sessions sidebar fills in only `{name}` to show it.
         "hubRunner": settings
@@ -316,159 +224,6 @@ pub(super) fn state(server: &Server, with_sessions: bool, with_lines: bool) -> V
         "pending": pending,
         "gates": gate::list(&server.ctx.state, &server.ctx.repo.slug, gate::Shelf::Open),
     })
-}
-
-/// A tmux socket as a lookup key: the path of the server it names, so that no setting, a bare
-/// name and the path a record kept for the same server are one key and one pair of `list-*`
-/// calls. The directory is resolved when it can be, because `/tmp` is `/private/tmp` on a Mac.
-pub(super) fn socket_key(socket: Option<&str>) -> PathBuf {
-    #[cfg(unix)]
-    let uid = unsafe { libc::getuid() };
-    #[cfg(not(unix))]
-    let uid = 0;
-    socket_key_in(
-        socket,
-        std::env::var("TMUX").ok().as_deref(),
-        std::env::var("TMUX_TMPDIR").ok().as_deref(),
-        uid,
-    )
-}
-
-/// `socket_key` with the environment it reads handed in.
-pub(super) fn socket_key_in(
-    socket: Option<&str>,
-    tmux_env: Option<&str>,
-    tmpdir: Option<&str>,
-    uid: u32,
-) -> PathBuf {
-    let path = crate::infra::terminal::tmux_socket_path(socket, tmux_env, tmpdir, uid);
-    match (
-        path.parent().and_then(|dir| dir.canonicalize().ok()),
-        path.file_name(),
-    ) {
-        (Some(dir), Some(leaf)) => dir.join(leaf),
-        _ => path,
-    }
-}
-
-fn session_waiting(
-    hub: &crate::mail::RepoHub,
-    open: &[&gate::Gate],
-) -> Option<session::SessionWaiting> {
-    let first = open.first()?;
-    Some(session::SessionWaiting {
-        id: first.id.clone(),
-        kind: first.kind.as_str().to_string(),
-        hub: hub.id.clone(),
-        slug: hub.slug.clone(),
-        title: Some(first.title.clone()).filter(|t| !t.is_empty()),
-        opened_at: first.opened_at.clone(),
-        count: open.len(),
-        options: if first.options.is_empty() {
-            first.kind.default_options()
-        } else {
-            first.options.clone()
-        },
-        choices: first
-            .choices
-            .iter()
-            .map(|c| session::WaitingChoice {
-                id: c.id.clone(),
-                label: c.label.clone(),
-            })
-            .collect(),
-        focus: first
-            .focus
-            .as_deref()
-            .map(|f| cut_chars(f, WAITING_FOCUS_CHARS))
-            .filter(|f| !f.is_empty()),
-    })
-}
-
-/// How much of a gate's focus the Sessions banner carries.
-const WAITING_FOCUS_CHARS: usize = 400;
-
-/// `text` cut to at most `max` characters, on a character boundary, with an ellipsis when cut.
-pub(super) fn cut_chars(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        Some((end, _)) => format!("{}…", text[..end].trim_end()),
-        None => text.to_string(),
-    }
-}
-
-/// One hub's open gates, and what could show their workers moved on, read once per poll.
-pub(super) struct HubGates {
-    pub(super) open: Vec<gate::Gate>,
-    signals: Vec<gate::Gate>,
-}
-
-impl HubGates {
-    fn read(state_dir: &Path, slug: &str) -> Self {
-        let open = gate::list(state_dir, slug, gate::Shelf::Open);
-        // Left unread when nothing waits on a worker: the archives only grow.
-        let signals = if open.iter().any(|g| g.wait && !g.answered_by_hub()) {
-            gate::resume_signals(state_dir, slug, &open)
-        } else {
-            Vec::new()
-        };
-        HubGates { open, signals }
-    }
-}
-
-/// The gates of the hubs a poll reaches, each hub's read the first time one of its sessions
-/// asks.
-pub(super) struct GateCache {
-    pub(super) state_dir: PathBuf,
-    pub(super) read: HashMap<String, HubGates>,
-}
-
-impl GateCache {
-    pub(super) fn of(&mut self, slug: &str) -> &HubGates {
-        self.read
-            .entry(slug.to_string())
-            .or_insert_with(|| HubGates::read(&self.state_dir, slug))
-    }
-}
-
-/// The gate a worker is waiting to have answered: the oldest still open in its hub's gate
-/// directory that it opened from `worktree` and has not moved on from. "Moved on" is judged as
-/// `close_resumed` judges it, from the same signals, but only reads: a hub's directory is
-/// closed by that hub's board.
-pub(super) fn waiting_worker(
-    hub: &crate::mail::RepoHub,
-    gates: &HubGates,
-    worktree: &str,
-    started: Option<&str>,
-    phase_at: Option<i64>,
-) -> Option<session::SessionWaiting> {
-    let phase_at = phase_at.map(crate::infra::clock::utc_stamp);
-    let open: Vec<&gate::Gate> = gates
-        .open
-        .iter()
-        .filter(|g| g.worktree == worktree && g.wait && !g.answered_by_hub())
-        .filter(|g| {
-            let later = gates
-                .signals
-                .iter()
-                .filter(|s| s.worktree == g.worktree && s.id != g.id && s.opened_at > g.opened_at)
-                .map(|s| s.opened_at.as_str())
-                .min();
-            gate::resumed_at(g, started, phase_at.as_deref(), later).is_none()
-        })
-        .collect();
-    session_waiting(hub, &open)
-}
-
-/// What a hub is waiting on: the gates it opened for a person to answer.
-pub(super) fn waiting_hub(
-    hub: &crate::mail::RepoHub,
-    gates: &[gate::Gate],
-) -> Option<session::SessionWaiting> {
-    let open: Vec<&gate::Gate> = gates
-        .iter()
-        .filter(|g| g.wait && g.answered_by_hub())
-        .collect();
-    session_waiting(hub, &open)
 }
 
 /// What one poll has already asked of the system, so `sessions_of` does not ask again: the
@@ -509,7 +264,7 @@ pub(super) fn split_main(main: &str, listed: Vec<Worktree>) -> (Option<String>, 
 /// Joined here rather than written onto the task record: a record belongs to the gate
 /// directory, and a copy on the task would be a second place for it that can disagree.
 /// A finished task gets neither — nobody reads its card for them, and the archive only grows.
-pub(super) fn with_records(
+pub fn with_records(
     tasks: Vec<task::Task>,
     records: Vec<gate::Gate>,
     answered: Vec<gate::Gate>,
@@ -554,48 +309,37 @@ pub(super) fn with_records(
         .collect()
 }
 
-/// Everything one task's gates left behind, for its full view: the gates a person answered
-/// (`answered`) and the records its worker kept (`records`), each oldest first.
-///
-/// Asked for by the page when it opens the view rather than joined into `/api/state`: the
-/// archive only grows, and reading all of it on every poll would cost more each day. The
-/// records are here as well as on the task in `/api/state` because a finished task's are not
-/// there, and a review is meant to stay readable after the work is done.
-pub(super) fn task_history(server: &Server, path: &str) -> Result<Value, String> {
-    let id = history_id(path).ok_or("no such task")?;
-    Ok(history_of(
-        id,
-        gate::list(
-            &server.ctx.state,
-            &server.ctx.repo.slug,
-            gate::Shelf::Answered,
-        ),
-        gate::list(
-            &server.ctx.state,
-            &server.ctx.repo.slug,
-            gate::Shelf::Record,
-        ),
-    ))
-}
-
-/// The task id in `/api/tasks/{id}/history`, when there is exactly one.
-pub(super) fn history_id(path: &str) -> Option<&str> {
-    path.strip_prefix("/api/tasks/")
-        .and_then(|rest| rest.strip_suffix("/history"))
-        .filter(|id| !id.is_empty() && !id.contains('/'))
-}
-
-pub(super) fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate::Gate>) -> Value {
-    let mine = |g: &gate::Gate| g.task.as_deref() == Some(id);
-    json!({
-        "answered": answered.into_iter().filter(mine).collect::<Vec<_>>(),
-        "records": records.into_iter().filter(mine).collect::<Vec<_>>(),
-    })
-}
-
-pub(super) fn branch_of(worktree: &str) -> Option<String> {
+pub fn branch_of(worktree: &str) -> Option<String> {
     let output =
         crate::infra::git::git(&["-C", worktree, "branch", "--show-current"], None).ok()?;
     let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!name.is_empty()).then_some(name)
+}
+
+/// What `state` says about opening a session in the person's own terminal: whether the board
+/// can, and through what. Known in advance so the page does not offer a button that can only
+/// be refused.
+pub(super) fn open_state(server: &Server, settings: &crate::kernel::config::Settings) -> Value {
+    let attach = settings.terminal.attach.is_some();
+    let iterm = terminal::iterm_available();
+    json!({
+        "available": server.resident && server.tmux.is_some() && (attach || iterm),
+        "terminal": match (attach, iterm) {
+            (true, _) => json!("terminal.attach"),
+            (false, true) => json!("iTerm2"),
+            (false, false) => Value::Null,
+        },
+    })
+}
+
+/// What `state` says about resuming: `available`, and the reason when it is not.
+pub(super) fn resume_state(settings: &crate::kernel::config::Settings) -> Value {
+    let refusal = resume_refusal(settings);
+    json!({ "available": refusal.is_none(), "reason": refusal })
+}
+
+/// What `state` says about resuming a hub: `available`, and the reason when it is not.
+pub(super) fn hub_resume_state(settings: &crate::kernel::config::Settings) -> Value {
+    let refusal = hub_resume_refusal(settings);
+    json!({ "available": refusal.is_none(), "reason": refusal })
 }
