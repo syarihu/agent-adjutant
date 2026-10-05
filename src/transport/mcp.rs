@@ -24,7 +24,6 @@ use crate::registry;
 use crate::registry::dashboards_running as board_running;
 use crate::transport::board_http::handle as board_connection;
 
-mod schema;
 mod tools;
 #[cfg(test)]
 use tools::resolve_repo;
@@ -160,19 +159,14 @@ fn prompt_get(params: &Value) -> Result<Value, String> {
 }
 
 pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
-    match name {
-        "adjutant_config" => tools::config::call(args),
-        "adjutant_hub_status" => tools::hub_status::call(args),
-        "adjutant_send" => tools::send::call(args),
-        "adjutant_pending" => tools::pending::call(args),
-        "adjutant_tell" => tools::tell::call(args),
-        "adjutant_outbox" => tools::outbox::call(args),
-        "adjutant_gate_open" => tools::gate_open::call(args),
-        "adjutant_gate_close" => tools::gate_close::call(args),
-        "adjutant_refresh" => tools::refresh::call(args),
-        "adjutant_skill" => tools::skill::call(args),
-        other => Err(format!("Unknown tool: {other}")),
+    match tools::TOOLS.iter().find(|tool| tool.name == name) {
+        Some(tool) => (tool.call)(args),
+        None => Err(format!("Unknown tool: {name}")),
     }
+}
+
+fn tool_definitions() -> Value {
+    json!({ "tools": tools::TOOLS.iter().map(|tool| (tool.definition)()).collect::<Vec<_>>() })
 }
 
 // ── the loop ─────────────────────────────────────────────────────────
@@ -531,7 +525,7 @@ fn handle_line(line: &str) -> Option<JsonRpcResponse> {
             Ok(result) => respond(id, result),
             Err(e) => respond_err(id, -32602, &e),
         },
-        "tools/list" => respond(id, schema::tool_definitions()),
+        "tools/list" => respond(id, tool_definitions()),
         "tools/call" => {
             let name = request.params["name"].as_str().unwrap_or("");
             match call_tool(name, &request.params["arguments"]) {

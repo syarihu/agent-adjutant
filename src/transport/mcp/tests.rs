@@ -501,3 +501,12 @@ fn an_unknown_procedure_is_worded_per_entry_point() {
         "no such procedure: nope (adj-hub / adj-worker / adj-report)"
     );
 }
+
+#[test]
+fn every_tool_definition_names_the_entry_it_is_listed_under() {
+    let mut seen = std::collections::HashSet::new();
+    for tool in tools::TOOLS {
+        assert_eq!((tool.definition)()["name"], tool.name);
+        assert!(seen.insert(tool.name), "{} is listed twice", tool.name);
+    }
+}
