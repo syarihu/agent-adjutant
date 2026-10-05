@@ -1764,8 +1764,6 @@ fn opening_a_later_gate_closes_the_earlier_one_as_answered_in_the_terminal() {
     );
 }
 
-// ── sessions the board starts with no task, and links to one afterwards ──
-
 fn sessions_url(path: &str) -> String {
     format!("/b/{SLUG}/api/sessions{path}")
 }
@@ -1864,6 +1862,8 @@ fn made_task(resident: &Resident, fields: serde_json::Value) -> serde_json::Valu
     assert_eq!(status, 200, "{body}");
     serde_json::from_str::<serde_json::Value>(&body).unwrap()["task"].clone()
 }
+
+// ── sessions the board starts with no task, and links to one afterwards ──
 
 fn children_of(state: &serde_json::Value, hub: &str) -> u64 {
     state["hubs"]
@@ -2707,8 +2707,6 @@ fn a_link_is_refused_for_a_hub_a_session_not_started_a_finished_task_or_one_held
     assert!(free_now["worktree"].is_null(), "{free_now}");
 }
 
-// ── what the board tells sessions apart by ───────────────────────────
-
 fn session_of<'a>(state: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
     state["sessions"]
         .as_array()
@@ -2726,6 +2724,8 @@ fn place_worker(worktree: &Path, window: &str) {
         serde_json::json!({"backend": "tmux", "socket": "scratch", "window": window});
     std::fs::write(path, record.to_string()).unwrap();
 }
+
+// ── what the board tells sessions apart by ───────────────────────────
 
 #[test]
 fn a_session_says_when_its_window_was_last_active_and_how_many_are_attached() {
