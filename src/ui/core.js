@@ -248,7 +248,7 @@ function waitingSinceMs(t) {
 
 function waitingMinutes(t) {
   const since = waitingSinceMs(t);
-  return Math.max(0, Math.floor((Date.now() - since) / 60000));
+  return minutesSince(since / 1000, Date.now() / 1000);
 }
 
 function waitTone(mins) {
@@ -340,7 +340,7 @@ function checkNewGates(gates) {
     for (const g of list) {
       if (!seenGateIds.has(refOf(g))) {
         const [label] = kindOf(g.kind);
-        const wtName = g.worktree ? g.worktree.split('/').pop() : '';
+        const wtName = baseName(g.worktree);
         const n = new Notification(`【${label}】${g.title}`, {
           body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
           tag: 'gate-' + refOf(g),

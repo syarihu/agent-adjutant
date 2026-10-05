@@ -259,7 +259,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
     const toHub = hubsGate(g);
     note(line, false, toHub
       ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
-      : `${g.worktree.split('/').pop()} の outbox に追記` +
+      : `${baseName(g.worktree)} の outbox に追記` +
         (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
     // A record stays, with this answer appended, so it stays in view to show that it went.

@@ -289,7 +289,7 @@ function panelRestHtml(task, colId) {
 
   h += `<div class="m3-filled-card">${secTitle('作業場所')}
     ${task.worktree || task.branch ? `<div class="tp-kvs">
-      ${monoKv('worktree', task.worktree ? task.worktree.split('/').pop() : '—', task.worktree || '')}
+      ${monoKv('worktree', baseName(task.worktree) || '—', task.worktree || '')}
       ${monoKv('ブランチ', task.branch || '—')}
     </div>` : '<div class="tp-muted">worktree はまだありません</div>'}
     ${task.worktree ? `<button type="button" class="btn-m3-tonal tp-ide" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;">code</span><span>IDE</span></button>` : ''}
@@ -513,7 +513,7 @@ function termPlaceholderHtml(s) {
     : !s.present ? 'このセッションは動いていません'
     : 'このセッションの端末はボードから開けません（tmux で動いているセッションだけ開けます）';
   const shot = sessView.screens[s.id];
-  const mins = shot && state.now != null && shot.at != null ? Math.max(0, Math.floor((state.now - shot.at) / 60)) : null;
+  const mins = shot && state.now != null && shot.at != null ? minutesSince(shot.at, state.now) : null;
   const resume = canResume(s) ? '' : !s.present && s.kind === 'worker'
     ? `<div class="tp-muted">${esc(!s.conversation ? '保存された会話がないため再開できません' : state.sessionResume?.reason || 'ボードからは再開できません')}</div>` : '';
   return `<div class="tp-ph-head">${esc(head)}</div>`
