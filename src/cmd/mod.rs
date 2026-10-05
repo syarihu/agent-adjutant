@@ -13,8 +13,6 @@ use crate::kernel::identity;
 use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, deliver_to_worker};
 use crate::registry::{self, Context, context, context_as, context_without_hub, resolve};
 
-mod board_actions;
-mod board_terminal;
 mod close;
 mod context;
 mod delivery;
@@ -24,7 +22,6 @@ mod ide_title_notify;
 mod jules;
 mod review_engine;
 mod serve;
-mod session;
 mod skill_outbox;
 mod stdin;
 mod task;

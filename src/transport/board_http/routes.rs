@@ -5,21 +5,22 @@ use std::net::TcpStream;
 
 use serde_json::{Value, json};
 
-use crate::cmd::session::start_request;
+use crate::board::hub::start_parent_hub;
+use crate::board::session::start_request;
 use crate::infra::http::{self, Request};
 
-use super::Server;
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::refuse;
 use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
     refresh_tasks, relay_findings, review_findings, update_task,
 };
+use crate::board::Server;
 use crate::board::view::{session_git, state, task_history};
 
 // ── routing ──────────────────────────────────────────────────────────
 
-pub(crate) fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
+pub fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let Some(req) = http::read_request(&mut reader)? else {
         return Ok(());
@@ -80,7 +81,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         ("POST", path) if session_route_for(path, "link").is_some() => {
             let result = session_route_for(path, "link")
                 .unwrap_or_else(|| Err("no such route".to_string()))
-                .and_then(|id| crate::cmd::session::link(server, &id, &req.body));
+                .and_then(|id| crate::board::session::link(server, &id, &req.body));
             reply(out, result)
         }
         // Only on the resident's boards, like the hub actions below: reopening a session,
@@ -94,17 +95,14 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         {
             let (id, action) = session_route(path).unwrap_or((Err("no such route".into()), ""));
             let result = id.and_then(|id| match action {
-                "resume" => crate::cmd::board_actions::resume(server, &id, &req.body),
-                "restart" => crate::cmd::board_actions::restart(server, &id, &req.body),
-                "open" => crate::cmd::board_actions::open(server, &id),
-                _ => crate::cmd::board_actions::cleanup(server, &id, &req.body),
+                "resume" => crate::board::session::resume(server, &id, &req.body),
+                "restart" => crate::board::session::restart(server, &id, &req.body),
+                "open" => crate::board::session::open(server, &id),
+                _ => crate::board::session::cleanup(server, &id, &req.body),
             });
             reply(out, result)
         }
-        ("POST", "/api/hubs") if server.resident => reply(
-            out,
-            crate::cmd::board_actions::start_parent_hub(server, &req.body),
-        ),
+        ("POST", "/api/hubs") if server.resident => reply(out, start_parent_hub(server, &req.body)),
         // Only on the resident's boards: starting and stopping a hub reaches outside the
         // repository's own records, and a board a hub serves lives and dies with that hub.
         ("POST", path) if server.resident && hub_route(path).is_some() => {

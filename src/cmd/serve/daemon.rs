@@ -5,13 +5,13 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::resident;
 use crate::board::view::boards_json;
 use crate::board::{
     DEFAULT_PORT, bind_resident, board_url, checkout_here, launch_resident, resident_board_url,
     resident_root, stop_resident, stored_token, token,
 };
 use crate::registry::{live_resident, note_board, recorded_version};
+use crate::transport::board_http::handle_resident;
 
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
 /// tests run.
@@ -92,7 +92,7 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
     if open {
         open_browser(&index);
     }
-    bound.run(resident::handle_resident);
+    bound.run(handle_resident);
     Ok(0)
 }
 

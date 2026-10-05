@@ -2,21 +2,14 @@
 
 use std::net::TcpListener;
 
-mod assets;
-mod auth;
 mod daemon;
-mod handlers;
-mod resident;
-mod routes;
 
 use crate::board::Board;
-pub(super) use crate::board::Server;
-pub(super) use crate::board::settings_now;
-pub(super) use crate::board::view::board_session;
 pub use crate::board::{DEFAULT_PORT, HubBoard, located, serve_for_hub};
+pub(crate) use crate::transport::board_http::handle as board_connection;
+use crate::transport::board_http::handle;
 use daemon::open_browser;
 pub use daemon::{server_restart, server_start, server_status, server_stop};
-pub(crate) use routes::handle as board_connection;
 
 pub fn serve(
     repo_arg: Option<&str>,
@@ -43,9 +36,6 @@ pub fn serve(
     if open {
         open_browser(&url);
     }
-    board.run(routes::handle);
+    board.run(handle);
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;
