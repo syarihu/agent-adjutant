@@ -14,7 +14,9 @@
 //! request arrives because a person clicked, and that is the only thing that moves. `/api/state`
 //! never asks GitHub on either, since the page polls it every couple of seconds.
 
+pub mod hub;
 pub mod jobs;
+pub mod session;
 pub mod view;
 
 mod daemon;
