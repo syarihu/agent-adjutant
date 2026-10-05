@@ -547,13 +547,15 @@ fn board_state(url: &str) -> serde_json::Value {
 }
 
 /// A board serving this fixture with `curl` stubbed, and the URL it printed.
-fn serve(fixture: &Fixture, path: &str) -> (std::process::Child, String) {
-    let mut child = fixture
-        .command(["serve", "--port", "0", "--no-open"])
-        .env("PATH", path)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+fn serve(fixture: &Fixture, path: &str) -> (Reaped, String) {
+    let mut child = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .env("PATH", path)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut said = String::new();
     std::io::BufReader::new(child.stdout.as_mut().unwrap())
         .read_line(&mut said)

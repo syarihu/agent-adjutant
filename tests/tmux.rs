@@ -253,8 +253,16 @@ fn tmux_error_handling_for_non_existent_pane() {
         eprintln!("tmux not available, skipping test");
         return;
     };
-    let fixture = Fixture::new(&tmux_config(&tmux.socket, &tmux.session));
+    // The server is already up, so a lookup needs a session to look in...
+    let made = tmux.tmux_cmd(&["new-session", "-d", "-s", &tmux.session, "sleep", "60"]);
+    assert!(made.status.success(), "{made:?}");
+    no_pane_is_found(&Fixture::new(&tmux_config(&tmux.socket, &tmux.session)));
+    // ...and a socket nothing listens on is the case of no server at all.
+    let nobody = format!("adj-test-nobody-{}", std::process::id());
+    no_pane_is_found(&Fixture::new(&tmux_config(&nobody, &tmux.session)));
+}
 
+fn no_pane_is_found(fixture: &Fixture) {
     // Pane lookup for non-existent PID fails
     let out = fixture.cmd(&["tmux", "pane", "--pid", "999999"]);
     assert!(!out.status.success());

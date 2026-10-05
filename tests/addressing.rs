@@ -736,6 +736,18 @@ fn a_worker_hands_its_agent_the_hub_it_registered_under_not_the_one_it_inherited
     assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "[]");
 }
 
+/// A worker whose agent is let go (it waits for `go`) and then killed when this goes out of scope.
+struct Released {
+    child: Reaped,
+    go: PathBuf,
+}
+
+impl Drop for Released {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.go, "");
+    }
+}
+
 /// A worker's agent started under one hub and linked to another since still addresses the one
 /// its record now names, though `ADJUTANT_HUB` on its line says the first. Run through a real
 /// agent process, because what is under test is that a command it starts sits below the pid
@@ -751,7 +763,7 @@ fn a_running_worker_addresses_the_hub_its_record_was_moved_to() {
         &script,
         format!(
             "echo \"[$ADJUTANT_HUB]\" > {up}\n\
-             while [ ! -f {go} ]; do sleep 0.1; done\n\
+             i=0; while [ ! -f {go} ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done\n\
              {bin} pending --path > {seen}\n",
             up = shell_quoted(&up.to_string_lossy()),
             go = shell_quoted(&go.to_string_lossy()),
@@ -775,16 +787,23 @@ fn a_running_worker_addresses_the_hub_its_record_was_moved_to() {
         panic!("{} never appeared", path.display());
     };
 
-    let mut worker = fixture
-        .command([
-            "worker",
-            "--worktree",
-            fixture.repo.to_str().unwrap(),
-            "--hub",
-            FEATURE,
-        ])
-        .spawn()
-        .unwrap();
+    // Written and killed on the way out, so that a failing assertion does not leave the agent
+    // waiting for a file nobody will write.
+    let mut worker = Released {
+        child: Reaped(
+            fixture
+                .command([
+                    "worker",
+                    "--worktree",
+                    fixture.repo.to_str().unwrap(),
+                    "--hub",
+                    FEATURE,
+                ])
+                .spawn()
+                .unwrap(),
+        ),
+        go: go.clone(),
+    };
     waited(&up);
     assert_eq!(
         std::fs::read_to_string(&up).unwrap().trim(),
@@ -799,7 +818,7 @@ fn a_running_worker_addresses_the_hub_its_record_was_moved_to() {
     std::fs::write(&record, moved.to_string()).unwrap();
     std::fs::write(&go, "").unwrap();
     waited(&seen);
-    let _ = worker.wait();
+    let _ = worker.child.wait();
 
     let own = fixture.ok(&["pending", "--path"]);
     let parent = fixture.ok(&["pending", "--path", "--hub", FEATURE]);
