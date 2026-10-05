@@ -1,7 +1,8 @@
+use super::args::{HubArgs, HubCloseArgs, HubStopArgs};
 use super::*;
 use crate::lifecycle::hub::{
-    AutoResume, Claimed, HubRequest, HubStart, Planned, Skip, TabOutcome, claim_launch,
-    exec_launch, hub_in_tab, plan_launch,
+    AutoResume, Claimed, HubRequest, Planned, Skip, TabOutcome, claim_launch, exec_launch,
+    hub_in_tab, plan_launch,
 };
 
 // ── hub (the launcher) ─────────────────────────────────────────
@@ -34,20 +35,14 @@ pub(super) fn print_performed(done: &terminal::Performed, dry_run: bool) {
 
 /// Start this repository's hub, here, once.
 ///
-/// `tab` opens a tab and starts it there instead, for a caller that is not a person sitting
+/// `--tab` opens a tab and starts it there instead, for a caller that is not a person sitting
 /// at an empty one — nothing else about the decision changes, including which of the two
 /// tabs claims the record.
-/// `dashboard` is `--dashboard` / `--no-dashboard`, and `None` when neither was typed — the
-/// standing `startupDashboard` then answers on its own.
-pub fn hub(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    extra: &[String],
-    tab: bool,
-    start: HubStart,
-    dashboard: Option<bool>,
-    dry_run: bool,
-) -> Result<(), String> {
+pub fn hub(args: &HubArgs) -> Result<(), String> {
+    let repo_arg = args.repo.as_deref();
+    let hub_arg = args.hub.as_deref();
+    let (extra, tab, start) = (args.extra(), args.tab, args.start());
+    let (dashboard, dry_run) = (args.dashboard(), args.dry_run);
     // `context_as`, not `context`: this command is run from anywhere in the repository,
     // worktrees included, and a hub that took its identity from whichever worktree it was
     // typed in would be a different hub every time.
@@ -74,7 +69,7 @@ pub fn hub(
         return match hub_in_tab(
             &ctx,
             repo_arg,
-            extra,
+            &extra,
             start,
             dashboard,
             &ctx.settings.terminal,
@@ -90,7 +85,7 @@ pub fn hub(
     let request = HubRequest {
         start,
         dashboard,
-        extra: extra.to_vec(),
+        extra,
     };
     let launch = match plan_launch(&ctx, &request)? {
         Planned::Running(status) => return go_to_running_hub(&ctx, &status, dry_run),
@@ -150,8 +145,8 @@ pub(super) fn ago(secs: i64) -> String {
 
 /// Remove this repo's hub record. For a hub shutting down cleanly, and for clearing a record
 /// left behind by one that did not.
-pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
-    let info = resolve(repo_arg, hub_arg)?;
+pub fn hub_stop(args: &HubStopArgs) -> Result<(), String> {
+    let info = resolve(args.repo.as_deref(), args.hub.as_deref())?;
     registry::unregister_hub(
         &crate::registry::state_root(Some(std::path::Path::new(&info.main))),
         &info.slug,
@@ -164,8 +159,8 @@ pub fn hub_stop(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), Str
 /// board's address book, so it drops out of the list. Like `hub-stop` it ends no process: it
 /// is for the hub itself, or a hub that is no longer running, and refuses a running one.
 /// Its saved session, tasks, gates and inbox stay, and starting the same key with `--resume` picks them up again.
-pub fn hub_close(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
-    let info = resolve(repo_arg, hub_arg)?;
+pub fn hub_close(args: &HubCloseArgs) -> Result<(), String> {
+    let info = resolve(args.repo.as_deref(), args.hub.as_deref())?;
     let root = crate::registry::state_root(Some(std::path::Path::new(&info.main)));
     let hub = mail::all_repo_hubs(&root, &info)
         .into_iter()

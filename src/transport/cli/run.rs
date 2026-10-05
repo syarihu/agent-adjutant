@@ -2,9 +2,7 @@
 
 use clap::Parser;
 
-use super::args::{
-    Cli, Commands, GateAction, JulesAction, ServerAction, TaskAction, TmuxAction, strip_separator,
-};
+use super::args::{Cli, Commands, GateAction, JulesAction, ServerAction, TaskAction, TmuxAction};
 use super::outbox;
 use crate::transport::cli;
 
@@ -17,61 +15,9 @@ pub fn run() -> ! {
         Commands::Config(args) => super::show_config(args).map(|_| 0),
         Commands::Pending(args) => super::pending(args).map(|_| 0),
         Commands::Send(args) => super::send(args).map(|_| 0),
-        Commands::Spawn {
-            repo,
-            cwd,
-            title,
-            dry_run,
-            command,
-        } => super::spawn(
-            repo.as_deref(),
-            cwd,
-            title,
-            &strip_separator(command),
-            *dry_run,
-        )
-        .map(|_| 0),
-        Commands::Work {
-            repo,
-            hub,
-            worktree,
-            title,
-            task,
-            prompt,
-            resume,
-            dry_run,
-        } => super::work(&super::WorkArgs {
-            repo: repo.as_deref(),
-            hub: hub.as_deref(),
-            worktree,
-            title,
-            task: task.as_deref(),
-            prompt: prompt.as_deref(),
-            resume: *resume,
-            dry_run: *dry_run,
-        }),
-        // Exit 1 when the hub is not running, so a shell can branch on it without parsing
-        // anything this prints.
-        Commands::Worker {
-            repo,
-            hub,
-            worktree,
-            title,
-            task,
-            prompt,
-            resume,
-            dry_run,
-        } => super::worker(&super::WorkerArgs {
-            repo: repo.as_deref(),
-            hub: hub.as_deref(),
-            worktree: worktree.as_deref(),
-            title: title.as_deref(),
-            task: task.as_deref(),
-            prompt: prompt.as_deref(),
-            resume: *resume,
-            dry_run: *dry_run,
-        })
-        .map(|_| 0),
+        Commands::Spawn(args) => super::spawn(args).map(|_| 0),
+        Commands::Work(args) => super::work(args),
+        Commands::Worker(args) => super::worker(args).map(|_| 0),
         Commands::Tell(args) => super::tell(args).map(|_| 0),
         Commands::Serve(args) => super::serve(args).map(|_| 0),
         Commands::Server { action } => match action {
@@ -85,71 +31,15 @@ pub fn run() -> ! {
         Commands::Jules { action } => run_jules(action).map(|_| 0),
         Commands::Skill(args) => super::skill(args).map(|_| 0),
         Commands::Outbox(args) => outbox(args).map(|_| 0),
-        Commands::Focus {
-            repo,
-            hub: _,
-            worktree: Some(worktree),
-            quiet,
-            dry_run,
-        } => super::focus_worker_cmd(repo.as_deref(), worktree, *quiet, *dry_run)
-            .map(|found| i32::from(!found)),
-        Commands::Focus {
-            repo,
-            hub,
-            worktree: None,
-            quiet,
-            dry_run,
-        } => super::focus(repo.as_deref(), hub.as_deref(), *quiet, *dry_run)
-            .map(|found| i32::from(!found)),
-        Commands::Phase { set, worktree } => {
-            super::phase(worktree.as_deref(), set.as_deref()).map(|_| 0)
-        }
+        // Exit 1 when the hub is not running, so a shell can branch on it without parsing
+        // anything this prints.
+        Commands::Focus(args) => super::focus(args).map(|found| i32::from(!found)),
+        Commands::Phase(args) => super::phase(args).map(|_| 0),
         Commands::ReviewEngine(args) => super::review_engine(args).map(|_| 0),
-        Commands::Close {
-            repo,
-            worktree,
-            quiet,
-            dry_run,
-        } => {
-            cli::close(repo.as_deref(), worktree, *quiet, *dry_run).map(|closed| i32::from(!closed))
-        }
-        Commands::Hub {
-            repo,
-            hub,
-            dry_run,
-            tab,
-            resume,
-            new,
-            no_dashboard,
-            dashboard,
-            extra,
-        } => super::hub(
-            repo.as_deref(),
-            hub.as_deref(),
-            &strip_separator(extra),
-            *tab,
-            match (*resume, *new) {
-                (true, _) => crate::lifecycle::hub::HubStart::Resume,
-                (_, true) => crate::lifecycle::hub::HubStart::New,
-                _ => crate::lifecycle::hub::HubStart::Auto,
-            },
-            // Two flags, three answers. `None` is "nobody said", and it has to stay distinct
-            // from both: it is what leaves the configured value standing, and what keeps a
-            // plain `adj hub` printing the command line it has always printed.
-            match (*no_dashboard, *dashboard) {
-                (true, _) => Some(false),
-                (_, true) => Some(true),
-                _ => None,
-            },
-            *dry_run,
-        )
-        .map(|_| 0),
-        Commands::HubStop { repo, hub } => {
-            super::hub_stop(repo.as_deref(), hub.as_deref()).map(|_| 0)
-        }
-        Commands::HubClose { repo, hub } => {
-            super::hub_close(repo.as_deref(), hub.as_deref()).map(|_| 0)
-        }
+        Commands::Close(args) => cli::close(args).map(|closed| i32::from(!closed)),
+        Commands::Hub(args) => super::hub(args).map(|_| 0),
+        Commands::HubStop(args) => super::hub_stop(args).map(|_| 0),
+        Commands::HubClose(args) => super::hub_close(args).map(|_| 0),
         Commands::Ide(args) => super::open_ide(args).map(|_| 0),
         Commands::Title(args) => super::set_title(args).map(|_| 0),
         Commands::Notify(args) => super::notify_user(args).map(|_| 0),

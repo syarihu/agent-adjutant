@@ -1,3 +1,4 @@
+use super::args::{FocusArgs, PhaseArgs, SpawnArgs, WorkArgs, WorkerArgs};
 use super::*;
 use crate::lifecycle::title_command;
 use crate::lifecycle::worker::{
@@ -5,29 +6,24 @@ use crate::lifecycle::worker::{
     plan_launch, register_launch, resume_worker, worker_worktree,
 };
 
-pub fn spawn(
-    repo_arg: Option<&str>,
-    cwd: &str,
-    title: &str,
-    command: &[String],
-    dry_run: bool,
-) -> Result<(), String> {
+pub fn spawn(args: &SpawnArgs) -> Result<(), String> {
+    let command = args.command();
     if command.is_empty() {
         return Err("pass the command to run after --".to_string());
     }
-    let settings = settings_for(repo_arg);
-    let name_it = title_command(&settings, title);
+    let settings = settings_for(args.repo.as_deref());
+    let name_it = title_command(&settings, &args.title);
     let done = terminal::spawn(
         &settings.terminal,
         &SpawnRequest {
-            cwd: &crate::infra::paths::expand_home(cwd).to_string_lossy(),
-            title,
-            command: &crate::infra::template::sh_join(command),
+            cwd: &crate::infra::paths::expand_home(&args.cwd).to_string_lossy(),
+            title: &args.title,
+            command: &crate::infra::template::sh_join(&command),
             title_command: name_it.as_deref(),
         },
-        dry_run,
+        args.dry_run,
     )?;
-    if dry_run {
+    if args.dry_run {
         println!("{}", done.script);
     } else {
         println!("{}", done.description);
@@ -40,49 +36,38 @@ pub fn spawn(
 /// should answer by leaving the task queued instead of reporting a failure.
 pub const WORKER_LIMIT_EXIT: i32 = 3;
 
-pub struct WorkArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub worktree: &'a str,
-    pub title: &'a str,
-    /// The task record to take the title from, when `title` is empty.
-    pub task: Option<&'a str>,
-    pub prompt: Option<&'a str>,
-    pub resume: bool,
-    pub dry_run: bool,
-}
-
-pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
-    let WorkArgs {
-        repo: repo_arg,
-        hub: hub_arg,
-        worktree,
-        title,
-        task: task_id,
-        prompt,
-        resume,
-        dry_run,
-    } = *args;
-    if resume {
-        return work_resumed(repo_arg, hub_arg, worktree, title, prompt, dry_run);
+/// Open a tab and start a worker on a worktree. `--task` names the record the title is taken
+/// from when `--title` is empty.
+pub fn work(args: &WorkArgs) -> Result<i32, String> {
+    let repo_arg = args.repo.as_deref();
+    let hub_arg = args.hub.as_deref();
+    if args.resume {
+        return work_resumed(
+            repo_arg,
+            hub_arg,
+            &args.worktree,
+            &args.title,
+            args.prompt.as_deref(),
+            args.dry_run,
+        );
     }
     // The dispatching side: the identifier being handed to the new worker is this caller's
     // own, never one read out of some worktree it happens to be standing in.
     let ctx = context_as(repo_arg, hub_arg)?;
     let request = StartRequest {
-        worktree: worktree.to_string(),
-        title: title.to_string(),
-        task: task_id.map(str::to_string),
-        prompt: prompt.map(str::to_string),
-        repo: repo_arg.map(str::to_string),
+        worktree: args.worktree.clone(),
+        title: args.title.clone(),
+        task: args.task.clone(),
+        prompt: args.prompt.clone(),
+        repo: args.repo.clone(),
     };
-    match crate::lifecycle::worker::start(&ctx, &request, dry_run)? {
+    match crate::lifecycle::worker::start(&ctx, &request, args.dry_run)? {
         Started::Full(refusal) => {
             eprintln!("adjutant: {refusal}");
             Ok(WORKER_LIMIT_EXIT)
         }
         Started::Opened(done) => {
-            print_performed(&done, dry_run);
+            print_performed(&done, args.dry_run);
             Ok(0)
         }
     }
@@ -115,13 +100,17 @@ fn work_resumed(
     }
 }
 
-pub fn focus(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    quiet: bool,
-    dry_run: bool,
-) -> Result<bool, String> {
-    let ctx = context(repo_arg, hub_arg)?;
+/// `adj focus`: bring the hub, or with `--worktree` the worker in that worktree, to the front.
+pub fn focus(args: &FocusArgs) -> Result<bool, String> {
+    match args.worktree.as_deref() {
+        Some(worktree) => focus_worker_cmd(args, worktree),
+        None => focus_hub(args),
+    }
+}
+
+fn focus_hub(args: &FocusArgs) -> Result<bool, String> {
+    let (quiet, dry_run) = (args.quiet, args.dry_run);
+    let ctx = context(args.repo.as_deref(), args.hub.as_deref())?;
     let Some(raised) = crate::lifecycle::hub::focus(&ctx, dry_run)? else {
         if !quiet {
             println!("{} is not running", ctx.repo.hub_name);
@@ -142,13 +131,9 @@ pub fn focus(
     Ok(true)
 }
 
-pub fn focus_worker_cmd(
-    repo_arg: Option<&str>,
-    worktree: &str,
-    quiet: bool,
-    dry_run: bool,
-) -> Result<bool, String> {
-    let settings = settings_for(repo_arg);
+fn focus_worker_cmd(args: &FocusArgs, worktree: &str) -> Result<bool, String> {
+    let (quiet, dry_run) = (args.quiet, args.dry_run);
+    let settings = settings_for(args.repo.as_deref());
     let worktree = crate::infra::paths::expand_home(worktree);
     let Some(done) = focus_worker(&settings, &worktree, dry_run)? else {
         if !quiet {
@@ -167,9 +152,9 @@ pub fn focus_worker_cmd(
 }
 
 /// `adj phase`: set the step the worker here is in, or say which it is.
-pub fn phase(worktree: Option<&str>, set: Option<&str>) -> Result<(), String> {
-    let worktree = worker_worktree(worktree)?;
-    match set {
+pub fn phase(args: &PhaseArgs) -> Result<(), String> {
+    let worktree = worker_worktree(args.worktree.as_deref())?;
+    match args.set.as_deref() {
         Some(phase) => {
             registry::set_worker_phase(&worktree, phase)?;
             println!("phase: {phase}");
@@ -182,26 +167,14 @@ pub fn phase(worktree: Option<&str>, set: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// What `adj worker` was typed with.
-pub struct WorkerArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub worktree: Option<&'a str>,
-    pub title: Option<&'a str>,
-    pub task: Option<&'a str>,
-    pub prompt: Option<&'a str>,
-    pub resume: bool,
-    pub dry_run: bool,
-}
-
-pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
+pub fn worker(args: &WorkerArgs) -> Result<(), String> {
     let request = WorkerRequest {
-        repo: args.repo.map(str::to_string),
-        hub: args.hub.map(str::to_string),
-        worktree: args.worktree.map(str::to_string),
-        title: args.title.map(str::to_string),
-        task: args.task.map(str::to_string),
-        prompt: args.prompt.map(str::to_string),
+        repo: args.repo.clone(),
+        hub: args.hub.clone(),
+        worktree: args.worktree.clone(),
+        title: args.title.clone(),
+        task: args.task.clone(),
+        prompt: args.prompt.clone(),
         resume: args.resume,
     };
     let launch = match plan_launch(&request)? {

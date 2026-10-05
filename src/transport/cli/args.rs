@@ -2,6 +2,8 @@
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::lifecycle::hub::HubStart;
+
 #[derive(Parser)]
 #[command(
     name = "adjutant",
@@ -24,75 +26,11 @@ pub(crate) enum Commands {
     /// Hand a message to this repository's hub (body from --body or stdin)
     Send(SendArgs),
     /// Open a terminal tab and run a command there
-    Spawn {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Directory the new tab starts in
-        #[arg(long)]
-        cwd: String,
-        /// Tab title
-        #[arg(long, default_value = "")]
-        title: String,
-        /// Print the command or script instead of running it
-        #[arg(long)]
-        dry_run: bool,
-        /// -- followed by the command to run
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        command: Vec<String>,
-    },
+    Spawn(SpawnArgs),
     /// Open a tab and start a worker agent on a worktree; exit 3 if maxWorkers are already running
-    Work {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        worktree: String,
-        #[arg(long, default_value = "")]
-        title: String,
-        /// Take the tab's title from this task record instead of --title
-        #[arg(long, value_name = "ID", conflicts_with_all = ["title", "resume"])]
-        task: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
-        /// worktree's own record is not read here)
-        #[arg(long)]
-        hub: Option<String>,
-        /// What the worker is told on startup (default: read .claude/task-brief.md; with
-        /// --resume, check the outbox and carry on)
-        #[arg(long)]
-        prompt: Option<String>,
-        /// Reopen the worker session saved in this worktree instead of starting a new one
-        #[arg(long)]
-        resume: bool,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Work(WorkArgs),
     /// Start the worker agent in this tab (what `work` opens a tab to run)
-    Worker {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Default with --resume: the worktree this is run from
-        #[arg(long, required_unless_present = "resume")]
-        worktree: Option<String>,
-        /// Default with --resume: the title the worker was started with
-        #[arg(long)]
-        title: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
-        /// worktree's own record is not read here. With --resume: the hub that dispatched the
-        /// saved session)
-        #[arg(long)]
-        hub: Option<String>,
-        /// What the worker is told on startup (default: read .claude/task-brief.md; with
-        /// --resume, check the outbox and carry on)
-        #[arg(long)]
-        prompt: Option<String>,
-        /// Reopen the worker session saved in this worktree instead of starting a new one
-        #[arg(long)]
-        resume: bool,
-        /// The task record ID when one is linked
-        #[arg(long)]
-        task: Option<String>,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Worker(WorkerArgs),
     /// Leave a message for the worker in a worktree (body from --body or stdin)
     Tell(TellArgs),
     /// Print one of the procedures: adj-hub | adj-worker | adj-report
@@ -100,90 +38,19 @@ pub(crate) enum Commands {
     /// What the hub has left for the worker in this worktree
     Outbox(OutboxArgs),
     /// Bring this repository's running hub (or, with --worktree, a worker) to the front; exit 1 if it is not running
-    Focus {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-        /// Bring the worker in this worktree to the front instead of the hub
-        #[arg(long, conflicts_with = "hub")]
-        worktree: Option<String>,
-        /// Say nothing, use the exit code
-        #[arg(long)]
-        quiet: bool,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Focus(FocusArgs),
     /// Say which step the worker in this worktree is in, or show it
-    Phase {
-        /// plan | implement | self-review | verify | pr | pr-bots | review | report
-        #[arg(long, value_name = "PHASE")]
-        set: Option<String>,
-        /// Default: the worktree this is run from
-        #[arg(long)]
-        worktree: Option<String>,
-    },
+    Phase(PhaseArgs),
     /// Which engine reads the diff in this self-review round: reviewEngine, then Claude's rate limits
     ReviewEngine(ReviewEngineArgs),
     /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
-    Close {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        worktree: String,
-        /// Say nothing, use the exit code
-        #[arg(long)]
-        quiet: bool,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Close(CloseArgs),
     /// Start this repository's hub, in the main checkout, once
-    Hub {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        dry_run: bool,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
-        /// worktree's own record is not read here)
-        #[arg(long)]
-        hub: Option<String>,
-        /// Open a tab and start it there, instead of becoming it in this one
-        #[arg(long)]
-        tab: bool,
-        /// Reopen this hub's saved session instead of starting a new one (without either flag,
-        /// a session that ended within hubAutoResumeHours is resumed)
-        #[arg(long, conflicts_with = "new")]
-        resume: bool,
-        /// Start a new session even when the last one ended within hubAutoResumeHours
-        #[arg(long)]
-        new: bool,
-        /// Skip the dashboard collection this hub runs at startup (overrides startupDashboard)
-        #[arg(long, conflicts_with = "dashboard")]
-        no_dashboard: bool,
-        /// Collect the dashboard at startup even where startupDashboard is off
-        #[arg(long)]
-        dashboard: bool,
-        /// Extra arguments appended to the agent command
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        extra: Vec<String>,
-    },
+    Hub(HubArgs),
     /// Clear this repository's hub record
-    HubStop {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-    },
+    HubStop(HubStopArgs),
     /// Close a parent-task hub whose workers are all gone: clear its record and take it off the board
-    HubClose {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-    },
+    HubClose(HubCloseArgs),
     /// Open a worktree in the configured editor
     Ide(IdeArgs),
     /// Name the tab this process is running in (the hub names its own)
@@ -314,6 +181,86 @@ impl SendArgs {
 }
 
 #[derive(Args)]
+pub(crate) struct SpawnArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Directory the new tab starts in
+    #[arg(long)]
+    pub(crate) cwd: String,
+    /// Tab title
+    #[arg(long, default_value = "")]
+    pub(crate) title: String,
+    /// Print the command or script instead of running it
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// -- followed by the command to run
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub(crate) command: Vec<String>,
+}
+
+impl SpawnArgs {
+    /// The command to run, without the `--` that may come before it.
+    pub(crate) fn command(&self) -> Vec<String> {
+        strip_separator(&self.command)
+    }
+}
+
+#[derive(Args)]
+pub(crate) struct WorkArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) worktree: String,
+    #[arg(long, default_value = "")]
+    pub(crate) title: String,
+    /// Take the tab's title from this task record instead of --title
+    #[arg(long, value_name = "ID", conflicts_with_all = ["title", "resume"])]
+    pub(crate) task: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
+    /// worktree's own record is not read here)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// What the worker is told on startup (default: read .claude/task-brief.md; with
+    /// --resume, check the outbox and carry on)
+    #[arg(long)]
+    pub(crate) prompt: Option<String>,
+    /// Reopen the worker session saved in this worktree instead of starting a new one
+    #[arg(long)]
+    pub(crate) resume: bool,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct WorkerArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Default with --resume: the worktree this is run from
+    #[arg(long, required_unless_present = "resume")]
+    pub(crate) worktree: Option<String>,
+    /// Default with --resume: the title the worker was started with
+    #[arg(long)]
+    pub(crate) title: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
+    /// worktree's own record is not read here. With --resume: the hub that dispatched the
+    /// saved session)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// What the worker is told on startup (default: read .claude/task-brief.md; with
+    /// --resume, check the outbox and carry on)
+    #[arg(long)]
+    pub(crate) prompt: Option<String>,
+    /// Reopen the worker session saved in this worktree instead of starting a new one
+    #[arg(long)]
+    pub(crate) resume: bool,
+    /// The task record ID when one is linked
+    #[arg(long)]
+    pub(crate) task: Option<String>,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
 pub(crate) struct TellArgs {
     #[arg(long)]
     pub(crate) repo: Option<String>,
@@ -374,12 +321,128 @@ pub(crate) struct OutboxArgs {
 }
 
 #[derive(Args)]
+pub(crate) struct FocusArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Bring the worker in this worktree to the front instead of the hub
+    #[arg(long, conflicts_with = "hub")]
+    pub(crate) worktree: Option<String>,
+    /// Say nothing, use the exit code
+    #[arg(long)]
+    pub(crate) quiet: bool,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct PhaseArgs {
+    /// plan | implement | self-review | verify | pr | pr-bots | review | report
+    #[arg(long, value_name = "PHASE")]
+    pub(crate) set: Option<String>,
+    /// Default: the worktree this is run from
+    #[arg(long)]
+    pub(crate) worktree: Option<String>,
+}
+
+#[derive(Args)]
 pub(crate) struct ReviewEngineArgs {
     #[arg(long)]
     pub(crate) repo: Option<String>,
     /// Print the decision, the window that tripped and the message as JSON
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct CloseArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) worktree: String,
+    /// Say nothing, use the exit code
+    #[arg(long)]
+    pub(crate) quiet: bool,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct HubArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, then the one agentEnv names; a
+    /// worktree's own record is not read here)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Open a tab and start it there, instead of becoming it in this one
+    #[arg(long)]
+    pub(crate) tab: bool,
+    /// Reopen this hub's saved session instead of starting a new one (without either flag,
+    /// a session that ended within hubAutoResumeHours is resumed)
+    #[arg(long, conflicts_with = "new")]
+    pub(crate) resume: bool,
+    /// Start a new session even when the last one ended within hubAutoResumeHours
+    #[arg(long)]
+    pub(crate) new: bool,
+    /// Skip the dashboard collection this hub runs at startup (overrides startupDashboard)
+    #[arg(long, conflicts_with = "dashboard")]
+    pub(crate) no_dashboard: bool,
+    /// Collect the dashboard at startup even where startupDashboard is off
+    #[arg(long)]
+    pub(crate) dashboard: bool,
+    /// Extra arguments appended to the agent command
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub(crate) extra: Vec<String>,
+}
+
+impl HubArgs {
+    pub(crate) fn start(&self) -> HubStart {
+        match (self.resume, self.new) {
+            (true, _) => HubStart::Resume,
+            (_, true) => HubStart::New,
+            _ => HubStart::Auto,
+        }
+    }
+
+    /// Two flags, three answers. `None` is "nobody said", and it has to stay distinct
+    /// from both: it is what leaves the configured value standing, and what keeps a
+    /// plain `adj hub` printing the command line it has always printed. The standing
+    /// `startupDashboard` then answers on its own.
+    pub(crate) fn dashboard(&self) -> Option<bool> {
+        match (self.no_dashboard, self.dashboard) {
+            (true, _) => Some(false),
+            (_, true) => Some(true),
+            _ => None,
+        }
+    }
+
+    /// The extra arguments for the agent command, without the `--` that may come before them.
+    pub(crate) fn extra(&self) -> Vec<String> {
+        strip_separator(&self.extra)
+    }
+}
+
+#[derive(Args)]
+pub(crate) struct HubStopArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct HubCloseArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
 }
 
 #[derive(Args)]

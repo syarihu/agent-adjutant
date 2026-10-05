@@ -60,4 +60,4 @@ pub use task::{
     update_cmd as task_update,
 };
 pub use tell::tell;
-pub use worker::{WorkArgs, WorkerArgs, focus, focus_worker_cmd, phase, spawn, work, worker};
+pub use worker::{focus, phase, spawn, work, worker};
