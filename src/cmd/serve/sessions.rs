@@ -12,9 +12,10 @@ use crate::task;
 
 use super::Server;
 use super::state::{
-    GateCache, Listing, linked_task_title, parent_hub_id, session_terminal, settings_now,
-    socket_key, split_main, waiting_hub, waiting_worker, worker_session_ids,
+    GateCache, Listing, linked_task_title, parent_hub_id, session_terminal, socket_key, split_main,
+    waiting_hub, waiting_worker, worker_session_ids,
 };
+use crate::board::settings_now;
 
 /// What one tmux server said about its panes and clients in one poll.
 pub(super) struct TmuxView {

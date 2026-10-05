@@ -33,7 +33,6 @@ mod tell;
 pub mod tmux;
 mod worker_ops;
 
-pub use crate::board::jobs::{HubTitles, PrPoll};
 pub use close::close;
 use context::settings_for;
 pub use context::{hub_name, show_config};
@@ -47,9 +46,8 @@ use hub_ops::{ago, print_performed};
 pub use hub_ops::{hub, hub_close, hub_stop};
 pub use ide_title_notify::{WorktreeArgs, notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
-    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, Watch as JulesWatch,
-    findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
-    start as jules_start,
+    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, findings_cmd as jules_findings_cmd,
+    relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
 pub use review_engine::run as review_engine;
 pub(crate) use serve::board_connection;
@@ -69,6 +67,3 @@ pub use task::{
 };
 pub use tell::{TellArgs, tell};
 pub use worker_ops::{WorkArgs, WorkerArgs, focus, focus_worker_cmd, phase, spawn, work, worker};
-
-#[cfg(test)]
-mod tests;

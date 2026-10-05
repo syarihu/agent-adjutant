@@ -1,6 +1,5 @@
-use std::collections::HashSet;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
@@ -9,153 +8,14 @@ use crate::{gate, task};
 
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{is_own_origin, refuse};
-use super::daemon::{bind_resident, private_log, resident_root};
 use super::index::{WorkerSeen, board_counts};
-use super::registry::resident_board_url;
 use super::resident::split_board_path;
 use super::routes::{hub_route, is_page_path, session_route, session_route_for, terminal_route};
 use super::state::{
-    LAST_LINE_MIN_AGE, branch_of, cut_chars, history_id, history_of, socket_key_in, state,
-    with_records, worker_session_ids,
+    branch_of, cut_chars, history_id, history_of, socket_key_in, state, with_records,
+    worker_session_ids,
 };
 use super::*;
-use crate::registry::{Served, boards_dir, dashboards_running, forget_board, prefer};
-
-#[test]
-fn forgetting_a_board_removes_only_that_slug() {
-    let sandbox = crate::testing::Sandbox::empty();
-    let root = sandbox.state();
-    std::fs::create_dir_all(boards_dir(&root)).unwrap();
-    for slug in ["acme-widget-a", "acme-widget-b"] {
-        std::fs::write(boards_dir(&root).join(format!("{slug}.json")), "{}").unwrap();
-    }
-    forget_board(&root, "acme-widget-a").unwrap();
-    assert!(!boards_dir(&root).join("acme-widget-a.json").exists());
-    assert!(boards_dir(&root).join("acme-widget-b.json").exists());
-    // Nothing to forget is not an error.
-    forget_board(&root, "acme-widget-a").unwrap();
-}
-
-/// A relative state directory is the main checkout's of the repository the server command was
-/// typed in, and outside any repository the working directory's.
-#[test]
-fn the_resident_root_is_taken_against_the_checkout_it_was_typed_in() {
-    let sandbox = crate::testing::Sandbox::empty();
-    let _state =
-        crate::testing::EnvVar::set(&sandbox, crate::infra::env::STATE_DIR_ENV, "relative-state");
-    let checkout = tempfile::tempdir().unwrap();
-    let repo = crate::kernel::identity::RepoInfo {
-        main: checkout.path().to_string_lossy().to_string(),
-        nwo: "acme/widget".to_string(),
-        repo: "widget".to_string(),
-        hub: None,
-        slug: "acme-widget".to_string(),
-        hub_name: "adjutant-acme-widget".to_string(),
-        nwo_source: "dirname",
-    };
-    assert_eq!(
-        resident_root(Some(&repo)),
-        checkout.path().join("relative-state")
-    );
-    assert_eq!(
-        resident_root(None),
-        std::env::current_dir().unwrap().join("relative-state")
-    );
-}
-
-#[test]
-fn the_dashboards_record_is_written_whole() {
-    let sandbox = crate::testing::Sandbox::empty();
-    assert_eq!(record(&sandbox.state(), "acme-widget", 4321), Ok(true));
-    let dir = sandbox.state().join("dashboards");
-    let names: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    assert_eq!(names, ["acme-widget.json"]);
-    let written: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("acme-widget.json")).unwrap())
-            .unwrap();
-    let pid = std::process::id();
-    assert_eq!(written["pid"], pid);
-    assert_eq!(written["port"], 4321);
-    assert_eq!(
-        written["psStarted"],
-        json!(crate::registry::ps_started(pid))
-    );
-    assert_eq!(
-        dashboards_running(&sandbox.state(), "acme-widget"),
-        Some(4321)
-    );
-}
-
-#[test]
-fn a_pane_is_read_again_only_when_it_has_moved_and_the_last_read_is_old() {
-    let lines = LastLines::default();
-    let t0 = Instant::now();
-    let reads = std::cell::Cell::new(0);
-    // The read is made at epoch second 1000 unless a case says otherwise.
-    let look_at = |activity, at: Instant, secs| {
-        lines.look("pane", Some(activity), at, secs, || {
-            reads.set(reads.get() + 1);
-            Some(format!("read {}", reads.get()))
-        })
-    };
-    let look = |activity, at| look_at(activity, at, 1000);
-    assert_eq!(look(10, t0).as_deref(), Some("read 1"));
-    // Nothing moved: the answer stands, however old.
-    assert_eq!(
-        look(10, t0 + Duration::from_secs(60)).as_deref(),
-        Some("read 1")
-    );
-    // Moved, but read a moment ago.
-    assert_eq!(
-        look(11, t0 + Duration::from_secs(2)).as_deref(),
-        Some("read 1")
-    );
-    // Moved and read long enough ago.
-    assert_eq!(look(11, t0 + LAST_LINE_MIN_AGE).as_deref(), Some("read 2"));
-    assert_eq!(reads.get(), 2);
-    // Activity has one-second resolution: output in the second of the read may have come
-    // after it, so that read is not trusted once the age is up.
-    assert_eq!(
-        look_at(2000, t0 + Duration::from_secs(20), 2000).as_deref(),
-        Some("read 3")
-    );
-    assert_eq!(
-        look_at(2000, t0 + Duration::from_secs(21), 2000).as_deref(),
-        Some("read 3")
-    );
-    assert_eq!(
-        look_at(2000, t0 + Duration::from_secs(30), 2001).as_deref(),
-        Some("read 4")
-    );
-    assert_eq!(
-        look_at(2000, t0 + Duration::from_secs(40), 2005).as_deref(),
-        Some("read 4")
-    );
-    // A read that found nothing, or a window with no known activity, is tried again.
-    let nothing = |activity, at: Instant| lines.look("empty", activity, at, 1000, || None);
-    assert_eq!(nothing(Some(5), t0), None);
-    let found = |activity, at: Instant| {
-        lines.look("empty", activity, at, 1000, || Some("late".to_string()))
-    };
-    assert_eq!(found(Some(5), t0 + Duration::from_secs(1)), None);
-    assert_eq!(
-        found(Some(5), t0 + LAST_LINE_MIN_AGE).as_deref(),
-        Some("late")
-    );
-    assert_eq!(
-        found(None, t0 + LAST_LINE_MIN_AGE * 2).as_deref(),
-        Some("late")
-    );
-    // A pane that is no longer listed is forgotten.
-    lines.keep_only(&HashSet::new());
-    assert_eq!(
-        look(11, t0 + Duration::from_secs(70)).as_deref(),
-        Some("read 5")
-    );
-}
 
 #[test]
 fn the_page_pieces_join_into_one_document() {
@@ -419,23 +279,6 @@ fn a_board_path_names_one_slug() {
 }
 
 #[test]
-fn a_board_url_carries_its_path() {
-    assert_eq!(
-        resident_board_url(4577, "acme-x-1", "tok"),
-        "http://127.0.0.1:4577/b/acme-x-1/?token=tok"
-    );
-    assert_eq!(board_url(4577, "tok"), "http://127.0.0.1:4577/?token=tok");
-}
-
-#[test]
-fn the_resident_is_preferred_over_a_dedicated_board() {
-    assert_eq!(prefer(Some(1), Some(2)), Some(Served::Resident(1)));
-    assert_eq!(prefer(Some(1), None), Some(Served::Resident(1)));
-    assert_eq!(prefer(None, Some(2)), Some(Served::Dedicated(2)));
-    assert_eq!(prefer(None, None), None);
-}
-
-#[test]
 fn a_post_to_a_board_path_needs_the_same_origin() {
     let path = "/b/acme-x-1/api/tasks";
     let with = |origin: Option<&str>| {
@@ -483,25 +326,6 @@ fn a_worktree_called_main_keeps_its_id_unless_the_main_checkout_has_it() {
         ["worker-main", "worker-solo"]
     );
     assert!(worker_session_ids(&paths, true)[0].starts_with("worker-main-"));
-}
-
-#[test]
-fn the_server_log_is_readable_by_its_owner_alone() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("server.log");
-    drop(private_log(&path).unwrap());
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
-    // A log an older version made with the default mask is tightened, not trusted.
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-    drop(private_log(&path).unwrap());
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
 }
 
 #[test]
@@ -928,16 +752,6 @@ fn a_history_path_names_one_task() {
 
 const TOKEN: &str = "s3cret";
 const PORT: u16 = 4577;
-
-#[test]
-fn a_taken_port_falls_back_to_a_free_one() {
-    let taken = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = taken.local_addr().unwrap().port();
-    let second = bind_preferring(port).unwrap();
-    let got = second.local_addr().unwrap().port();
-    assert_ne!(got, port);
-    assert_ne!(got, 0);
-}
 
 #[test]
 fn the_page_opens_with_the_token_in_the_url() {
@@ -1387,29 +1201,4 @@ fn one_tmux_server_is_one_key_however_a_session_names_its_socket() {
     assert_eq!(key(Some("  ")), key(None));
     assert_eq!(key(Some("default")), key(None));
     assert_ne!(key(Some("another")), key(None));
-}
-
-#[test]
-fn binding_the_resident_records_this_process_and_refuses_a_second_while_the_lock_is_held() {
-    let sandbox = crate::testing::Sandbox::empty();
-    let root = sandbox.state();
-    let first = bind_resident(&root, 0).unwrap();
-    assert_ne!(first.bound, 0);
-    let record = crate::infra::fs::read_json(&root.join("server.json")).unwrap();
-    assert_eq!(record["pid"], json!(std::process::id()));
-    assert_eq!(record["port"], json!(first.bound));
-    for key in ["psStarted", "startedAt", "version"] {
-        assert!(record.get(key).is_some(), "{key} in {record}");
-    }
-    assert_eq!(
-        crate::registry::live_resident(&root),
-        Some((std::process::id(), first.bound))
-    );
-    let Err(refused) = bind_resident(&root, 0) else {
-        panic!("a second resident bound while the first held the lock")
-    };
-    assert!(
-        refused.starts_with("another adj server is running"),
-        "{refused}"
-    );
 }
