@@ -899,3 +899,35 @@ fn window_ids_are_an_at_sign_and_digits() {
         assert!(!is_window_id(bad), "{bad:?}");
     }
 }
+
+#[test]
+fn with_nothing_running_there_is_no_status_and_nothing_to_stop() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    assert_eq!(status(&root), None);
+    assert_eq!(stop(&root), Ok(None));
+}
+
+#[test]
+fn stopping_forgets_a_record_of_a_process_that_is_gone() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    std::fs::create_dir_all(&root).unwrap();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    crate::infra::fs::write_json(
+        &root.join("server.json"),
+        &json!({
+            "pid": dead,
+            "psStarted": "whenever it was",
+            "port": 1,
+            "startedAt": "1970-01-01T00:00:00Z",
+            "version": "0",
+        }),
+    )
+    .unwrap();
+    assert_eq!(status(&root), None);
+    assert_eq!(stop(&root), Ok(None));
+    assert!(!root.join("server.json").exists());
+}

@@ -5,12 +5,12 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::board::view::boards_json;
+use crate::board::view::boards;
 use crate::board::{
-    DEFAULT_PORT, bind_resident, board_url, checkout_here, launch_resident, resident_board_url,
-    resident_root, stop_resident, stored_token, token,
+    self, RestartFailed, Restarted, Started, Status, bind_resident, board_url, checkout_here,
+    resident_board_url, resident_root, token,
 };
-use crate::registry::{live_resident, note_board, recorded_version};
+use crate::kernel::identity::RepoInfo;
 use crate::transport::board_http::handle_resident;
 
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
@@ -21,29 +21,36 @@ pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, Stri
     if foreground {
         return serve_resident(&root, port, open);
     }
-    if let Some((pid, port)) = live_resident(&root) {
-        if let Some(repo) = &here {
-            note_board(&root, repo);
+    match board::start(&root, port, here.as_ref())? {
+        Started::Already { pid, port } => {
+            let shown = shown_url(&root, port, here.as_ref())?;
+            println!("adj server: already running (pid {pid}) — {shown}");
+            Ok(0)
         }
-        let shown = shown_url(&root, port, here.as_ref())?;
-        println!("adj server: already running (pid {pid}) — {shown}");
-        return Ok(0);
+        Started::Launched { port } => say_serving(&root, port, open, here.as_ref()),
     }
-    start_detached(&root, port, open, here.as_ref())
 }
 
-/// Start the resident detached and say where it is. The caller has already found none running.
+/// Start the resident detached and say where it is.
 fn start_detached(
     root: &Path,
     port: u16,
     open: bool,
-    here: Option<&crate::kernel::identity::RepoInfo>,
+    here: Option<&RepoInfo>,
 ) -> Result<i32, String> {
-    let port = launch_resident(root, port)?;
+    // Already: another resident won the race since the caller looked, and it is serving all the
+    // same.
+    let port = match board::start(root, port, here)? {
+        Started::Already { port, .. } | Started::Launched { port } => port,
+    };
+    say_serving(root, port, open, here)
+}
+
+/// What a start that launched says.
+fn say_serving(root: &Path, port: u16, open: bool, here: Option<&RepoInfo>) -> Result<i32, String> {
     let index = resident_index_url(root, port)?;
     println!("adj server: serving on {index}");
     if let Some(repo) = here {
-        note_board(root, repo);
         println!(
             "adj server: {} — {}",
             repo.nwo,
@@ -61,11 +68,7 @@ fn resident_index_url(root: &Path, port: u16) -> Result<String, String> {
 }
 
 /// The URL worth showing: the board of the checkout this stands in, else the index.
-fn shown_url(
-    root: &Path,
-    port: u16,
-    here: Option<&crate::kernel::identity::RepoInfo>,
-) -> Result<String, String> {
+fn shown_url(root: &Path, port: u16, here: Option<&RepoInfo>) -> Result<String, String> {
     match here {
         Some(repo) => Ok(resident_board_url(port, &repo.slug, &token(root)?)),
         None => resident_index_url(root, port),
@@ -99,8 +102,8 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
 /// `adj server stop`. Only the server: a hub is a session of its own and goes on running.
 pub fn server_stop() -> Result<i32, String> {
     let root = resident_root(checkout_here().as_ref());
-    match stop_resident(&root, false)? {
-        Some((pid, _)) => println!("stopped adj server (pid {pid})"),
+    match board::stop(&root)? {
+        Some(board::Stopped { pid, .. }) => println!("stopped adj server (pid {pid})"),
         None => println!("adj server is not running"),
     }
     Ok(0)
@@ -113,48 +116,50 @@ pub fn server_stop() -> Result<i32, String> {
 pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
     let here = checkout_here();
     let root = resident_root(here.as_ref());
-    let old_version = recorded_version(&root);
-    let Some((old_pid, old_port)) = stop_resident(&root, true)? else {
-        println!("adj server was not running; starting it");
-        return start_detached(&root, port.unwrap_or(DEFAULT_PORT), open, here.as_ref());
-    };
-    println!("adj server: stopped pid {old_pid}");
-    // Catches a supervisor that was quicker than this check and nothing more: one that
-    // respawns after it still races the start below, so restart is not for a supervised server.
-    if let Some((current, _)) = live_resident(&root) {
-        println!("adj server: its supervisor already started it again (pid {current})");
-        return Ok(0);
-    }
-    let wanted = port.unwrap_or(old_port);
-    let bound = launch_resident(&root, wanted).map_err(|e| {
-        format!(
-            "stopped pid {old_pid}, but the new server did not start; nothing is running now: {e}"
-        )
+    let restarted = board::restart(&root, port, here.as_ref()).map_err(|failed| {
+        if let RestartFailed::Start { stopped, .. } = &failed {
+            println!("adj server: stopped pid {stopped}");
+        }
+        failed.to_string()
     })?;
-    let new_pid = live_resident(&root).map_or(0, |(pid, _)| pid);
-    if let Some(repo) = &here {
-        note_board(&root, repo);
+    match restarted {
+        Restarted::WasNotRunning { port } => {
+            println!("adj server was not running; starting it");
+            start_detached(&root, port, open, here.as_ref())
+        }
+        Restarted::Supervised { stopped, current } => {
+            println!("adj server: stopped pid {stopped}");
+            println!("adj server: its supervisor already started it again (pid {current})");
+            Ok(0)
+        }
+        Restarted::Replaced {
+            stopped,
+            pid,
+            wanted,
+            bound,
+            versions,
+        } => {
+            println!("adj server: stopped pid {stopped}");
+            let shown = shown_url(&root, bound, here.as_ref())?;
+            let version =
+                versions.map_or_else(String::new, |(old, new)| format!(" ({old} -> {new})"));
+            println!("adj server: restarted (pid {pid}){version} — {shown}");
+            // 0 asks for any port, so there is nothing for the bound one to differ from.
+            if wanted != 0 && bound != wanted {
+                println!("adj server: port {wanted} was taken; now on {bound}");
+            }
+            if open {
+                open_browser(&shown);
+            }
+            Ok(0)
+        }
     }
-    let shown = shown_url(&root, bound, here.as_ref())?;
-    let version = match (old_version, recorded_version(&root)) {
-        (Some(old), Some(new)) if old != new => format!(" ({old} -> {new})"),
-        _ => String::new(),
-    };
-    println!("adj server: restarted (pid {new_pid}){version} — {shown}");
-    // 0 asks for any port, so there is nothing for the bound one to differ from.
-    if wanted != 0 && bound != wanted {
-        println!("adj server: port {wanted} was taken; now on {bound}");
-    }
-    if open {
-        open_browser(&shown);
-    }
-    Ok(0)
 }
 
 /// `adj server status`. Exit 1 when there is no resident, so a script can ask.
 pub fn server_status(as_json: bool) -> Result<i32, String> {
     let root = resident_root(checkout_here().as_ref());
-    let Some((pid, port)) = live_resident(&root) else {
+    let Some(Status { pid, port, token }) = board::status(&root) else {
         if as_json {
             println!("{}", json!({ "running": false }));
         } else {
@@ -162,9 +167,9 @@ pub fn server_status(as_json: bool) -> Result<i32, String> {
         }
         return Ok(1);
     };
-    let token = stored_token(&root).ok_or("the dashboard token is missing")?;
+    let token = token.ok_or("the dashboard token is missing")?;
     let index = board_url(port, &token);
-    let boards = boards_json(&root, port, &token);
+    let boards = boards(&root, port, &token);
     if as_json {
         let out = json!({
             "running": true,
@@ -178,18 +183,14 @@ pub fn server_status(as_json: bool) -> Result<i32, String> {
     }
     println!("adj server: running (pid {pid}) on port {port}");
     println!("index: {index}");
-    for board in &boards {
-        let hub = board["hub"].as_str().unwrap_or("-");
-        let state = if board["hubPresent"].as_bool().unwrap_or(false) {
+    for row in &boards {
+        let hub = row.hub.as_deref().unwrap_or("-");
+        let state = if row.hub_present {
             "running"
         } else {
             "stopped"
         };
-        println!(
-            "{} (hub {hub}, {state}) — {}",
-            board["nwo"].as_str().unwrap_or_default(),
-            board["url"].as_str().unwrap_or_default()
-        );
+        println!("{} (hub {hub}, {state}) — {}", row.nwo, row.url);
     }
     Ok(0)
 }

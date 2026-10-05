@@ -9,6 +9,15 @@ use crate::registry::{
 };
 use crate::task;
 
+mod restart;
+mod start;
+mod status;
+mod stop;
+pub use restart::*;
+pub use start::*;
+pub use status::*;
+pub use stop::*;
+
 pub const DEFAULT_PORT: u16 = 4577;
 
 /// `port` on the loopback address, or any free port when `port` is taken — a second hub of
