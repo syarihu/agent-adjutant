@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use crate::board::jobs::JulesSeen;
 use crate::gate;
 use crate::infra::terminal::SessionTerminal;
 use crate::task;
 
 use super::view::{
-    WorkerSeen, board_counts, board_session, branch_of, cut_chars, history_of, socket_key_in,
-    state, with_records, worker_session_ids,
+    GateCard, HumanCol, WorkerRow, WorkerSeen, board_counts, board_session, branch_of, cut_chars,
+    history_of, socket_key_in, state, waits_on_person, with_records, worker_of, worker_session_ids,
 };
 use super::*;
 
@@ -451,6 +452,329 @@ fn a_jules_task_follows_its_prs_turn_and_waits_when_the_turn_says_nothing() {
 }
 
 #[test]
+fn a_card_waits_on_the_person_by_the_page_s_rule() {
+    let jules = |mut t: task::Task| {
+        t.jules_session = Some("s1".to_string());
+        t
+    };
+    let with_status = |mut t: task::Task, status: task::Status| {
+        t.status = status;
+        t
+    };
+    let found = |state: &str, working: bool| JulesSeen::Found {
+        session: "s1".to_string(),
+        state: state.to_string(),
+        url: None,
+        pr: None,
+        working,
+    };
+    let in_phase = |phase: &'static str| Some(Some(phase));
+    type Row<'a> = (
+        &'a str,
+        task::Task,
+        Option<Option<&'a str>>,
+        Option<JulesSeen>,
+        bool,
+    );
+    let table: Vec<Row> = vec![
+        // A finished task waits on nothing, whatever its PR and worker say.
+        (
+            "done",
+            with_status(read_pr("open", "changes", 0, 0), task::Status::Done),
+            in_phase("pr"),
+            None,
+            false,
+        ),
+        (
+            "cancelled",
+            with_status(read_pr("open", "changes", 0, 0), task::Status::Cancelled),
+            in_phase("pr"),
+            None,
+            false,
+        ),
+        // Jules working: the ball is Jules's.
+        (
+            "jules working",
+            jules(read_pr("open", "changes", 0, 0)),
+            None,
+            Some(found("IN_PROGRESS", true)),
+            false,
+        ),
+        // Jules failed: the worker rule decides.
+        (
+            "jules failed, worker implementing",
+            jules(read_pr("open", "changes", 0, 0)),
+            in_phase("implement"),
+            Some(found("FAILED", false)),
+            false,
+        ),
+        (
+            "jules failed, no row, status pr, no turn",
+            jules(on_pr("t1", task::Status::Pr)),
+            None,
+            Some(found("FAILED", false)),
+            true,
+        ),
+        // Jules not working: the PR's turn.
+        (
+            "jules, checks",
+            jules(read_pr("open", "none", 0, 2)),
+            None,
+            Some(found("COMPLETED", false)),
+            false,
+        ),
+        (
+            "jules, other reviewer",
+            jules(read_pr("open", "required", 0, 0)),
+            None,
+            Some(found("COMPLETED", false)),
+            false,
+        ),
+        (
+            "jules, merged",
+            jules(read_pr("merged", "approved", 0, 0)),
+            None,
+            Some(found("COMPLETED", false)),
+            false,
+        ),
+        (
+            "jules, changes",
+            jules(read_pr("open", "changes", 0, 0)),
+            in_phase("implement"),
+            Some(found("COMPLETED", false)),
+            true,
+        ),
+        (
+            "jules, merge",
+            jules(read_pr("open", "approved", 0, 0)),
+            None,
+            Some(found("COMPLETED", false)),
+            true,
+        ),
+        (
+            "jules, ci failed",
+            jules(read_pr("open", "none", 1, 0)),
+            None,
+            Some(found("COMPLETED", false)),
+            true,
+        ),
+        (
+            "jules, closed",
+            jules(read_pr("closed", "none", 0, 0)),
+            None,
+            Some(found("COMPLETED", false)),
+            true,
+        ),
+        (
+            "jules, a turn that says nothing",
+            jules(read_pr("open", "none", 0, 0)),
+            None,
+            Some(found("COMPLETED", false)),
+            true,
+        ),
+        (
+            "jules, no turn read",
+            jules(on_pr("t1", task::Status::Pr)),
+            None,
+            None,
+            true,
+        ),
+        (
+            "jules, still being checked",
+            jules(read_pr("open", "none", 0, 0)),
+            None,
+            Some(JulesSeen::Checking {
+                session: "s1".to_string(),
+                checking: true,
+            }),
+            true,
+        ),
+        (
+            "jules, lookup failed",
+            jules(read_pr("open", "none", 0, 0)),
+            None,
+            Some(JulesSeen::Failed {
+                session: "s1".to_string(),
+                error: "boom".to_string(),
+            }),
+            true,
+        ),
+        // A worker task with a PR.
+        (
+            "worker in another phase",
+            read_pr("open", "changes", 0, 0),
+            in_phase("implement"),
+            None,
+            false,
+        ),
+        (
+            "worker record with no phase",
+            read_pr("open", "changes", 0, 0),
+            Some(None),
+            None,
+            false,
+        ),
+        (
+            "person's turn, pr",
+            read_pr("open", "changes", 0, 0),
+            in_phase("pr"),
+            None,
+            true,
+        ),
+        (
+            "person's turn, pr-bots",
+            read_pr("open", "approved", 0, 0),
+            in_phase("pr-bots"),
+            None,
+            true,
+        ),
+        (
+            "bots' turn",
+            read_pr("open", "none", 0, 2),
+            in_phase("pr"),
+            None,
+            false,
+        ),
+        (
+            "another reviewer's turn",
+            read_pr("open", "required", 0, 0),
+            in_phase("pr"),
+            None,
+            false,
+        ),
+        (
+            "merged",
+            read_pr("merged", "approved", 0, 0),
+            in_phase("pr"),
+            None,
+            false,
+        ),
+        (
+            "no turn, pr",
+            read_pr("open", "none", 0, 0),
+            in_phase("pr"),
+            None,
+            true,
+        ),
+        (
+            "no turn, pr-bots",
+            read_pr("open", "none", 0, 0),
+            in_phase("pr-bots"),
+            None,
+            false,
+        ),
+        (
+            "no row, status pr",
+            on_pr("t1", task::Status::Pr),
+            None,
+            None,
+            true,
+        ),
+        (
+            "no row, status dispatched",
+            on_pr("t1", task::Status::Dispatched),
+            None,
+            None,
+            false,
+        ),
+        (
+            "no PR",
+            with_status(a_task("t1", task::Status::Pr), task::Status::Pr),
+            None,
+            None,
+            false,
+        ),
+        (
+            "jules session but no PR",
+            jules(a_task("t1", task::Status::Pr)),
+            None,
+            None,
+            false,
+        ),
+    ];
+    for (label, t, phase, seen, want) in table {
+        assert_eq!(waits_on_person(&t, phase, seen.as_ref()), want, "{label}");
+    }
+}
+
+#[test]
+fn a_gate_s_column_is_its_kind_s() {
+    for (kind, column) in [
+        (gate::Kind::Plan, "plan"),
+        (gate::Kind::Diff, "diff"),
+        (gate::Kind::Verify, "verify"),
+        (gate::Kind::Dispatch, "dispatch"),
+        (gate::Kind::Issue, "dispatch"),
+        (gate::Kind::Question, "question"),
+        (gate::Kind::Result, "verify"),
+        (gate::Kind::Relay, "prreview"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(HumanCol::of_gate(kind)).unwrap(),
+            json!(column),
+            "{kind:?}"
+        );
+    }
+
+    let card = |g: gate::Gate| serde_json::to_value(GateCard::of(g)).unwrap();
+    assert_eq!(
+        card(a_gate("g1", gate::Kind::Dispatch, "t1"))["answeredByHub"],
+        true
+    );
+    let mut by_hub = a_gate("g2", gate::Kind::Plan, "t1");
+    by_hub.opened_by = gate::Opener::Hub;
+    assert_eq!(card(by_hub)["answeredByHub"], true);
+    assert_eq!(
+        card(a_gate("g3", gate::Kind::Plan, "t1"))["answeredByHub"],
+        false
+    );
+    let relay = card(a_gate("g4", gate::Kind::Relay, "t1"));
+    assert_eq!(relay["humanCol"], "prreview");
+    assert_eq!(relay["kind"], "relay");
+}
+
+#[test]
+fn a_card_joins_the_first_worker_row_in_its_worktree_that_is_its_own_or_no_one_s() {
+    let row = |worktree: &str, task: Option<&str>, phase: &str| WorkerRow {
+        worktree: worktree.to_string(),
+        name: None,
+        branch: None,
+        present: true,
+        stale: false,
+        title: None,
+        task: task.map(str::to_string),
+        phase: Some(phase.to_string()),
+        phase_at: None,
+    };
+    // A PR whose turn says nothing, so the worker's phase is what decides.
+    let card = on_pr("t1", task::Status::Pr);
+    let waits = |workers: &[WorkerRow]| {
+        let found = worker_of(&card, workers);
+        waits_on_person(&card, found.map(|w| w.phase.as_deref()), None)
+    };
+    let phase_of = |workers: &[WorkerRow]| worker_of(&card, workers).and_then(|w| w.phase.clone());
+
+    assert!(waits(&[row("/tmp/wt", None, "pr")]));
+    assert!(waits(&[row("/tmp/wt", Some("t1"), "pr")]));
+    assert!(!waits(&[row("/tmp/wt", Some("t1"), "implement")]));
+    // Another task's row is skipped, so there is no row and the status decides.
+    assert!(waits(&[row("/tmp/wt", Some("t2"), "implement")]));
+    assert!(waits(&[row("/tmp/other", None, "implement")]));
+    // The first match wins, whichever follows it.
+    let both = [
+        row("/tmp/wt", Some("t2"), "implement"),
+        row("/tmp/wt", Some("t1"), "pr-bots"),
+        row("/tmp/wt", None, "pr"),
+    ];
+    assert_eq!(phase_of(&both).as_deref(), Some("pr-bots"));
+    assert!(!waits(&both));
+    // A card with no worktree has no row.
+    let mut bare = card.clone();
+    bare.worktree = None;
+    assert!(worker_of(&bare, &[row("/tmp/wt", None, "pr")]).is_none());
+}
+
+#[test]
 fn a_live_task_carries_its_records_and_the_plan_approved_last() {
     let mut record = a_gate("r1", gate::Kind::Diff, "t1");
     record.wait = false;
@@ -483,6 +807,9 @@ fn a_live_task_carries_its_records_and_the_plan_approved_last() {
     assert!(tasks[0]["records"][0].get("diffSize").is_none());
     assert_eq!(tasks[0]["approvedPlan"]["id"], "p-new");
     assert_eq!(tasks[0]["approvedPlan"]["answeredAt"], "20260922T040000Z");
+    assert_eq!(tasks[0]["waitsOnPerson"], false);
+    assert_eq!(tasks[0]["records"][0]["answeredByHub"], false);
+    assert!(tasks[0]["approvedPlan"].get("answeredByHub").is_none());
 }
 
 #[test]
@@ -514,17 +841,41 @@ fn a_stored_unknown_key_the_card_writes_itself_is_written_once_with_the_cards_va
     record.wait = false;
     record.diff = Some("abc".to_string());
     record.extra.insert("diffSize".to_string(), json!("stale"));
+    record
+        .extra
+        .insert("answeredByHub".to_string(), json!("stale"));
     let mut live = a_task("t1", task::Status::Dispatched);
     live.extra.insert("records".to_string(), json!("stale"));
+    live.extra
+        .insert("waitsOnPerson".to_string(), json!("stale"));
     let mut done = a_task("t2", task::Status::Done);
     done.extra.insert("records".to_string(), json!("kept"));
+    done.extra
+        .insert("waitsOnPerson".to_string(), json!("stale"));
     let cards = with_records(vec![live, done], vec![record], Vec::new());
     let body = serde_json::to_string(&cards).unwrap();
     assert_eq!(body.matches("\"records\"").count(), 2, "{body}");
     assert_eq!(body.matches("\"diffSize\"").count(), 1, "{body}");
+    // Once per card, finished ones too, and once on the one record.
+    assert_eq!(body.matches("\"waitsOnPerson\"").count(), 2, "{body}");
+    assert_eq!(body.matches("\"answeredByHub\"").count(), 1, "{body}");
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed[0]["records"][0]["diffSize"], 3);
+    assert_eq!(parsed[0]["records"][0]["answeredByHub"], false);
+    assert_eq!(parsed[0]["waitsOnPerson"], false);
+    assert_eq!(parsed[1]["waitsOnPerson"], false);
     assert_eq!(parsed[1]["records"], "kept");
+
+    let mut open = a_gate("g1", gate::Kind::Dispatch, "t1");
+    open.extra.insert("humanCol".to_string(), json!("stale"));
+    open.extra
+        .insert("answeredByHub".to_string(), json!("stale"));
+    let body = serde_json::to_string(&GateCard::of(open)).unwrap();
+    assert_eq!(body.matches("\"humanCol\"").count(), 1, "{body}");
+    assert_eq!(body.matches("\"answeredByHub\"").count(), 1, "{body}");
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(parsed["humanCol"], "dispatch");
+    assert_eq!(parsed["answeredByHub"], true);
 }
 
 #[test]

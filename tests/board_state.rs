@@ -497,6 +497,7 @@ fn expected_tasks() -> Value {
         "prTurn": null,
         "records": [
           {
+            "answeredByHub": false,
             "diffSize": 24,
             "id": "20260922T042000Z-diff-record",
             "kind": "diff",
@@ -512,6 +513,7 @@ fn expected_tasks() -> Value {
         "stopAt": "plan",
         "title": "Task WID-1",
         "updatedAt": "20260922T035000Z",
+        "waitsOnPerson": false,
         "worktree": "<tmp>/wid-1"
       },
       {
@@ -527,7 +529,8 @@ fn expected_tasks() -> Value {
         "status": "queued",
         "stopAt": "plan",
         "title": "Task WID-2",
-        "updatedAt": "20260922T035100Z"
+        "updatedAt": "20260922T035100Z",
+        "waitsOnPerson": false
       },
       {
         "autoStart": true,
@@ -539,7 +542,8 @@ fn expected_tasks() -> Value {
         "status": "done",
         "stopAt": "plan",
         "title": "Task WID-3",
-        "updatedAt": "20260922T034000Z"
+        "updatedAt": "20260922T034000Z",
+        "waitsOnPerson": false
       }
     ])
 }
@@ -574,6 +578,7 @@ fn expected_workers() -> Value {
 fn expected_gates() -> Value {
     json!([
       {
+        "answeredByHub": false,
         "choices": [
           {
             "id": "a",
@@ -587,6 +592,7 @@ fn expected_gates() -> Value {
           }
         ],
         "focus": "How the click is handled",
+        "humanCol": "question",
         "id": "g-wait",
         "kind": "question",
         "openedAt": "20260922T044500Z",

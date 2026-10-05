@@ -10,6 +10,8 @@ use crate::gate;
 use crate::registry::addresses;
 use crate::task;
 
+use super::columns::waits_on_person;
+
 /// What a worker's record says about the task it is on, for `board_counts`.
 pub struct WorkerSeen {
     pub task: Option<String>,
@@ -40,14 +42,11 @@ fn worker_seen(worktree: &str) -> Option<WorkerSeen> {
 /// How many things wait on the person and how many workers are at work on one board, from its
 /// records alone — no `ps`, no git, no tmux — so the sidebar can ask every board at once.
 ///
-/// This mirrors `humanColOf` in `src/ui/core.js` and the board's own "waiting" and "workers"
-/// counts; keep the two in step. A task waits when it has an open gate, or when its pull
-/// request is the person's ball: a Jules task with a pull request for which
-/// `task::jules_pr_waits_on_person` says so, or a worker task for which `task::pr_waits_on_person`
-/// says so (the state of its PR, then its worker's phase). A gate
-/// whose task is not on the board waits too. Workers at work are the dispatched and `pr` tasks that
-/// do not wait. The page's Jules check also looks at the session's live state, which only the
-/// board's own poll has, so a Jules task that is still working counts as waiting here.
+/// A task waits when it has an open gate, or when `waits_on_person` says so: the rule each card
+/// of `/api/state` carries as `waitsOnPerson`, so the sidebar and the board cannot disagree.
+/// A gate whose task is not on the board waits too. Workers at work are the dispatched and `pr`
+/// tasks that do not wait. The board's own poll also has Jules's answer about each session;
+/// this has none, so a Jules task that is still working counts as waiting here.
 pub fn board_counts(
     tasks: &[task::Task],
     gates: &[gate::Gate],
@@ -56,29 +55,20 @@ pub fn board_counts(
     let mut waiting = 0;
     let mut working = 0;
     for t in tasks {
-        let waits = if gates
+        let waits = gates
             .iter()
             .any(|g| g.task.as_deref() == Some(t.id.as_str()))
-        {
-            true
-        } else if matches!(t.status, task::Status::Done | task::Status::Cancelled) {
-            false
-        } else if t.jules_session.is_some() && t.pr.is_some() {
-            task::jules_pr_waits_on_person(t.pr_status.as_ref())
-        } else {
-            // Only a task with a PR has a worker record that matters here.
-            let seen =
-                t.pr.as_ref()
+            || {
+                // Only a live task with a PR has a worker record that matters here.
+                let finished = matches!(t.status, task::Status::Done | task::Status::Cancelled);
+                let seen = (!finished)
+                    .then_some(t.pr.as_ref())
+                    .flatten()
                     .and(t.worktree.as_deref())
                     .and_then(&worker)
                     .filter(|w| w.task.as_deref().is_none_or(|id| id == t.id));
-            task::pr_waits_on_person(
-                t.status,
-                t.pr.is_some(),
-                t.pr_status.as_ref(),
-                seen.as_ref().map(|w| w.phase.as_deref()),
-            )
-        };
+                waits_on_person(t, seen.as_ref().map(|w| w.phase.as_deref()), None)
+            };
         if waits {
             waiting += 1;
         } else if matches!(t.status, task::Status::Dispatched | task::Status::Pr) {
