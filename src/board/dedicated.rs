@@ -1,7 +1,7 @@
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
-use super::{DEFAULT_PORT, Server, bind_preferring, board_url, resident_url, token};
+use super::{DEFAULT_PORT, Server, bind_preferring, board_url, jobs, resident_url, token};
 use crate::registry::{dashboards_running, record};
 
 /// What serving the board of a hub from inside its MCP server came to.
@@ -84,6 +84,9 @@ impl Board {
     }
 
     pub fn run(self, handle: fn(&Server, TcpStream) -> std::io::Result<()>) {
+        // The board's one clock: it ends with the process, as the accept loop below does.
+        let ctx = self.server.ctx.clone();
+        std::thread::spawn(move || jobs::sweep_gates::run(move || vec![ctx.clone()]));
         for stream in self.listener.incoming() {
             match stream {
                 Ok(stream) => {

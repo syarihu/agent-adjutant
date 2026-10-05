@@ -9,10 +9,12 @@
 //! state that until now could only be read one `adj` invocation at a time, and a place to
 //! put the questions a worker used to have to ask into a tab nobody was watching.
 //!
-//! It holds one clock, and only in the resident server: the poll that keeps the cards' pull
-//! requests up to date (`pr_poll`). A board served by itself, or by a hub, has none: there a
-//! request arrives because a person clicked, and that is the only thing that moves. `/api/state`
-//! never asks GitHub on either, since the page polls it every couple of seconds.
+//! It holds two clocks: the poll that keeps the cards' pull requests up to date, in the
+//! resident server only (`jobs::pr_poll`), and the sweep that every two seconds closes the
+//! gates whose worker has visibly moved on (`jobs::sweep_gates`), in every board, whether the
+//! resident serves it, `adj serve` does or a hub does. Anything else moves because a request
+//! arrived. `/api/state` neither asks GitHub nor writes, since the page polls it every couple
+//! of seconds.
 
 pub mod hub;
 pub mod jobs;

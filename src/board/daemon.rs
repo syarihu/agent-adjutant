@@ -2,7 +2,8 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::{Resident, board_url, token};
+use super::{Resident, board_url, jobs, token};
+use crate::gate;
 use crate::registry::{
     addresses, forget_server, live_resident, note_board, record_server, recorded_server,
 };
@@ -182,8 +183,8 @@ impl BoundResident {
         board_url(self.bound, &self.token)
     }
 
-    /// Poll the pull requests and answer connections with `handle`, for as long as the process
-    /// lives.
+    /// Poll the pull requests, sweep the gates and answer connections with `handle`, for as long
+    /// as the process lives.
     pub fn run(self, handle: fn(&Resident, TcpStream) -> std::io::Result<()>) {
         let BoundResident {
             lock,
@@ -223,6 +224,26 @@ impl BoundResident {
                                         task::Status::Done | task::Status::Cancelled
                                     )
                             })
+                        })
+                        .filter_map(|a| resident.board(&a.slug))
+                        .map(|server| server.ctx.clone())
+                        .collect()
+                });
+            });
+        }
+        {
+            let resident = Arc::clone(&resident);
+            std::thread::spawn(move || {
+                jobs::sweep_gates::run(|| {
+                    // Only a board holding a gate a worker opened and waits on is opened for it:
+                    // opening one asks git where the checkout is, which is not worth doing every
+                    // two seconds for a board with nothing to sweep.
+                    addresses(&resident.root)
+                        .iter()
+                        .filter(|a| {
+                            gate::list(&resident.root, &a.slug, gate::Shelf::Open)
+                                .iter()
+                                .any(|g| g.wait && !g.answered_by_hub())
                         })
                         .filter_map(|a| resident.board(&a.slug))
                         .map(|server| server.ctx.clone())

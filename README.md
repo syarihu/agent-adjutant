@@ -581,8 +581,10 @@ gui/$(id -u)/adj.server` instead.
 for state every two seconds. The one thing that answer reaches outside for is a task handed to
 Jules: its session is asked about at most once every 45 seconds, and only while the page is
 open and the card is in progress or in review (see [Handing a task to
-Jules](#handing-a-task-to-jules)). The one clock is the resident server's PR poll, described
-below under where a pull request's card sits; `/api/state` itself never asks GitHub.
+Jules](#handing-a-task-to-jules)). The clocks are the resident server's PR poll, described
+below under where a pull request's card sits, and the sweep every board runs every two seconds
+to close the gates whose worker has moved on; `/api/state` itself never asks GitHub and
+changes nothing.
 
 A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
 message that announces it: the message is read once and acked, and after that the hub would

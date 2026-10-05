@@ -191,9 +191,6 @@ impl RecordCard {
 /// session's last line of output (`lastLine`), which reads its tmux pane: only the page that
 /// shows it asks.
 pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardState {
-    // Before the gates are read: a gate whose worker has moved on is closed here rather than
-    // by a timer, since nothing in the server polls on one.
-    let _ = crate::gate::close_resumed(&server.ctx);
     let repo = &server.ctx.repo;
     let tasks = with_records(
         task::list(&server.ctx.state, &server.ctx.repo.slug),
