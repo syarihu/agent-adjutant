@@ -7,22 +7,17 @@
 
 use serde_json::{Value, json};
 
+use super::args::{GateAnswerArgs, GateCloseArgs, GateListArgs, GateOpenArgs, GateShowArgs};
 use crate::gate::{self, GateRequest, Shelf, answer, close, open};
 
 // ── the subcommands ──────────────────────────────────────────────────
 
-pub fn open_cmd(
-    repo: Option<&str>,
-    hub: Option<&str>,
-    file: Option<&str>,
-    body_file: Option<&str>,
-    as_json: bool,
-) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
+pub fn open_cmd(args: &GateOpenArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
     // The payload arrives whole rather than as a dozen flags: every interesting field is
     // multi-line prose, and a shell quoting three paragraphs into `--focus` is a worse
     // interface than a heredoc.
-    let raw = match file {
+    let raw = match args.file.as_deref() {
         Some(path) => {
             let path = crate::infra::paths::expand_home(path);
             std::fs::read_to_string(&path)
@@ -35,7 +30,7 @@ pub fn open_cmd(
     // The body read from a file as it is, so the one who opens the gate need not read a long
     // report into its own context to quote it into JSON — the hub opening a plan a sub-agent
     // wrote is the case this is for, and what the person approves is that file, byte for byte.
-    let body = match body_file {
+    let body = match args.body_file.as_deref() {
         Some(path) => {
             let path = crate::infra::paths::expand_home(path);
             Some(
@@ -55,7 +50,7 @@ pub fn open_cmd(
     }
     let (gate, served) = open(&ctx, request)?;
 
-    if as_json {
+    if args.json {
         println!("{}", open_json(&ctx, &gate, served));
         return Ok(());
     }
@@ -90,10 +85,10 @@ fn with_body(request: &mut GateRequest, body: String) -> Result<(), String> {
 
 use crate::transport::wording::{RECORDED, open_json};
 
-pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
+pub fn list(args: &GateListArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
     let gates = gate::list(&ctx.state, &ctx.repo.slug, Shelf::Open);
-    if as_json {
+    if args.json {
         println!("{}", json!(gates));
         return Ok(());
     }
@@ -113,9 +108,9 @@ pub fn list(repo: Option<&str>, hub: Option<&str>, as_json: bool) -> Result<(), 
     Ok(())
 }
 
-pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
-    let gate = gate::get(&ctx.state, &ctx.repo.slug, id)?;
+pub fn show(args: &GateShowArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let gate = gate::get(&ctx.state, &ctx.repo.slug, &args.id)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&gate).map_err(|e| e.to_string())?
@@ -123,19 +118,15 @@ pub fn show(repo: Option<&str>, hub: Option<&str>, id: &str) -> Result<(), Strin
     Ok(())
 }
 
-pub struct AnswerArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub id: &'a str,
-    pub decision: &'a str,
-    pub choice: Option<&'a str>,
-    pub comment: Option<&'a str>,
-    pub json: bool,
-}
-
-pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
-    let (gate, told) = answer(&ctx, args.id, args.decision, args.choice, args.comment)?;
+pub fn answer_cmd(args: &GateAnswerArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let (gate, told) = answer(
+        &ctx,
+        &args.id,
+        &args.decision,
+        args.choice.as_deref(),
+        args.comment.as_deref(),
+    )?;
     if args.json {
         let mut out = json!({
             "gate": gate,
@@ -189,21 +180,10 @@ pub fn answer_cmd(args: &AnswerArgs<'_>) -> Result<(), String> {
     Ok(())
 }
 
-/// Arguments for `adj gate close`.
-pub struct CloseArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub id: &'a str,
-    pub comment: Option<&'a str>,
-    /// The person answered in the worker's terminal.
-    pub terminal: bool,
-    pub json: bool,
-}
-
 /// `adj gate close`: archive an open gate from the command line.
-pub fn close_cmd(args: &CloseArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
-    let gate = close(&ctx, args.id, args.comment, args.terminal)?;
+pub fn close_cmd(args: &GateCloseArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let gate = close(&ctx, &args.id, args.comment.as_deref(), args.terminal)?;
     let on_board = gate.answered_on_board();
     if args.json {
         println!(

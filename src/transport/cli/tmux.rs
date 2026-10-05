@@ -2,18 +2,18 @@
 
 use serde_json::json;
 
+use super::args::{TmuxCloseArgs, TmuxFocusArgs, TmuxPaneArgs, TmuxSpawnArgs, TmuxWakeArgs};
 use super::settings_for;
 use crate::infra::terminal;
 
-pub fn pane(
-    repo: Option<&str>,
-    socket: Option<&str>,
-    pid: Option<u32>,
-    tty: Option<&str>,
-    as_json: bool,
-) -> Result<(), String> {
-    let settings = settings_for(repo);
-    let socket = socket.or_else(|| settings.terminal.tmux_socket());
+pub fn pane(args: &TmuxPaneArgs) -> Result<(), String> {
+    let (pid, tty) = (args.pid, args.tty.as_deref());
+    let as_json = args.json;
+    let settings = settings_for(args.repo.as_deref());
+    let socket = args
+        .socket
+        .as_deref()
+        .or_else(|| settings.terminal.tmux_socket());
     if pid.is_some() || tty.is_some() {
         let pane = terminal::find_tmux_pane(socket, pid, tty)?;
         match pane {
@@ -62,25 +62,24 @@ pub fn pane(
     Ok(())
 }
 
-pub fn wake(
-    repo: Option<&str>,
-    socket: Option<&str>,
-    pid: u32,
-    line: Option<&str>,
-    agent: Option<&str>,
-    dry_run: bool,
-) -> Result<(), String> {
-    let settings = settings_for(repo);
-    let socket = socket.or_else(|| settings.terminal.tmux_socket());
+pub fn wake(args: &TmuxWakeArgs) -> Result<(), String> {
+    let dry_run = args.dry_run;
+    let settings = settings_for(args.repo.as_deref());
+    let socket = args
+        .socket
+        .as_deref()
+        .or_else(|| settings.terminal.tmux_socket());
     // Generic unless told: a pane whose screen is not known is typed into without looking,
     // as it always was, and looking is what the caller asks for by naming the agent.
-    let agent = agent
+    let agent = args
+        .agent
+        .as_deref()
         .and_then(crate::infra::agent::Agent::parse)
         .unwrap_or(crate::infra::agent::Agent::Generic);
     let performed = terminal::tmux_wake(
         socket,
-        pid,
-        line,
+        args.pid,
+        args.line.as_deref(),
         crate::mail::look_before_typing(agent),
         dry_run,
     )?;
@@ -95,15 +94,14 @@ pub fn wake(
     Ok(())
 }
 
-pub fn focus(
-    repo: Option<&str>,
-    socket: Option<&str>,
-    pid: u32,
-    dry_run: bool,
-) -> Result<(), String> {
-    let settings = settings_for(repo);
-    let socket = socket.or_else(|| settings.terminal.tmux_socket());
-    let performed = terminal::tmux_focus(socket, pid, dry_run)?;
+pub fn focus(args: &TmuxFocusArgs) -> Result<(), String> {
+    let dry_run = args.dry_run;
+    let settings = settings_for(args.repo.as_deref());
+    let socket = args
+        .socket
+        .as_deref()
+        .or_else(|| settings.terminal.tmux_socket());
+    let performed = terminal::tmux_focus(socket, args.pid, dry_run)?;
     if dry_run {
         println!("{}", performed.script);
         return Ok(());
@@ -115,15 +113,14 @@ pub fn focus(
     Ok(())
 }
 
-pub fn close(
-    repo: Option<&str>,
-    socket: Option<&str>,
-    pid: u32,
-    dry_run: bool,
-) -> Result<(), String> {
-    let settings = settings_for(repo);
-    let socket = socket.or_else(|| settings.terminal.tmux_socket());
-    let performed = terminal::tmux_close(socket, pid, dry_run)?;
+pub fn close(args: &TmuxCloseArgs) -> Result<(), String> {
+    let dry_run = args.dry_run;
+    let settings = settings_for(args.repo.as_deref());
+    let socket = args
+        .socket
+        .as_deref()
+        .or_else(|| settings.terminal.tmux_socket());
+    let performed = terminal::tmux_close(socket, args.pid, dry_run)?;
     if dry_run {
         println!("{}", performed.script);
         return Ok(());
@@ -135,30 +132,31 @@ pub fn close(
     Ok(())
 }
 
-pub fn spawn(
-    repo: Option<&str>,
-    socket: Option<&str>,
-    session: Option<&str>,
-    cwd: Option<&str>,
-    title: &str,
-    command: &[String],
-    dry_run: bool,
-) -> Result<(), String> {
+pub fn spawn(args: &TmuxSpawnArgs) -> Result<(), String> {
+    let command = args.command();
+    let dry_run = args.dry_run;
     if command.is_empty() {
         return Err("pass the command to run after --".to_string());
     }
-    let settings = settings_for(repo);
-    let socket = socket.or_else(|| settings.terminal.tmux_socket());
-    let session = session.or_else(|| Some(settings.terminal.tmux_session()));
+    let settings = settings_for(args.repo.as_deref());
+    let socket = args
+        .socket
+        .as_deref()
+        .or_else(|| settings.terminal.tmux_socket());
+    let session = args
+        .session
+        .as_deref()
+        .or_else(|| Some(settings.terminal.tmux_session()));
     let expanded;
-    let cwd_str = match cwd {
+    let cwd_str = match args.cwd.as_deref() {
         Some(c) => {
             expanded = crate::infra::paths::expand_home(c);
             expanded.to_string_lossy()
         }
         None => std::borrow::Cow::Borrowed("."),
     };
-    let performed = terminal::tmux_spawn(socket, session, &cwd_str, title, command, dry_run)?;
+    let performed =
+        terminal::tmux_spawn(socket, session, &cwd_str, &args.title, &command, dry_run)?;
     if dry_run {
         println!("{}", performed.script);
         return Ok(());

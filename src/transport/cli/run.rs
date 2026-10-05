@@ -2,7 +2,9 @@
 
 use clap::Parser;
 
-use super::args::{Cli, Commands, GateAction, JulesAction, ServerAction, TaskAction, TmuxAction};
+use super::args::{
+    Cli, Commands, GateAction, JulesAction, ServerAction, TaskAction, TmuxAction, strip_separator,
+};
 use super::outbox;
 use crate::transport::cli;
 
@@ -149,14 +151,10 @@ pub fn run() -> ! {
             no_open,
         } => super::serve(repo.as_deref(), hub.as_deref(), *port, !*no_open).map(|_| 0),
         Commands::Server { action } => match action {
-            ServerAction::Start {
-                port,
-                foreground,
-                no_open,
-            } => super::server_start(*port, *foreground, !*no_open),
+            ServerAction::Start(args) => super::server_start(args),
             ServerAction::Stop => super::server_stop(),
-            ServerAction::Restart { port, open } => super::server_restart(*port, *open),
-            ServerAction::Status { json } => super::server_status(*json),
+            ServerAction::Restart(args) => super::server_restart(args),
+            ServerAction::Status(args) => super::server_status(args),
         },
         Commands::Gate { action } => run_gate(action).map(|_| 0),
         Commands::Task { action } => run_task(action).map(|_| 0),
@@ -282,15 +280,6 @@ pub fn run() -> ! {
     }
 }
 
-/// clap keeps the `--` in a trailing var-arg, and the caller meant it as a separator rather
-/// than as the first word of the command.
-fn strip_separator(args: &[String]) -> Vec<String> {
-    match args.split_first() {
-        Some((first, rest)) if first == "--" => rest.to_vec(),
-        _ => args.to_vec(),
-    }
-}
-
 /// The `adj task` verbs. Split out of `run` because the verbs are a subcommand of a
 /// subcommand, and inlining that match would bury the rest of the dispatch.
 fn run_task(action: &TaskAction) -> Result<(), String> {
@@ -309,172 +298,31 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
 /// The `adj jules` verbs, split out for the same reason `run_task` is.
 fn run_jules(action: &JulesAction) -> Result<(), String> {
     match action {
-        JulesAction::Start {
-            repo,
-            hub,
-            id,
-            prompt_file,
-            base,
-            json,
-        } => super::jules_start(&super::JulesStartArgs {
-            repo: repo.as_deref(),
-            hub: hub.as_deref(),
-            id,
-            prompt: prompt_file,
-            base: base.as_deref(),
-            json: *json,
-        }),
-        JulesAction::Show {
-            repo,
-            hub,
-            id,
-            session,
-            json,
-        } => super::jules_show(&super::JulesShowArgs {
-            repo: repo.as_deref(),
-            hub: hub.as_deref(),
-            id: id.as_deref(),
-            session: session.as_deref(),
-            json: *json,
-        }),
-        JulesAction::Findings {
-            repo,
-            hub,
-            id,
-            json,
-        } => super::jules_findings_cmd(repo.as_deref(), hub.as_deref(), id, *json),
-        JulesAction::Relay {
-            repo,
-            hub,
-            id,
-            comments,
-            plan_file,
-            note,
-        } => super::jules_relay_cmd(
-            repo.as_deref(),
-            hub.as_deref(),
-            id,
-            comments,
-            plan_file.as_deref(),
-            note.as_deref(),
-        ),
+        JulesAction::Start(args) => super::jules_start(args),
+        JulesAction::Show(args) => super::jules_show(args),
+        JulesAction::Findings(args) => super::jules_findings_cmd(args),
+        JulesAction::Relay(args) => super::jules_relay_cmd(args),
     }
 }
 
 /// The `adj gate` verbs, split out for the same reason `run_task` is.
 fn run_gate(action: &GateAction) -> Result<(), String> {
     match action {
-        GateAction::Open {
-            repo,
-            hub,
-            file,
-            body_file,
-            json,
-        } => super::gate_open(
-            repo.as_deref(),
-            hub.as_deref(),
-            file.as_deref(),
-            body_file.as_deref(),
-            *json,
-        ),
-        GateAction::List { repo, hub, json } => {
-            super::gate_list(repo.as_deref(), hub.as_deref(), *json)
-        }
-        GateAction::Show { repo, hub, id } => super::gate_show(repo.as_deref(), hub.as_deref(), id),
-        GateAction::Answer {
-            repo,
-            hub,
-            id,
-            decision,
-            choice,
-            comment,
-            json,
-        } => super::gate_answer(&super::AnswerArgs {
-            repo: repo.as_deref(),
-            hub: hub.as_deref(),
-            id,
-            decision,
-            choice: choice.as_deref(),
-            comment: comment.as_deref(),
-            json: *json,
-        }),
-        GateAction::Close {
-            repo,
-            hub,
-            id,
-            comment,
-            terminal,
-            json,
-        } => super::gate_close(&super::CloseArgs {
-            repo: repo.as_deref(),
-            hub: hub.as_deref(),
-            id,
-            comment: comment.as_deref(),
-            terminal: *terminal,
-            json: *json,
-        }),
+        GateAction::Open(args) => super::gate_open(args),
+        GateAction::List(args) => super::gate_list(args),
+        GateAction::Show(args) => super::gate_show(args),
+        GateAction::Answer(args) => super::gate_answer(args),
+        GateAction::Close(args) => super::gate_close(args),
     }
 }
 
 /// The `adj tmux` verbs.
 fn run_tmux(action: &TmuxAction) -> Result<(), String> {
     match action {
-        TmuxAction::Pane {
-            repo,
-            socket,
-            pid,
-            tty,
-            json,
-        } => super::tmux::pane(
-            repo.as_deref(),
-            socket.as_deref(),
-            *pid,
-            tty.as_deref(),
-            *json,
-        ),
-        TmuxAction::Wake {
-            repo,
-            socket,
-            pid,
-            line,
-            agent,
-            dry_run,
-        } => super::tmux::wake(
-            repo.as_deref(),
-            socket.as_deref(),
-            *pid,
-            line.as_deref(),
-            agent.as_deref(),
-            *dry_run,
-        ),
-        TmuxAction::Focus {
-            repo,
-            socket,
-            pid,
-            dry_run,
-        } => super::tmux::focus(repo.as_deref(), socket.as_deref(), *pid, *dry_run),
-        TmuxAction::Close {
-            repo,
-            socket,
-            pid,
-            dry_run,
-        } => super::tmux::close(repo.as_deref(), socket.as_deref(), *pid, *dry_run),
-        TmuxAction::Spawn {
-            repo,
-            socket,
-            session,
-            cwd,
-            title,
-            command,
-            dry_run,
-        } => super::tmux::spawn(
-            repo.as_deref(),
-            socket.as_deref(),
-            session.as_deref(),
-            cwd.as_deref(),
-            title,
-            &strip_separator(command),
-            *dry_run,
-        ),
+        TmuxAction::Pane(args) => super::tmux::pane(args),
+        TmuxAction::Wake(args) => super::tmux::wake(args),
+        TmuxAction::Focus(args) => super::tmux::focus(args),
+        TmuxAction::Close(args) => super::tmux::close(args),
+        TmuxAction::Spawn(args) => super::tmux::spawn(args),
     }
 }

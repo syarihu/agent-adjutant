@@ -5,6 +5,7 @@ use std::path::Path;
 
 use serde_json::json;
 
+use super::args::{ServerRestartArgs, ServerStartArgs, ServerStatusArgs};
 use crate::board::view::boards;
 use crate::board::{
     self, RestartFailed, Restarted, Started, Status, bind_resident, board_url, checkout_here,
@@ -15,10 +16,11 @@ use crate::transport::board_http::handle_resident;
 
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
 /// tests run.
-pub fn server_start(port: u16, foreground: bool, open: bool) -> Result<i32, String> {
+pub fn server_start(args: &ServerStartArgs) -> Result<i32, String> {
+    let (port, open) = (args.port, !args.no_open);
     let here = checkout_here();
     let root = resident_root(here.as_ref());
-    if foreground {
+    if args.foreground {
         return serve_resident(&root, port, open);
     }
     match board::start(&root, port, here.as_ref())? {
@@ -113,7 +115,8 @@ pub fn server_stop() -> Result<i32, String> {
 /// `port` says otherwise. The new one is this binary, which is what lets a reinstall take
 /// effect. Hubs and workers are other processes and go on running; board tabs reconnect by
 /// themselves, which is why the browser is opened only on request.
-pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
+pub fn server_restart(args: &ServerRestartArgs) -> Result<i32, String> {
+    let (port, open) = (args.port, args.open);
     let here = checkout_here();
     let root = resident_root(here.as_ref());
     let restarted = board::restart(&root, port, here.as_ref()).map_err(|failed| {
@@ -157,7 +160,8 @@ pub fn server_restart(port: Option<u16>, open: bool) -> Result<i32, String> {
 }
 
 /// `adj server status`. Exit 1 when there is no resident, so a script can ask.
-pub fn server_status(as_json: bool) -> Result<i32, String> {
+pub fn server_status(args: &ServerStatusArgs) -> Result<i32, String> {
+    let as_json = args.json;
     let root = resident_root(checkout_here().as_ref());
     let Some(Status { pid, port, token }) = board::status(&root) else {
         if as_json {

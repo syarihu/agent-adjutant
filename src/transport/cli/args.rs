@@ -399,250 +399,317 @@ pub(crate) enum Commands {
 #[derive(Subcommand)]
 pub(crate) enum ServerAction {
     /// Start the resident server, detached unless --foreground
-    Start {
-        /// 0 picks a free port; a taken port falls back to a free one
-        #[arg(long, default_value_t = crate::board::DEFAULT_PORT)]
-        port: u16,
-        /// Stay in this process, for a service manager
-        #[arg(long)]
-        foreground: bool,
-        /// Print the URL without opening a browser
-        #[arg(long)]
-        no_open: bool,
-    },
+    Start(ServerStartArgs),
     /// Stop the resident server. Hubs keep running
     Stop,
     /// Stop the resident server and start it again on the same port. Hubs and workers keep running
-    Restart {
-        /// Port for the new server; the old one's port when omitted
-        #[arg(long)]
-        port: Option<u16>,
-        /// Open the board in a browser once it is up
-        #[arg(long)]
-        open: bool,
-    },
+    Restart(ServerRestartArgs),
     /// Whether the resident server is running, and which boards it serves (exit 1 when not)
-    Status {
-        #[arg(long)]
-        json: bool,
-    },
+    Status(ServerStatusArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct ServerStartArgs {
+    /// 0 picks a free port; a taken port falls back to a free one
+    #[arg(long, default_value_t = crate::board::DEFAULT_PORT)]
+    pub(crate) port: u16,
+    /// Stay in this process, for a service manager
+    #[arg(long)]
+    pub(crate) foreground: bool,
+    /// Print the URL without opening a browser
+    #[arg(long)]
+    pub(crate) no_open: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ServerRestartArgs {
+    /// Port for the new server; the old one's port when omitted
+    #[arg(long)]
+    pub(crate) port: Option<u16>,
+    /// Open the board in a browser once it is up
+    #[arg(long)]
+    pub(crate) open: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ServerStatusArgs {
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum GateAction {
     /// Hand the ball over. The payload is JSON, on stdin unless --file says otherwise
-    Open {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        /// Read the payload from here instead of stdin
-        #[arg(long)]
-        file: Option<String>,
-        /// Take the gate's body from this file as it is (the payload must not have one)
-        #[arg(long)]
-        body_file: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Open(GateOpenArgs),
     /// What is waiting for a person
-    List {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    List(GateListArgs),
     /// One gate's payload, as JSON
-    Show {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-    },
+    Show(GateShowArgs),
     /// Hand the ball back: deliver the decision to that worktree's outbox, or to the hub's inbox for a gate the hub opened
-    Answer {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-        /// approve | changes | reject | choice | ack | ask | answer
-        #[arg(long)]
-        decision: String,
-        /// Which of the gate's choices, for `--decision choice`
-        #[arg(long)]
-        choice: Option<String>,
-        #[arg(long)]
-        comment: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Answer(GateAnswerArgs),
     /// Archive a gate without delivering an answer to the worker (e.g. dealt with in tab)
-    Close {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-        /// Reason or note for closing
-        #[arg(long)]
-        comment: Option<String>,
-        /// The person answered in the worker's terminal
-        #[arg(long)]
-        terminal: bool,
-        #[arg(long)]
-        json: bool,
-    },
+    Close(GateCloseArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct GateOpenArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Read the payload from here instead of stdin
+    #[arg(long)]
+    pub(crate) file: Option<String>,
+    /// Take the gate's body from this file as it is (the payload must not have one)
+    #[arg(long)]
+    pub(crate) body_file: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct GateListArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct GateShowArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+}
+
+#[derive(Args)]
+pub(crate) struct GateAnswerArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    /// approve | changes | reject | choice | ack | ask | answer
+    #[arg(long)]
+    pub(crate) decision: String,
+    /// Which of the gate's choices, for `--decision choice`
+    #[arg(long)]
+    pub(crate) choice: Option<String>,
+    #[arg(long)]
+    pub(crate) comment: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct GateCloseArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    /// Reason or note for closing
+    #[arg(long)]
+    pub(crate) comment: Option<String>,
+    /// The person answered in the worker's terminal
+    #[arg(long)]
+    pub(crate) terminal: bool,
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum JulesAction {
     /// Start a Jules session for a task and write its id onto the record
-    Start {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        /// The task being handed over
-        #[arg(long)]
-        id: String,
-        /// File holding the prompt (the design Jules implements), or - for stdin
-        #[arg(long)]
-        prompt_file: String,
-        /// Branch Jules starts from (default: the task's own base)
-        #[arg(long)]
-        base: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Start(JulesStartArgs),
     /// How a session is doing: its state, its page and its pull request
-    Show {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        /// The task whose session to show
-        #[arg(long, conflicts_with = "session", required_unless_present = "session")]
-        id: Option<String>,
-        /// A session id, when there is no task for it
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Show(JulesShowArgs),
     /// The review bots' comments on the task's pull request that could be passed on to Jules
-    Findings {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        json: bool,
-    },
+    Findings(JulesFindingsArgs),
     /// Pass review comments on to Jules, as one comment on the pull request in your name
-    Relay {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        hub: Option<String>,
-        #[arg(long)]
-        id: String,
-        /// A comment id from `adj jules findings` (repeat for more)
-        #[arg(
-            long = "comment",
-            required_unless_present = "plan_file",
-            conflicts_with = "plan_file"
-        )]
-        comments: Vec<String>,
-        /// A relay plan as JSON: {"note": …, "findings": [{"id": …, "note": …}]} — a note for each
-        /// comment, as the hub prepares them
-        #[arg(long)]
-        plan_file: Option<String>,
-        /// Something to say to Jules above them (- reads stdin)
-        #[arg(long)]
-        note: Option<String>,
-    },
+    Relay(JulesRelayArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct JulesStartArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// The task being handed over
+    #[arg(long)]
+    pub(crate) id: String,
+    /// File holding the prompt (the design Jules implements), or - for stdin
+    #[arg(long)]
+    pub(crate) prompt_file: String,
+    /// Branch Jules starts from (default: the task's own base)
+    #[arg(long)]
+    pub(crate) base: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct JulesShowArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// The task whose session to show
+    #[arg(long, conflicts_with = "session", required_unless_present = "session")]
+    pub(crate) id: Option<String>,
+    /// A session id, when there is no task for it
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct JulesFindingsArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct JulesRelayArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    /// A comment id from `adj jules findings` (repeat for more)
+    #[arg(
+        long = "comment",
+        required_unless_present = "plan_file",
+        conflicts_with = "plan_file"
+    )]
+    pub(crate) comments: Vec<String>,
+    /// A relay plan as JSON: {"note": …, "findings": [{"id": …, "note": …}]} — a note for each
+    /// comment, as the hub prepares them
+    #[arg(long)]
+    pub(crate) plan_file: Option<String>,
+    /// Something to say to Jules above them (- reads stdin)
+    #[arg(long)]
+    pub(crate) note: Option<String>,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum TmuxAction {
     /// Inspect tmux panes matching a pid or tty
-    Pane {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        socket: Option<String>,
-        #[arg(long)]
-        pid: Option<u32>,
-        #[arg(long)]
-        tty: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
+    Pane(TmuxPaneArgs),
     /// Wake a process running in a tmux window
-    Wake {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        socket: Option<String>,
-        #[arg(long)]
-        pid: u32,
-        #[arg(long)]
-        line: Option<String>,
-        /// The agent in the pane, whose screen is read before typing: claude | agy | generic
-        /// (default: generic, which types without looking)
-        #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
-        agent: Option<String>,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Wake(TmuxWakeArgs),
     /// Focus a tmux window running a process
-    Focus {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        socket: Option<String>,
-        #[arg(long)]
-        pid: u32,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Focus(TmuxFocusArgs),
     /// Close a tmux window running a process
-    Close {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        socket: Option<String>,
-        #[arg(long)]
-        pid: u32,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Close(TmuxCloseArgs),
     /// Spawn a command in a detached tmux window
-    Spawn {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        socket: Option<String>,
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        cwd: Option<String>,
-        #[arg(long)]
-        title: String,
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        command: Vec<String>,
-    },
+    Spawn(TmuxSpawnArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxPaneArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) socket: Option<String>,
+    #[arg(long)]
+    pub(crate) pid: Option<u32>,
+    #[arg(long)]
+    pub(crate) tty: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxWakeArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) socket: Option<String>,
+    #[arg(long)]
+    pub(crate) pid: u32,
+    #[arg(long)]
+    pub(crate) line: Option<String>,
+    /// The agent in the pane, whose screen is read before typing: claude | agy | generic
+    /// (default: generic, which types without looking)
+    #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
+    pub(crate) agent: Option<String>,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxFocusArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) socket: Option<String>,
+    #[arg(long)]
+    pub(crate) pid: u32,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxCloseArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) socket: Option<String>,
+    #[arg(long)]
+    pub(crate) pid: u32,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TmuxSpawnArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) socket: Option<String>,
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    #[arg(long)]
+    pub(crate) cwd: Option<String>,
+    #[arg(long)]
+    pub(crate) title: String,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub(crate) command: Vec<String>,
+}
+
+impl TmuxSpawnArgs {
+    /// The command to run, without the `--` that may come before it.
+    pub(crate) fn command(&self) -> Vec<String> {
+        strip_separator(&self.command)
+    }
+}
+
+/// clap keeps the `--` in a trailing var-arg, and the caller meant it as a separator rather
+/// than as the first word of the command.
+pub(crate) fn strip_separator(args: &[String]) -> Vec<String> {
+    match args.split_first() {
+        Some((first, rest)) if first == "--" => rest.to_vec(),
+        _ => args.to_vec(),
+    }
 }
 
 #[derive(Subcommand)]

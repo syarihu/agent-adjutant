@@ -7,23 +7,14 @@
 
 use serde_json::{Value, json};
 
+use super::args::{JulesFindingsArgs, JulesRelayArgs, JulesShowArgs, JulesStartArgs};
 use crate::jules::{self, Chosen, findings, read_plan, relay};
 use crate::task;
 
-pub struct StartArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub id: &'a str,
-    /// Where the prompt is: a file, or `-` for stdin.
-    pub prompt: &'a str,
-    pub base: Option<&'a str>,
-    pub json: bool,
-}
-
-pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
-    let prompt = read_prompt(args.prompt)?;
-    let session = jules::start(&ctx, args.id, &prompt, args.base)?;
+pub fn start(args: &JulesStartArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let prompt = read_prompt(&args.prompt_file)?;
+    let session = jules::start(&ctx, &args.id, &prompt, args.base.as_deref())?;
     if args.json {
         println!("{}", json!({ "task": args.id, "session": session }));
         return Ok(());
@@ -35,18 +26,10 @@ pub fn start(args: &StartArgs<'_>) -> Result<(), String> {
     Ok(())
 }
 
-pub struct ShowArgs<'a> {
-    pub repo: Option<&'a str>,
-    pub hub: Option<&'a str>,
-    pub id: Option<&'a str>,
-    pub session: Option<&'a str>,
-    pub json: bool,
-}
-
 /// How a session is doing, named by its task or by its own id.
-pub fn show(args: &ShowArgs<'_>) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo, args.hub)?;
-    let session_id = match (args.session, args.id) {
+pub fn show(args: &JulesShowArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let session_id = match (args.session.as_deref(), args.id.as_deref()) {
         (Some(session), _) => session.to_string(),
         (None, Some(id)) => task::get(&ctx.state, &ctx.repo.slug, id)?
             .jules_session
@@ -66,15 +49,10 @@ pub fn show(args: &ShowArgs<'_>) -> Result<(), String> {
 }
 
 /// `adj jules findings`: the review comments that could be passed on.
-pub fn findings_cmd(
-    repo: Option<&str>,
-    hub: Option<&str>,
-    id: &str,
-    as_json: bool,
-) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
-    let found = findings(&ctx, id)?;
-    if as_json {
+pub fn findings_cmd(args: &JulesFindingsArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let found = findings(&ctx, &args.id)?;
+    if args.json {
         println!("{}", json!(found));
         return Ok(());
     }
@@ -88,17 +66,10 @@ pub fn findings_cmd(
 }
 
 /// `adj jules relay`: pass the chosen review comments on to Jules.
-pub fn relay_cmd(
-    repo: Option<&str>,
-    hub: Option<&str>,
-    id: &str,
-    comments: &[String],
-    plan: Option<&str>,
-    note: Option<&str>,
-) -> Result<(), String> {
-    let ctx = crate::registry::context(repo, hub)?;
-    let note = note.map(super::dash_is_stdin).transpose()?;
-    let (chosen, note) = match plan {
+pub fn relay_cmd(args: &JulesRelayArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let note = args.note.as_deref().map(super::dash_is_stdin).transpose()?;
+    let (chosen, note) = match args.plan_file.as_deref() {
         // A file, since it is prose the hub wrote and a note in it can hold any quote.
         Some(path) => {
             let path = crate::infra::paths::expand_home(path);
@@ -109,9 +80,12 @@ pub fn relay_cmd(
             let (chosen, planned) = read_plan(&plan)?;
             (chosen, note.or(planned))
         }
-        None => (comments.iter().map(|c| Chosen::bare(c)).collect(), note),
+        None => (
+            args.comments.iter().map(|c| Chosen::bare(c)).collect(),
+            note,
+        ),
     };
-    let done = relay(&ctx, id, &chosen, note.as_deref())?;
+    let done = relay(&ctx, &args.id, &chosen, note.as_deref())?;
     println!("passed {} comment(s) on to Jules", chosen.len());
     if let Some(url) = done["comment"].as_str().filter(|u| !u.is_empty()) {
         println!("{url}");

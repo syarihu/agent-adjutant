@@ -38,15 +38,15 @@ use config::settings_for;
 pub use config::{hub_name, show_config};
 pub use delivery::{PendingArgs, SendArgs, pending, send};
 pub use gate::{
-    AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
-    open_cmd as gate_open, show as gate_show,
+    answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list, open_cmd as gate_open,
+    show as gate_show,
 };
 use hub::{ago, print_performed};
 pub use hub::{hub, hub_close, hub_stop};
 pub use ide_title_notify::{WorktreeArgs, notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
-    ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, findings_cmd as jules_findings_cmd,
-    relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
+    findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
+    start as jules_start,
 };
 pub use review_engine::run as review_engine;
 pub use run::run;
