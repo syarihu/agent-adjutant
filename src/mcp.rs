@@ -193,7 +193,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
                 // The board running for this hub, or null, and whether the resident server
                 // serves it. Read from records, so one started by hand with `adj serve` is
                 // found as well as the hub's own.
-                "board": crate::cmd::board_json(
+                "board": crate::cmd::located(
                     &crate::registry::state_root(Some(Path::new(&info.main))),
                     &info,
                 ),
@@ -564,7 +564,8 @@ fn start_board() {
     let context = hub_board_context(&slug);
     // Taken before `serve_for_hub` consumes the context: the watcher reads the same directory.
     let root = context.as_ref().ok().map(|ctx| ctx.state.clone());
-    let served = context.and_then(crate::cmd::serve_for_hub);
+    let served =
+        context.and_then(|ctx| crate::cmd::serve_for_hub(ctx, crate::cmd::board_connection));
     match &served {
         Ok(HubBoard::Serving(url)) => say_serving(url),
         Ok(HubBoard::Resident(url)) => say_resident(url),
@@ -655,7 +656,8 @@ fn watch_board(root: &Path, slug: &str, mut mode: Mode) {
                 }
             }
         }
-        let served = hub_board_context(slug).and_then(crate::cmd::serve_for_hub);
+        let served = hub_board_context(slug)
+            .and_then(|ctx| crate::cmd::serve_for_hub(ctx, crate::cmd::board_connection));
         match &served {
             Ok(HubBoard::Serving(url)) => say_serving(url),
             Ok(HubBoard::Resident(url)) => say_resident(url),

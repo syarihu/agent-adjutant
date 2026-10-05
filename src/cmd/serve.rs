@@ -11,7 +11,7 @@
 //! request arrives because a person clicked, and that is the only thing that moves. `/api/state`
 //! never asks GitHub on either, since the page polls it every couple of seconds.
 
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -33,9 +33,9 @@ use daemon::open_browser;
 pub(super) use daemon::resident_command;
 pub use daemon::{server_restart, server_start, server_status, server_stop};
 pub(super) use handlers::hub_start_of;
-pub use registry::board_json;
+pub use registry::located;
 use registry::{board_url, resident_url};
-use routes::handle;
+pub(crate) use routes::handle as board_connection;
 pub(super) use sessions::{board_session, find_session, git_state_of};
 use state::LastLines;
 pub(super) use state::settings_now;
@@ -44,7 +44,7 @@ pub const DEFAULT_PORT: u16 = 4577;
 
 /// Everything a connection needs. Shared across threads, read-only after startup — the
 /// state that changes lives on disk, where the hub and its workers can also reach it.
-pub(super) struct Server {
+pub(crate) struct Server {
     pub(super) ctx: crate::registry::Context,
     token: String,
     port: u16,
@@ -83,7 +83,7 @@ pub fn serve(
              (a dashboard may already be running — try opening http://127.0.0.1:{port}/)"
         )
     })?;
-    let board = Board::new(ctx, listener)?;
+    let board = Board::bind(ctx, listener)?;
     let url = board.url();
     println!("adj serve: {} — {url}", board.server.ctx.repo.nwo);
     println!("The token is in the URL. Anything without it gets a 403.");
@@ -95,7 +95,7 @@ pub fn serve(
     if open {
         open_browser(&url);
     }
-    board.run();
+    board.run(routes::handle);
     Ok(())
 }
 
@@ -121,7 +121,10 @@ pub enum HubBoard {
 ///
 /// Nothing here writes to stdout. In that process stdout carries JSON-RPC, and a stray line
 /// on it breaks the protocol for the whole session.
-pub fn serve_for_hub(ctx: crate::registry::Context) -> Result<HubBoard, String> {
+pub fn serve_for_hub(
+    ctx: crate::registry::Context,
+    handle: fn(&Server, TcpStream) -> std::io::Result<()>,
+) -> Result<HubBoard, String> {
     if let Some(url) = resident_url(&ctx.state, &ctx.repo) {
         return Ok(HubBoard::Resident(url));
     }
@@ -130,9 +133,9 @@ pub fn serve_for_hub(ctx: crate::registry::Context) -> Result<HubBoard, String> 
     }
     let listener =
         bind_preferring(DEFAULT_PORT).map_err(|e| format!("cannot listen on 127.0.0.1: {e}"))?;
-    let board = Board::new(ctx, listener)?;
+    let board = Board::bind(ctx, listener)?;
     let url = board.url();
-    std::thread::spawn(move || board.run());
+    std::thread::spawn(move || board.run(handle));
     Ok(HubBoard::Serving(url))
 }
 
@@ -154,7 +157,7 @@ struct Board {
 }
 
 impl Board {
-    fn new(ctx: crate::registry::Context, listener: TcpListener) -> Result<Board, String> {
+    fn bind(ctx: crate::registry::Context, listener: TcpListener) -> Result<Board, String> {
         let token = token(&ctx.state)?;
         // Asked back rather than taken from the caller: port 0 is how a board gets a free
         // port, and the number it got is the only way to reach it.
@@ -185,7 +188,7 @@ impl Board {
         board_url(self.server.port, &self.server.token)
     }
 
-    fn run(self) {
+    fn run(self, handle: fn(&Server, TcpStream) -> std::io::Result<()>) {
         for stream in self.listener.incoming() {
             match stream {
                 Ok(stream) => {

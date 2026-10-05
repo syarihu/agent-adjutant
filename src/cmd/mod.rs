@@ -52,8 +52,9 @@ pub use jules::{
     start as jules_start,
 };
 pub use review_engine::run as review_engine;
+pub(crate) use serve::board_connection;
 pub use serve::{
-    DEFAULT_PORT, HubBoard, board_json, serve, serve_for_hub, server_restart, server_start,
+    DEFAULT_PORT, HubBoard, located, serve, serve_for_hub, server_restart, server_start,
     server_status, server_stop,
 };
 #[cfg(test)]

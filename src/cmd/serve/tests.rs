@@ -9,7 +9,7 @@ use crate::{gate, task};
 
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{is_own_origin, refuse};
-use super::daemon::{names_resident, private_log, resident_root};
+use super::daemon::{bind_resident, private_log, resident_root};
 use super::index::{WorkerSeen, board_counts};
 use super::registry::resident_board_url;
 use super::resident::split_board_path;
@@ -483,24 +483,6 @@ fn a_worktree_called_main_keeps_its_id_unless_the_main_checkout_has_it() {
         ["worker-main", "worker-solo"]
     );
     assert!(worker_session_ids(&paths, true)[0].starts_with("worker-main-"));
-}
-
-#[test]
-fn a_record_is_removed_only_while_it_names_the_stopped_server() {
-    let old = (7, Some("Mon Jan  1 00:00:00 2024".to_string()));
-    assert!(names_resident(
-        Some(&old),
-        7,
-        Some("Mon Jan  1 00:00:00 2024")
-    ));
-    // A supervisor's restart has written another pid, or the same pid started later.
-    assert!(!names_resident(
-        Some(&old),
-        8,
-        Some("Mon Jan  1 00:00:00 2024")
-    ));
-    assert!(!names_resident(Some(&old), 7, Some("later")));
-    assert!(!names_resident(None, 7, None));
 }
 
 #[test]
@@ -1405,4 +1387,29 @@ fn one_tmux_server_is_one_key_however_a_session_names_its_socket() {
     assert_eq!(key(Some("  ")), key(None));
     assert_eq!(key(Some("default")), key(None));
     assert_ne!(key(Some("another")), key(None));
+}
+
+#[test]
+fn binding_the_resident_records_this_process_and_refuses_a_second_while_the_lock_is_held() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    let first = bind_resident(&root, 0).unwrap();
+    assert_ne!(first.bound, 0);
+    let record = crate::infra::fs::read_json(&root.join("server.json")).unwrap();
+    assert_eq!(record["pid"], json!(std::process::id()));
+    assert_eq!(record["port"], json!(first.bound));
+    for key in ["psStarted", "startedAt", "version"] {
+        assert!(record.get(key).is_some(), "{key} in {record}");
+    }
+    assert_eq!(
+        crate::registry::live_resident(&root),
+        Some((std::process::id(), first.bound))
+    );
+    let Err(refused) = bind_resident(&root, 0) else {
+        panic!("a second resident bound while the first held the lock")
+    };
+    assert!(
+        refused.starts_with("another adj server is running"),
+        "{refused}"
+    );
 }
