@@ -16,75 +16,13 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// This repository's hub session name — the address a report is sent to
-    HubName {
-        /// owner/name (default: derived from origin)
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-        /// Also print the slug, main checkout and where the name came from
-        #[arg(long)]
-        json: bool,
-    },
+    HubName(HubNameArgs),
     /// The resolved configuration for this repository, as JSON
-    Config {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-    },
+    Config(ConfigArgs),
     /// Messages waiting for this repository's hub
-    Pending {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-        /// Print only the inbox directory, creating it if absent
-        #[arg(long)]
-        path: bool,
-        /// Max entries to list
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-        #[arg(long)]
-        json: bool,
-        /// Print one message in full
-        #[arg(long, value_name = "NAME")]
-        read: Option<String>,
-        /// File one message away once it has been dealt with
-        #[arg(long, value_name = "NAME")]
-        ack: Option<String>,
-    },
+    Pending(PendingArgs),
     /// Hand a message to this repository's hub (body from --body or stdin)
-    Send {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-        /// Who is sending: your session or worktree name
-        #[arg(long)]
-        from: Option<String>,
-        /// report | question | answer | ack | done | needs-user | request | next | gate
-        #[arg(long, default_value = "report")]
-        kind: String,
-        /// One line stating the conclusion
-        #[arg(long)]
-        subject: Option<String>,
-        #[arg(long)]
-        body: Option<String>,
-        /// Say nothing on success
-        #[arg(long)]
-        quiet: bool,
-        /// Wake the receiver (default: automatic based on message kind and sender)
-        #[arg(long, overrides_with = "no_wake")]
-        wake: bool,
-        /// Deliver without waking the receiver
-        #[arg(long, overrides_with = "wake")]
-        no_wake: bool,
-    },
+    Send(SendArgs),
     /// Open a terminal tab and run a command there
     Spawn {
         #[arg(long)]
@@ -156,50 +94,11 @@ pub(crate) enum Commands {
         dry_run: bool,
     },
     /// Leave a message for the worker in a worktree (body from --body or stdin)
-    Tell {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        worktree: String,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-        /// One line stating the point. `[question …]` is what makes a worker answer
-        #[arg(long)]
-        subject: String,
-        #[arg(long)]
-        body: Option<String>,
-        /// Who is speaking (default: this repository's hub name)
-        #[arg(long)]
-        from: Option<String>,
-        #[arg(long)]
-        quiet: bool,
-        /// Wake the receiver (default: automatic based on subject)
-        #[arg(long, overrides_with = "no_wake")]
-        wake: bool,
-        /// Deliver without waking the receiver
-        #[arg(long, overrides_with = "wake")]
-        no_wake: bool,
-    },
+    Tell(TellArgs),
     /// Print one of the procedures: adj-hub | adj-worker | adj-report
-    Skill {
-        name: String,
-        /// Free text substituted into the procedure where it asks for it
-        #[arg(long, default_value = "")]
-        arguments: String,
-        /// Target agent format: claude | agy | generic (default: auto-detect)
-        #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
-        agent: Option<String>,
-    },
+    Skill(SkillArgs),
     /// What the hub has left for the worker in this worktree
-    Outbox {
-        /// Default: the current directory
-        #[arg(long)]
-        worktree: Option<String>,
-        /// Everything in it has been dealt with
-        #[arg(long)]
-        clear: bool,
-    },
+    Outbox(OutboxArgs),
     /// Bring this repository's running hub (or, with --worktree, a worker) to the front; exit 1 if it is not running
     Focus {
         #[arg(long)]
@@ -226,13 +125,7 @@ pub(crate) enum Commands {
         worktree: Option<String>,
     },
     /// Which engine reads the diff in this self-review round: reviewEngine, then Claude's rate limits
-    ReviewEngine {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Print the decision, the window that tripped and the message as JSON
-        #[arg(long)]
-        json: bool,
-    },
+    ReviewEngine(ReviewEngineArgs),
     /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
     Close {
         #[arg(long)]
@@ -292,77 +185,19 @@ pub(crate) enum Commands {
         hub: Option<String>,
     },
     /// Open a worktree in the configured editor
-    Ide {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long)]
-        worktree: String,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Ide(IdeArgs),
     /// Name the tab this process is running in (the hub names its own)
-    Title {
-        #[arg(long)]
-        repo: Option<String>,
-        /// `-` reads it from stdin
-        #[arg(long)]
-        title: String,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Title(TitleArgs),
     /// Tell the human something happened
-    Notify {
-        #[arg(long)]
-        repo: Option<String>,
-        #[arg(long, default_value = "adjutant")]
-        title: String,
-        #[arg(long)]
-        message: String,
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Notify(NotifyArgs),
     /// Where a task's worktree goes, and what branch it sits on, with no convention tool
-    WorktreePath {
-        #[arg(long)]
-        repo: Option<String>,
-        /// A branch you already know: prints the path only
-        #[arg(long)]
-        branch: Option<String>,
-        /// A task name (app-1234): prints branch, path and main as JSON
-        #[arg(long)]
-        name: Option<String>,
-        /// Branch owner (default: $USER)
-        #[arg(long)]
-        user: Option<String>,
-        /// The task source's branchPattern, if it has one
-        #[arg(long)]
-        pattern: Option<String>,
-        /// With --name: take the first of name, name-2, name-3… whose path and branch are free
-        #[arg(long, requires = "name", conflicts_with = "branch")]
-        unique: bool,
-    },
+    WorktreePath(WorktreePathArgs),
     /// Run the stdio MCP server
     Mcp,
     /// Register the MCP server with an agent
-    InstallMcp {
-        /// claude-code | agy | json
-        #[arg(long, default_value = "claude-code")]
-        target: String,
-    },
+    InstallMcp(InstallMcpArgs),
     /// Serve this repository's dashboard on a local port
-    Serve {
-        #[arg(long)]
-        repo: Option<String>,
-        /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
-        #[arg(long)]
-        hub: Option<String>,
-        /// 0 picks a free port, for a second dashboard on the same machine
-        #[arg(long, default_value_t = crate::board::DEFAULT_PORT)]
-        port: u16,
-        /// Print the URL without opening a browser
-        #[arg(long)]
-        no_open: bool,
-    },
+    Serve(ServeArgs),
     /// The resident server: every repository's board, whether or not a hub is running
     Server {
         #[command(subcommand)]
@@ -384,16 +219,250 @@ pub(crate) enum Commands {
         action: JulesAction,
     },
     /// Remove the MCP server registration
-    UninstallMcp {
-        /// claude-code | agy
-        #[arg(long, default_value = "claude-code")]
-        target: String,
-    },
+    UninstallMcp(UninstallMcpArgs),
     /// Tmux backend helpers: pane inspection, window spawning, wake, close, and focus
     Tmux {
         #[command(subcommand)]
         action: TmuxAction,
     },
+}
+
+#[derive(Args)]
+pub(crate) struct HubNameArgs {
+    /// owner/name (default: derived from origin)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Also print the slug, main checkout and where the name came from
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ConfigArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct PendingArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Print only the inbox directory, creating it if absent
+    #[arg(long)]
+    pub(crate) path: bool,
+    /// Max entries to list
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: usize,
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// Print one message in full
+    #[arg(long, value_name = "NAME")]
+    pub(crate) read: Option<String>,
+    /// File one message away once it has been dealt with
+    #[arg(long, value_name = "NAME")]
+    pub(crate) ack: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct SendArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// Who is sending: your session or worktree name
+    #[arg(long)]
+    pub(crate) from: Option<String>,
+    /// report | question | answer | ack | done | needs-user | request | next | gate
+    #[arg(long, default_value = "report")]
+    pub(crate) kind: String,
+    /// One line stating the conclusion
+    #[arg(long)]
+    pub(crate) subject: Option<String>,
+    #[arg(long)]
+    pub(crate) body: Option<String>,
+    /// Say nothing on success
+    #[arg(long)]
+    pub(crate) quiet: bool,
+    /// Wake the receiver (default: automatic based on message kind and sender)
+    #[arg(long, overrides_with = "no_wake")]
+    pub(crate) wake: bool,
+    /// Deliver without waking the receiver
+    #[arg(long, overrides_with = "wake")]
+    pub(crate) no_wake: bool,
+}
+
+impl SendArgs {
+    pub(crate) fn wake(&self) -> Option<bool> {
+        if self.wake {
+            Some(true)
+        } else if self.no_wake {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Args)]
+pub(crate) struct TellArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) worktree: String,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// One line stating the point. `[question …]` is what makes a worker answer
+    #[arg(long)]
+    pub(crate) subject: String,
+    #[arg(long)]
+    pub(crate) body: Option<String>,
+    /// Who is speaking (default: this repository's hub name)
+    #[arg(long)]
+    pub(crate) from: Option<String>,
+    #[arg(long)]
+    pub(crate) quiet: bool,
+    /// Wake the receiver (default: automatic based on subject)
+    #[arg(long, overrides_with = "no_wake")]
+    pub(crate) wake: bool,
+    /// Deliver without waking the receiver
+    #[arg(long, overrides_with = "wake")]
+    pub(crate) no_wake: bool,
+}
+
+impl TellArgs {
+    pub(crate) fn wake(&self) -> Option<bool> {
+        if self.wake {
+            Some(true)
+        } else if self.no_wake {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Args)]
+pub(crate) struct SkillArgs {
+    pub(crate) name: String,
+    /// Free text substituted into the procedure where it asks for it
+    #[arg(long, default_value = "")]
+    pub(crate) arguments: String,
+    /// Target agent format: claude | agy | generic (default: auto-detect)
+    #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
+    pub(crate) agent: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct OutboxArgs {
+    /// Default: the current directory
+    #[arg(long)]
+    pub(crate) worktree: Option<String>,
+    /// Everything in it has been dealt with
+    #[arg(long)]
+    pub(crate) clear: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewEngineArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Print the decision, the window that tripped and the message as JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct IdeArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) worktree: String,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TitleArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// `-` reads it from stdin
+    #[arg(long)]
+    pub(crate) title: String,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct NotifyArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long, default_value = "adjutant")]
+    pub(crate) title: String,
+    #[arg(long)]
+    pub(crate) message: String,
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct WorktreePathArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// A branch you already know: prints the path only
+    #[arg(long)]
+    pub(crate) branch: Option<String>,
+    /// A task name (app-1234): prints branch, path and main as JSON
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+    /// Branch owner (default: $USER)
+    #[arg(long)]
+    pub(crate) user: Option<String>,
+    /// The task source's branchPattern, if it has one
+    #[arg(long)]
+    pub(crate) pattern: Option<String>,
+    /// With --name: take the first of name, name-2, name-3… whose path and branch are free
+    #[arg(long, requires = "name", conflicts_with = "branch")]
+    pub(crate) unique: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ServeArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    /// 0 picks a free port, for a second dashboard on the same machine
+    #[arg(long, default_value_t = crate::board::DEFAULT_PORT)]
+    pub(crate) port: u16,
+    /// Print the URL without opening a browser
+    #[arg(long)]
+    pub(crate) no_open: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct InstallMcpArgs {
+    /// claude-code | agy | json
+    #[arg(long, default_value = "claude-code")]
+    pub(crate) target: String,
+}
+
+#[derive(Args)]
+pub(crate) struct UninstallMcpArgs {
+    /// claude-code | agy
+    #[arg(long, default_value = "claude-code")]
+    pub(crate) target: String,
 }
 
 #[derive(Subcommand)]

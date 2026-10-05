@@ -1,16 +1,13 @@
+use super::args::{ConfigArgs, HubNameArgs};
 use super::*;
 use crate::board::located;
 use crate::kernel::config;
 
 // ── hub-name ─────────────────────────────────────────────────────────
 
-pub fn hub_name(
-    repo_arg: Option<&str>,
-    hub_arg: Option<&str>,
-    as_json: bool,
-) -> Result<(), String> {
-    let info = resolve(repo_arg, hub_arg)?;
-    if as_json {
+pub fn hub_name(args: &HubNameArgs) -> Result<(), String> {
+    let info = resolve(args.repo.as_deref(), args.hub.as_deref())?;
+    if args.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -41,8 +38,8 @@ pub fn hub_name(
 
 // ── config ───────────────────────────────────────────────────────────
 
-pub fn show_config(repo_arg: Option<&str>, hub_arg: Option<&str>) -> Result<(), String> {
-    let ctx = context(repo_arg, hub_arg)?;
+pub fn show_config(args: &ConfigArgs) -> Result<(), String> {
+    let ctx = context(args.repo.as_deref(), args.hub.as_deref())?;
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({

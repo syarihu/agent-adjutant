@@ -6,6 +6,7 @@
 use serde_json::json;
 use std::path::Path;
 
+use super::args::ReviewEngineArgs;
 use crate::task::{Engine, Reason, cache_path, decide, read_cache};
 
 /// The one line the worker tells the user.
@@ -75,8 +76,8 @@ fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i6
 }
 
 /// `adj review-engine`.
-pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
-    let ctx = crate::registry::context_without_hub(repo_arg)?;
+pub fn run(args: &ReviewEngineArgs) -> Result<(), String> {
+    let ctx = crate::registry::context_without_hub(args.repo.as_deref())?;
     let setting = &ctx.settings.review_engine;
 
     let cache = cache_path(
@@ -90,7 +91,7 @@ pub fn run(repo_arg: Option<&str>, as_json: bool) -> Result<(), String> {
     })?;
     let text = message(engine, &reason, setting.as_str(), &cache, now);
 
-    if as_json {
+    if args.json {
         let (window, used_percentage, resets_at) = match &reason {
             Reason::Tripped(w) | Reason::CodexMissing(w) => {
                 (Some(w.name), Some(w.used), w.resets_at)

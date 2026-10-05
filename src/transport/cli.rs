@@ -36,14 +36,14 @@ mod worker;
 pub use close::close;
 use config::settings_for;
 pub use config::{hub_name, show_config};
-pub use delivery::{PendingArgs, SendArgs, pending, send};
+pub use delivery::{pending, send};
 pub use gate::{
     answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list, open_cmd as gate_open,
     show as gate_show,
 };
 use hub::{ago, print_performed};
 pub use hub::{hub, hub_close, hub_stop};
-pub use ide_title_notify::{WorktreeArgs, notify_user, open_ide, set_title, worktree_path};
+pub use ide_title_notify::{notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
     findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
     start as jules_start,
@@ -59,5 +59,5 @@ pub use task::{
     list as task_list, next_cmd as task_next, refresh_cmd as task_refresh_cmd, show as task_show,
     update_cmd as task_update,
 };
-pub use tell::{TellArgs, tell};
+pub use tell::tell;
 pub use worker::{WorkArgs, WorkerArgs, focus, focus_worker_cmd, phase, spawn, work, worker};

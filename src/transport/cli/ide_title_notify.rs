@@ -1,14 +1,15 @@
+use super::args::{IdeArgs, NotifyArgs, TitleArgs, WorktreePathArgs};
 use super::*;
 
-pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result<(), String> {
-    let ctx = context_without_hub(repo_arg)?;
-    let worktree = crate::infra::paths::expand_home(worktree)
+pub fn open_ide(args: &IdeArgs) -> Result<(), String> {
+    let ctx = context_without_hub(args.repo.as_deref())?;
+    let worktree = crate::infra::paths::expand_home(&args.worktree)
         .to_string_lossy()
         .to_string();
     let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {
         return Err("ide is not set: put your editor command in the config's ide key".to_string());
     };
-    if dry_run {
+    if args.dry_run {
         println!("{command}");
         return Ok(());
     }
@@ -19,11 +20,11 @@ pub fn open_ide(repo_arg: Option<&str>, worktree: &str, dry_run: bool) -> Result
 
 /// Name the tab this process is sitting in. The hub calls it on itself at startup; nothing
 /// else needs it, because a spawned tab is named at spawn time.
-pub fn set_title(repo_arg: Option<&str>, title: &str, dry_run: bool) -> Result<(), String> {
-    let settings = settings_for(repo_arg);
-    let title = dash_is_stdin(title)?;
-    let done = terminal::set_title(&settings.terminal, &title, dry_run)?;
-    if dry_run {
+pub fn set_title(args: &TitleArgs) -> Result<(), String> {
+    let settings = settings_for(args.repo.as_deref());
+    let title = dash_is_stdin(&args.title)?;
+    let done = terminal::set_title(&settings.terminal, &title, args.dry_run)?;
+    if args.dry_run {
         println!("{}", done.script);
     } else {
         println!("{}", done.description);
@@ -31,16 +32,13 @@ pub fn set_title(repo_arg: Option<&str>, title: &str, dry_run: bool) -> Result<(
     Ok(())
 }
 
-pub fn notify_user(
-    repo_arg: Option<&str>,
-    title: &str,
-    message: &str,
-    dry_run: bool,
-) -> Result<(), String> {
+pub fn notify_user(args: &NotifyArgs) -> Result<(), String> {
+    let title = args.title.as_str();
+    let message = args.message.as_str();
     // Resolved once rather than left to `settings_for`, because a `{nwo}` template needs the
     // same answer the config was picked with — and because this command is the one that can
     // legitimately be run from outside a repository, where there is no answer at all.
-    let nwo = match repo_arg {
+    let nwo = match args.repo.as_deref() {
         Some(arg) => Some(arg.to_string()),
         None => identity::resolve(None, None).ok().map(|info| info.nwo),
     };
@@ -61,7 +59,7 @@ pub fn notify_user(
         eprintln!("adjutant: no notifier is configured ({title}: {message})");
         return Ok(());
     };
-    if dry_run {
+    if args.dry_run {
         println!("{command}");
         return Ok(());
     }
@@ -70,21 +68,6 @@ pub fn notify_user(
 }
 
 // ── worktree ─────────────────────────────────────────────────────────
-
-pub struct WorktreeArgs<'a> {
-    pub repo: Option<&'a str>,
-    /// A branch you already know. Answers the path only.
-    pub branch: Option<&'a str>,
-    /// A task name (`app-1234`). Answers the branch *and* the path, as JSON — the two are
-    /// always needed together, and deriving them in two places is how they drift apart.
-    pub name: Option<&'a str>,
-    pub user: Option<&'a str>,
-    /// The selected task source's `branchPattern`, when it has one.
-    pub pattern: Option<&'a str>,
-    /// With `name`: the first of `name`, `name-2`, `name-3`… that nothing holds yet, for a
-    /// caller that picks the name itself and so has no one to tell it is taken.
-    pub unique: bool,
-}
 
 /// Whether a worktree of this name could be created now: its path is free, no local branch
 /// has its name, and git does not list a worktree there (a listed one whose directory is gone
@@ -114,32 +97,38 @@ fn worktree_name_free(
     Ok(!taken.status.success())
 }
 
-pub fn worktree_path(args: &WorktreeArgs<'_>) -> Result<(), String> {
-    let ctx = context_without_hub(args.repo)?;
+/// `--name` answers the branch *and* the path, as JSON — the two are always needed together,
+/// and deriving them in two places is how they drift apart. `--unique` is for a caller that
+/// picks the name itself and so has no one to tell it is taken.
+pub fn worktree_path(args: &WorktreePathArgs) -> Result<(), String> {
+    let ctx = context_without_hub(args.repo.as_deref())?;
     let layout = ctx
         .settings
         .worktree_pattern
         .as_deref()
         .unwrap_or(identity::DEFAULT_WORKTREE_PATTERN);
 
-    if let Some(branch) = args.branch {
+    if let Some(branch) = args.branch.as_deref() {
         println!(
             "{}",
             identity::worktree_fallback(layout, &ctx.repo.main, branch)?
         );
         return Ok(());
     }
-    let Some(name) = args.name else {
+    let Some(name) = args.name.as_deref() else {
         return Err("pass either --branch or --name".to_string());
     };
-    let user = match args.user {
+    let user = match args.user.as_deref() {
         Some(user) => user.to_string(),
         // Not guessed from the remote: the branch prefix people use is their forge login,
         // which is not always the local account name — so the caller passes it, and this is
         // only the last resort.
         None => std::env::var("USER").unwrap_or_else(|_| "worker".to_string()),
     };
-    let pattern = args.pattern.unwrap_or(identity::DEFAULT_BRANCH_PATTERN);
+    let pattern = args
+        .pattern
+        .as_deref()
+        .unwrap_or(identity::DEFAULT_BRANCH_PATTERN);
     let name = match args.unique {
         true => {
             let listed = identity::linked_worktrees(&ctx.repo.main)?;
