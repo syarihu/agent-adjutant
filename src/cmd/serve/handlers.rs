@@ -8,7 +8,6 @@ use super::Server;
 use super::routes::{hub_route, task_id_in};
 use super::state::settings_now;
 use crate::jules::{findings as jules_findings, relay as jules_relay};
-use crate::registry::forget_board;
 
 // ── the two things the board can change ──────────────────────────────
 
@@ -242,18 +241,15 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
         "stop" | "close" => {
             let closing = action == "close";
             if closing {
-                crate::cmd::closable_check(repo, &hub)?;
+                crate::lifecycle::hub::closable_check(repo, &hub)?;
             }
             // A hub that will not stop is not closed: nothing is forgotten until it is gone.
             let was_running = crate::cmd::stop_hub(&hub_stop_context(server, &hub, settings))?;
             if closing {
                 // `stop_hub` cleared a record naming the process it stopped; what is left
                 // names none, unless a hub registered in the meantime, which stays.
-                if !crate::registry::unregister_hub_if_unnamed(&server.ctx.state, &hub.slug)? {
-                    return Err(format!("{} changed while it was being closed", hub.name));
-                }
-                forget_board(&server.ctx.state, &hub.slug)?;
-                Ok(json!({ "closed": true, "wasRunning": was_running, "unread": hub.inbox_count }))
+                let closed = crate::lifecycle::hub::close(&server.ctx.state, repo, &hub)?;
+                Ok(json!({ "closed": true, "wasRunning": was_running, "unread": closed.unread }))
             } else {
                 Ok(json!({ "stopped": true, "wasRunning": was_running }))
             }
