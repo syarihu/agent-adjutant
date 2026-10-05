@@ -20,6 +20,8 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/core.js"),
     include_str!("../../ui/terminal.js"),
     include_str!("../../ui/board.js"),
+    include_str!("../../ui/cards.js"),
+    include_str!("../../ui/task-panel.js"),
     include_str!("../../ui/actions.js"),
     include_str!("../../ui/review.js"),
     include_str!("../../ui/task-view.js"),
