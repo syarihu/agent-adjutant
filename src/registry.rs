@@ -52,7 +52,7 @@ pub use status::*;
 pub use unregister::*;
 
 // For the tests outside `registry` that write record fixtures (the inbox tests,
-// `cmd/serve/tests.rs`).
+// `board/tests.rs`).
 #[cfg(test)]
 pub(crate) use store::{boards_dir, hub_record_path, worker_record_path};
 
