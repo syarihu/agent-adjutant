@@ -267,4 +267,47 @@ write_infra $'pub mod clock;\n#[doc = "a]b"] pub mod shell;' ""
 git mv src/shell.rs src/infra/shell.rs
 verify "a ] inside a string in an attribute does not end it" 0 "move-only ok" main
 
+# A helper moved from a test file into tests/common/mod.rs is read like one moved under src/.
+new_crate "$tmp/tests"
+mkdir -p tests
+printf '' >src/lib.rs
+# write_test_head <factor in the moved helper>
+write_test_head() {
+  mkdir -p tests/common
+  cat >tests/a.rs <<'RS'
+mod common;
+
+use common::*;
+
+#[test]
+fn doubles() {
+    assert_eq!(double(2), 4);
+}
+RS
+  cat >tests/common/mod.rs <<RS
+//! What the tests share.
+
+pub fn double(x: u8) -> u8 {
+    x * $1
+}
+RS
+}
+cat >tests/a.rs <<'RS'
+fn double(x: u8) -> u8 {
+    x * 2
+}
+
+#[test]
+fn doubles() {
+    assert_eq!(double(2), 4);
+}
+RS
+commit base
+git checkout -q -B case main
+write_test_head 2
+verify "a helper moved into tests/common/mod.rs is a move" 0 "same items in 2 files" main
+git checkout -q -B case main
+write_test_head 3
+verify "a helper changed on its way into tests/common/mod.rs is not a move" 1 "not a move: the items above" main
+
 exit "$failed"

@@ -5,11 +5,12 @@
 #
 # A move takes items from one file to another and changes only what the move forces: `mod`
 # and `use` lines, visibility, and paths that point somewhere else from the new file. So
-# both sides of every touched `src/**.rs` file are reduced to the tokens that are left once
-# those are dropped, cut into top-level items (up to the `}` that closes one, or a `;`), and
-# the two multisets of items must be equal. Each item keeps its tokens in order, so moving a
-# whole item anywhere is fine, while changing or reordering tokens within one is not. Lines,
-# indentation and wrapping do not count, so rustfmt re-wrapping a moved item is fine.
+# both sides of every touched `.rs` file under src/ or tests/ are reduced to the tokens that
+# are left once those are dropped, cut into top-level items (up to the `}` that closes one,
+# or a `;`), and the two multisets of items must be equal. Each item keeps its tokens in
+# order, so moving a whole item anywhere is fine, while changing or reordering tokens within
+# one is not. Lines, indentation and wrapping do not count, so rustfmt re-wrapping a moved
+# item is fine.
 #
 # A `mod x;` or `use` line takes the outer attributes and the `///` and `//` comments directly
 # above it along (up to a blank line or code), so a declaration moves with its `#[cfg(unix)]`.
@@ -22,22 +23,22 @@
 # It cannot see a reference retargeted to a same-named item elsewhere (`a::f` to `b::f`):
 # the paths are dropped. The compiler and the test count at the end cover that.
 #
-# Known gaps: only the committed HEAD is read, so a dirty src/ is refused; the closing brace
-# of a `mod tests {` is found by its indent, so a differently indented one is missed. Moving
-# items out of a non-test inline `mod x { }` or out of an `impl` block shows as a change: a
-# false failure, never a false pass. Braces inside string or char literals can do the same.
-# `a || { b }` loses its braces too, so adding or removing just those braces passes, and so
-# does `|| { e }` inside a macro that reads its tokens as text (`stringify!`): closures in
-# macro arguments such as `assert!` are the ones rustfmt collapses, so macros are not skipped.
-# An attribute on a `mod x;` or `use` line is not compared, so adding, changing or dropping
-# its `#[cfg]` or `#[path]` passes; the compiler and the test count are left to see it. A
-# comment left behind above a moved `mod x;` or `use` line shows as a change. An attribute is
-# followed to its `]` by counting brackets outside `"..."`, so a bracket or quote in a raw
-# string or char literal can hold the lines up to the next blank one, and a `mod` or `use`
-# line that ends them drops them. A trailing `// ...` is cut off outside `"..."`, so a lone
-# `"` in a char literal keeps the comment on that line. Lines are read one at a time, so a
-# line inside a multi-line string literal that reads as `mod x;`, `use`, `//!` or
-# `#[cfg(test)]` is dropped like one.
+# Known gaps: only the committed HEAD is read, so a dirty src/ or tests/ is refused; the
+# closing brace of a `mod tests {` is found by its indent, so a differently indented one is
+# missed. Moving items out of a non-test inline `mod x { }` or out of an `impl` block shows
+# as a change: a false failure, never a false pass. Braces inside string or char literals
+# can do the same. `a || { b }` loses its braces too, so adding or removing just those
+# braces passes, and so does `|| { e }` inside a macro that reads its tokens as text
+# (`stringify!`): closures in macro arguments such as `assert!` are the ones rustfmt
+# collapses, so macros are not skipped. An attribute on a `mod x;` or `use` line is not
+# compared, so adding, changing or dropping its `#[cfg]` or `#[path]` passes; the compiler
+# and the test count are left to see it. A comment left behind above a moved `mod x;` or
+# `use` line shows as a change. An attribute is followed to its `]` by counting brackets
+# outside `"..."`, so a bracket or quote in a raw string or char literal can hold the lines
+# up to the next blank one, and a `mod` or `use` line that ends them drops them. A trailing
+# `// ...` is cut off outside `"..."`, so a lone `"` in a char literal keeps the comment on
+# that line. Lines are read one at a time, so a line inside a multi-line string literal that
+# reads as `mod x;`, `use`, `//!` or `#[cfg(test)]` is dropped like one.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
@@ -50,8 +51,8 @@ if [ $# -ne 1 ]; then
   exit 2
 fi
 cd "$(git rev-parse --show-toplevel)"
-if [ -n "$(git status --porcelain -- src)" ]; then
-  echo "commit or stash changes under src/ first: the tokens are read from HEAD and the tests are counted in the working tree" >&2
+if [ -n "$(git status --porcelain -- src tests)" ]; then
+  echo "commit or stash changes under src/ or tests/ first: the tokens are read from HEAD and the tests are counted in the working tree" >&2
   exit 1
 fi
 
@@ -59,9 +60,9 @@ fi
 # since would bring its own changes into the comparison.
 base=$(git merge-base "$1" HEAD)
 
-files=$(git diff --name-only --no-renames "$base" HEAD -- src | grep '\.rs$' || true)
+files=$(git diff --name-only --no-renames "$base" HEAD -- src tests | grep '\.rs$' || true)
 if [ -z "$files" ]; then
-  echo "move-only ok: no .rs file under src/ changed"
+  echo "move-only ok: no .rs file under src/ or tests/ changed"
   exit 0
 fi
 
