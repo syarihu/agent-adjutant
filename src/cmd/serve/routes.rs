@@ -20,7 +20,7 @@ use super::state::{state, task_history};
 
 // ── routing ──────────────────────────────────────────────────────────
 
-pub(super) fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
+pub(crate) fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let Some(req) = http::read_request(&mut reader)? else {
         return Ok(());

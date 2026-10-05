@@ -1,6 +1,6 @@
 //! Which boards are running and where: the address book and the server record.
 
-use super::store::{boards_dir, record_path};
+use super::store::{boards_dir, record_path, server_record_path};
 use super::*;
 
 pub(crate) fn served(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Option<Served> {
@@ -126,10 +126,6 @@ pub(crate) fn addresses(root: &Path) -> Vec<Address> {
         .collect()
 }
 
-pub(crate) fn server_record_path(root: &Path) -> PathBuf {
-    root.join("server.json")
-}
-
 /// The pid and port of the resident server, when one is running. Anchored on the recorded
 /// process start time like every other record here, so a killed server leaves a file that
 /// reads as absent.
@@ -148,4 +144,45 @@ pub(crate) fn recorded_version(root: &Path) -> Option<String> {
         .get("version")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Write `server.json` for this process, which has bound `port`.
+pub(crate) fn record_server(root: &Path, port: u16) -> Result<(), String> {
+    let pid = std::process::id();
+    let record = json!({
+        "pid": pid,
+        "psStarted": ps_started(pid),
+        "port": port,
+        "startedAt": crate::infra::clock::utc_stamp(crate::infra::clock::now_secs()),
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    crate::infra::fs::write_json(&server_record_path(root), &record)
+}
+
+/// What `server.json` names, whether or not that process is still there.
+pub(crate) fn recorded_server(root: &Path) -> Option<(u32, Option<String>)> {
+    let record = crate::infra::fs::read_json(&server_record_path(root))?;
+    let pid = record.get("pid").and_then(Value::as_u64)? as u32;
+    let started = record
+        .get("psStarted")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some((pid, started))
+}
+
+/// Whether `record` still names the process `pid` started at `started`. The rule for removing
+/// `server.json`: a supervisor that restarts the server may already have written the next
+/// record, and that one is not ours to remove.
+pub(crate) fn names_resident(
+    record: Option<&(u32, Option<String>)>,
+    pid: u32,
+    started: Option<&str>,
+) -> bool {
+    record.is_some_and(|(p, s)| *p == pid && s.as_deref() == started)
+}
+
+pub(crate) fn forget_server(root: &Path, pid: u32, started: Option<&str>) {
+    if names_resident(recorded_server(root).as_ref(), pid, started) {
+        let _ = std::fs::remove_file(server_record_path(root));
+    }
 }

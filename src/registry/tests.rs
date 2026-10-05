@@ -1689,3 +1689,21 @@ fn a_context_at_a_root_reads_that_root() {
     let ctx = context_at(repo, other_dir.clone()).unwrap();
     assert_eq!(ctx.state, other_dir);
 }
+
+#[test]
+fn a_record_is_removed_only_while_it_names_the_stopped_server() {
+    let old = (7, Some("Mon Jan  1 00:00:00 2024".to_string()));
+    assert!(names_resident(
+        Some(&old),
+        7,
+        Some("Mon Jan  1 00:00:00 2024")
+    ));
+    // A supervisor's restart has written another pid, or the same pid started later.
+    assert!(!names_resident(
+        Some(&old),
+        8,
+        Some("Mon Jan  1 00:00:00 2024")
+    ));
+    assert!(!names_resident(Some(&old), 7, Some("later")));
+    assert!(!names_resident(None, 7, None));
+}

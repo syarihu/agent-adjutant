@@ -102,6 +102,10 @@ pub(crate) fn boards_dir(root: &Path) -> PathBuf {
     root.join("boards")
 }
 
+pub(super) fn server_record_path(root: &Path) -> PathBuf {
+    root.join("server.json")
+}
+
 /// Read first, and only when that fails ask whether anything is there, so a record removed
 /// in between reads as absent.
 pub(super) fn read_record<T>(path: &Path, parse: impl FnOnce(Value) -> Option<T>) -> Recorded<T> {

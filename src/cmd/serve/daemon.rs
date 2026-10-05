@@ -1,20 +1,24 @@
 //! The resident server process.
 
 use std::io::IsTerminal;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::task;
 
 use super::auth::{stored_token, token};
 use super::index::{boards_json, checkout_here, seed_boards};
 use super::registry::{board_url, resident_board_url};
-use super::resident::{Resident, handle_resident};
+use super::resident::{self, Resident};
 use super::{DEFAULT_PORT, bind_preferring};
 
-use crate::registry::{addresses, live_resident, note_board, recorded_version, server_record_path};
+use crate::registry::{
+    addresses, forget_server, live_resident, note_board, record_server, recorded_server,
+    recorded_version,
+};
 
 // ── the resident server ──────────────────────────────────────────────
 //
@@ -190,9 +194,19 @@ fn wait_for_resident(root: &Path, mut child: std::process::Child) -> Result<u16,
     }
 }
 
-/// The resident itself: holds `server.lock` for as long as it runs, binds, says where it is,
-/// and answers.
-fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
+/// The resident, bound and recorded but not yet answering. Holds `server.lock` for as long as
+/// it lives.
+pub(super) struct BoundResident {
+    lock: std::fs::File,
+    listener: TcpListener,
+    resident: Arc<Resident>,
+    pub(super) asked: u16,
+    pub(super) bound: u16,
+}
+
+/// Take `server.lock`, bind `port` (or any free port when it is taken), and write the record
+/// that says where the resident is. Prints nothing.
+pub(super) fn bind_resident(root: &Path, port: u16) -> Result<BoundResident, String> {
     let lock_path = server_lock_path(root);
     // Held for the process's lifetime and released by the system when it ends, however it
     // ends — the same lock `registry::take_over` takes, for the same reason.
@@ -208,32 +222,9 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
         .local_addr()
         .map(|a| a.port())
         .map_err(|e| format!("cannot read the server's port: {e}"))?;
-    if port != 0 && bound != port {
-        eprintln!("adj server: 127.0.0.1:{port} is taken; serving on {bound} instead");
-    }
     let token = token(root)?;
-    let pid = std::process::id();
-    let record = json!({
-        "pid": pid,
-        "psStarted": crate::registry::ps_started(pid),
-        "port": bound,
-        "startedAt": crate::infra::clock::utc_stamp(crate::infra::clock::now_secs()),
-        "version": env!("CARGO_PKG_VERSION"),
-    });
-    crate::infra::fs::write_json(&server_record_path(root), &record)?;
+    record_server(root, bound)?;
     seed_boards(root);
-    let index = board_url(bound, &token);
-    // The token goes to a terminal and nowhere else: detached, or under a service manager,
-    // stdout is a log file, and a log is kept, attached to bug reports and read by others. The
-    // process that started it prints the whole URL to the person who asked.
-    if std::io::stdout().is_terminal() {
-        println!("adj server: serving on {index}");
-    } else {
-        println!("adj server: serving on http://127.0.0.1:{bound}/");
-    }
-    if open {
-        open_browser(&index);
-    }
     let resident = Arc::new(Resident {
         root: root.to_path_buf(),
         token,
@@ -243,72 +234,94 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
         terminals: Arc::default(),
         pr_poll: Arc::default(),
     });
-    {
-        let resident = Arc::clone(&resident);
-        let poll = Arc::clone(&resident.pr_poll);
-        std::thread::spawn(move || {
-            poll.run(|| {
-                // Only a board with a card on a PR is opened for it: opening one asks git where
-                // the checkout is, which is not worth doing every round for a board with nothing
-                // to look after.
-                addresses(&resident.root)
-                    .iter()
-                    .filter(|a| {
-                        task::list(&resident.root, &a.slug).iter().any(|t| {
-                            t.pr.is_some()
-                                && !matches!(t.status, task::Status::Done | task::Status::Cancelled)
+    Ok(BoundResident {
+        lock,
+        listener,
+        resident,
+        asked: port,
+        bound,
+    })
+}
+
+impl BoundResident {
+    pub(super) fn index_url(&self) -> String {
+        board_url(self.bound, &self.resident.token)
+    }
+
+    /// Poll the pull requests and answer connections with `handle`, for as long as the process
+    /// lives.
+    pub(super) fn run(self, handle: fn(&Resident, TcpStream) -> std::io::Result<()>) {
+        let BoundResident {
+            lock,
+            listener,
+            resident,
+            ..
+        } = self;
+        {
+            let resident = Arc::clone(&resident);
+            let poll = Arc::clone(&resident.pr_poll);
+            std::thread::spawn(move || {
+                poll.run(|| {
+                    // Only a board with a card on a PR is opened for it: opening one asks git where
+                    // the checkout is, which is not worth doing every round for a board with nothing
+                    // to look after.
+                    addresses(&resident.root)
+                        .iter()
+                        .filter(|a| {
+                            task::list(&resident.root, &a.slug).iter().any(|t| {
+                                t.pr.is_some()
+                                    && !matches!(
+                                        t.status,
+                                        task::Status::Done | task::Status::Cancelled
+                                    )
+                            })
                         })
-                    })
-                    .filter_map(|a| resident.board(&a.slug))
-                    .map(|server| server.ctx.clone())
-                    .collect()
-            });
-        });
-    }
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let resident = Arc::clone(&resident);
-                // A thread per connection, for the reason `Board::run` gives.
-                std::thread::spawn(move || {
-                    if let Err(e) = handle_resident(&resident, stream) {
-                        eprintln!("adj server: connection error: {e}");
-                    }
+                        .filter_map(|a| resident.board(&a.slug))
+                        .map(|server| server.ctx.clone())
+                        .collect()
                 });
-            }
-            Err(e) => eprintln!("adj server: accept error: {e}"),
+            });
         }
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let resident = Arc::clone(&resident);
+                    // A thread per connection, for the reason `Board::run` gives.
+                    std::thread::spawn(move || {
+                        if let Err(e) = handle(&resident, stream) {
+                            eprintln!("adj server: connection error: {e}");
+                        }
+                    });
+                }
+                Err(e) => eprintln!("adj server: accept error: {e}"),
+            }
+        }
+        drop(lock);
     }
-    drop(lock);
+}
+
+/// The resident itself: holds `server.lock` for as long as it runs, binds, says where it is,
+/// and answers.
+fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
+    let bound = bind_resident(root, port)?;
+    let (asked, on) = (bound.asked, bound.bound);
+    if asked != 0 && on != asked {
+        eprintln!("adj server: 127.0.0.1:{asked} is taken; serving on {on} instead");
+    }
+    let index = bound.index_url();
+    // The token goes to a terminal and nowhere else: detached, or under a service manager,
+    // stdout is a log file, and a log is kept, attached to bug reports and read by others. The
+    // process that started it prints the whole URL to the person who asked.
+    if std::io::stdout().is_terminal() {
+        println!("adj server: serving on {index}");
+    } else {
+        println!("adj server: serving on http://127.0.0.1:{on}/");
+    }
+    if open {
+        open_browser(&index);
+    }
+    bound.run(resident::handle_resident);
     Ok(0)
-}
-
-/// What `server.json` names, whether or not that process is still there.
-fn recorded_resident(root: &Path) -> Option<(u32, Option<String>)> {
-    let record = crate::infra::fs::read_json(&server_record_path(root))?;
-    let pid = record.get("pid").and_then(Value::as_u64)? as u32;
-    let started = record
-        .get("psStarted")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Some((pid, started))
-}
-
-/// Whether `record` still names the process `pid` started at `started`. The rule for removing
-/// `server.json`: a supervisor that restarts the server may already have written the next
-/// record, and that one is not ours to remove.
-pub(super) fn names_resident(
-    record: Option<&(u32, Option<String>)>,
-    pid: u32,
-    started: Option<&str>,
-) -> bool {
-    record.is_some_and(|(p, s)| *p == pid && s.as_deref() == started)
-}
-
-fn forget_resident(root: &Path, pid: u32, started: Option<&str>) {
-    if names_resident(recorded_resident(root).as_ref(), pid, started) {
-        let _ = std::fs::remove_file(server_record_path(root));
-    }
 }
 
 /// How long a stop waits for the resident to exit before giving up.
@@ -318,10 +331,10 @@ const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// `None` when nothing was running — a record left by a killed server is forgotten on the way.
 /// `restarting` only changes the timeout message, which then says no other is started.
 fn stop_resident(root: &Path, restarting: bool) -> Result<Option<(u32, u16)>, String> {
-    let named = recorded_resident(root);
+    let named = recorded_server(root);
     let Some((pid, port)) = live_resident(root) else {
         if let Some((pid, started)) = &named {
-            forget_resident(root, *pid, started.as_deref());
+            forget_server(root, *pid, started.as_deref());
         }
         return Ok(None);
     };
@@ -354,7 +367,7 @@ fn stop_resident(root: &Path, restarting: bool) -> Result<Option<(u32, u16)>, St
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    forget_resident(root, pid, started.as_deref());
+    forget_server(root, pid, started.as_deref());
     Ok(Some((pid, port)))
 }
 
