@@ -8,9 +8,19 @@
 # shell left in a dead tmux server holds a pty for good, and the machine runs out of them
 # (`fork failed: Device not configured`) after a day of test runs.
 dir=$(mktemp -d /tmp/adj-check.XXXXXX) && dir=$(cd "$dir" && pwd -P) || exit 1
-trap 'rm -rf "$dir"; exit 130' INT TERM
-TMPDIR="$dir/" "$@"
+# In the background so that a signal is handled at once rather than after the command, and
+# still followed by the check: a test killed before its Drop is exactly what leaks. A
+# background child ignores INT, so it is passed on as TERM.
+caught=
+trap 'caught=1; kill -TERM "$pid" 2>/dev/null' INT TERM
+TMPDIR="$dir/" "$@" &
+pid=$!
+wait "$pid"
 status=$?
+while [ -n "$caught" ] && kill -0 "$pid" 2>/dev/null; do
+  wait "$pid"
+done
+[ -n "$caught" ] && status=130
 if ! command -v lsof >/dev/null 2>&1; then
   echo "check-test-leaks: lsof not found, leak check skipped" >&2
   rm -rf "$dir"
