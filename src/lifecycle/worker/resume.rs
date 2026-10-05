@@ -5,8 +5,8 @@ use crate::kernel::identity;
 use crate::lifecycle::{forwarded_env, resume_template, title_command};
 use crate::registry::{self, Context};
 
-/// What reopening a worker came to.
-pub enum Resumed {
+/// What starting or reopening a worker came to.
+pub enum Started {
     /// The tab was opened (or, on a dry run, would be).
     Opened(terminal::Performed),
     /// `maxWorkers` is reached; the refusal says so. Kept apart from `Err` because the command
@@ -28,7 +28,7 @@ pub fn resume_worker(
     title: &str,
     prompt: Option<&str>,
     dry_run: bool,
-) -> Result<Resumed, String> {
+) -> Result<Started, String> {
     let worktree = worker_worktree(Some(worktree))?;
     // Refused here rather than in the tab, so the caller — often a hub — hears about it.
     let saved = saved_worker_session(&worktree)?;
@@ -38,7 +38,7 @@ pub fn resume_worker(
     )?;
     // A reopened worker is as much a process as a fresh one.
     if let Some(refusal) = claim_worker_slot(ctx, &worktree, dry_run)? {
-        return Ok(Resumed::Full(refusal));
+        return Ok(Started::Full(refusal));
     }
     let worktree = worktree.to_string_lossy().to_string();
     let title = match title {
@@ -78,7 +78,7 @@ pub fn resume_worker(
         },
         dry_run,
     )
-    .map(Resumed::Opened)
+    .map(Started::Opened)
 }
 
 /// The worktree a worker runs in: the one named, or — for `--resume`, typed by a person

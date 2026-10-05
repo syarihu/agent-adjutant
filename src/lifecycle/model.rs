@@ -31,8 +31,6 @@ pub fn title_command(settings: &Settings, title: &str) -> Option<String> {
     ))
 }
 
-/// Open a tab and start a worker agent in it. One command rather than two so the runner
-/// template is read in exactly one place.
 /// The environment a new tab has to be handed on its command line, because a terminal is
 /// given a command line and nothing else.
 ///
