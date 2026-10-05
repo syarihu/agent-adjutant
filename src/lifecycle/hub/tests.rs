@@ -166,9 +166,13 @@ fn closing_a_parent_hub_that_is_still_running_is_refused_and_leaves_its_record()
         }),
     );
 
+    let address = ctx.state.join("boards").join(format!("{}.json", hub.slug));
+
     let refused = close(&ctx.state, &ctx.repo, &hub).err().unwrap();
 
     assert!(refused.contains("still running"), "{refused}");
+    assert!(refused.contains(&format!("pid {sleeper}")), "{refused}");
     assert!(path.exists());
+    assert!(address.exists());
     drop(sandbox);
 }

@@ -246,8 +246,8 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
             // A hub that will not stop is not closed: nothing is forgotten until it is gone.
             let was_running = crate::cmd::stop_hub(&hub_stop_context(server, &hub, settings))?;
             if closing {
-                // `stop_hub` cleared a record naming the process it stopped; what is left
-                // names none, unless a hub registered in the meantime, which stays.
+                // `stop_hub` cleared a record naming the process it stopped; a hub that
+                // registered in the meantime stays, and `close` refuses it as still running.
                 let closed = crate::lifecycle::hub::close(&server.ctx.state, repo, &hub)?;
                 Ok(json!({ "closed": true, "wasRunning": was_running, "unread": closed.unread }))
             } else {
