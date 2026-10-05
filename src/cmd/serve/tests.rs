@@ -325,7 +325,7 @@ fn a_session_with_no_task_opens_in_the_task_panel() {
         "function mountSelected",
         "function renderSessionSidebar",
         "sess-term-open",
-        "`&session=${",
+        "`&session=$\u{7b}",
         "heldBySessions",
     ] {
         assert!(!UI_HTML.contains(gone), "{gone}");
