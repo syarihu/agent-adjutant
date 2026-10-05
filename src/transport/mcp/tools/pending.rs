@@ -2,7 +2,24 @@ use crate::mail;
 use serde_json::{Value, json};
 use std::path::Path;
 
-use super::resolve_repo;
+use super::{cwd_property, hub_property, repo_property, resolve_repo};
+
+pub(super) fn definition() -> Value {
+    json!({
+        "name": "adjutant_pending",
+        "description": "The messages waiting for a hub. action=list (default) summarises them, action=read returns one in full, action=ack files one away once it has been dealt with. A hub reads this at startup and again before going back to waiting.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["list", "read", "ack"], "description": "Default: list." },
+                "name": { "type": "string", "description": "Message file name, as given by action=list. Required for read and ack." },
+                "repo": repo_property(),
+                "hub": hub_property(),
+                "cwd": cwd_property(),
+            },
+        },
+    })
+}
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let info = resolve_repo(args)?;

@@ -3,7 +3,28 @@ use crate::mail::Message;
 use crate::mail::{NotWoken, Reached};
 use serde_json::{Value, json};
 
-use super::{cwd_param, resolve_repo};
+use super::{cwd_param, cwd_property, hub_property, repo_property, resolve_repo};
+
+pub(super) fn definition() -> Value {
+    json!({
+        "name": "adjutant_send",
+        "description": "Deliver a message to a repository's hub. Never fails for want of a listener: if the hub is not running the message waits in its inbox and is picked up when it next starts, and the reply says which of the two happened. Use for bug reports found mid-task, answers to a hub's question, acknowledgements, and telling the hub a task is finished so it can close this tab and clear the worktree. The message records the worktree you are sending from, derived from `cwd`, so pass `cwd` whenever you are not in it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "body": { "type": "string", "description": "The message. Markdown; keep it under 30 lines — the hub reshapes it into an issue." },
+                "subject": { "type": "string", "description": "One line stating the conclusion. This is all a human sees in a listing." },
+                "from": { "type": "string", "description": "Who is sending: your session or worktree name." },
+                "kind": { "type": "string", "description": "report (default) | question | answer | ack | done | needs-user | request | next | gate | jules-pr | jules-review" },
+                "wake": { "type": "boolean", "description": "Whether to wake the hub. Defaults to automatic: wakes for actionable messages (reports, answers, done, requests, next, gate, jules-pr, jules-review); delivers without waking for questions, needs-user, ack, or when sending to yourself." },
+                "repo": repo_property(),
+                "hub": hub_property(),
+                "cwd": cwd_property(),
+            },
+            "required": ["body"],
+        },
+    })
+}
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let info = resolve_repo(args)?;

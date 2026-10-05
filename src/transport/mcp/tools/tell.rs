@@ -1,7 +1,28 @@
 use crate::mail::{NotWoken, Reached};
 use serde_json::{Value, json};
 
-use super::resolve_repo;
+use super::{cwd_property, hub_property, repo_property, resolve_repo};
+
+pub(super) fn definition() -> Value {
+    json!({
+        "name": "adjutant_tell",
+        "description": "Leave a message for the worker in a worktree, and wake it if it is sitting there. This is the hub-to-worker direction: the address is the worktree, not a session, so it reaches whatever agent is working there whatever it is doing. Start the subject with `[question <id>]` when you need an answer back — that marker is what tells the worker it may reply.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "worktree": { "type": "string", "description": "Absolute path of the worktree." },
+                "subject": { "type": "string", "description": "One line stating the point. `[question <id>]` asks for an answer; `[ack]` acknowledges; anything else is a notice." },
+                "body": { "type": "string", "description": "The message. Markdown." },
+                "from": { "type": "string", "description": "Who is speaking (default: this repository's hub name)." },
+                "wake": { "type": "boolean", "description": "Whether to wake the worker. Defaults to automatic based on the subject: wakes for `[question <id>]` and gate answers; delivers without waking for `[ack]` and plain notices." },
+                "repo": repo_property(),
+                "hub": hub_property(),
+                "cwd": cwd_property(),
+            },
+            "required": ["worktree", "subject", "body"],
+        },
+    })
+}
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let info = resolve_repo(args)?;

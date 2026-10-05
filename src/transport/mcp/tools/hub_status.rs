@@ -3,7 +3,18 @@ use crate::registry;
 use serde_json::{Value, json};
 use std::path::Path;
 
-use super::resolve_repo;
+use super::{cwd_property, hub_property, repo_property, resolve_repo};
+
+pub(super) fn definition() -> Value {
+    json!({
+        "name": "adjutant_hub_status",
+        "description": "The hub session name for a repository, and whether that hub is currently running. The name is the address a report is sent to; derive it here rather than reconstructing it, so both sides always agree.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "repo": repo_property(), "hub": hub_property(), "cwd": cwd_property() },
+        },
+    })
+}
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let info = resolve_repo(args)?;
