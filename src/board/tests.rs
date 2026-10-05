@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::gate;
+use crate::infra::terminal::SessionTerminal;
 use crate::task;
 
 use super::view::{
@@ -721,4 +722,89 @@ fn one_tmux_server_is_one_key_however_a_session_names_its_socket() {
     assert_eq!(key(Some("  ")), key(None));
     assert_eq!(key(Some("default")), key(None));
     assert_ne!(key(Some("another")), key(None));
+}
+
+#[test]
+fn a_second_restart_of_the_same_target_is_refused_until_the_first_is_over() {
+    let first = Restarting::claim("guard-test/a", "the session").unwrap();
+    let again = Restarting::claim("guard-test/a", "the session");
+    assert_eq!(again.err().unwrap(), "the session is already restarting");
+    // Another target is not held up by it.
+    let other = Restarting::claim("guard-test/b", "the session");
+    assert!(other.is_ok());
+    drop(first);
+    assert!(Restarting::claim("guard-test/a", "the session").is_ok());
+}
+
+#[test]
+fn a_held_restart_refuses_another_until_the_hold_is_over() {
+    let at = Instant::now();
+    Restarting::claim_at("guard-test/held", "the hub", at)
+        .unwrap()
+        .hold_at(at);
+    let soon = Restarting::claim_at("guard-test/held", "the hub", at + RESTART_HOLD / 2);
+    assert!(soon.err().unwrap().contains("coming up"));
+    let later = Restarting::claim_at("guard-test/held", "the hub", at + RESTART_HOLD);
+    assert!(later.is_ok());
+}
+
+fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Session {
+    Session {
+        id: id.to_string(),
+        kind: "worker".to_string(),
+        agent: "claude".to_string(),
+        terminal: SessionTerminal {
+            backend: backend.to_string(),
+            socket: Some("adj-test".to_string()),
+            session: Some("work".to_string()),
+            window: window.map(str::to_string),
+            pane: None,
+        },
+        hub: None,
+        key: None,
+        worktree: "/tmp/w".to_string(),
+        branch: None,
+        task: None,
+        title: None,
+        task_title: None,
+        conversation: None,
+        present,
+        stale: false,
+        pid: None,
+        started_at: None,
+        phase: None,
+        phase_at: None,
+        phases: Vec::new(),
+        last_activity_at: None,
+        last_line: None,
+        attached: None,
+        waiting: None,
+    }
+}
+
+#[test]
+fn only_a_running_tmux_session_with_a_window_id_can_be_opened() {
+    let sessions = [
+        session("worker-a", "tmux", Some("@3"), true),
+        session("worker-b", "iterm2", Some("@3"), true),
+        session("worker-c", "tmux", None, true),
+        session("worker-d", "tmux", Some("main:1"), true),
+        session("worker-e", "tmux", Some("@3"), false),
+    ];
+    assert_eq!(
+        target_of(&sessions[0]),
+        Some((Some("adj-test".to_string()), "@3".to_string()))
+    );
+    for other in &sessions[1..] {
+        assert_eq!(target_of(other), None, "{}", other.id);
+    }
+}
+
+#[test]
+fn window_ids_are_an_at_sign_and_digits() {
+    assert!(is_window_id("@0"));
+    assert!(is_window_id("@123"));
+    for bad in ["", "@", "3", "@a", "@1 ", "@1;ls", "=x:@1", "@-1"] {
+        assert!(!is_window_id(bad), "{bad:?}");
+    }
 }

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::Server;
 use super::routes::{hub_route, task_id_in};
-use crate::board::settings_now;
+use crate::board::{hub_start_of, settings_now};
 use crate::jules::{findings as jules_findings, relay as jules_relay};
 
 // ── the two things the board can change ──────────────────────────────
@@ -87,18 +87,6 @@ pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
         "present": raised.is_some(),
         "ran": raised.as_ref().is_some_and(|r| r.done.ran),
     }))
-}
-
-/// How a hub is to be started, from the `start` a request names: `auto` when it names none.
-pub(in crate::cmd) fn hub_start_of(
-    input: &Value,
-) -> Result<crate::lifecycle::hub::HubStart, String> {
-    match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
-        "auto" => Ok(crate::lifecycle::hub::HubStart::Auto),
-        "resume" => Ok(crate::lifecycle::hub::HubStart::Resume),
-        "new" => Ok(crate::lifecycle::hub::HubStart::New),
-        other => Err(format!("no such start: {other}")),
-    }
 }
 
 /// The context that starts `hub`: addressed by its key, refused when a parent hub's key is not

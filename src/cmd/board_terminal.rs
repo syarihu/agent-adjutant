@@ -26,23 +26,6 @@ const CLOSE_NO_SESSION: u16 = 4404;
 #[cfg(any(unix, test))]
 const CLOSE_TMUX_FAILED: u16 = 4500;
 
-/// A tmux window id: `@` and digits, the only thing a record's `window` is allowed to be.
-pub(super) fn is_window_id(window: &str) -> bool {
-    window
-        .strip_prefix('@')
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// The socket and window of `session`, if it is one a terminal can be opened on: it runs in
-/// tmux, was recorded with a window, and is running. Shared with the board's action that opens
-/// the session in the person's own terminal.
-pub(super) fn target_of(session: &crate::session::Session) -> Option<(Option<String>, String)> {
-    let terminal = &session.terminal;
-    let window = terminal.window.as_deref().filter(|w| is_window_id(w))?;
-    (terminal.backend == "tmux" && session.present)
-        .then(|| (terminal.socket.clone(), window.to_string()))
-}
-
 #[cfg(unix)]
 pub(super) use imp::serve;
 
@@ -60,6 +43,7 @@ pub(super) fn serve(
 #[cfg(unix)]
 mod imp {
     use super::*;
+    use crate::board::target_of;
     use crate::cmd::serve::{board_session, settings_now};
     use crate::infra::pty;
     use crate::infra::terminal;
@@ -434,69 +418,6 @@ mod imp {
 mod tests {
     use super::imp::*;
     use super::*;
-    use crate::infra::terminal::SessionTerminal;
-    use crate::session::Session;
-
-    fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Session {
-        Session {
-            id: id.to_string(),
-            kind: "worker".to_string(),
-            agent: "claude".to_string(),
-            terminal: SessionTerminal {
-                backend: backend.to_string(),
-                socket: Some("adj-test".to_string()),
-                session: Some("work".to_string()),
-                window: window.map(str::to_string),
-                pane: None,
-            },
-            hub: None,
-            key: None,
-            worktree: "/tmp/w".to_string(),
-            branch: None,
-            task: None,
-            title: None,
-            task_title: None,
-            conversation: None,
-            present,
-            stale: false,
-            pid: None,
-            started_at: None,
-            phase: None,
-            phase_at: None,
-            phases: Vec::new(),
-            last_activity_at: None,
-            last_line: None,
-            attached: None,
-            waiting: None,
-        }
-    }
-
-    #[test]
-    fn only_a_running_tmux_session_with_a_window_id_can_be_opened() {
-        let sessions = [
-            session("worker-a", "tmux", Some("@3"), true),
-            session("worker-b", "iterm2", Some("@3"), true),
-            session("worker-c", "tmux", None, true),
-            session("worker-d", "tmux", Some("main:1"), true),
-            session("worker-e", "tmux", Some("@3"), false),
-        ];
-        assert_eq!(
-            target_of(&sessions[0]),
-            Some((Some("adj-test".to_string()), "@3".to_string()))
-        );
-        for other in &sessions[1..] {
-            assert_eq!(target_of(other), None, "{}", other.id);
-        }
-    }
-
-    #[test]
-    fn window_ids_are_an_at_sign_and_digits() {
-        assert!(is_window_id("@0"));
-        assert!(is_window_id("@123"));
-        for bad in ["", "@", "3", "@a", "@1 ", "@1;ls", "=x:@1", "@-1"] {
-            assert!(!is_window_id(bad), "{bad:?}");
-        }
-    }
 
     #[test]
     fn a_resize_is_clamped_and_anything_else_is_ignored() {

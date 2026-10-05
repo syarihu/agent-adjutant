@@ -5,9 +5,12 @@
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
 //! Pure data structures with serde serialization, and the two board-wide refusals to resume
-//! a session or a hub, which read only the settings.
+//! a session or a hub, which read only the settings. Until the transport takes the parsing
+//! (#412–#415), it also holds the request-body readers `input_of`, `text` and `hub_start_of`,
+//! and `is_window_id` and `target_of`, which name the tmux window a session is opened in.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::infra::terminal::SessionTerminal;
 use crate::kernel::runner;
@@ -205,6 +208,54 @@ pub fn hub_resume_refusal(settings: &crate::kernel::config::Settings) -> Option<
         return Some(refusal);
     }
     own_hub_runner_refusal(settings)
+}
+
+pub fn input_of(body: &[u8]) -> Result<Value, String> {
+    let input: Value = match body.is_empty() {
+        true => json!({}),
+        false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
+    };
+    match input.is_object() {
+        true => Ok(input),
+        false => Err("expected an object".to_string()),
+    }
+}
+
+/// A string field, trimmed; blank and `null` are absent. Anything that is not a string is
+/// refused rather than read as absent, as `TaskPatch::from_json` does for a task update.
+pub fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
+    match input.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(v)) => Ok(Some(v.trim()).filter(|s| !s.is_empty())),
+        Some(other) => Err(format!("{key} has to be a string, not {other}")),
+    }
+}
+
+/// How a hub is to be started, from the `start` a request names: `auto` when it names none.
+pub fn hub_start_of(input: &Value) -> Result<crate::lifecycle::hub::HubStart, String> {
+    match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
+        "auto" => Ok(crate::lifecycle::hub::HubStart::Auto),
+        "resume" => Ok(crate::lifecycle::hub::HubStart::Resume),
+        "new" => Ok(crate::lifecycle::hub::HubStart::New),
+        other => Err(format!("no such start: {other}")),
+    }
+}
+
+/// A tmux window id: `@` and digits, the only thing a record's `window` is allowed to be.
+pub fn is_window_id(window: &str) -> bool {
+    window
+        .strip_prefix('@')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The socket and window of `session`, if it is one a terminal can be opened on: it runs in
+/// tmux, was recorded with a window, and is running. Shared with the board's action that opens
+/// the session in the person's own terminal.
+pub fn target_of(session: &crate::session::Session) -> Option<(Option<String>, String)> {
+    let terminal = &session.terminal;
+    let window = terminal.window.as_deref().filter(|w| is_window_id(w))?;
+    (terminal.backend == "tmux" && session.present)
+        .then(|| (terminal.socket.clone(), window.to_string()))
 }
 
 #[cfg(test)]
