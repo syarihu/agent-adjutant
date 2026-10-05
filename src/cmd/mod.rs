@@ -36,7 +36,7 @@ pub(crate) use delivery::wake_note_sentence;
 pub use delivery::{PendingArgs, SendArgs, pending, send};
 pub use gate::{
     AnswerArgs, CloseArgs, answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list,
-    open_cmd as gate_open, open_json as gate_open_json, show as gate_show,
+    open_cmd as gate_open, show as gate_show,
 };
 use hub_ops::{ago, print_performed};
 pub use hub_ops::{hub, hub_close, hub_stop};
@@ -46,20 +46,15 @@ pub use jules::{
     relay_cmd as jules_relay_cmd, show as jules_show, start as jules_start,
 };
 pub use review_engine::run as review_engine;
-pub(crate) use serve::board_connection;
 pub use serve::{
-    DEFAULT_PORT, HubBoard, located, serve, serve_for_hub, server_restart, server_start,
-    server_status, server_stop,
+    DEFAULT_PORT, located, serve, server_restart, server_start, server_status, server_stop,
 };
-#[cfg(test)]
-pub(crate) use skill_outbox::skill_text;
 pub use skill_outbox::{outbox, skill};
 use stdin::{dash_is_stdin, read_body};
 pub use task::{
     AddArgs, BriefArgs, UpdateArgs, add as task_add, brief as task_brief,
     fetch_issue_cmd as task_fetch_issue_cmd, list as task_list, next_cmd as task_next,
-    refresh_cmd as task_refresh_cmd, refresh_json as task_refresh_json, show as task_show,
-    update_cmd as task_update,
+    refresh_cmd as task_refresh_cmd, show as task_show, update_cmd as task_update,
 };
 pub use tell::{TellArgs, tell};
 pub use worker_ops::{WorkArgs, WorkerArgs, focus, focus_worker_cmd, phase, spawn, work, worker};

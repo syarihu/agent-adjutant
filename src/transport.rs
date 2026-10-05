@@ -4,6 +4,7 @@
 //! answers two or more of them give the same way, so none of them has to name another to say it.
 
 pub mod board_http;
+pub mod mcp;
 pub mod wording;
 
 #[cfg(test)]
