@@ -1,9 +1,10 @@
 //! The board's cache of what Jules says about each session a card follows, asked from a
 //! thread of its own so that a slow API makes a badge stale rather than the board.
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::jules;
+use crate::task;
 
 // ── the board's view of the sessions ─────────────────────────────────
 
@@ -19,6 +20,39 @@ const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(45);
 #[derive(Default)]
 pub struct Watch {
     seen: std::sync::Mutex<std::collections::HashMap<String, Seen>>,
+}
+
+/// What the board shows about a task's Jules session: the three objects the page reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum JulesSeen {
+    /// Not answered yet. `checking` is always `true`; it is the key the page reads.
+    Checking {
+        session: String,
+        checking: bool,
+    },
+    Found {
+        session: String,
+        state: String,
+        url: Option<String>,
+        pr: Option<String>,
+        working: bool,
+    },
+    Failed {
+        session: String,
+        error: String,
+    },
+}
+
+impl JulesSeen {
+    /// The session this is about, whichever answer it is.
+    pub fn session(&self) -> &str {
+        match self {
+            Self::Checking { session, .. }
+            | Self::Found { session, .. }
+            | Self::Failed { session, .. } => session,
+        }
+    }
 }
 
 struct Seen {
@@ -37,14 +71,13 @@ impl Watch {
         self: &std::sync::Arc<Self>,
         ctx: &crate::registry::Context,
         key: &crate::infra::terminal::Hook,
-        task: &Value,
-    ) -> Option<Value> {
-        let session = task.get("julesSession")?.as_str()?.to_string();
-        let status = task.get("status").and_then(Value::as_str)?;
-        if !matches!(status, "dispatched" | "pr") {
+        task: &task::Task,
+    ) -> Option<JulesSeen> {
+        let session = task.jules_session.clone()?;
+        if !matches!(task.status, task::Status::Dispatched | task::Status::Pr) {
             return None;
         }
-        let task_id = task.get("id")?.as_str()?.to_string();
+        let task_id = task.id.clone();
         let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
         let entry = seen.entry(session.clone()).or_insert(Seen {
             at: std::time::Instant::now(),
@@ -64,18 +97,21 @@ impl Watch {
         // whenever the state it polls differs from the last, and a field that ticks would have
         // it redraw every two seconds.
         Some(match &entry.answer {
-            None => json!({ "session": session, "checking": true }),
-            Some(Ok(found)) => json!({
-                "session": session,
-                "state": found.state,
-                "url": found.url,
-                "pr": found.pr,
-                "working": jules::working(&found.state),
-            }),
-            Some(Err(why)) => json!({
-                "session": session,
-                "error": why,
-            }),
+            None => JulesSeen::Checking {
+                session,
+                checking: true,
+            },
+            Some(Ok(found)) => JulesSeen::Found {
+                session,
+                state: found.state.clone(),
+                url: found.url.clone(),
+                pr: found.pr.clone(),
+                working: jules::working(&found.state),
+            },
+            Some(Err(why)) => JulesSeen::Failed {
+                session,
+                error: why.clone(),
+            },
         })
     }
 

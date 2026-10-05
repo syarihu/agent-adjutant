@@ -2,9 +2,10 @@
 
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
-use crate::board::{Server, hub_resume_refusal, resume_refusal, settings_now};
+use crate::board::jobs::{JulesSeen, PollHealth};
+use crate::board::{Server, Session, hub_resume_refusal, resume_refusal, settings_now};
 use crate::gate;
 use crate::infra::terminal;
 use crate::kernel::identity::Worktree;
@@ -13,11 +14,183 @@ use crate::task;
 
 use super::sessions::sessions_of;
 
+/// The state document `/api/state` sends. Every key the page reads is a field here, and the
+/// transport only serializes it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardState {
+    pub repo: String,
+    pub main: String,
+    pub hub_name: String,
+    pub hub: HubPresence,
+    pub hubs: Vec<crate::mail::RepoHub>,
+    /// Whether the resident server serves this board, which is also what tells the page
+    /// it lives under a path of its own.
+    pub resident: bool,
+    /// Whether the PR poll is running and whether it is failing, for the one line the page
+    /// shows when it is. `null` where nothing polls. Read from memory: this is polled every
+    /// couple of seconds and must not reach GitHub.
+    pub pr_poll: Option<PollHealth>,
+    /// Whether the board may start a hub: only where the settings mean a tmux window.
+    pub hub_start: Available,
+    /// Whether the board can open a terminal on a session that runs in tmux: the resident
+    /// server, on a machine that has tmux. Which sessions is for the page to read from
+    /// `sessions[].terminal` and `present`.
+    pub board_terminal: Available,
+    /// Whether the board can open a session in the person's own terminal, and through what:
+    /// `terminal.attach` when it is set, iTerm2 where that is installed.
+    pub session_open: SessionOpen,
+    /// Whether the board can resume a stopped worker, so the page offers it only where it
+    /// can work, and says why not where it cannot.
+    pub session_resume: Availability,
+    /// The same for restarting a running hub on its conversation, which needs the hub's own
+    /// resume line rather than the worker's.
+    pub hub_resume: Availability,
+    /// The command line a hub runs, as configured: the server sends the template with its
+    /// placeholders in place, and the Sessions sidebar fills in only `{name}` to show it.
+    pub hub_runner: String,
+    /// The agent a session started from the board runs, which is the only one its dialog offers.
+    pub session_start: SessionStart,
+    pub sessions: Vec<Session>,
+    pub tasks: Vec<TaskCard>,
+    pub workers: Vec<WorkerRow>,
+    /// The slot count `adj work` decides by, counted the same way — a worker still
+    /// starting up holds one — so the header and the refusal cannot disagree.
+    pub worker_slots: WorkerSlots,
+    /// Minutes in one phase before a card is flagged. `0` = never.
+    pub stuck_after_minutes: f64,
+    /// Whether the IDE buttons can do anything, and where to set it when they cannot. Read
+    /// on every poll, so an `ide` written into the config shows up without a restart.
+    pub ide_configured: bool,
+    pub config_path: String,
+    pub now: i64,
+    pub pending: Vec<PendingRow>,
+    pub gates: Vec<gate::Gate>,
+}
+
+/// The repository's own hub. Unlike `mail::RepoHubState`, `pid` and `startedAt` are written
+/// as `null` when there is none.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubPresence {
+    pub present: bool,
+    pub stale: bool,
+    pub pid: Option<u32>,
+    pub started_at: Option<String>,
+}
+
+/// A thing the board can or cannot do.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Available {
+    pub available: bool,
+}
+
+/// A thing the board can or cannot do, and why not.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Availability {
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOpen {
+    pub available: bool,
+    pub terminal: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStart {
+    pub agent: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerSlots {
+    pub busy: usize,
+    pub max: Option<u32>,
+}
+
+/// One linked worktree and what its worker says.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerRow {
+    pub worktree: String,
+    pub name: Option<String>,
+    pub branch: Option<String>,
+    pub present: bool,
+    pub stale: bool,
+    pub title: Option<String>,
+    /// The task this worker reports for, which is what the card joins on: a worker
+    /// with none is a session that has no card until it is linked.
+    pub task: Option<String>,
+    pub phase: Option<String>,
+    pub phase_at: Option<i64>,
+}
+
+/// A message waiting in the hub's inbox.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingRow {
+    pub name: String,
+    pub subject: String,
+    pub from: String,
+    pub kind: String,
+    pub worktree: Option<String>,
+}
+
+/// A task as the board's card: the record itself, with what is joined to it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCard {
+    #[serde(flatten)]
+    pub task: task::Task,
+    /// Absent on a finished task.
+    #[serde(flatten)]
+    pub live: Option<LiveCard>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jules: Option<JulesSeen>,
+}
+
+/// What a live task's card carries beyond the record.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveCard {
+    pub records: Vec<RecordCard>,
+    pub approved_plan: Option<gate::Gate>,
+    pub pr_turn: Option<task::PrTurn>,
+}
+
+/// A record as the card carries it: the gate without its diff, and the diff's size.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordCard {
+    #[serde(flatten)]
+    pub gate: gate::Gate,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_size: Option<usize>,
+}
+
+impl RecordCard {
+    fn of(record: &gate::Gate) -> Self {
+        let mut gate = record.clone();
+        let diff_size = gate.diff.take().map(|d| d.len());
+        if diff_size.is_some() {
+            // A key kept from disk that the card writes itself: the card's value wins.
+            gate.extra.remove("diffSize");
+        }
+        RecordCard { gate, diff_size }
+    }
+}
+
 /// `with_sessions` false leaves `sessions` empty: the page that merges several boards has no
 /// use for them, and listing them is the dearest part of a poll. `with_lines` adds each
 /// session's last line of output (`lastLine`), which reads its tmux pane: only the page that
 /// shows it asks.
-pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
+pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardState {
     // Before the gates are read: a gate whose worker has moved on is closed here rather than
     // by a timer, since nothing in the server polls on one.
     let _ = crate::gate::close_resumed(&server.ctx);
@@ -41,18 +214,22 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
     let settings = settings_now(server);
     // After the records are joined, from the same values the page gets: a card shows the last
     // answer about its session, and an old answer is asked again behind the page's back.
-    let tasks: Vec<Value> = tasks
+    let tasks: Vec<TaskCard> = tasks
         .into_iter()
-        .map(|mut t| {
-            if let Some(seen) = server.jules.look(&server.ctx, &settings.jules_key, &t) {
-                t["jules"] = seen;
+        .map(|mut card| {
+            card.jules = server
+                .jules
+                .look(&server.ctx, &settings.jules_key, &card.task);
+            if card.jules.is_some() {
+                // A key kept from disk that the card writes itself: the card's value wins.
+                card.task.extra.remove("jules");
             }
-            t
+            card
         })
         .collect();
     let shown: std::collections::HashSet<String> = tasks
         .iter()
-        .filter_map(|t| t["jules"]["session"].as_str().map(str::to_string))
+        .filter_map(|card| card.jules.as_ref().map(|j| j.session().to_string()))
         .collect();
     server.jules.keep_only(&shown);
     // One `git worktree list` and one `ps` serve every question below, so what a poll costs
@@ -97,7 +274,7 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
             }
         });
     let mut workers_data = Vec::with_capacity(linked.len());
-    let mut workers: Vec<Value> = Vec::with_capacity(linked.len());
+    let mut workers: Vec<WorkerRow> = Vec::with_capacity(linked.len());
     for Worktree { path, branch } in &linked {
         let status = crate::registry::worker_status_with(&processes, Path::new(path));
         // A present worker holds a slot without asking `ps` again; the rest are asked
@@ -112,19 +289,17 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
             .file_name()
             .map(|n| n.to_string_lossy().to_string());
         let task = crate::registry::worker_task(Path::new(path));
-        workers.push(json!({
-            "worktree": path,
-            "name": name,
-            "branch": branch.clone(),
-            "present": status.present,
-            "stale": status.stale,
-            "title": status.title,
-            // The task this worker reports for, which is what the card joins on: a worker
-            // with none is a session that has no card until it is linked.
-            "task": task,
-            "phase": status.phase,
-            "phaseAt": status.phase_at,
-        }));
+        workers.push(WorkerRow {
+            worktree: path.clone(),
+            name,
+            branch: branch.clone(),
+            present: status.present,
+            stale: status.stale,
+            title: status.title.clone(),
+            task,
+            phase: status.phase.clone(),
+            phase_at: status.phase_at,
+        });
         workers_data.push((status, branch));
     }
 
@@ -146,84 +321,69 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> Value {
         Vec::new()
     };
 
-    let pending: Vec<Value> = crate::mail::pending(&server.ctx.state, &repo.slug)
+    let pending: Vec<PendingRow> = crate::mail::pending(&server.ctx.state, &repo.slug)
         .messages
         .iter()
-        .map(|entry| {
-            json!({
-                "name": entry.name,
-                "subject": entry.subject,
-                "from": entry.from,
-                "kind": entry.kind,
-                "worktree": entry.worktree,
-            })
+        .map(|entry| PendingRow {
+            name: entry.name.clone(),
+            subject: entry.subject.clone(),
+            from: entry.from.clone(),
+            kind: entry.kind.clone(),
+            worktree: entry.worktree.clone(),
         })
         .collect();
 
-    json!({
-        "repo": repo.nwo,
-        "main": repo.main,
-        "hubName": repo.hub_name,
-        "hub": {
-            "present": hub.present,
-            "stale": hub.stale,
-            "pid": hub.pid,
-            "startedAt": hub.started_at,
+    BoardState {
+        repo: repo.nwo.clone(),
+        main: repo.main.clone(),
+        hub_name: repo.hub_name.clone(),
+        hub: HubPresence {
+            present: hub.present,
+            stale: hub.stale,
+            pid: hub.pid,
+            started_at: hub.started_at,
         },
-        "hubs": hubs,
-        // Whether the resident server serves this board, which is also what tells the page
-        // it lives under a path of its own.
-        "resident": server.resident,
-        // Whether the PR poll is running and whether it is failing, for the one line the page
-        // shows when it is. `null` where nothing polls. Read from memory: this is polled every
-        // couple of seconds and must not reach GitHub.
-        "prPoll": server.pr_poll.as_ref().map(|p| p.health_json()),
-        // Whether the board may start a hub: only where the settings mean a tmux window.
-        "hubStart": { "available": crate::lifecycle::hub::hub_startable(&settings.terminal) },
-        // Whether the board can open a terminal on a session that runs in tmux: the resident
-        // server, on a machine that has tmux. Which sessions is for the page to read from
-        // `sessions[].terminal` and `present`.
-        "boardTerminal": { "available": server.resident && server.tmux.is_some() },
-        // Whether the board can open a session in the person's own terminal, and through what:
-        // `terminal.attach` when it is set, iTerm2 where that is installed.
-        "sessionOpen": open_state(server, &settings),
-        // Whether the board can resume a stopped worker, so the page offers it only where it
-        // can work, and says why not where it cannot.
-        "sessionResume": resume_state(&settings),
-        // The same for restarting a running hub on its conversation, which needs the hub's own
-        // resume line rather than the worker's.
-        "hubResume": hub_resume_state(&settings),
-        // The command line a hub runs, as configured: the server sends the template with its
-        // placeholders in place, and the Sessions sidebar fills in only `{name}` to show it.
-        "hubRunner": settings
+        hubs,
+        resident: server.resident,
+        pr_poll: server.pr_poll.as_ref().map(|p| p.health()),
+        hub_start: Available {
+            available: crate::lifecycle::hub::hub_startable(&settings.terminal),
+        },
+        board_terminal: Available {
+            available: server.resident && server.tmux.is_some(),
+        },
+        session_open: open_state(server, &settings),
+        session_resume: resume_state(&settings),
+        hub_resume: hub_resume_state(&settings),
+        hub_runner: settings
             .hub_runner
             .as_deref()
-            .unwrap_or(runner::DEFAULT_HUB_RUNNER),
-        // The agent a session started from the board runs, which is the only one its dialog offers.
-        "sessionStart": {
-            "agent": runner::agent_from_runner(
-                settings.agent_runner.as_deref().unwrap_or(runner::DEFAULT_AGENT_RUNNER),
+            .unwrap_or(runner::DEFAULT_HUB_RUNNER)
+            .to_string(),
+        session_start: SessionStart {
+            agent: runner::agent_from_runner(
+                settings
+                    .agent_runner
+                    .as_deref()
+                    .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
             ),
         },
-        "sessions": sessions,
-        "tasks": tasks,
-        "workers": workers,
-        // The slot count `adj work` decides by, counted the same way — a worker still
-        // starting up holds one — so the header and the refusal cannot disagree.
-        "workerSlots": {
-            "busy": busy,
-            "max": settings.max_workers,
+        sessions,
+        tasks,
+        workers,
+        worker_slots: WorkerSlots {
+            busy,
+            max: settings.max_workers,
         },
-        // Minutes in one phase before a card is flagged. `0` = never.
-        "stuckAfterMinutes": settings.stuck_after_minutes,
-        // Whether the IDE buttons can do anything, and where to set it when they cannot. Read
-        // on every poll, so an `ide` written into the config shows up without a restart.
-        "ideConfigured": crate::infra::ide::configured(settings.ide.as_deref()),
-        "configPath": crate::kernel::config::config_path().to_string_lossy(),
-        "now": now,
-        "pending": pending,
-        "gates": gate::list(&server.ctx.state, &server.ctx.repo.slug, gate::Shelf::Open),
-    })
+        stuck_after_minutes: settings.stuck_after_minutes,
+        ide_configured: crate::infra::ide::configured(settings.ide.as_deref()),
+        config_path: crate::kernel::config::config_path()
+            .to_string_lossy()
+            .to_string(),
+        now,
+        pending,
+        gates: gate::list(&server.ctx.state, &server.ctx.repo.slug, gate::Shelf::Open),
+    }
 }
 
 /// What one poll has already asked of the system, so `sessions_of` does not ask again: the
@@ -268,43 +428,43 @@ pub fn with_records(
     tasks: Vec<task::Task>,
     records: Vec<gate::Gate>,
     answered: Vec<gate::Gate>,
-) -> Vec<Value> {
+) -> Vec<TaskCard> {
     tasks
         .into_iter()
-        .filter_map(|t| {
-            let live = !matches!(t.status, task::Status::Done | task::Status::Cancelled);
-            let mut value = serde_json::to_value(&t).ok()?;
-            if live {
-                let mine = |g: &&gate::Gate| g.task.as_deref() == Some(t.id.as_str());
-                let records: Vec<&gate::Gate> = records.iter().filter(mine).collect();
-                // The latest, because a plan sent back with `changes` is opened again, and the
-                // one that was approved last is the one being worked to.
-                let plan = answered
-                    .iter()
-                    .filter(mine)
-                    .filter(|g| g.kind == gate::Kind::Plan)
-                    .filter(|g| matches!(g.decision.as_deref(), Some("approve" | "choice")))
-                    .max_by(|a, b| a.answered_at.cmp(&b.answered_at));
-                // Without their diffs, which are most of what a poll weighs: the page reads
-                // one from the task's history when it shows it, and `diffSize` says it is there.
-                value["records"] = records
-                    .into_iter()
-                    .map(|r| {
-                        let mut record = json!(r);
-                        if let Some(diff) = record.as_object_mut().and_then(|f| f.remove("diff"))
-                            && let Some(diff) = diff.as_str()
-                        {
-                            record["diffSize"] = json!(diff.len());
-                        }
-                        record
-                    })
-                    .collect();
-                value["approvedPlan"] = json!(plan);
-                // Whose turn the PR is, from what the last read kept on the record. Derived
-                // here, on every poll, so the rule can change without rewriting a record.
-                value["prTurn"] = json!(t.pr_status.as_ref().and_then(task::pr_turn));
+        .map(|t| {
+            let live =
+                (!matches!(t.status, task::Status::Done | task::Status::Cancelled)).then(|| {
+                    let mine = |g: &&gate::Gate| g.task.as_deref() == Some(t.id.as_str());
+                    // The latest, because a plan sent back with `changes` is opened again, and the
+                    // one that was approved last is the one being worked to.
+                    let plan = answered
+                        .iter()
+                        .filter(mine)
+                        .filter(|g| g.kind == gate::Kind::Plan)
+                        .filter(|g| matches!(g.decision.as_deref(), Some("approve" | "choice")))
+                        .max_by(|a, b| a.answered_at.cmp(&b.answered_at));
+                    LiveCard {
+                        // Without their diffs, which are most of what a poll weighs: the page reads
+                        // one from the task's history when it shows it, and `diffSize` says it is there.
+                        records: records.iter().filter(mine).map(RecordCard::of).collect(),
+                        approved_plan: plan.cloned(),
+                        // Whose turn the PR is, from what the last read kept on the record. Derived
+                        // here, on every poll, so the rule can change without rewriting a record.
+                        pr_turn: t.pr_status.as_ref().and_then(task::pr_turn),
+                    }
+                });
+            let mut t = t;
+            if live.is_some() {
+                // Keys kept from disk that the card writes itself: the card's value wins.
+                for key in ["records", "approvedPlan", "prTurn"] {
+                    t.extra.remove(key);
+                }
             }
-            Some(value)
+            TaskCard {
+                task: t,
+                live,
+                jules: None,
+            }
         })
         .collect()
 }
@@ -319,27 +479,36 @@ pub fn branch_of(worktree: &str) -> Option<String> {
 /// What `state` says about opening a session in the person's own terminal: whether the board
 /// can, and through what. Known in advance so the page does not offer a button that can only
 /// be refused.
-pub(super) fn open_state(server: &Server, settings: &crate::kernel::config::Settings) -> Value {
+pub(super) fn open_state(
+    server: &Server,
+    settings: &crate::kernel::config::Settings,
+) -> SessionOpen {
     let attach = settings.terminal.attach.is_some();
     let iterm = terminal::iterm_available();
-    json!({
-        "available": server.resident && server.tmux.is_some() && (attach || iterm),
-        "terminal": match (attach, iterm) {
-            (true, _) => json!("terminal.attach"),
-            (false, true) => json!("iTerm2"),
-            (false, false) => Value::Null,
+    SessionOpen {
+        available: server.resident && server.tmux.is_some() && (attach || iterm),
+        terminal: match (attach, iterm) {
+            (true, _) => Some("terminal.attach"),
+            (false, true) => Some("iTerm2"),
+            (false, false) => None,
         },
-    })
+    }
 }
 
 /// What `state` says about resuming: `available`, and the reason when it is not.
-pub(super) fn resume_state(settings: &crate::kernel::config::Settings) -> Value {
+pub(super) fn resume_state(settings: &crate::kernel::config::Settings) -> Availability {
     let refusal = resume_refusal(settings);
-    json!({ "available": refusal.is_none(), "reason": refusal })
+    Availability {
+        available: refusal.is_none(),
+        reason: refusal,
+    }
 }
 
 /// What `state` says about resuming a hub: `available`, and the reason when it is not.
-pub(super) fn hub_resume_state(settings: &crate::kernel::config::Settings) -> Value {
+pub(super) fn hub_resume_state(settings: &crate::kernel::config::Settings) -> Availability {
     let refusal = hub_resume_refusal(settings);
-    json!({ "available": refusal.is_none(), "reason": refusal })
+    Availability {
+        available: refusal.is_none(),
+        reason: refusal,
+    }
 }

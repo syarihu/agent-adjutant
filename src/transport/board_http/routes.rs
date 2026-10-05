@@ -3,7 +3,7 @@
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::board::hub::start_parent_hub;
 use crate::board::session::start_request;
@@ -40,16 +40,17 @@ pub(super) fn is_page_path(path: &str) -> bool {
 pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", path) if is_page_path(path) => http::html(out, UI_HTML),
-        ("GET", "/api/state") => http::json(
-            out,
-            200,
-            &state(
+        ("GET", "/api/state") => {
+            let document = state(
                 server,
                 req.param("sessions") != Some("0"),
                 req.param("lines") == Some("1"),
-            )
-            .to_string(),
-        ),
+            );
+            match serde_json::to_string(&document) {
+                Ok(body) => http::json(out, 200, &body),
+                Err(e) => http::json(out, 500, &json!({ "error": e.to_string() }).to_string()),
+            }
+        }
         ("GET", path) if vendor_asset(path, server.resident).is_some() => {
             let (kind, body) = vendor_asset(path, server.resident).unwrap_or_default();
             http::respond(out, 200, kind, body.as_bytes())
@@ -123,9 +124,12 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
 /// A command's answer, as the page sees it. An error is a 400 with the message in it rather
 /// than a 500 with nothing: every failure reachable from here is something the person can
 /// act on, and the page shows the text.
-fn reply(out: &mut impl Write, result: Result<Value, String>) -> std::io::Result<()> {
-    match result {
-        Ok(value) => http::json(out, 200, &value.to_string()),
+fn reply<T: serde::Serialize>(
+    out: &mut impl Write,
+    result: Result<T, String>,
+) -> std::io::Result<()> {
+    match result.and_then(|value| serde_json::to_string(&value).map_err(|e| e.to_string())) {
+        Ok(body) => http::json(out, 200, &body),
         Err(e) => http::json(out, 400, &json!({ "error": e }).to_string()),
     }
 }
