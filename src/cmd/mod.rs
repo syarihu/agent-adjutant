@@ -11,18 +11,15 @@ use crate::infra::paths::same_path;
 use crate::infra::terminal::{self, SpawnRequest};
 use crate::kernel::config::{self, Settings};
 use crate::kernel::identity;
-use crate::kernel::runner;
 pub use crate::lifecycle::hub::{HubStart, TabOutcome, hub_startable, start_hub, stop_hub};
 use crate::lifecycle::hub::{hub_in_tab, hub_resume_check, own_hub_runner_refusal};
 pub use crate::lifecycle::worker::focus_worker;
 use crate::lifecycle::worker::{
     StartRequest, Started, resume_worker, saved_worker_session, worker_worktree,
 };
-use crate::lifecycle::{agent_command, resume_template, title_command};
+use crate::lifecycle::{resume_template, title_command};
 use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, deliver_to_worker};
-use crate::registry::{
-    self, Context, agent_env, context, context_as, context_of, context_without_hub, resolve,
-};
+use crate::registry::{self, Context, context, context_as, context_without_hub, resolve};
 
 mod board_actions;
 mod board_terminal;
