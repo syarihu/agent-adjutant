@@ -194,12 +194,13 @@ fn wait_for_resident(root: &Path, mut child: std::process::Child) -> Result<u16,
     }
 }
 
-/// The resident, bound and recorded but not yet answering. Holds `server.lock` for as long as
-/// it lives.
+/// The resident, locked, bound and recorded but not yet answering. Holds `server.lock` for as
+/// long as it lives.
 pub(super) struct BoundResident {
     lock: std::fs::File,
     listener: TcpListener,
-    resident: Arc<Resident>,
+    root: PathBuf,
+    token: String,
     pub(super) asked: u16,
     pub(super) bound: u16,
 }
@@ -223,23 +224,13 @@ pub(super) fn bind_resident(root: &Path, port: u16) -> Result<BoundResident, Str
         .map(|a| a.port())
         .map_err(|e| format!("cannot read the server's port: {e}"))?;
     let token = token(root)?;
-    // Built before the record is written, so asking tmux for its version does not stand
-    // between the record and the serving line, which whoever sees the record waits for.
-    let resident = Arc::new(Resident {
-        root: root.to_path_buf(),
-        token,
-        port: bound,
-        boards: Mutex::default(),
-        tmux: board_terminal_tmux(),
-        terminals: Arc::default(),
-        pr_poll: Arc::default(),
-    });
     record_server(root, bound)?;
     seed_boards(root);
     Ok(BoundResident {
         lock,
         listener,
-        resident,
+        root: root.to_path_buf(),
+        token,
         asked: port,
         bound,
     })
@@ -247,7 +238,7 @@ pub(super) fn bind_resident(root: &Path, port: u16) -> Result<BoundResident, Str
 
 impl BoundResident {
     pub(super) fn index_url(&self) -> String {
-        board_url(self.bound, &self.resident.token)
+        board_url(self.bound, &self.token)
     }
 
     /// Poll the pull requests and answer connections with `handle`, for as long as the process
@@ -256,17 +247,31 @@ impl BoundResident {
         let BoundResident {
             lock,
             listener,
-            resident,
+            root,
+            token,
+            bound,
             ..
         } = self;
+        // Built here rather than in `bind_resident`: asking tmux for its version is a process to
+        // wait for, and neither the record (a starting `adj server start` waits for it) nor the
+        // serving line (read from the log right after the record) should wait on it.
+        let resident = Arc::new(Resident {
+            root,
+            token,
+            port: bound,
+            boards: Mutex::default(),
+            tmux: board_terminal_tmux(),
+            terminals: Arc::default(),
+            pr_poll: Arc::default(),
+        });
         {
             let resident = Arc::clone(&resident);
             let poll = Arc::clone(&resident.pr_poll);
             std::thread::spawn(move || {
                 poll.run(|| {
-                    // Only a board with a card on a PR is opened for it: opening one asks git where
-                    // the checkout is, which is not worth doing every round for a board with nothing
-                    // to look after.
+                    // Only a board with a card on a PR is opened for it: opening one asks git
+                    // where the checkout is, which is not worth doing every round for a board
+                    // with nothing to look after.
                     addresses(&resident.root)
                         .iter()
                         .filter(|a| {

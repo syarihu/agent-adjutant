@@ -1398,6 +1398,9 @@ fn binding_the_resident_records_this_process_and_refuses_a_second_while_the_lock
     let record = crate::infra::fs::read_json(&root.join("server.json")).unwrap();
     assert_eq!(record["pid"], json!(std::process::id()));
     assert_eq!(record["port"], json!(first.bound));
+    for key in ["psStarted", "startedAt", "version"] {
+        assert!(record.get(key).is_some(), "{key} in {record}");
+    }
     assert_eq!(
         crate::registry::live_resident(&root),
         Some((std::process::id(), first.bound))
