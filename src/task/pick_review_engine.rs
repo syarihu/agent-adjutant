@@ -230,6 +230,6 @@ pub fn decide(
 
 #[cfg(test)]
 mod tests;
-// The message tests left in src/cmd/review_engine/tests.rs read the same clock.
+// The message tests left in src/transport/cli/review_engine/tests.rs read the same clock.
 #[cfg(test)]
 pub(crate) use tests::NOW;

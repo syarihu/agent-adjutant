@@ -5,8 +5,8 @@
 //! lines cannot drift from the record, and the label of each one is named once.
 //!
 //! A leaf: the labels are pinned in this file and cross-checked against the procedures that
-//! read them in the `cmd::task` tests, which may see both sides. A new line is a field on
-//! `TaskBrief`, a label in `label`, and one call in `render_task`.
+//! read them in the `transport::cli::task` tests, which may see both sides. A new line is a field
+//! on `TaskBrief`, a label in `label`, and one call in `render_task`.
 
 use serde_json::{Map, Value};
 
