@@ -148,14 +148,6 @@ const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label ||
 // A worker that names another task is that task's, whatever worktree a stale record still points
 // at; one that names none is a session waiting to be linked, and the worktree joins it.
 const workerOf = (t, data = state) => t && t.worktree && (data.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
-const stampSecs = stamp => {
-  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
-  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
-};
-const updatedMs = t => {
-  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(t?.updatedAt || '');
-  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : Date.now();
-};
 
 function gateHumanCol(kind) {
   switch (kind) {
@@ -275,7 +267,6 @@ function columnOf(t, data = state) {
 const ALLOWED = { backlog:['queued'], queued:['backlog','queued'] };
 const canDrop = (from, to) => (ALLOWED[from] || []).includes(to);
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Shown after a title made from the issue URL, until the issue has been read.
 const titlePendingPill = task => task.titlePending
   ? '<span class="m3-pill pill-neutral" style="margin-left:6px;" title="Issue をまだ読めていません">タイトル未取得</span>' : '';

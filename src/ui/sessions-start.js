@@ -2,8 +2,6 @@
    the + menu, the dialogs it and the panel's 詳細 open, and the rows the tree shows for a
    session that has been asked for and not started yet. */
 
-const pad2 = n => String(n).padStart(2, '0');
-const baseName = path => (path || '').split('/').filter(Boolean).pop() || '';
 const repoHubId = () => (state.hubs || []).find(h => !h.parent)?.id || 'hub';
 const NO_START = 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます';
 
