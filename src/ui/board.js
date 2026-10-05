@@ -1,20 +1,3 @@
-/* What `adj phase --set` writes, in the words a card shows. */
-const PHASE_LABEL = { plan:'計画', implement:'実装', 'self-review':'セルフレビュー', verify:'動作確認',
-                      pr:'PR', 'pr-bots':'bot待ち', review:'レビュー対応', report:'報告' };
-const minutesLabel = mins => mins < 1 ? '1分未満' : mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.floor(mins / 60)}時間` : `${Math.floor(mins / 1440)}日`;
-/* Minutes since something → 「たった今」「4分前」「2時間前」「3日前」. Floors, like minutesLabel. */
-const agoLabel = mins => mins < 1 ? 'たった今' : `${minutesLabel(mins)}前`;
-
-/* What each gate decision is called on a button, wherever it is drawn. A kind overrides only
-   where the decision means something different for it. */
-const DECISION_LABEL = { approve:'承認する', changes:'差し戻す', reject:'見送る', ack:'了解', ask:'追加で聞く', answer:'答える' };
-const DECISION_LABEL_OF_KIND = {
-  dispatch: { approve:'着手する' },
-  issue:    { approve:'着手する' },
-  verify:   { approve:'確認した', changes:'直してほしい' },
-};
-const decisionLabel = (decision, kind) =>
-  DECISION_LABEL_OF_KIND[kind]?.[decision] || DECISION_LABEL[decision] || decision;
 /* The decision a board button's `data-act` ends up sending: act() remaps these by kind. */
 const sentDecision = (action, kind) =>
   action === 'approve' ? (kind === 'result' ? 'ack' : 'approve')

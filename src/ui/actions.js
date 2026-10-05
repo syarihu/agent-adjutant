@@ -138,11 +138,6 @@ function initialsOf(b) {
   return (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase();
 }
 
-function sinceLabel(secs) {
-  if (secs == null) return '';
-  return agoLabel(Math.max(0, Math.floor((Date.now() / 1000 - secs) / 60)));
-}
-
 const rowStartedAt = {};
 const rowStartingNow = b => rowStartedAt[b.slug] != null && Date.now() - rowStartedAt[b.slug] < HUB_STARTING_MS;
 

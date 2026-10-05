@@ -5,8 +5,6 @@ const TASK_TABS = [['overview', '概要'], ['review', 'コードレビュー'], 
    show only in 経過. */
 const TAB_OF_KIND = { plan:'overview', diff:'review', verify:'check' };
 const KIND_OF_TAB = { overview:'plan', review:'diff', check:'verify' };
-const DECISION = { approve:'承認した', changes:'修正を指示した', reject:'却下した', choice:'案を選んだ',
-                   ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };
 
 /* `pick` is the gate a tab shows when a person chose one from 経過; otherwise a tab shows the
    one waiting, else the latest. */
@@ -125,14 +123,6 @@ function gateForTab(task, tab, all) {
   return ofKind.find(isWaiting) || ofKind[ofKind.length - 1] || null;
 }
 
-/* `20260922T041233Z` in the reader's own time: 9/22 13:12. */
-function when(stamp) {
-  const secs = stampSecs(stamp);
-  if (secs == null) return stamp || '';
-  const d = new Date(secs * 1000);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
 /* The files a unified diff touches, with the lines each gained and lost. */
 function filesOf(diff) {
   const files = [];
@@ -201,10 +191,6 @@ function actHtml(g) {
   return '';
 }
 
-/* A URL a link may point at: http or https only. The issue URL is typed into a form and
-   stored as given, and `esc` keeps it from breaking the markup but not from being a
-   `javascript:` link. */
-const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
 // The number at the end of an issue URL, ignoring a query, a fragment, or a trailing slash.
 function issueNumberOf(url) {
   try { return new URL(url).pathname.split('/').filter(Boolean).pop() || ''; } catch { return ''; }
