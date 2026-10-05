@@ -11,6 +11,9 @@
 
 #![allow(dead_code, unused_imports)]
 
+mod board;
+
+pub use board::*;
 pub use std::io::{BufRead, Read, Write};
 pub use std::path::{Path, PathBuf};
 pub use std::process::{Command, Stdio};
