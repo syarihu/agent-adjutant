@@ -19,13 +19,12 @@ use serde_json::{Value, json};
 use super::board_terminal::target_of;
 use super::serve::{Server, find_session, git_state_of, hub_start_of, settings_now};
 use super::session::{input_of, text};
+pub(super) use crate::board::{hub_resume_refusal, resume_refusal};
 use crate::infra::paths::same_path;
 use crate::infra::template::{Sub, render, sh_join, sh_quote};
 use crate::infra::terminal;
-use crate::kernel::runner;
 use crate::kernel::worktree_state::GitState;
-use crate::lifecycle::hub::{TabOutcome, hub_startable, own_hub_runner_refusal, start_hub};
-use crate::lifecycle::resume_template;
+use crate::lifecycle::hub::{TabOutcome, start_hub};
 use crate::lifecycle::worker::{Started, resume_worker, saved_worker_session};
 use crate::mail;
 use crate::registry::{self, Context};
@@ -44,46 +43,6 @@ fn own_hub_context(
         state: server.ctx.state.clone(),
         settings,
     })
-}
-
-// ── resume ───────────────────────────────────────────────────────────
-
-/// Why no session can be resumed from the board with these settings, or `None` when one can.
-/// The board-wide half of `resume`'s refusals, known without looking at a session.
-pub(super) fn resume_refusal(settings: &crate::kernel::config::Settings) -> Option<String> {
-    if !hub_startable(&settings.terminal) {
-        return Some(
-            "resuming a session from the board needs terminal.preset \"tmux\" and no terminal.spawn"
-                .to_string(),
-        );
-    }
-    // Only the built-in resume line knows how to reopen a Claude conversation. Another agent
-    // given it would start something unrelated in the worktree and look like a resumed worker.
-    let agent = runner::agent_from_runner(
-        settings
-            .agent_runner
-            .as_deref()
-            .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
-    );
-    if settings.agent_resume_runner.is_none() && agent != "claude" {
-        return Some(format!(
-            "{agent} has no agentResumeRunner, so it cannot be resumed"
-        ));
-    }
-    // The same refusal the resume itself would end in, so the page never offers a button that
-    // can only fail.
-    if let Err(refusal) =
-        resume_template(settings.agent_resume_runner.as_deref(), "agentResumeRunner")
-    {
-        return Some(refusal);
-    }
-    None
-}
-
-/// What `state` says about resuming: `available`, and the reason when it is not.
-pub(super) fn resume_state(settings: &crate::kernel::config::Settings) -> Value {
-    let refusal = resume_refusal(settings);
-    json!({ "available": refusal.is_none(), "reason": refusal })
 }
 
 /// Reopen the worker session `id` in a new tab, as `adj work --resume` does.
@@ -124,29 +83,6 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
         "hub": session.hub,
         "hubRunning": hub_running,
     }))
-}
-
-/// Why no hub can be resumed from the board with these settings, or `None` when one can: what
-/// `hub_startable` and `hubResumeRunner` say, known without looking at a hub. The per-hub half
-/// (a saved conversation, a parent key that is known) is checked by the restart itself.
-pub(super) fn hub_resume_refusal(settings: &crate::kernel::config::Settings) -> Option<String> {
-    if !hub_startable(&settings.terminal) {
-        return Some(
-            "restarting a hub from the board needs terminal.preset \"tmux\" and no terminal.spawn"
-                .to_string(),
-        );
-    }
-    if let Err(refusal) = resume_template(settings.hub_resume_runner.as_deref(), "hubResumeRunner")
-    {
-        return Some(refusal);
-    }
-    own_hub_runner_refusal(settings)
-}
-
-/// What `state` says about resuming a hub: `available`, and the reason when it is not.
-pub(super) fn hub_resume_state(settings: &crate::kernel::config::Settings) -> Value {
-    let refusal = hub_resume_refusal(settings);
-    json!({ "available": refusal.is_none(), "reason": refusal })
 }
 
 /// How long a hub's restart keeps refusing another one after it has answered. The answer comes
@@ -297,22 +233,6 @@ const NOT_SET: &str = "terminal.attach is not set: put the command that opens yo
 /// Numbers the sessions this process makes to open a terminal on, so that two requests never
 /// share a name.
 static NEXT: AtomicUsize = AtomicUsize::new(1);
-
-/// What `state` says about opening a session in the person's own terminal: whether the board
-/// can, and through what. Known in advance so the page does not offer a button that can only
-/// be refused.
-pub(super) fn open_state(server: &Server, settings: &crate::kernel::config::Settings) -> Value {
-    let attach = settings.terminal.attach.is_some();
-    let iterm = terminal::iterm_available();
-    json!({
-        "available": server.resident && server.tmux.is_some() && (attach || iterm),
-        "terminal": match (attach, iterm) {
-            (true, _) => json!("terminal.attach"),
-            (false, true) => json!("iTerm2"),
-            (false, false) => Value::Null,
-        },
-    })
-}
 
 /// Open the session `id` in the person's terminal.
 ///

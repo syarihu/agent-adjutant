@@ -15,10 +15,12 @@
 //! never asks GitHub on either, since the page polls it every couple of seconds.
 
 pub mod jobs;
+pub mod view;
 
 mod daemon;
 mod dedicated;
 mod last_lines;
+mod model;
 mod resident;
 mod server;
 #[cfg(test)]
@@ -29,6 +31,7 @@ mod url;
 pub use daemon::*;
 pub use dedicated::*;
 pub use last_lines::*;
+pub use model::*;
 pub use resident::*;
 pub use server::*;
 pub use token::*;

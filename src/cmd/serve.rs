@@ -6,21 +6,18 @@ mod assets;
 mod auth;
 mod daemon;
 mod handlers;
-mod index;
 mod resident;
 mod routes;
-mod sessions;
-mod state;
 
 use crate::board::Board;
 pub(super) use crate::board::Server;
 pub(super) use crate::board::settings_now;
+pub(super) use crate::board::view::{board_session, find_session, git_state_of};
 pub use crate::board::{DEFAULT_PORT, HubBoard, located, serve_for_hub};
 use daemon::open_browser;
 pub use daemon::{server_restart, server_start, server_status, server_stop};
 pub(super) use handlers::hub_start_of;
 pub(crate) use routes::handle as board_connection;
-pub(super) use sessions::{board_session, find_session, git_state_of};
 
 pub fn serve(
     repo_arg: Option<&str>,
