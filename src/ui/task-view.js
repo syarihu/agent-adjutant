@@ -275,7 +275,7 @@ function ghChipsHtml(task) {
   const issueNumber = issueUrl ? issueNumberOf(issueUrl) : '';
   const prNumber = prRefNumber(task.pr);
   const issue = issueNumber
-    ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
+    ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
           <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
           <span>${esc(issueNumber)}</span>
         </a>`
@@ -285,7 +285,7 @@ function ghChipsHtml(task) {
   const prTitle = esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}${prStale()}`);
   const prClass = `gh-pr ${esc(prStateOf(task) || 'unknown')}`;
   const pr = prUrl
-    ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="${prClass}" title="${prTitle}">${prLabel}</a>`
+    ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" class="${prClass}" title="${prTitle}">${prLabel}</a>`
     : task.pr ? `<span class="${prClass}" title="${prTitle}">${prLabel}</span>` : '';
   return issue + pr;
 }

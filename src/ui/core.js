@@ -84,29 +84,29 @@ function applyLayout() {
   });
   savePrefs();
 }
-window.setBoardLayout = function(layout) { prefs.layout = layout; applyLayout(); };
-window.setBoardArrange = function(arrange) { prefs.arrange = arrange; applyLayout(); };
-window.showBoard = function(board) {
+function setBoardLayout(layout) { prefs.layout = layout; applyLayout(); }
+function setBoardArrange(arrange) { prefs.arrange = arrange; applyLayout(); }
+function showBoard(board) {
   // Side by side both are already on screen: choosing one is choosing to look at it alone. From
   // another tab nothing was on screen to choose between, and the layout is left as it was.
   if (prefs.layout === 'split' && view === 'board' && nav.view !== 'sessions') { prefs.layout = 'tabs'; savePrefs(); }
   // The address says which tab it is (and a board shown on its own page keeps it).
   go({ view: board === 'agent' ? 'agent' : 'human' });
-};
-window.showSessions = () => go({ view: 'sessions' });
+}
+function showSessions() { go({ view: 'sessions' }); }
 document.querySelector('.view-tabs').addEventListener('click', e => {
   const tab = e.target.closest('.view-tab[data-tab]');
   if (!tab) return;
   if (tab.dataset.tab === 'sessions') showSessions(); else showBoard(tab.dataset.tab);
 });
-window.jump = function(board, id) {
+function jump(board, id) {
   const want = board === 'agent' ? 'agent' : 'human';
   if (view !== 'board' || nav.view !== want) go({ view: want });
   const el = document.getElementById(`${board}-${id}`);
   if (!el) return;
   el.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
-};
+}
 
 const AGENT_COLUMNS = [
   { id:'before',     label:'着手前',          icon:'inbox',          hint:'待ち / Backlog' },

@@ -137,6 +137,26 @@ function toggleTheme() {
   document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
 }
 
+// Each entry is an arrow so a later optional first parameter never receives the element. One
+// entry per line: the_page_wires_no_inline_handlers reads the keys line by line.
+const ACTIONS = {
+  'new-task': () => openForm(),
+  queue: () => goToQueue(),
+  notify: () => toggleNotify(),
+  theme: () => toggleTheme(),
+  'own-hub': () => openOwnHub(),
+  resync: () => refreshAll(),
+  layout: el => setBoardLayout(el.dataset.layout),
+  arrange: el => setBoardArrange(el.dataset.arrange),
+  sheet: () => toggleBottomSheet(),
+  'handover-close': () => closeHandoverDialog(),
+  'nudge-hub': () => nudgeHub(),
+};
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-action]');
+  if (el) ACTIONS[el.dataset.action](el);
+});
+
 note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
 
 /* Whether this server serves several boards: the resident answers the list of them, a board

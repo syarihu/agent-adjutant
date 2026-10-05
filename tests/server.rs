@@ -77,7 +77,7 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
     }
     assert!(!page.contains("id=\"nav-sessions\""));
     // 要対応レビュー opens the queue, not the first gate's task.
-    assert!(page.contains("id=\"nav-review\" title=\"要対応レビュー\" onclick=\"goToQueue()\""));
+    assert!(page.contains("id=\"nav-review\" title=\"要対応レビュー\" data-action=\"queue\""));
     // 着手を促す is the hub panel's, not the title bar's.
     assert!(!page.contains("id=\"btn-nudge\""));
 
