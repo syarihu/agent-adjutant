@@ -8,5 +8,5 @@ mod notifications;
 mod pr_poll;
 
 pub use hub_titles::{HubTitles, cached_title};
-pub use jules_watch::Watch;
-pub use pr_poll::PrPoll;
+pub use jules_watch::{JulesSeen, Watch};
+pub use pr_poll::{PollHealth, PrPoll};

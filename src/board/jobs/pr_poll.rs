@@ -13,7 +13,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use super::notifications::{self as gh, Notified};
 use crate::registry::Context;
@@ -163,6 +163,15 @@ struct Card {
     pr: PrRef,
 }
 
+/// What `/api/state` says about the poll. No timestamps: the page redraws when the JSON changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PollHealth {
+    pub active: bool,
+    /// `null` when healthy.
+    pub error: Option<String>,
+}
+
 /// The poll's state, shared with the pages that report its health.
 #[derive(Default)]
 pub struct PrPoll {
@@ -172,9 +181,11 @@ pub struct PrPoll {
 impl PrPoll {
     /// What `/api/state` says about the poll. No timestamps: the page redraws when the JSON
     /// changes, and a clock in it would redraw it every poll.
-    pub fn health_json(&self) -> Value {
-        let error = self.lock().error.clone();
-        json!({ "active": true, "error": error })
+    pub fn health(&self) -> PollHealth {
+        PollHealth {
+            active: true,
+            error: self.lock().error.clone(),
+        }
     }
 
     /// Poll for as long as the process lives. `boards` is asked each round, so a board the

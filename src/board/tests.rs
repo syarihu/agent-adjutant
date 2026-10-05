@@ -461,7 +461,7 @@ fn a_live_task_carries_its_records_and_the_plan_approved_last() {
         g.answered_at = Some(at.to_string());
         g
     };
-    let tasks = with_records(
+    let tasks = serde_json::to_value(with_records(
         vec![a_task("t1", task::Status::Dispatched)],
         vec![record, others],
         vec![
@@ -470,7 +470,8 @@ fn a_live_task_carries_its_records_and_the_plan_approved_last() {
             // Sent back later still: not what was approved.
             answered("p-sent-back", "changes", "20260922T050000Z"),
         ],
-    );
+    ))
+    .unwrap();
     let ids: Vec<&str> = tasks[0]["records"]
         .as_array()
         .unwrap()
@@ -490,16 +491,17 @@ fn a_record_carries_the_size_of_its_diff_and_not_the_diff() {
     record.wait = false;
     record.diff = Some("diff --git a/ü b/ü\n+é\n".to_string());
     let size = record.diff.as_ref().unwrap().len();
-    let tasks = with_records(
+    let tasks = serde_json::to_value(with_records(
         vec![a_task("t1", task::Status::Dispatched)],
         vec![record.clone()],
         Vec::new(),
-    );
+    ))
+    .unwrap();
     let carried = &tasks[0]["records"][0];
     assert!(carried.get("diff").is_none(), "{carried}");
     assert_eq!(carried["diffSize"], size);
     // The history is where the diff is read from, whole.
-    let history = history_of("t1", Vec::new(), vec![record]);
+    let history = serde_json::to_value(history_of("t1", Vec::new(), vec![record])).unwrap();
     assert_eq!(
         history["records"][0]["diff"].as_str().map(str::len),
         Some(size)
@@ -508,14 +510,15 @@ fn a_record_carries_the_size_of_its_diff_and_not_the_diff() {
 
 #[test]
 fn a_task_with_no_approved_plan_says_so_and_a_finished_one_carries_nothing() {
-    let tasks = with_records(
+    let tasks = serde_json::to_value(with_records(
         vec![
             a_task("t1", task::Status::Queued),
             a_task("t2", task::Status::Done),
         ],
         vec![a_gate("r2", gate::Kind::Diff, "t2")],
         Vec::new(),
-    );
+    ))
+    .unwrap();
     assert_eq!(tasks[0]["records"], json!([]));
     assert!(tasks[0]["approvedPlan"].is_null());
     assert!(tasks[1].get("records").is_none(), "{}", tasks[1]);
@@ -531,7 +534,12 @@ fn a_task_s_history_is_its_own_answered_gates_and_records_of_every_kind() {
     let mut record = a_gate("20260922T030000Z-verify-record", gate::Kind::Verify, "t1");
     record.wait = false;
 
-    let history = history_of("t1", vec![plan, diff, theirs.clone()], vec![record, theirs]);
+    let history = serde_json::to_value(history_of(
+        "t1",
+        vec![plan, diff, theirs.clone()],
+        vec![record, theirs],
+    ))
+    .unwrap();
     let ids = |key: &str| -> Vec<String> {
         history[key]
             .as_array()
@@ -671,7 +679,8 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     let settings = settings_now(&server);
 
     // What the page is sent, which is the whole list.
-    let listed = state(&server, true, false)["sessions"]
+    let listed = serde_json::to_value(state(&server, true, false).sessions)
+        .unwrap()
         .as_array()
         .unwrap()
         .clone();

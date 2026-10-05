@@ -1,9 +1,16 @@
 //! A task's history, read when the page opens it.
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::board::Server;
 use crate::gate;
+
+/// A task's history as `/api/tasks/{id}/history` sends it: the records keep their diffs.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskHistory {
+    pub answered: Vec<gate::Gate>,
+    pub records: Vec<gate::Gate>,
+}
 
 /// Everything one task's gates left behind, for its full view: the gates a person answered
 /// (`answered`) and the records its worker kept (`records`), each oldest first.
@@ -12,7 +19,7 @@ use crate::gate;
 /// archive only grows, and reading all of it on every poll would cost more each day. The
 /// records are here as well as on the task in `/api/state` because a finished task's are not
 /// there, and a review is meant to stay readable after the work is done.
-pub fn task_history(server: &Server, path: &str) -> Result<Value, String> {
+pub fn task_history(server: &Server, path: &str) -> Result<TaskHistory, String> {
     let id = history_id(path).ok_or("no such task")?;
     Ok(history_of(
         id,
@@ -36,10 +43,10 @@ pub fn history_id(path: &str) -> Option<&str> {
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
-pub fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate::Gate>) -> Value {
+pub fn history_of(id: &str, answered: Vec<gate::Gate>, records: Vec<gate::Gate>) -> TaskHistory {
     let mine = |g: &gate::Gate| g.task.as_deref() == Some(id);
-    json!({
-        "answered": answered.into_iter().filter(mine).collect::<Vec<_>>(),
-        "records": records.into_iter().filter(mine).collect::<Vec<_>>(),
-    })
+    TaskHistory {
+        answered: answered.into_iter().filter(mine).collect(),
+        records: records.into_iter().filter(mine).collect(),
+    }
 }
