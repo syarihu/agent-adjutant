@@ -3,15 +3,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::board;
 use crate::gate;
-use crate::session;
 
 fn session_waiting(
     hub: &crate::mail::RepoHub,
     open: &[&gate::Gate],
-) -> Option<session::SessionWaiting> {
+) -> Option<board::SessionWaiting> {
     let first = open.first()?;
-    Some(session::SessionWaiting {
+    Some(board::SessionWaiting {
         id: first.id.clone(),
         kind: first.kind.as_str().to_string(),
         hub: hub.id.clone(),
@@ -27,7 +27,7 @@ fn session_waiting(
         choices: first
             .choices
             .iter()
-            .map(|c| session::WaitingChoice {
+            .map(|c| board::WaitingChoice {
                 id: c.id.clone(),
                 label: c.label.clone(),
             })
@@ -95,7 +95,7 @@ pub(super) fn waiting_worker(
     worktree: &str,
     started: Option<&str>,
     phase_at: Option<i64>,
-) -> Option<session::SessionWaiting> {
+) -> Option<board::SessionWaiting> {
     let phase_at = phase_at.map(crate::infra::clock::utc_stamp);
     let open: Vec<&gate::Gate> = gates
         .open
@@ -118,7 +118,7 @@ pub(super) fn waiting_worker(
 pub(super) fn waiting_hub(
     hub: &crate::mail::RepoHub,
     gates: &[gate::Gate],
-) -> Option<session::SessionWaiting> {
+) -> Option<board::SessionWaiting> {
     let open: Vec<&gate::Gate> = gates
         .iter()
         .filter(|g| g.wait && g.answered_by_hub())

@@ -1,33 +1,43 @@
 #!/usr/bin/env bash
 # Keep the dependency arrows pointing one way.
 #
-# The crate is one stack of modules. `RANK` lists the modules of the restructure from the
-# bottom up: a module may name only the ones below it. From `task` up it may also name the
-# `BOTTOM` modules, which the restructure has not reached yet; `registry` and `mail` may not,
-# so neither can reach `session`, and `infra` and `kernel` name nothing outside the RANK
-# modules below them (`infra` names nothing outside itself, `kernel` only `infra`). The
-# modules the restructure has not reached yet are the `BOTTOM` group, and the commands
-# (`TOP`) sit over all of it and may name anything. Nothing below the top names the top.
+# The crate is one stack of modules, `RANK`, from the bottom up: a module may name only the
+# ones below it, never one above it or beside it. The rank is the order checked, not a claim
+# that a module uses only the one directly below it (`transport` calls `task` directly).
+#
+#   infra      plumbing: fs, clock, paths, env, shell, git and gh runners, the terminal
+#              mechanism and its settings types, agent kind, notify, ide, template, pty, http, ws
+#   kernel     config, repository identity, worktree git state, prompts and skill rendering,
+#              runner, brief
+#   registry   Context and addressing, hub and worker records, saved sessions, liveness,
+#              slots, locks, the board address book and server record
+#   mail       inbox, outbox, delivery and wake, reading an agent's screen
+#   task       task records and their operations, GitHub reads
+#   gate       gate records and their operations
+#   jules      Jules sessions and their operations
+#   lifecycle  starting, stopping, resuming, closing and linking hubs and workers
+#   board      the daemon, the resident server, the read model, the background jobs, and the
+#              actions a person runs from the page
+#   transport  cli, mcp and board_http: read input, call an operation, word the result
+#
+# Below `registry` the rule is stricter: `infra` names nothing outside itself and `kernel`
+# only `infra`, and a file of nothing but `pub use` lines is checked too. `lib.rs` and
+# `main.rs` (`TOP`) are the crate roots over the stack: they may name anything, and nothing
+# names them.
 #
 # As long as this passes, splitting into crates later stays a mechanical move: files across,
 # a Cargo.toml each, `crate::infra::` -> `adjutant_infra::`.
 #
-# Runs under the bash 3.2 that macOS ships: no associative arrays, no `grep -P`, no `\s`.
+# Runs under the bash 3.2 that macOS ships: no associative arrays, no `grep -P`, no `\s`,
+# and no empty arrays (`set -u` takes `"${EMPTY[@]}"` for an unbound variable).
 set -uo pipefail
 export LC_ALL=C
 cd "$(dirname "$0")/.." || exit 1
 
-# The restructure, bottom first. A module here may name only modules earlier in this list.
-# One from `task` up may also name the BOTTOM modules; `registry` and `mail` may not, so
-# neither can reach `session`, and `infra` and `kernel` may not either. Entries that do not
-# exist yet are reservations and are not required to have a source file.
+# The stack, bottom first. A module here may name only modules earlier in this list.
 RANK=(infra kernel registry mail task gate jules lifecycle board transport)
-# The old bottom: `session` (`Session`, `RepoHub` and the rest), until they move. Answers
-# questions using nothing but the standard library, its own input and `infra`.
-BOTTOM=(session)
-# The top. May name anything; nothing else may name it. `lib` and `main` are the crate roots.
-# `cli_args` is a reservation like the RANK ones.
-TOP=(cmd mcp cli_args lib main)
+# The crate roots. May name anything; nothing else may name them.
+TOP=(lib main)
 # `testing` is `#[cfg(test)]` scaffolding in lib.rs, not a layer: it ships in no binary, so
 # naming it says nothing about the direction of the arrows at run time.
 ANYWHERE=(testing)
@@ -148,42 +158,27 @@ for bad in "${FORBIDDEN_FILES[@]}"; do
   done
 done
 
-# --- Every module is listed, every listed module that must exist does ------------------
+# --- Every module is listed --------------------------------------------------------------
 on_disk=$(modules_on_disk)
 for name in $on_disk; do
-  if ! in_list "$name" "${RANK[@]}" "${BOTTOM[@]}" "${TOP[@]}"; then
+  if ! in_list "$name" "${RANK[@]}" "${TOP[@]}"; then
     fail "src/$name: not in any list in scripts/check-layering.sh; add it to the one it belongs to"
-  fi
-done
-for name in "${BOTTOM[@]}"; do
-  if [ -z "$(module_files "$name")" ]; then
-    fail "$name is listed in scripts/check-layering.sh but has neither src/$name.rs nor files under src/$name/"
   fi
 done
 
 # --- References ---------------------------------------------------------------------------
 all_modules="$(echo "$on_disk" | tr '\n' ' ') ${RANK[*]} ${TOP[*]} ${ANYWHERE[*]}"
 
-# RANK modules up to `mail` may not name the BOTTOM modules.
 registry_rank=$(rank_of registry)
-mail_rank=$(rank_of mail)
 for name in $on_disk; do
-  # TOP wins over RANK wins over BOTTOM.
-  if in_list "$name" "${TOP[@]}"; then
-    group=top
-  elif [ -n "$(rank_of "$name")" ]; then
-    group=rank
-  elif in_list "$name" "${BOTTOM[@]}"; then
-    group=bottom
-  else
-    continue # reported above
-  fi
-  [ "$group" = top ] && continue
+  # TOP names anything; a module in no list was reported above.
+  in_list "$name" "${TOP[@]}" && continue
   my_rank=$(rank_of "$name")
+  [ -z "$my_rank" ] && continue
 
   for file in $(module_files "$name"); do
     # Below registry a shim is checked too: a `pub use` is still a name.
-    if is_shim "$file" && ! { [ -n "$my_rank" ] && [ "$my_rank" -lt "$registry_rank" ]; }; then
+    if is_shim "$file" && [ "$my_rank" -ge "$registry_rank" ]; then
       continue
     fi
     # The `super::`s that reach the crate root: one per path component of the file's module.
@@ -204,26 +199,16 @@ for name in $on_disk; do
       elif [ "$target" = "{root}" ]; then
         why="names the crate root; write one \`use crate::<module>::...\` per module"
       elif in_list "$target" "${TOP[@]}"; then
-        why="names the top (\`$target\`); only cmd, mcp, cli_args, lib.rs and main.rs may"
+        why="names the top (\`$target\`); only lib.rs and main.rs may"
       else
         t_rank=$(rank_of "$target")
-        case "$group" in
-          rank)
-            if [ -n "$t_rank" ]; then
-              [ "$t_rank" -lt "$my_rank" ] || why="names \`$target\`, which is not below \`$name\` in RANK"
-            elif [ "$my_rank" -lt "$registry_rank" ]; then
-              why="names \`$target\`; below registry, infra names nothing outside itself and kernel names only infra"
-            elif [ "$my_rank" -le "$mail_rank" ]; then
-              why="names \`$target\`; registry and mail may not name the BOTTOM modules (${BOTTOM[*]})"
-            elif ! in_list "$target" "${BOTTOM[@]}"; then
-              why="names \`$target\`, which is not in RANK"
-            fi
-            ;;
-          bottom)
-            [ "$target" = infra ] ||
-              why="names \`$target\`; a bottom module may name only infra"
-            ;;
-        esac
+        if [ -n "$t_rank" ]; then
+          [ "$t_rank" -lt "$my_rank" ] || why="names \`$target\`, which is not below \`$name\` in RANK"
+        elif [ "$my_rank" -lt "$registry_rank" ]; then
+          why="names \`$target\`; below registry, infra names nothing outside itself and kernel names only infra"
+        else
+          why="names \`$target\`, which is not in RANK"
+        fi
       fi
       [ -n "$why" ] && hits="$hits$file:$line: $why
 "

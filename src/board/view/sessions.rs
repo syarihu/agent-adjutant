@@ -4,9 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::board::{Server, settings_now};
+use crate::board::{self, Server, settings_now};
 use crate::kernel::runner;
-use crate::session;
 use crate::task;
 
 use super::state::{Listing, split_main};
@@ -282,7 +281,7 @@ impl Poll<'_> {
         worktree: &str,
         started: Option<&str>,
         phase_at: Option<i64>,
-    ) -> Option<session::SessionWaiting> {
+    ) -> Option<board::SessionWaiting> {
         let hubs = self.hubs;
         let hub = hubs.iter().find(|h| h.id == hub_id)?;
         waiting_worker(hub, self.gates.of(&hub.slug), worktree, started, phase_at)
@@ -303,7 +302,7 @@ pub(super) fn sessions_of(
     listing: Listing<'_>,
     only: Option<&str>,
     worker_data: impl FnMut(usize, &str) -> (crate::registry::WorkerStatus, Option<String>),
-) -> Vec<session::Session> {
+) -> Vec<board::Session> {
     let mut poll = Poll {
         server,
         settings,
@@ -341,7 +340,7 @@ pub(super) fn sessions_of(
 }
 
 /// One session per hub, in the order the hubs were listed.
-fn hub_sessions(poll: &mut Poll) -> Vec<session::Session> {
+fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
     let server = poll.server;
     let repo = &server.ctx.repo;
     let hubs = poll.hubs;
@@ -360,7 +359,7 @@ fn hub_sessions(poll: &mut Poll) -> Vec<session::Session> {
         let line = poll.last_line(&terminal, &agent, h.state.present, last_activity_at);
         let waiting = waiting_hub(h, &poll.gates.of(&h.slug).open);
 
-        sessions.push(session::Session {
+        sessions.push(board::Session {
             id: h.id.clone(),
             conversation: crate::registry::hub_session(&server.ctx.state, &h.slug)
                 .map(|s| s.session_id),
@@ -407,7 +406,7 @@ fn worker_sessions(
     poll: &mut Poll,
     linked_paths: &[String],
     mut worker_data: impl FnMut(usize, &str) -> (crate::registry::WorkerStatus, Option<String>),
-) -> Vec<session::Session> {
+) -> Vec<board::Session> {
     let repo = &poll.server.ctx.repo;
     let mut sessions = Vec::new();
     // Whether the main checkout is listed below as `worker-main`, which a worktree of that
@@ -446,7 +445,7 @@ fn worker_sessions(
 }
 
 /// The session of one worker, whichever checkout it runs in.
-fn worker_session(poll: &mut Poll, source: WorkerSource) -> session::Session {
+fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
     let repo = &poll.server.ctx.repo;
     let hubs = poll.hubs;
     let WorkerSource {
@@ -484,7 +483,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> session::Session {
         linked_task_title(&poll.gates.state_dir, &slug, id)
     });
 
-    session::Session {
+    board::Session {
         id,
         conversation,
         kind: "worker".to_string(),
@@ -512,7 +511,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> session::Session {
 }
 
 /// The main checkout's own session, if it has a record or a saved conversation.
-fn main_worker_session(poll: &mut Poll) -> Option<session::Session> {
+fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
     if poll.skipped("worker-main") {
         return None;
     }
@@ -556,7 +555,7 @@ fn main_worker_session(poll: &mut Poll) -> Option<session::Session> {
                 let slug = crate::kernel::identity::slug_for(&repo.nwo, saved.hub.as_deref());
                 linked_task_title(&poll.gates.state_dir, &slug, id)
             });
-            Some(session::Session {
+            Some(board::Session {
                 id: "worker-main".to_string(),
                 conversation: Some(saved.session_id.clone()),
                 kind: "worker".to_string(),
@@ -592,7 +591,7 @@ pub fn board_session(
     server: &Server,
     settings: &crate::kernel::config::Settings,
     id: &str,
-) -> Option<session::Session> {
+) -> Option<board::Session> {
     let repo = &server.ctx.repo;
     let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
@@ -632,7 +631,7 @@ pub fn find_session(
     server: &Server,
     settings: &crate::kernel::config::Settings,
     id: &str,
-) -> Result<session::Session, String> {
+) -> Result<board::Session, String> {
     board_session(server, settings, id).ok_or_else(|| format!("no such session: {id}"))
 }
 
@@ -656,7 +655,7 @@ fn worker_hub_slug(repo: &crate::kernel::identity::RepoInfo, worktree: &Path) ->
 /// The path comes from the board's own record of the session, never from the request.
 pub fn git_state_of(
     server: &Server,
-    session: &session::Session,
+    session: &board::Session,
 ) -> Result<Option<crate::kernel::worktree_state::GitState>, String> {
     // The task's own base, when it has one: work meant for a release branch is not merged
     // because it is in the default branch.

@@ -13,7 +13,7 @@ pub fn open_ide(args: &IdeArgs) -> Result<(), String> {
         println!("{command}");
         return Ok(());
     }
-    terminal::run_shell(&command)?;
+    crate::infra::shell::run_shell(&command)?;
     println!("opened {worktree}");
     Ok(())
 }
@@ -63,7 +63,7 @@ pub fn notify_user(args: &NotifyArgs) -> Result<(), String> {
         println!("{command}");
         return Ok(());
     }
-    terminal::run_shell(&command)?;
+    crate::infra::shell::run_shell(&command)?;
     Ok(())
 }
 

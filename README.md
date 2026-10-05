@@ -1128,14 +1128,21 @@ its session-to-session messages, and could not run anywhere else.
 ## Layout
 
 ```
-repo  config  template  prompts        leaves — stdlib and their own input, nothing else
-terminal  runner  notify  ide  messaging   may reach down, never sideways
-cmd/  mcp                                  the only layer that joins them up
+infra      fs, clock, paths, env, shell, git and gh runners, the terminal mechanism and its settings, agent kind, notify, ide, template, pty, http, ws
+kernel     config, repository identity, worktree git state, prompts and skill rendering, runner, brief
+registry   Context and addressing, hub and worker records, saved sessions, liveness, slots, locks, the board address book and server record
+mail       inbox, outbox, delivery and wake, reading an agent's screen
+task       task records, their operations and the GitHub reads behind them
+gate       gate records and their operations
+jules      Jules sessions: starting one, following it, relaying review comments
+lifecycle  starting, stopping, resuming, closing, focusing and linking hubs and workers
+board      the daemon, the resident server, the read model, the background jobs, and the page's session and hub actions
+transport  cli, mcp and board_http: read input, call an operation, word the result
 ```
 
-`scripts/check-layering.sh` enforces the arrows, and CI runs it. It is a fan rather than a
-stack, so splitting it into a Cargo workspace would grow an empty relay layer between the two
-real ones; as long as the check passes, splitting later stays a mechanical move.
+The list is bottom first: a module may use the ones above it, never one below it; `lib.rs` and
+`main.rs` are the crate roots over all ten. `scripts/check-layering.sh` enforces the arrows, and CI
+runs it. As long as it passes, splitting into a Cargo workspace later stays a mechanical move.
 
 ## Development
 

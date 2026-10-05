@@ -204,21 +204,22 @@ mod imp {
 
         // Before anything is made: a window that is gone must not start a server or leave a
         // session behind.
-        let home = terminal::run_shell(&terminal::tmux_window_home_script(socket, &window))
-            .map_err(|e| {
-                let lower = e.to_ascii_lowercase();
-                match lower.contains("can't find")
-                    || lower.contains("no server running")
-                    || lower.contains("error connecting")
-                {
-                    true => (CLOSE_NO_SESSION, "the tmux window is gone".to_string()),
-                    false => (CLOSE_TMUX_FAILED, e),
-                }
-            })?;
+        let home =
+            crate::infra::shell::run_shell(&terminal::tmux_window_home_script(socket, &window))
+                .map_err(|e| {
+                    let lower = e.to_ascii_lowercase();
+                    match lower.contains("can't find")
+                        || lower.contains("no server running")
+                        || lower.contains("error connecting")
+                    {
+                        true => (CLOSE_NO_SESSION, "the tmux window is gone".to_string()),
+                        false => (CLOSE_TMUX_FAILED, e),
+                    }
+                })?;
         let group = terminal::parse_window_home(&home)
             .ok_or((CLOSE_NO_SESSION, "the tmux window is gone".to_string()))?;
 
-        let _ = terminal::run_shell(&terminal::board_sweep_script(socket));
+        let _ = crate::infra::shell::run_shell(&terminal::board_sweep_script(socket));
         let name = format!(
             "{}{}-{}",
             terminal::BOARD_SESSION_PREFIX,
@@ -232,7 +233,7 @@ mod imp {
             socket: socket.map(str::to_string),
             name: name.clone(),
         };
-        terminal::run_shell(&terminal::board_attach_prepare_script(
+        crate::infra::shell::run_shell(&terminal::board_attach_prepare_script(
             socket, &group, &name, &window,
         ))
         .map_err(|e| (CLOSE_TMUX_FAILED, e))?;
@@ -259,7 +260,7 @@ mod imp {
     /// Give the session back once its client is gone, unless it is all that is left of the
     /// original's windows.
     fn release(socket: Option<&str>, name: &str) {
-        match terminal::run_shell(&terminal::board_release_script(socket, name)) {
+        match crate::infra::shell::run_shell(&terminal::board_release_script(socket, name)) {
             Ok(said) if said.contains(terminal::KEPT_MARKER) => eprintln!(
                 "adj server: kept tmux session {name}: the original session is gone, so it holds the windows now"
             ),
@@ -286,9 +287,11 @@ mod imp {
                 std::thread::sleep(step);
                 waited += step;
             }
-            if let Ok(windows) = terminal::run_shell(&terminal::board_windows_script(socket, name))
+            if let Ok(windows) =
+                crate::infra::shell::run_shell(&terminal::board_windows_script(socket, name))
                 && !windows.lines().any(|w| w.trim() == window)
-                && terminal::run_shell(&terminal::board_detach_script(socket, name)).is_ok()
+                && crate::infra::shell::run_shell(&terminal::board_detach_script(socket, name))
+                    .is_ok()
             {
                 break;
             }

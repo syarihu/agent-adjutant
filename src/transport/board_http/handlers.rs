@@ -66,7 +66,7 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
         "ide" => {
             let command = crate::infra::ide::open_command(settings.ide.as_deref(), worktree)
                 .ok_or("ide is not set: put your editor command in the config's ide key")?;
-            crate::infra::terminal::run_shell(&command)?;
+            crate::infra::shell::run_shell(&command)?;
             Ok(json!({ "ran": true }))
         }
         "close" => {
