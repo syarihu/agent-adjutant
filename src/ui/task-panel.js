@@ -221,7 +221,7 @@ const monoKv = (label, value, title = '') => `<div class="tp-kv"><span>${label}<
 function panelGateHtml(task, gate) {
   if (!gate) return '';
   const [label] = kindOf(gate.kind);
-  const col = gateHumanCol(gate.kind);
+  const col = gate.humanCol;
   const why = gate.problem || gate.why || '';
   const reasons = stopWhy(gate);
   const quick = col === 'dispatch' ? [['start', 'play_arrow']]

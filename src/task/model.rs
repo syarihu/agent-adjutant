@@ -339,7 +339,7 @@ pub fn pr_turn(status: &PrStatus) -> Option<PrTurn> {
 /// (which only the board's own poll knows, so this is asked after that). The same turn as
 /// `pr_waits_on_person`, with no worker phase to consult: the person's turn waits; another
 /// reviewer's, the bots' or a merge does not; a turn that says nothing (a draft, one nobody was
-/// asked, one not read yet) waits as it always did. `humanColOf` in `src/ui/core.js` mirrors it.
+/// asked, one not read yet) waits as it always did. The cards carry the answer as `waitsOnPerson`.
 pub fn jules_pr_waits_on_person(pr_status: Option<&PrStatus>) -> bool {
     match pr_status.and_then(pr_turn) {
         Some(turn) if turn.persons() => true,
@@ -349,7 +349,7 @@ pub fn jules_pr_waits_on_person(pr_status: Option<&PrStatus>) -> bool {
 }
 
 /// Whether a task's pull request is the person's ball: the one rule the board's column and
-/// the sidebar's count both follow, and which `humanColOf` in `src/ui/core.js` mirrors.
+/// the sidebar's count both follow, and which the cards carry as `waitsOnPerson`.
 ///
 /// `phase` is what the task's worker record says: `None` when there is no record, `Some(None)`
 /// when there is one with no phase. A worker still in a phase other than `pr` / `pr-bots` is

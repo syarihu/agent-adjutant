@@ -149,61 +149,14 @@ const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label ||
 // at; one that names none is a session waiting to be linked, and the worktree joins it.
 const workerOf = (t, data = state) => t && t.worktree && (data.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
 
-function gateHumanCol(kind) {
-  switch (kind) {
-    case 'dispatch':
-    case 'issue':
-      return 'dispatch';
-    case 'plan':
-      return 'plan';
-    case 'diff':
-      return 'diff';
-    case 'verify':
-    case 'result':
-      return 'verify';
-    case 'relay':
-      return 'prreview';
-    case 'question':
-    default:
-      return 'question';
-  }
-}
-
-/* Whether a task's PR is the person's ball: the twin of `task::pr_waits_on_person` in
-   src/task.rs, which says why. `w` is the task's worker record, if there is one. `prTurn` is
-   derived by the server from what the last PR read kept on the record. */
-function prWaitsOnPerson(t, w) {
-  if (!t.pr || t.status === 'done' || t.status === 'cancelled') return false;
-  // A worker still in another phase is at work, so the card stays on the agent board.
-  if (w && w.phase !== 'pr' && w.phase !== 'pr-bots') return false;
-  if (['changes', 'merge', 'ci-failed', 'closed'].includes(t.prTurn)) return true;
-  if (['checks', 'other-reviewer', 'merged'].includes(t.prTurn)) return false;
-  // A draft, a PR nobody was asked to review, one not read yet: as before the turn was known.
-  return w ? w.phase === 'pr' : t.status === 'pr';
-}
-
-/* The Rust `board_counts` (src/board/view/index.rs) counts what waits from the same rules, for the
-   sidebar's board rows. Change one and change the other. */
+/* The person's column a card sits in: its open gate's (`humanCol`), else the PR's when the
+   server says the PR waits on the person (`waitsOnPerson`). The page puts the two together
+   itself, not the server, because it drops a gate it has just answered from a state that was
+   already on its way (`dropGate`, `refresh`, `mergeStates`), and the card must leave that
+   gate's column at once. */
 function humanColOf(t, data = state) {
   if (!t) return null;
-  const g = openGate(t, data);
-  if (g) return gateHumanCol(g.kind);
-  if (t.status === 'done' || t.status === 'cancelled') return null;
-
-  // Jules tasks: while Jules is working the ball is with Jules, whatever the PR says; once it
-  // is not, the PR's turn (twin of `task::jules_pr_waits_on_person`). A turn that says nothing
-  // keeps today's column.
-  if (t.julesSession && t.pr) {
-    if (t.jules?.working) return null;
-    if (t.jules?.state !== 'FAILED') {
-      if (['checks', 'other-reviewer', 'merged'].includes(t.prTurn)) return null;
-      return 'prreview';
-    }
-  }
-
-  // Local worker tasks: whose turn the PR is, then the worker's phase (see `prWaitsOnPerson`).
-  if (prWaitsOnPerson(t, workerOf(t, data))) return 'prreview';
-  return null;
+  return openGate(t, data)?.humanCol || (t.waitsOnPerson ? 'prreview' : null);
 }
 
 function agentColOf(t, data = state) {
