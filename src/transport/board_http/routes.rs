@@ -15,7 +15,9 @@ use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
     refresh_tasks, relay_findings, review_findings, update_task,
 };
-use super::sessions::{git_of_session, open_session, restart_session, resume_session};
+use super::sessions::{
+    clean_up_session, git_of_session, open_session, restart_session, resume_session,
+};
 use crate::board::Server;
 use crate::board::view::{state, task_history};
 
@@ -100,7 +102,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
                 "resume" => resume_session(server, &id, &req.body),
                 "restart" => restart_session(server, &id, &req.body),
                 "open" => open_session(server, &id),
-                _ => crate::board::session::cleanup(server, &id, &req.body),
+                _ => clean_up_session(server, &id, &req.body),
             });
             reply(out, result)
         }
