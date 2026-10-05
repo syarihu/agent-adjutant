@@ -7,7 +7,7 @@ use std::io::Read;
 
 use crate::infra::ide;
 use crate::infra::notify;
-use crate::infra::paths::{exe_path, same_path};
+use crate::infra::paths::same_path;
 use crate::infra::terminal::{self, SpawnRequest};
 use crate::kernel::config::{self, Settings};
 use crate::kernel::identity;
@@ -18,10 +18,9 @@ use crate::lifecycle::hub::{
 };
 pub use crate::lifecycle::worker::focus_worker;
 use crate::lifecycle::worker::{
-    Resumed, claim_worker_slot, open_worker_tab, resume_worker, saved_worker_session,
-    worker_worktree,
+    StartRequest, Started, resume_worker, saved_worker_session, worker_worktree,
 };
-use crate::lifecycle::{agent_command, forwarded_env, resume_template, title_command};
+use crate::lifecycle::{agent_command, resume_template, title_command};
 use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, deliver_to_worker};
 use crate::registry::{
     self, Context, agent_env, context, context_as, context_of, context_without_hub, resolve,

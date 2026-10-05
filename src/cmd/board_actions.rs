@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::board_terminal::target_of;
 use super::serve::{Server, find_session, git_state_of, hub_start_of, settings_now};
 use super::session::{input_of, text};
-use super::{Resumed, TabOutcome, same_path};
+use super::{Started, TabOutcome, same_path};
 use crate::infra::template::{Sub, render, sh_join, sh_quote};
 use crate::infra::terminal;
 use crate::kernel::runner;
@@ -110,8 +110,8 @@ pub(super) fn resume(server: &Server, id: &str, body: &[u8]) -> Result<Value, St
     let repo = ctx.repo.nwo.clone();
     let done =
         match super::resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false)? {
-            Resumed::Opened(done) => done,
-            Resumed::Full(refusal) => return Err(refusal),
+            Started::Opened(done) => done,
+            Started::Full(refusal) => return Err(refusal),
         };
     let hub_running = mail::all_repo_hubs(&server.ctx.state, &server.ctx.repo)
         .iter()
@@ -269,8 +269,8 @@ pub(super) fn restart(server: &Server, id: &str, body: &[u8]) -> Result<Value, S
     }
     let done =
         match super::resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false) {
-            Ok(Resumed::Opened(done)) => done,
-            Ok(Resumed::Full(refusal)) | Err(refusal) => {
+            Ok(Started::Opened(done)) => done,
+            Ok(Started::Full(refusal)) | Err(refusal) => {
                 // Nothing was closed when nothing was running, and saying so would be false.
                 return Err(match was_running {
                     true => format!("closed the session, but could not start it again: {refusal}"),

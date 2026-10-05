@@ -331,3 +331,77 @@ fn a_link_to_a_session_that_has_not_started_writes_no_task() {
     assert_eq!(tasks[0].status, Status::Backlog);
     assert_eq!(tasks[0].worktree, None);
 }
+
+/// A hub's context whose main checkout is a real directory in the sandbox, so that what a
+/// dispatch writes under it (the slot lock) can be looked for.
+fn hub_with_checkout() -> (crate::testing::Sandbox, crate::registry::Context) {
+    let sandbox = crate::testing::Sandbox::empty();
+    let main = sandbox.state().join("checkout");
+    std::fs::create_dir_all(&main).unwrap();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: main.to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    (sandbox, ctx)
+}
+
+/// A mistyped path is refused before anything is marked: marking writes into the worktree and
+/// would create the very directory the check is for, and the slot lock would be left behind.
+#[test]
+fn starting_a_worker_in_a_path_that_is_not_a_directory_touches_nothing() {
+    let (sandbox, ctx) = hub_with_checkout();
+    let wt = sandbox.state().join("not-there");
+    let request = worker::StartRequest {
+        worktree: wt.to_string_lossy().to_string(),
+        title: "x".to_string(),
+        task: None,
+        prompt: None,
+        repo: None,
+    };
+    let err = worker::start(&ctx, &request, false).err().unwrap();
+    assert_eq!(err, format!("no such directory: {}", wt.display()));
+    assert!(!wt.exists());
+    assert!(!crate::registry::is_starting(
+        &wt,
+        crate::infra::clock::now_secs()
+    ));
+    assert!(
+        !std::path::Path::new(&ctx.repo.main)
+            .join(".claude")
+            .exists()
+    );
+}
+
+/// A title taken from a task that does not exist fails before a slot is claimed, so a typo in
+/// the task id does not leave a worktree marked as starting.
+#[test]
+fn starting_a_worker_for_a_task_that_does_not_exist_claims_no_slot() {
+    let (sandbox, ctx) = hub_with_checkout();
+    let wt = sandbox.state().join("worktree");
+    std::fs::create_dir_all(&wt).unwrap();
+    let request = worker::StartRequest {
+        worktree: wt.to_string_lossy().to_string(),
+        title: String::new(),
+        task: Some("nope".to_string()),
+        prompt: None,
+        repo: None,
+    };
+    let err = worker::start(&ctx, &request, false).err().unwrap();
+    assert_eq!(err, "no such task: nope");
+    assert!(!crate::registry::is_starting(
+        &wt,
+        crate::infra::clock::now_secs()
+    ));
+    assert!(!wt.join(".claude").exists());
+    assert!(
+        !std::path::Path::new(&ctx.repo.main)
+            .join(".claude")
+            .exists()
+    );
+}

@@ -35,18 +35,6 @@ pub fn spawn(
 /// should answer by leaving the task queued instead of reporting a failure.
 pub const WORKER_LIMIT_EXIT: i32 = 3;
 
-/// `open_worker_tab`, said aloud: what the command line prints.
-fn spawn_worker(
-    ctx: &Context,
-    worktree: &str,
-    request: &SpawnRequest<'_>,
-    dry_run: bool,
-) -> Result<i32, String> {
-    let done = open_worker_tab(ctx, worktree, request, dry_run)?;
-    print_performed(&done, dry_run);
-    Ok(0)
-}
-
 pub struct WorkArgs<'a> {
     pub repo: Option<&'a str>,
     pub hub: Option<&'a str>,
@@ -73,79 +61,26 @@ pub fn work(args: &WorkArgs<'_>) -> Result<i32, String> {
     if resume {
         return work_resumed(repo_arg, hub_arg, worktree, title, prompt, dry_run);
     }
-    let prompt = prompt.unwrap_or(runner::WORKER_STARTUP_PROMPT);
     // The dispatching side: the identifier being handed to the new worker is this caller's
     // own, never one read out of some worktree it happens to be standing in.
     let ctx = context_as(repo_arg, hub_arg)?;
-    // Named after the task's record rather than a title typed on the command line. The title
-    // comes from an issue or a report, and quoted into the hub's shell it could close the
-    // quote; the record's id is one this tool generated.
-    let from_record;
-    let title = match task_id {
-        Some(id) if title.is_empty() => {
-            from_record = crate::task::get(&ctx.state, &ctx.repo.slug, id)?.title;
-            from_record.as_str()
-        }
-        _ => title,
+    let request = StartRequest {
+        worktree: worktree.to_string(),
+        title: title.to_string(),
+        task: task_id.map(str::to_string),
+        prompt: prompt.map(str::to_string),
+        repo: repo_arg.map(str::to_string),
     };
-    let worktree = crate::infra::paths::expand_home(worktree)
-        .to_string_lossy()
-        .to_string();
-    // Asked here and not left to the spawn, because marking the slot writes into the
-    // worktree and would create the very directory the spawn checks for — a mistyped path
-    // would then open a tab in an empty directory outside any repository.
-    if !std::path::Path::new(&worktree).is_dir() {
-        return Err(format!("no such directory: {worktree}"));
+    match crate::lifecycle::worker::start(&ctx, &request, dry_run)? {
+        Started::Full(refusal) => {
+            eprintln!("adjutant: {refusal}");
+            Ok(WORKER_LIMIT_EXIT)
+        }
+        Started::Opened(done) => {
+            print_performed(&done, dry_run);
+            Ok(0)
+        }
     }
-    if let Some(refusal) = claim_worker_slot(&ctx, std::path::Path::new(&worktree), dry_run)? {
-        eprintln!("adjutant: {refusal}");
-        return Ok(WORKER_LIMIT_EXIT);
-    }
-    // The tab runs `adjutant worker`, not the agent directly. The agent is started by a
-    // process that has already written down its own PID and then `exec`s itself away, which
-    // is the only way anyone later gets to ask "is that worker still there".
-    let mut parts = forwarded_env(&ctx.state);
-    parts.extend([
-        exe_path(),
-        "worker".to_string(),
-        "--worktree".to_string(),
-        worktree.clone(),
-        // `=` rather than a separate word, as in `title_command`: a title from an issue that
-        // starts with `--` would otherwise be parsed as an option and the worker never start.
-        format!("--title={title}"),
-        format!("--prompt={prompt}"),
-    ]);
-    if let Some(repo) = repo_arg {
-        parts.push("--repo".to_string());
-        parts.push(repo.to_string());
-    }
-    // The *resolved* identifier rather than the flag, because a hub dispatching work runs
-    // this as its own child and so usually passes no flag at all — it is carrying the
-    // answer in its environment. That environment does not survive the trip: the tab is
-    // opened by the terminal, which is handed a command line and nothing else. So the
-    // answer goes onto the command line, or the worker registers under the wrong hub and
-    // reports to an inbox nobody reads.
-    // One argument rather than two: an identifier that starts with a dash reaches here from
-    // `ADJUTANT_HUB`, where no flag parser has seen it, and as a separate word clap reads it
-    // as the next option instead of as this one's value.
-    if let Some(hub) = &ctx.repo.hub {
-        parts.push(format!("--hub={hub}"));
-    }
-    if let Some(task) = task_id {
-        parts.push(format!("--task={task}"));
-    }
-    let name_it = title_command(&ctx.settings, title);
-    spawn_worker(
-        &ctx,
-        &worktree,
-        &SpawnRequest {
-            cwd: &worktree,
-            title,
-            command: &crate::infra::template::sh_join(&parts),
-            title_command: name_it.as_deref(),
-        },
-        dry_run,
-    )
 }
 
 /// Open a tab that reopens the worker session saved in `worktree`.
@@ -164,11 +99,11 @@ fn work_resumed(
 ) -> Result<i32, String> {
     let ctx = context_without_hub(repo_arg)?;
     match resume_worker(&ctx, repo_arg, hub_arg, worktree, title, prompt, dry_run)? {
-        Resumed::Full(refusal) => {
+        Started::Full(refusal) => {
             eprintln!("adjutant: {refusal}");
             Ok(WORKER_LIMIT_EXIT)
         }
-        Resumed::Opened(done) => {
+        Started::Opened(done) => {
             print_performed(&done, dry_run);
             Ok(0)
         }
@@ -381,7 +316,7 @@ pub fn worker(args: &WorkerArgs<'_>) -> Result<(), String> {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
     } else if let Some(saved) = &resumed {
-        // Resumed under another hub than the session remembers: say so there too, or the
+        // Reopened under another hub than the session remembers: say so there too, or the
         // worker would count for the old hub once it has ended and its record is gone.
         let slug_of = |hub: Option<&str>| identity::slug_for(&ctx.repo.nwo, hub);
         if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
