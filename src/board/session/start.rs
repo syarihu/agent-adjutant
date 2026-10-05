@@ -10,8 +10,9 @@ use crate::session::SessionRequest;
 use crate::task;
 
 /// The hub named by `hub` (a `hubs[].id`), or this board's own when none is named, with the
-/// context to address it by. Refused the way `act_on_hub` refuses: a parent-task hub whose key
-/// cannot be told cannot be addressed at all.
+/// context to address it by. Refused the way a hub's start from the board
+/// (`hub::start_context`) refuses: a parent-task hub whose key cannot be told cannot be
+/// addressed at all.
 pub(super) fn hub_context(
     server: &Server,
     id: Option<&str>,

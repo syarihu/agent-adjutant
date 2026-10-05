@@ -5,7 +5,6 @@ use std::net::TcpStream;
 
 use serde_json::json;
 
-use crate::board::hub::start_parent_hub;
 use crate::board::session::start_request;
 use crate::infra::http::{self, Request};
 
@@ -13,7 +12,7 @@ use super::assets::{UI_HTML, vendor_asset};
 use super::auth::refuse;
 use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
-    refresh_tasks, relay_findings, review_findings, update_task,
+    refresh_tasks, relay_findings, review_findings, start_parent_hub, update_task,
 };
 use super::sessions::{
     clean_up_session, git_of_session, open_session, restart_session, resume_session,
