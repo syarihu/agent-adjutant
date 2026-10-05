@@ -1,14 +1,40 @@
 //! The session routes whose operations answer a value rather than JSON: reopening, restarting
-//! and opening a session, removing its worktree, and its worktree's git state. Each reads the
-//! request, calls the board, and words the answer.
+//! and opening a session, starting one with no task, linking one to a task, removing its
+//! worktree, and its worktree's git state. Each reads the request, calls the board, and words
+//! the answer. It also holds the body readers `input_of` and `text`, which `handlers` borrows.
 
 use serde_json::{Value, json};
 
 use crate::board::session::{
-    BranchRemoval, CleanUp, CleanUpRequest, Loss, OpenedIn, clean_up, open, restart, resume,
+    BranchRemoval, CleanUp, CleanUpRequest, LinkSession, Loss, OpenedIn, StartSession, clean_up,
+    inbox_name, link, open, restart, resume, start,
 };
 use crate::board::view::{find_session, session_git};
-use crate::board::{Server, input_of, settings_now, text};
+use crate::board::{Server, settings_now};
+use crate::lifecycle::worker::LinkTo;
+use crate::mail::Handed;
+use crate::task::NewTask;
+
+pub(super) fn input_of(body: &[u8]) -> Result<Value, String> {
+    let input: Value = match body.is_empty() {
+        true => json!({}),
+        false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
+    };
+    match input.is_object() {
+        true => Ok(input),
+        false => Err("expected an object".to_string()),
+    }
+}
+
+/// A string field, trimmed; blank and `null` are absent. Anything that is not a string is
+/// refused rather than read as absent, as `TaskPatch::from_json` does for a task update.
+pub(super) fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
+    match input.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(v)) => Ok(Some(v.trim()).filter(|s| !s.is_empty())),
+        Some(other) => Err(format!("{key} has to be a string, not {other}")),
+    }
+}
 
 /// The body is refused before the session is looked up, as the operation did when it read it.
 pub(super) fn resume_session(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
@@ -59,6 +85,91 @@ pub(super) fn git_of_session(server: &Server, id: &str) -> Result<Value, String>
             Err(format!("{} does not exist", session.worktree))
         }
     }
+}
+
+/// Ask a hub to start a session with no task. The body is read before the board is asked, so a
+/// body wrong in any way is refused before the agent, the name, the worker limit or the hub is
+/// looked at.
+pub(super) fn start_session(server: &Server, body: &[u8]) -> Result<Value, String> {
+    let input = input_of(body)?;
+    // Optional: the worker greets the person and waits when there is none.
+    let instruction = text(&input, "instruction")?.unwrap_or("");
+    // The brief writes a missing instruction as `-`, so the hub could not tell this one apart.
+    if instruction.trim() == "-" {
+        return Err("an instruction of only `-` means no instruction; leave it empty".to_string());
+    }
+    let request = StartSession {
+        instruction: instruction.to_string(),
+        agent: text(&input, "agent")?.map(str::to_string),
+        worktree_name: text(&input, "worktreeName")?.map(str::to_string),
+        hub: text(&input, "hub")?.map(str::to_string),
+    };
+    let asked = start(server, request)?;
+    let mut reply = json!({
+        "handed": Handed::from(&asked.delivered),
+        "hubStarted": matches!(asked.hub_started, Ok(true)),
+        "worktreeName": asked.worktree_name,
+        "hub": asked.hub,
+        "message": inbox_name(&asked.delivered),
+    });
+    if let Err(e) = &asked.hub_started {
+        reply["hubStartError"] = json!(e);
+    }
+    Ok(reply)
+}
+
+/// Join a session to a task. The body is read before the session is looked up, so a body wrong
+/// in any way is refused before an unknown session or hub.
+pub(super) fn link_session(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
+    let input = input_of(body)?;
+    let hub = text(&input, "hub")?.map(str::to_string);
+    let to = match (text(&input, "task")?, input.get("newTask")) {
+        (Some(_), Some(_)) => return Err("give either task or newTask, not both".to_string()),
+        (Some(task_id), None) => {
+            // An existing task already has its issue or its reason not to; only a task made by
+            // this link can ask the hub to file one.
+            if text(&input, "kind")? == Some("file-and-start") {
+                return Err(
+                    "file-and-start needs a newTask: an existing task is not filed".to_string(),
+                );
+            }
+            LinkTo::Existing(task_id.to_string())
+        }
+        (None, Some(new_task)) => {
+            let mut fields = new_task
+                .as_object()
+                .cloned()
+                .ok_or("newTask has to be an object")?;
+            // What the link decides itself, whatever the caller sent: removed before the
+            // rest is read, so that junk in them is not refused.
+            fields.remove("worktreeName");
+            fields.remove("status");
+            fields.remove("worktree");
+            LinkTo::New(NewTask::from_json(&Value::Object(fields))?)
+        }
+        (None, None) => return Err("a task or a newTask is required".to_string()),
+    };
+    let phase = text(&input, "phase")?.map(str::to_string);
+    let linked = link(server, id, LinkSession { hub, to, phase })?;
+    let mut reply = json!({
+        "task": &linked.task,
+        "session": { "id": linked.session, "task": linked.task.id, "hub": linked.hub },
+    });
+    match &linked.file_issue {
+        None => {}
+        Some(Ok(asked)) => {
+            reply["fileIssue"] = json!({
+                "handed": Handed::from(&asked.delivered),
+                "message": inbox_name(&asked.delivered),
+            });
+            reply["hubStarted"] = json!(matches!(asked.hub_started, Ok(true)));
+            if let Err(e) = &asked.hub_started {
+                reply["hubStartError"] = json!(e);
+            }
+        }
+        Some(Err(e)) => reply["fileIssueError"] = json!(e),
+    }
+    Ok(reply)
 }
 
 /// Remove a session's worktree. A removal that would lose work is answered 200 with
