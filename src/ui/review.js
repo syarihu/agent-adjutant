@@ -1,11 +1,5 @@
 // ── the review view ───────────────────────────────────────────────────
 
-/* The kinds the hub opens: their answers go to its inbox, and its tab is the one to raise. */
-const HUB_KINDS = ['dispatch', 'issue', 'relay'];
-/* Whether the hub is the one waiting on this gate: one of its kinds, or a plan it opened for a
-   task handed to Jules, whose worktree has no worker in it. */
-const hubsGate = g => HUB_KINDS.includes(g.kind) || g.openedBy === 'hub';
-
 let focused = null;
 
 /* How the review queue names a gate: its board and id, since gates of several boards share it.
@@ -170,7 +164,7 @@ const reviewHubOf = g => g._slug ? boards.find(b => b.slug === g._slug)?.hubId :
    hub for what the hub waits on, else the worker in the item's worktree. */
 function reviewSessionOf(g) {
   const mine = (state.sessions || []).filter(s => !g._slug || s._slug === g._slug);
-  if (hubsGate(g)) return mine.find(s => s.kind === 'hub' && s.id === reviewHubOf(g));
+  if (g.answeredByHub) return mine.find(s => s.kind === 'hub' && s.id === reviewHubOf(g));
   return g.worktree ? mine.find(s => s.kind === 'worker' && s.worktree === g.worktree) : undefined;
 }
 
@@ -178,7 +172,7 @@ function reviewSessionOf(g) {
    serves terminals and what the item waits on is running. */
 function reviewTermUsable(g) {
   if (!state.boardTerminal?.available) return false;
-  if (hubsGate(g)) {
+  if (g.answeredByHub) {
     return g._slug ? !!boards.find(b => b.slug === g._slug)?.hubPresent
       : !!(state.hubs || []).find(h => h.id === reviewHubOf(g))?.state?.present;
   }

@@ -381,8 +381,7 @@ fn a_hub_route_names_an_id_and_an_action() {
 #[test]
 fn the_page_places_a_pr_by_its_turn_and_says_when_the_poll_has_stopped() {
     for piece in [
-        "function prWaitsOnPerson",
-        "if (prWaitsOnPerson(t, workerOf(t, data))) return 'prreview';",
+        "t.waitsOnPerson ? 'prreview'",
         "'other-reviewer': ['レビュー待ち（他の人）'",
         "changes: ['修正の依頼あり'",
         "merge: ['マージ待ち'",
@@ -392,6 +391,148 @@ fn the_page_places_a_pr_by_its_turn_and_says_when_the_poll_has_stopped() {
         "title=\"PR の状態を読み直す\"",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+}
+
+/// The body of one table of the page: what lies between `open` and the first `close` after it.
+fn page_table(open: &str, close: &str) -> &'static str {
+    assert_eq!(UI_HTML.matches(open).count(), 1, "{open}");
+    let body = &UI_HTML[UI_HTML.find(open).unwrap() + open.len()..];
+    &body[..body
+        .find(close)
+        .unwrap_or_else(|| panic!("{open} has no {close}"))]
+}
+
+/// Whether `body` has `name` as a key, `name:` or `'name':`, and not as the end of a longer word.
+fn has_key(body: &str, name: &str) -> bool {
+    body.contains(&format!("'{name}':"))
+        || body.match_indices(&format!("{name}:")).any(|(i, _)| {
+            body[..i]
+                .chars()
+                .last()
+                .is_none_or(|c| !(c.is_alphanumeric() || "_-'".contains(c)))
+        })
+}
+
+fn serde_name(v: impl serde::Serialize) -> String {
+    serde_json::to_value(v)
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn the_page_has_a_word_for_every_value_the_server_sends() {
+    use crate::board::view::HumanCol;
+    use crate::gate::Kind;
+    use crate::task::PrTurn;
+
+    // Each list sits beside a `match` with no wildcard arm: a new variant does not compile until
+    // it is added to the list beside it.
+    let kinds = [
+        Kind::Plan,
+        Kind::Diff,
+        Kind::Verify,
+        Kind::Dispatch,
+        Kind::Issue,
+        Kind::Question,
+        Kind::Result,
+        Kind::Relay,
+    ];
+    let _ = |k: Kind| match k {
+        Kind::Plan
+        | Kind::Diff
+        | Kind::Verify
+        | Kind::Dispatch
+        | Kind::Issue
+        | Kind::Question
+        | Kind::Result
+        | Kind::Relay => {}
+    };
+    let turns = [
+        PrTurn::Draft,
+        PrTurn::Unrequested,
+        PrTurn::OtherReviewer,
+        PrTurn::Checks,
+        PrTurn::Changes,
+        PrTurn::Merge,
+        PrTurn::CiFailed,
+        PrTurn::Merged,
+        PrTurn::Closed,
+    ];
+    let _ = |t: PrTurn| match t {
+        PrTurn::Draft
+        | PrTurn::Unrequested
+        | PrTurn::OtherReviewer
+        | PrTurn::Checks
+        | PrTurn::Changes
+        | PrTurn::Merge
+        | PrTurn::CiFailed
+        | PrTurn::Merged
+        | PrTurn::Closed => {}
+    };
+    let columns = [
+        HumanCol::Dispatch,
+        HumanCol::Plan,
+        HumanCol::Diff,
+        HumanCol::Verify,
+        HumanCol::PrReview,
+        HumanCol::Question,
+    ];
+    let _ = |c: HumanCol| match c {
+        HumanCol::Dispatch
+        | HumanCol::Plan
+        | HumanCol::Diff
+        | HumanCol::Verify
+        | HumanCol::PrReview
+        | HumanCol::Question => {}
+    };
+
+    let kinds_table = page_table("const KINDS = {", "};");
+    let phase_label = page_table("const PHASE_LABEL = {", "};");
+    let phase_col = page_table("const AGENT_COL_OF_PHASE = {", "};");
+    let decision_label = page_table("const DECISION_LABEL = {", "};");
+    let human_columns = page_table("const HUMAN_COLUMNS = [", "];");
+    let turn_why = page_table("const PR_TURN_WHY = {", "};");
+    let turn_pill = page_table("const PR_TURN = {", "};");
+
+    for kind in kinds {
+        let name = serde_name(kind);
+        assert!(has_key(kinds_table, &name), "KINDS has no gate kind {name}");
+        for option in kind.default_options() {
+            assert!(
+                has_key(decision_label, &option),
+                "DECISION_LABEL has no {option}, an option of a {name} gate"
+            );
+        }
+    }
+    for phase in crate::registry::PHASES {
+        assert!(has_key(phase_label, phase), "PHASE_LABEL has no {phase}");
+        assert!(
+            has_key(phase_col, phase),
+            "AGENT_COL_OF_PHASE has no {phase}"
+        );
+    }
+    for turn in turns {
+        let name = serde_name(turn);
+        // A PR nobody was asked to review has no pill of its own, by design.
+        if turn != PrTurn::Unrequested {
+            assert!(has_key(turn_pill, &name), "PR_TURN has no turn {name}");
+        }
+        if turn.persons() {
+            assert!(
+                has_key(turn_why, &name),
+                "PR_TURN_WHY has no turn {name}, which waits on the person"
+            );
+        }
+    }
+    for column in columns {
+        let name = serde_name(column);
+        assert!(
+            human_columns.contains(&format!("id:'{name}'")),
+            "HUMAN_COLUMNS has no column {name}"
+        );
     }
 }
 

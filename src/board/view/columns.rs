@@ -1,5 +1,6 @@
 //! Which of the person's columns a gate puts its task in, and whether a card's pull request
-//! waits on the person: the server's half of the page's `humanColOf`, sent on `/api/state`.
+//! waits on the person: sent on `/api/state` as `humanCol` and `waitsOnPerson`, which the page's
+//! `humanColOf` reads.
 
 use serde::Serialize;
 
@@ -50,7 +51,7 @@ pub fn waits_on_person(
     if matches!(task.status, task::Status::Done | task::Status::Cancelled) {
         return false;
     }
-    // A blank `pr` or `julesSession` cannot be on a record, so `is_some` is the page's truthiness.
+    // A blank `pr` or `julesSession` cannot be on a record, so `is_some` is all there is to ask.
     if task.jules_session.is_some() && task.pr.is_some() {
         match jules {
             Some(JulesSeen::Found { working: true, .. }) => return false,

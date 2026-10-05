@@ -376,7 +376,7 @@ function renderColumns(force = false) {
     hb.innerHTML = '';
     for (const def of HUMAN_COLUMNS) {
       const tasksInCol = humanItems.filter(t => humanColOf(t) === def.id);
-      const gatesInCol = standaloneGates.filter(g => gateHumanCol(g.kind) === def.id);
+      const gatesInCol = standaloneGates.filter(g => g.humanCol === def.id);
       const allItems = [
         ...tasksInCol.map(t => ({ isGate: false, item: t, at: waitingSinceMs(t) })),
         ...gatesInCol.map(g => ({ isGate: true, item: g, at: stampSecs(g.openedAt) ? stampSecs(g.openedAt) * 1000 : 0 })),

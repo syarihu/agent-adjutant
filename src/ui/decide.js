@@ -79,10 +79,10 @@ function decideHtml(g) {
     <div style="font-size:11.5px;color:var(--md-sys-color-outline);display:flex;align-items:flex-start;gap:6px;margin-top:8px;">
       <span class="material-symbols-outlined" style="font-size:14px;margin-top:2px;">info</span>
       <span>
-        ${hubsGate(g)
+        ${g.answeredByHub
           ? '判定は <code>adj gate answer</code> → hub の受信箱に送信 → <code>hubWake</code> で hub に通知します。'
           : '判定は <code>adj gate answer</code> → 対象 worktree の outbox に追記 → <code>workerWake</code> で worker に通知します。'}<br>
-        <b>「ターミナルで話す」</b>は gate を開いたまま${hubsGate(g) ? ' hub' : ' worker'} タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（${hubsGate(g) ? 'hub への配信' : 'worker への outbox 配信'}なしでアーカイブします）。
+        <b>「ターミナルで話す」</b>は gate を開いたまま${g.answeredByHub ? ' hub' : ' worker'} タブを前面表示します。直接確認した後は<b>「解決済みとして閉じる」</b>を押してください（${g.answeredByHub ? 'hub への配信' : 'worker への outbox 配信'}なしでアーカイブします）。
       </span>
     </div>
   </div>`;
@@ -256,7 +256,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
     });
     // The hub opened this gate, and its answer goes to the hub's inbox instead.
-    const toHub = hubsGate(g);
+    const toHub = g.answeredByHub;
     note(line, false, toHub
       ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
       : `${baseName(g.worktree)} の outbox に追記` +
@@ -285,7 +285,7 @@ function talk(id = focused) {
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
   // hub's.
-  if (hubsGate(g)) focusHub(g._slug); else worktreeAct('focus', g.worktree, false, g._slug);
+  if (g.answeredByHub) focusHub(g._slug); else worktreeAct('focus', g.worktree, false, g._slug);
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
