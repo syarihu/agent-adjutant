@@ -33,94 +33,263 @@ pub fn handle(server: &Server, mut stream: TcpStream) -> std::io::Result<()> {
     route(server, &req, &mut stream)
 }
 
-/// The paths that are the page itself. One document serves them all, and the page reads its
-/// own address to know which view to draw.
-pub(super) fn is_page_path(path: &str) -> bool {
-    matches!(path, "/" | "/index.html" | "/review")
+/// A route a board serves and what its path names. `Id` is a session's or a hub's id: the
+/// segment as written (`&str`) until `decoded`, then the id it percent-decodes to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Route<Id = String> {
+    Page,
+    State {
+        sessions: bool,
+        lines: bool,
+    },
+    /// A script or style the board terminal loads: its content type and body.
+    Asset(&'static str, &'static str),
+    // Task ids, worktree actions and gate ids are the raw segment, never decoded.
+    TaskHistory(String),
+    TaskFindings(String),
+    RelayFindings(String),
+    FetchIssue(String),
+    UpdateTask(String),
+    CreateTask,
+    Refresh,
+    StartSession,
+    LinkSession(Id),
+    SessionGit(Id),
+    Session(Id, SessionAction),
+    StartParentHub,
+    Hub(Id, HubAction),
+    NudgeHub,
+    FocusHub,
+    Worktree(String),
+    AnswerGate(String),
+    Terminal(Id),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionAction {
+    Resume,
+    Restart,
+    Open,
+    CleanUp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HubAction {
+    Start,
+    Stop,
+    Close,
+    Reset,
+    Restart,
+}
+
+impl<Id> Route<Id> {
+    /// The routes a board a hub serves answers 404 for: reopening a session, opening a
+    /// terminal and starting or stopping a hub reach outside the repository's own records, and
+    /// a board a hub serves lives and dies with that hub. The terminal assets are only for the
+    /// resident's terminal.
+    pub(super) fn resident_only(&self) -> bool {
+        matches!(
+            self,
+            Route::Session(..)
+                | Route::StartParentHub
+                | Route::Hub(..)
+                | Route::Terminal(_)
+                | Route::Asset(..)
+        )
+    }
+}
+
+impl Route {
+    #[cfg(test)]
+    pub(super) fn parse(req: &Request) -> Result<Option<Route>, String> {
+        match Route::named(req)? {
+            Some(route) => route.decoded().map(Some),
+            None => Ok(None),
+        }
+    }
+}
+
+impl<'a> Route<&'a str> {
+    /// The route a request names, its session or hub id still as written. Two steps, because a
+    /// caller has to say which routes it serves between them: a bad encoding in the id of a
+    /// route that is not served is a 404, not a 400. `Err` only for a path that ends in a task
+    /// route's name without exactly one id: "no such task".
+    pub(super) fn named(req: &'a Request) -> Result<Option<Self>, String> {
+        let (method, path) = (req.method.as_str(), req.path.as_str());
+        if let Some(rest) = path.strip_prefix("/api/tasks/") {
+            return Self::task(method, rest, req.tail());
+        }
+        if let Some(rest) = path.strip_prefix("/api/sessions/") {
+            return Ok(Self::session(method, rest));
+        }
+        if let Some(rest) = path.strip_prefix("/api/hubs/") {
+            return Ok(Self::hub(method, rest));
+        }
+        Ok(Some(match (method, path) {
+            // One document serves the page paths, and the page reads its own address to know
+            // which view to draw.
+            ("GET", "/" | "/index.html" | "/review") => Route::Page,
+            ("GET", "/api/state") => Route::State {
+                sessions: req.param("sessions") != Some("0"),
+                lines: req.param("lines") == Some("1"),
+            },
+            ("GET", _) => match vendor_asset(path) {
+                Some((kind, body)) => Route::Asset(kind, body),
+                None => return Ok(None),
+            },
+            ("POST", "/api/tasks") => Route::CreateTask,
+            ("POST", "/api/refresh") => Route::Refresh,
+            ("POST", "/api/sessions") => Route::StartSession,
+            ("POST", "/api/hubs") => Route::StartParentHub,
+            ("POST", "/api/hub/next") => Route::NudgeHub,
+            ("POST", "/api/hub/focus") => Route::FocusHub,
+            ("POST", _) => match (
+                path.strip_prefix("/api/worktrees/"),
+                path.strip_prefix("/api/gates/"),
+            ) {
+                (Some(_), _) => Route::Worktree(req.tail().to_string()),
+                (_, Some(_)) => Route::AnswerGate(req.tail().to_string()),
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        }))
+    }
+
+    fn task(method: &str, rest: &str, last: &str) -> Result<Option<Self>, String> {
+        let segments: Vec<&str> = rest.split('/').collect();
+        let id = || match segments[..] {
+            [id, _] if !id.is_empty() => Ok(id.to_string()),
+            _ => Err("no such task".to_string()),
+        };
+        Ok(Some(match (method, last) {
+            ("GET", "history") => Route::TaskHistory(id()?),
+            ("GET", "findings") => Route::TaskFindings(id()?),
+            ("POST", "relay") => Route::RelayFindings(id()?),
+            ("POST", "issue") => Route::FetchIssue(id()?),
+            ("POST", _) => Route::UpdateTask(last.to_string()),
+            _ => return Ok(None),
+        }))
+    }
+
+    /// `<id>/<action>` under `/api/sessions/`. The id is one segment, split on the raw path
+    /// before decoding, so an encoded `/` is part of an id and a bare one is another path. The
+    /// terminal takes any method, as the handshake never looked at it; whether the id names a
+    /// session, and one that runs in tmux, is answered once the socket is open, where the page
+    /// can be told why not.
+    fn session(method: &str, rest: &'a str) -> Option<Self> {
+        let (raw, action) = rest.split_once('/').filter(|(raw, _)| !raw.is_empty())?;
+        Some(match (method, action) {
+            ("GET", "git") => Route::SessionGit(raw),
+            ("POST", "link") => Route::LinkSession(raw),
+            ("POST", "resume") => Route::Session(raw, SessionAction::Resume),
+            ("POST", "restart") => Route::Session(raw, SessionAction::Restart),
+            ("POST", "open") => Route::Session(raw, SessionAction::Open),
+            ("POST", "cleanup") => Route::Session(raw, SessionAction::CleanUp),
+            (_, "terminal") => Route::Terminal(raw),
+            _ => return None,
+        })
+    }
+
+    /// `<id>/<action>` under `/api/hubs/`, split as `session` does: the page sends the id
+    /// through `encodeURIComponent`, and a key may hold a `/`, a space or a letter that is not
+    /// ASCII.
+    fn hub(method: &str, rest: &'a str) -> Option<Self> {
+        let (raw, action) = rest.split_once('/').filter(|(raw, _)| !raw.is_empty())?;
+        let action = match (method, action) {
+            ("POST", "start") => HubAction::Start,
+            ("POST", "stop") => HubAction::Stop,
+            ("POST", "close") => HubAction::Close,
+            ("POST", "reset") => HubAction::Reset,
+            ("POST", "restart") => HubAction::Restart,
+            _ => return None,
+        };
+        Some(Route::Hub(raw, action))
+    }
+
+    /// The same route with its ids percent-decoded. An encoding that is not UTF-8 is an error
+    /// for the caller to say, not a different route.
+    pub(super) fn decoded(self) -> Result<Route, String> {
+        Ok(match self {
+            Route::LinkSession(raw) => Route::LinkSession(decode_segment(raw)?),
+            Route::SessionGit(raw) => Route::SessionGit(decode_segment(raw)?),
+            Route::Session(raw, action) => Route::Session(decode_segment(raw)?, action),
+            Route::Hub(raw, action) => Route::Hub(decode_segment(raw)?, action),
+            Route::Terminal(raw) => Route::Terminal(decode_segment(raw)?),
+            Route::Page => Route::Page,
+            Route::State { sessions, lines } => Route::State { sessions, lines },
+            Route::Asset(kind, body) => Route::Asset(kind, body),
+            Route::TaskHistory(id) => Route::TaskHistory(id),
+            Route::TaskFindings(id) => Route::TaskFindings(id),
+            Route::RelayFindings(id) => Route::RelayFindings(id),
+            Route::FetchIssue(id) => Route::FetchIssue(id),
+            Route::UpdateTask(id) => Route::UpdateTask(id),
+            Route::CreateTask => Route::CreateTask,
+            Route::Refresh => Route::Refresh,
+            Route::StartSession => Route::StartSession,
+            Route::StartParentHub => Route::StartParentHub,
+            Route::NudgeHub => Route::NudgeHub,
+            Route::FocusHub => Route::FocusHub,
+            Route::Worktree(action) => Route::Worktree(action),
+            Route::AnswerGate(id) => Route::AnswerGate(id),
+        })
+    }
 }
 
 pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
-    match (req.method.as_str(), req.path.as_str()) {
-        ("GET", path) if is_page_path(path) => http::html(out, UI_HTML),
-        ("GET", "/api/state") => {
-            let document = state(
-                server,
-                req.param("sessions") != Some("0"),
-                req.param("lines") == Some("1"),
-            );
+    let named = match Route::named(req) {
+        Ok(Some(route)) => route,
+        Ok(None) => return no_such_route(out),
+        Err(e) => return reply(out, Err::<(), _>(e)),
+    };
+    // A terminal is a WebSocket, answered by the resident before routing; here it is no route.
+    if matches!(named, Route::Terminal(_)) || (named.resident_only() && !server.resident) {
+        return no_such_route(out);
+    }
+    let route = match named.decoded() {
+        Ok(route) => route,
+        Err(e) => return reply(out, Err::<(), _>(e)),
+    };
+    match route {
+        Route::Page => http::html(out, UI_HTML),
+        Route::State { sessions, lines } => {
+            let document = state(server, sessions, lines);
             match serde_json::to_string(&document) {
                 Ok(body) => http::json(out, 200, &body),
                 Err(e) => http::json(out, 500, &json!({ "error": e.to_string() }).to_string()),
             }
         }
-        ("GET", path) if vendor_asset(path, server.resident).is_some() => {
-            let (kind, body) = vendor_asset(path, server.resident).unwrap_or_default();
-            http::respond(out, 200, kind, body.as_bytes())
-        }
-        ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/history") => {
-            reply(out, task_history(server, path))
-        }
-        ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/findings") => {
-            reply(out, review_findings(server, path))
-        }
-        ("GET", path) if session_route_for(path, "git").is_some() => {
-            let result = session_route_for(path, "git")
-                .unwrap_or_else(|| Err("no such route".to_string()))
-                .and_then(|id| git_of_session(server, &id));
-            reply(out, result)
-        }
-        ("POST", "/api/tasks") => reply(out, create_task(server, &req.body)),
-        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/relay") => {
-            reply(out, relay_findings(server, path, &req.body))
-        }
-        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/issue") => {
-            reply(out, fetch_issue(server, path))
-        }
-        ("POST", path) if path.starts_with("/api/tasks/") => {
-            reply(out, update_task(server, req.tail(), &req.body))
-        }
-        ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
-        ("POST", "/api/sessions") => reply(out, start_session(server, &req.body)),
-        ("POST", path) if session_route_for(path, "link").is_some() => {
-            let result = session_route_for(path, "link")
-                .unwrap_or_else(|| Err("no such route".to_string()))
-                .and_then(|id| link_session(server, &id, &req.body));
-            reply(out, result)
-        }
-        // Only on the resident's boards, like the hub actions below: reopening a session,
-        // opening a terminal and removing a worktree reach outside the repository's own
-        // records, and a board a hub serves lives and dies with that hub.
-        ("POST", path)
-            if server.resident
-                && session_route(path).is_some_and(|(_, action)| {
-                    matches!(action, "resume" | "restart" | "open" | "cleanup")
-                }) =>
-        {
-            let (id, action) = session_route(path).unwrap_or((Err("no such route".into()), ""));
-            let result = id.and_then(|id| match action {
-                "resume" => resume_session(server, &id, &req.body),
-                "restart" => restart_session(server, &id, &req.body),
-                "open" => open_session(server, &id),
-                _ => clean_up_session(server, &id, &req.body),
-            });
-            reply(out, result)
-        }
-        ("POST", "/api/hubs") if server.resident => reply(out, start_parent_hub(server, &req.body)),
-        // Only on the resident's boards: starting and stopping a hub reaches outside the
-        // repository's own records, and a board a hub serves lives and dies with that hub.
-        ("POST", path) if server.resident && hub_route(path).is_some() => {
-            reply(out, act_on_hub(server, path, &req.body))
-        }
-        ("POST", "/api/hub/next") => reply(out, nudge_hub(server)),
-        ("POST", "/api/hub/focus") => reply(out, focus_hub(server)),
-        ("POST", path) if path.starts_with("/api/worktrees/") => {
-            reply(out, act_on_worktree(server, req.tail(), &req.body))
-        }
-        ("POST", path) if path.starts_with("/api/gates/") => {
-            reply(out, answer_gate(server, req.tail(), &req.body))
-        }
-        _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
+        Route::Asset(kind, body) => http::respond(out, 200, kind, body.as_bytes()),
+        Route::TaskHistory(id) => reply(out, Ok::<_, String>(task_history(server, &id))),
+        Route::TaskFindings(id) => reply(out, review_findings(server, &id)),
+        Route::RelayFindings(id) => reply(out, relay_findings(server, &id, &req.body)),
+        Route::FetchIssue(id) => reply(out, fetch_issue(server, &id)),
+        Route::UpdateTask(id) => reply(out, update_task(server, &id, &req.body)),
+        Route::CreateTask => reply(out, create_task(server, &req.body)),
+        Route::Refresh => reply(out, refresh_tasks(server)),
+        Route::StartSession => reply(out, start_session(server, &req.body)),
+        Route::LinkSession(id) => reply(out, link_session(server, &id, &req.body)),
+        Route::SessionGit(id) => reply(out, git_of_session(server, &id)),
+        Route::Session(id, action) => reply(
+            out,
+            match action {
+                SessionAction::Resume => resume_session(server, &id, &req.body),
+                SessionAction::Restart => restart_session(server, &id, &req.body),
+                SessionAction::Open => open_session(server, &id),
+                SessionAction::CleanUp => clean_up_session(server, &id, &req.body),
+            },
+        ),
+        Route::StartParentHub => reply(out, start_parent_hub(server, &req.body)),
+        Route::Hub(id, action) => reply(out, act_on_hub(server, &id, action, &req.body)),
+        Route::NudgeHub => reply(out, nudge_hub(server)),
+        Route::FocusHub => reply(out, focus_hub(server)),
+        Route::Worktree(action) => reply(out, act_on_worktree(server, &action, &req.body)),
+        Route::AnswerGate(id) => reply(out, answer_gate(server, &id, &req.body)),
+        Route::Terminal(_) => no_such_route(out),
     }
+}
+
+pub(super) fn no_such_route(out: &mut impl Write) -> std::io::Result<()> {
+    http::json(out, 404, &json!({ "error": "no such route" }).to_string())
 }
 
 /// A command's answer, as the page sees it. An error is a 400 with the message in it rather
@@ -136,54 +305,9 @@ fn reply<T: serde::Serialize>(
     }
 }
 
-/// `/api/hubs/<id>/<action>` as its id and action, for the five actions there are (start, stop,
-/// close, reset and restart). The id is one path segment, percent-decoded — the page sends it through
-/// `encodeURIComponent`, and a key may hold a `/`, a space or a letter that is not ASCII. The
-/// raw segment is checked for a `/` first, so an encoded one names an id and a bare one is
-/// another route. An encoding that is not UTF-8 is an error for the caller to say, not a
-/// different route.
-pub(super) fn hub_route(path: &str) -> Option<(Result<String, String>, &str)> {
-    let (raw, action) = path.strip_prefix("/api/hubs/")?.split_once('/')?;
-    (!raw.is_empty()
-        && !raw.contains('/')
-        && matches!(action, "start" | "stop" | "close" | "reset" | "restart"))
-    .then(|| (decode_segment(raw), action))
-}
-
-/// `/api/sessions/<id>/terminal` as the session id, percent-decoded as `hub_route` does. Only
-/// the path is looked at: whether the id names a session, and one that runs in tmux, is
-/// answered once the socket is open, where the page can be told why not.
-pub(super) fn terminal_route(path: &str) -> Option<Result<String, String>> {
-    let raw = path
-        .strip_prefix("/api/sessions/")?
-        .strip_suffix("/terminal")?;
-    (!raw.is_empty() && !raw.contains('/')).then(|| decode_segment(raw))
-}
-
-/// `/api/sessions/<id>/<action>` as the session id, percent-decoded as `terminal_route` does,
-/// and the action, for the six there are besides the terminal (which is a WebSocket and
-/// answered before routing). Which of them a board serves is for `route` to say.
-pub(super) fn session_route(path: &str) -> Option<(Result<String, String>, &str)> {
-    let (raw, action) = path.strip_prefix("/api/sessions/")?.split_once('/')?;
-    (!raw.is_empty()
-        && !raw.contains('/')
-        && matches!(
-            action,
-            "link" | "git" | "resume" | "restart" | "open" | "cleanup"
-        ))
-    .then(|| (decode_segment(raw), action))
-}
-
-/// The session id in `path` when it is the route of `action` and no other.
-pub(super) fn session_route_for(path: &str, action: &str) -> Option<Result<String, String>> {
-    session_route(path)
-        .filter(|(_, found)| *found == action)
-        .map(|(id, _)| id)
-}
-
 /// `%XX` escapes in one path segment, and nothing else: unlike a query string, a `+` here is a
 /// plus.
-fn decode_segment(raw: &str) -> Result<String, String> {
+pub(super) fn decode_segment(raw: &str) -> Result<String, String> {
     let bytes = raw.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -203,11 +327,4 @@ fn decode_segment(raw: &str) -> Result<String, String> {
         i += 3;
     }
     String::from_utf8(out).map_err(|_| format!("the id is not valid UTF-8: {raw}"))
-}
-
-/// The task id in `/api/tasks/{id}/{what}`, when there is exactly one.
-pub(super) fn task_id_in<'a>(path: &'a str, what: &str) -> Option<&'a str> {
-    path.strip_prefix("/api/tasks/")
-        .and_then(|rest| rest.strip_suffix(&format!("/{what}")))
-        .filter(|id| !id.is_empty() && !id.contains('/'))
 }

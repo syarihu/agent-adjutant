@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::routes::{hub_route, task_id_in};
+use super::routes::HubAction;
 use super::sessions::{input_of, text};
 use crate::board::hub::{Reopened, close, find, reset, restart, start, start_for_key, stop};
 use crate::board::{Server, settings_now};
@@ -94,16 +94,19 @@ pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
 /// Start, stop, close, reset or restart one of the repository's hubs from the board. `id` is the
 /// `hubs[].id` the page was given, so the page can only name a hub this repository was found to
 /// have.
-pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
-    let (id, action) = hub_route(path).ok_or("no such route")?;
-    let id = id?;
+pub(super) fn act_on_hub(
+    server: &Server,
+    id: &str,
+    action: HubAction,
+    body: &[u8],
+) -> Result<Value, String> {
     let input: Value = match body.is_empty() {
         true => json!({}),
         false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
     };
-    let hub = find(server, &id)?;
+    let hub = find(server, id)?;
     match action {
-        "start" => {
+        HubAction::Start => {
             let how = hub_start_of(&input)?;
             Ok(match start(server, &hub, how)? {
                 TabOutcome::Opened(done) => {
@@ -114,17 +117,16 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
                 }
             })
         }
-        "reset" => Ok(reopened("reset", reset(server, &hub)?)),
-        "restart" => Ok(reopened("restarted", restart(server, &hub)?)),
-        "stop" => {
+        HubAction::Reset => Ok(reopened("reset", reset(server, &hub)?)),
+        HubAction::Restart => Ok(reopened("restarted", restart(server, &hub)?)),
+        HubAction::Stop => {
             let was_running = stop(server, &hub)?;
             Ok(json!({ "stopped": true, "wasRunning": was_running }))
         }
-        "close" => {
+        HubAction::Close => {
             let closed = close(server, &hub)?;
             Ok(json!({ "closed": true, "wasRunning": closed.was_running, "unread": closed.unread }))
         }
-        other => Err(format!("no such action: {other}")),
     }
 }
 
@@ -182,14 +184,12 @@ fn hub_start_of(input: &Value) -> Result<HubStart, String> {
 
 /// The review bots' comments on a Jules task's PR, for the side sheet to choose from. Asked
 /// for when a person opens the list, not on every poll: it is a round trip to GitHub.
-pub(super) fn review_findings(server: &Server, path: &str) -> Result<Value, String> {
-    let id = task_id_in(path, "findings").ok_or("no such task")?;
+pub(super) fn review_findings(server: &Server, id: &str) -> Result<Value, String> {
     Ok(json!({ "findings": jules_findings(&server.ctx, id)? }))
 }
 
 /// Post the chosen comments to the PR for Jules, in the name `gh` is signed in as.
-pub(super) fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result<Value, String> {
-    let id = task_id_in(path, "relay").ok_or("no such task")?;
+pub(super) fn relay_findings(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
     let input: Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
     let chosen = input
         .get("comments")
@@ -210,8 +210,7 @@ pub(super) fn relay_findings(server: &Server, path: &str, body: &[u8]) -> Result
 }
 
 /// The board's 「再取得」: read the task's issue again, on a click and never on a poll.
-pub(super) fn fetch_issue(server: &Server, path: &str) -> Result<Value, String> {
-    let id = task_id_in(path, "issue").ok_or("no such task")?;
+pub(super) fn fetch_issue(server: &Server, id: &str) -> Result<Value, String> {
     let task = crate::task::fetch_issue(&server.ctx, id)?;
     Ok(json!({ "task": task }))
 }

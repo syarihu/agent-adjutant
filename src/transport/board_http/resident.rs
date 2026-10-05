@@ -9,7 +9,7 @@ use crate::infra::ws;
 
 use super::assets::UI_HTML;
 use super::auth::refuse;
-use super::routes::{is_page_path, route, terminal_route};
+use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
 use crate::board::view::boards;
 
@@ -57,15 +57,18 @@ fn upgrade_resident(
     reader: BufReader<TcpStream>,
 ) -> std::io::Result<()> {
     let found = split_board_path(&req.path).and_then(|(slug, rest)| {
-        let id = terminal_route(rest)?;
+        let inner = Request {
+            path: rest.to_string(),
+            ..req.clone()
+        };
+        let Ok(Some(Route::Terminal(raw))) = Route::named(&inner) else {
+            return None;
+        };
+        let id = decode_segment(raw);
         Some((resident.board(slug)?, id))
     });
     let Some((server, id)) = found else {
-        return http::json(
-            &mut stream,
-            404,
-            &json!({ "error": "no such route" }).to_string(),
-        );
+        return no_such_route(&mut stream);
     };
     match id {
         Ok(id) => super::terminal::serve(&server, &id, req, stream, reader),
@@ -84,14 +87,16 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         };
         return route(&server, &inner, out);
     }
+    if matches!(Route::named(req), Ok(Some(Route::Page))) {
+        return http::html(out, UI_HTML);
+    }
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", path) if is_page_path(path) => http::html(out, UI_HTML),
         ("GET", "/api/boards") => http::json(
             out,
             200,
             &serde_json::to_string(&boards(&resident.root, resident.port, &resident.token))
                 .unwrap_or_default(),
         ),
-        _ => http::json(out, 404, &json!({ "error": "no such route" }).to_string()),
+        _ => no_such_route(out),
     }
 }
