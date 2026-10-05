@@ -30,7 +30,7 @@ pub(super) fn split_board_path(path: &str) -> Option<(&str, &str)> {
     .then_some((slug, tail))
 }
 
-pub(super) fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::Result<()> {
+pub fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::Result<()> {
     // A connection that opens and says nothing must not hold a thread for ever: this process
     // is meant to run for days, and a browser opens speculative connections all the time.
     stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
@@ -68,7 +68,7 @@ fn upgrade_resident(
         );
     };
     match id {
-        Ok(id) => crate::cmd::board_terminal::serve(&server, &id, req, stream, reader),
+        Ok(id) => super::terminal::serve(&server, &id, req, stream, reader),
         Err(e) => http::json(&mut stream, 400, &json!({ "error": e }).to_string()),
     }
 }

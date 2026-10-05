@@ -89,10 +89,10 @@ fn the_hub_terminal_bar_leads_with_the_reset() {
     assert!(helper.contains("s.kind === 'hub'"));
     assert!(helper.contains("hubStartWhy(h) || hubWaitWhy(h)"));
     let buttons = UI_HTML.split("function sessionButtons").nth(1).unwrap();
-    let buttons = &buttons[..buttons.find("\n}\n").unwrap()];
+    let buttons = &buttons[..buttons.find("\n\u{7d}\n").unwrap()];
     assert!(buttons.contains("hubResetButton(s)"));
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
-    let bar = &bar[..bar.find("\n}\n").unwrap()];
+    let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     let gap = bar.find("tp-bar-gap").unwrap();
     assert!(bar.contains("actions ? hubResetButton(s) : null"));
     let reset = bar.find("actionButtonHtml(reset)").unwrap();

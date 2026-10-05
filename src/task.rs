@@ -51,7 +51,7 @@ pub use refresh::*;
 pub use remove::*;
 pub use update::*;
 pub use write_brief::*;
-// The board's fixture in src/cmd/serve/tests.rs writes a record by hand.
+// The board's fixture in src/board/tests.rs writes a record by hand.
 #[cfg(test)]
 pub(crate) use store::dir;
 

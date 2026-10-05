@@ -3,7 +3,7 @@
 The board terminal (`adj server`, resident boards only) renders a tmux session with
 [xterm.js](https://github.com/xtermjs/xterm.js). The files here are embedded in the binary with
 `include_str!` and served at `/b/<slug>/vendor/xterm.js` and `/b/<slug>/vendor/xterm.css`
-(see `src/cmd/serve/assets.rs`). Nothing is fetched from a CDN at run time.
+(see `src/transport/board_http/assets.rs`). Nothing is fetched from a CDN at run time.
 
 | Package | Version | Files used | Tarball | sha256 of the tarball |
 | --- | --- | --- | --- | --- |

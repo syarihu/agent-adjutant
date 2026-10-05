@@ -3,6 +3,7 @@
 //! Each of the three reads input, calls an operation and words the result. `wording` holds the
 //! answers two or more of them give the same way, so none of them has to name another to say it.
 
+pub mod board_http;
 pub mod wording;
 
 #[cfg(test)]

@@ -9,7 +9,7 @@
 //! What the page names is a session id from the board's own state; the socket and the window
 //! come from the record, never from the request.
 
-use super::serve::Server;
+use crate::board::Server;
 use crate::infra::http::Request;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
@@ -43,8 +43,9 @@ pub(super) fn serve(
 #[cfg(unix)]
 mod imp {
     use super::*;
+    use crate::board::settings_now;
     use crate::board::target_of;
-    use crate::cmd::serve::{board_session, settings_now};
+    use crate::board::view::board_session;
     use crate::infra::pty;
     use crate::infra::terminal;
     use crate::infra::ws;
@@ -91,7 +92,7 @@ mod imp {
         stream.flush()
     }
 
-    pub(in crate::cmd) fn serve(
+    pub(in crate::transport::board_http) fn serve(
         server: &Server,
         id: &str,
         req: &Request,

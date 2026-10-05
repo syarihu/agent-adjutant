@@ -4,8 +4,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::Server;
 use super::routes::{hub_route, task_id_in};
+use crate::board::Server;
 use crate::board::{hub_start_of, settings_now};
 use crate::jules::{findings as jules_findings, relay as jules_relay};
 
@@ -196,12 +196,12 @@ pub(super) fn act_on_hub(server: &Server, path: &str, body: &[u8]) -> Result<Val
             // Everything the start would refuse is refused before the hub is stopped, the
             // saved conversation included: a restart that cannot reopen it has only taken the
             // hub down. The saved session file is not touched; `--resume` reads it as it is.
-            if let Some(refusal) = crate::cmd::board_actions::hub_resume_refusal(&settings) {
+            if let Some(refusal) = crate::board::hub_resume_refusal(&settings) {
                 return Err(refusal);
             }
             let start_ctx = hub_start_context(server, &hub, settings.clone())?;
             crate::lifecycle::hub::hub_resume_check(&start_ctx)?;
-            let restarting = crate::cmd::board_actions::Restarting::claim(&hub.slug, &hub.name)?;
+            let restarting = crate::board::Restarting::claim(&hub.slug, &hub.name)?;
             let was_running =
                 crate::lifecycle::hub::stop_hub(&hub_stop_context(server, &hub, settings))?;
             match crate::lifecycle::hub::start_hub(
@@ -295,7 +295,7 @@ pub(super) fn fetch_issue(server: &Server, path: &str) -> Result<Value, String> 
 /// in its log before it redraws.
 pub(super) fn refresh_tasks(server: &Server) -> Result<Value, String> {
     let checked = crate::task::refresh(&server.ctx)?;
-    Ok(crate::cmd::task::refresh_json(&checked))
+    Ok(crate::transport::wording::refresh_json(&checked))
 }
 
 pub(super) fn nudge_hub(server: &Server) -> Result<Value, String> {
