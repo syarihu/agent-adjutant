@@ -5,7 +5,9 @@
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
 //! Pure data structures with serde serialization, and the two board-wide refusals to resume
-//! a session or a hub, which read only the settings.
+//! a session or a hub, which read only the settings. Until the transport takes the parsing
+//! (#412–#415), it also holds the request-body readers `input_of`, `text` and `hub_start_of`,
+//! and `is_window_id` and `target_of`, which name the tmux window a session is opened in.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
