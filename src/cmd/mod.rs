@@ -19,12 +19,10 @@ mod close;
 mod context;
 mod delivery;
 mod gate;
-mod gh;
 mod hub_ops;
 mod hub_title;
 mod ide_title_notify;
 mod jules;
-mod pr_poll;
 mod review_engine;
 mod serve;
 mod session;
@@ -35,6 +33,7 @@ mod tell;
 pub mod tmux;
 mod worker_ops;
 
+pub use crate::board::jobs::{HubTitles, PrPoll};
 pub use close::close;
 use context::settings_for;
 pub use context::{hub_name, show_config};
@@ -46,14 +45,12 @@ pub use gate::{
 };
 use hub_ops::{ago, print_performed};
 pub use hub_ops::{hub, hub_close, hub_stop};
-pub use hub_title::HubTitles;
 pub use ide_title_notify::{WorktreeArgs, notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
     ShowArgs as JulesShowArgs, StartArgs as JulesStartArgs, Watch as JulesWatch,
     findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
     start as jules_start,
 };
-pub use pr_poll::PrPoll;
 pub use review_engine::run as review_engine;
 pub use serve::{
     DEFAULT_PORT, HubBoard, board_json, serve, serve_for_hub, server_restart, server_start,

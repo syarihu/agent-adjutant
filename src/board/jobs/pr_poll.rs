@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::gh::{self, Notified};
+use super::notifications::{self as gh, Notified};
 use crate::registry::Context;
 use crate::task::{self, PrRef, PrTurn, Task};
 

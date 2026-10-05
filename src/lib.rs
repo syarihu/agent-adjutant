@@ -8,6 +8,7 @@
 //! `adj`), so the same code is one build rather than two, and the integration tests can
 //! drive it directly.
 
+mod board;
 mod cmd;
 mod gate;
 mod infra;
