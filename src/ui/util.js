@@ -6,10 +6,7 @@ const stampSecs = stamp => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
 };
-const updatedMs = t => {
-  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(t?.updatedAt || '');
-  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : Date.now();
-};
+const updatedMs = t => { const s = stampSecs(t?.updatedAt); return s != null ? s * 1000 : Date.now(); };
 
 const pad2 = n => String(n).padStart(2, '0');
 const baseName = path => (path || '').split('/').filter(Boolean).pop() || '';
@@ -17,18 +14,19 @@ const baseName = path => (path || '').split('/').filter(Boolean).pop() || '';
 const minutesLabel = mins => mins < 1 ? '1分未満' : mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.floor(mins / 60)}時間` : `${Math.floor(mins / 1440)}日`;
 /* Minutes since something → 「たった今」「4分前」「2時間前」「3日前」. Floors, like minutesLabel. */
 const agoLabel = mins => mins < 1 ? 'たった今' : `${minutesLabel(mins)}前`;
+/* Whole minutes from `secs` to `nowSecs`, never below 0. The caller passes its own clock. */
+const minutesSince = (secs, nowSecs) => Math.max(0, Math.floor((nowSecs - secs) / 60));
 
 function sinceLabel(secs) {
   if (secs == null) return '';
-  return agoLabel(Math.max(0, Math.floor((Date.now() / 1000 - secs) / 60)));
+  return agoLabel(minutesSince(secs, Date.now() / 1000));
 }
 
 /* `20260922T041233Z` → 「4分前」. The stamp is UTC and says so; the reader wants neither. */
 function ago(stamp) {
-  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
-  if (!m) return stamp || '';
-  const then = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  return agoLabel(Math.max(0, Math.floor((Date.now() - then) / 60000)));
+  const secs = stampSecs(stamp);
+  if (secs == null) return stamp || '';
+  return agoLabel(minutesSince(secs, Date.now() / 1000));
 }
 
 /* Render markdown into safe HTML: headings (H1-H5), code blocks, tables, lists, blockquotes,
@@ -216,7 +214,7 @@ function when(stamp) {
   const secs = stampSecs(stamp);
   if (secs == null) return stamp || '';
   const d = new Date(secs * 1000);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 /* A URL a link may point at: http or https only. The issue URL is typed into a form and
@@ -253,5 +251,5 @@ const DECISION_LABEL_OF_KIND = {
 const decisionLabel = (decision, kind) =>
   DECISION_LABEL_OF_KIND[kind]?.[decision] || DECISION_LABEL[decision] || decision;
 
-const DECISION = { approve:'承認した', changes:'修正を指示した', reject:'却下した', choice:'案を選んだ',
+const DECISION = { approve:'承認した', changes:'差し戻した', reject:'見送った', choice:'案を選んだ',
                    ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };

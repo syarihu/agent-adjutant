@@ -10,7 +10,7 @@ const actLabel = (action, kind) => decisionLabel(sentDecision(action, kind), kin
 /* Minutes since the worker entered its phase, by the server's clock so a laptop that slept
    does not make every card look stuck. */
 const phaseMinutes = w => w && w.phaseAt != null && state.now != null
-  ? Math.max(0, Math.floor((state.now - w.phaseAt) / 60)) : null;
+  ? minutesSince(w.phaseAt, state.now) : null;
 
 /* Minutes the worker has had the ball: since it entered its phase, or since a person last
    answered its gate, whichever is later. */
@@ -18,7 +18,7 @@ const workerMinutes = (task, w) => {
   const mins = phaseMinutes(w);
   const answered = stampSecs(task.gateAnsweredAt);
   if (mins == null || answered == null || state.now == null) return mins;
-  return Math.min(mins, Math.max(0, Math.floor((state.now - answered) / 60)));
+  return Math.min(mins, minutesSince(answered, state.now));
 };
 
 /* Why a card is stuck, or null. A badge rather than a column: moved to a column of its own,
@@ -34,7 +34,7 @@ function stuckOf(task) {
   if (task.executor === 'jules') {
     if (openGate(task)) return null;
     const since = Math.max(updatedMs(task), (stampSecs(task.gateAnsweredAt) || 0) * 1000);
-    const mins = Math.floor((Date.now() - since) / 60000);
+    const mins = minutesSince(since / 1000, Date.now() / 1000);
     const limit = state.stuckAfterMinutes;
     return limit > 0 && mins >= limit ? `計画が ${minutesLabel(mins)} 止まっています` : null;
   }

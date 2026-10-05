@@ -240,8 +240,9 @@ function humanGateCard(gate, col) {
   el.dataset.id = gateRef(gate);
   if (gate._slug) el.dataset.slug = gate._slug;
 
-  const mins = stampSecs(gate.openedAt) ? Math.max(0, Math.floor((Date.now() - stampSecs(gate.openedAt) * 1000) / 60000)) : 0;
-  const wtName = gate.worktree ? gate.worktree.split('/').pop() : gate.id;
+  const opened = stampSecs(gate.openedAt);
+  const mins = opened ? minutesSince(opened, Date.now() / 1000) : 0;
+  const wtName = baseName(gate.worktree) || gate.id;
   const why = gate.problem || gate.why || stopWhy(gate).join(' / ') || gate.title;
 
   el.innerHTML = `
@@ -391,7 +392,7 @@ function agentCard(task) {
   }
 
   // 9. Footer row: slug & buttons
-  const worktreeSlug = task.worktree ? task.worktree.split('/').pop() : '';
+  const worktreeSlug = baseName(task.worktree);
   const branchSlug = task.branch || '';
   const hasSlug = worktreeSlug || branchSlug || (!issueNumber && task.id);
   const hasButtons = task.worktree || task.status === 'backlog';
@@ -451,7 +452,7 @@ function sessionCard(w) {
 
   const missing = !!w.task && !(state.tasks || []).some(t => t.id === w.task && (!w._slug || t._slug === w._slug));
   const what = missing ? 'タスク ID はこのボードに見つかりません' : 'タスクのレコードがないセッション';
-  const folder = (w.worktree || '').split('/').filter(Boolean).pop() || w.name || '';
+  const folder = baseName(w.worktree) || w.name || '';
   const name = s ? sessionKey(s) : folder;
   const icon = n => `<span class="material-symbols-outlined" style="font-size:14px;">${n}</span>`;
 

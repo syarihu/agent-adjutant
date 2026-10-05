@@ -75,7 +75,7 @@ function sessionKey(s, data = state) {
     const h = (data.hubs || []).find(x => x.id === s.id);
     return h ? hubShortName(h) : s.id;
   }
-  return (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
+  return baseName(s.worktree) || s.id;
 }
 
 /* What a row and the panel's head title a session with: `title` is the repository's name for its
@@ -101,8 +101,7 @@ function sessionLabel(s, ask = false, data = state) {
 
 function lastOutputText(s, data = state) {
   if (data.now == null || s.lastActivityAt == null) return null;
-  const mins = Math.max(0, Math.floor((data.now - s.lastActivityAt) / 60));
-  return mins < 1 ? 'たった今' : `${minutesLabel(mins)}前`;
+  return agoLabel(minutesSince(s.lastActivityAt, data.now));
 }
 
 /* `s` as the list and the address name it: a session of 「すべて」 is told apart by the board it

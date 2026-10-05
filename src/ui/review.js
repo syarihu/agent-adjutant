@@ -75,7 +75,7 @@ function reviewRowHtml(g, cur, done) {
       <span class="w rv-row-when">${done ? esc(DECISION[done.decision === 'close' ? 'closed' : done.decision] || done.decision) : ago(g.openedAt)}</span>
     </div>
     <div class="t">${esc(g.title)}</div>
-    <div class="rv-row-wt">${esc(g.worktree ? g.worktree.split('/').pop() : '')}</div>
+    <div class="rv-row-wt">${esc(baseName(g.worktree))}</div>
   </button>`;
 }
 

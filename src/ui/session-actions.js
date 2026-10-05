@@ -174,7 +174,7 @@ function runSessionAction(act, s) {
 function restartWarnings(s) {
   const out = [];
   if (s.waiting) {
-    out.push(`確認待ち（${gateKindLabel(s.waiting.kind)}${s.waiting.title ? `: ${s.waiting.title}` : ''}）があります。gate は残り再起動後も答えられますが、待っている途中の処理は中断されます。`);
+    out.push(`確認待ち（${kindOf(s.waiting.kind)[0]}${s.waiting.title ? `: ${s.waiting.title}` : ''}）があります。gate は残り再起動後も答えられますが、待っている途中の処理は中断されます。`);
   }
   if (s.present && sessionActivity(s) === 'working') {
     out.push(`直近 1 分以内に出力があり、作業の途中かもしれません${s.phase ? `（フェーズ: ${s.phase}）` : ''}。実行中のコマンドや書きかけの返答は中断されます。`);
@@ -193,7 +193,7 @@ function openRestartDialog(s) {
   const why = restartWhy(s);
   if (why) return note(`セッションを再起動できません: ${why}`, true);
   restartTarget = s;
-  const name = (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
+  const name = baseName(s.worktree) || s.id;
   sessEl('sess-restart-lead').textContent = `${name} の worker を閉じて、同じ worktree で同じ会話を再開します（開き直す tmux のウィンドウでは adj worker --resume --worktree ${s.worktree} が動きます）。`;
   fillWarnings('sess-restart-warnings', restartWarnings(s));
   sessEl('sess-restart-note').textContent = 'worktree・outbox・gate の記録は残り、再開した worker は outbox を確認して続きから進めます。';
@@ -244,9 +244,6 @@ async function sessRestart(s) {
   });
 }
 
-const GATE_KIND_LABEL = { result: '結果の確認', issue: '起票の確認', relay: '連絡' };
-const gateKindLabel = kind => GATE_KIND_LABEL[kind] || humanLabel(kind);
-
 /* ── Clean up a worktree ── */
 let cleanupTarget = null;
 
@@ -271,7 +268,7 @@ function cleanupFactsHtml(s, git) {
 
 async function openCleanupDialog(s) {
   if (restartingNow(s)) return note('再起動しています。終わってから操作してください', true);
-  const name = (s.worktree || '').split('/').filter(Boolean).pop() || s.id;
+  const name = baseName(s.worktree) || s.id;
   cleanupTarget = { s, name };
   sessEl('cleanup-name').textContent = name;
   sessEl('cleanup-path').textContent = s.worktree;

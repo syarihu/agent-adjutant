@@ -607,7 +607,7 @@ function renderTaskView() {
     <div class="row" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
       <span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>
       ${worker && worker.present && worker.phase ? `<span style="font-size:12px;color:var(--md-sys-color-primary);font-weight:600;">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
-      ${task.worktree ? `<span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.worktree.split('/').pop())}</code></span>` : ''}
+      ${task.worktree ? `<span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(baseName(task.worktree))}</code></span>` : ''}
       ${task.branch ? `<span>ブランチ: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.branch)}</code></span>` : ''}
       ${stuckOf(task) ? `<span class="m3-pill pill-critical" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuckOf(task))}</span></span>` : ''}
       ${task.worktree ? `

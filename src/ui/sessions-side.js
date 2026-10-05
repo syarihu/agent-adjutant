@@ -78,7 +78,7 @@ function gitFactsHtml(s) {
     body = items.map(t => `<li>${esc(t)}</li>`).join('');
     if (g.error) body += `<li class="warn">${esc(`更新できませんでした: ${g.error}`)}</li>`;
   }
-  const mins = g.at != null ? Math.max(0, Math.floor((Date.now() - g.at) / 60000)) : null;
+  const mins = g.at != null ? minutesSince(g.at / 1000, Date.now() / 1000) : null;
   const when = mins == null ? '' : mins < 1 ? 'たった今確認' : `${minutesLabel(mins)}前に確認`;
   return `<ul class="sess-side-facts">${body}</ul>` +
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
@@ -119,7 +119,7 @@ function sessDetailHtml(s, pane) {
   return `<div class="sess-detail">
     <div class="m3-filled-card">${secTitle('このセッション')}${sideNote(what)}${jump}${link}</div>
     <div class="m3-filled-card">${secTitle('ブランチと worktree')}
-      <div class="tp-kvs">${monoKv('ブランチ', s.branch || '—')}${s.worktree ? monoKv('worktree', s.worktree.split('/').pop(), s.worktree) : ''}</div>
+      <div class="tp-kvs">${monoKv('ブランチ', s.branch || '—')}${s.worktree ? monoKv('worktree', baseName(s.worktree), s.worktree) : ''}</div>
       ${gitFactsHtml(s)}
       ${acts ? `<div class="tp-gate-actions">${acts}</div>` : ''}
     </div>
@@ -131,11 +131,11 @@ function sessGateHtml(s) {
   const w = s.waiting;
   if (!w) return '';
   const since = stampSecs(w.openedAt);
-  const mins = since != null && state.now != null ? Math.max(0, Math.floor((state.now - since) / 60)) : null;
+  const mins = since != null && state.now != null ? minutesSince(since, state.now) : null;
   return `<div class="m3-card-attention-box">
       <div class="tp-gate-head">
         <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
-        <span>【${esc(gateKindLabel(w.kind))}】確認待ち</span>
+        <span>【${esc(kindOf(w.kind)[0])}】確認待ち</span>
         ${mins == null ? '' : `<span class="tp-gate-wait">${esc(minutesLabel(mins))}待ち</span>`}
       </div>
       ${w.title ? `<div style="font-size:12.5px;">${esc(w.title)}</div>` : ''}

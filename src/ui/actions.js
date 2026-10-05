@@ -70,7 +70,7 @@ function openIdeDialog() {
 let closeTarget = null;
 function openCloseDialog(worktree) {
   closeTarget = worktree;
-  document.getElementById('close-worktree-name').textContent = worktree.split('/').pop();
+  document.getElementById('close-worktree-name').textContent = baseName(worktree);
   document.getElementById('close-worktree-path').textContent = worktree;
   const dialog = document.getElementById('close-dialog');
   dialog.returnValue = '';
