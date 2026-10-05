@@ -5,12 +5,10 @@
 //! and tmux details), its task and git context, and its lifecycle status.
 //!
 //! Pure data structures with serde serialization, and the two board-wide refusals to resume
-//! a session or a hub, which read only the settings. Until the transport takes the parsing
-//! (#412–#415), it also holds the request-body readers `input_of` and `text`,
-//! and `is_window_id` and `target_of`, which name the tmux window a session is opened in.
+//! a session or a hub, which read only the settings. It also holds `is_window_id` and
+//! `target_of`, which name the tmux window a session is opened in.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::infra::terminal::SessionTerminal;
 use crate::kernel::runner;
@@ -208,27 +206,6 @@ pub fn hub_resume_refusal(settings: &crate::kernel::config::Settings) -> Option<
         return Some(refusal);
     }
     own_hub_runner_refusal(settings)
-}
-
-pub fn input_of(body: &[u8]) -> Result<Value, String> {
-    let input: Value = match body.is_empty() {
-        true => json!({}),
-        false => serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?,
-    };
-    match input.is_object() {
-        true => Ok(input),
-        false => Err("expected an object".to_string()),
-    }
-}
-
-/// A string field, trimmed; blank and `null` are absent. Anything that is not a string is
-/// refused rather than read as absent, as `TaskPatch::from_json` does for a task update.
-pub fn text<'a>(input: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
-    match input.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(v)) => Ok(Some(v.trim()).filter(|s| !s.is_empty())),
-        Some(other) => Err(format!("{key} has to be a string, not {other}")),
-    }
 }
 
 /// A tmux window id: `@` and digits, the only thing a record's `window` is allowed to be.

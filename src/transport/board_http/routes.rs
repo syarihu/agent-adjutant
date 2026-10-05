@@ -5,7 +5,6 @@ use std::net::TcpStream;
 
 use serde_json::json;
 
-use crate::board::session::start_request;
 use crate::infra::http::{self, Request};
 
 use super::assets::{UI_HTML, vendor_asset};
@@ -15,7 +14,8 @@ use super::handlers::{
     refresh_tasks, relay_findings, review_findings, start_parent_hub, update_task,
 };
 use super::sessions::{
-    clean_up_session, git_of_session, open_session, restart_session, resume_session,
+    clean_up_session, git_of_session, link_session, open_session, restart_session, resume_session,
+    start_session,
 };
 use crate::board::Server;
 use crate::board::view::{state, task_history};
@@ -80,11 +80,11 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
             reply(out, update_task(server, req.tail(), &req.body))
         }
         ("POST", "/api/refresh") => reply(out, refresh_tasks(server)),
-        ("POST", "/api/sessions") => reply(out, start_request(server, &req.body)),
+        ("POST", "/api/sessions") => reply(out, start_session(server, &req.body)),
         ("POST", path) if session_route_for(path, "link").is_some() => {
             let result = session_route_for(path, "link")
                 .unwrap_or_else(|| Err("no such route".to_string()))
-                .and_then(|id| crate::board::session::link(server, &id, &req.body));
+                .and_then(|id| link_session(server, &id, &req.body));
             reply(out, result)
         }
         // Only on the resident's boards, like the hub actions below: reopening a session,

@@ -1,10 +1,7 @@
-use serde_json::{Value, json};
-
-use crate::board::{Server, input_of, settings_now, text};
+use crate::board::{Server, settings_now};
 use crate::kernel::runner;
 use crate::lifecycle::hub::{HubStart, TabOutcome, hub_startable, start_hub};
-use crate::mail::RepoHub;
-use crate::mail::{self, Message};
+use crate::mail::{self, DeliveryOutcome, Message, RepoHub};
 use crate::registry::{self, Context};
 use crate::session::SessionRequest;
 use crate::task;
@@ -75,24 +72,43 @@ fn dated_name(epoch_secs: i64) -> String {
 pub(super) fn start_if_stopped(
     server: &Server,
     ctx: &Context,
-    delivered: &crate::mail::DeliveryOutcome,
-) -> (bool, Option<String>) {
+    delivered: &DeliveryOutcome,
+) -> Result<bool, String> {
     if delivered.is_present() || !server.resident || !hub_startable(&ctx.settings.terminal) {
-        return (false, None);
+        return Ok(false);
     }
     match start_hub(ctx, HubStart::Auto) {
-        Ok(TabOutcome::Opened(_)) => (true, None),
-        Ok(TabOutcome::AlreadyRunning(_)) => (false, None),
-        Err(e) => (false, Some(e)),
+        Ok(TabOutcome::Opened(_)) => Ok(true),
+        Ok(TabOutcome::AlreadyRunning(_)) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 
 /// The inbox file name of a delivered message, which is what `hubs[].inbox[].name` calls it.
-pub(super) fn inbox_name(delivered: &crate::mail::DeliveryOutcome) -> Option<String> {
+pub fn inbox_name(delivered: &DeliveryOutcome) -> Option<String> {
     delivered
         .path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
+}
+
+/// What the person asked for when starting a session with no task. Strings are trimmed and a
+/// blank one is absent; an absent instruction is "".
+pub struct StartSession {
+    pub instruction: String,
+    pub agent: Option<String>,
+    pub worktree_name: Option<String>,
+    pub hub: Option<String>,
+}
+
+/// What asking a hub to start a session came to.
+pub struct SessionAsked {
+    pub delivered: DeliveryOutcome,
+    pub worktree_name: String,
+    /// The `hubs[].id` of the hub that was asked.
+    pub hub: String,
+    /// Whether a stopped hub was started for the message, or why it could not be.
+    pub hub_started: Result<bool, String>,
 }
 
 /// Ask a hub to start a session with no task.
@@ -101,33 +117,26 @@ pub(super) fn inbox_name(delivered: &crate::mail::DeliveryOutcome) -> Option<Str
 /// --unique`), creates the worktree and starts the worker, so the checks here are the ones
 /// that spare the person a request that can only fail — a name git refuses, an agent this
 /// board cannot start, a machine with every worker slot taken.
-pub fn start_request(server: &Server, body: &[u8]) -> Result<Value, String> {
-    let input = input_of(body)?;
+pub fn start(server: &Server, request: StartSession) -> Result<SessionAsked, String> {
     let settings = settings_now(server);
-    // Optional: the worker greets the person and waits when there is none.
-    let instruction = text(&input, "instruction")?.unwrap_or("");
-    // The brief writes a missing instruction as `-`, so the hub could not tell this one apart.
-    if instruction.trim() == "-" {
-        return Err("an instruction of only `-` means no instruction; leave it empty".to_string());
-    }
     let configured = runner::agent_from_runner(
         settings
             .agent_runner
             .as_deref()
             .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
     );
-    let agent = text(&input, "agent")?.unwrap_or(&configured);
+    let agent = request.agent.as_deref().unwrap_or(&configured);
     if agent != configured {
         return Err(format!(
             "only {configured} can be started: it is the agent the worker runner is set to"
         ));
     }
-    let name = match text(&input, "worktreeName")? {
+    let name = match request.worktree_name {
         Some(name) => {
-            task::check_worktree_name(name)?;
-            name.to_string()
+            task::check_worktree_name(&name)?;
+            name
         }
-        None => derived_name(instruction, crate::infra::clock::now_secs()),
+        None => derived_name(&request.instruction, crate::infra::clock::now_secs()),
     };
     // Unlike a task, a session request has no record to wait in for a free slot, so a full
     // machine is refused here rather than left for the hub to turn away. The check is advisory:
@@ -145,11 +154,11 @@ pub fn start_request(server: &Server, body: &[u8]) -> Result<Value, String> {
             ));
         }
     }
-    let (hub, ctx) = hub_context(server, text(&input, "hub")?, settings)?;
-    let request = SessionRequest {
+    let (hub, ctx) = hub_context(server, request.hub.as_deref(), settings)?;
+    let session = SessionRequest {
         agent: agent.to_string(),
         worktree_name: name.clone(),
-        instruction: instruction.to_string(),
+        instruction: request.instruction,
     };
     let message = Message {
         from: "dashboard".to_string(),
@@ -157,21 +166,16 @@ pub fn start_request(server: &Server, body: &[u8]) -> Result<Value, String> {
         worktree: None,
         kind: "session".to_string(),
         subject: format!("start a session: {name}"),
-        body: request.render_request(),
+        body: session.render_request(),
     };
-    let delivered = crate::mail::deliver_to_hub(&ctx, &message)?;
-    let (started, start_error) = start_if_stopped(server, &ctx, &delivered);
-    let mut reply = json!({
-        "handed": crate::mail::Handed::from(&delivered),
-        "hubStarted": started,
-        "worktreeName": name,
-        "hub": hub.id,
-        "message": inbox_name(&delivered),
-    });
-    if let Some(e) = start_error {
-        reply["hubStartError"] = json!(e);
-    }
-    Ok(reply)
+    let delivered = mail::deliver_to_hub(&ctx, &message)?;
+    let hub_started = start_if_stopped(server, &ctx, &delivered);
+    Ok(SessionAsked {
+        delivered,
+        worktree_name: name,
+        hub: hub.id,
+        hub_started,
+    })
 }
 
 #[cfg(test)]

@@ -5,8 +5,9 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::routes::{hub_route, task_id_in};
+use super::sessions::{input_of, text};
 use crate::board::hub::{Reopened, close, find, reset, restart, start, start_for_key, stop};
-use crate::board::{Server, input_of, settings_now, text};
+use crate::board::{Server, settings_now};
 use crate::jules::{findings as jules_findings, relay as jules_relay};
 use crate::lifecycle::hub::{HubStart, TabOutcome};
 
