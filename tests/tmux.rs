@@ -24,18 +24,6 @@ fn tmux_config(socket: &str, session: &str) -> String {
     .to_string()
 }
 
-fn forge_worker_record(worktree: &Path, pid: u32) -> PathBuf {
-    let record = worktree.join(".claude").join("adjutant-worker.json");
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    std::fs::write(
-        &record,
-        serde_json::json!({"pid": pid, "title": "WID-957", "psStarted": ps_started(pid)})
-            .to_string(),
-    )
-    .unwrap();
-    record
-}
-
 #[test]
 fn tmux_work_dry_run_generates_tmux_spawn_command() {
     let config = serde_json::json!({

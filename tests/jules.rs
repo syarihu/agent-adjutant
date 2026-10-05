@@ -22,13 +22,12 @@ fn config(jules_key: &str) -> String {
 /// might do, so the test can see that the key is taken out of it.
 fn stub_curl(fixture: &Fixture) -> (String, PathBuf, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let args = fixture.repo.join("curl-args");
     let stdin = fixture.repo.join("curl-stdin");
-    let curl = stubs.join("curl");
-    std::fs::write(
-        &curl,
-        format!(
+    stub_bin(
+        &stubs,
+        "curl",
+        &format!(
             "#!/bin/sh\n\
              printf '%s\\n' \"$@\" > {args}\n\
              cat > {stdin}\n\
@@ -43,27 +42,18 @@ fn stub_curl(fixture: &Fixture) -> (String, PathBuf, PathBuf) {
             args = shell_quoted(&args.to_string_lossy()),
             stdin = shell_quoted(&stdin.to_string_lossy()),
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     // `adj jules start` asks `gh` who is signed in, and the real one would answer about the
     // developer running the suite.
-    let gh = stubs.join("gh");
-    if !gh.exists() {
-        std::fs::write(
-            &gh,
+    if !stubs.join("gh").exists() {
+        stub_bin(
+            &stubs,
+            "gh",
             "#!/bin/sh
 case \"$1 $2\" in 'api user') echo someone ;; *) exit 1 ;; esac\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
     }
-    let path = format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let path = path_with(&stubs);
     (path, args, stdin)
 }
 
@@ -529,41 +519,6 @@ fn two_starts_for_one_task_at_once_create_one_session() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("already with Jules"));
 }
 
-/// `/api/state` from a running board, whole.
-fn board_state(url: &str) -> serde_json::Value {
-    let rest = url.strip_prefix("http://").unwrap();
-    let (host, query) = rest.split_once('/').unwrap();
-    let token = query.split("token=").nth(1).unwrap();
-    let mut stream = std::net::TcpStream::connect(host).unwrap();
-    write!(
-        stream,
-        "GET /api/state?token={token} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-    )
-    .unwrap();
-    let mut answer = String::new();
-    std::io::Read::read_to_string(&mut stream, &mut answer).unwrap();
-    let body = answer.split_once("\r\n\r\n").unwrap().1;
-    serde_json::from_str(body).unwrap()
-}
-
-/// A board serving this fixture with `curl` stubbed, and the URL it printed.
-fn serve(fixture: &Fixture, path: &str) -> (Reaped, String) {
-    let mut child = Reaped(
-        fixture
-            .command(["serve", "--port", "0", "--no-open"])
-            .env("PATH", path)
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let mut said = String::new();
-    std::io::BufReader::new(child.stdout.as_mut().unwrap())
-        .read_line(&mut said)
-        .unwrap();
-    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
-    (child, url)
-}
-
 #[test]
 fn the_board_shows_the_session_and_moves_its_task_to_review_once_the_pr_is_open() {
     let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
@@ -580,12 +535,12 @@ fn the_board_shows_the_session_and_moves_its_task_to_review_once_the_pr_is_open(
         "--no-hand-over",
     ]);
     let (path, _, _) = stub_curl(&fixture);
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     // The first answer is asked for in the background; the card says so until it lands.
     let mut seen = serde_json::Value::Null;
     for _ in 0..100 {
-        let state = board_state(&url);
+        let state = fetch_state(&url);
         let task = state["tasks"]
             .as_array()
             .unwrap()
@@ -640,12 +595,12 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
         "--no-hand-over",
     ]);
     let (path, args, _) = stub_curl(&fixture);
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
     // The state shows once the answer is stored, and the answer is stored after it has been
     // acted on — so from here on, a message would already be in the inbox.
     let mut answered = false;
     for _ in 0..100 {
-        if board_state(&url)["tasks"][0]["jules"]["state"] == "COMPLETED" {
+        if fetch_state(&url)["tasks"][0]["jules"]["state"] == "COMPLETED" {
             answered = true;
             break;
         }
@@ -665,7 +620,6 @@ fn a_task_that_already_has_its_pr_is_not_announced_again() {
 /// posted comment.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
     let posted = fixture.repo.join("gh-posted");
     let listed = fixture.repo.join("gh-listed");
     let comments = [
@@ -686,10 +640,10 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
             .join("\n"),
     )
     .unwrap();
-    let gh = stubs.join("gh");
-    std::fs::write(
-        &gh,
-        format!(
+    stub_bin(
+        &stubs,
+        "gh",
+        &format!(
             "#!/bin/sh\n\
              case \"$1 $2\" in\n\
              'api user') echo someone ;;\n\
@@ -700,15 +654,8 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
             listed = shell_quoted(&listed.to_string_lossy()),
             posted = shell_quoted(&posted.to_string_lossy()),
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
     );
+    let path = path_with(&stubs);
     (path, posted)
 }
 
@@ -850,11 +797,11 @@ fn new_review_comments_on_a_jules_pr_are_brought_to_the_hub_once() {
     // Both stubs live in the same directory, so either path finds both.
     let _ = stub_curl(&fixture);
     let (path, _) = stub_gh(&fixture);
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     let mut told = None;
     for _ in 0..100 {
-        let _ = board_state(&url);
+        let _ = fetch_state(&url);
         let listed = fixture.json(&["pending", "--json"]);
         if let Some(m) = listed["messages"]
             .as_array()
@@ -1104,7 +1051,7 @@ fn a_board_that_listed_findings_sees_an_account_switched_since() {
     task["julesBy"] = serde_json::json!("someone-else");
     std::fs::write(&record, task.to_string()).unwrap();
     let (path, posted) = stub_gh(&fixture);
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     // Listed while `gh` is signed in as `someone`, which the board keeps for the listing.
     let (status, _) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
@@ -1144,7 +1091,7 @@ fn a_gh_that_hangs_on_the_listing_does_not_hold_the_board_request() {
         "the stub changed"
     );
     std::fs::write(&gh, script).unwrap();
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     let started = std::time::Instant::now();
     let (status, body) = board_request(&url, "GET", &format!("/api/tasks/{id}/findings"), "");
@@ -1171,7 +1118,7 @@ fn a_gh_that_exits_but_leaves_its_pipes_open_on_the_post_does_not_hold_the_relay
         "the stub changed"
     );
     std::fs::write(&gh, script).unwrap();
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     let started = std::time::Instant::now();
     let (status, body) = board_request(
@@ -1217,7 +1164,7 @@ fn a_gh_that_hangs_on_the_post_does_not_hold_the_relay() {
         "the stub changed"
     );
     std::fs::write(&gh, script).unwrap();
-    let (mut board, url) = serve(&fixture, &path);
+    let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
     let started = std::time::Instant::now();
     let (status, body) = board_request(

@@ -49,13 +49,6 @@ fn forge_last_alive(fixture: &Fixture, slug: &str, session: &str, secs_ago: i64)
     .unwrap();
 }
 
-fn set_config(fixture: &Fixture, key: &str, value: serde_json::Value) {
-    let mut config: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
-    config[key] = value;
-    std::fs::write(&fixture.config, config.to_string()).unwrap();
-}
-
 /// Start a hub through the stub runner and hand back the session it saved.
 fn started_hub_session(fixture: &Fixture) -> String {
     fixture.ok(&["hub"]);

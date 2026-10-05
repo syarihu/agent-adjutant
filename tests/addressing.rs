@@ -606,13 +606,6 @@ fn an_identifier_that_reads_like_a_flag_is_handed_down_as_one_argument() {
     );
 }
 
-fn set_config(fixture: &Fixture, key: &str, value: serde_json::Value) {
-    let mut config: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
-    config[key] = value;
-    std::fs::write(&fixture.config, config.to_string()).unwrap();
-}
-
 /// `agentEnv` may name the identifier, as a default. The command that starts an agent then
 /// claims the hub the agent is going to address, rather than the repository's own.
 ///

@@ -350,21 +350,13 @@ fn a_hub_is_not_opened_in_a_tab_when_ps_cannot_answer_for_the_record() {
     // A `ps` that fails *with something on stderr*: that is what tells "I could not do
     // that" from "no such process", and only the second is an answer.
     let stubs = fixture.repo.join("stub-bin");
-    std::fs::create_dir_all(&stubs).unwrap();
-    let ps = stubs.join("ps");
-    std::fs::write(
-        &ps,
+    stub_bin(
+        &stubs,
+        "ps",
         "#!/bin/sh\necho 'ps: cannot do that here' >&2\nexit 1\n",
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
-    // Prepended rather than replacing: the binary still has to find the real `git`.
-    let path = format!(
-        "{}:{}",
-        stubs.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
     );
+    // Prepended rather than replacing: the binary still has to find the real `git`.
+    let path = path_with(&stubs);
 
     let out = fixture
         .command(["hub", "--tab"])

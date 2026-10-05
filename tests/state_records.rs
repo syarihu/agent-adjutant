@@ -74,11 +74,6 @@ fn task_file(fixture: &Fixture) -> PathBuf {
         .join(format!("{TASK_ID}.json"))
 }
 
-fn tool_result(response: &Json) -> Json {
-    let text = response["result"]["content"][0]["text"].as_str().unwrap();
-    parse(text)
-}
-
 /// Every key `before` has is in `after` with the same value, except those a command was
 /// expected to change. A key the binary does not know is the point, but so is every other:
 /// a write that dropped `psStarted` would be as much of a loss.

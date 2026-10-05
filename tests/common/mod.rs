@@ -576,7 +576,6 @@ pub struct Spy {
 
 impl Spy {
     pub fn new(dir: &Path) -> Spy {
-        use std::os::unix::fs::PermissionsExt;
         let bin = dir.join("spybin");
         std::fs::create_dir_all(&bin).unwrap();
         let log = dir.join("spy.log");
@@ -589,26 +588,20 @@ impl Spy {
             if real.is_empty() {
                 continue;
             }
-            let script = bin.join(tool);
-            std::fs::write(
-                &script,
-                format!(
+            stub_bin(
+                &bin,
+                tool,
+                &format!(
                     "#!/bin/sh\necho \"{tool} $*\" >> '{}'\nexec '{real}' \"$@\"\n",
                     log.display()
                 ),
-            )
-            .unwrap();
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            );
         }
         Spy { bin, log }
     }
 
     pub fn path(&self) -> String {
-        format!(
-            "{}:{}",
-            self.bin.display(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        path_with(&self.bin)
     }
 
     /// Forget what was asked so far, such as by a server still coming up.
@@ -624,4 +617,189 @@ impl Spy {
             .map(str::to_string)
             .collect()
     }
+}
+
+// ── helpers shared between test files ──
+
+pub fn set_config(fixture: &Fixture, key: &str, value: serde_json::Value) {
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture.config).unwrap()).unwrap();
+    config[key] = value;
+    std::fs::write(&fixture.config, config.to_string()).unwrap();
+}
+
+/// A GET whose own query is `query`, with the token added after it.
+pub fn get_with_query(resident: &Resident, path: &str, query: &str) -> (u16, String) {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", resident.port)).unwrap();
+    write!(
+        stream,
+        "GET {path}?{query}&token={} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        resident.token
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        body.to_string(),
+    )
+}
+
+/// A worker record for `pid`, carrying the start time the system reports for it — the
+/// anchor that tells that process from whatever the pid is handed to next.
+pub fn forge_worker_record(worktree: &Path, pid: u32) -> PathBuf {
+    let record = worktree.join(".claude").join("adjutant-worker.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({"pid": pid, "title": "WID-957", "psStarted": ps_started(pid)})
+            .to_string(),
+    )
+    .unwrap();
+    record
+}
+
+/// A process standing in for a worker: it stays until something kills it, and really does
+/// disappear when something does.
+///
+/// Not simply a `sleep` spawned by the test. That would be the test's own child, and a
+/// child nobody has waited for stays a zombie once it dies — `ps -o lstart=` answers for a
+/// zombie exactly as it answers for a live process, so a test that killed one would be
+/// asserting that `close` sees a death at the one moment the system still reports life, and
+/// would pass against an implementation that never checked at all.
+///
+/// So it is a *grandchild*: spawned under a shell that then sits in `wait`, which gives it
+/// a live parent to reap it the instant it goes. `ps` says "no such process" from then on.
+///
+/// It blocks on a pipe this test holds rather than sleeping for a while, so nothing here
+/// depends on a stand-in outliving the rest of the test — a timeout would be a second way
+/// for a correct implementation to fail, on a slow enough machine. Closing the pipe is also
+/// what cleans up after a test run that was killed outright: the read reaches end of file
+/// and the process exits on its own. `cat <&3` rather than plain `cat` because a shell
+/// points a background job's stdin at `/dev/null` unless the redirect is written out, and
+/// `cat` on `/dev/null` is a stand-in that exits immediately.
+pub struct Sleeper {
+    shell: std::process::Child,
+    /// `None` only while `new` is still assembling one. The value exists before the pid is
+    /// read so that a panic during construction still runs `Drop`: a value that never
+    /// finished being built is never dropped, and both processes would be left behind.
+    pid: Option<u32>,
+}
+
+impl Sleeper {
+    pub fn new() -> Sleeper {
+        let shell = Command::new("sh")
+            .args(["-c", "exec 3<&0; cat <&3 >/dev/null & echo $!; wait"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            // The shell announces the kill on stderr, which is this test's own doing and
+            // not something a reader of the suite's output should have to explain.
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut sleeper = Sleeper { shell, pid: None };
+        let mut line = String::new();
+        std::io::BufReader::new(sleeper.shell.stdout.as_mut().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        sleeper.pid = Some(line.trim().parse().unwrap());
+        assert!(
+            !ps_started(sleeper.pid()).is_empty(),
+            "the stand-in worker was not running to begin with"
+        );
+        sleeper
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid.expect("the stand-in worker has no pid")
+    }
+}
+
+impl Drop for Sleeper {
+    fn drop(&mut self) {
+        // By closing the pipe, never by pid. Two tests kill the stand-in through the close
+        // template, and the shell reaps it at once, so its pid is back with the system by the
+        // time this runs — with the suite running in parallel, a second `kill` could reach
+        // whatever holds that number now. Closing the pipe needs no pid: `cat` reads end of
+        // file and exits, the shell reaps it and leaves `wait`, and waiting on the shell
+        // then returns. A stand-in that is already gone changes nothing.
+        drop(self.shell.stdin.take());
+        let _ = self.shell.wait();
+    }
+}
+
+pub fn tool_result(response: &serde_json::Value) -> serde_json::Value {
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+    serde_json::from_str(text).expect(text)
+}
+
+/// `GET /api/state` from the board, whole.
+pub fn fetch_state(url: &str) -> serde_json::Value {
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, query) = rest.split_once('/').unwrap();
+    let token = query.split("token=").nth(1).unwrap();
+    let mut stream = std::net::TcpStream::connect(host).unwrap();
+    write!(
+        stream,
+        "GET /api/state?token={token} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    std::io::Read::read_to_string(&mut stream, &mut answer).unwrap();
+    let body = answer.split_once("\r\n\r\n").unwrap().1;
+    serde_json::from_str(body).unwrap()
+}
+
+/// A board serving this fixture, with `env` on top of it, and the URL it printed.
+pub fn serve_board(fixture: &Fixture, env: &[(&str, &str)]) -> (Reaped, String) {
+    let mut by_hand = Reaped(
+        fixture
+            .command(["serve", "--port", "0", "--no-open"])
+            .envs(env.iter().copied())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut said = String::new();
+    std::io::BufReader::new(by_hand.stdout.as_mut().unwrap())
+        .read_line(&mut said)
+        .unwrap();
+    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
+    (by_hand, url)
+}
+
+/// Polls until `done` holds, or panics after about ten seconds with what was last seen.
+pub fn wait_until<T: std::fmt::Debug>(what: &str, mut seen: impl FnMut() -> (bool, T)) -> T {
+    let mut last = None;
+    for _ in 0..100 {
+        let (done, value) = seen();
+        if done {
+            return value;
+        }
+        last = Some(value);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("{what}: last saw {last:?}");
+}
+
+/// A stand-in for the tool `name`: `script` written to `dir/name` and made executable, `dir`
+/// made first if it is not there. Put `path_with(dir)` in the child's `PATH`.
+pub fn stub_bin(dir: &Path, name: &str, script: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir).unwrap();
+    let bin = dir.join(name);
+    std::fs::write(&bin, script).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// `dir` ahead of the inherited `PATH`: prepended rather than replacing, so a child still
+/// finds the real `git`.
+pub fn path_with(dir: &Path) -> String {
+    format!(
+        "{}:{}",
+        dir.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    )
 }

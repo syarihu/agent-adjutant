@@ -30,11 +30,6 @@ fn mcp_raw(fixture: &Fixture, lines: &[&[u8]]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn tool_result(response: &serde_json::Value) -> serde_json::Value {
-    let text = response["result"]["content"][0]["text"].as_str().unwrap();
-    serde_json::from_str(text).expect(text)
-}
-
 #[test]
 fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
     let fixture = Fixture::new(QUIET);
@@ -649,27 +644,10 @@ fn fetch(url: &str) -> String {
     status
 }
 
-/// `GET /api/state` from the board, whole.
-fn fetch_state(url: &str) -> serde_json::Value {
-    let rest = url.strip_prefix("http://").unwrap();
-    let (host, query) = rest.split_once('/').unwrap();
-    let token = query.split("token=").nth(1).unwrap();
-    let mut stream = std::net::TcpStream::connect(host).unwrap();
-    write!(
-        stream,
-        "GET /api/state?token={token} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-    )
-    .unwrap();
-    let mut answer = String::new();
-    std::io::Read::read_to_string(&mut stream, &mut answer).unwrap();
-    let body = answer.split_once("\r\n\r\n").unwrap().1;
-    serde_json::from_str(body).unwrap()
-}
-
 #[test]
 fn the_board_state_reports_hubs_and_sessions_alongside_hub_and_workers() {
     let fixture = Fixture::new(QUIET);
-    let (mut board, url) = start_board(&fixture);
+    let (mut board, url) = serve_board(&fixture, &[]);
 
     let state = fetch_state(&url);
     // Legacy fields preserved for existing board callers
@@ -753,7 +731,7 @@ fn the_board_state_reports_worker_session_with_metadata() {
     )
     .unwrap();
 
-    let (mut board, url) = start_board(&fixture);
+    let (mut board, url) = serve_board(&fixture, &[]);
     let state = fetch_state(&url);
 
     // hubs must discover parent-1 from the worktree's worker record
@@ -813,7 +791,7 @@ fn the_board_state_reports_main_worker_from_saved_session_when_unregistered() {
     )
     .unwrap();
 
-    let (mut board, url) = start_board(&fixture);
+    let (mut board, url) = serve_board(&fixture, &[]);
     let state = fetch_state(&url);
 
     // hubs must discover parent-main-saved from the main checkout saved session
@@ -872,7 +850,7 @@ fn the_board_state_reports_linked_worker_from_saved_session_when_unregistered() 
     )
     .unwrap();
 
-    let (mut board, url) = start_board(&fixture);
+    let (mut board, url) = serve_board(&fixture, &[]);
     let state = fetch_state(&url);
 
     let hubs = state["hubs"].as_array().expect("hubs array");
@@ -972,26 +950,10 @@ fn a_hub_for_a_parent_task_serves_a_board_of_its_own() {
     child.wait().unwrap();
 }
 
-fn start_board(fixture: &Fixture) -> (Reaped, String) {
-    let mut by_hand = Reaped(
-        fixture
-            .command(["serve", "--port", "0", "--no-open"])
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let mut said = String::new();
-    std::io::BufReader::new(by_hand.stdout.as_mut().unwrap())
-        .read_line(&mut said)
-        .unwrap();
-    let url = said.split(" — ").nth(1).unwrap().trim().to_string();
-    (by_hand, url)
-}
-
 #[test]
 fn a_board_already_running_for_the_hub_is_left_to_serve() {
     let fixture = Fixture::new(QUIET);
-    let (mut by_hand, theirs) = start_board(&fixture);
+    let (mut by_hand, theirs) = serve_board(&fixture, &[]);
 
     let (mut child, config) = hub_mcp(&fixture, SLUG);
     assert_eq!(config["board"]["url"], theirs.as_str());
@@ -1010,8 +972,8 @@ fn a_board_already_running_for_the_hub_is_left_to_serve() {
 #[test]
 fn a_second_board_does_not_take_the_record_from_the_one_still_serving() {
     let fixture = Fixture::new(QUIET);
-    let (mut first, first_url) = start_board(&fixture);
-    let (mut second, _) = start_board(&fixture);
+    let (mut first, first_url) = serve_board(&fixture, &[]);
+    let (mut second, _) = serve_board(&fixture, &[]);
     assert_eq!(
         fixture.json(&["config"])["board"]["url"],
         first_url.as_str()
@@ -1032,11 +994,11 @@ fn a_second_board_does_not_take_the_record_from_the_one_still_serving() {
 #[test]
 fn a_board_takes_the_record_from_one_that_has_stopped() {
     let fixture = Fixture::new(QUIET);
-    let (mut first, _) = start_board(&fixture);
+    let (mut first, _) = serve_board(&fixture, &[]);
     first.kill().unwrap();
     first.wait().unwrap();
 
-    let (mut second, second_url) = start_board(&fixture);
+    let (mut second, second_url) = serve_board(&fixture, &[]);
     assert_eq!(
         fixture.json(&["config"])["board"]["url"],
         second_url.as_str()
@@ -1254,7 +1216,7 @@ fn a_worker_record_without_a_terminal_reports_the_backend_a_spawn_template_uses(
     )
     .unwrap();
 
-    let (mut board, url) = start_board(&fixture);
+    let (mut board, url) = serve_board(&fixture, &[]);
     let state = fetch_state(&url);
     let sessions = state["sessions"].as_array().expect("sessions array");
     let worker = sessions
