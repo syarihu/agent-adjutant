@@ -5,8 +5,7 @@ use std::net::TcpListener;
 mod daemon;
 
 use crate::board::Board;
-pub use crate::board::{DEFAULT_PORT, HubBoard, located, serve_for_hub};
-pub(crate) use crate::transport::board_http::handle as board_connection;
+pub use crate::board::{DEFAULT_PORT, located};
 use crate::transport::board_http::handle;
 use daemon::open_browser;
 pub use daemon::{server_restart, server_start, server_status, server_stop};
