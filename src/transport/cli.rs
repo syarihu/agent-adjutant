@@ -28,6 +28,7 @@ mod review_engine;
 mod run;
 mod serve;
 mod server;
+mod setup;
 mod skill_outbox;
 mod stdin;
 mod task;
@@ -56,6 +57,7 @@ pub use review_engine::run as review_engine;
 pub use run::run;
 pub use serve::serve;
 pub use server::{server_restart, server_start, server_status, server_stop};
+pub use setup::setup;
 pub use skill_outbox::{outbox, skill};
 use stdin::{dash_is_stdin, read_body};
 pub use task::{
