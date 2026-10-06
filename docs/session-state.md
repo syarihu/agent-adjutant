@@ -332,6 +332,14 @@ command gets and records `model`, `contextPercent` and `rateLimits` into the row
 one. It prints nothing, so a user who wants these fields adds one line to their own status line
 script, piping its stdin to it. Without it the rows simply lack those fields.
 
+The row keeps `model` as the display name (the id when there is none), `contextPercent` as a whole
+number, and `rateLimits` as `{ fiveHour, sevenDay }`, each `{ usedPercent, resetsAt }` with
+`resetsAt` in epoch seconds as Claude Code gives it. A draw that lacks a field leaves the stored
+value as it is. The write rules are the ordinary ones: a change moves `lastEventAt`, and an
+unchanged draw writes at most once a minute. So `lastEventAt` is not the time the rate limits were
+captured; it also moves for hooks. Whatever reads the limits from the row (the review engine
+follow-up below) must keep that in mind.
+
 adjutant already depends on the user's status line in one place: `task::pick_review_engine` reads
 `rate-limit-cache.json`, which a status line script writes. Once the relay exists, `adj
 review-engine` reads the five-hour and seven-day figures from the row with the caller's agent and

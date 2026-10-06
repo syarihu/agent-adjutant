@@ -1,0 +1,40 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "transcript_path": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d.jsonl",
+  "cwd": "/home/user/repo",
+  "model": {
+    "id": "claude-opus-4-1",
+    "display_name": "Opus"
+  },
+  "workspace": {
+    "current_dir": "/home/user/repo",
+    "project_dir": "/home/user/repo"
+  },
+  "version": "2.1.291",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 0.01,
+    "total_duration_ms": 45000
+  },
+  "context_window": {
+    "total_input_tokens": 15234,
+    "total_output_tokens": 4521,
+    "context_window_size": 200000,
+    "used_percentage": 42.6,
+    "remaining_percentage": 57.4
+  },
+  "exceeds_200k_tokens": false,
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 23.5,
+      "resets_at": 1767225600
+    },
+    "seven_day": {
+      "used_percentage": 61.0,
+      "resets_at": 1767744000
+    }
+  }
+}

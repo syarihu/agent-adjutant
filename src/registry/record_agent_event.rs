@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 
 /// One hook call, as the receiver parsed it. The agent's own payload shape stays in the
 /// transport; this is what the ledger needs from it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AgentEvent {
     /// `claude` first.
     pub agent: String,
@@ -29,7 +29,7 @@ pub struct AgentEvent {
     pub at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HookEvent {
     SessionStart,
     UserPromptSubmit,
@@ -45,6 +45,15 @@ pub enum HookEvent {
     SessionEnd,
     SubagentStart,
     SubagentStop,
+    /// One draw of the status line, not a hook: the figures it showed, each absent when the draw
+    /// did not carry it. It only fills a row that exists and sets no status, though like any
+    /// event it still runs the sub-agent tidy, which can apply a held `pendingStatus`.
+    StatusLine {
+        model: Option<String>,
+        context_percent: Option<f64>,
+        five_hour: Option<RateWindow>,
+        seven_day: Option<RateWindow>,
+    },
     /// An event this version does not know. It records nothing.
     Other(String),
 }

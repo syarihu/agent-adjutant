@@ -91,6 +91,14 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant hub-stop` | clear this repo's hub record |
 | `adjutant hub-close --hub KEY` | close a parent-task hub none of whose checkouts report to it any more: clear its record and take it off the board's list; run by the hub itself or against a hub that is no longer running, it refuses a running hub from outside (its saved session, tasks, gates and inbox stay) |
 
+**Model, context use and rate limits in `agent-sessions`.** Claude Code gives these only to the status line, so they reach adjutant only if your status line passes them on. adjutant does not install a status line, since that would replace yours; add one line to your own script instead. In a shell script, read stdin into a variable first:
+
+```sh
+input=$(cat); printf '%s' "$input" | /absolute/path/to/adj hook claude --status-line 2>/dev/null || true
+```
+
+and draw from `"$input"` as before. `adj hook claude --status-line` prints nothing and, once it runs, always exits 0 (the `|| true` covers a missing binary). It records `model`, `contextPercent` and `rateLimits` only on a session that already has a row (see `adj agent-sessions --json`), and writes when they change, and otherwise at most once a minute. Name `adj` by its absolute path (`command -v adj`), since the status line's `PATH` may not include it. A script in another language passes the same text to the command's stdin.
+
 Agent-side (`adjutant mcp`), the same machinery as ten tools and three prompts:
 
 - **prompts** — `adj-hub` (run the hub), `adj-worker` (take a task from brief to handover),

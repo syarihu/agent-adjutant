@@ -28,6 +28,7 @@ fn fixture(name: &str) -> Value {
         "stop" => include_str!("../../../fixtures/hooks/claude/stop.json"),
         "stop-failure" => include_str!("../../../fixtures/hooks/claude/stop-failure.json"),
         "session-end" => include_str!("../../../fixtures/hooks/claude/session-end.json"),
+        "status-line" => include_str!("../../../fixtures/hooks/claude/status-line.json"),
         other => panic!("no fixture called {other}"),
     };
     serde_json::from_str(text).unwrap()
@@ -168,4 +169,118 @@ fn the_pid_is_a_positive_number_and_the_config_dir_falls_back_to_the_default_acc
         at(None, Some("/cfg/work")).config_dir.as_deref(),
         Some("/cfg/work")
     );
+}
+
+fn status_line(payload: &Value) -> Result<Option<AgentEvent>, String> {
+    claude_status_line(payload, 1_000)
+}
+
+fn figures(payload: &Value) -> Option<HookEvent> {
+    status_line(payload).unwrap().map(|event| event.hook)
+}
+
+fn window(used: f64, resets_at: i64) -> RateWindow {
+    RateWindow {
+        used_percent: Some(used),
+        resets_at: Some(resets_at),
+        other: serde_json::Map::new(),
+    }
+}
+
+#[test]
+fn a_status_line_payload_is_the_figures_it_shows() {
+    let event = status_line(&fixture("status-line")).unwrap().unwrap();
+    assert_eq!(event.session_id, "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d");
+    assert_eq!((event.agent.as_str(), event.at), ("claude", 1_000));
+    assert_eq!(event.cwd, None);
+    assert_eq!(
+        event.hook,
+        HookEvent::StatusLine {
+            model: Some("Opus".to_string()),
+            context_percent: Some(43.0),
+            five_hour: Some(window(23.5, 1_767_225_600)),
+            seven_day: Some(window(61.0, 1_767_744_000)),
+        }
+    );
+}
+
+#[test]
+fn a_status_line_without_figures_records_nothing_and_blanks_are_absent() {
+    assert_eq!(figures(&fixture("stop")), None);
+
+    let with = |edit: &dyn Fn(&mut Value)| {
+        let mut p = fixture("status-line");
+        edit(&mut p);
+        figures(&p)
+    };
+    let only_model = |event: Option<HookEvent>| match event {
+        Some(HookEvent::StatusLine {
+            model,
+            context_percent: None,
+            five_hour: None,
+            seven_day: None,
+        }) => model,
+        other => panic!("not just a model: {other:?}"),
+    };
+    // Each field alone: null, blank, a string, a negative number are all absent.
+    for bad in [
+        serde_json::json!(null),
+        serde_json::json!(""),
+        serde_json::json!("43"),
+        serde_json::json!(-1.0),
+    ] {
+        let kept = with(&|p| {
+            p["context_window"]["used_percentage"] = bad.clone();
+            p["rate_limits"]["five_hour"]["used_percentage"] = bad.clone();
+            p["rate_limits"]["seven_day"] = bad.clone();
+        });
+        assert_eq!(only_model(kept).as_deref(), Some("Opus"));
+    }
+    // A window with no resets_at still has its percentage.
+    let open = with(&|p| {
+        p["rate_limits"]["five_hour"]
+            .as_object_mut()
+            .unwrap()
+            .remove("resets_at");
+    });
+    assert!(matches!(
+        open,
+        Some(HookEvent::StatusLine { five_hour: Some(RateWindow { used_percent: Some(u), resets_at: None, .. }), .. }) if u == 23.5
+    ));
+
+    // The model: the id when the name is blank, the string as it is, nothing for blank.
+    let model = |value: Value| {
+        let mut p = fixture("status-line");
+        p["model"] = value;
+        p["context_window"] = Value::Null;
+        p["rate_limits"] = Value::Null;
+        figures(&p)
+    };
+    assert_eq!(
+        only_model(model(
+            serde_json::json!({"id": "claude-x", "display_name": " "})
+        ))
+        .as_deref(),
+        Some("claude-x")
+    );
+    assert_eq!(
+        only_model(model(serde_json::json!("opus-4"))).as_deref(),
+        Some("opus-4")
+    );
+    assert_eq!(model(serde_json::json!("  ")), None);
+    assert_eq!(model(serde_json::json!({})), None);
+}
+
+#[test]
+fn a_status_line_with_a_bad_session_id_is_refused() {
+    for id in [
+        serde_json::json!(""),
+        serde_json::json!("../x"),
+        serde_json::json!("a/b"),
+        serde_json::json!(null),
+    ] {
+        let mut p = fixture("status-line");
+        p["session_id"] = id;
+        assert!(status_line(&p).is_err());
+    }
 }

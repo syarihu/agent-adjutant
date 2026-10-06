@@ -438,9 +438,9 @@ pub(crate) struct Address {
 /// What an agent's hooks last said about one session, as `agent-sessions/<id>.json` keeps it.
 ///
 /// Every field but the key is optional and keys this version does not know stay in `other`
-/// (rule 10 in `docs/architecture.md`). `model`, `contextPercent` and `rateLimits` are not typed
-/// yet; they pass through `other` until the status line relay reads them. A known key of the
-/// wrong type fails the load, and the row is then moved aside like any unreadable one.
+/// (rule 10 in `docs/architecture.md`). `model`, `contextPercent` and `rateLimits` come from the
+/// status line (`adj hook claude --status-line`), never from a hook. A known key of the wrong
+/// type fails the load, and the row is then moved aside like any unreadable one.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
@@ -482,6 +482,38 @@ pub struct AgentSession {
     /// `agent_id` to when it stopped, so a late event cannot bring one back.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub finished_subagents: BTreeMap<String, i64>,
+    /// What the status line last showed, as the person sees it: the model's display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// A whole number of percent of the context window in use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_percent: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limits: Option<RateLimits>,
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
+}
+
+/// The account's rate limit windows, as the status line last showed them.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour: Option<RateWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seven_day: Option<RateWindow>,
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateWindow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_percent: Option<f64>,
+    /// Epoch seconds, as Claude Code gives it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<i64>,
     #[serde(flatten)]
     pub other: Map<String, Value>,
 }
@@ -665,6 +697,7 @@ pub(super) fn can_create(event: &AgentEvent) -> bool {
         | HookEvent::StopFailure
         | HookEvent::SessionEnd
         | HookEvent::SubagentStop
+        | HookEvent::StatusLine { .. }
         | HookEvent::Other(_) => false,
     }
 }
@@ -950,6 +983,28 @@ fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
                 row.finished_subagents.insert(id.clone(), now);
                 if row.subagents.is_empty() {
                     apply_pending(row);
+                }
+            }
+        }
+        HookEvent::StatusLine {
+            model,
+            context_percent,
+            five_hour,
+            seven_day,
+        } => {
+            if model.is_some() {
+                row.model = model.clone();
+            }
+            if context_percent.is_some() {
+                row.context_percent = *context_percent;
+            }
+            if five_hour.is_some() || seven_day.is_some() {
+                let limits = row.rate_limits.get_or_insert_with(RateLimits::default);
+                if five_hour.is_some() {
+                    limits.five_hour = five_hour.clone();
+                }
+                if seven_day.is_some() {
+                    limits.seven_day = seven_day.clone();
                 }
             }
         }

@@ -835,6 +835,152 @@ fn readers_leave_a_dead_row_out_without_deleting_it() {
     assert!(agent_sessions_with(blocked.path(), &table).is_err());
 }
 
+// ── the status line ──────────────────────────────────────────────
+
+fn window(used: f64, resets_at: i64) -> RateWindow {
+    RateWindow {
+        used_percent: Some(used),
+        resets_at: Some(resets_at),
+        other: serde_json::Map::new(),
+    }
+}
+
+/// One draw of the status line.
+fn draw(
+    at: i64,
+    model: Option<&str>,
+    context_percent: Option<f64>,
+    five_hour: Option<RateWindow>,
+    seven_day: Option<RateWindow>,
+) -> AgentEvent {
+    event(
+        HookEvent::StatusLine {
+            model: model.map(str::to_string),
+            context_percent,
+            five_hour,
+            seven_day,
+        },
+        at,
+    )
+}
+
+#[test]
+fn a_status_line_never_makes_a_row() {
+    let dir = tempfile::tempdir().unwrap();
+    record(
+        dir.path(),
+        &draw(T0, Some("Opus"), Some(43.0), Some(window(1.0, 5)), None),
+    );
+    assert!(!exists(dir.path(), "s1"));
+    assert!(!agent_session_lock_path(dir.path(), "s1").exists());
+}
+
+#[test]
+fn a_status_line_sets_the_figures_and_leaves_the_status_and_updated_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    record(root, &event(HookEvent::SessionStart, T0));
+    record(root, &event(HookEvent::UserPromptSubmit, T0 + 1));
+    record(
+        root,
+        &draw(
+            T0 + 10,
+            Some("Opus"),
+            Some(43.0),
+            Some(window(23.5, 1_767_225_600)),
+            Some(window(61.0, 1_767_744_000)),
+        ),
+    );
+    let row = read(root, "s1");
+    assert_eq!(row.status, Some(AgentStatus::Running));
+    assert_eq!(row.updated_at, Some(T0 + 1));
+    assert_eq!(row.last_event_at, Some(T0 + 10));
+    assert_eq!(row.model.as_deref(), Some("Opus"));
+    assert_eq!(row.context_percent, Some(43.0));
+
+    let raw: Value =
+        serde_json::from_slice(&std::fs::read(agent_session_path(root, "s1")).unwrap()).unwrap();
+    assert_eq!(raw["contextPercent"], 43.0);
+    assert_eq!(raw["rateLimits"]["fiveHour"]["usedPercent"], 23.5);
+    assert_eq!(raw["rateLimits"]["fiveHour"]["resetsAt"], 1_767_225_600);
+    assert_eq!(raw["rateLimits"]["sevenDay"]["usedPercent"], 61.0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(agent_session_path(root, "s1"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[test]
+fn the_same_figures_are_not_written_again_within_a_minute() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    record(root, &event(HookEvent::SessionStart, T0));
+    let same = |at| draw(at, Some("Opus"), Some(43.0), Some(window(1.0, 5)), None);
+    record(root, &same(T0 + 1));
+    assert_eq!(read(root, "s1").last_event_at, Some(T0 + 1));
+    record(root, &same(T0 + 31));
+    assert_eq!(read(root, "s1").last_event_at, Some(T0 + 1));
+    record(root, &same(T0 + 62));
+    assert_eq!(read(root, "s1").last_event_at, Some(T0 + 62));
+    record(
+        root,
+        &draw(
+            T0 + 63,
+            Some("Opus"),
+            Some(44.0),
+            Some(window(1.0, 5)),
+            None,
+        ),
+    );
+    let row = read(root, "s1");
+    assert_eq!(row.context_percent, Some(44.0));
+    assert_eq!(row.last_event_at, Some(T0 + 63));
+}
+
+#[test]
+fn figures_a_draw_does_not_carry_keep_their_last_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    record(root, &event(HookEvent::SessionStart, T0));
+    record(
+        root,
+        &draw(
+            T0 + 1,
+            Some("Opus"),
+            Some(43.0),
+            Some(window(23.5, 5)),
+            Some(window(61.0, 6)),
+        ),
+    );
+    record(
+        root,
+        &draw(T0 + 2, None, Some(50.0), None, Some(window(62.0, 7))),
+    );
+    let row = read(root, "s1");
+    assert_eq!(row.model.as_deref(), Some("Opus"));
+    assert_eq!(row.context_percent, Some(50.0));
+    let limits = row.rate_limits.unwrap();
+    assert_eq!(limits.five_hour, Some(window(23.5, 5)));
+    assert_eq!(limits.seven_day, Some(window(62.0, 7)));
+}
+
+#[test]
+fn a_status_line_leaves_an_unreadable_row_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let path = agent_session_path(root, "s1");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "not json").unwrap();
+    record(root, &draw(T0, Some("Opus"), Some(43.0), None, None));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
+    assert!(!agent_session_broken_path(root, "s1").exists());
+}
+
 // ── records shared across versions ───────────────────────────────
 
 #[test]
@@ -852,6 +998,8 @@ fn a_key_this_binary_does_not_know_survives_an_event_and_so_does_an_unknown_stat
         "updatedAt": T0,
         "x-unknown": {"a": [1, 2]},
         "model": "some-model",
+        "contextPercent": 12.0,
+        "rateLimits": {"fiveHour": {"usedPercent": 1.5, "resetsAt": 5, "x-win": 1}, "x-lim": 2},
         "subagents": [{
             "id": "a1", "type": "Explore", "startedAt": T0, "lastSeenAt": T0, "x-sub": true
         }]
@@ -870,6 +1018,8 @@ fn a_key_this_binary_does_not_know_survives_an_event_and_so_does_an_unknown_stat
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written["x-unknown"], raw["x-unknown"]);
     assert_eq!(written["model"], "some-model");
+    assert_eq!(written["contextPercent"], raw["contextPercent"]);
+    assert_eq!(written["rateLimits"], raw["rateLimits"]);
     assert_eq!(written["subagents"][0]["x-sub"], true);
     assert_eq!(written["subagents"][0]["lastSeenAt"], T0 + 100);
     assert_eq!(written["status"], "snoozing");

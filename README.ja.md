@@ -76,6 +76,14 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 | `adjutant hub-close --hub KEY` | 親タスクの hub を閉じる（この hub に報告する checkout が残っていないときだけ）。実行記録を消し、ボードの一覧から外す。プロセスは止めないので、hub 自身から、または動いていない hub に対して使い、動いている hub を外から閉じようとすると断る。保存済みのセッション・タスク・gate・受信箱は残る |
 
+**`agent-sessions` にモデル・コンテキスト使用率・レート制限を載せる。** Claude Code はこれらをステータスラインにしか渡さないため、ステータスラインから流さない限り adjutant には届きません。adjutant はステータスラインを入れません（入れるとあなたのものを置き換えてしまうため）。代わりに、自分のステータスラインのスクリプトに1行足してください。シェルスクリプトなら、標準入力をいったん変数に受けてから渡します：
+
+```sh
+input=$(cat); printf '%s' "$input" | /absolute/path/to/adj hook claude --status-line 2>/dev/null || true
+```
+
+描画はこれまでどおり `"$input"` から行います。`adj hook claude --status-line` は何も出力せず、起動できれば常に exit 0 で終わります（バイナリが無いときは `|| true` が受け止めます）。記録するのは既に行があるセッションの `model`・`contextPercent`・`rateLimits` だけで（`adj agent-sessions --json` で見られます）、値が変わったときに書き込み、変わらなければ書き込みは多くても1分に1回です。ステータスラインの `PATH` に `adj` があるとは限らないので、絶対パス（`command -v adj` の出力）で書いてください。他の言語のスクリプトなら、受け取った標準入力をそのままこのコマンドの標準入力に渡します。
+
 エージェント側（`adjutant mcp`）：10個のツールと3つのプロンプトを提供します。
 
 - **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスクの着手から完了引き渡しまで）、`adj-report`（作業中に発見したバグを hub に報告）。Claude Code では `/mcp__adjutant__adj-hub` のように呼び出せます。
