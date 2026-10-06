@@ -444,7 +444,7 @@ state directory that serves the board of every repository on this machine, each 
 `/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
 boards in place: the sidebar lists a row per repository, with its parent-task hubs under it
 (each row shows whether its hub runs, what waits on you and how many workers are at work),
-and "すべて" reads every board at once. `/review` is one review queue for every board: the list
+and "すべて" reads every board at once. The repository's board also shows its parent-task hubs' tasks as cards marked with the parent key; opening one switches to that hub's board, and without the resident server they are read-only. A parent-task hub's board shows only its own tasks. `/review` is one review queue for every board: the list
 on the left, the item on the right (see below). Each screen has an address that carries the board
 and the view, so back and forward and a pasted link land on the same screen. It detaches
 (its output goes to `server.log` in the state directory); `--foreground` keeps it in the

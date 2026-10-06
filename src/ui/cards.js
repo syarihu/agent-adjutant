@@ -1,5 +1,12 @@
 /* In 「すべて」 a card says which board it came from; on a board of its own that is known. */
 function originChip(item) {
+  // On the repository's board a parent-task hub's card says whose it is, by the parent's key.
+  if (item?.ownerHub && !scopeAll()) {
+    const h = (state.hubs || []).find(x => x.slug === item.ownerHub.slug);
+    const name = item.ownerHub.key || (h ? hubShortName(h) : item.ownerHub.slug);
+    const title = (h && hubTitle(h)) || (h ? hubLabel(h) : name);
+    return `<span class="origin-chip" title="${esc(title)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><span>${esc(name)}</span></span>`;
+  }
   if (!scopeAll() || !item?._slug) return '';
   const b = boards.find(x => x.slug === item._slug);
   const name = b ? (b.hub || repoNameOf(b)) : item._slug;
@@ -272,13 +279,20 @@ function humanGateCard(gate, col) {
 
 function agentCard(task) {
   const el = document.createElement('div');
-  const hcol = humanColOf(task);
+  // A card of a parent-task hub on the repository's board: read from that hub's records, so
+  // what it does goes to that hub's board, and without the resident server it only shows.
+  const owner = task.ownerHub;
+  const hcol = owner ? owner.humanCol : humanColOf(task);
   const compact = task.status === 'backlog' || task.status === 'done';
   const stuck = stuckOf(task);
   el.className = 'card' + (hcol ? ' waiting' : '') + (stuck && !hcol ? ' stuck' : '') + (compact ? ' compact' : '') + (selectedTaskId === task.id ? ' selected' : '');
   el.id = `agent-${task.id}`;
   el.dataset.id = task.id;
   if (task._slug) el.dataset.slug = task._slug;
+  if (owner) {
+    el.dataset.slug = owner.slug;
+    el.dataset.owner = '1';
+  }
 
   const live = ['dispatched', 'pr'].includes(task.status);
   const worker = live ? workerOf(task) : null;
@@ -300,7 +314,7 @@ function agentCard(task) {
       ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
       ${ghChipsHtml(task)}
       ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
-      ${task.status === 'queued' && task.order != null ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>` : ''}
+      ${task.status === 'queued' && task.order != null && !owner ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>` : ''}
     </div>
   `;
 
@@ -349,7 +363,8 @@ function agentCard(task) {
   }
 
   // 5. Chips (diff / verify records)
-  const chips = chipsOf(task);
+  // A record chip opens its record, which only this board's own tasks or a switch to the owning board can show.
+  const chips = owner && !multiBoard ? [] : chipsOf(task);
   if (chips.length) {
     h += `<div class="chips" style="display:flex;flex-wrap:wrap;gap:4px;">${chips.map(c => {
       const isGood = c.tone === 'good';
@@ -407,9 +422,9 @@ function agentCard(task) {
             : ''}
         </div>
         <div class="card-button-row">
-          ${readySessionOfTask(task) ? `<button type="button" class="m3-icon-button" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
-          ${task.worktree ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
-          ${task.status === 'backlog' ? `<button type="button" class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
+          ${readySessionOfTask(task) && (!owner || multiBoard) ? `<button type="button" class="m3-icon-button" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
+          ${task.worktree && (!owner || multiBoard) ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
+          ${task.status === 'backlog' && (!owner || multiBoard) ? `<button type="button" class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
         </div>
       </div>
     `;
@@ -418,24 +433,31 @@ function agentCard(task) {
   // 10. Wait link if waiting on human
   if (hcol) {
     const mins = waitingMinutes(task);
+    // The person's board of this page does not hold the card, so there is nothing to jump to.
+    const [open, close, attrs] = owner ? ['div', 'div', ' style="cursor:default;"']
+      : ['button', 'button', ` type="button" data-jump-human="${esc(task.id)}" title="人のボードでこのカードを開く"`];
     h += `
-      <button type="button" class="wait-link" data-jump-human="${esc(task.id)}" title="人のボードでこのカードを開く">
+      <${open} class="wait-link"${attrs}>
         <div class="wait-link-row">
           <span class="wait-link-badge">
             <span class="material-symbols-outlined">person_alert</span>
             <span>人の確認待ち</span>
           </span>
-          <span class="go">${minutesLabel(mins)}<span class="material-symbols-outlined">arrow_outward</span></span>
+          <span class="go">${minutesLabel(mins)}${owner ? '' : '<span class="material-symbols-outlined">arrow_outward</span>'}</span>
         </div>
         <div class="wait-link-target">${esc(humanLabel(hcol))}</div>
-      </button>
+      </${close}>
     `;
   }
 
   el.innerHTML = h;
+  if (owner && !multiBoard) {
+    el.style.cursor = 'default';
+    return el;
+  }
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('a')) return;
-    onBoard(task._slug, () => openTaskPanel(task.id));
+    onBoard(owner ? owner.slug : task._slug, () => openTaskPanel(task.id));
   };
   return el;
 }

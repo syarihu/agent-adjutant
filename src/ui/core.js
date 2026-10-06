@@ -160,6 +160,7 @@ const workerOf = (t, data = state) => t && t.worktree && (data.workers || []).fi
    gate's column at once. */
 function humanColOf(t, data = state) {
   if (!t) return null;
+  if (t.ownerHub) return t.ownerHub.humanCol || null;
   return openGate(t, data)?.humanCol || (t.waitsOnPerson ? 'prreview' : null);
 }
 
