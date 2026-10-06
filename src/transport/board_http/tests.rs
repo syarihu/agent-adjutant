@@ -1037,3 +1037,49 @@ fn the_task_view_shows_the_queue_beside_a_task_on_the_persons_board() {
         "renderTaskView still names the old column"
     );
 }
+
+#[test]
+fn every_icon_only_button_has_a_name() {
+    // A Material Symbols ligature alone names the button after the icon ("close").
+    const ICON: &str = "<span class=\"material-symbols-outlined\"";
+    let mut seen = 0;
+    for part in UI_HTML.split("<button").skip(1) {
+        // A `>` inside a `${...}` template expression does not end the tag.
+        let (mut depth, mut gt) = (0, None);
+        for (i, c) in part.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                '>' if depth == 0 => {
+                    gt = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let (Some(gt), Some(end)) = (gt, part.find("</button>")) else {
+            continue;
+        };
+        let (tag, inner) = (&part[..gt], &part[gt + 1..end]);
+        let Some(at) = inner.find(ICON) else {
+            continue;
+        };
+        let close = at + inner[at..].find("</span>").unwrap() + "</span>".len();
+        // #btn-notify gets its visible label from updateNotifyButton on the first render.
+        if !(inner[..at].trim().is_empty() && inner[close..].trim().is_empty())
+            || tag.contains("id=\"btn-notify\"")
+        {
+            continue;
+        }
+        seen += 1;
+        assert!(
+            tag.contains("aria-label=\"") && !tag.contains("aria-label=\"\""),
+            "<button{tag}>"
+        );
+        assert!(
+            inner[at..close].contains("aria-hidden=\"true\""),
+            "<button{tag}>"
+        );
+    }
+    assert!(seen >= 18, "{seen}");
+}
