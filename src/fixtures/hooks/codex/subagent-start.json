@@ -1,0 +1,11 @@
+{
+  "session_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "turn_id": "turn-1",
+  "transcript_path": "/home/user/.codex/sessions/rollout-0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d.jsonl",
+  "cwd": "/work/repo",
+  "hook_event_name": "SubagentStart",
+  "model": "gpt-5-codex",
+  "permission_mode": "default",
+  "agent_id": "agent-example-1",
+  "agent_type": "worker"
+}

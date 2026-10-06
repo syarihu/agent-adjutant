@@ -2,8 +2,9 @@
 //! the event to the session ledger, and never fails the agent: whatever goes wrong is said on
 //! stderr and the exit code is 0.
 //!
-//! The payload's shape is Claude Code's, so it is read here and `registry` is handed a typed
-//! `AgentEvent`; `registry` holds who is running and where, not what an agent's JSON looks like.
+//! The payload's shape is the agent's (Claude Code's or Codex's), so it is read here and
+//! `registry` is handed a typed `AgentEvent`; `registry` holds who is running and where, not what
+//! an agent's JSON looks like.
 
 use serde_json::Value;
 use std::io::Read;
@@ -12,7 +13,7 @@ use std::path::Path;
 
 use super::args::HookArgs;
 use crate::infra::clock::now_secs;
-use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CLAUDE_PID_ENV};
+use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CLAUDE_PID_ENV, CODEX_HOME_ENV};
 use crate::infra::paths::home_dir;
 use crate::registry::{self, AgentEvent, HookEvent, RateWindow};
 
@@ -28,10 +29,17 @@ fn say(message: std::fmt::Arguments) {
 
 /// Always 0. Claude Code treats exit 2 as blocking and any other non-zero exit as a hook error.
 pub fn hook(args: &HookArgs) -> i32 {
-    if args.agent != "claude" {
+    let codex = match args.agent.as_str() {
+        "claude" => false,
+        "codex" => true,
+        other => {
+            say(format_args!("adjutant hook: unknown agent {other:?}"));
+            return 0;
+        }
+    };
+    if codex && args.status_line {
         say(format_args!(
-            "adjutant hook: unknown agent {:?}",
-            args.agent
+            "adjutant hook: --status-line is Claude Code's status line; Codex has none"
         ));
         return 0;
     }
@@ -61,7 +69,7 @@ pub fn hook(args: &HookArgs) -> i32 {
     }
     let permission =
         payload.get("hook_event_name").and_then(Value::as_str) == Some("PermissionRequest");
-    match std::panic::catch_unwind(AssertUnwindSafe(|| record(&payload))) {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| record(&payload, codex))) {
         Ok(Ok(())) => {}
         Ok(Err(message)) => say(format_args!("adjutant hook: {message}")),
         Err(_) => say(format_args!(
@@ -69,8 +77,9 @@ pub fn hook(args: &HookArgs) -> i32 {
         )),
     }
     // The one event whose answer the agent reads: `{}` leaves the decision to its own prompt.
-    // Said even when recording failed, or the failure would be the agent's.
-    if permission {
+    // Said even when recording failed, or the failure would be the agent's. Codex reads a hook's
+    // stdout as a decision, so nothing is printed for it, not even `{}`.
+    if permission && !codex {
         // Not `println!`, which panics on a closed stdout, outside the `catch_unwind`.
         use std::io::Write;
         let mut out = std::io::stdout();
@@ -80,14 +89,23 @@ pub fn hook(args: &HookArgs) -> i32 {
     0
 }
 
-fn record(payload: &Value) -> Result<(), String> {
-    let event = claude_event(
-        payload,
-        std::env::var(CLAUDE_PID_ENV).ok().as_deref(),
-        std::env::var(CLAUDE_CONFIG_DIR_ENV).ok().as_deref(),
-        &home_dir(),
-        now_secs(),
-    )?;
+fn record(payload: &Value, codex: bool) -> Result<(), String> {
+    let event = if codex {
+        codex_event(
+            payload,
+            std::env::var(CODEX_HOME_ENV).ok().as_deref(),
+            &home_dir(),
+            now_secs(),
+        )?
+    } else {
+        claude_event(
+            payload,
+            std::env::var(CLAUDE_PID_ENV).ok().as_deref(),
+            std::env::var(CLAUDE_CONFIG_DIR_ENV).ok().as_deref(),
+            &home_dir(),
+            now_secs(),
+        )?
+    };
     let root = registry::hook_state_root(event.cwd.as_deref().map(Path::new));
     registry::record_agent_event(&root, &event)
 }
@@ -140,6 +158,49 @@ fn claude_event(
         pid: pid
             .and_then(|pid| pid.trim().parse::<u32>().ok())
             .filter(|pid| *pid > 0),
+        config_dir: Some(config_dir),
+        at,
+    })
+}
+
+/// A Codex hook payload as the event it reports. Codex gives a hook no pid, so the row has none
+/// and falls back to the age rule; `Interrupt` (the turn cut short) is the same to the ledger as
+/// the turn ending.
+fn codex_event(
+    payload: &Value,
+    codex_home: Option<&str>,
+    home: &Path,
+    at: i64,
+) -> Result<AgentEvent, String> {
+    let session_id = text(payload, "session_id").unwrap_or_default();
+    if !registry::valid_session_id(&session_id) {
+        return Err(format!("not a usable session id: {session_id:?}"));
+    }
+    let name = text(payload, "hook_event_name").ok_or("the payload has no hook_event_name")?;
+    let hook = match name.as_str() {
+        "SessionStart" => HookEvent::SessionStart,
+        "UserPromptSubmit" => HookEvent::UserPromptSubmit,
+        "PostToolUse" => HookEvent::PostToolUse,
+        "PermissionRequest" => HookEvent::PermissionRequest,
+        "Stop" | "Interrupt" => HookEvent::Stop,
+        "SessionEnd" => HookEvent::SessionEnd,
+        "SubagentStart" => HookEvent::SubagentStart,
+        "SubagentStop" => HookEvent::SubagentStop,
+        _ => HookEvent::Other(name),
+    };
+    let config_dir = codex_home
+        .filter(|dir| !dir.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| home.join(".codex").to_string_lossy().to_string());
+    Ok(AgentEvent {
+        agent: "codex".to_string(),
+        session_id,
+        hook,
+        agent_id: text(payload, "agent_id"),
+        agent_type: text(payload, "agent_type"),
+        cwd: text(payload, "cwd"),
+        summary: tool_summary(payload),
+        pid: None,
         config_dir: Some(config_dir),
         at,
     })

@@ -28,6 +28,62 @@ pub const CLAUDE_EVENTS: &[(&str, Option<&str>)] = &[
     ("SubagentStop", None),
 ];
 
+/// The events that reach `adj hook codex`. Codex reads `hooks.json` with the same shape as Claude
+/// Code's; `Interrupt` is the turn being cut short, which Claude Code reports as no event at all.
+/// A Codex that predates `Interrupt` ignores the key, so it is listed unconditionally.
+pub const CODEX_EVENTS: &[(&str, Option<&str>)] = &[
+    ("SessionStart", None),
+    ("UserPromptSubmit", None),
+    ("PostToolUse", Some("*")),
+    ("PermissionRequest", Some("*")),
+    ("Stop", None),
+    ("Interrupt", None),
+    ("SessionEnd", None),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
+];
+
+/// An agent whose user-level hooks file `adj setup` edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlobalHookAgent {
+    Claude,
+    Codex,
+}
+
+impl GlobalHookAgent {
+    /// The word after `adj hook`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    pub fn events(self) -> &'static [(&'static str, Option<&'static str>)] {
+        match self {
+            Self::Claude => CLAUDE_EVENTS,
+            Self::Codex => CODEX_EVENTS,
+        }
+    }
+
+    fn display(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude Code",
+            Self::Codex => "Codex",
+        }
+    }
+}
+
+/// The handler `timeout` (seconds) an event needs, where the agent's default is too short. Codex
+/// gives `SessionEnd` 1 s by default and 3 s at most, and `adj hook` (a git lookup and the ledger
+/// lock) must not be killed before it has removed the row.
+fn handler_timeout(agent: GlobalHookAgent, event: &str) -> Option<u64> {
+    match (agent, event) {
+        (GlobalHookAgent::Codex, "SessionEnd") => Some(3),
+        _ => None,
+    }
+}
+
 const GUARD_OPEN: &str = "[ ! -x ";
 const GUARD_MID: &str = " ] || ";
 
@@ -42,10 +98,10 @@ pub fn claude_hook_command(exe: &str) -> String {
     guarded(exe, "hook claude")
 }
 
-/// `claude_hook_command` for the entries `adj setup claude` writes into a global settings file:
-/// the same, with `--global` marking them as adjutant's so they can be found again.
-pub fn claude_global_hook_command(exe: &str) -> String {
-    guarded(exe, "hook claude --global")
+/// `claude_hook_command` for the entries `adj setup <agent>` writes into that agent's global
+/// hooks file: the same, with `--global` marking them as adjutant's so they can be found again.
+pub fn global_hook_command(exe: &str, agent: GlobalHookAgent) -> String {
+    guarded(exe, &format!("hook {} --global", agent.name()))
 }
 
 fn guarded(exe: &str, args: &str) -> String {
@@ -107,13 +163,13 @@ fn unquote_word(text: &str) -> Option<(String, &str)> {
     (!quoted).then_some((word, ""))
 }
 
-/// Whether `command` is one `claude_global_hook_command` wrote, whatever binary it names: the
-/// whole guarded form `[ ! -x P ] || P hook claude --global || true`, or the bare `P hook claude
+/// Whether `command` is one `global_hook_command` wrote for `agent`, whatever binary it names: the
+/// whole guarded form `[ ! -x P ] || P hook <agent> --global || true`, or the bare `P hook <agent>
 /// --global` (optionally `|| true`) with nothing before it. Read by words and anchored at both
 /// ends, so a user's `echo x; adj hook claude --global` or `echo adj hook claude --global` is not
-/// taken for ours. Only single quotes are understood, the only ones adjutant writes; a command
-/// with an unbalanced one is not ours.
-pub fn is_global_hook_command(command: &str) -> bool {
+/// taken for ours, and neither is the other agent's entry. Only single quotes are understood, the
+/// only ones adjutant writes; a command with an unbalanced one is not ours.
+pub fn is_global_hook_command(command: &str, agent: GlobalHookAgent) -> bool {
     let mut words = Vec::new();
     let mut rest = command.trim_start();
     while !rest.is_empty() {
@@ -124,7 +180,7 @@ pub fn is_global_hook_command(command: &str) -> bool {
         rest = after.trim_start();
     }
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    let flag = ["hook", "claude", "--global"];
+    let flag = ["hook", agent.name(), "--global"];
     match words.as_slice() {
         ["[", "!", "-x", path, "]", "||", again, rest @ ..] => {
             !path.is_empty() && path == again && rest == [flag[0], flag[1], flag[2], "||", "true"]
@@ -138,43 +194,51 @@ pub fn is_global_hook_command(command: &str) -> bool {
     }
 }
 
-const SHAPE: &str = "its \"hooks\" table is not the shape Claude Code reads";
+fn shape(agent: GlobalHookAgent) -> String {
+    format!(
+        "its \"hooks\" table is not the shape {} reads",
+        agent.display()
+    )
+}
 
 /// The `hooks` table of a settings file, when there is one and it is an object.
-fn hooks_table(settings: &Value) -> Result<Option<&serde_json::Map<String, Value>>, String> {
+fn hooks_table(
+    settings: &Value,
+    agent: GlobalHookAgent,
+) -> Result<Option<&serde_json::Map<String, Value>>, String> {
     let root = settings
         .as_object()
         .ok_or_else(|| "the settings are not a JSON object".to_string())?;
     match root.get("hooks") {
         None => Ok(None),
         Some(Value::Object(hooks)) => Ok(Some(hooks)),
-        Some(_) => Err(format!("{SHAPE}: \"hooks\" is not an object")),
+        Some(_) => Err(format!("{}: \"hooks\" is not an object", shape(agent))),
     }
 }
 
-fn not_an_array(event: &str) -> String {
-    format!("{SHAPE}: \"hooks.{event}\" is not an array")
+fn not_an_array(event: &str, agent: GlobalHookAgent) -> String {
+    format!("{}: \"hooks.{event}\" is not an array", shape(agent))
 }
 
 /// The `command` of every handler in the groups of one event that is ours.
-fn ours_in(groups: &mut [Value]) -> impl Iterator<Item = &mut Value> {
+fn ours_in(groups: &mut [Value], agent: GlobalHookAgent) -> impl Iterator<Item = &mut Value> {
     groups
         .iter_mut()
         .filter_map(|group| group.get_mut("hooks")?.as_array_mut())
         .flat_map(|handlers| handlers.iter_mut())
-        .filter(|handler| is_ours(handler))
+        .filter(move |handler| is_ours(handler, agent))
 }
 
-fn is_ours(handler: &Value) -> bool {
+fn is_ours(handler: &Value, agent: GlobalHookAgent) -> bool {
     handler
         .get("command")
         .and_then(Value::as_str)
-        .is_some_and(is_global_hook_command)
+        .is_some_and(|command| is_global_hook_command(command, agent))
 }
 
 /// How many handlers in `settings` are ours.
-pub fn count_global_hooks(settings: &Value) -> usize {
-    let Ok(Some(hooks)) = hooks_table(settings) else {
+pub fn count_global_hooks(settings: &Value, agent: GlobalHookAgent) -> usize {
+    let Ok(Some(hooks)) = hooks_table(settings, agent) else {
         return 0;
     };
     hooks
@@ -183,18 +247,22 @@ pub fn count_global_hooks(settings: &Value) -> usize {
         .flatten()
         .filter_map(|group| group.get("hooks")?.as_array())
         .flatten()
-        .filter(|handler| is_ours(handler))
+        .filter(|handler| is_ours(handler, agent))
         .count()
 }
 
-/// `settings` with `command` under every event of `CLAUDE_EVENTS`, next to whatever is there.
+/// `settings` with `command` under every event of `agent`'s table, next to whatever is there.
 ///
 /// An event that already has one of our handlers has its command rewritten in place (the binary
 /// may have moved); the others get a group of their own, never a handler inside a group the user
-/// wrote. Nothing is ever removed. A settings file that is not the shape Claude Code reads is
+/// wrote. Nothing is ever removed. A settings file that is not the shape the agent reads is
 /// refused rather than repaired, since the user's hooks in it are not ours to reinterpret.
-pub fn add_global_hooks(settings: &Value, command: &str) -> Result<Value, String> {
-    hooks_table(settings)?;
+pub fn add_global_hooks(
+    settings: &Value,
+    command: &str,
+    agent: GlobalHookAgent,
+) -> Result<Value, String> {
+    hooks_table(settings, agent)?;
     let mut out = settings.clone();
     let hooks = out
         .as_object_mut()
@@ -204,38 +272,45 @@ pub fn add_global_hooks(settings: &Value, command: &str) -> Result<Value, String
                 .as_object_mut()
         })
         .ok_or_else(|| "the settings are not a JSON object".to_string())?;
-    for (event, matcher) in CLAUDE_EVENTS {
+    for (event, matcher) in agent.events() {
         let groups = hooks
             .entry(event.to_string())
             .or_insert_with(|| json!([]))
             .as_array_mut()
-            .ok_or_else(|| not_an_array(event))?;
-        if let Some(handler) = ours_in(groups).next() {
+            .ok_or_else(|| not_an_array(event, agent))?;
+        if let Some(handler) = ours_in(groups, agent).next() {
             handler["command"] = json!(command);
+            if let Some(timeout) = handler_timeout(agent, event) {
+                handler["timeout"] = json!(timeout);
+            }
             continue;
         }
         let mut group = serde_json::Map::new();
         if let Some(matcher) = matcher {
             group.insert("matcher".to_string(), json!(matcher));
         }
-        group.insert(
-            "hooks".to_string(),
-            json!([{ "type": "command", "command": command }]),
-        );
+        let mut handler = json!({ "type": "command", "command": command });
+        if let Some(timeout) = handler_timeout(agent, event) {
+            handler["timeout"] = json!(timeout);
+        }
+        group.insert("hooks".to_string(), json!([handler]));
         groups.push(Value::Object(group));
     }
     Ok(out)
 }
 
-/// `settings` without the handlers `add_global_hooks` wrote, and how many that was. A group or an
-/// event left empty by it goes too; one that was empty before is left alone, and so is everything
-/// else.
-pub fn remove_global_hooks(settings: &Value) -> Result<(Value, usize), String> {
-    let Some(table) = hooks_table(settings)? else {
+/// `settings` without the handlers `add_global_hooks` wrote for `agent`, and how many that was. A
+/// group or an event left empty by it goes too; one that was empty before is left alone, and so is
+/// everything else.
+pub fn remove_global_hooks(
+    settings: &Value,
+    agent: GlobalHookAgent,
+) -> Result<(Value, usize), String> {
+    let Some(table) = hooks_table(settings, agent)? else {
         return Ok((settings.clone(), 0));
     };
     if let Some((event, _)) = table.iter().find(|(_, groups)| !groups.is_array()) {
-        return Err(not_an_array(event));
+        return Err(not_an_array(event, agent));
     }
     let mut out = settings.clone();
     let mut removed = 0;
@@ -249,7 +324,7 @@ pub fn remove_global_hooks(settings: &Value) -> Result<(Value, usize), String> {
                 return true;
             };
             let had = handlers.len();
-            handlers.retain(|handler| !is_ours(handler));
+            handlers.retain(|handler| !is_ours(handler, agent));
             here += had - handlers.len();
             !(handlers.is_empty() && had > 0)
         });
@@ -267,6 +342,7 @@ pub fn remove_global_hooks(settings: &Value) -> Result<(Value, usize), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use GlobalHookAgent::{Claude, Codex};
 
     #[test]
     fn every_event_has_one_entry_and_only_the_tool_events_have_a_matcher() {
@@ -372,7 +448,7 @@ mod tests {
     fn the_global_command_is_the_injected_one_with_the_flag_and_names_the_same_binary() {
         for exe in ODD_PATHS {
             let injected = claude_hook_command(exe);
-            let global = claude_global_hook_command(exe);
+            let global = global_hook_command(exe, Claude);
             assert_eq!(
                 global,
                 injected.replace(" hook claude ||", " hook claude --global ||")
@@ -391,18 +467,26 @@ mod tests {
     fn our_commands_are_recognised_by_word_whatever_the_path() {
         for exe in ODD_PATHS {
             assert!(
-                is_global_hook_command(&claude_global_hook_command(exe)),
+                is_global_hook_command(&global_hook_command(exe, Claude), Claude),
                 "{exe}"
             );
         }
-        assert!(is_global_hook_command("adj hook claude --global"));
-        assert!(!is_global_hook_command("echo x; adj hook claude --global"));
-        assert!(!is_global_hook_command("echo adj hook claude --global"));
+        assert!(is_global_hook_command("adj hook claude --global", Claude));
         assert!(!is_global_hook_command(
-            "[ ! -x a ] || b hook claude --global || true"
+            "echo x; adj hook claude --global",
+            Claude
+        ));
+        assert!(!is_global_hook_command(
+            "echo adj hook claude --global",
+            Claude
+        ));
+        assert!(!is_global_hook_command(
+            "[ ! -x a ] || b hook claude --global || true",
+            Claude
         ));
         assert!(is_global_hook_command(
-            "/x/adj hook claude --global || true"
+            "/x/adj hook claude --global || true",
+            Claude
         ));
         for other in [
             claude_hook_command("/usr/local/bin/adj"),
@@ -415,24 +499,24 @@ mod tests {
             "adj hook claude --global && rm -rf x".to_string(),
             String::new(),
         ] {
-            assert!(!is_global_hook_command(&other), "{other}");
+            assert!(!is_global_hook_command(&other, Claude), "{other}");
         }
     }
 
     #[test]
     fn adding_to_nothing_gives_exactly_the_injected_table() {
-        let command = claude_global_hook_command("/bin/adj");
+        let command = global_hook_command("/bin/adj", Claude);
         assert_eq!(
-            add_global_hooks(&json!({}), &command).unwrap(),
+            add_global_hooks(&json!({}), &command, Claude).unwrap(),
             claude_settings(&command)
         );
     }
 
     #[test]
     fn adding_keeps_the_users_hooks_and_keys_and_appends_ours_as_separate_groups() {
-        let command = claude_global_hook_command("/bin/adj");
+        let command = global_hook_command("/bin/adj", Claude);
         let before = user_settings();
-        let after = add_global_hooks(&before, &command).unwrap();
+        let after = add_global_hooks(&before, &command, Claude).unwrap();
         assert_eq!(after["permissions"], before["permissions"]);
         assert_eq!(after["env"], before["env"]);
         assert_eq!(after["statusLine"], before["statusLine"]);
@@ -444,26 +528,26 @@ mod tests {
         let post = after["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post[0], before["hooks"]["PostToolUse"][0]);
         assert_eq!(post[1]["matcher"], "*");
-        assert_eq!(count_global_hooks(&after), CLAUDE_EVENTS.len());
-        assert_eq!(count_global_hooks(&before), 0);
+        assert_eq!(count_global_hooks(&after, Claude), CLAUDE_EVENTS.len());
+        assert_eq!(count_global_hooks(&before, Claude), 0);
     }
 
     #[test]
     fn adding_twice_changes_nothing() {
-        let command = claude_global_hook_command("/bin/adj");
-        let once = add_global_hooks(&user_settings(), &command).unwrap();
-        assert_eq!(add_global_hooks(&once, &command).unwrap(), once);
+        let command = global_hook_command("/bin/adj", Claude);
+        let once = add_global_hooks(&user_settings(), &command, Claude).unwrap();
+        assert_eq!(add_global_hooks(&once, &command, Claude).unwrap(), once);
     }
 
     #[test]
     fn a_moved_binary_is_rewritten_in_place_and_the_users_groups_are_untouched() {
-        let old = claude_global_hook_command("/gone/a b/adj");
-        let new = claude_global_hook_command("/bin/adj");
-        let first = add_global_hooks(&user_settings(), &old).unwrap();
-        let again = add_global_hooks(&first, &new).unwrap();
-        assert_eq!(count_global_hooks(&again), CLAUDE_EVENTS.len());
+        let old = global_hook_command("/gone/a b/adj", Claude);
+        let new = global_hook_command("/bin/adj", Claude);
+        let first = add_global_hooks(&user_settings(), &old, Claude).unwrap();
+        let again = add_global_hooks(&first, &new, Claude).unwrap();
+        assert_eq!(count_global_hooks(&again, Claude), CLAUDE_EVENTS.len());
         assert!(!again.to_string().contains("/gone/"));
-        let expected = add_global_hooks(&user_settings(), &new).unwrap();
+        let expected = add_global_hooks(&user_settings(), &new, Claude).unwrap();
         assert_eq!(again, expected);
     }
 
@@ -475,12 +559,12 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .extend([
-                json!({ "type": "command", "command": claude_global_hook_command("/x y/adj") }),
+                json!({ "type": "command", "command": global_hook_command("/x y/adj", Claude) }),
                 json!({ "type": "command", "command": injected }),
             ]);
         let with_ours =
-            add_global_hooks(&settings, &claude_global_hook_command("/bin/adj")).unwrap();
-        let (after, removed) = remove_global_hooks(&with_ours).unwrap();
+            add_global_hooks(&settings, &global_hook_command("/bin/adj", Claude), Claude).unwrap();
+        let (after, removed) = remove_global_hooks(&with_ours, Claude).unwrap();
         assert_eq!(removed, CLAUDE_EVENTS.len());
         let mut kept = settings.clone();
         kept["hooks"]["Stop"][0]["hooks"]
@@ -488,23 +572,24 @@ mod tests {
             .unwrap()
             .remove(1);
         assert_eq!(after, kept);
-        assert_eq!(count_global_hooks(&after), 0);
-        let (same, none) = remove_global_hooks(&after).unwrap();
+        assert_eq!(count_global_hooks(&after, Claude), 0);
+        let (same, none) = remove_global_hooks(&after, Claude).unwrap();
         assert_eq!((same, none), (after, 0));
     }
 
     #[test]
     fn removing_from_what_adding_made_leaves_an_empty_hooks_table() {
-        let added = add_global_hooks(&json!({}), &claude_global_hook_command("/bin/adj")).unwrap();
+        let added =
+            add_global_hooks(&json!({}), &global_hook_command("/bin/adj", Claude), Claude).unwrap();
         assert_eq!(
-            remove_global_hooks(&added).unwrap(),
+            remove_global_hooks(&added, Claude).unwrap(),
             (json!({ "hooks": {} }), CLAUDE_EVENTS.len())
         );
     }
 
     #[test]
     fn an_unexpected_shape_is_refused_by_both() {
-        let command = claude_global_hook_command("/bin/adj");
+        let command = global_hook_command("/bin/adj", Claude);
         for bad in [
             json!([]),
             json!("text"),
@@ -512,12 +597,131 @@ mod tests {
             json!({ "hooks": null }),
             json!({ "hooks": { "Stop": {} } }),
         ] {
-            assert!(add_global_hooks(&bad, &command).is_err(), "{bad}");
-            assert!(remove_global_hooks(&bad).is_err(), "{bad}");
+            assert!(add_global_hooks(&bad, &command, Claude).is_err(), "{bad}");
+            assert!(remove_global_hooks(&bad, Claude).is_err(), "{bad}");
         }
         // An event adjutant does not use is only a problem for removing.
         let odd = json!({ "hooks": { "PreToolUse": "x" } });
-        assert!(add_global_hooks(&odd, &command).is_ok());
-        assert!(remove_global_hooks(&odd).is_err());
+        assert!(add_global_hooks(&odd, &command, Claude).is_ok());
+        assert!(remove_global_hooks(&odd, Claude).is_err());
+    }
+
+    #[test]
+    fn the_codex_table_has_nine_events_and_only_tool_and_permission_ones_have_a_matcher() {
+        assert_eq!(CODEX_EVENTS.len(), 9);
+        let with_matcher: Vec<_> = CODEX_EVENTS
+            .iter()
+            .filter(|(_, m)| m.is_some())
+            .map(|(e, _)| *e)
+            .collect();
+        assert_eq!(with_matcher, ["PostToolUse", "PermissionRequest"]);
+        assert!(CODEX_EVENTS.iter().any(|(e, _)| *e == "Interrupt"));
+    }
+
+    #[test]
+    fn the_command_names_the_agent_and_each_agent_only_recognises_its_own() {
+        let claude = global_hook_command("/bin/adj", Claude);
+        let codex = global_hook_command("/bin/adj", Codex);
+        assert_eq!(
+            claude,
+            "[ ! -x /bin/adj ] || /bin/adj hook claude --global || true"
+        );
+        assert_eq!(
+            codex,
+            "[ ! -x /bin/adj ] || /bin/adj hook codex --global || true"
+        );
+        assert!(is_global_hook_command(&codex, Codex));
+        assert!(!is_global_hook_command(&codex, Claude));
+        assert!(!is_global_hook_command(&claude, Codex));
+        assert!(is_global_hook_command("adj hook codex --global", Codex));
+    }
+
+    #[test]
+    fn codex_hooks_are_added_removed_and_left_alone_the_second_time() {
+        let command = global_hook_command("/bin/adj", Codex);
+        let before = user_settings();
+        let once = add_global_hooks(&before, &command, Codex).unwrap();
+        assert_eq!(count_global_hooks(&once, Codex), CODEX_EVENTS.len());
+        assert_eq!(count_global_hooks(&once, Claude), 0);
+        assert_eq!(once["hooks"]["PreToolUse"], before["hooks"]["PreToolUse"]);
+        assert_eq!(once["hooks"]["PermissionRequest"][0]["matcher"], "*");
+        assert!(once["hooks"]["Interrupt"][0].get("matcher").is_none());
+        assert_eq!(add_global_hooks(&once, &command, Codex).unwrap(), once);
+        assert_eq!(
+            remove_global_hooks(&once, Codex).unwrap(),
+            (before, CODEX_EVENTS.len())
+        );
+    }
+
+    #[test]
+    fn a_moved_binary_is_rewritten_in_place_for_codex_too() {
+        let old = global_hook_command("/gone/a b/adj", Codex);
+        let new = global_hook_command("/bin/adj", Codex);
+        let first = add_global_hooks(&user_settings(), &old, Codex).unwrap();
+        let again = add_global_hooks(&first, &new, Codex).unwrap();
+        assert!(!again.to_string().contains("/gone/"));
+        assert_eq!(
+            again,
+            add_global_hooks(&user_settings(), &new, Codex).unwrap()
+        );
+    }
+
+    #[test]
+    fn removing_one_agents_entries_keeps_the_other_agents() {
+        let claude = global_hook_command("/bin/adj", Claude);
+        let codex = global_hook_command("/bin/adj", Codex);
+        let both = add_global_hooks(&user_settings(), &claude, Claude).unwrap();
+        let both = add_global_hooks(&both, &codex, Codex).unwrap();
+        let (without_codex, removed) = remove_global_hooks(&both, Codex).unwrap();
+        assert_eq!(removed, CODEX_EVENTS.len());
+        assert_eq!(
+            count_global_hooks(&without_codex, Claude),
+            CLAUDE_EVENTS.len()
+        );
+        assert_eq!(
+            without_codex,
+            add_global_hooks(&user_settings(), &claude, Claude).unwrap()
+        );
+        let (without_claude, removed) = remove_global_hooks(&both, Claude).unwrap();
+        assert_eq!(removed, CLAUDE_EVENTS.len());
+        assert_eq!(
+            count_global_hooks(&without_claude, Codex),
+            CODEX_EVENTS.len()
+        );
+    }
+
+    #[test]
+    fn a_refused_shape_names_the_agent() {
+        let err = add_global_hooks(&json!({ "hooks": [] }), "c", Codex).unwrap_err();
+        assert!(err.contains("Codex"), "{err}");
+    }
+
+    #[test]
+    fn only_codex_session_end_carries_a_timeout_and_an_old_entry_gains_it() {
+        let command = global_hook_command("/bin/adj", Codex);
+        let added = add_global_hooks(&json!({}), &command, Codex).unwrap();
+        for (event, _) in CODEX_EVENTS {
+            let timeout = added["hooks"][*event][0]["hooks"][0].get("timeout");
+            match *event {
+                "SessionEnd" => assert_eq!(timeout, Some(&json!(3))),
+                _ => assert_eq!(timeout, None, "{event}"),
+            }
+        }
+        let claude =
+            add_global_hooks(&json!({}), &global_hook_command("/bin/adj", Claude), Claude).unwrap();
+        assert!(!claude.to_string().contains("timeout"));
+
+        // An entry written before the timeout existed is updated, not duplicated.
+        let mut old = added.clone();
+        old["hooks"]["SessionEnd"][0]["hooks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("timeout");
+        assert_eq!(add_global_hooks(&old, &command, Codex).unwrap(), added);
+        assert_eq!(count_global_hooks(&added, Codex), CODEX_EVENTS.len());
+        assert_eq!(
+            remove_global_hooks(&added, Codex).unwrap(),
+            (json!({ "hooks": {} }), CODEX_EVENTS.len())
+        );
     }
 }

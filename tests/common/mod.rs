@@ -39,7 +39,9 @@ pub const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-pub const AMBIENT: [&str; 18] = [
+pub const AMBIENT: [&str; 19] = [
+    // Where Codex keeps its hooks file; a child must not reach the developer's real one.
+    "CODEX_HOME",
     "ADJUTANT_HUB",
     "ADJUTANT_STARTUP_DASHBOARD",
     // A hub's MCP server beats for the session this names; a test child that inherited it

@@ -204,7 +204,7 @@ fn what_cannot_be_recorded_is_said_on_stderr_and_still_exits_zero() {
         // A refused permission request is still answered: the agent is waiting for the line.
         assert_eq!(String::from_utf8_lossy(&out.stdout), said);
     }
-    let mut command = fx.command(["hook", "codex"]);
+    let mut command = fx.command(["hook", "agy"]);
     let out = start(
         &mut command,
         sent(&fx, "session-start").to_string().as_bytes(),
@@ -395,4 +395,49 @@ fn the_status_line_relay_never_fails_the_status_line() {
         assert!(out.stdout.is_empty());
         assert!(!out.stderr.is_empty());
     }
+}
+
+/// A Codex payload as a session in the fixture repository sends it.
+fn codex_sent(fixture: &Fixture, name: &str) -> Json {
+    let text = match name {
+        "session-start" => include_str!("../src/fixtures/hooks/codex/session-start.json"),
+        "permission-request" => include_str!("../src/fixtures/hooks/codex/permission-request.json"),
+        "interrupt" => include_str!("../src/fixtures/hooks/codex/interrupt.json"),
+        other => panic!("no fixture called {other}"),
+    };
+    let mut payload: Json = serde_json::from_str(text).unwrap();
+    payload["cwd"] = fixture.repo.to_string_lossy().to_string().into();
+    payload
+}
+
+fn codex_hook(fixture: &Fixture, payload: &Json) -> std::process::Output {
+    let mut command = fixture.command(["hook", "codex"]);
+    // A live pid in `CLAUDE_PID`, which Codex's row must not pick up.
+    start(
+        &mut command,
+        payload.to_string().as_bytes(),
+        std::process::id(),
+    )
+    .wait_with_output()
+    .unwrap()
+}
+
+#[test]
+fn a_codex_hook_records_a_row_without_a_pid_and_prints_nothing() {
+    let fx = fixture();
+    for name in ["session-start", "permission-request"] {
+        let out = codex_hook(&fx, &codex_sent(&fx, name));
+        quiet_success(&out);
+        // Codex reads stdout as a decision, so even a permission request is answered with nothing.
+        assert!(out.stdout.is_empty(), "{name}");
+    }
+    let rows = rows(&fx);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["agent"], "codex");
+    assert_eq!(rows[0]["sessionId"], SESSION);
+    assert_eq!(rows[0]["status"], "waiting");
+    assert!(rows[0].get("pid").is_none());
+
+    quiet_success(&codex_hook(&fx, &codex_sent(&fx, "interrupt")));
+    assert_eq!(self::rows(&fx)[0]["status"], "done");
 }

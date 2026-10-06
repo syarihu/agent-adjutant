@@ -55,17 +55,19 @@ resolves to the binary you ran, and its absolute path otherwise — so running `
 out of a build directory pins that build forever, and `cargo clean` then breaks the server.
 
 **Sessions adjutant did not start.** Hubs and workers adjutant starts get its hooks at launch. To
-have Claude Code sessions you start yourself report to `adjutant agent-sessions` too, add the same
-hooks to your Claude Code user settings:
+have Claude Code or Codex sessions you start yourself report to `adjutant agent-sessions` too, add
+the same hooks to your Claude Code user settings or Codex's hooks file:
 
 ```bash
 adjutant setup claude            # adds adjutant's hooks to ~/.claude/settings.json ($CLAUDE_CONFIG_DIR/settings.json when set)
 adjutant setup claude --remove   # takes out only those again
+adjutant setup codex             # the same for Codex: ~/.codex/hooks.json ($CODEX_HOME/hooks.json when set); Codex asks you to trust the new hooks
+adjutant setup codex --remove    # and the same for Codex
 ```
 
 It appends its entries next to your own hooks and never changes those; `--remove` takes out only
-entries that run `… hook claude --global`, whatever path they name. Run it again after moving or upgrading `adj`
-to rewrite them to the new path. It records the path of the binary it runs as, so run it from the
+entries that run `… hook <agent> --global`, whatever path they name. Run it again after moving or
+upgrading `adj` to rewrite them to the new path. It records the path of the binary it runs as, so run it from the
 installed `adjutant`, not from `cargo run` or a build directory. The file is rewritten formatted, with its keys sorted.
 
 **`adj` is the same program under a shorter name** — both binaries are installed, and every
@@ -93,7 +95,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
 | `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate-limit cache and whether `codex` is on `PATH` — and the line to tell the user |
 | `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, and the last tool it reported; sessions whose process has gone are left out |
-| `adjutant setup claude [--remove]` | add adjutant's hooks to your Claude Code user settings, so sessions adjutant did not start report to `agent-sessions` too (see [Install](#install)) |
+| `adjutant setup claude\|codex [--remove]` | add adjutant's hooks to your Claude Code user settings or Codex hooks file, so sessions adjutant did not start report to `agent-sessions` too (see [Install](#install)) |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |

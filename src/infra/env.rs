@@ -56,3 +56,9 @@ pub const CLAUDE_PID_ENV: &str = "CLAUDE_PID";
 /// Where the session's Claude Code account keeps its files. Unset on the default account, whose
 /// directory is `~/.claude`.
 pub const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
+
+// ── what Codex gives a hook ──────────────────────────────────────────
+
+/// Where Codex keeps its files (its `hooks.json` among them). Unset on the default install,
+/// whose directory is `~/.codex`.
+pub const CODEX_HOME_ENV: &str = "CODEX_HOME";

@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 /// transport; this is what the ledger needs from it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentEvent {
-    /// `claude` first.
+    /// `claude` or `codex`.
     pub agent: String,
     pub session_id: String,
     pub hook: HookEvent,
@@ -22,7 +22,7 @@ pub struct AgentEvent {
     pub cwd: Option<String>,
     /// The tool in use, as `Edit: src/lib.rs`.
     pub summary: Option<String>,
-    /// The agent's process (`CLAUDE_PID`).
+    /// The agent's process, when its hooks report one (Claude Code's `CLAUDE_PID`; Codex has none).
     pub pid: Option<u32>,
     pub config_dir: Option<String>,
     /// When it was received, epoch seconds: the only clock `apply` reads.
