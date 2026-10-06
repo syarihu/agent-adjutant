@@ -3,7 +3,7 @@ const sentDecision = (action, kind) =>
   action === 'approve' ? (kind === 'result' ? 'ack' : 'approve')
   : action === 'start' ? 'approve'
   : action === 'shelve' ? 'reject'
-  : action === 'reject' && (kind === 'verify' || kind === 'diff') ? 'changes'
+  : action === 'reject' && (kind === 'plan' || kind === 'verify' || kind === 'diff') ? 'changes'
   : action;
 const actLabel = (action, kind) => decisionLabel(sentDecision(action, kind), kind);
 
@@ -290,8 +290,7 @@ async function act(action, id, choice) {
         break;
       }
       case 'send-reject': {
-        // Keep sentDecision in step: the button labels name what this sends.
-        const decision = gate?.kind === 'verify' || gate?.kind === 'diff' ? 'changes' : 'reject';
+        const decision = sentDecision('reject', gate?.kind);
         if (gate) {
           await submitAnswer(decision, undefined, gateRef(gate), reply || '差し戻し');
         }
