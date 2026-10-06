@@ -8,6 +8,13 @@ pub fn state_dir() -> PathBuf {
     {
         return expand_home(&dir);
     }
+    default_state_dir()
+}
+
+/// What `state_dir` answers when `ADJUTANT_STATE_DIR` is not set. Relative only when
+/// `XDG_STATE_HOME` is, so a caller that needs an absolute path makes it one
+/// (`registry::hook_state_root` does, with `std::path::absolute`).
+pub fn default_state_dir() -> PathBuf {
     match std::env::var("XDG_STATE_HOME") {
         Ok(dir) if !dir.is_empty() => expand_home(&dir).join("adjutant"),
         _ => home_dir().join(".local").join("state").join("adjutant"),

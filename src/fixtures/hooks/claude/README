@@ -1,0 +1,39 @@
+Hook payloads an agent sends to `adj hook claude`, read by `src/transport/cli/hook/tests.rs` and
+`tests/agent_sessions.rs`. One file per event:
+
+    session-start.json                 SessionStart
+    user-prompt-submit.json            UserPromptSubmit
+    post-tool-use.json                 PostToolUse, an Edit
+    post-tool-use-failure.json         PostToolUseFailure, a Bash command
+    permission-request.json            PermissionRequest
+    notification-permission.json       Notification, permission_prompt
+    notification-idle.json             Notification, idle_prompt
+    subagent-start.json                SubagentStart
+    subagent-post-tool-use.json        PostToolUse sent by a sub-agent (carries agent_id)
+    subagent-permission-request.json   PermissionRequest sent by a sub-agent
+    subagent-stop.json                 SubagentStop
+    stop.json                          Stop
+    stop-failure.json                  StopFailure
+    session-end.json                   SessionEnd
+
+Recorded from a real session (Claude Code 2.1.291, `claude -p` with a hand-written `--settings`
+file whose hooks wrote their stdin to a file): the keys of `session-start.json` and
+`user-prompt-submit.json`, of `stop.json` as far as they were noted (`stop_hook_active`,
+`last_assistant_message`, the common ones), and the whole of `subagent-start.json`,
+`subagent-post-tool-use.json` (a sub-agent's Bash call) and `subagent-stop.json`, from a session
+that had a sub-agent run `ls`. A sub-agent's events carry `agent_id` and `agent_type`; its
+`PostToolUse` also carries `effort`.
+
+Written by hand from the Claude Code hooks reference, with the keys it lists for the event (and
+`prompt_id` and `duration_ms`, which the recorded tool events carry): both `notification-*.json`,
+`post-tool-use.json` (an Edit), `post-tool-use-failure.json`, `permission-request.json`,
+`stop-failure.json`, `session-end.json` and `subagent-permission-request.json` (the recorded
+sub-agent layout with a permission request's keys). The recorded session asked for no permission
+and ran no tool of its own that fails. When one is recorded, replace the hand-written file.
+
+Editing applied, since the repository is public: the session id, the prompt id, the agent id and the tool use id
+became fixed values, paths became `/home/user/...`, and the prompt and message text was made plain.
+Each recorded file keeps the keys the binary sent.
+
+The tests rewrite `cwd` to the fixture repository and `session_id` where they need more than one
+session; nothing else is edited.

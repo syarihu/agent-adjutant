@@ -1,0 +1,26 @@
+{
+  "session_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "transcript_path": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d.jsonl",
+  "cwd": "/home/user/repo",
+  "prompt_id": "3f2a1c9e-7b64-4d58-a0e1-5c6d7e8f9a0b",
+  "permission_mode": "default",
+  "agent_id": "aac91a24906eff6d1",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/subagents/agent-aac91a24906eff6d1.jsonl",
+  "last_assistant_message": "The directory is empty.",
+  "background_tasks": [
+    {
+      "id": "aac91a24906eff6d1",
+      "type": "subagent",
+      "status": "running",
+      "description": "Run ls command to list directory contents",
+      "agent_type": "general-purpose"
+    }
+  ],
+  "session_crons": []
+}

@@ -46,3 +46,13 @@ pub const HUB_SESSION_ENV: &str = "ADJUTANT_HUB_SESSION";
 /// records no session, and such a hub still wants its board. Left off when `hubServe` is
 /// `false`.
 pub const HUB_SERVE_ENV: &str = "ADJUTANT_HUB_SERVE";
+
+// ── what Claude Code gives a hook ────────────────────────────────────
+
+/// The pid of the `claude` process, set in a hook's environment (documented from Claude Code
+/// 2.1.214). Read by the hook receiver to join a session's row to the process behind it.
+pub const CLAUDE_PID_ENV: &str = "CLAUDE_PID";
+
+/// Where the session's Claude Code account keeps its files. Unset on the default account, whose
+/// directory is `~/.claude`.
+pub const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";

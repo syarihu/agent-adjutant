@@ -43,6 +43,11 @@ pub(crate) enum Commands {
     Phase(PhaseArgs),
     /// Which engine reads the diff in this self-review round: reviewEngine, then Claude's rate limits
     ReviewEngine(ReviewEngineArgs),
+    /// What each agent session's hooks last said: running, waiting, done, sub-agents
+    AgentSessions(AgentSessionsArgs),
+    /// Record an agent's hook event from stdin (what the agent's settings run)
+    #[command(hide = true)]
+    Hook(HookArgs),
     /// Close the tab the worker in a worktree is sitting in; exit 1 if it is still there
     Close(CloseArgs),
     /// Start this repository's hub, in the main checkout, once
@@ -354,6 +359,22 @@ pub(crate) struct ReviewEngineArgs {
     /// Print the decision, the window that tripped and the message as JSON
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct AgentSessionsArgs {
+    /// Print the rows as a JSON array, as they are stored
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct HookArgs {
+    /// Which agent's payload this is: claude
+    pub(crate) agent: String,
+    /// Marks an entry `adj setup` wrote into a global settings file; it changes nothing here
+    #[arg(long, hide = true)]
+    pub(crate) global: bool,
 }
 
 #[derive(Args)]

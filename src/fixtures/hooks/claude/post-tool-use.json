@@ -1,0 +1,19 @@
+{
+  "session_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "transcript_path": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d.jsonl",
+  "cwd": "/home/user/repo",
+  "prompt_id": "3f2a1c9e-7b64-4d58-a0e1-5c6d7e8f9a0b",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/home/user/repo/src/lib.rs",
+    "old_string": "1 + 1",
+    "new_string": "2"
+  },
+  "tool_response": {
+    "success": true
+  },
+  "tool_use_id": "toolu_01ExampleEdit",
+  "duration_ms": 1246
+}

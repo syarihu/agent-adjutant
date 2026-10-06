@@ -92,6 +92,22 @@ pub fn state_root(anchor: Option<&Path>) -> PathBuf {
     std::path::absolute(&joined).unwrap_or(joined)
 }
 
+/// The state root for a hook, which loads no config and must always find one: `state_root`,
+/// except that a relative `ADJUTANT_STATE_DIR` is taken against the main checkout of `cwd`, as
+/// the other commands take it against theirs, and outside git against nothing but the default.
+pub fn hook_state_root(cwd: Option<&Path>) -> PathBuf {
+    if state_dir().is_absolute() {
+        return state_root(None);
+    }
+    if let Some(cwd) = cwd
+        && let Ok(main) = identity::main_worktree(Some(cwd))
+    {
+        return state_root(Some(Path::new(&main)));
+    }
+    let fallback = default_state_dir();
+    std::path::absolute(&fallback).unwrap_or(fallback)
+}
+
 pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
     let state = state_root(Some(Path::new(&repo.main)));
     context_at(repo, state)

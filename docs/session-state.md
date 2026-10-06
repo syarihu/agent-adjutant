@@ -96,35 +96,43 @@ They answer different questions, and neither replaces the other.
 **Writes.** Load, change and save under the row's lock, replacing the file through a rename
 (`infra::fs`). A change is any field but `lastEventAt`; with none, the write is skipped unless
 `lastEventAt` is a minute old, as proctor does with its sub-agent heartbeat. So `PostToolUse` on the
-same tool writes at most once a minute.
+same tool writes at most once a minute. `activity` and `request` carry the first line of a tool's
+command, which can hold a secret, so a row is written readable by its owner only (mode 0600).
 
 What costs a process is done only when it can change the row. The receiver first reads the row
-without the lock, only to decide whether it needs `git rev-parse` (the row is new or `cwd` differs)
-or the `ps` start time (the row is new or `pid` differs), and runs those before taking the lock. The
-write always reloads the row under the lock and applies the event to that, never to the first read,
-so a parent's and a sub-agent's events that overlap both survive. If the locked read shows a lookup
-is needed after all (another event moved the row in between), it releases the lock, runs it, and
-tries again. A `PostToolUse` on a settled row then costs two reads and, at most once a minute, one
-write.
+without the lock, only to decide whether it needs `git rev-parse` (the row is new or `cwd` differs,
+for an event from the session itself: a sub-agent's never moves `cwd`) or the `ps` start time (the
+row is new, `pid` differs, or the start time was never read), and runs those before taking the
+lock. The write always reloads the row under the lock and applies the event to that, never to the
+first read, so a parent's and a sub-agent's events that overlap both survive. If the locked read
+shows a lookup is needed after all (another event moved the row in between), it releases the lock,
+runs it, and tries again. A `PostToolUse` on a settled row then costs two reads and, at most once a
+minute, one write.
 
 **Pruning.** `SessionEnd` removes the row. For a row that ends without one (the tab was closed, the
 process was killed), the receiver sweeps the other rows on `SessionStart` and `Stop`. Not on every
 event: a sweep checks processes, and `PostToolUse` fires after every tool call. A sweep takes one
 `ProcessTable::snapshot` and checks every row against it, rather than one `ps` per row.
 
-- A row with a `pid` is dead when the pid is gone or its start time differs (a row whose start time
-  could not be read is judged by the pid alone). The row's own pid is used, not the joined hub or
-  worker record: a record can be missing while its agent still runs.
+- A row with a `pid` is dead when the pid is gone or its start time differs. A row whose start
+  time could not be read cannot tell a reused pid from its own process, so it is also dropped once
+  quiet for 24 hours (a live session reads the start time again on every event). The row's own
+  pid is used, not the joined hub or worker record: a record can be missing while its agent still
+  runs.
 - When the table cannot be read, nothing is removed (`Liveness::CannotTell` keeps the row).
 - A row without a pid is dropped when `lastEventAt` is older than 24 hours, whatever its status. A
   live session sends events far more often than that (every tool call, every turn), so a row that
   has been quiet that long is a process that died without `Stop` or `SessionEnd`. Unlike proctor, a
   `running` row is not exempt; there it could stay `running` for ever.
-- A removed row's `.lock` goes with it, and a `.json.broken` file older than a week.
+- `SessionEnd` removes only the `.json`. The sweep removes a `.lock` that has no row beside it, and
+  only after taking it without waiting. Unlinking a lock another process holds open would hand
+  two callers two different locks (see `infra::fs::open_lock`), so a writer checks, once it holds
+  a lock, that the path still names that file, and opens it again if not
+  (`infra::fs::lock_checked`). A `.json.broken` file older than a week goes too.
 
 A sweep only runs when some session sends one of those events, so with nothing else running a closed
 tab's row stays on disk. Readers therefore apply the same check: `agent_sessions` leaves out rows
-the sweep would remove (a dead pid, or no pid and quiet for 24 hours), through
+the sweep would remove (a dead pid, or no pid or no start time and quiet for 24 hours), through
 `agent_sessions_with(root, table)` (rule 7), so the board's poll and `adj agent-sessions` never
 show a closed tab as `running`.
 
@@ -185,8 +193,9 @@ The events, taken from proctor's table:
 | `SubagentStart` | | adds the sub-agent by `agent_id` |
 | `SubagentStop` | | removes it; applies `pendingStatus` when it was the last |
 
-An event that carries `agent_id` comes from a sub-agent: it updates that sub-agent's `lastSeenAt`
-and does not set the parent's `status`, with these exceptions:
+An event that carries `agent_id` comes from a sub-agent. Its `PostToolUse`, `PostToolUseFailure`
+and `PermissionRequest` update that sub-agent's `lastSeenAt` and do not set the parent's `status`,
+with these exceptions (any other such event sets no status and adds no sub-agent):
 
 - A `PermissionRequest` from a sub-agent sets the parent to `waiting`, since the person is asked in
   the parent's terminal either way; otherwise the row looks busy until the `Notification` some
@@ -195,6 +204,10 @@ and does not set the parent's `status`, with these exceptions:
   clears `request`: the prompt was answered. Without it the parent stays `waiting` until the
   sub-agent ends.
 - `SubagentStop` for the last sub-agent applies the parent's `pendingStatus`.
+- The parent's own `PostToolUse`, `PostToolUseFailure` or `PermissionRequest` clears a held
+  `pendingStatus`, as `UserPromptSubmit` does: the parent is in a new turn, and a later
+  `SubagentStop` must not put `done` over it.
+- Any other event that carries an `agent_id` sets no status and adds no sub-agent.
 
 No hook is run in the background (`async`). A background `PostToolUse` that finished after `Stop`
 would put a finished row back to `running`. Run in order, the receiver has to be fast instead, which
@@ -250,10 +263,11 @@ edits a global settings file, and removing adjutant leaves nothing behind in the
   (`Sub::Quoted`). When the runner's agent is `claude` (`runner::agent_from_runner`) and the
   template does not name `{settings}`, it is added after the agent's name, unless the template
   already passes its own `--settings`: adjutant leaves the user's alone, and that session has no
-  injected hooks (whether Claude Code honours two `--settings` flags is not documented, and issue 1
-  checks it). adjutant does not try to parse a template the shell does not read as one command (a
-  pipe, `;`): it inserts after the agent's name as above, and a user whose template needs it
-  elsewhere names `{settings}` there. The four default runners name it.
+  injected hooks. A second `--settings` would not add to the user's: Claude Code takes the last
+  `--settings` flag and drops the earlier ones without an error (checked on Claude Code 2.1.291),
+  so the rule of not adding one stands. adjutant does not try to parse a template the shell does
+  not read as one command (a pipe, `;`): it inserts after the agent's name as above, and a user
+  whose template needs it elsewhere names `{settings}` there. The four default runners name it.
 
 **Written once by `adj setup claude`, for everything else.** Sessions adjutant did not start, and
 agents with no per-session settings flag (Codex and Antigravity read hooks only from a global file),
@@ -269,6 +283,14 @@ through a temporary file and a rename. It is opt-in: adjutant works without it.
 Claude Code merges hook entries across settings levels rather than letting one replace another, and
 `--settings` is one of those levels (above the user's, project and local files). So the injected
 hooks run next to whatever hooks the user has, and the user's are untouched.
+
+What this relies on was checked on Claude Code 2.1.291, by running `claude -p` with hand-written
+`--settings` files. The `session_id` in a hook payload is the one passed with `--session-id`, and
+`--resume <id>` keeps it (`SessionStart` says `source: "resume"`); only `--fork-session` gives a
+new one (`source: "fork"`), as `/clear` does, and the pid join covers that. Hooks passed with
+`--settings` ran in addition to the user's own, both firing for the same event. `CLAUDE_PID` is set
+for hooks and is the `claude` process, the hook shell's parent. `CLAUDE_CONFIG_DIR` is not set on
+the default account, so the `~/.claude` fallback is the common case.
 
 **No double counting between the two.** When both are present, a session adjutant started runs both
 sets, and both write the same row. That is harmless by construction: every event sets a status, adds

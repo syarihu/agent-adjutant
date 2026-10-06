@@ -14,11 +14,13 @@ use crate::mail::{self, Message, NotWoken, Reached, deliver_to_hub_with_wake, de
 use crate::registry::{self, Context, context, context_as, context_without_hub, resolve};
 use crate::transport::wording::wake_note_sentence;
 
+mod agent_sessions;
 mod args;
 mod close;
 mod config;
 mod delivery;
 mod gate;
+mod hook;
 mod hub;
 mod ide_title_notify;
 mod jules;
@@ -33,6 +35,7 @@ mod tell;
 pub mod tmux;
 mod worker;
 
+pub use agent_sessions::run as agent_sessions;
 pub use close::close;
 use config::settings_for;
 pub use config::{hub_name, show_config};
@@ -41,6 +44,7 @@ pub use gate::{
     answer_cmd as gate_answer, close_cmd as gate_close, list as gate_list, open_cmd as gate_open,
     show as gate_show,
 };
+pub use hook::hook;
 use hub::{ago, print_performed};
 pub use hub::{hub, hub_close, hub_stop};
 pub use ide_title_notify::{notify_user, open_ide, set_title, worktree_path};
