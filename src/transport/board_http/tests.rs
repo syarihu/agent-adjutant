@@ -1010,3 +1010,28 @@ fn the_views_register_themselves() {
     // No registration outside the order (it would throw at load).
     assert_eq!(UI_HTML.matches("registerView('").count(), names.len());
 }
+
+// The rail once keyed on a column id that no longer existed, so it never showed.
+#[test]
+fn the_task_view_shows_the_queue_beside_a_task_on_the_persons_board() {
+    let start = UI_HTML
+        .find("function renderTaskView(")
+        .expect("the page defines renderTaskView");
+    let rest = &UI_HTML[start..];
+    let end = rest[1..]
+        .find("\nfunction ")
+        .map_or(rest.len(), |at| at + 1);
+    let body = &rest[..end];
+    for piece in [
+        "const onQueue = !!humanColOf(task);",
+        "root.classList.toggle('with-rail', onQueue);",
+        "要対応 ${gates.length} 件",
+    ] {
+        assert!(body.contains(piece), "renderTaskView lacks {piece}");
+    }
+    assert!(UI_HTML.contains("<div class=\"rail hidden\"></div>"));
+    assert!(
+        !body.contains("'attention'"),
+        "renderTaskView still names the old column"
+    );
+}
