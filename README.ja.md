@@ -64,7 +64,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant focus [--worktree …]` | 実行中の hub タブ（`--worktree` ならその worktree の worker のタブ）をアクティブにする（なければ exit 1） |
 | `adjutant phase [--set …]` | worker が今どの工程にいるかを書く（`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`）。`--set` 無しなら今の工程を表示 |
 | `adjutant review-engine [--json]` | worker 用。このセルフレビューのラウンドで差分を読むエンジンを返す（`reviewEngine`、`auto` なら Claude のレート制限キャッシュと `PATH` 上の `codex` で決める）。ユーザーに伝える一文も返す |
-| `adjutant agent-sessions [--json]` | 各エージェントセッションのフックが最後に伝えた状態（idle・running・権限プロンプト待ちの waiting・done・failed）、実行中のサブエージェント、使用中のツールを一覧する。プロセスが終わったセッションは出さない |
+| `adjutant agent-sessions [--json]` | 各エージェントセッションのフックが最後に伝えた状態（idle・running・権限プロンプト待ちの waiting・done・failed）、実行中のサブエージェント、最後に報告したツールを一覧する。プロセスが終わったセッションは出さない |
 | `adjutant close --worktree …` | 指定 worktree の worker が座っているタブを閉じる（閉じられなければ exit 1） |
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |

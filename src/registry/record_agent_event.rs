@@ -168,7 +168,14 @@ fn sweep(root: &Path, table: &ProcessTable, now: i64, except: &str) -> Result<()
     };
     let mut errors = Vec::new();
     let mut locks = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                errors.push(format!("cannot list {}: {e}", dir.display()));
+                continue;
+            }
+        };
         let path = entry.path();
         let Some(name) = path
             .file_name()

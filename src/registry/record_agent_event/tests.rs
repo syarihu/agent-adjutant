@@ -816,6 +816,7 @@ fn readers_leave_a_dead_row_out_without_deleting_it() {
     std::fs::write(agent_session_path(root, "garbled"), "{").unwrap();
     let table = ProcessTable::fixed(Some(HashMap::from([(5, "A".to_string())])));
     let ids: Vec<String> = agent_sessions_with(root, &table)
+        .unwrap()
         .into_iter()
         .map(|row| row.session_id)
         .collect();
@@ -823,7 +824,15 @@ fn readers_leave_a_dead_row_out_without_deleting_it() {
     assert!(exists(root, "gone"));
     assert!(matches!(agent_session(root, "gone"), Recorded::Found(_)));
     assert_eq!(agent_session(root, "../gone"), Recorded::Absent);
-    assert!(agent_sessions_with(&root.join("none"), &table).is_empty());
+    assert!(
+        agent_sessions_with(&root.join("none"), &table)
+            .unwrap()
+            .is_empty()
+    );
+    // A file where the directory should be is a failure to look, not an empty list.
+    let blocked = tempfile::tempdir().unwrap();
+    std::fs::write(agent_sessions_dir(blocked.path()), "").unwrap();
+    assert!(agent_sessions_with(blocked.path(), &table).is_err());
 }
 
 // ── records shared across versions ───────────────────────────────
