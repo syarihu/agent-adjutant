@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::config::ReviewEngine;
+use crate::registry::{AgentSession, RateLimits};
 
 use serde_json::json;
 
@@ -243,4 +244,201 @@ fn the_cache_sits_under_claude_config_dir_or_home() {
         cache_path(None, home),
         PathBuf::from("/home/.claude/rate-limit-cache.json")
     );
+}
+
+#[test]
+fn a_blank_claude_config_dir_is_the_default_account() {
+    let home = Path::new("/home");
+    assert_eq!(
+        claude_config_dir(Some(OsStr::new("  ")), home),
+        PathBuf::from("/home/.claude")
+    );
+    assert_eq!(
+        claude_config_dir(Some(OsStr::new("")), home),
+        PathBuf::from("/home/.claude")
+    );
+    assert_eq!(
+        claude_config_dir(Some(OsStr::new("/cfg/a")), home),
+        PathBuf::from("/cfg/a")
+    );
+    assert_eq!(
+        cache_path(Some(OsStr::new(" ")), home),
+        PathBuf::from("/home/.claude/rate-limit-cache.json")
+    );
+}
+
+fn window(used: Option<f64>, resets_at: Option<i64>) -> RateWindow {
+    RateWindow {
+        used_percent: used,
+        resets_at,
+        ..Default::default()
+    }
+}
+
+fn row(
+    id: &str,
+    agent: &str,
+    config_dir: &str,
+    last_event_at: i64,
+    five: Option<RateWindow>,
+    seven: Option<RateWindow>,
+) -> AgentSession {
+    AgentSession {
+        session_id: id.to_string(),
+        agent: Some(agent.to_string()),
+        config_dir: Some(config_dir.to_string()),
+        last_event_at: Some(last_event_at),
+        rate_limits: Some(RateLimits {
+            five_hour: five,
+            seven_day: seven,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn claude_row(id: &str, last_event_at: i64, used: f64) -> AgentSession {
+    row(
+        id,
+        "claude",
+        "/cfg/a",
+        last_event_at,
+        Some(window(Some(used), None)),
+        None,
+    )
+}
+
+#[test]
+fn the_newest_qualifying_row_of_the_account_is_picked() {
+    let dir = Path::new("/cfg/a");
+    let mut no_limits = claude_row("no-limits", NOW - 1, 1.0);
+    no_limits.rate_limits = None;
+    let rows = vec![
+        no_limits,
+        row(
+            "other-dir",
+            "claude",
+            "/cfg/b",
+            NOW - 2,
+            Some(window(Some(1.0), None)),
+            None,
+        ),
+        row(
+            "codex",
+            "codex",
+            "/cfg/a",
+            NOW - 3,
+            Some(window(Some(1.0), None)),
+            None,
+        ),
+        row(
+            "no-percent",
+            "claude",
+            "/cfg/a",
+            NOW - 4,
+            Some(window(None, Some(NOW))),
+            None,
+        ),
+        claude_row("older", NOW - 600, 20.0),
+        claude_row("oldest", NOW - 700, 30.0),
+    ];
+    let got = ledger_usage(&rows, dir, NOW).unwrap();
+    assert_eq!(got.session_id, "older");
+    assert_eq!(got.last_event_at, NOW - 600);
+
+    // Not relying on the order the rows come in.
+    let rows = vec![
+        claude_row("oldest", NOW - 700, 30.0),
+        claude_row("newer", NOW - 10, 40.0),
+    ];
+    assert_eq!(ledger_usage(&rows, dir, NOW).unwrap().session_id, "newer");
+
+    assert_eq!(ledger_usage(&[], dir, NOW), None);
+}
+
+#[test]
+fn a_config_dir_with_a_trailing_slash_is_the_same_account() {
+    let rows = vec![row(
+        "s",
+        "claude",
+        "/cfg/a/",
+        NOW,
+        Some(window(Some(10.0), None)),
+        None,
+    )];
+    assert!(ledger_usage(&rows, Path::new("/cfg/a"), NOW).is_some());
+}
+
+#[test]
+fn a_row_is_fresh_for_fifteen_minutes() {
+    let dir = Path::new("/cfg/a");
+    let at = |last| vec![claude_row("s", last, 10.0)];
+    assert!(ledger_usage(&at(NOW - 900), dir, NOW).is_some());
+    assert_eq!(ledger_usage(&at(NOW - 901), dir, NOW), None);
+    assert_eq!(ledger_usage(&at(NOW + 1), dir, NOW), None);
+}
+
+fn ledger(five: Option<RateWindow>, seven: Option<RateWindow>) -> Usage {
+    Usage::Ledger(LedgerUsage {
+        session_id: "s".to_string(),
+        last_event_at: NOW,
+        five_hour: five,
+        seven_day: seven,
+    })
+}
+
+#[test]
+fn ledger_figures_trip_by_the_same_rules_as_the_cache() {
+    let usage = ledger(
+        Some(window(Some(50.0), Some(NOW + 60))),
+        Some(window(Some(10.0), None)),
+    );
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
+    assert_eq!(engine, Engine::Codex);
+    assert_eq!(
+        reason,
+        Reason::Tripped(Window {
+            name: "5h",
+            used: 50.0,
+            resets_at: Some(NOW + 60)
+        })
+    );
+
+    let usage = ledger(None, Some(window(Some(71.0), Some(NOW + 5))));
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || true).unwrap();
+    assert_eq!(engine, Engine::Codex);
+    assert_eq!(
+        reason,
+        Reason::Tripped(Window {
+            name: "7d",
+            used: 71.0,
+            resets_at: Some(NOW + 5)
+        })
+    );
+
+    let usage = ledger(Some(window(Some(10.0), None)), None);
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || {
+        panic!("PATH was searched although nothing tripped")
+    })
+    .unwrap();
+    assert_eq!(engine, Engine::Claude);
+    assert_eq!(
+        reason,
+        Reason::WithinLimits {
+            five_hour: Some(10.0),
+            seven_day: None
+        }
+    );
+
+    let usage = ledger(Some(window(Some(60.0), None)), None);
+    let (engine, reason) = decide(&ReviewEngine::Auto, &usage, NOW, || false).unwrap();
+    assert_eq!(engine, Engine::Claude);
+    assert_eq!(reason.code(), "codex-missing");
+
+    let (engine, reason) = decide(&ReviewEngine::Claude, &usage, NOW, || {
+        panic!("PATH was searched although the engine is pinned")
+    })
+    .unwrap();
+    assert_eq!(engine, Engine::Claude);
+    assert_eq!(reason, Reason::Pinned);
 }

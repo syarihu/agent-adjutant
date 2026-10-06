@@ -91,7 +91,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
 | `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
 | `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
-| `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate-limit cache and whether `codex` is on `PATH` — and the line to tell the user |
+| `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate limits (from the agent session ledger when the status line relay fills it, else the rate-limit cache) and whether `codex` is on `PATH` — and the line to tell the user |
 | `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, and the last tool it reported; sessions whose process has gone are left out |
 | `adjutant setup claude [--remove]` | add adjutant's hooks to your Claude Code user settings, so sessions adjutant did not start report to `agent-sessions` too (see [Install](#install)) |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
