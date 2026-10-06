@@ -45,6 +45,8 @@ pub(crate) enum Commands {
     ReviewEngine(ReviewEngineArgs),
     /// What each agent session's hooks last said: running, waiting, done, sub-agents
     AgentSessions(AgentSessionsArgs),
+    /// Add adjutant's hooks to an agent's user settings, so sessions adjutant did not start report too
+    Setup(SetupArgs),
     /// Record an agent's hook event from stdin (what the agent's settings run)
     #[command(hide = true)]
     Hook(HookArgs),
@@ -366,6 +368,16 @@ pub(crate) struct AgentSessionsArgs {
     /// Print the rows as a JSON array, as they are stored
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct SetupArgs {
+    /// Which agent's settings: claude
+    #[arg(value_parser = ["claude"])]
+    pub(crate) agent: String,
+    /// Take out only the entries `adj setup` added (any `adj` path), and nothing else
+    #[arg(long)]
+    pub(crate) remove: bool,
 }
 
 #[derive(Args)]

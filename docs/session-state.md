@@ -280,7 +280,9 @@ behaves the same with or without it); `adj setup claude --remove` takes out exac
 added and nothing else, recognising them by `adj hook claude --global` whatever path they name,
 quoted or not. Those entries name the binary by absolute path too, so after an upgrade that moves
 it, `adj setup claude` is run again and rewrites its own entries in place. It writes the user's file
-through a temporary file and a rename. It is opt-in: adjutant works without it.
+through a temporary file and a rename, creating it when missing and keeping its mode; a file that
+is not valid JSON or not the shape Claude Code reads is refused with nothing written, and keys
+come out sorted. It is opt-in: adjutant works without it.
 
 Claude Code merges hook entries across settings levels rather than letting one replace another, and
 `--settings` is one of those levels (above the user's, project and local files). So the injected

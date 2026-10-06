@@ -227,6 +227,24 @@ fn write_json_as<T: Serialize + ?Sized>(
     })
 }
 
+/// `write_json` for a file somebody else owns and may have tightened: the new one takes the old
+/// one's permission bits (unix), so a `0600` file does not come back `0644`.
+pub(crate) fn replace_json(path: &Path, value: &Value) -> Result<(), String> {
+    let parent = parent_dir(path)?;
+    let staged = stage(parent, &render_json(value)?)?;
+    let finish = || -> Result<(), String> {
+        #[cfg(unix)]
+        if let Ok(old) = std::fs::metadata(path) {
+            std::fs::set_permissions(&staged, old.permissions())
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        }
+        std::fs::rename(&staged, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    };
+    finish().inspect_err(|_| {
+        let _ = std::fs::remove_file(&staged);
+    })
+}
+
 pub(crate) enum CreateError {
     /// The name already exists. Not a failure — an answer.
     Taken,
@@ -375,5 +393,19 @@ mod tests {
         );
         let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(names.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_json_keeps_the_mode_of_the_file_it_replaces() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        replace_json(&path, &serde_json::json!({ "a": 1 })).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }

@@ -43,6 +43,15 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 **登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
 
+**adjutant が起動していないセッション。** adjutant が起動した hub や worker には、起動時にフックが渡されます。自分で起動した Claude Code のセッションも `adjutant agent-sessions` に出したい場合は、同じフックを Claude Code のユーザー設定に追加します。
+
+```bash
+adjutant setup claude            # ~/.claude/settings.json（$CLAUDE_CONFIG_DIR 指定時は $CLAUDE_CONFIG_DIR/settings.json）に adjutant のフックを追加する
+adjutant setup claude --remove   # 追加したものだけを取り除く
+```
+
+自分で書いたフックはそのままにして、その隣に追記します。`--remove` が取り除くのは `… hook claude --global` を実行するエントリだけで、`adj` のパスが何であっても対象です。`adj` を移動・アップグレードしたら再実行すると、新しいパスに書き換わります。実行したバイナリのパスがそのまま記録されるため、`cargo run` やビルドディレクトリではなく、インストール済みの `adjutant` から実行してください。ファイルは整形され、キーは並べ替えられて書き戻されます。
+
 **`adj` は `adjutant` の短縮名です。** どちらを実行しても同じように動作します。`adj work` から起動された worker タブも `adj worker` として立ち上がります。
 
 ## 2つのモード
@@ -65,6 +74,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant phase [--set …]` | worker が今どの工程にいるかを書く（`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`）。`--set` 無しなら今の工程を表示 |
 | `adjutant review-engine [--json]` | worker 用。このセルフレビューのラウンドで差分を読むエンジンを返す（`reviewEngine`、`auto` なら Claude のレート制限キャッシュと `PATH` 上の `codex` で決める）。ユーザーに伝える一文も返す |
 | `adjutant agent-sessions [--json]` | 各エージェントセッションのフックが最後に伝えた状態（idle・running・権限プロンプト待ちの waiting・done・failed）、実行中のサブエージェント、最後に報告したツールを一覧する。プロセスが終わったセッションは出さない |
+| `adjutant setup claude [--remove]` | adjutant のフックを Claude Code のユーザー設定に追加し、adjutant が起動していないセッションも `agent-sessions` に出す（[インストール](#インストール)参照） |
 | `adjutant close --worktree …` | 指定 worktree の worker が座っているタブを閉じる（閉じられなければ exit 1） |
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |

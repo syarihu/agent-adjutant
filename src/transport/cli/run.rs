@@ -37,6 +37,7 @@ pub fn run() -> ! {
         Commands::Phase(args) => super::phase(args).map(|_| 0),
         Commands::ReviewEngine(args) => super::review_engine(args).map(|_| 0),
         Commands::AgentSessions(args) => super::agent_sessions(args).map(|_| 0),
+        Commands::Setup(args) => super::setup(args).map(|_| 0),
         // Always 0: a hook that fails shows in the agent's transcript on every tool call.
         Commands::Hook(args) => Ok(super::hook(args)),
         Commands::Close(args) => cli::close(args).map(|closed| i32::from(!closed)),
