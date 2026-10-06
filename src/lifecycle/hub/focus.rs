@@ -15,6 +15,12 @@ pub fn focus(ctx: &Context, dry_run: bool) -> Result<Option<Raised>, String> {
     let Some(pid) = status.pid.filter(|_| status.present) else {
         return Ok(None);
     };
-    let done = terminal::focus(&ctx.settings.terminal, pid, &ctx.repo.hub_name, dry_run)?;
+    let done = terminal::focus(
+        &ctx.settings.terminal,
+        status.terminal.as_ref(),
+        pid,
+        &ctx.repo.hub_name,
+        dry_run,
+    )?;
     Ok(Some(Raised { pid, done }))
 }

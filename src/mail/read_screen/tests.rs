@@ -354,6 +354,7 @@ impl FakePane {
             locks.path(),
             Some("ttys005".to_string()),
             &term,
+            None,
             &Wake::default(),
             &WakeRequest {
                 pid: 12345,
@@ -577,6 +578,7 @@ fn wakes_at_the_same_moment_take_turns_at_the_pane() {
                         locks,
                         Some("ttys005".to_string()),
                         term,
+                        None,
                         &Wake::default(),
                         &WakeRequest {
                             pid: 12345,
@@ -617,6 +619,7 @@ fn a_wake_that_cannot_get_the_pane_within_the_budget_gives_up() {
         locks.path(),
         Some("ttys005".to_string()),
         &term,
+        None,
         &Wake::default(),
         &WakeRequest {
             pid: 12345,
@@ -685,6 +688,7 @@ fn where_the_screen_is_not_read_nothing_is_captured() {
         locks.path(),
         None,
         &term,
+        None,
         &Wake::default(),
         &WakeRequest {
             pid: 12345,
@@ -722,6 +726,7 @@ fn where_the_screen_is_not_read_nothing_is_captured() {
             locks.path(),
             Some("ttys005".to_string()),
             &terminal,
+            None,
             &wake,
             &WakeRequest {
                 pid: 12345,

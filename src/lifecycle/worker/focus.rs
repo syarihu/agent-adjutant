@@ -22,5 +22,12 @@ pub fn focus_worker(
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default(),
     );
-    terminal::focus(&settings.terminal, pid, &title, dry_run).map(Some)
+    terminal::focus(
+        &settings.terminal,
+        status.terminal.as_ref(),
+        pid,
+        &title,
+        dry_run,
+    )
+    .map(Some)
 }

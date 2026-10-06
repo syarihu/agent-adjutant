@@ -23,6 +23,19 @@ impl<'a> Backend<'a> {
         }
     }
 
+    /// Reach a session the way it was started (#156): the backend recorded when it was launched,
+    /// falling back to the current settings for a record written before #150 or a `custom` one.
+    pub fn reaching(terminal: &'a TerminalSettings, recorded: Option<&'a SessionTerminal>) -> Self {
+        match recorded {
+            Some(r) if r.backend == "tmux" => Backend::Tmux {
+                socket: r.socket.as_deref().or(terminal.tmux_socket()),
+                session: r.session.as_deref().unwrap_or(terminal.tmux_session()),
+            },
+            Some(r) if r.backend == "iterm2" => Backend::Iterm2,
+            _ => Backend::of(terminal),
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Backend::Tmux { .. } => "tmux",
@@ -229,13 +242,14 @@ fn spawn_on(
 
 pub fn focus(
     terminal: &TerminalSettings,
+    recorded: Option<&SessionTerminal>,
     pid: u32,
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
     focus_on(
         terminal.focus.as_deref(),
-        &Backend::of(terminal),
+        &Backend::reaching(terminal, recorded),
         pid,
         title,
         dry_run,
@@ -351,11 +365,20 @@ fn reported_closing(built_in: bool, output: &str) -> bool {
 /// caller that is about to delete something has to ask the process itself.
 pub fn close(
     terminal: &TerminalSettings,
+    recorded: Option<&SessionTerminal>,
     pid: u32,
     title: &str,
     dry_run: bool,
 ) -> Result<Performed, String> {
-    close_with(run_shell, tty_of(pid), terminal, pid, title, dry_run)
+    close_with(
+        run_shell,
+        tty_of(pid),
+        terminal,
+        recorded,
+        pid,
+        title,
+        dry_run,
+    )
 }
 
 /// The same, with the thing that runs the command handed in.
@@ -367,6 +390,7 @@ pub(super) fn close_with(
     run: impl Fn(&str) -> Result<String, String>,
     tty: Option<String>,
     terminal: &TerminalSettings,
+    recorded: Option<&SessionTerminal>,
     pid: u32,
     title: &str,
     dry_run: bool,
@@ -375,7 +399,7 @@ pub(super) fn close_with(
         run,
         tty,
         &terminal.close,
-        &Backend::of(terminal),
+        &Backend::reaching(terminal, recorded),
         pid,
         title,
         dry_run,
@@ -606,8 +630,10 @@ pub struct LookBeforeTyping {
     pub holds_just: HoldsJust,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn wake(
     terminal: &TerminalSettings,
+    recorded: Option<&SessionTerminal>,
     wake: &Wake,
     pid: u32,
     subject: &str,
@@ -620,6 +646,7 @@ pub fn wake(
         run_shell,
         tty_of(pid),
         terminal,
+        recorded,
         wake,
         &WakeRequest {
             pid,
@@ -641,6 +668,7 @@ pub(super) fn wake_with(
     run: impl Fn(&str) -> Result<String, String>,
     tty: Option<String>,
     terminal: &TerminalSettings,
+    recorded: Option<&SessionTerminal>,
     wake: &Wake,
     req: &WakeRequest,
 ) -> Result<Performed, String> {
@@ -650,6 +678,7 @@ pub(super) fn wake_with(
         &wake_lock_dir(),
         tty,
         terminal,
+        recorded,
         wake,
         req,
     )
@@ -657,16 +686,19 @@ pub(super) fn wake_with(
 
 /// `wake_with`, with the thing that waits handed in as well: waiting for an agent to come
 /// back to its prompt is a loop, and a test that slept through it would take the budget.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn wake_with_clock(
     run: impl Fn(&str) -> Result<String, String>,
     wait: impl Fn(Duration),
     lock_dir: &Path,
     tty: Option<String>,
     terminal: &TerminalSettings,
+    recorded: Option<&SessionTerminal>,
     wake: &Wake,
     req: &WakeRequest,
 ) -> Result<Performed, String> {
-    wake_on(run, wait, lock_dir, tty, &Backend::of(terminal), wake, req)
+    let backend = Backend::reaching(terminal, recorded);
+    wake_on(run, wait, lock_dir, tty, &backend, wake, req)
 }
 
 fn wake_on(

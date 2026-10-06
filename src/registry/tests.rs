@@ -1756,3 +1756,67 @@ fn the_resident_is_preferred_over_a_dedicated_board() {
     assert_eq!(prefer(None, Some(2)), Some(Served::Dedicated(2)));
     assert_eq!(prefer(None, None), None);
 }
+
+#[test]
+fn a_worker_status_and_identity_expose_where_it_was_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    let at = crate::infra::terminal::SessionTerminal {
+        backend: "tmux".into(),
+        socket: Some("/tmp/rec.sock".into()),
+        session: Some("adjutant".into()),
+        window: None,
+        pane: Some("%7".into()),
+    };
+    register_worker(worktree, "WID-957", None, None, Some(&at)).unwrap();
+    assert_eq!(worker_status(worktree).terminal, Some(at.clone()));
+    let Recorded::Found(worker) = read_worker(worktree) else {
+        panic!("a registered worker is readable");
+    };
+    assert_eq!(worker.terminal, Some(at));
+
+    // A record from before the location was kept has none, and one that does not read as a
+    // location is none as well.
+    write_json(
+        &worker_record_path(worktree),
+        &json!({"pid": std::process::id(), "terminal": "tmux"}),
+    )
+    .unwrap();
+    assert_eq!(worker_status(worktree).terminal, None);
+    let Recorded::Found(worker) = read_worker(worktree) else {
+        panic!("a record with a pid is readable");
+    };
+    assert_eq!(worker.terminal, None);
+}
+
+#[test]
+fn a_hub_status_exposes_where_it_was_started() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let name = this_process_name();
+    let terminal = crate::infra::terminal::SessionTerminal {
+        backend: "iterm2".into(),
+        socket: None,
+        session: None,
+        window: None,
+        pane: None,
+    };
+    match claim_hub(
+        &root,
+        "acme-widget",
+        &name,
+        "/src/widget",
+        true,
+        None,
+        Some(&terminal),
+    )
+    .unwrap()
+    {
+        Claim::Ours => {}
+        Claim::Taken(status) => panic!("{status:?}"),
+    }
+    assert_eq!(
+        hub_status(&root, "acme-widget", &name).terminal,
+        Some(terminal)
+    );
+}

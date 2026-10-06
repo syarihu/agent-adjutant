@@ -10,7 +10,7 @@ pub enum Claimed {
     Ours {
         session_saved: Result<(), String>,
     },
-    Taken(registry::HubStatus),
+    Taken(Box<registry::HubStatus>),
 }
 
 /// Claim the hub's record for `launch`, tell a resident server where the repository is, and
@@ -36,7 +36,7 @@ pub fn claim_launch(ctx: &Context, launch: &Launch) -> Result<Claimed, String> {
         Some(&terminal::own_location(&ctx.settings.terminal)),
     )? {
         registry::Claim::Ours => {}
-        registry::Claim::Taken(status) => return Ok(Claimed::Taken(*status)),
+        registry::Claim::Taken(status) => return Ok(Claimed::Taken(status)),
     }
     // Where this repository is, for a resident server that may serve its board without
     // being told anything else. Only the address: nothing here needs the server to be up.
