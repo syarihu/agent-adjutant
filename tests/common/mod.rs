@@ -39,7 +39,7 @@ pub const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-pub const AMBIENT: [&str; 16] = [
+pub const AMBIENT: [&str; 18] = [
     "ADJUTANT_HUB",
     "ADJUTANT_STARTUP_DASHBOARD",
     // A hub's MCP server beats for the session this names; a test child that inherited it
@@ -68,6 +68,10 @@ pub const AMBIENT: [&str; 16] = [
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
     "GH_HOST",
+    // Claude Code sets both for its hooks, so a `cargo test` typed inside a Claude Code session
+    // would hand every `adj hook` a pid and an account that are not the test's.
+    "CLAUDE_PID",
+    "CLAUDE_CONFIG_DIR",
 ];
 
 /// Strip `AMBIENT` from a child about to be run.

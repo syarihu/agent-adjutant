@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::infra::terminal::SessionTerminal;
+use serde::{Deserialize, Serialize};
 use serde_json::Map;
+use std::collections::BTreeMap;
 
 // ── presence ─────────────────────────────────────────────────────────
 
@@ -429,4 +431,528 @@ pub(crate) struct Address {
     pub(crate) main: String,
     pub(crate) nwo: String,
     pub(crate) hub: Option<String>,
+}
+
+// ── the agent session ledger ─────────────────────────────────────────
+
+/// What an agent's hooks last said about one session, as `agent-sessions/<id>.json` keeps it.
+///
+/// Every field but the key is optional and keys this version does not know stay in `other`
+/// (rule 10 in `docs/architecture.md`). `model`, `contextPercent` and `rateLimits` are not typed
+/// yet; they pass through `other` until the status line relay reads them. A known key of the
+/// wrong type fails the load, and the row is then moved aside like any unreadable one.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSession {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<AgentStatus>,
+    /// A `done` or `failed` held back while sub-agents run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_status: Option<AgentStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    /// The agent process's start time as `ps` prints it, opaque like every other `psStarted`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ps_started: Option<String>,
+    /// Epoch seconds, as are the other times here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+    /// Moves only when `status` changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+    /// The "seen alive" mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<Subagent>,
+    /// `agent_id` to when it stopped, so a late event cannot bring one back.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub finished_subagents: BTreeMap<String, i64>,
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subagent {
+    pub id: String,
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<i64>,
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
+}
+
+/// A status this version names, or the string a newer one wrote, kept as it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum AgentStatus {
+    Idle,
+    Running,
+    Waiting,
+    Done,
+    Failed,
+    Other(String),
+}
+
+impl AgentStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            AgentStatus::Idle => "idle",
+            AgentStatus::Running => "running",
+            AgentStatus::Waiting => "waiting",
+            AgentStatus::Done => "done",
+            AgentStatus::Failed => "failed",
+            AgentStatus::Other(text) => text,
+        }
+    }
+}
+
+impl From<String> for AgentStatus {
+    fn from(text: String) -> Self {
+        match text.as_str() {
+            "idle" => AgentStatus::Idle,
+            "running" => AgentStatus::Running,
+            "waiting" => AgentStatus::Waiting,
+            "done" => AgentStatus::Done,
+            "failed" => AgentStatus::Failed,
+            _ => AgentStatus::Other(text),
+        }
+    }
+}
+
+impl From<AgentStatus> for String {
+    fn from(status: AgentStatus) -> Self {
+        status.as_str().to_string()
+    }
+}
+
+/// A session id that is safe as a file name: it keys `agent-sessions/<id>.json`, and an id with
+/// a `/` or a `..` in it would name a file outside the directory.
+pub fn valid_session_id(id: &str) -> bool {
+    (1..=128).contains(&id.len())
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// How long a `finishedSubagents` entry is kept.
+const FINISHED_KEPT_SECS: i64 = 300;
+/// A sub-agent not seen for this long never sent its `SubagentStop`.
+const SUBAGENT_SILENT_SECS: i64 = 600;
+/// `lastEventAt` and a sub-agent's `lastSeenAt` move at most this often on their own.
+const HEARTBEAT_SECS: i64 = 60;
+
+/// What `apply` still has to be told, because it takes no part in running a process.
+#[derive(Debug, Default)]
+pub(super) struct Lookups {
+    /// A `cwd` and the worktree git named for it, `None` outside git.
+    pub worktree: Option<(String, Option<String>)>,
+    /// A pid and its start time, `None` when `ps` did not say.
+    pub started: Option<(u32, Option<String>)>,
+}
+
+/// The lookups an event needs for a row, which are the ones whose input differs from the row's.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Wanted {
+    pub cwd: Option<String>,
+    pub pid: Option<u32>,
+}
+
+impl Wanted {
+    /// What of this `lookups` has not answered yet.
+    pub(super) fn unanswered(&self, lookups: &Lookups) -> Wanted {
+        Wanted {
+            cwd: self
+                .cwd
+                .clone()
+                .filter(|cwd| lookups.worktree.as_ref().map(|(asked, _)| asked) != Some(cwd)),
+            pid: self
+                .pid
+                .filter(|pid| lookups.started.as_ref().map(|(asked, _)| asked) != Some(pid)),
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.cwd.is_none() && self.pid.is_none()
+    }
+}
+
+pub(super) enum Applied {
+    /// Nothing to write.
+    Unchanged,
+    Write(Box<AgentSession>),
+    Remove,
+    /// A lookup the event needs has not been made: release the lock, make it, apply again.
+    NeedsLookup,
+}
+
+/// Whether the event comes from a sub-agent rather than the session itself: it names an
+/// `agent_id` and is not one of the two events about a sub-agent's life, or a notification
+/// (which is always the parent's).
+fn from_subagent(event: &AgentEvent) -> bool {
+    event.agent_id.is_some()
+        && !matches!(
+            event.hook,
+            HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Notification { .. }
+        )
+}
+
+/// What a notification of this type says: that the person is wanted, that the agent is idle
+/// again, or nothing about the session's state.
+enum Notified {
+    Waiting,
+    Idle,
+    Nothing,
+}
+
+fn notified(kind: Option<&str>) -> Notified {
+    match kind {
+        Some("idle_prompt") => Notified::Idle,
+        Some(
+            "auth_success"
+            | "elicitation_complete"
+            | "elicitation_response"
+            | "agent_completed"
+            | "quota_auto_resume_fired"
+            | "quota_auto_resume_stale"
+            | "quota_auto_resume_disabled",
+        ) => Notified::Nothing,
+        // The prompts, and anything this version does not know: asking the person is the
+        // reading that costs least when it is wrong.
+        _ => Notified::Waiting,
+    }
+}
+
+/// Whether an event for a session with no row makes one. A stray `Stop` or `SessionEnd` from a
+/// session that ended before its row was written never does.
+pub(super) fn can_create(event: &AgentEvent) -> bool {
+    if from_subagent(event) {
+        return matches!(
+            event.hook,
+            HookEvent::PostToolUse | HookEvent::PostToolUseFailure | HookEvent::PermissionRequest
+        );
+    }
+    match &event.hook {
+        HookEvent::SessionStart
+        | HookEvent::UserPromptSubmit
+        | HookEvent::PostToolUse
+        | HookEvent::PostToolUseFailure
+        | HookEvent::PermissionRequest => true,
+        HookEvent::SubagentStart => event.agent_id.is_some(),
+        HookEvent::Notification { kind, .. } => {
+            matches!(notified(kind.as_deref()), Notified::Waiting)
+        }
+        HookEvent::Stop
+        | HookEvent::StopFailure
+        | HookEvent::SessionEnd
+        | HookEvent::SubagentStop
+        | HookEvent::Other(_) => false,
+    }
+}
+
+/// A late event from a sub-agent that has already stopped: it must not bring it back.
+fn is_late(row: Option<&AgentSession>, event: &AgentEvent) -> bool {
+    match (row, &event.agent_id) {
+        (Some(row), Some(id)) => {
+            from_subagent(event) && row.finished_subagents.contains_key(id.as_str())
+        }
+        _ => false,
+    }
+}
+
+/// The lookups `event` needs to be applied to `row`: the worktree when the `cwd` is new to the
+/// row, the start time when the pid is.
+pub(super) fn wanted(row: Option<&AgentSession>, event: &AgentEvent) -> Wanted {
+    if is_late(row, event) {
+        return Wanted::default();
+    }
+    Wanted {
+        // A sub-agent may work elsewhere (its own worktree); the row says where the session is.
+        cwd: event
+            .cwd
+            .clone()
+            .filter(|_| !from_subagent(event))
+            .filter(|cwd| row.and_then(|r| r.cwd.as_ref()) != Some(cwd)),
+        // Also for a pid whose start time was never read: `ps` failing once must not stick.
+        pid: event.pid.filter(|pid| {
+            row.and_then(|r| r.pid) != Some(*pid) || row.is_some_and(|r| r.ps_started.is_none())
+        }),
+    }
+}
+
+fn new_row(event: &AgentEvent) -> AgentSession {
+    AgentSession {
+        session_id: event.session_id.clone(),
+        agent: Some(event.agent.clone()),
+        created_at: Some(event.at),
+        updated_at: Some(event.at),
+        last_event_at: Some(event.at),
+        ..AgentSession::default()
+    }
+}
+
+/// Move to `status`. The text that belongs to the old one goes: a request only means something
+/// while waiting, and the tool in use means nothing once the turn is over.
+fn set_status(row: &mut AgentSession, status: AgentStatus) {
+    if status != AgentStatus::Waiting {
+        row.request = None;
+    }
+    if matches!(
+        status,
+        AgentStatus::Idle | AgentStatus::Done | AgentStatus::Failed
+    ) {
+        row.activity = None;
+    }
+    row.status = Some(status);
+}
+
+fn apply_pending(row: &mut AgentSession) {
+    if let Some(pending) = row.pending_status.take() {
+        set_status(row, pending);
+    }
+}
+
+/// What `Stop` and `StopFailure` say, held while sub-agents are still running.
+fn finish(row: &mut AgentSession, status: AgentStatus) {
+    if row.subagents.is_empty() {
+        row.pending_status = None;
+        set_status(row, status);
+    } else {
+        row.pending_status = Some(status);
+    }
+}
+
+/// Forget what is too old to matter: stop entries kept for five minutes, and sub-agents whose
+/// `SubagentStop` never came. The parent's held `done` goes through once the last one is gone.
+fn tidy(row: &mut AgentSession, now: i64) {
+    row.finished_subagents
+        .retain(|_, stopped| now - *stopped <= FINISHED_KEPT_SECS);
+    let before = row.subagents.len();
+    let mut dropped = Vec::new();
+    row.subagents.retain(|sub| {
+        let seen = sub.last_seen_at.or(sub.started_at);
+        let silent = seen.is_some_and(|seen| now - seen >= SUBAGENT_SILENT_SECS);
+        if silent {
+            dropped.push(sub.id.clone());
+        }
+        !silent
+    });
+    for id in dropped {
+        row.finished_subagents.insert(id, now);
+    }
+    if before > 0 && row.subagents.is_empty() {
+        apply_pending(row);
+    }
+}
+
+/// Note that sub-agent `id` is alive: add it, or move its `lastSeenAt` if it is a minute old.
+fn see_subagent(row: &mut AgentSession, id: &str, kind: Option<&str>, now: i64) {
+    match row.subagents.iter_mut().find(|sub| sub.id == id) {
+        Some(sub) => {
+            let seen = sub.last_seen_at.or(sub.started_at);
+            if seen.is_none_or(|seen| now - seen >= HEARTBEAT_SECS) {
+                sub.last_seen_at = Some(now);
+            }
+        }
+        None => row.subagents.push(Subagent {
+            id: id.to_string(),
+            kind: kind.map(str::to_string),
+            started_at: Some(now),
+            last_seen_at: Some(now),
+            other: Map::new(),
+        }),
+    }
+}
+
+fn identify(row: &mut AgentSession, event: &AgentEvent, lookups: &Lookups) {
+    if let Some(pid) = event.pid
+        && (row.pid != Some(pid) || row.ps_started.is_none())
+    {
+        row.pid = Some(pid);
+        row.ps_started = lookups
+            .started
+            .as_ref()
+            .filter(|(asked, _)| *asked == pid)
+            .and_then(|(_, started)| started.clone());
+    }
+    if let Some(cwd) = &event.cwd
+        && !from_subagent(event)
+        && row.cwd.as_ref() != Some(cwd)
+    {
+        row.cwd = Some(cwd.clone());
+        row.worktree = lookups
+            .worktree
+            .as_ref()
+            .filter(|(asked, _)| asked == cwd)
+            .and_then(|(_, worktree)| worktree.clone());
+    }
+    if let Some(dir) = &event.config_dir
+        && row.config_dir.as_ref() != Some(dir)
+    {
+        row.config_dir = Some(dir.clone());
+    }
+    if row.agent.is_none() {
+        row.agent = Some(event.agent.clone());
+    }
+}
+
+/// What `event` does to the session's row, which is `row` (`None` for no row). Pure: the time is
+/// the event's own, and what git and `ps` said comes in as `lookups`.
+pub(super) fn apply(row: Option<AgentSession>, event: &AgentEvent, lookups: &Lookups) -> Applied {
+    let now = event.at;
+    match (&event.hook, &row) {
+        (HookEvent::Other(_), _) => return Applied::Unchanged,
+        (HookEvent::SessionEnd, Some(_)) => return Applied::Remove,
+        (HookEvent::SessionEnd, None) => return Applied::Unchanged,
+        (_, None) if !can_create(event) => return Applied::Unchanged,
+        _ => {}
+    }
+    if !wanted(row.as_ref(), event).unanswered(lookups).is_empty() {
+        return Applied::NeedsLookup;
+    }
+    let late = is_late(row.as_ref(), event);
+    let old = row.clone();
+    let mut cur = row.unwrap_or_else(|| new_row(event));
+    tidy(&mut cur, now);
+    if !late {
+        identify(&mut cur, event, lookups);
+        match (&event.agent_id, from_subagent(event)) {
+            // Only these are a sub-agent at work. Any other event that names one changes
+            // nothing: it could add a sub-agent nobody removes.
+            (Some(id), true) => {
+                if matches!(
+                    event.hook,
+                    HookEvent::PostToolUse
+                        | HookEvent::PostToolUseFailure
+                        | HookEvent::PermissionRequest
+                ) {
+                    see_subagent(&mut cur, id, event.agent_type.as_deref(), now);
+                    apply_from_subagent(&mut cur, event);
+                }
+            }
+            _ => apply_from_session(&mut cur, event, now),
+        }
+    }
+    if cur.status != old.as_ref().and_then(|row| row.status.clone()) {
+        cur.updated_at = Some(now);
+    }
+    // A change is anything but `lastEventAt`; with none, the write is skipped until that mark is
+    // a minute old, so a busy session does not rewrite its row on every tool call.
+    let Some(old) = old else {
+        cur.last_event_at = Some(now);
+        return Applied::Write(Box::new(cur));
+    };
+    let (mut before, mut after) = (old.clone(), cur.clone());
+    before.last_event_at = None;
+    after.last_event_at = None;
+    let stale = old
+        .last_event_at
+        .is_none_or(|seen| now - seen >= HEARTBEAT_SECS);
+    if before != after || stale {
+        cur.last_event_at = Some(now);
+        Applied::Write(Box::new(cur))
+    } else {
+        Applied::Unchanged
+    }
+}
+
+/// An event from a sub-agent (already noted by `see_subagent`): it leaves the parent's status
+/// alone, except that the person is asked in the parent's terminal either way.
+fn apply_from_subagent(row: &mut AgentSession, event: &AgentEvent) {
+    match &event.hook {
+        HookEvent::PermissionRequest => {
+            set_status(row, AgentStatus::Waiting);
+            row.request = event.summary.clone();
+        }
+        HookEvent::PostToolUse | HookEvent::PostToolUseFailure => match row.status {
+            // The prompt was answered, or the sub-agent would not be running tools.
+            Some(AgentStatus::Waiting) | None => set_status(row, AgentStatus::Running),
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
+    match &event.hook {
+        HookEvent::SessionStart => match row.status {
+            // A new row. On an existing one it fires on resume, compaction and `/clear` too,
+            // and must not wipe a turn in progress.
+            None => set_status(row, AgentStatus::Idle),
+            Some(_) => row.request = None,
+        },
+        HookEvent::UserPromptSubmit => {
+            row.pending_status = None;
+            set_status(row, AgentStatus::Running);
+        }
+        HookEvent::PostToolUse | HookEvent::PostToolUseFailure => {
+            // A new turn: what was held from the last one is not for this one.
+            row.pending_status = None;
+            set_status(row, AgentStatus::Running);
+            if event.summary.is_some() {
+                row.activity = event.summary.clone();
+            }
+        }
+        HookEvent::PermissionRequest => {
+            row.pending_status = None;
+            set_status(row, AgentStatus::Waiting);
+            row.request = event.summary.clone();
+        }
+        HookEvent::Notification { kind, message } => match notified(kind.as_deref()) {
+            Notified::Waiting => {
+                set_status(row, AgentStatus::Waiting);
+                if row.request.is_none() {
+                    row.request = message.clone();
+                }
+            }
+            Notified::Idle => {
+                if row.status == Some(AgentStatus::Waiting) {
+                    set_status(row, AgentStatus::Idle);
+                }
+            }
+            Notified::Nothing => {}
+        },
+        HookEvent::Stop => finish(row, AgentStatus::Done),
+        HookEvent::StopFailure => finish(row, AgentStatus::Failed),
+        HookEvent::SubagentStart => {
+            if let Some(id) = &event.agent_id
+                && !row.finished_subagents.contains_key(id)
+            {
+                see_subagent(row, id, event.agent_type.as_deref(), now);
+            }
+            // A row made by a sub-agent starting is busy; an existing one keeps its status.
+            if row.status.is_none() {
+                set_status(row, AgentStatus::Running);
+            }
+        }
+        HookEvent::SubagentStop => {
+            if let Some(id) = &event.agent_id {
+                row.subagents.retain(|sub| &sub.id != id);
+                row.finished_subagents.insert(id.clone(), now);
+                if row.subagents.is_empty() {
+                    apply_pending(row);
+                }
+            }
+        }
+        HookEvent::SessionEnd | HookEvent::Other(_) => {}
+    }
 }

@@ -8,6 +8,13 @@ pub fn state_dir() -> PathBuf {
     {
         return expand_home(&dir);
     }
+    default_state_dir()
+}
+
+/// What `state_dir` answers when `ADJUTANT_STATE_DIR` is not set. Relative only when
+/// `XDG_STATE_HOME` is, so a caller that needs an absolute path makes it one
+/// (`registry::hook_state_root` does, with `std::path::absolute`).
+pub fn default_state_dir() -> PathBuf {
     match std::env::var("XDG_STATE_HOME") {
         Ok(dir) if !dir.is_empty() => expand_home(&dir).join("adjutant"),
         _ => home_dir().join(".local").join("state").join("adjutant"),
@@ -81,6 +88,22 @@ pub fn exe_path() -> String {
     std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "adjutant".to_string())
+}
+
+/// `exe_path` for a caller that writes the path into a file a later process runs, where the
+/// fallback `adjutant` (found through a `PATH` the hook may not have) would be a silent
+/// no-op. The reason is in the error because it is what the person is told.
+pub fn exe_path_absolute() -> Result<String, String> {
+    let path = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+    if !path.is_absolute() {
+        return Err(format!(
+            "this binary's path is not absolute: {}",
+            path.display()
+        ));
+    }
+    path.into_os_string()
+        .into_string()
+        .map_err(|path| format!("this binary's path is not valid UTF-8: {path:?}"))
 }
 
 #[cfg(test)]

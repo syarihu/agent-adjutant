@@ -78,6 +78,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
 | `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
 | `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate-limit cache and whether `codex` is on `PATH` — and the line to tell the user |
+| `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, and the last tool it reported; sessions whose process has gone are left out |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
 | `adjutant title --title …` | name the tab this process is in (the hub names its own) |
@@ -294,10 +295,11 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session (or tmux literal `send-keys` with `preset: "tmux"`) |
 | `hubWake` / `workerWake` | the same | override `wake` for one direction |
 | | | *the built-in `focus`, `close` and `wake` reach a session through the terminal it was started in (recorded when it registered), so changing `preset` does not strand sessions started before; sessions with no such record, or one started by a `spawn` template outside tmux, follow the current `preset`* |
-| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
-| `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
-| `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {prompt}` |
-| `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {prompt}` |
+| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
+| `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
+| | | *`{settings}` becomes `--settings <file>`, the file holding adjutant's hooks for the session. It is added after `claude` when a template does not name it, unless the template passes its own `--settings`; do not quote it. A binary older than this does not know it, so write it by hand only once every binary sharing the config does* |
 | | | *drop `{name}` and the session is nameless in every listing* |
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |

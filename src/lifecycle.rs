@@ -5,8 +5,10 @@
 pub mod hub;
 mod model;
 pub mod worker;
+mod write_agent_hooks;
 
 pub use model::*;
+pub use write_agent_hooks::*;
 
 #[cfg(test)]
 mod tests;

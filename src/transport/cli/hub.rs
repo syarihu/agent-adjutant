@@ -1,5 +1,6 @@
 use super::args::{HubArgs, HubCloseArgs, HubStopArgs};
 use super::*;
+use crate::lifecycle::Hooks;
 use crate::lifecycle::hub::{
     AutoResume, Claimed, HubRequest, Planned, Skip, TabOutcome, claim_launch, exec_launch,
     hub_in_tab, plan_launch,
@@ -105,6 +106,9 @@ pub fn hub(args: &HubArgs) -> Result<(), String> {
              is not set, so the built-in one would reopen it"
         ),
         None => {}
+    }
+    if let Hooks::Skipped(why) = &launch.hooks {
+        eprintln!("adjutant: not passing hooks to the agent: {why}");
     }
     if dry_run {
         println!("cd {}", crate::infra::template::sh_quote(&ctx.repo.main));

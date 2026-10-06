@@ -1,10 +1,10 @@
 use super::args::{FocusArgs, PhaseArgs, SpawnArgs, WorkArgs, WorkerArgs};
 use super::*;
-use crate::lifecycle::title_command;
 use crate::lifecycle::worker::{
     Planned, SessionNote, StartRequest, Started, WorkerRequest, exec_launch, focus_worker,
     plan_launch, register_launch, resume_worker, worker_worktree,
 };
+use crate::lifecycle::{Hooks, title_command};
 
 pub fn spawn(args: &SpawnArgs) -> Result<(), String> {
     let command = args.command();
@@ -187,6 +187,9 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         }
         Planned::Launch(launch) => launch,
     };
+    if let Hooks::Skipped(why) = &launch.hooks {
+        eprintln!("adjutant: not passing hooks to the agent: {why}");
+    }
     if args.dry_run {
         println!(
             "cd {}",

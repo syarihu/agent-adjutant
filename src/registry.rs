@@ -1,6 +1,6 @@
-//! Who is running, and where: hub and worker records, saved sessions, liveness, worker slots
-//! and markers, the claim and dispatch locks, addressing, `Context`, and the board address book
-//! and server record.
+//! Who is running, and where: hub and worker records, saved sessions, the agent session ledger,
+//! liveness, worker slots and markers, the claim and dispatch locks, addressing, `Context`, and
+//! the board address book and server record.
 //!
 //! Names `infra` and `kernel` and nothing else. `store` is private: the paths and raw reads
 //! behind the records are this module's own, and other modules ask through the typed reads.
@@ -14,11 +14,14 @@ use crate::infra::clock::{now_secs, utc_stamp};
 use crate::infra::env::HUB_ENV;
 use crate::infra::fs::{
     CreateError, create_new_json, read_json, record_exists, remove_if_present, write_json,
+    write_json_private,
 };
-use crate::infra::paths::state_dir;
+use crate::infra::paths::{default_state_dir, state_dir};
 use crate::kernel::identity::current_worktree;
 
 mod address;
+mod agent_session_of;
+mod agent_sessions;
 mod board_record;
 mod claim;
 mod context;
@@ -26,6 +29,7 @@ mod dispatch_lock;
 mod liveness;
 mod mark_removing;
 mod model;
+mod record_agent_event;
 mod register;
 mod relink;
 mod saved_session;
@@ -36,6 +40,10 @@ mod store;
 mod unregister;
 
 pub use address::*;
+// Its first caller is the board (a later issue).
+#[allow(unused_imports)]
+pub use agent_session_of::*;
+pub use agent_sessions::*;
 pub use board_record::*;
 pub use claim::*;
 pub use context::*;
@@ -43,6 +51,7 @@ pub use dispatch_lock::*;
 pub use liveness::*;
 pub use mark_removing::*;
 pub use model::*;
+pub use record_agent_event::*;
 pub use register::*;
 pub use relink::*;
 pub use saved_session::*;

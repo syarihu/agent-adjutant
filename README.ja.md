@@ -64,6 +64,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 | `adjutant focus [--worktree …]` | 実行中の hub タブ（`--worktree` ならその worktree の worker のタブ）をアクティブにする（なければ exit 1） |
 | `adjutant phase [--set …]` | worker が今どの工程にいるかを書く（`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`）。`--set` 無しなら今の工程を表示 |
 | `adjutant review-engine [--json]` | worker 用。このセルフレビューのラウンドで差分を読むエンジンを返す（`reviewEngine`、`auto` なら Claude のレート制限キャッシュと `PATH` 上の `codex` で決める）。ユーザーに伝える一文も返す |
+| `adjutant agent-sessions [--json]` | 各エージェントセッションのフックが最後に伝えた状態（idle・running・権限プロンプト待ちの waiting・done・failed）、実行中のサブエージェント、最後に報告したツールを一覧する。プロセスが終わったセッションは出さない |
 | `adjutant close --worktree …` | 指定 worktree の worker が座っているタブを閉じる（閉じられなければ exit 1） |
 | `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
 | `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
@@ -172,10 +173,11 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
 | `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |
-| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
-| `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
-| `agentResumeRunner` | `agentRunner` と同じ | `claude --resume {sessionId} --permission-mode auto {prompt}` |
-| `hubResumeRunner` | `hubRunner` と同じ | `claude -n {name} --resume {sessionId} --permission-mode auto {prompt}` |
+| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `agentResumeRunner` | `agentRunner` と同じ | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
+| `hubResumeRunner` | `hubRunner` と同じ | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
+| | | *`{settings}` は `--settings <file>` になり、セッションに渡す adjutant のフックを書いたファイルを指す。テンプレートに書かなければ `claude` の直後に足される（テンプレート自身が `--settings` を渡している場合を除く）。クォートしないこと。これを知らない古いバイナリがあるので、設定を共有するバイナリがすべて知っているときだけ手で書くこと* |
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier`（未インストールなら `osascript`） |
 | `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
 | `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |

@@ -77,7 +77,8 @@ fixtures.
   `worktree_state`, `prompts` (procedures, `render_skill`), `runner`, `brief`. It names only
   `infra` and holds no records on disk.
 - `registry`: who is running and where. `Context` (repo, settings, resolved config, state dir),
-  addressing, hub and worker records, `hub_status` / `worker_status`, saved sessions, liveness,
+  addressing, hub and worker records, `hub_status` / `worker_status`, saved sessions, the agent
+  session ledger (what each agent's hooks last said, and its sweep), liveness,
   worker slots, the claim and dispatch locks, and the board address book and server record. It
   names no task or gate and holds none of their records.
 - `mail`: inbox (worker to hub), outbox (hub to worker), delivery and wake, `pending`, `ack`,
@@ -300,6 +301,8 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `sessions/<slug>.json`, `sessions/<slug>.alive` | saved hub session | registry (`store.rs`) |
 | `dashboards/<slug>.json` | a hub's or `adj serve`'s own board | registry (`store.rs`) |
 | `boards/<slug>.json`, `server.json` | the resident's address book and record | registry (`store.rs`) |
+| `agent-sessions/<session id>.json` (+ `.lock`, `.json.broken`) | what one agent session's hooks last said | registry (`store.rs`) |
+| `agent-hooks/claude-<digest>.json` | the hook settings passed with `--settings`, one per `adj` binary | lifecycle (`write_agent_hooks.rs`) |
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
 | `gates/<slug>/`, `records/` and `answered/` under it, each gate with an `<id>.lock` | open gates, gates kept as a record (`wait: false`), answered gates | gate (`store.rs`) |

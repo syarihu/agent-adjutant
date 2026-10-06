@@ -876,3 +876,43 @@ fn a_symlink_reached_by_stepping_back_over_a_missing_part_is_resolved_too() {
         "{added}"
     );
 }
+
+#[test]
+fn the_default_runner_passes_the_hook_settings_the_launch_wrote() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.ok(&[
+        "worker",
+        "--worktree",
+        fixture.repo.to_str().unwrap(),
+        "--title",
+        "WID-1",
+        "--dry-run",
+    ]);
+    let dir = fixture.state.join("agent-hooks");
+    let files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(
+        out.contains(&format!("--settings {}", files[0].display())),
+        "{out}"
+    );
+    let written = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(written.contains(BIN), "{written}");
+}
+
+#[test]
+fn a_worker_runner_that_is_not_claude_is_given_no_hook_settings() {
+    let fixture = Fixture::new(CODEX);
+    let out = fixture.ok(&[
+        "worker",
+        "--worktree",
+        fixture.repo.to_str().unwrap(),
+        "--title",
+        "WID-1",
+        "--dry-run",
+    ]);
+    assert!(!out.contains("--settings"), "{out}");
+    assert!(!fixture.state.join("agent-hooks").exists());
+}

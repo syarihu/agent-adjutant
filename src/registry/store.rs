@@ -130,3 +130,48 @@ pub(super) fn unreadable_worker_record(worktree: &Path) -> String {
         worker_record_path(worktree).display()
     )
 }
+
+// ── what each agent session is doing ─────────────────────────────────
+
+pub(super) fn agent_sessions_dir(root: &Path) -> PathBuf {
+    root.join("agent-sessions")
+}
+
+pub(super) fn agent_session_path(root: &Path, id: &str) -> PathBuf {
+    agent_sessions_dir(root).join(format!("{id}.json"))
+}
+
+pub(super) fn agent_session_lock_path(root: &Path, id: &str) -> PathBuf {
+    agent_sessions_dir(root).join(format!("{id}.lock"))
+}
+
+/// Where a row that cannot be read is moved to, so a new one can be started.
+pub(super) fn agent_session_broken_path(root: &Path, id: &str) -> PathBuf {
+    agent_sessions_dir(root).join(format!("{id}.json.broken"))
+}
+
+/// A row, with the session id filled in from the file name when the file does not say.
+pub(super) fn read_agent_session(path: &Path) -> Recorded<AgentSession> {
+    match read_record(path, |value| {
+        serde_json::from_value::<AgentSession>(value).ok()
+    }) {
+        Recorded::Found(mut row) => {
+            if row.session_id.is_empty() {
+                row.session_id = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().to_string())
+                    .unwrap_or_default();
+            }
+            Recorded::Found(row)
+        }
+        Recorded::Absent => Recorded::Absent,
+        Recorded::Unreadable => Recorded::Unreadable,
+    }
+}
+
+pub(super) fn write_agent_session(root: &Path, row: &AgentSession) -> Result<(), String> {
+    if !valid_session_id(&row.session_id) {
+        return Err(format!("not a usable session id: {:?}", row.session_id));
+    }
+    write_json_private(&agent_session_path(root, &row.session_id), row)
+}

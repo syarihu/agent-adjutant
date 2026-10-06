@@ -84,6 +84,15 @@ impl ProcessTable {
         }
     }
 
+    /// A table that answers from `starts` (`None` for a `ps` that could not be read), for tests.
+    #[cfg(test)]
+    pub(crate) fn fixed(starts: Option<HashMap<u32, String>>) -> Self {
+        ProcessTable {
+            all: true,
+            snapshot: std::cell::OnceCell::from(starts),
+        }
+    }
+
     pub(super) fn lstart(&self, pid: u32) -> Answer {
         if !self.all {
             return ps_answer(pid, "lstart");
@@ -319,5 +328,38 @@ pub fn worker_liveness_with(table: &ProcessTable, worker: &WorkerIdentity) -> Li
             // free to take, and the cost of its two mistakes runs the other way.
             None => Liveness::CannotTell,
         },
+    }
+}
+
+/// How long a row with no pid may be quiet before it is taken for a process that died without
+/// `Stop` or `SessionEnd`. A live session sends events far more often than this.
+const QUIET_ROW_SECS: i64 = 86_400;
+
+/// Whether an agent session's process is gone, so the sweep removes its row and readers leave
+/// it out.
+///
+/// A row with a pid is dead when the pid is gone or its start time differs, and a table that
+/// cannot be read judges nothing. A row with no start time cannot tell a reused pid from its
+/// own process, so it is judged by the pid and also dropped once quiet for 24 hours (a live
+/// session reads the start time again on every event). So is a row without a pid, whatever its
+/// status; one with no time at all has nothing to show it was ever alive.
+pub(super) fn agent_session_dead(row: &AgentSession, table: &ProcessTable, now: i64) -> bool {
+    match row.pid {
+        Some(pid) => match table.lstart(pid) {
+            Answer::NoSuchProcess => true,
+            Answer::CannotTell => false,
+            Answer::Said(started) => match anchor_of(row.ps_started.as_deref()) {
+                Some(recorded) => recorded != started,
+                None => quiet(row, now),
+            },
+        },
+        None => quiet(row, now),
+    }
+}
+
+fn quiet(row: &AgentSession, now: i64) -> bool {
+    match row.last_event_at.or(row.created_at) {
+        Some(seen) => now - seen >= QUIET_ROW_SECS,
+        None => true,
     }
 }

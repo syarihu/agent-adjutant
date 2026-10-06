@@ -1,0 +1,12 @@
+{
+  "session_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "transcript_path": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d.jsonl",
+  "cwd": "/home/user/repo",
+  "hook_event_name": "PermissionRequest",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "rm -rf target",
+    "description": "Remove build output"
+  }
+}

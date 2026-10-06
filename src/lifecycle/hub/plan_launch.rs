@@ -1,6 +1,6 @@
 use super::{HubStart, asked_session, hub_env, own_hub_runner_refusal};
 use crate::kernel::runner;
-use crate::lifecycle::resume_template;
+use crate::lifecycle::{Hooks, agent_hooks_for, resume_template};
 use crate::registry::{self, Context};
 
 /// What `adj hub` was asked to start.
@@ -26,6 +26,8 @@ pub struct Launch {
     pub resumed: Option<registry::SavedSession>,
     pub records: bool,
     pub auto: Option<AutoResume>,
+    /// What came of the hook settings the runner may take; `Skipped` is for the caller to say.
+    pub hooks: Hooks,
 }
 
 /// What a plain `adj hub` made of the session it had, for the caller to say.
@@ -43,7 +45,7 @@ pub enum Skip {
 }
 
 /// What starting the hub `ctx` addresses comes to — already running, or the line to run and
-/// the session it runs as — decided without writing anything. The tab route does not come
+/// the session it runs as — decided without writing a record. The tab route does not come
 /// here: it hands the question to the `adj hub` in the new tab.
 ///
 /// Three things go wrong when a person types the agent command by hand, and this exists to
@@ -102,20 +104,37 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
             ctx.repo.slug.clone(),
         ));
     }
+    // The hook settings are a file, not a record: written on a dry run too, and the same
+    // bytes every time for one binary.
+    let (template, default) = match &resumed {
+        Some(_) => (
+            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?,
+            runner::DEFAULT_HUB_RESUME_RUNNER,
+        ),
+        None => (
+            ctx.settings.hub_runner.as_deref(),
+            runner::DEFAULT_HUB_RUNNER,
+        ),
+    };
+    let hooks = agent_hooks_for(&ctx.state, template.unwrap_or(default));
+    let settings = hooks.path().map(|path| path.to_string_lossy());
+    let settings = settings.as_deref();
     let mut command = match &resumed {
         Some(_) => runner::hub_resume_command(
-            resume_template(ctx.settings.hub_resume_runner.as_deref(), "hubResumeRunner")?,
+            template,
             &env,
             &ctx.repo.hub_name,
             &session,
             runner::HUB_RESUME_PROMPT,
+            settings,
         ),
         None => runner::hub_command(
-            ctx.settings.hub_runner.as_deref(),
+            template,
             &env,
             &ctx.repo.hub_name,
             &session,
             runner::HUB_STARTUP_PROMPT,
+            settings,
         ),
     };
     if !request.extra.is_empty() {
@@ -130,6 +149,7 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
         resumed,
         records,
         auto,
+        hooks,
     }))
 }
 
