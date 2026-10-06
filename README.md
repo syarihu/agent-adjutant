@@ -1144,6 +1144,9 @@ The list is bottom first: a module may use the ones above it, never one below it
 `main.rs` are the crate roots over all ten. `scripts/check-layering.sh` enforces the arrows, and CI
 runs it. As long as it passes, splitting into a Cargo workspace later stays a mechanical move.
 
+[docs/architecture.md](docs/architecture.md) has the details: a picture of the layers, what each
+module holds and must not hold, the rules that come with them, and where a change goes.
+
 ## Development
 
 ```bash
