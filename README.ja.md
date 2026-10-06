@@ -278,7 +278,7 @@ security add-generic-password -s jules-api -a "$USER" -w
 - **デタッチウィンドウ起動**: worker をバックグラウンドウィンドウ（`tmux new-window -d`）として起動するため、現在の作業画面のフォーカスを奪いません。対象セッションが存在しない場合は自動で初期セッションを作成します。
 - **PID/TTYからペインへの自動解決**: プロセスツリーと TTY を探索して tmux ペインを特定するため、手書きのラッパースクリプトなしで wake や focus、close が動きます。
 - **入力通知（wake）**: 組み込みの wake は、先にペインを読み（`tmux capture-pane`）、エージェント（組み込みの runner か `claude` の runner なら Claude Code、`agy` の runner なら agy）が空の入力欄で待っているときだけ入力します。`tmux send-keys -l` でリテラル文字列を送信し、その行が入力欄に入ったことを確かめてから、少し遅れて Enter を押します。質問・許可確認・メニューが出ているとき、人が入力の途中のとき、画面を判別できないときは何も入力せず、`send` / `tell` の返答（`wakeNote`）に理由が出て、wake できなかった場合と同じく人に通知します。ターン実行中は最大5秒待ちます。`wake` テンプレート、iTerm2、それ以外の自前 runner は、画面を見ずにそのまま入力します。Enter を押す前に、入力欄にあるのが入力した行だけであることも確かめます。
-- **フォーカスと終了**: `adj focus` でウィンドウとペインを選択し、`adj close` で worker のウィンドウを片付けます（`tmux kill-window`）。
+- **フォーカスと終了**: `adj focus` でウィンドウとペインを選択し、`adj close` で worker のウィンドウを片付けます（`tmux kill-window`）。組み込みのフォーカス・終了・wake は、セッションを起動したときに記録した端末（iTerm2 か tmux とそのソケット）でセッションに届くので、`preset` を切り替えても、それより前に起動したセッションに届かなくなることはありません。記録の無い古いセッションと、`spawn` テンプレートで tmux の外に起動したセッションは、今の `preset` に従います。
 - **アタッチ**: `tmux attach -t adjutant` や `tmux -CC attach -t adjutant`（iTerm2 連携）、`ttyd` 等でいつでもセッションに接続できます。
 - **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）で tmux セッションの状態確認や操作を直接行えます。
   - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: `--agent claude` / `agy` ではペインを先に読みます。既定の `generic` は画面を見ずに入力します。

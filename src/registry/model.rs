@@ -16,6 +16,8 @@ pub struct HubStatus {
     pub started_at: Option<String>,
     /// A record was found but the process behind it is gone.
     pub stale: bool,
+    /// Where the hub was started, when its record says (#150).
+    pub terminal: Option<SessionTerminal>,
 }
 
 /// The answer to "may this process be the hub for `slug`?".
@@ -286,6 +288,8 @@ pub struct WorkerStatus {
     pub phase_at: Option<i64>,
     /// Every phase entered, oldest first, as `(phase, epoch seconds)`.
     pub phases: Vec<(String, i64)>,
+    /// Where the worker was started, when its record says (#150).
+    pub terminal: Option<SessionTerminal>,
 }
 
 /// How many entries a record's `phases` keeps. A worker that says a phase on every step of a
@@ -360,6 +364,8 @@ pub struct WorkerIdentity {
     /// already `CannotTell`; what closes is the narrow window where it failed only once.
     pub started: Option<String>,
     pub title: Option<String>,
+    /// Where the worker was started, when its record says (#150).
+    pub terminal: Option<SessionTerminal>,
 }
 
 /// What clearing a record came to.

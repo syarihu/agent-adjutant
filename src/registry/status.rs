@@ -42,6 +42,7 @@ pub fn hub_status_with(root: &Path, table: &ProcessTable, slug: &str, hub_name: 
         cwd: None,
         started_at: None,
         stale: false,
+        terminal: None,
     };
     let Recorded::Found(record) = read_hub_record(root, slug) else {
         return status;
@@ -49,6 +50,7 @@ pub fn hub_status_with(root: &Path, table: &ProcessTable, slug: &str, hub_name: 
     status.pid = record.pid.map(|p| p as u32);
     status.cwd = record.cwd.clone();
     status.started_at = record.started_at.clone();
+    status.terminal = record.terminal.clone();
     let ps_started = recorded_anchor(&record);
     // Looking for the hub's name in its command line is the stronger of the two anchors,
     // but it only works if the name is *there* — a `hubRunner` with no `{name}` in it, or
@@ -87,6 +89,7 @@ pub fn worker_status_with(table: &ProcessTable, worktree: &Path) -> WorkerStatus
         phase: None,
         phase_at: None,
         phases: Vec::new(),
+        terminal: None,
     };
     let Recorded::Found(record) = read_worker_record(worktree) else {
         return status;
@@ -95,6 +98,7 @@ pub fn worker_status_with(table: &ProcessTable, worktree: &Path) -> WorkerStatus
     // as a worker that is there, while the slot count reads the same record as nobody.
     status.pid = record.pid.and_then(|p| u32::try_from(p).ok());
     status.title = record.title.clone();
+    status.terminal = record.terminal();
     status.phase = record.phase.clone();
     status.phase_at = record.phase_at;
     status.phases = recorded_phases(&record)
@@ -143,6 +147,7 @@ pub fn read_worker(worktree: &Path) -> Recorded<WorkerIdentity> {
                 // being deleted on the strength of a pid number alone.
                 started: record.anchor().map(str::to_string),
                 title: record.title.clone(),
+                terminal: record.terminal(),
             }),
         },
     }

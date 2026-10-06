@@ -293,7 +293,7 @@ fn spawning_into_a_directory_that_is_not_there_fails_before_opening_anything() {
 #[test]
 fn focus_without_a_template_on_a_pid_with_no_terminal_is_a_quiet_no_op() {
     // pid 1 has no controlling terminal on macOS or Linux.
-    let out = focus(&TerminalSettings::default(), 1, "hub", true).unwrap();
+    let out = focus(&TerminalSettings::default(), None, 1, "hub", true).unwrap();
     assert!(!out.ran);
 }
 
@@ -312,7 +312,7 @@ fn a_process_with_no_terminal_is_recognised_on_either_system() {
 fn closing_without_a_template_on_a_pid_with_no_terminal_is_a_quiet_no_op() {
     // Same shape as `focus`: pid 1 has no controlling terminal, and there is no tab to
     // dispose of for a session nobody can locate.
-    let out = close(&TerminalSettings::default(), 1, "WID-957", true).unwrap();
+    let out = close(&TerminalSettings::default(), None, 1, "WID-957", true).unwrap();
     assert!(!out.ran);
     assert!(out.description.contains("not closing"), "{out:?}");
     assert!(out.script.is_empty(), "{out:?}");
@@ -332,6 +332,7 @@ fn closing_can_be_turned_off_and_then_reaches_nothing() {
         |_| panic!("a close that is turned off ran a command"),
         Some("ttys004".to_string()),
         &term,
+        None,
         std::process::id(),
         "WID-957",
         false,
@@ -357,7 +358,7 @@ fn a_close_template_is_handed_the_pid_and_the_tty_and_runs_only_for_real() {
         close: Hook::Command(template),
         ..Default::default()
     };
-    let planned = close(&term, 4321, "WID-957", true).unwrap();
+    let planned = close(&term, None, 4321, "WID-957", true).unwrap();
     assert!(!planned.ran);
     assert!(planned.script.contains("4321"), "{}", planned.script);
     // A pid with no terminal still substitutes, as the empty string. Left standing, the
@@ -366,7 +367,7 @@ fn a_close_template_is_handed_the_pid_and_the_tty_and_runs_only_for_real() {
     assert!(!marker.exists(), "a dry run ran the template");
 
     let ours = std::process::id();
-    let done = close(&term, ours, "WID-957", false).unwrap();
+    let done = close(&term, None, ours, "WID-957", false).unwrap();
     assert!(done.ran);
     let recorded = std::fs::read_to_string(&marker).unwrap();
     let (pid, tty) = recorded.split_once('|').unwrap();
@@ -393,6 +394,7 @@ fn the_builtin_close_only_reports_success_when_it_reached_a_session() {
         |_| Ok(String::new()),
         Some("ttys004".to_string()),
         &term,
+        None,
         ours,
         "WID-957",
         false,
@@ -406,6 +408,7 @@ fn the_builtin_close_only_reports_success_when_it_reached_a_session() {
         |_| Ok(CLOSED_MARKER.to_string()),
         Some("ttys004".to_string()),
         &term,
+        None,
         ours,
         "WID-957",
         false,
@@ -422,6 +425,7 @@ fn the_builtin_close_only_reports_success_when_it_reached_a_session() {
         |_| Ok(String::new()),
         None,
         &template_term,
+        None,
         ours,
         "WID-957",
         false,
@@ -434,6 +438,7 @@ fn the_builtin_close_only_reports_success_when_it_reached_a_session() {
         |_| Err("no iTerm2 window is open".to_string()),
         Some("ttys004".to_string()),
         &term,
+        None,
         ours,
         "WID-957",
         false,
@@ -493,6 +498,7 @@ fn a_title_that_is_turned_off_runs_nothing_at_all() {
 fn waking_a_hub_is_a_template_and_can_be_turned_off() {
     let done = wake(
         &TerminalSettings::default(),
+        None,
         &Wake {
             hook: Hook::Command("tmux send-keys -t {tty} {line} Enter".into()),
             line: None,
@@ -513,6 +519,7 @@ fn waking_a_hub_is_a_template_and_can_be_turned_off() {
 
     let off = wake(
         &TerminalSettings::default(),
+        None,
         &Wake {
             hook: Hook::Off,
             line: None,
@@ -546,6 +553,7 @@ fn the_sentence_can_be_replaced_without_restating_how_to_poke() {
     // slash command, needs a different sentence through the same terminal.
     let done = wake(
         &TerminalSettings::default(),
+        None,
         &Wake {
             hook: Hook::Command("tmux send-keys -t {tty} {line} Enter".into()),
             line: Some("check adjutant pending".into()),
@@ -569,6 +577,7 @@ fn the_sentence_can_be_replaced_without_restating_how_to_poke() {
 fn waking_a_pid_with_no_terminal_is_a_quiet_no_op() {
     let done = wake(
         &TerminalSettings::default(),
+        None,
         &Wake::default(),
         1,
         "s",
@@ -586,7 +595,7 @@ fn a_focus_template_gets_the_pid() {
         focus: Some("raise-tab --pid {pid}".into()),
         ..Default::default()
     };
-    let out = focus(&term, 4321, "hub", true).unwrap();
+    let out = focus(&term, None, 4321, "hub", true).unwrap();
     assert_eq!(out.script, "raise-tab --pid 4321");
 }
 
@@ -606,6 +615,7 @@ fn the_builtin_wake_only_claims_success_when_it_typed_something() {
         |_| Ok(String::new()),
         Some("ttys004".to_string()),
         &term,
+        None,
         &built_in,
         &WakeRequest {
             pid: ours,
@@ -624,6 +634,7 @@ fn the_builtin_wake_only_claims_success_when_it_typed_something() {
         |_| Ok(WOKE_MARKER.to_string()),
         Some("ttys004".to_string()),
         &term,
+        None,
         &built_in,
         &WakeRequest {
             pid: ours,
@@ -646,6 +657,7 @@ fn the_builtin_wake_only_claims_success_when_it_typed_something() {
         |_| Ok(String::new()),
         None,
         &term,
+        None,
         &template,
         &WakeRequest {
             pid: ours,
@@ -873,6 +885,7 @@ fn tmux_wake_with_runner_mock() {
         runner,
         Some("ttys005".to_string()),
         &term,
+        None,
         &wake_cfg,
         &WakeRequest {
             pid: 12345,
@@ -910,6 +923,7 @@ fn tmux_close_with_runner_mock() {
         runner,
         Some("ttys005".to_string()),
         &term,
+        None,
         12345,
         "worker",
         false,
@@ -1491,4 +1505,181 @@ fn a_capture_is_split_from_what_tmux_says_about_the_pane() {
     let bare = parse_pane_screen("one");
     assert!(!bare.in_mode);
     assert_eq!(bare.text, "one");
+}
+
+fn recorded(backend: &str, socket: Option<&str>) -> SessionTerminal {
+    SessionTerminal {
+        backend: backend.to_string(),
+        socket: socket.map(str::to_string),
+        session: None,
+        window: None,
+        pane: None,
+    }
+}
+
+#[test]
+fn a_session_is_reached_the_way_it_was_started() {
+    let tmux = TerminalSettings {
+        preset: Some("tmux".to_string()),
+        socket: Some("current".to_string()),
+        ..Default::default()
+    };
+    let default = TerminalSettings::default();
+
+    // No record: the current settings, as before.
+    assert_eq!(Backend::reaching(&tmux, None), Backend::of(&tmux));
+    assert_eq!(Backend::reaching(&default, None), Backend::of(&default));
+
+    // A recorded tmux socket wins over the settings, whichever backend they name.
+    let on_socket = recorded("tmux", Some("/tmp/rec.sock"));
+    for term in [&tmux, &default] {
+        assert!(matches!(
+            Backend::reaching(term, Some(&on_socket)),
+            Backend::Tmux {
+                socket: Some("/tmp/rec.sock"),
+                ..
+            }
+        ));
+    }
+
+    // A tmux record with no socket falls back to the settings' socket.
+    let no_socket = recorded("tmux", None);
+    assert!(matches!(
+        Backend::reaching(&tmux, Some(&no_socket)),
+        Backend::Tmux {
+            socket: Some("current"),
+            ..
+        }
+    ));
+
+    // The recorded backend beats the preset, and `custom` says nothing about how to reach it.
+    assert_eq!(
+        Backend::reaching(&tmux, Some(&recorded("iterm2", None))),
+        Backend::Iterm2
+    );
+    let custom = recorded("custom", None);
+    assert_eq!(Backend::reaching(&tmux, Some(&custom)), Backend::of(&tmux));
+    assert_eq!(
+        Backend::reaching(&default, Some(&custom)),
+        Backend::of(&default)
+    );
+}
+
+#[test]
+fn closing_follows_a_recorded_tmux_socket_under_other_settings() {
+    let term = TerminalSettings::default();
+    let rec = recorded("tmux", Some("/tmp/rec.sock"));
+    let raw_panes = "%1\t12345\t/dev/ttys005\t@1\tadjutant\t1\tworker\n";
+    let runner = |cmd: &str| {
+        if cmd.contains("list-panes") {
+            assert!(cmd.contains("-S /tmp/rec.sock"), "{cmd}");
+            Ok(raw_panes.to_string())
+        } else if cmd.contains("kill-window") {
+            Ok(format!("killed\n{CLOSED_MARKER}\n"))
+        } else {
+            Err(format!("unexpected command: {cmd}"))
+        }
+    };
+    let performed = close_with(
+        runner,
+        Some("ttys005".to_string()),
+        &term,
+        Some(&rec),
+        12345,
+        "worker",
+        false,
+    )
+    .unwrap();
+    assert!(performed.ran, "{performed:?}");
+    assert!(performed.script.contains("kill-window -t @1"));
+    assert!(performed.script.contains("-S /tmp/rec.sock"));
+}
+
+/// The issue's repro: the preset was switched to tmux after the session started in iTerm2.
+#[test]
+fn closing_a_session_started_in_iterm2_ignores_a_preset_switched_since() {
+    let term = TerminalSettings {
+        preset: Some("tmux".to_string()),
+        ..Default::default()
+    };
+    let rec = recorded("iterm2", None);
+    let runner = |cmd: &str| {
+        if cmd.contains("tmux") {
+            panic!("reached for tmux: {cmd}");
+        } else if cmd.contains("osascript") {
+            Ok(format!("{CLOSED_MARKER}\n"))
+        } else {
+            Err(format!("unexpected command: {cmd}"))
+        }
+    };
+    let performed = close_with(
+        runner,
+        Some("ttys005".to_string()),
+        &term,
+        Some(&rec),
+        12345,
+        "worker",
+        false,
+    )
+    .unwrap();
+    assert!(performed.ran, "{performed:?}");
+    assert!(performed.script.starts_with("osascript"));
+}
+
+#[test]
+fn waking_follows_a_recorded_tmux_session_under_other_settings() {
+    let term = TerminalSettings::default();
+    let rec = recorded("tmux", Some("/tmp/rec.sock"));
+    let raw_panes = "%1\t12345\t/dev/ttys005\t@1\tadjutant\t1\tworker\n";
+    let runner = |cmd: &str| {
+        if cmd.contains("list-panes") {
+            Ok(raw_panes.to_string())
+        } else if cmd.contains("send-keys") {
+            Ok(format!("typed\n{WOKE_MARKER}\n"))
+        } else {
+            Err(format!("unexpected command: {cmd}"))
+        }
+    };
+    let performed = wake_with(
+        runner,
+        Some("ttys005".to_string()),
+        &term,
+        Some(&rec),
+        &Wake::default(),
+        &WakeRequest {
+            pid: 12345,
+            subject: "sub",
+            line: "wake up",
+            look: None,
+            dry_run: false,
+        },
+    )
+    .unwrap();
+    assert!(performed.ran, "{performed:?}");
+    assert!(performed.script.contains("send-keys -l -t %1 'wake up'"));
+}
+
+#[test]
+fn a_close_template_still_wins_over_the_recorded_backend() {
+    let term = TerminalSettings {
+        close: Hook::Command("close-tab --pid {pid}".to_string()),
+        ..Default::default()
+    };
+    let rec = recorded("tmux", Some("/tmp/rec.sock"));
+    let runner = |cmd: &str| {
+        assert!(!cmd.contains("list-panes"), "{cmd}");
+        Ok(String::new())
+    };
+    let performed = close_with(
+        runner,
+        Some("ttys005".to_string()),
+        &term,
+        Some(&rec),
+        12345,
+        "worker",
+        false,
+    )
+    .unwrap();
+    assert!(performed.ran, "{performed:?}");
+    assert_eq!(performed.script, "close-tab --pid 12345");
 }

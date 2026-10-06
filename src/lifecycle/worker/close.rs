@@ -95,6 +95,7 @@ pub fn close(settings: &Settings, worktree: &Path, dry_run: bool) -> Result<Work
     }
     let done = terminal::close(
         &settings.terminal,
+        worker.terminal.as_ref(),
         pid,
         // The name the tab actually carries: `spawn` put the record's title through
         // `sanitise_title` with the directory name behind it, and a template that matches

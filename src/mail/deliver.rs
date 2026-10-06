@@ -135,19 +135,19 @@ impl Posted {
 
         let (wake, default_line, runner) = wake_settings(&ctx.settings, true);
         let reached = reached_after(delivery.present, wake_needed, || {
-            hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name)
-                .pid
-                .map(|pid| {
-                    terminal::wake(
-                        &ctx.settings.terminal,
-                        wake,
-                        pid,
-                        &subject,
-                        default_line,
-                        look_before_typing(wake_agent(runner)),
-                        false,
-                    )
-                })
+            let hub = hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
+            hub.pid.map(|pid| {
+                terminal::wake(
+                    &ctx.settings.terminal,
+                    hub.terminal.as_ref(),
+                    wake,
+                    pid,
+                    &subject,
+                    default_line,
+                    look_before_typing(wake_agent(runner)),
+                    false,
+                )
+            })
         });
 
         if announce
@@ -192,6 +192,7 @@ pub fn deliver_to_worker(
         status.pid.map(|pid| {
             terminal::wake(
                 &ctx.settings.terminal,
+                status.terminal.as_ref(),
                 wake,
                 pid,
                 subject,
