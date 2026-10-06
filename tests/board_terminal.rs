@@ -396,6 +396,46 @@ fn a_worker_s_tmux_window_is_opened_in_the_browser_without_disturbing_the_sessio
 }
 
 #[test]
+fn a_window_whose_original_session_was_killed_still_opens_through_its_group() {
+    let Some(tmux) = IsolatedTmux::new("board-group") else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let layout = tmux.lay_out();
+    // The group outlives the name it was made under: `keep` holds the windows, the original
+    // session is gone, and the group is still called after it.
+    tmux.out(&["new-session", "-d", "-s", "keep", "-t", &layout.session]);
+    tmux.out(&["kill-session", "-t", &format!("={}", layout.session)]);
+    let fixture = Fixture::new(&config(&tmux));
+    forge_worker(&fixture, &layout);
+    let resident = Resident::start(&fixture);
+
+    let path = terminal_path(&resident, "worker-main", "cols=100&rows=30");
+    let (head, mut ws) = handshake(resident.port, &path, Some(&own_origin(&resident)));
+    assert_eq!(status_of(&head), 101, "{head}");
+    let mut seen = String::new();
+    read_until(&mut ws, &mut seen, "ADJ_MARK");
+    let made = tmux.board_sessions();
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!(tmux.current_window(&made[0]), layout.target_window);
+
+    ws.write_all(&client_frame(0x8, &1000u16.to_be_bytes()))
+        .unwrap();
+    read_close(&mut ws);
+    drop(ws);
+    eventually("the board session to be gone", || {
+        tmux.board_sessions().is_empty()
+    });
+    let sessions = tmux.out(&["list-sessions", "-F", "#{session_name}"]);
+    assert_eq!(sessions, "keep", "{sessions}");
+    let windows = tmux.out(&["list-windows", "-a", "-F", "#{window_id}"]);
+    assert!(
+        windows.lines().any(|w| w == layout.target_window),
+        "{windows}"
+    );
+}
+
+#[test]
 fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
     let Some(tmux) = IsolatedTmux::new("board-one") else {
         eprintln!("tmux not available, skipping test");

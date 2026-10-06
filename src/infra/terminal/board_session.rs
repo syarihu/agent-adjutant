@@ -112,7 +112,32 @@ pub fn parse_window_home(output: &str) -> Option<String> {
     (!target.is_empty()).then(|| target.to_string())
 }
 
-/// Make the session `name` in `group`, showing `window`.
+/// Whether what tmux said on stderr means the window (or the server it was in) is gone, as
+/// opposed to tmux failing for some other reason.
+pub fn is_gone_error(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("can't find")
+        || lower.contains("no server running")
+        || lower.contains("error connecting")
+}
+
+/// Make the session `name` in `group`, showing `window`; or fail and leave nothing behind.
+///
+/// `new-session -t <group>` does not fail for a group that is not there: it makes a session
+/// in a new group with a login shell of its own, and starts a server if there was none. So
+/// the group is not trusted until the window is found through the new session:
+///
+/// - `list-sessions` first, because it fails without starting a server. Window ids start at
+///   `@0` on a fresh server, so without it `select-window` could find the stray's own window.
+/// - `select-window` succeeding is the proof that the session joined the right group. When it
+///   fails, the session just made holds nothing of the agent's (it is a fresh stray, or a
+///   member of a group that still has others), so it is killed.
+/// - The kill only runs after `new-session` succeeded, so a name that was already taken
+///   fails there and never kills someone else's session.
+///
+/// The group is not checked with `has-session`: a group outlives its first session's name, so
+/// the name need not be one a session has. And it is passed without `=`, which `new-session -t`
+/// would read as part of a new group's name.
 pub fn board_attach_prepare_script(
     socket: Option<&str>,
     group: &str,
@@ -120,8 +145,9 @@ pub fn board_attach_prepare_script(
     window: &str,
 ) -> String {
     let prefix = tmux_cmd_prefix(socket);
+    let session = sh_quote(&format!("={name}"));
     format!(
-        "{prefix} new-session -d -s {} -t {} && {prefix} select-window -t {}",
+        "{prefix} list-sessions >/dev/null && {prefix} new-session -d -s {} -t {} && {{ {prefix} select-window -t {} || {{ {prefix} kill-session -t {session} 2>/dev/null; false; }}; }}",
         sh_quote(name),
         sh_quote(group),
         sh_quote(&format!("={name}:{window}"))
