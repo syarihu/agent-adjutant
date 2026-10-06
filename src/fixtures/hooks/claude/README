@@ -15,6 +15,7 @@ Hook payloads an agent sends to `adj hook claude`, read by `src/transport/cli/ho
     stop.json                          Stop
     stop-failure.json                  StopFailure
     session-end.json                   SessionEnd
+    status-line.json                   the status line's stdin (`adj hook claude --status-line`), not a hook
 
 Recorded from a real session (Claude Code 2.1.291, `claude -p` with a hand-written `--settings`
 file whose hooks wrote their stdin to a file): the keys of `session-start.json` and
@@ -28,7 +29,8 @@ Written by hand from the Claude Code hooks reference, with the keys it lists for
 `prompt_id` and `duration_ms`, which the recorded tool events carry): both `notification-*.json`,
 `post-tool-use.json` (an Edit), `post-tool-use-failure.json`, `permission-request.json`,
 `stop-failure.json`, `session-end.json` and `subagent-permission-request.json` (the recorded
-sub-agent layout with a permission request's keys). The recorded session asked for no permission
+sub-agent layout with a permission request's keys), and `status-line.json` (the keys of the
+status line input the Claude Code documentation lists). The recorded session asked for no permission
 and ran no tool of its own that fails. When one is recorded, replace the hand-written file.
 
 Editing applied, since the repository is public: the session id, the prompt id, the agent id and the tool use id

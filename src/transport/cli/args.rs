@@ -387,6 +387,9 @@ pub(crate) struct HookArgs {
     /// Marks an entry `adj setup` wrote into a global settings file; it changes nothing here
     #[arg(long, hide = true)]
     pub(crate) global: bool,
+    /// Read Claude Code's status line input instead of a hook payload: record the model, context use and rate limits on the session's existing row, print nothing
+    #[arg(long)]
+    pub(crate) status_line: bool,
 }
 
 #[derive(Args)]

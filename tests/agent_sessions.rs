@@ -37,6 +37,7 @@ fn payload(name: &str) -> Json {
         "stop" => include_str!("../src/fixtures/hooks/claude/stop.json"),
         "stop-failure" => include_str!("../src/fixtures/hooks/claude/stop-failure.json"),
         "session-end" => include_str!("../src/fixtures/hooks/claude/session-end.json"),
+        "status-line" => include_str!("../src/fixtures/hooks/claude/status-line.json"),
         other => panic!("no fixture called {other}"),
     };
     serde_json::from_str(text).unwrap()
@@ -116,6 +117,14 @@ fn row_path(fixture: &Fixture, id: &str) -> PathBuf {
         .state
         .join("agent-sessions")
         .join(format!("{id}.json"))
+}
+
+/// `adj hook claude --status-line` fed `input`, as a status line script runs it.
+fn relay(fixture: &Fixture, input: &[u8]) -> std::process::Output {
+    let mut command = fixture.command(["hook", "claude", "--status-line"]);
+    start(&mut command, input, std::process::id())
+        .wait_with_output()
+        .unwrap()
 }
 
 #[test]
@@ -350,4 +359,40 @@ fn the_receiver_is_hidden_from_the_help_and_the_listing_is_not() {
             .any(|line| line.trim_start().starts_with("hook")),
         "{help}"
     );
+}
+
+#[test]
+fn the_status_line_relay_fills_an_existing_row_and_prints_nothing() {
+    let fx = fixture();
+    let draw = sent(&fx, "status-line").to_string();
+
+    let out = relay(&fx, draw.as_bytes());
+    quiet_success(&out);
+    assert!(out.stdout.is_empty());
+    assert!(rows(&fx).is_empty());
+    assert!(!row_path(&fx, SESSION).exists());
+
+    quiet_success(&hook(&fx, &sent(&fx, "session-start")));
+    let out = relay(&fx, draw.as_bytes());
+    quiet_success(&out);
+    assert!(out.stdout.is_empty());
+    let rows = rows(&fx);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["model"], "Opus");
+    assert_eq!(rows[0]["contextPercent"], 43.0);
+    assert_eq!(rows[0]["rateLimits"]["fiveHour"]["usedPercent"], 23.5);
+    assert_eq!(rows[0]["status"], "idle");
+}
+
+#[test]
+fn the_status_line_relay_never_fails_the_status_line() {
+    let fx = fixture();
+    let mut bad_id = sent(&fx, "status-line");
+    bad_id["session_id"] = "../x".into();
+    for input in [b"not json".to_vec(), bad_id.to_string().into_bytes()] {
+        let out = relay(&fx, &input);
+        assert!(out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(!out.stderr.is_empty());
+    }
 }

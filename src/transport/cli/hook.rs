@@ -14,7 +14,7 @@ use super::args::HookArgs;
 use crate::infra::clock::now_secs;
 use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CLAUDE_PID_ENV};
 use crate::infra::paths::home_dir;
-use crate::registry::{self, AgentEvent, HookEvent};
+use crate::registry::{self, AgentEvent, HookEvent, RateWindow};
 
 /// What is shown of a tool call or a notification: enough to tell what is going on, and a
 /// bounded size for the row that keeps it.
@@ -47,6 +47,18 @@ pub fn hook(args: &HookArgs) -> i32 {
             return 0;
         }
     };
+    if args.status_line {
+        // Whatever the status line's own script prints is what gets drawn, so nothing goes to
+        // stdout here, whatever `hook_event_name` the payload carries.
+        match std::panic::catch_unwind(AssertUnwindSafe(|| record_status_line(&payload))) {
+            Ok(Ok(())) => {}
+            Ok(Err(message)) => say(format_args!("adjutant hook: {message}")),
+            Err(_) => say(format_args!(
+                "adjutant hook: panicked while recording the status line"
+            )),
+        }
+        return 0;
+    }
     let permission =
         payload.get("hook_event_name").and_then(Value::as_str) == Some("PermissionRequest");
     match std::panic::catch_unwind(AssertUnwindSafe(|| record(&payload))) {
@@ -131,6 +143,78 @@ fn claude_event(
         config_dir: Some(config_dir),
         at,
     })
+}
+
+fn record_status_line(payload: &Value) -> Result<(), String> {
+    let Some(event) = claude_status_line(payload, now_secs())? else {
+        return Ok(());
+    };
+    let cwd = text(payload, "cwd").or_else(|| {
+        payload
+            .get("workspace")
+            .and_then(|workspace| text(workspace, "current_dir"))
+    });
+    let root = registry::hook_state_root(cwd.as_deref().map(Path::new));
+    registry::record_agent_event(&root, &event)
+}
+
+/// A Claude Code status line input as the figures it shows, or `None` when it shows none of
+/// them. The `cwd` is not part of the event: a status line only fills a row that exists, and
+/// the row already says where its session is.
+fn claude_status_line(payload: &Value, at: i64) -> Result<Option<AgentEvent>, String> {
+    let session_id = text(payload, "session_id").unwrap_or_default();
+    if !registry::valid_session_id(&session_id) {
+        return Err(format!("not a usable session id: {session_id:?}"));
+    }
+    let model = match payload.get("model") {
+        Some(Value::String(name)) => Some(name.clone()).filter(|name| !name.trim().is_empty()),
+        Some(model @ Value::Object(_)) => text(model, "display_name").or_else(|| text(model, "id")),
+        _ => None,
+    };
+    let context_percent = payload
+        .get("context_window")
+        .and_then(|window| percent(window.get("used_percentage")))
+        .map(f64::round);
+    let limits = payload.get("rate_limits");
+    let window = |key: &str| {
+        let window = limits?.get(key)?;
+        Some(RateWindow {
+            used_percent: Some(percent(window.get("used_percentage"))?),
+            resets_at: window
+                .get("resets_at")
+                .and_then(Value::as_f64)
+                .map(|at| at as i64),
+            other: serde_json::Map::new(),
+        })
+    };
+    let (five_hour, seven_day) = (window("five_hour"), window("seven_day"));
+    if model.is_none() && context_percent.is_none() && five_hour.is_none() && seven_day.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(AgentEvent {
+        agent: "claude".to_string(),
+        session_id,
+        hook: HookEvent::StatusLine {
+            model,
+            context_percent,
+            five_hour,
+            seven_day,
+        },
+        agent_id: None,
+        agent_type: None,
+        cwd: None,
+        summary: None,
+        pid: None,
+        config_dir: None,
+        at,
+    }))
+}
+
+/// A percentage a status line gave: a finite number, not below zero.
+fn percent(value: Option<&Value>) -> Option<f64> {
+    value
+        .and_then(Value::as_f64)
+        .filter(|percent| percent.is_finite() && *percent >= 0.0)
 }
 
 /// A string key, with blank the same as absent.
