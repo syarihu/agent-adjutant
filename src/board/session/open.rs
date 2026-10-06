@@ -22,6 +22,15 @@ pub struct Opened {
     pub window: String,
 }
 
+/// What a failed tmux call means for the person: a window or server that is gone says so,
+/// anything else is tmux's own message.
+fn tmux_failure(stderr: String) -> String {
+    match terminal::is_gone_error(&stderr) {
+        true => "the tmux window is gone".to_string(),
+        false => stderr,
+    }
+}
+
 /// Open the session `id` in the person's terminal.
 ///
 /// Through a session of its own in the group of the original, as the board terminal does
@@ -42,16 +51,7 @@ pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
     // Before anything is made: a window that is gone must not start a server or leave a
     // session behind.
     let home = crate::infra::shell::run_shell(&terminal::tmux_window_home_script(socket, &window))
-        .map_err(|e| {
-            let lower = e.to_ascii_lowercase();
-            match lower.contains("can't find")
-                || lower.contains("no server running")
-                || lower.contains("error connecting")
-            {
-                true => "the tmux window is gone".to_string(),
-                false => e,
-            }
-        })?;
+        .map_err(tmux_failure)?;
     let group = terminal::parse_window_home(&home).ok_or("the tmux window is gone")?;
 
     let _ = crate::infra::shell::run_shell(&terminal::board_sweep_script(socket));
@@ -63,7 +63,8 @@ pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
     );
     crate::infra::shell::run_shell(&terminal::board_attach_prepare_script(
         socket, &group, &name, &window,
-    ))?;
+    ))
+    .map_err(tmux_failure)?;
 
     let opened = match attach {
         Some(template) => {

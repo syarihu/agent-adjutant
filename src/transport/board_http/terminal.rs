@@ -186,6 +186,15 @@ mod imp {
         }
     }
 
+    /// What a failed tmux call means for the page: a window or server that is gone is the
+    /// window's end, anything else is tmux failing.
+    fn tmux_failure(stderr: String) -> (u16, String) {
+        match terminal::is_gone_error(&stderr) {
+            true => (CLOSE_NO_SESSION, "the tmux window is gone".to_string()),
+            false => (CLOSE_TMUX_FAILED, stderr),
+        }
+    }
+
     /// Resolve `id` to a live tmux window and attach to it, or say why not as a close code.
     fn open(server: &Server, id: &str, cols: u16, rows: u16) -> Result<Attached, (u16, String)> {
         // The same rule the page is shown (`boardTerminal.available`): no usable tmux, no terminal.
@@ -206,16 +215,7 @@ mod imp {
         // session behind.
         let home =
             crate::infra::shell::run_shell(&terminal::tmux_window_home_script(socket, &window))
-                .map_err(|e| {
-                    let lower = e.to_ascii_lowercase();
-                    match lower.contains("can't find")
-                        || lower.contains("no server running")
-                        || lower.contains("error connecting")
-                    {
-                        true => (CLOSE_NO_SESSION, "the tmux window is gone".to_string()),
-                        false => (CLOSE_TMUX_FAILED, e),
-                    }
-                })?;
+                .map_err(tmux_failure)?;
         let group = terminal::parse_window_home(&home)
             .ok_or((CLOSE_NO_SESSION, "the tmux window is gone".to_string()))?;
 
@@ -236,7 +236,7 @@ mod imp {
         crate::infra::shell::run_shell(&terminal::board_attach_prepare_script(
             socket, &group, &name, &window,
         ))
-        .map_err(|e| (CLOSE_TMUX_FAILED, e))?;
+        .map_err(tmux_failure)?;
 
         let mut command = Command::new("tmux");
         command

@@ -1078,12 +1078,14 @@ fn the_window_home_is_asked_by_window_id_and_names_the_group_to_join() {
 }
 
 #[test]
-fn the_prepare_script_makes_a_grouped_session_and_picks_the_window_by_id() {
+fn the_prepare_script_makes_a_grouped_session_and_removes_it_if_it_missed_the_window() {
     let script = board_attach_prepare_script(Some("/tmp/t/sock"), "work", "adjboard-1-2", "@5");
     assert_eq!(
         script,
-        "tmux -S /tmp/t/sock new-session -d -s adjboard-1-2 -t work && \
-         tmux -S /tmp/t/sock select-window -t '=adjboard-1-2:@5'"
+        "tmux -S /tmp/t/sock list-sessions >/dev/null && \
+         tmux -S /tmp/t/sock new-session -d -s adjboard-1-2 -t work && \
+         { tmux -S /tmp/t/sock select-window -t '=adjboard-1-2:@5' || \
+         { tmux -S /tmp/t/sock kill-session -t '=adjboard-1-2' 2>/dev/null; false; }; }"
     );
     assert!(!script.contains("select-pane"), "{script}");
     assert!(!script.contains("window-size"), "{script}");
@@ -1091,12 +1093,210 @@ fn the_prepare_script_makes_a_grouped_session_and_picks_the_window_by_id() {
     assert!(!script.contains("destroy-unattached"), "{script}");
     // No hooks: one on a session that is destroyed later crashed the tmux server.
     assert!(!script.contains("set-hook"), "{script}");
+    // The group name need not be a session's name: a group outlives its first session.
+    assert!(!script.contains("has-session"), "{script}");
+    // `=` would make a new group named `=work` rather than join `work`.
+    assert!(!script.contains("-t =work"), "{script}");
 
     let spaced = board_attach_prepare_script(Some("adj-test"), "my session", "adjboard-1-2", "@5");
     assert!(
-        spaced.starts_with("tmux -L adj-test new-session -d -s adjboard-1-2 -t 'my session' &&"),
+        spaced.contains(
+            "tmux -L adj-test new-session -d -s adjboard-1-2 -t 'my session' && \
+             { tmux -L adj-test select-window"
+        ),
         "{spaced}"
     );
+}
+
+#[test]
+fn only_a_window_or_server_that_is_gone_reads_as_gone() {
+    assert!(is_gone_error("can't find window: @5"));
+    assert!(is_gone_error("no server running on /tmp/tmux-501/x"));
+    assert!(is_gone_error(
+        "error connecting to /tmp/tmux-501/x (No such file or directory)"
+    ));
+    assert!(is_gone_error("Can't find session: x"));
+    assert!(!is_gone_error("duplicate session: adjboard-1-2"));
+    assert!(!is_gone_error(""));
+}
+
+/// A tmux server of its own for running the prepare script against, and everything it made
+/// gone when this is dropped. `None` where there is no tmux.
+struct PrepareTmux {
+    socket: String,
+    cwd: tempfile::TempDir,
+}
+
+impl PrepareTmux {
+    fn new(start: bool) -> Option<Self> {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let found = std::process::Command::new("tmux").arg("-V").output().ok()?;
+        if !found.status.success() {
+            return None;
+        }
+        let this = PrepareTmux {
+            // The shape the test sweep of `tests/common` recognises, should a kill be missed.
+            socket: format!(
+                "adj-test-prepare-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ),
+            // Under TMPDIR, so that the leak check sees a server that outlives its test.
+            cwd: tempfile::tempdir().unwrap(),
+        };
+        if start {
+            let out = this.tmux(&[
+                "-f",
+                "/dev/null",
+                "start-server",
+                ";",
+                "set",
+                "-s",
+                "exit-empty",
+                "off",
+                ";",
+                "set",
+                "-g",
+                "default-shell",
+                "/bin/sh",
+                ";",
+                "set",
+                "-g",
+                "default-command",
+                "exec cat",
+            ]);
+            assert!(out.status.success(), "{out:?}");
+        }
+        Some(this)
+    }
+
+    fn tmux(&self, args: &[&str]) -> std::process::Output {
+        std::process::Command::new("tmux")
+            .current_dir(self.cwd.path())
+            .args(["-L", &self.socket])
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn out(&self, args: &[&str]) -> String {
+        let out = self.tmux(args);
+        assert!(
+            out.status.success(),
+            "tmux {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn sessions(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .out(&["list-sessions", "-F", "#{session_name}"])
+            .lines()
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn prepare(&self, group: &str, name: &str, window: &str) -> Result<String, String> {
+        crate::infra::shell::run_shell(&board_attach_prepare_script(
+            Some(&self.socket),
+            group,
+            name,
+            window,
+        ))
+    }
+}
+
+impl Drop for PrepareTmux {
+    fn drop(&mut self) {
+        // Whatever the test did, the server (if any) goes, and its shells with it.
+        let _ = self.tmux(&["kill-server"]);
+    }
+}
+
+#[test]
+fn preparing_a_session_in_a_group_that_is_gone_does_not_start_a_server() {
+    let Some(tmux) = PrepareTmux::new(false) else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let err = tmux.prepare("work", "adjboard-1-1", "@0").unwrap_err();
+    assert!(
+        err.contains("no server running") || err.contains("error connecting"),
+        "{err}"
+    );
+    assert!(is_gone_error(&err), "{err}");
+    assert!(!tmux.tmux(&["list-sessions"]).status.success());
+}
+
+#[test]
+fn preparing_a_session_in_a_group_that_is_gone_removes_the_stray_it_made() {
+    let Some(tmux) = PrepareTmux::new(true) else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    tmux.out(&["new-session", "-d", "-s", "other"]);
+    let window = tmux.out(&["display-message", "-p", "-t", "=other:", "#{window_id}"]);
+    let err = tmux.prepare("G", "adjboard-1-1", &window).unwrap_err();
+    assert!(err.contains("can't find"), "{err}");
+    assert!(is_gone_error(&err), "{err}");
+    assert_eq!(tmux.sessions(), ["other"]);
+}
+
+#[test]
+fn a_group_whose_first_session_is_gone_is_still_joined() {
+    let Some(tmux) = PrepareTmux::new(true) else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    tmux.out(&["new-session", "-d", "-s", "work", "-n", "main"]);
+    let window = tmux.out(&[
+        "new-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{window_id}",
+        "-t",
+        "=work:",
+        "-n",
+        "target",
+    ]);
+    tmux.out(&["new-session", "-d", "-s", "m2", "-t", "work"]);
+    tmux.out(&["kill-session", "-t", "=work"]);
+    assert!(!tmux.tmux(&["has-session", "-t", "=work"]).status.success());
+
+    tmux.prepare("work", "adjboard-1-1", &window).unwrap();
+    assert_eq!(tmux.sessions(), ["adjboard-1-1", "m2"]);
+    let made = "=adjboard-1-1:";
+    assert_eq!(
+        tmux.out(&["display-message", "-p", "-t", made, "#{session_group}"]),
+        "work"
+    );
+    assert_eq!(
+        tmux.out(&["display-message", "-p", "-t", made, "#{session_group_size}"]),
+        "2"
+    );
+    assert_eq!(
+        tmux.out(&["display-message", "-p", "-t", made, "#{window_id}"]),
+        window
+    );
+}
+
+#[test]
+fn a_name_that_is_taken_fails_without_touching_the_session_that_has_it() {
+    let Some(tmux) = PrepareTmux::new(true) else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    tmux.out(&["new-session", "-d", "-s", "work"]);
+    let window = tmux.out(&["display-message", "-p", "-t", "=work:", "#{window_id}"]);
+    tmux.out(&["new-session", "-d", "-s", "adjboard-1-1", "-t", "work"]);
+    let err = tmux.prepare("work", "adjboard-1-1", &window).unwrap_err();
+    assert!(err.contains("duplicate session"), "{err}");
+    assert!(!is_gone_error(&err), "{err}");
+    assert_eq!(tmux.sessions(), ["adjboard-1-1", "work"]);
 }
 
 #[test]
