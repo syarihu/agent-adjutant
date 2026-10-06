@@ -12,7 +12,6 @@ let state = emptyState();
 let view = 'board';
 let log = [];
 let selectedTaskId = null;   // what the panel is open on: a task id, a hub as HUB_REF + its id, or a session with no task as SESS_REF + its id
-let panelPop = false;        // the panel is popped out: never saved, so a reload comes back to its side
 // The panel's terminal, kept while its task (or hub) is open: moving the panel or switching to 詳細 must
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
 const panelTerm = { host: () => document.getElementById('tp-term-host'), redraw: () => renderTaskPanel(), base: () => BASE,
@@ -39,11 +38,16 @@ const sessOfRef = (id, data = state) => isSessRef(id) ? (data.sessions || []).fi
 const PREF_KEY = 'adj-board-split';
 // sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
-// panelSide and panelWidth are where the task panel sits (left or right) and how wide it is;
+// panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
+// dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering in the review view moves on to the next item.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], boardsFolded:[], panelSide:'left', panelWidth:520, reviewNext:true },
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
-if (prefs.panelSide !== 'right') prefs.panelSide = 'left';
+// The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
+// a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
+delete prefs.panelSide;
+if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
+prefs.panelDialog = prefs.panelDialog === true;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };

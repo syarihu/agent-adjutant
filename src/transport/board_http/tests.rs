@@ -35,7 +35,8 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         "id=\"task-panel\"",
         "id=\"tp-term-host\"",
         "data-pane=",
-        "panelSide",
+        "panelDock",
+        "panelDialog",
         "rail-icons",
         "function renderTaskPanel",
         "function openTaskPanel",
@@ -45,6 +46,7 @@ fn the_page_has_one_task_panel_and_no_drawer() {
     for gone in [
         "id=\"task-drawer\"",
         "function renderDrawer",
+        "let panelPop",
         "sidesheet-header",
         // The card's button for the terminal tab outside the board. The task view and the
         // review view keep theirs, which have a `style=` between the class and the title.
