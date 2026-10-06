@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use crate::board::view::Lines;
 use crate::infra::http::{self, Request};
 
 use super::assets::{UI_HTML, vendor_asset};
@@ -914,6 +915,7 @@ fn only_the_resident_serves_what_reaches_outside_the_repository() {
         ("POST", "/api/sessions/x/link"),
         ("GET", "/api/sessions/x/git"),
         ("POST", "/api/hub/next"),
+        ("POST", "/api/hub/wake"),
         ("POST", "/api/worktrees/focus"),
         ("POST", "/api/gates/g"),
     ] {
@@ -1082,4 +1084,52 @@ fn every_icon_only_button_has_a_name() {
         );
     }
     assert!(seen >= 18, "{seen}");
+}
+
+#[test]
+fn waking_the_hub_is_a_post_to_its_own_route() {
+    assert!(matches!(
+        parsed("POST", "/api/hub/wake"),
+        Ok(Some(Route::WakeHub))
+    ));
+    // Not something a page may only look at.
+    assert!(matches!(parsed("GET", "/api/hub/wake"), Ok(None)));
+}
+
+#[test]
+fn the_state_asks_for_the_last_lines_of_all_sessions_or_of_the_hubs_only() {
+    let lines_of = |query: Option<&str>| {
+        let mut req = request("GET", "/api/state", &[]);
+        if let Some(value) = query {
+            req.query.push(("lines".to_string(), value.to_string()));
+        }
+        match Route::parse(&req) {
+            Ok(Some(Route::State { lines, .. })) => lines,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(lines_of(None), Lines::None);
+    assert_eq!(lines_of(Some("1")), Lines::All);
+    assert_eq!(lines_of(Some("hub")), Lines::Hubs);
+    assert_eq!(lines_of(Some("0")), Lines::None);
+    assert_eq!(lines_of(Some("hubs")), Lines::None);
+}
+
+#[test]
+fn the_page_has_the_hubs_entry_and_its_wake_button() {
+    for piece in [
+        "id=\"hub-strip-slot\"",
+        "data-action=\"wake-hub\"",
+        "data-action=\"hub-strip-open\"",
+        "function renderHubStrip",
+        "/api/hub/wake",
+        "/api/state?lines=hub",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // Above the agent columns, not inside them: a redraw of the columns must not be needed
+    // to move it.
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("id=\"pane-agent\"") < at("id=\"hub-strip-slot\""));
+    assert!(at("id=\"hub-strip-slot\"") < at("id=\"board-agent\""));
 }

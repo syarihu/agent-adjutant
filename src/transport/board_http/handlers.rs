@@ -77,6 +77,38 @@ pub(super) fn act_on_worktree(server: &Server, action: &str, body: &[u8]) -> Res
     }
 }
 
+/// Poke this board's hub to read what is waiting for it, without leaving it a message: the
+/// button on the agent board's hub entry. The wake is what `deliver_to_hub` runs, with the
+/// settings as they are now; `woken` is whether it typed, and `why` is what stopped it when
+/// the screen did. A refused wake is an answer, not an error.
+pub(super) fn wake_hub(server: &Server) -> Result<Value, String> {
+    let ctx = crate::registry::Context {
+        settings: settings_now(server),
+        ..server.ctx.clone()
+    };
+    // The oldest message still to be read names the wake, as the delivery of it would have.
+    let subject = crate::mail::pending(&ctx.state, &ctx.repo.slug)
+        .messages
+        .into_iter()
+        .find(|m| {
+            !m.seen
+                && crate::mail::should_wake_hub(&m.from, &ctx.repo.hub_name, &m.kind, &m.subject)
+        })
+        .map(|m| m.subject)
+        .unwrap_or_default();
+    Ok(match crate::mail::wake_hub(&ctx, &subject) {
+        None => json!({ "present": false, "woken": false, "screen": false }),
+        Some(Ok(done)) if done.ran => json!({ "present": true, "woken": true, "screen": false }),
+        Some(Ok(done)) => json!({
+            "present": true,
+            "woken": false,
+            "screen": done.screen,
+            "why": done.description,
+        }),
+        Some(Err(why)) => json!({ "present": true, "woken": false, "screen": false, "why": why }),
+    })
+}
+
 /// Raise the hub's tab: 「タブで話す」 on a gate the hub opened, which sits in the main
 /// checkout where there is no worker to raise.
 pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {

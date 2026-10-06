@@ -7,7 +7,7 @@ use super::{cwd_property, hub_property, repo_property, resolve_repo};
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_pending",
-        "description": "The messages waiting for a hub. action=list (default) summarises them, action=read returns one in full, action=ack files one away once it has been dealt with. A hub reads this at startup and again before going back to waiting.",
+        "description": "The messages waiting for a hub. action=list (default) summarises them, action=read returns one in full and marks it as looked at (the board shows it as read, not yet dealt with), action=ack files one away once it has been dealt with. A hub reads this at startup and again before going back to waiting.",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -28,6 +28,11 @@ pub fn ack(root: &Path, slug: &str, name: &str) -> Result<PathBuf, String> {
             _ => Err(format!("cannot move {}: {e}", from.display())),
         };
     }
+    // Once the message is taken, not before: an ack that fails before taking it leaves it read.
+    // One that takes it and then cannot file it puts it back without the marker, so it reads as
+    // unseen again. Best effort, as a marker left behind is older than whatever next takes the
+    // name.
+    let _ = std::fs::remove_file(inbox.join(format!("{SEEN}{name}")));
     // From here the message exists only under the holding name, so it is unlinked from
     // there only once something else holds it. An ack that cannot file *and* cannot put
     // back leaves it where the sweep below will find it, rather than deleting it to keep

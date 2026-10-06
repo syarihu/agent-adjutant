@@ -338,6 +338,69 @@ async function act(action, id, choice) {
   }
 }
 
+/* The hub's entry above the agent columns, on a board other than 「すべて」: how its session is
+   (as a row of the sessions tab says it), and, when something that calls for it is waiting in its
+   inbox, how much is unread and a button that wakes it. The wake button is the page's only one
+   for this, so it is drawn from `hubWake` (actions.js) as well as from the state. */
+let hubStripKey = null;
+function renderHubStrip() {
+  const strip = document.getElementById('hub-strip');
+  if (!strip) return;
+  const line1 = document.getElementById('hub-strip-line1');
+  const line2 = document.getElementById('hub-strip-line2');
+  const body = document.getElementById('hub-strip-line2-body');
+  const why = document.getElementById('hub-wake-why');
+  const h = scopeAll() ? null : pageHub();
+  // The reason's live region is part of the page, not of what is rewritten here, so a change in
+  // its text is what a screen reader hears; it is set only when it differs.
+  const say = text => { if (why.textContent !== text) why.textContent = text; };
+  // Written only when it differs from what is there, so a redraw that changes nothing leaves the
+  // focus on its buttons.
+  const put = (main, inbox) => {
+    const key = `${main}\0${inbox}`;
+    if (key === hubStripKey) return;
+    hubStripKey = key;
+    const was = strip.contains(document.activeElement) ? document.activeElement.dataset.action : null;
+    strip.hidden = !main;
+    line2.hidden = !inbox;
+    line1.innerHTML = main;
+    body.innerHTML = inbox;
+    // Focus that was on the strip stays on it: on the same control, or on the next best one when
+    // that is gone or cannot take focus (the wake button while its request is on its way).
+    if (was) {
+      const ok = a => [...strip.querySelectorAll('button')].find(b => b.dataset.action === a && !b.disabled);
+      (ok(was) || ok('hub-strip-open') || ok('own-hub'))?.focus();
+    }
+  };
+  if (!h) {
+    say('');
+    return put('', '');
+  }
+  const s = hubSessionOf(h);
+  const st = sessionState(s);
+  const label = sessionLabel(s);
+  const last = sessionLastText(s, state);
+  const unseen = h.unseen || 0;
+  const seen = h.seen || 0;
+  if (!unseen) delete hubWake.why[h.slug];
+  const main = `<button type="button" class="hub-strip-main" data-action="own-hub" title="hub のターミナルを開く">
+    <span class="m3-pill sess-row-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>
+    <span class="hub-strip-name">hub · ${esc(label.text)}</span>
+    <span class="hub-strip-last">${esc(last)}</span></button>`;
+  let inbox = '';
+  if (unseen + seen > 0) {
+    const oldest = unseen && h.oldestUnseenAt ? stampSecs(h.oldestUnseenAt) : null;
+    const age = oldest != null && state.now != null ? ` · 最古の未確認 ${agoLabel(minutesSince(oldest, state.now))}` : '';
+    const present = !!h.state?.present;
+    const blocked = !unseen ? '未確認のメッセージはありません' : !present ? 'hub が止まっています' : hubWake.busy[h.slug] ? '起こしています' : '';
+    inbox = `<span class="hub-strip-counts">受信箱 未確認 ${unseen} · 確認済み・未処理 ${seen}${esc(age)}</span>
+      <button type="button" class="btn-m3-text hub-strip-subjects" data-action="hub-strip-open">件名を見る</button>
+      <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub"${blocked ? ' disabled' : ''} title="${esc(blocked || 'hub の端末に確認の合図を入力します（メッセージは追加しません）')}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
+  }
+  say(inbox ? hubWake.why[h.slug] || '' : '');
+  put(main, inbox);
+}
+
 let boardHeld = false;
 /* Draws the columns afresh across both Human board and Agent board. */
 function renderColumns(force = false) {
@@ -436,6 +499,8 @@ function renderColumns(force = false) {
         </div>`
       : '';
   }
+
+  renderHubStrip();
 
   // Render Agent Board
   if (ab) {

@@ -725,10 +725,11 @@ the gate directories.
 - `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
   out when the session is not in tmux or its window is not listed.
 - `lastLine` (only with `GET /api/state?lines=1`, which the セッション tab sends while it is on
-  screen): the last line the session's pane shows above its input box, cut to 200 characters. Read
-  with one `tmux capture-pane` per present tmux session, and only when the window has had activity
-  since the last read and that was at least 5 seconds ago, so a busy agent does not make the poll
-  dear. Left out for a session that is not in tmux, a pane with nothing written, and always with
+  screen, or `lines=hub`, which the board view sends and which reads the hubs' panes alone): the
+  last line the session's pane shows above its input box, cut to 200 characters. Read with one
+  `tmux capture-pane` per present tmux session, and only when the window has had activity since
+  the last read and that was at least 5 seconds ago, so a busy agent does not make the poll dear.
+  Left out for a session that is not in tmux, a pane with nothing written, and always with
   `sessions=0`.
 - `attached`: how many clients are attached to that window, not counting the board's own
   browser terminals (`adjboard-*`); a terminal the board opened for a person (`adjterm-*`) is a person and counts. A control-mode client (iTerm2's `-CC`) counts on every
@@ -747,8 +748,28 @@ the gate directories.
   current one.
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
-`name`, `subject`, `kind`, `from`, `worktree` and `at` (a UTC stamp). `inboxCount` stays the
-number waiting in all.
+`name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether
+`unseen` / `seen` count it at all, as below). `inboxCount` stays the number waiting in all.
+
+A message is *seen* once its body was read (`adjutant_pending action=read`, `adjutant pending
+--read`) and stays waiting until it is acked. Listing it does not count, and the board never
+reads a body. `hubs[]` also says `unseen` and `seen`, the waiting messages that call for waking
+the hub and have not / have been read (the hub's own `question` and `needs-user` copies, acks and
+notices are in neither), and `oldestUnseenAt`, the `at` of the oldest unseen one (left out when
+there is none). A read leaves an empty `.seen-<name>` file beside the message in the inbox, which
+the ack removes; a marker older than the message belongs to an earlier message of that name and
+is ignored.
+
+On a board other than 「すべて」 the agent board has the hub's entry above its columns: the hub's
+session as a row of the セッション tab shows it (state and last line) and, while `unseen + seen` is
+above 0, the counts, the age of the oldest unseen message and a 「hub を起こす」 button.
+`POST /api/hub/wake` is what it sends: the hub's wake line is typed into its tab, with the
+settings as they are now, and no message is written to the inbox. The answer is `{present, woken,
+screen, why?}`: `woken` is whether it was typed, `screen` whether the agent's screen is what
+stopped it, and `why` the reason, present only when a running hub was not typed into (when the hub
+is not running, `present` is false and there is no `why`). The button is enabled only while
+`unseen` is above 0 and the hub runs, and the page shows the reason next to it when nothing was
+typed.
 
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,

@@ -745,6 +745,55 @@
   cursor: pointer;
 }
 
+/* The hub's entry above the agent columns: its session on one line, its inbox on the next. */
+.hub-strip {
+  margin: 8px 16px 0;
+  padding: 6px 10px;
+  border-radius: var(--md-shape-corner-sm);
+  background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.hub-strip-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hub-strip-main:hover .hub-strip-name { text-decoration: underline; }
+.hub-strip-name { flex: none; max-width: 40%; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-strip-last {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--md-sys-color-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hub-strip[hidden], .hub-strip-inbox[hidden] { display: none; }
+.hub-strip-inbox { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.hub-strip-line2-body { display: contents; }
+.hub-strip-counts { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.hub-strip-wake:disabled { opacity: .5; cursor: default; }
+.hub-wake-why { min-width: 0; font-size: 11px; color: var(--md-sys-color-error); overflow-wrap: anywhere; }
+/* Empty, the live region takes no room: it is kept in the page so that its text is announced. */
+.hub-wake-why:empty { margin: 0; padding: 0; }
+
 .flash { animation: flash 1.6s ease; }
 @keyframes flash {
   0%, 40% { box-shadow: 0 0 0 3px var(--md-sys-color-primary), var(--md-elevation-3); }

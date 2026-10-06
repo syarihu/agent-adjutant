@@ -523,8 +523,9 @@ async function refresh(force = false) {
   const base = BASE;
   const epoch = navEpoch;
   try {
-    // The last line of each session's pane is read from tmux, so only the tab that shows it asks.
-    const next = await boardApi(base, view === 'sessions' ? '/api/state?lines=1' : '/api/state');
+    // The last line of each session's pane is read from tmux, so only what shows it asks: the
+    // sessions tab for every session, the board view for the hub's own.
+    const next = await boardApi(base, view === 'sessions' ? '/api/state?lines=1' : view === 'board' ? '/api/state?lines=hub' : '/api/state');
     // The person moved to another board while this was on its way.
     if (epoch !== navEpoch) return;
     if (!multiBoard) checkNewGates(next.gates);

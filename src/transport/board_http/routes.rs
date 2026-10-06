@@ -11,14 +11,14 @@ use super::assets::{UI_HTML, vendor_asset};
 use super::auth::refuse;
 use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
-    refresh_tasks, relay_findings, review_findings, start_parent_hub, update_task,
+    refresh_tasks, relay_findings, review_findings, start_parent_hub, update_task, wake_hub,
 };
 use super::sessions::{
     clean_up_session, git_of_session, link_session, open_session, restart_session, resume_session,
     start_session,
 };
 use crate::board::Server;
-use crate::board::view::{state, task_history};
+use crate::board::view::{Lines, state, task_history};
 
 // ── routing ──────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ pub(super) enum Route<Id = String> {
     Page,
     State {
         sessions: bool,
-        lines: bool,
+        lines: Lines,
     },
     /// A script or style the board terminal loads: its content type and body.
     Asset(&'static str, &'static str),
@@ -59,6 +59,7 @@ pub(super) enum Route<Id = String> {
     StartParentHub,
     Hub(Id, HubAction),
     NudgeHub,
+    WakeHub,
     FocusHub,
     Worktree(String),
     AnswerGate(String),
@@ -131,7 +132,11 @@ impl<'a> Route<&'a str> {
             ("GET", "/" | "/index.html" | "/review") => Route::Page,
             ("GET", "/api/state") => Route::State {
                 sessions: req.param("sessions") != Some("0"),
-                lines: req.param("lines") == Some("1"),
+                lines: match req.param("lines") {
+                    Some("1") => Lines::All,
+                    Some("hub") => Lines::Hubs,
+                    _ => Lines::None,
+                },
             },
             ("GET", _) => match vendor_asset(path) {
                 Some((kind, body)) => Route::Asset(kind, body),
@@ -142,6 +147,7 @@ impl<'a> Route<&'a str> {
             ("POST", "/api/sessions") => Route::StartSession,
             ("POST", "/api/hubs") => Route::StartParentHub,
             ("POST", "/api/hub/next") => Route::NudgeHub,
+            ("POST", "/api/hub/wake") => Route::WakeHub,
             ("POST", "/api/hub/focus") => Route::FocusHub,
             ("POST", _) => match (
                 path.strip_prefix("/api/worktrees/"),
@@ -228,6 +234,7 @@ impl<'a> Route<&'a str> {
             Route::StartSession => Route::StartSession,
             Route::StartParentHub => Route::StartParentHub,
             Route::NudgeHub => Route::NudgeHub,
+            Route::WakeHub => Route::WakeHub,
             Route::FocusHub => Route::FocusHub,
             Route::Worktree(action) => Route::Worktree(action),
             Route::AnswerGate(id) => Route::AnswerGate(id),
@@ -281,6 +288,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::StartParentHub => reply(out, start_parent_hub(server, &req.body)),
         Route::Hub(id, action) => reply(out, act_on_hub(server, &id, action, &req.body)),
         Route::NudgeHub => reply(out, nudge_hub(server)),
+        Route::WakeHub => reply(out, wake_hub(server)),
         Route::FocusHub => reply(out, focus_hub(server)),
         Route::Worktree(action) => reply(out, act_on_worktree(server, &action, &req.body)),
         Route::AnswerGate(id) => reply(out, answer_gate(server, &id, &req.body)),

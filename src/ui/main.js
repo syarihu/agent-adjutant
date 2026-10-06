@@ -150,6 +150,8 @@ const ACTIONS = {
   sheet: () => toggleBottomSheet(),
   'handover-close': () => closeHandoverDialog(),
   'nudge-hub': () => nudgeHub(),
+  'wake-hub': () => wakeHub(),
+  'hub-strip-open': () => { const h = pageHub(); if (h) openTaskPanel(HUB_REF + h.id, 'detail'); },
 };
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');

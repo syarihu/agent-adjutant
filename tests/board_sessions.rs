@@ -955,6 +955,58 @@ fn a_session_says_what_its_pane_last_showed_only_when_asked() {
 }
 
 #[test]
+fn a_poll_for_the_hubs_lines_reads_the_hubs_pane_and_no_worker_s() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(
+        &tmux.screen,
+        include_str!("../src/fixtures/panes/claude-idle-after-turn.txt"),
+    )
+    .unwrap();
+    let sleeper = Sleeper::new();
+    let running = Sleeper::new();
+    let one = session_worktree(&fixture, "one", None, None, running.pid());
+    place_worker(&one, "@5");
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": sleeper.pid(),
+            "psStarted": ps_started(sleeper.pid()),
+            "hubName": HUB,
+            "cwd": fixture.repo.to_str().unwrap(),
+            "nameInCommand": false,
+            "terminal": {"backend": "tmux", "socket": "scratch", "window": "@1"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &tmux.panes,
+        format!(
+            "%3\t{}\t/dev/ttys999\t@1\tadjutant-test\t1\tmain\t1790000000\n\
+             %5\t1\t/dev/ttys005\t@5\tadjutant-test\t1\tone\t1790000000\n",
+            sleeper.pid()
+        ),
+    )
+    .unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let (status, body) = get_with_query(&resident, &format!("/b/{SLUG}/api/state"), "lines=hub");
+    assert_eq!(status, 200, "{body}");
+    let asked: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+    assert_eq!(
+        session_of(&asked, "hub")["lastLine"],
+        "✻ Brewed for 3s · done 2:20",
+        "{asked}"
+    );
+    assert!(session_of(&asked, "worker-one").get("lastLine").is_none());
+    assert_eq!(tmux.logged().matches("capture-pane").count(), 1);
+}
+
+#[test]
 fn a_session_shows_the_gate_it_waits_on_even_from_a_parent_hubs_directory() {
     let fixture = Fixture::new(QUIET);
     listed_parent_hub(&fixture);
@@ -1037,6 +1089,10 @@ fn a_hub_lists_its_inbox_newest_first_with_a_cap_and_the_full_count() {
     let state = state_of(&resident);
     let hub = &state["hubs"][0];
     assert_eq!(hub["inboxCount"], 23);
+    // The count and the age are of the whole inbox, not of the 20 listed.
+    assert_eq!(hub["unseen"], 23);
+    assert_eq!(hub["seen"], 0);
+    assert_eq!(hub["oldestUnseenAt"], "20260922T040000Z");
     let items = hub["inbox"].as_array().unwrap();
     assert_eq!(items.len(), 20);
     assert_eq!(items[0]["subject"], "s22");

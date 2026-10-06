@@ -246,7 +246,7 @@ fn forty_reports_sent_at_once_are_forty_reports() {
     // Nothing staged is left behind — invisible to `list`, so it would grow unnoticed.
     let staged: Vec<String> = names_in(&inbox_dir(&root, "acme-widget"))
         .into_iter()
-        .filter(|n| n.starts_with('.'))
+        .filter(|n| n.starts_with('.') && !n.starts_with(SEEN))
         .collect();
     assert!(staged.is_empty(), "staging files left over: {staged:?}");
 }
@@ -1019,4 +1019,195 @@ fn the_wake_reads_the_screen_only_where_the_built_in_tmux_wake_is_used() {
     generic.agent_runner = Some("codex exec {prompt}".to_string());
     assert!(!wake_looks_at_screen(&generic, false));
     assert!(wake_looks_at_screen(&generic, true));
+}
+
+fn hub_counts(root: &Path, main: &Path) -> (usize, usize, Option<String>, usize) {
+    let hubs = all_repo_hubs(root, &widget_repo(main));
+    let hub = &hubs[0];
+    (
+        hub.unseen,
+        hub.seen,
+        hub.oldest_unseen_at.clone(),
+        hub.inbox_count,
+    )
+}
+
+fn sent(root: &Path, from: &str, kind: &str, subject: &str) -> String {
+    send(
+        root,
+        "acme-widget",
+        "adjutant-acme-widget",
+        &Message {
+            from: from.into(),
+            worktree: None,
+            kind: kind.into(),
+            subject: subject.into(),
+            body: "b".into(),
+        },
+    )
+    .unwrap()
+    .path
+    .file_name()
+    .unwrap()
+    .to_string_lossy()
+    .to_string()
+}
+
+#[test]
+fn reading_a_message_marks_it_seen_and_listing_does_not() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = tempfile::tempdir().unwrap();
+    let name = sent(&root, "w", "report", "found a bug");
+    assert!(!list(&root, "acme-widget")[0].seen);
+    assert_eq!(hub_counts(&root, dir.path()).0, 1);
+
+    read(&root, "acme-widget", &name).unwrap();
+    let entries = list(&root, "acme-widget");
+    // The marker is not a message.
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].seen);
+    let (unseen, seen, oldest, total) = hub_counts(&root, dir.path());
+    assert_eq!((unseen, seen, oldest, total), (0, 1, None, 1));
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
+    assert!(hubs[0].inbox[0].seen);
+}
+
+#[test]
+fn the_oldest_unseen_message_is_the_one_the_age_is_told_of() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = inbox_dir(&root, "acme-widget");
+    std::fs::create_dir_all(&inbox).unwrap();
+    for (name, at) in [
+        ("20260101T000100Z-a.md", "20260101T000100Z"),
+        ("20260101T000200Z-b.md", "20260101T000200Z"),
+        ("20260101T000300Z-c.md", "20260101T000300Z"),
+    ] {
+        std::fs::write(
+            inbox.join(name),
+            format!("---\nfrom: w\nkind: report\nsubject: s\nat: {at}\n---\n\nb\n"),
+        )
+        .unwrap();
+    }
+    read(&root, "acme-widget", "20260101T000100Z-a.md").unwrap();
+    let (unseen, seen, oldest, _) = hub_counts(&root, dir.path());
+    assert_eq!((unseen, seen), (2, 1));
+    assert_eq!(oldest.as_deref(), Some("20260101T000200Z"));
+}
+
+#[test]
+fn what_does_not_call_for_waking_the_hub_counts_in_neither_number() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = tempfile::tempdir().unwrap();
+    sent(&root, "adjutant-acme-widget", "question", "for the person");
+    sent(
+        &root,
+        "adjutant-acme-widget",
+        "needs-user",
+        "for the person",
+    );
+    sent(&root, "w", "notice", "plain notice");
+    sent(&root, "w", "ack", "received");
+    let counted = sent(&root, "w", "report", "found a bug");
+    let (unseen, seen, _, total) = hub_counts(&root, dir.path());
+    assert_eq!((unseen, seen, total), (1, 0, 5));
+    // The listing says which are counted, so the page tags only those.
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
+    let tagged: Vec<&str> = hubs[0]
+        .inbox
+        .iter()
+        .filter(|m| m.counted)
+        .map(|m| m.subject.as_str())
+        .collect();
+    assert_eq!(tagged, vec!["found a bug"]);
+
+    // Reading the ones that never counted does not move them into `seen`.
+    for entry in list(&root, "acme-widget") {
+        read(&root, "acme-widget", &entry.name).unwrap();
+    }
+    let (unseen, seen, _, total) = hub_counts(&root, dir.path());
+    assert_eq!((unseen, seen, total), (0, 1, 5));
+    ack(&root, "acme-widget", &counted).unwrap();
+    assert_eq!(hub_counts(&root, dir.path()).1, 0);
+}
+
+#[test]
+fn an_ack_takes_the_message_out_of_both_numbers_and_removes_the_marker() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = tempfile::tempdir().unwrap();
+    let name = sent(&root, "w", "report", "found a bug");
+    read(&root, "acme-widget", &name).unwrap();
+    let inbox = inbox_dir(&root, "acme-widget");
+    assert!(inbox.join(format!(".seen-{name}")).exists());
+    ack(&root, "acme-widget", &name).unwrap();
+    assert!(!inbox.join(format!(".seen-{name}")).exists());
+    let (unseen, seen, oldest, total) = hub_counts(&root, dir.path());
+    assert_eq!((unseen, seen, oldest, total), (0, 0, None, 0));
+}
+
+#[test]
+fn a_message_that_reuses_an_acked_name_starts_unseen() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let inbox = inbox_dir(&root, "acme-widget");
+    std::fs::create_dir_all(&inbox).unwrap();
+    let text = "---\nfrom: w\nkind: report\nsubject: s\nat: 20260101T000100Z\n---\n\nb\n";
+    let name = "20260101T000100Z-a.md";
+    std::fs::write(inbox.join(name), text).unwrap();
+    read(&root, "acme-widget", name).unwrap();
+    ack(&root, "acme-widget", name).unwrap();
+    std::fs::write(inbox.join(name), text).unwrap();
+    assert!(!list(&root, "acme-widget")[0].seen);
+
+    // A marker the ack never got to remove is older than the message that took the name.
+    let marker = inbox.join(format!(".seen-{name}"));
+    std::fs::write(&marker, "").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&marker)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    assert!(!list(&root, "acme-widget")[0].seen);
+
+    // Reading it again makes the marker current.
+    read(&root, "acme-widget", name).unwrap();
+    assert!(list(&root, "acme-widget")[0].seen);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_marker_that_cannot_be_written_leaves_the_message_unseen_and_the_read_working() {
+    use std::os::unix::fs::PermissionsExt;
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let name = sent(&root, "w", "report", "found a bug");
+    let inbox = inbox_dir(&root, "acme-widget");
+    // A directory that cannot be written into is the way to refuse the marker.
+    std::fs::set_permissions(&inbox, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let bound = std::fs::File::create(inbox.join(".probe")).is_err();
+    let text = read(&root, "acme-widget", &name);
+    let seen = list(&root, "acme-widget")[0].seen;
+    std::fs::set_permissions(&inbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A user the mode does not bind (root) writes the marker after all.
+    if bound {
+        assert!(text.unwrap().contains("found a bug"));
+        assert!(!seen);
+    }
+}
+
+#[test]
+fn an_ack_that_fails_leaves_the_message_read() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let name = sent(&root, "w", "report", "found a bug");
+    read(&root, "acme-widget", &name).unwrap();
+    // A name with nothing behind it fails; the marker of the real message is not its to remove.
+    assert!(ack(&root, "acme-widget", "nothing-here.md").is_err());
+    assert!(list(&root, "acme-widget")[0].seen);
 }

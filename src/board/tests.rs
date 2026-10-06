@@ -979,7 +979,7 @@ fn reading_the_state_leaves_a_resumable_gate_open() {
         pr_poll: None,
     };
 
-    let read = state(&server, false, false);
+    let read = state(&server, false, crate::board::view::Lines::None);
     assert!(gates.join("g1.json").exists());
     assert!(!gates.join("answered").join("g1.json").exists());
     assert_eq!(read.gates.len(), 1);
@@ -1105,11 +1105,12 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     let settings = settings_now(&server);
 
     // What the page is sent, which is the whole list.
-    let listed = serde_json::to_value(state(&server, true, false).sessions)
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .clone();
+    let listed =
+        serde_json::to_value(state(&server, true, crate::board::view::Lines::None).sessions)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .clone();
     let ids: Vec<&str> = listed.iter().map(|s| s["id"].as_str().unwrap()).collect();
     let digest =
         |rel: &str| crate::kernel::identity::short_digest(root.join(rel).to_str().unwrap());
@@ -1291,6 +1292,9 @@ fn a_repo_hub(slug: &str, key: Option<&str>) -> crate::mail::RepoHub {
             started_at: None,
         },
         inbox_count: 0,
+        unseen: 0,
+        seen: 0,
+        oldest_unseen_at: None,
         inbox: Vec::new(),
         children: 0,
     }

@@ -874,3 +874,91 @@ fn a_hub_whose_key_needs_percent_encoding_can_be_named_from_the_board() {
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("percent-encoding"), "{body}");
 }
+
+fn wake_answer(resident: &Resident) -> serde_json::Value {
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hub/wake"), "{}");
+    assert_eq!(status, 200, "{body}");
+    serde_json::from_str(&body).unwrap()
+}
+
+fn files_in(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map(|r| r.count()).unwrap_or(0)
+}
+
+#[test]
+fn waking_a_hub_that_shows_a_question_says_why_and_leaves_the_inbox_alone() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(
+        &tmux.screen,
+        include_str!("../src/fixtures/panes/claude-question.txt"),
+    )
+    .unwrap();
+    let sleeper = Sleeper::new();
+    running_repo_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let inbox = fixture.state.join("inbox").join(SLUG);
+
+    let answer = wake_answer(&resident);
+    assert_eq!(answer["present"], true, "{answer}");
+    assert_eq!(answer["woken"], false, "{answer}");
+    assert_eq!(answer["screen"], true, "{answer}");
+    assert!(
+        answer["why"]
+            .as_str()
+            .unwrap()
+            .contains("question or a menu"),
+        "{answer}"
+    );
+    // Nothing was typed, and nothing was written for the hub to find.
+    assert!(!tmux.logged().contains("send-keys"), "{}", tmux.logged());
+    assert_eq!(files_in(&inbox), 0);
+}
+
+#[test]
+fn waking_a_hub_that_can_be_woken_writes_no_message() {
+    let fixture = Fixture::new(QUIET);
+    // A hook of the person's own stands in for the screen-reading wake, whose echo check
+    // cannot be satisfied by a screen that does not change.
+    write_tmux_config_with(&fixture, |c| c["hubWake"] = serde_json::json!("true"));
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::new();
+    running_repo_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let inbox = fixture.state.join("inbox").join(SLUG);
+
+    let answer = wake_answer(&resident);
+    assert_eq!(answer["present"], true, "{answer}");
+    assert_eq!(answer["woken"], true, "{answer}");
+    assert_eq!(files_in(&inbox), 0);
+}
+
+#[test]
+fn waking_a_hub_that_is_not_running_says_so() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let answer = wake_answer(&resident);
+    assert_eq!(answer["present"], false, "{answer}");
+    assert_eq!(answer["woken"], false, "{answer}");
+    assert_eq!(files_in(&fixture.state.join("inbox").join(SLUG)), 0);
+}
+
+#[test]
+fn waking_a_hub_uses_the_settings_as_they_are_now_not_as_the_board_started() {
+    let fixture = Fixture::new(QUIET);
+    // Waking is off when the resident starts ...
+    write_tmux_config_with(&fixture, |c| c["hubWake"] = serde_json::json!(false));
+    let tmux = FakeTmux::new(&fixture);
+    let sleeper = Sleeper::new();
+    running_repo_hub(&fixture, &tmux, sleeper.pid());
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let before = wake_answer(&resident);
+    assert_eq!(before["woken"], false, "{before}");
+
+    // ... and a hook is written into the config after it.
+    write_tmux_config_with(&fixture, |c| c["hubWake"] = serde_json::json!("true"));
+    let after = wake_answer(&resident);
+    assert_eq!(after["present"], true, "{after}");
+    assert_eq!(after["woken"], true, "{after}");
+}
