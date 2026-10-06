@@ -25,8 +25,6 @@ pub struct AgentIdentity<'a> {
 ///
 /// Rows whose process is gone are never returned. An error only when the ledger cannot be
 /// listed: an answer of `None` means there is no such row.
-// Its first caller is the board (a later issue); until then only the tests ask.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn agent_session_of(
     root: &Path,
     table: &ProcessTable,
@@ -45,6 +43,46 @@ pub fn agent_session_of(
     Ok(agent_sessions_with(root, table)?
         .into_iter()
         .find(|row| row.pid == Some(pid) && anchor_of(row.ps_started.as_deref()) == Some(started)))
+}
+
+/// The row of the agent a hub is running, from what the hub saved and recorded. `None` when it
+/// has neither a row nor a way to find one, and when the ledger cannot be listed: a reader
+/// that only wants to know whether a row says "busy" has no use for the error.
+pub fn hub_agent_session(root: &Path, table: &ProcessTable, slug: &str) -> Option<AgentSession> {
+    let saved = hub_session(root, slug);
+    let record = match read_hub_record(root, slug) {
+        Recorded::Found(record) => Some(record),
+        Recorded::Absent | Recorded::Unreadable => None,
+    };
+    let identity = AgentIdentity {
+        session_id: saved.as_ref().map(|saved| saved.session_id.as_str()),
+        pid: record
+            .as_ref()
+            .and_then(|record| record.pid)
+            .and_then(|pid| u32::try_from(pid).ok())
+            .filter(|pid| *pid > 0),
+        ps_started: record.as_ref().and_then(recorded_anchor),
+    };
+    agent_session_of(root, table, &identity).ok().flatten()
+}
+
+/// The same for the worker in `worktree`.
+pub fn worker_agent_session(
+    root: &Path,
+    table: &ProcessTable,
+    worktree: &Path,
+) -> Option<AgentSession> {
+    let saved = worker_session(worktree);
+    let record = match read_worker_record(worktree) {
+        Recorded::Found(record) => Some(record),
+        Recorded::Absent | Recorded::Unreadable => None,
+    };
+    let identity = AgentIdentity {
+        session_id: saved.as_ref().map(|saved| saved.session_id.as_str()),
+        pid: record.as_ref().and_then(WorkerRecord::usable_pid),
+        ps_started: record.as_ref().and_then(WorkerRecord::anchor),
+    };
+    agent_session_of(root, table, &identity).ok().flatten()
 }
 
 #[cfg(test)]

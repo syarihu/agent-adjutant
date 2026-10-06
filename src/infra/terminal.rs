@@ -37,9 +37,9 @@ pub struct Performed {
     pub description: String,
     pub script: String,
     pub ran: bool,
-    /// The built-in tmux wake declined because of what the agent's screen showed, or could
-    /// not confirm what it typed. Only then is the reason worth telling the person; every
-    /// other failure is reported as it always was.
+    /// The wake declined because of what the agent's screen or session state showed, or the
+    /// built-in tmux wake could not confirm what it typed. Only then is the reason worth
+    /// telling the person; every other failure is reported as it always was.
     pub screen: bool,
 }
 

@@ -366,7 +366,8 @@ None of this is in the foundation; it is listed so the ledger carries what it wi
   existing 2-second poll of `/api/state`. No push channel is added.
 - **Waking.** `mail::read_screen` guesses an agent's state from a tmux screen, and works for neither
   iTerm2 nor `Generic`. A row in `waiting` or `running` says not to type now; `idle` or `done` says
-  it is safe. The screen check stays for typing the line itself, and as the fallback with no row.
+  it is safe; a `running` row not heard from in ten minutes is not believed, since an interrupted turn
+  sends no `Stop`. The screen check stays for typing the line itself, and as the fallback with no row.
 - **Gates and cards.** A worker in `waiting` on a permission prompt is waiting on a person even with
   no gate open; the card can say so. A worker whose row went `done` and stayed there with no phase
   change is a better "stuck" signal than the phase age alone.

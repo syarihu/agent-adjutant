@@ -1,6 +1,9 @@
 use super::*;
 use crate::infra::fs::write_json;
-use crate::registry::{hub_record_path, save_hub_session, save_worker_session, worker_record_path};
+use crate::infra::terminal::{WAKE_READY_BUDGET, WAKE_READY_POLL};
+use crate::registry::{
+    AgentStatus, hub_record_path, save_hub_session, save_worker_session, worker_record_path,
+};
 use crate::testing::Sandbox;
 use serde_json::json;
 
@@ -1210,4 +1213,135 @@ fn an_ack_that_fails_leaves_the_message_read() {
     // A name with nothing behind it fails; the marker of the real message is not its to remove.
     assert!(ack(&root, "acme-widget", "nothing-here.md").is_err());
     assert!(list(&root, "acme-widget")[0].seen);
+}
+
+fn row_saying(status: Option<AgentStatus>, last_event_at: i64) -> AgentSession {
+    AgentSession {
+        session_id: "s1".to_string(),
+        status,
+        last_event_at: Some(last_event_at),
+        ..AgentSession::default()
+    }
+}
+
+const NOW: i64 = 100_000;
+
+/// What the wake does against a row that says `status`, seen `age` seconds ago.
+fn held_by(status: Option<AgentStatus>, age: i64) -> Option<String> {
+    let row = row_saying(status, NOW - age);
+    hold::wait_for_row(|| Some(row.clone()), |_| {}, || NOW, 42)
+        .err()
+        .map(|held| {
+            assert!(held.screen && !held.ran);
+            held.description
+        })
+}
+
+#[test]
+fn a_row_that_is_running_or_waiting_holds_the_wake_and_says_why() {
+    let running = held_by(Some(AgentStatus::Running), 5).unwrap();
+    assert!(running.contains("(pid 42)"), "{running}");
+    assert!(running.contains("in the middle of a turn"), "{running}");
+    let waiting = held_by(Some(AgentStatus::Waiting), 5).unwrap();
+    assert!(waiting.contains("waiting on a question"), "{waiting}");
+}
+
+#[test]
+fn a_row_that_is_anything_else_lets_the_wake_through() {
+    for status in [
+        Some(AgentStatus::Idle),
+        Some(AgentStatus::Done),
+        Some(AgentStatus::Failed),
+        Some(AgentStatus::Other("compacting".to_string())),
+        None,
+    ] {
+        assert_eq!(held_by(status.clone(), 5), None, "{status:?}");
+    }
+    assert!(hold::wait_for_row(|| None, |_| {}, || NOW, 42).is_ok());
+}
+
+#[test]
+fn a_running_row_not_heard_from_in_ten_minutes_is_not_believed_but_a_waiting_one_is() {
+    // An interrupted turn sends no `Stop`, so the row stays `running`.
+    assert_eq!(held_by(Some(AgentStatus::Running), 601), None);
+    assert!(held_by(Some(AgentStatus::Running), 599).is_some());
+    assert!(held_by(Some(AgentStatus::Waiting), 3 * 3600).is_some());
+}
+
+#[test]
+fn the_wake_goes_through_when_the_row_turns_done_while_it_waits() {
+    let reads = std::cell::Cell::new(0);
+    let waits = std::cell::Cell::new(0);
+    let result = hold::wait_for_row(
+        || {
+            reads.set(reads.get() + 1);
+            let status = if reads.get() < 3 {
+                AgentStatus::Running
+            } else {
+                AgentStatus::Done
+            };
+            Some(row_saying(Some(status), NOW))
+        },
+        |_| waits.set(waits.get() + 1),
+        || NOW,
+        42,
+    );
+    assert!(result.is_ok());
+    assert_eq!((reads.get(), waits.get()), (3, 2));
+}
+
+#[test]
+fn a_row_that_stays_running_gives_up_after_the_wake_budget() {
+    let waits = std::cell::RefCell::new(Vec::new());
+    let row = row_saying(Some(AgentStatus::Running), NOW);
+    let result = hold::wait_for_row(
+        || Some(row.clone()),
+        |d| waits.borrow_mut().push(d),
+        || NOW,
+        42,
+    );
+    assert!(result.is_err());
+    let expected = (WAKE_READY_BUDGET.as_millis() / WAKE_READY_POLL.as_millis()) as usize;
+    assert_eq!(*waits.borrow(), vec![WAKE_READY_POLL; expected]);
+}
+
+#[test]
+fn a_session_with_a_row_is_held_by_it_on_any_terminal_and_one_without_is_not() {
+    use crate::registry::{AgentEvent, HookEvent, record_agent_event_with};
+    let sandbox = Sandbox::empty();
+    let worktree = tempfile::tempdir().unwrap();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: worktree.path().display().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_of(repo).unwrap();
+    // Default settings are iTerm2: no screen to read.
+    assert!(!wake_looks_at_screen(&ctx.settings, false));
+    assert!(!wake_holds_for_session(&ctx, worktree.path(), false));
+
+    save_worker_session(worktree.path(), "t", None, None, "sid-1").unwrap();
+    let event = AgentEvent {
+        agent: "claude".to_string(),
+        session_id: "sid-1".to_string(),
+        hook: HookEvent::UserPromptSubmit,
+        agent_id: None,
+        agent_type: None,
+        cwd: None,
+        summary: None,
+        pid: Some(std::process::id()),
+        config_dir: None,
+        at: now_secs(),
+    };
+    record_agent_event_with(&ctx.state, &event, &ProcessTable::fixed(None)).unwrap();
+    assert!(wake_holds_for_session(&ctx, worktree.path(), false));
+
+    let mut off = ctx.clone();
+    off.settings.worker_wake.hook = crate::infra::terminal::Hook::Off;
+    assert!(!wake_holds_for_session(&off, worktree.path(), false));
+    drop(sandbox);
 }

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
-use crate::mail::wake_looks_at_screen;
+use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
 use crate::registry::Context;
 use crate::task::{self, Checked, PrState};
 
@@ -64,10 +64,17 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
         };
         if !wake.hook.is_off() {
             out["wakeLine"] = json!(wake.line_or(default_line));
-            // Said only where it holds: the built-in tmux wake reads the screen and holds
-            // its line back from a question, and a caller that knows that can end its turn
-            // at an empty prompt instead of asking the same thing in the terminal too.
-            if wake_looks_at_screen(&ctx.settings, gate.answered_by_hub()) {
+            // Said only where it holds: the built-in tmux wake reads the screen, and a
+            // session with a row is held by it on any terminal, so neither types its line
+            // into a question, and a caller that knows that can end its turn at an empty
+            // prompt instead of asking the same thing in the terminal too.
+            if wake_looks_at_screen(&ctx.settings, gate.answered_by_hub())
+                || wake_holds_for_session(
+                    ctx,
+                    std::path::Path::new(&gate.worktree),
+                    gate.answered_by_hub(),
+                )
+            {
                 out["wakeChecksScreen"] = json!(true);
             }
         }
