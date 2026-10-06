@@ -8,7 +8,7 @@ use crate::board::{self, Server, settings_now};
 use crate::kernel::runner;
 use crate::task;
 
-use super::state::{Listing, split_main};
+use super::state::{Lines, Listing, split_main};
 use super::waiting::{GateCache, waiting_hub, waiting_worker};
 
 // ── what the board reads ─────────────────────────────────────────────
@@ -246,12 +246,18 @@ impl Poll<'_> {
     /// runs in tmux, and cached by pane (see `LastLines`).
     fn last_line(
         &mut self,
+        is_hub: bool,
         terminal: &crate::infra::terminal::SessionTerminal,
         agent: &str,
         present: bool,
         activity: Option<i64>,
     ) -> Option<String> {
-        if !self.listing.with_lines || !present {
+        let asked = match self.listing.lines {
+            Lines::None => false,
+            Lines::Hubs => is_hub,
+            Lines::All => true,
+        };
+        if !asked || !present {
             return None;
         }
         let pane = tmux_pane_of(&mut self.views, terminal)?;
@@ -333,7 +339,7 @@ pub(super) fn sessions_of(
     sessions.extend(main_worker_session(&mut poll));
     // Only a poll that reached the main checkout's turn forgets the lines nobody asked for, as
     // before the split.
-    if poll.listing.with_lines && !poll.skipped("worker-main") {
+    if poll.listing.lines == Lines::All && !poll.skipped("worker-main") {
         server.last_lines.keep_only(&poll.screens);
     }
     sessions
@@ -356,7 +362,7 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
         let terminal = poll.terminal(recorded.as_ref(), h.state.pid);
         let (last_activity_at, attached) = poll.tmux_activity(&terminal);
         let agent = poll.hub_agent.clone();
-        let line = poll.last_line(&terminal, &agent, h.state.present, last_activity_at);
+        let line = poll.last_line(true, &terminal, &agent, h.state.present, last_activity_at);
         let waiting = waiting_hub(h, &poll.gates.of(&h.slug).open);
 
         sessions.push(board::Session {
@@ -471,7 +477,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
     );
     let (last_activity_at, attached) = poll.tmux_activity(&terminal);
     let agent = poll.worker_agent.clone();
-    let line = poll.last_line(&terminal, &agent, status.present, last_activity_at);
+    let line = poll.last_line(false, &terminal, &agent, status.present, last_activity_at);
     let waiting = poll.worker_waiting(
         &parent_hub,
         &worktree,
@@ -548,7 +554,7 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
             let (last_activity_at, attached) = poll.tmux_activity(&terminal);
             let agent = poll.worker_agent.clone();
             // Not present, so there is no pane to read.
-            let line = poll.last_line(&terminal, &agent, false, last_activity_at);
+            let line = poll.last_line(false, &terminal, &agent, false, last_activity_at);
             let waiting = poll.worker_waiting(&parent_hub, &repo.main, None, None);
 
             let task_title = saved.task.as_deref().and_then(|id| {
@@ -608,7 +614,7 @@ pub fn board_session(
         Listing {
             processes: &processes,
             main_branch,
-            with_lines: false,
+            lines: Lines::None,
         },
         Some(id),
         |index, path| {

@@ -395,10 +395,13 @@ function hubDetailHtml(h, s) {
       : '<div class="tp-muted">待ちはありません</div>'}</div>`;
   }
 
-  // Newest first, as the hub reports them: `inboxCount` is the whole of it.
-  const inbox = (h.inbox || []).slice(0, HUB_LIST_MAX);
+  // The hub reports the newest first and `inboxCount` is the whole of it. What is still to be read
+  // comes first, oldest first, so the message the board's entry names the age of is in view.
+  const unread = m => m.counted && !m.seen;
+  const listed = h.inbox || [];
+  const inbox = [...listed.filter(unread).reverse(), ...listed.filter(m => !unread(m))].slice(0, HUB_LIST_MAX);
   html += `<div class="m3-filled-card">${secTitle('受信箱')}${inbox.length
-    ? `<ul class="sess-side-list">${inbox.map(m => `<li><div>${esc(m.subject || m.name)}</div><div class="who">${esc([m.kind, m.from, m.at ? when(m.at) : ''].filter(Boolean).join(' ・ '))}</div></li>`).join('')}</ul>${hubListMore((h.inboxCount || 0) - inbox.length)}`
+    ? `<ul class="sess-side-list">${inbox.map(m => `<li><div>${unread(m) ? '<span class="m3-pill pill-warn">未確認</span> ' : ''}${esc(m.subject || m.name)}</div><div class="who">${esc([m.kind, m.from, m.at ? when(m.at) : ''].filter(Boolean).join(' ・ '))}</div></li>`).join('')}</ul>${hubListMore((h.inboxCount || 0) - inbox.length)}`
     : '<div class="tp-muted">受信箱は空です</div>'}</div>`;
 
   // A stopped hub's start is the banner's.

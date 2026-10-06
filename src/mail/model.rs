@@ -66,6 +66,9 @@ pub struct Entry {
     /// When it was sent: the `at` header, or the stamp its file name starts with for a
     /// message that has none. `None` when neither reads as a stamp.
     pub at: Option<String>,
+    /// Whether the hub has looked at it: its body was read after it arrived and it is not yet
+    /// acked. A message that is only listed is not looked at.
+    pub seen: bool,
 }
 
 pub fn header_value(text: &str, key: &str) -> Option<String> {
@@ -88,6 +91,11 @@ pub fn header_value(text: &str, key: &str) -> Option<String> {
 /// it and `safe_join` will not open it — it is mid-move, not waiting — and it carries the
 /// name it came from so that a move interrupted half way can be undone.
 pub(super) const HOLDING: &str = ".acking-";
+
+/// The prefix of the empty file left beside a message once its body was read: `.seen-<name>`.
+/// A dotfile, so `list` does not offer it as a message. It says that the message was looked at,
+/// not what became of it, so it is removed with the message when that is acked.
+pub(super) const SEEN: &str = ".seen-";
 
 /// How long a message may be held before `list` decides nobody is coming back for it. An
 /// ack holds one across two syscalls, so anything this old is from a process that died.
@@ -128,6 +136,14 @@ pub struct InboxItem {
     /// UTC timestamp string from the message header, or its file name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,
+    /// Whether the hub has read it since it arrived. Absent from older listings, which means
+    /// not yet.
+    #[serde(default)]
+    pub seen: bool,
+    /// Whether it is one of the messages `unseen` and `seen` count: those that call for waking
+    /// the hub. The hub's own question copies, acks and notices are not, whether read or not.
+    #[serde(default)]
+    pub counted: bool,
 }
 
 /// A hub of the repository, as reported in hubs[].
@@ -150,6 +166,17 @@ pub struct RepoHub {
     pub slug: String,
     pub state: RepoHubState,
     pub inbox_count: usize,
+    /// How many waiting messages call for waking the hub and have not been read. Messages the
+    /// hub left for itself, acks and notices are in neither this nor `seen`.
+    #[serde(default)]
+    pub unseen: usize,
+    /// How many waiting messages that call for waking the hub have been read and not acked.
+    #[serde(default)]
+    pub seen: usize,
+    /// When the oldest of the `unseen` messages was sent. Said apart from `inbox` because that
+    /// keeps only the newest few.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_unseen_at: Option<String>,
     /// The newest messages waiting, newest first and capped: `inbox_count` is the full number.
     #[serde(default)]
     pub inbox: Vec<InboxItem>,

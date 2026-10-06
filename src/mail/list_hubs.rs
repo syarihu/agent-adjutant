@@ -132,18 +132,38 @@ pub fn all_repo_hubs_among_with(
             let status = hub_status_with(root, table, &slug, &hub_name);
             let entries = list(root, &slug);
             let inbox_count = entries.len();
+            // Only what calls for waking the hub counts as waiting on it: the hub's own
+            // question and needs-user copies, acks and notices are not waiting for a read.
+            let (mut unseen, mut seen, mut oldest_unseen_at) = (0, 0, None::<String>);
+            for entry in &entries {
+                if !should_wake_hub(&entry.from, &hub_name, &entry.kind, &entry.subject) {
+                    continue;
+                }
+                if entry.seen {
+                    seen += 1;
+                    continue;
+                }
+                unseen += 1;
+                if let Some(at) = &entry.at
+                    && oldest_unseen_at.as_ref().is_none_or(|oldest| at < oldest)
+                {
+                    oldest_unseen_at = Some(at.clone());
+                }
+            }
             // `list` is oldest first, so the newest are at the end.
             let inbox = entries
                 .into_iter()
                 .rev()
                 .take(INBOX_LISTED)
                 .map(|entry| InboxItem {
+                    counted: should_wake_hub(&entry.from, &hub_name, &entry.kind, &entry.subject),
                     name: entry.name,
                     subject: entry.subject,
                     kind: entry.kind,
                     from: entry.from,
                     worktree: entry.worktree,
                     at: entry.at,
+                    seen: entry.seen,
                 })
                 .collect();
             let id = match &key {
@@ -166,6 +186,9 @@ pub fn all_repo_hubs_among_with(
                     started_at: status.started_at,
                 },
                 inbox_count,
+                unseen,
+                seen,
+                oldest_unseen_at,
                 inbox,
                 children,
             }

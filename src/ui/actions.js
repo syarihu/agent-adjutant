@@ -661,6 +661,47 @@ async function nudgeHub(base = BASE) {
   }
 }
 
+/* The hub entry's wake button (renderHubStrip). It types the hub's wake line and leaves it no
+   message. `busy` (by the hub's slug, so a press on one board leaves another's button alone) keeps a second press from sending another while one is on its way; `why` is
+   what the last press that typed nothing was told, by the hub's slug, kept until the next press
+   or until nothing is left to read. */
+const hubWake = { busy: {}, why: {} };
+
+async function wakeHub() {
+  const h = pageHub();
+  // The button's disabled state is the rule; this repeats it for a click that reaches here anyway.
+  if (!h || hubWake.busy[h.slug] || !((h.unseen || 0) > 0 && h.state?.present)) return;
+  const slug = h.slug;
+  const epoch = navEpoch;
+  const line = 'hub を起こす（POST /api/hub/wake）';
+  // Focus on the button goes to the next control while it is disabled, and back when it is not.
+  const refocus = document.activeElement?.dataset?.action === 'wake-hub';
+  hubWake.busy[slug] = true;
+  delete hubWake.why[slug];
+  renderHubStrip();
+  try {
+    const data = await boardApi(BASE, '/api/hub/wake', { method: 'POST' });
+    if (data.woken) note(line, false, 'hub の端末に入力しました');
+    else {
+      // A refused wake is an answer, and the page says why next to the button.
+      hubWake.why[slug] = data.present ? `入力しませんでした: ${data.why || '理由不明'}` : 'hub は停止中のため入力しませんでした';
+      note(line, true, hubWake.why[slug]);
+    }
+  } catch (e) {
+    hubWake.why[slug] = `入力できませんでした: ${e.message}`;
+    note(`${line} → ${e.message}`, true);
+  } finally {
+    delete hubWake.busy[slug];
+    renderHubStrip();
+    // Only where the strip put it: a person who has moved on is left where they are.
+    if (refocus && document.activeElement?.dataset?.action === 'hub-strip-open') {
+      [...document.querySelectorAll('#hub-strip button')].find(b => b.dataset.action === 'wake-hub' && !b.disabled)?.focus();
+    }
+  }
+  // The board moved on while this was on its way: its answer is not this one's to refresh.
+  if (epoch === navEpoch) await refresh();
+}
+
 /* Read a task's issue again. On a click only: the board never asks the tracker on its own. */
 async function fetchIssue(id, e) {
   const line = `adj task fetch-issue --id ${id}`;

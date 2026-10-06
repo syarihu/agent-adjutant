@@ -91,6 +91,33 @@ pub fn deliver_to_hub_with_wake(
     Ok(post_to_hub_with_wake(ctx, message, wake)?.follow_up(ctx, announce))
 }
 
+/// Poke the hub's tab with the wake line, without leaving a message for it. `None` when the hub
+/// is not running; otherwise what the wake came to, which for a running hub with no process to
+/// find a tab by is an error saying so.
+///
+/// The one copy of the wake rule: a delivery follows up with it, and so does the board's button
+/// that wakes a hub with messages waiting.
+pub fn wake_hub(ctx: &Context, subject: &str) -> Option<Result<terminal::Performed, String>> {
+    let hub = hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
+    if !hub.present {
+        return None;
+    }
+    let (wake, default_line, runner) = wake_settings(&ctx.settings, true);
+    Some(match hub.pid {
+        Some(pid) => terminal::wake(
+            &ctx.settings.terminal,
+            hub.terminal.as_ref(),
+            wake,
+            pid,
+            subject,
+            default_line,
+            look_before_typing(wake_agent(runner)),
+            false,
+        ),
+        None => Err("the hub has no process to find its tab by".to_string()),
+    })
+}
+
 /// A message written into the hub's inbox, its two follow-ups not yet run.
 pub struct Posted {
     subject: String,
@@ -133,22 +160,7 @@ impl Posted {
             wake_needed,
         } = self;
 
-        let (wake, default_line, runner) = wake_settings(&ctx.settings, true);
-        let reached = reached_after(delivery.present, wake_needed, || {
-            let hub = hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name);
-            hub.pid.map(|pid| {
-                terminal::wake(
-                    &ctx.settings.terminal,
-                    hub.terminal.as_ref(),
-                    wake,
-                    pid,
-                    &subject,
-                    default_line,
-                    look_before_typing(wake_agent(runner)),
-                    false,
-                )
-            })
-        });
+        let reached = reached_after(delivery.present, wake_needed, || wake_hub(ctx, &subject));
 
         if announce
             && wake_needed

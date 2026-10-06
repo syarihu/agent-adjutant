@@ -22,7 +22,7 @@ pub(crate) struct Server {
     /// The titles of the parent tasks the hubs are named after: a cache of the tracker's, kept
     /// on disk, and read from a thread of its own.
     pub hub_titles: Arc<HubTitles>,
-    /// The last line each session's pane showed, for the pages that ask for it (`?lines=1`).
+    /// The last line each session's pane showed, for the pages that ask for it (`?lines=1`, or `?lines=hub` for the hubs').
     /// A cache: the pane is the answer.
     pub last_lines: Arc<LastLines>,
     /// What tmux this machine has, when the board may open terminals on it: only the resident

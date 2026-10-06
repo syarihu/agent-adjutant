@@ -297,16 +297,20 @@ fn expected_hubs() -> Value {
         "inbox": [
           {
             "at": "20260922T043500Z",
+            "counted": false,
             "from": "wid-1",
             "kind": "question",
             "name": "20260922T043500Z-question.md",
+            "seen": false,
             "subject": "Which way?"
           },
           {
             "at": "20260922T043000Z",
+            "counted": true,
             "from": "wid-1",
             "kind": "report",
             "name": "20260922T043000Z-report.md",
+            "seen": false,
             "subject": "Done with plan",
             "worktree": "<tmp>/wid-1"
           }
@@ -314,12 +318,15 @@ fn expected_hubs() -> Value {
         "inboxCount": 2,
         "key": null,
         "name": "adjutant-acme-widget-898449509108182c",
+        "oldestUnseenAt": "20260922T043000Z",
         "parent": false,
+        "seen": 0,
         "slug": "acme-widget-898449509108182c",
         "state": {
           "present": false,
           "stale": false
-        }
+        },
+        "unseen": 1
       },
       {
         "children": 1,
@@ -329,6 +336,7 @@ fn expected_hubs() -> Value {
         "key": "wid-957",
         "name": "adjutant-acme-widget-wid-957-5283c95d4f4cc314",
         "parent": true,
+        "seen": 0,
         "slug": "acme-widget-wid-957-5283c95d4f4cc314",
         "state": {
           "pid": GONE,
@@ -336,7 +344,8 @@ fn expected_hubs() -> Value {
           "stale": true,
           "startedAt": "20260922T030000Z"
         },
-        "title": "Ship the feature"
+        "title": "Ship the feature",
+        "unseen": 0
       }
     ])
 }

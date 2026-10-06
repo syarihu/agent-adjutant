@@ -131,7 +131,7 @@ pub(crate) struct PendingArgs {
     pub(crate) limit: usize,
     #[arg(long)]
     pub(crate) json: bool,
-    /// Print one message in full
+    /// Print one message in full, which marks it as looked at
     #[arg(long, value_name = "NAME")]
     pub(crate) read: Option<String>,
     /// File one message away once it has been dealt with

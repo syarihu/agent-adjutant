@@ -244,11 +244,20 @@ impl GateCard {
     }
 }
 
+/// Whose last line of output (`lastLine`) a poll carries. Reading it runs a command per pane,
+/// so only the pages that show it ask, and the board view wants the hubs' alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lines {
+    #[default]
+    None,
+    Hubs,
+    All,
+}
+
 /// `with_sessions` false leaves `sessions` empty: the page that merges several boards has no
-/// use for them, and listing them is the dearest part of a poll. `with_lines` adds each
-/// session's last line of output (`lastLine`), which reads its tmux pane: only the page that
-/// shows it asks.
-pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardState {
+/// use for them, and listing them is the dearest part of a poll. `lines` adds the last line of
+/// output to the sessions it names, which reads their tmux panes.
+pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     let repo = &server.ctx.repo;
     let tasks = with_records(
         task::list(&server.ctx.state, &server.ctx.repo.slug),
@@ -388,7 +397,7 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
             Listing {
                 processes: &processes,
                 main_branch,
-                with_lines,
+                lines,
             },
             None,
             |index, _| workers_data[index].clone(),
@@ -530,9 +539,9 @@ pub fn worker_of<'a>(task: &task::Task, workers: &'a [WorkerRow]) -> Option<&'a 
 pub(super) struct Listing<'a> {
     pub(super) processes: &'a crate::registry::ProcessTable,
     pub(super) main_branch: Option<String>,
-    /// Whether each session carries the last line of its pane: reading it runs a command per
+    /// Which sessions carry the last line of their pane: reading it runs a command per
     /// session, so only the page that shows it asks.
-    pub(super) with_lines: bool,
+    pub(super) lines: Lines,
 }
 
 /// The main checkout's branch and the linked worktrees, out of one listing. The branch is
