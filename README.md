@@ -497,9 +497,11 @@ never by the page, so they are as new as the last read. ターミナル is the t
 session in the built-in terminal, with a bar for resuming, closing or opening it in your own
 terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
 no session. A card's body opens 詳細; its 「ターミナル」 button, and 「ターミナルで答える」 on a
-question, open ターミナル. The panel sits on the left (the default) or the right of the page, or
-pops out as a large dialog that goes back to its side when closed or clicked away from. The side
-and the width are remembered by the browser; while the panel is on the left the sidebar shrinks
+question, open ターミナル. The panel sits on the right (the default) or the left of the page, or
+opens as a large dialog (↗, 「ダイアログで開く」). The dialog is a remembered mode: while it is on,
+every panel opens as a dialog, and ×, Escape or a click outside close the panel without leaving
+the mode; the left and right sidebar buttons switch back to the sidebar. The side, the mode and
+the width are remembered by the browser; while the panel is on the left the sidebar shrinks
 to its icon rail, and on a narrow window the panel floats over the board. Moving the panel only
 changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
 The open task and tab are in the address (`task=<id>`, `pane=term`), so back and forward and a

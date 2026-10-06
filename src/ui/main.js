@@ -20,8 +20,7 @@ document.addEventListener('keydown', e => {
       return;
     }
     if ((view === 'board' || view === 'sessions') && selectedTaskId) {
-      // A popped-out panel goes back to its side first; the next Escape closes it.
-      if (panelPop) { panelPop = false; renderTaskPanel(); } else closeTaskPanel();
+      closeTaskPanel();
       return;
     }
   }

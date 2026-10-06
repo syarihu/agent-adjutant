@@ -34,7 +34,6 @@ function openTaskPanel(id, pane = 'detail') {
 /* The panel's state, without the address: for a move the address already made. */
 function hideTaskPanelState() {
   pendingTask = null;
-  panelPop = false;
   selectedTaskId = null;
   panelScrolledFor = null;
   // Opened again, a session's git state is read again.
@@ -55,15 +54,15 @@ function closeTaskPanel() {
   if (nav.task) go({ task: null, pane: 'detail' });
 }
 
-/* 'left' and 'right' are the saved side; 'pop' is a large dialog that goes back to the side
-   when closed or clicked away from. */
+/* Where panels open is a remembered mode: 'pop' is the dialog, 'left' and 'right' the sidebar on that side.
+   Closing never changes it; only choosing one of these does. */
 function placePanel(where) {
-  if (where === 'pop') panelPop = true;
+  if (where === 'pop') prefs.panelDialog = true;
   else {
-    panelPop = false;
-    prefs.panelSide = where;
-    savePrefs();
+    prefs.panelDialog = false;
+    prefs.panelDock = where;
   }
+  savePrefs();
   renderTaskPanel();
 }
 
@@ -116,10 +115,10 @@ function renderTaskPanel() {
   const shown = !!(task || hub || sess) && (view === 'board' || view === 'sessions');
   const cls = document.body.classList;
   panel.hidden = !shown;
-  tp('tp-scrim').hidden = !(shown && panelPop);
+  tp('tp-scrim').hidden = !(shown && prefs.panelDialog);
   cls.toggle('panel-open', shown);
-  cls.toggle('panel-right', prefs.panelSide === 'right');
-  cls.toggle('panel-pop', shown && panelPop);
+  cls.toggle('panel-right', prefs.panelDock === 'right');
+  cls.toggle('panel-pop', shown && prefs.panelDialog);
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
   applyRailMode();
   // The list marks the session the panel is open on.
@@ -192,9 +191,9 @@ function panelBtnsHtml(jump) {
     `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
   return `<div class="tp-head-btns">
       ${jump}
-      ${place('left', 'left_panel_open', '左に置く', prefs.panelSide === 'left' && !panelPop)}
-      ${place('right', 'right_panel_open', '右に置く', prefs.panelSide === 'right' && !panelPop)}
-      ${place('pop', 'open_in_new', 'ポップアウト', panelPop)}
+      ${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !prefs.panelDialog)}
+      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !prefs.panelDialog)}
+      ${place('pop', 'open_in_new', 'ダイアログで開く', prefs.panelDialog)}
       <button type="button" class="tool-btn" data-tp-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
     </div>`;
 }
@@ -531,18 +530,16 @@ tp('task-panel').addEventListener('click', e => {
   let b;
   if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
   if (hit('[data-tp-close]')) {
-    // Closing a popped-out panel puts it back on its side, as a click outside does; the next closes it.
-    if (panelPop) { panelPop = false; return renderTaskPanel(); }
     return closeTaskPanel();
   }
   if ((b = hit('[data-tp-place]'))) return placePanel(b.dataset.tpPlace);
   if (hub) return hubPanelClick(e, hub);
   if (sess) return sessPanelClick(e, sess);
   if (hit('[data-tp-jump]')) {
-    // A popped-out panel is over the card: it goes back to its side first.
-    panelPop = false;
-    renderTaskPanel();
-    return jump('agent', task.id);
+    // A dialog covers the card, so it closes first; a docked panel stays beside it.
+    const id = task.id;
+    if (prefs.panelDialog) closeTaskPanel(); else renderTaskPanel();
+    return jump('agent', id);
   }
   if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);
   if ((b = hit('[data-record]'))) return openRecord(b.dataset.record);
@@ -618,8 +615,12 @@ function hubPanelClick(e, h) {
   }
   if ((b = hit('[data-tp-task]'))) return openTaskPanel(b.dataset.tpTask);
   if (hit('[data-tp-board]')) {
-    // The hub's board, with the hub still in the panel on the tab it was on.
-    panelPop = false;
+    // The hub's board, with the hub still in the panel on the tab it was on; a dialog would cover
+    // the board, so it closes instead.
+    if (prefs.panelDialog) {
+      hideTaskPanelState();
+      return go({ board: h.slug, task: null, pane: 'detail' });
+    }
     return go({ board: h.slug, task: selectedTaskId, pane: nav.pane });
   }
   if ((b = hit('[data-sess-act]'))) {
@@ -639,8 +640,8 @@ tp('task-panel').addEventListener('change', e => {
   if (b.checked) relay.picked.add(b.dataset.relayPick); else relay.picked.delete(b.dataset.relayPick);
   renderTaskPanel();
 });
-// Clicking outside a popped-out panel puts it back; it stays open.
-tp('tp-scrim').addEventListener('click', () => { panelPop = false; renderTaskPanel(); });
+// Clicking outside the dialog closes the panel; the dialog mode stays.
+tp('tp-scrim').addEventListener('click', () => closeTaskPanel());
 
 /* The width is dragged from the edge that faces the page, saved when the pointer is let go;
    the arrow keys move it a step at a time. */
@@ -650,22 +651,22 @@ function setPanelWidth(raw) {
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
 }
 tp('tp-resize').addEventListener('keydown', e => {
-  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop || matchMedia('(max-width: 720px)').matches) return;
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || prefs.panelDialog || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();
   // The panel grows away from its side: toward the right on the left, toward the left on the right.
-  const grow = (e.key === 'ArrowRight') === (prefs.panelSide !== 'right');
+  const grow = (e.key === 'ArrowRight') === (prefs.panelDock !== 'right');
   setPanelWidth(tp('task-panel').offsetWidth + (grow ? 24 : -24));
   savePrefs();
 });
 tp('tp-resize').addEventListener('pointerdown', e => {
-  if (panelPop || matchMedia('(max-width: 720px)').matches) return;
+  if (prefs.panelDialog || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();
   const handle = e.currentTarget;
   handle.setPointerCapture(e.pointerId);
   document.body.classList.add('tp-dragging');
   const move = ev => {
     const rail = tp('nav-rail').offsetWidth;
-    setPanelWidth(prefs.panelSide === 'right' ? innerWidth - ev.clientX : ev.clientX - rail);
+    setPanelWidth(prefs.panelDock === 'right' ? innerWidth - ev.clientX : ev.clientX - rail);
   };
   const end = () => {
     handle.removeEventListener('pointermove', move);
