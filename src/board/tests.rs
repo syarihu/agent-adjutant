@@ -1373,3 +1373,41 @@ fn the_repository_board_carries_the_parent_hubs_tasks_apart_from_its_own() {
     let hubs = [a_repo_hub("acme-widget-ABC-9", Some("ABC-9"))];
     assert!(hub_task_cards(&sandbox.state(), &repo, &hubs, &[]).is_empty());
 }
+
+#[test]
+fn a_parent_hub_card_follows_only_the_worker_of_its_own_hub() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let hubs = [
+        a_repo_hub("acme-widget", None),
+        a_repo_hub("acme-widget-ABC-1", Some("ABC-1")),
+    ];
+    let mut t = serde_json::to_value(a_task("t4", task::Status::Pr)).unwrap();
+    t["pr"] = json!("https://github.com/acme/widget/pull/4");
+    t["worktree"] = json!("/w4");
+    let dir = sandbox.state().join("tasks").join("acme-widget-ABC-1");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t4.json"), t.to_string()).unwrap();
+    // The same worktree and task id under two hubs: the repository hub's worker is in `pr`,
+    // which would wait on the person, the parent hub's is still implementing.
+    let worker = |hub_slug: &str, phase: &str| WorkerRow {
+        worktree: "/w4".to_string(),
+        name: None,
+        branch: None,
+        present: true,
+        stale: false,
+        title: None,
+        task: Some("t4".to_string()),
+        hub_slug: hub_slug.to_string(),
+        phase: Some(phase.to_string()),
+        phase_at: None,
+    };
+    let workers = [
+        worker("acme-widget", "pr"),
+        worker("acme-widget-ABC-1", "implement"),
+    ];
+    let repo = a_repo(None, "acme-widget");
+    let cards = hub_task_cards(&sandbox.state(), &repo, &hubs, &workers);
+    assert_eq!(cards.len(), 1);
+    assert!(!cards[0].waits_on_person);
+    assert!(cards[0].owner_hub.as_ref().unwrap().human_col.is_none());
+}

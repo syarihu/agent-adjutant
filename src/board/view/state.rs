@@ -362,8 +362,14 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
         workers_data.push((status, branch));
     }
 
+    // Task ids are unique only per hub, so a card joins only the workers that report to this hub.
+    let own: Vec<WorkerRow> = workers
+        .iter()
+        .filter(|w| w.hub_slug == repo.slug)
+        .cloned()
+        .collect();
     for card in &mut tasks {
-        let row = worker_of(&card.task, &workers);
+        let row = worker_of(&card.task, &own);
         card.waits_on_person = waits_on_person(
             &card.task,
             row.map(|w| w.phase.as_deref()),
@@ -483,10 +489,15 @@ pub fn hub_task_cards(
             gate::list(state_dir, &h.slug, gate::Shelf::Record),
             gate::list_of_kind(state_dir, &h.slug, gate::Shelf::Answered, gate::Kind::Plan),
         );
+        let own: Vec<WorkerRow> = workers
+            .iter()
+            .filter(|w| w.hub_slug == h.slug)
+            .cloned()
+            .collect();
         for mut card in cards {
             card.waits_on_person = waits_on_person(
                 &card.task,
-                worker_of(&card.task, workers).map(|w| w.phase.as_deref()),
+                worker_of(&card.task, &own).map(|w| w.phase.as_deref()),
                 None,
             );
             let human_col = open
