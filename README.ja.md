@@ -43,7 +43,7 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と�
 
 **登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
 
-**adjutant が起動していないセッション。** adjutant が起動した hub や worker には、起動時にフックが渡されます。自分で起動した Claude Code / Codex のセッションも `adjutant agent-sessions` に出したい場合は、同じフックを Claude Code のユーザー設定（Codex は hooks ファイル）に追加します。
+**adjutant が起動していないセッション。** adjutant が起動した Claude Code の hub や worker には、起動時にフックが渡されます。Antigravity のセッションはまだ状態を報告できません（[#520](https://github.com/syarihu/agent-adjutant/issues/520)）。自分で起動した Claude Code のセッションや、Codex のセッション（adjutant が起動したものを含む）も `adjutant agent-sessions` やボードのセッションタブに出したい場合は、同じフックを Claude Code のユーザー設定（Codex は hooks ファイル）に追加します。
 
 ```bash
 adjutant setup claude            # ~/.claude/settings.json（$CLAUDE_CONFIG_DIR 指定時は $CLAUDE_CONFIG_DIR/settings.json）に adjutant のフックを追加する
@@ -221,7 +221,7 @@ hub はメインチェックアウトで動作します。手順書によって�
 
 これでクリック時にターミナルが前面に出ます。さらに `{nwo}` を使うと、タブ単位まで狙えます。`{nwo}` はそのメッセージが属するリポジトリで、`--repo` が受け取るのと同じ値です（`owner/name`、ただし使える remote が無いチェックアウトではそのディレクトリ名になります）。クリック時に `adj focus --repo {nwo}` を実行する通知コマンドにすれば、**そのリポジトリの hub タブそのもの**が前面に出ます。ただしテンプレート内にクォートで囲んだコマンドを入れ子にするのは避け、スクリプトを用意してそれを指定してください（理由は後述の wake の注意点と同じで、置換される値が自身のクォートを伴って展開されるためです）。なお `adjutant notify` をリポジトリ外で実行した場合 `{nwo}` は空になり、その旨が標準エラー出力に出ます。
 
-macOS 以外には組み込みの通知手段がなく、通知できないことはエラーではなく無音として扱われます。そのため Linux で hub を動かす場合はこのキーの設定が必要です（例: `"notify-send {title} {message}"`）。逆に proctor のサイドバーや tmux のステータス行など、セッションを監視する仕組みが別にある場合は、バナーを二重に出さず `false` で無効化してください。
+macOS 以外には組み込みの通知手段がなく、通知できないことはエラーではなく無音として扱われます。そのため Linux で hub を動かす場合はこのキーの設定が必要です（例: `"notify-send {title} {message}"`）。逆にターミナルのサイドバーや tmux のステータス行など、セッションを監視する仕組みが別にある場合は、バナーを二重に出さず `false` で無効化してください。
 
 テンプレートが実際にどのコマンドへ展開されるかは `adjutant notify --message … --dry-run` で確認できます（実際の送信は行われません）。
 
@@ -424,7 +424,7 @@ worker はタスク実行中、環境内に特化サブエージェントが定�
 
 ## 任意の連携ツール
 
-[`proctor`](https://github.com/syarihu/agent-proctor)（worktree 規約、セッション台帳、タブ着色）や [`lk`](https://github.com/syarihu/local-knowledge-cli)（ローカルナレッジベース）が PATH 上にあれば自動で連携し、なければスキップします。
+[`proctor`](https://github.com/syarihu/agent-proctor)（worktree 規約）や [`lk`](https://github.com/syarihu/local-knowledge-cli)（ローカルナレッジベース）が PATH 上にあれば自動で連携し、なければスキップします。
 
 どちらも必須ではありません。worktree の配置や命名規約は `adjutant worktree-path --name`（ブランチ: `{user}/{name}`、パス: `<main>/.claude/worktrees/{name}`）が同等の形式を標準で提供します。また、リポジトリごとの追加ファイル配置は、本ツールの設定にある `postCreate` フックで対応できます。
 

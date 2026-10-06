@@ -54,9 +54,11 @@ is the only path that asks you to paste anything.
 resolves to the binary you ran, and its absolute path otherwise — so running `install-mcp`
 out of a build directory pins that build forever, and `cargo clean` then breaks the server.
 
-**Sessions adjutant did not start.** Hubs and workers adjutant starts get its hooks at launch. To
-have Claude Code or Codex sessions you start yourself report to `adjutant agent-sessions` too, add
-the same hooks to your Claude Code user settings or Codex's hooks file:
+**Sessions adjutant did not start.** Claude Code hubs and workers adjutant starts get its hooks at
+launch. Antigravity sessions do not report yet ([#520](https://github.com/syarihu/agent-adjutant/issues/520)).
+To have Claude Code sessions you start yourself, or any Codex session, report to
+`adjutant agent-sessions` and the board's セッション tab, add the same hooks to your Claude Code user
+settings or Codex's hooks file:
 
 ```bash
 adjutant setup claude            # adds adjutant's hooks to ~/.claude/settings.json ($CLAUDE_CONFIG_DIR/settings.json when set)
@@ -398,7 +400,7 @@ rather than silently.
 
 There is no built-in off macOS, where a missing notifier is silence rather than an error, so a Linux
 hub needs the key set (`"notify-send {title} {message}"`). And when something already watches the
-sessions — proctor's sidebar, a tmux status line — `false` is the honest answer rather than a second
+sessions — a terminal sidebar, a tmux status line — `false` is the honest answer rather than a second
 banner. `adjutant notify --message … --dry-run` prints the command a template resolves to without
 sending anything.
 
@@ -1232,7 +1234,7 @@ Custom subagents are defined on the agent client side (such as `~/.claude/agents
 
 ## Optional neighbours
 
-[`proctor`](https://github.com/syarihu/agent-proctor) (worktree conventions, session ledger, tab colours) and [`lk`](https://github.com/syarihu/local-knowledge-cli) (the local knowledge
+[`proctor`](https://github.com/syarihu/agent-proctor) (worktree conventions) and [`lk`](https://github.com/syarihu/local-knowledge-cli) (the local knowledge
 base) are used when they are on PATH and skipped when they are not.
 
 Neither is needed. A convention tool does not *create* worktrees — it answers where they go
