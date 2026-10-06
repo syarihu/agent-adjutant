@@ -206,7 +206,8 @@ function panelTabsHtml(task, gate, s, pane) {
   const usable = hasSession(s) && !!state.boardTerminal?.available;
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
   return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '')
-    + panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>' : '', !usable && hint);
+    + panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
+      : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
 }
 
 /* ── 詳細 ── */
@@ -260,6 +261,7 @@ function panelRestHtml(task, colId) {
   h += `<div class="m3-filled-card">${secTitle('工程')}
     <ol class="tp-steps">${STEPS.map(([, text], i) => `<li class="${i < now ? 'done' : i === now ? 'now' : ''}">${esc(text)}</li>`).join('')}</ol>
     ${worker?.phase ? `<div class="tp-line">worker は${esc(PHASE_LABEL[worker.phase] || worker.phase)}${worker.present ? '' : '（停止）'}${mins != null ? `（${esc(agoLabel(mins))}から）` : ''}</div>` : ''}
+    ${live ? agentFactsHtml(sessionOfTask(task)) : ''}
     <div class="tp-kvs">
       ${kv('完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—'))}
       ${kv('止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—'))}
@@ -335,6 +337,7 @@ function hubPanelHeadHtml(h, s) {
     : hubStartingNow(h) ? ['起動しています…', 'pill-neutral']
     : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
     : s.waiting ? ['入力待ち', 'pill-warn']
+    : sessionState(s) === 'permission' ? [permissionLabel(s), 'pill-warn']
     : ['稼働中', 'pill-good'];
   const origin = row ? boardName(row) : repoName();
   const nwo = row?.nwo || state.repo || '';
@@ -357,7 +360,8 @@ function hubPanelHeadHtml(h, s) {
 function hubPanelTabsHtml(h, s, pane) {
   const why = hubTermWhy(h, s);
   return panelTab(pane, 'detail', '詳細', '', '')
-    + panelTab(pane, 'term', 'ターミナル', why ? `<span class="tp-tab-hint">${esc(why[0])}</span>` : s.waiting ? '<span class="tp-wait">入力待ち</span>' : '', why && why[1]);
+    + panelTab(pane, 'term', 'ターミナル', why ? `<span class="tp-tab-hint">${esc(why[0])}</span>` : s.waiting ? '<span class="tp-wait">入力待ち</span>'
+      : sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', why && why[1]);
 }
 
 const HUB_LIST_MAX = 5;
@@ -386,7 +390,7 @@ function hubDetailHtml(h, s) {
   else if (row) counts.push(kv('あなたの確認待ち', `${row.waiting || 0} 件`));
   if (queued != null) counts.push(kv('待ちキュー', `${queued} 件`));
   counts.push(kv('受信箱', `${h.inboxCount || 0} 件`));
-  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${counts.join('')}</div></div>`;
+  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${counts.join('')}</div>${agentFactsHtml(s)}</div>`;
 
   // Only the page's own board has its tasks to name; another board's are read on its own page.
   if (!other) {

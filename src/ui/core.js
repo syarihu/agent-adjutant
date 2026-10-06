@@ -414,7 +414,7 @@ async function refreshAllBoards(force) {
         const { now: at, ...rest } = next;
         now = Math.max(now, at || 0);
         // As `refresh` compares them, so a minute turning over does not redraw each board.
-        const json = JSON.stringify({ ...rest, sessions: minuteSessions(rest.sessions, at) });
+        const json = JSON.stringify({ ...rest, sessions: minuteSessions(rest.sessions, at, view) });
         if (boardStates[b.slug]?.json !== json) changed = true;
         boardStates[b.slug] = { json, data: next };
       } catch (e) {
@@ -503,12 +503,27 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
 }
 
 /* The sessions as two polls are compared: a session's last activity as the whole minutes it has
-   been idle at `now`, which is as fine as the page shows it. `shows` false leaves it out, for the
-   views that do not draw it. Clamped at 0: tmux's activity can be a second later than the
-   poll's clock, and -1 against 0 between two polls would redraw for nothing. */
-function minuteSessions(sessions, now, shows = true) {
-  return (sessions || []).map(({ lastActivityAt, ...s }) => !shows || lastActivityAt == null ? s
-    : { ...s, lastActivityAt: Math.max(0, Math.floor((now - lastActivityAt) / 60)) });
+   been idle at `now`, which is as fine as the page shows it. `mode` is the view being drawn: the
+   board and the sessions tab draw the last activity, and others leave it out. The agent's own part
+   is cut to what the view draws, since activity and request change on every tool call: the
+   sessions tab has all of it (`updatedAt` as minutes, `lastEventAt` not drawn), the board only
+   the state and, while it waits on a permission prompt, the request its card shows, and any other
+   view only the state. In board mode the activity is left out on purpose, though the session card
+   and the task panel draw it: it shows with the next real change or the minute redraw. Clamped
+   at 0: tmux's activity can be a second later than the poll's clock, and -1 against 0 between two
+   polls would redraw for nothing. */
+function minuteSessions(sessions, now, mode = 'sessions') {
+  const minutes = secs => Math.max(0, Math.floor((now - secs) / 60));
+  const shows = mode === 'board' || mode === 'sessions';
+  return (sessions || []).map(({ lastActivityAt, agentSession: a, ...s }) => {
+    const agent = !a ? {} : { agentSession: {
+      status: a.status, pending: a.pending, subagents: a.subagents, error: a.error,
+      ...(mode === 'sessions' ? { activity: a.activity, request: a.request }
+        : mode === 'board' && a.status === 'waiting' ? { request: a.request } : {}),
+      ...(shows && a.updatedAt != null ? { updatedAt: minutes(a.updatedAt) } : {}),
+    } };
+    return !shows || lastActivityAt == null ? { ...s, ...agent } : { ...s, ...agent, lastActivityAt: minutes(lastActivityAt) };
+  });
 }
 
 async function refresh(force = false) {
@@ -539,7 +554,7 @@ async function refresh(force = false) {
     // does not redraw them (and cut a comment being typed there); a view switch draws its view
     // afresh.
     const { now, ...rest } = next;
-    if (rest.sessions) rest.sessions = minuteSessions(rest.sessions, now, view === 'board' || view === 'sessions');
+    if (rest.sessions) rest.sessions = minuteSessions(rest.sessions, now, view);
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
     const changed = nextJson !== lastStateJson;

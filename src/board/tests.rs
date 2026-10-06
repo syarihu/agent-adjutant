@@ -1215,6 +1215,7 @@ fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Sess
         last_line: None,
         attached: None,
         waiting: None,
+        agent_session: None,
     }
 }
 

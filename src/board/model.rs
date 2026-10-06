@@ -93,6 +93,41 @@ pub struct Session {
     /// The open gate this session is waiting on, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting: Option<SessionWaiting>,
+    /// What the agent's hooks last said about this session, from the agent session ledger.
+    /// Only for a session that runs; `error` alone when the ledger could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<SessionAgentState>,
+}
+
+/// What the agent's hooks last said about a session: its row in the agent session ledger, as
+/// much of it as the page shows. Times are epoch seconds, never ages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAgentState {
+    /// The ledger's own word: idle, running, waiting, done, failed, or one a newer binary wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// A `done` or `failed` held back while sub-agents run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<String>,
+    /// When the status last changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+    /// When the hooks were last heard from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_at: Option<i64>,
+    /// The tool the agent is running, first line, cut short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    /// What the agent asks permission for, first line, cut short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    /// How many sub-agents are running.
+    #[serde(default)]
+    pub subagents: usize,
+    /// Set instead of the rest when the ledger could not be read: not the same as no row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// The oldest open gate a session waits on: the one a worker opened and is waiting to have
@@ -261,6 +296,7 @@ mod tests {
             last_line: None,
             attached: None,
             waiting: None,
+            agent_session: None,
         };
         let bare = serde_json::to_value(&session).unwrap();
         for key in [
@@ -269,6 +305,7 @@ mod tests {
             "lastLine",
             "attached",
             "waiting",
+            "agentSession",
         ] {
             assert!(bare.get(key).is_none(), "{key} should be left out");
         }
@@ -291,7 +328,24 @@ mod tests {
             }],
             focus: None,
         });
+        session.agent_session = Some(SessionAgentState {
+            status: Some("waiting".to_string()),
+            pending: None,
+            updated_at: Some(7),
+            last_event_at: Some(8),
+            activity: None,
+            request: Some("Bash: ls".to_string()),
+            subagents: 2,
+            error: None,
+        });
         let full = serde_json::to_value(&session).unwrap();
+        assert_eq!(full["agentSession"]["status"], "waiting");
+        assert_eq!(full["agentSession"]["updatedAt"], 7);
+        assert_eq!(full["agentSession"]["lastEventAt"], 8);
+        assert_eq!(full["agentSession"]["request"], "Bash: ls");
+        assert_eq!(full["agentSession"]["subagents"], 2);
+        assert!(full["agentSession"].get("pending").is_none());
+        assert!(full["agentSession"].get("error").is_none());
         assert_eq!(
             full["phases"],
             serde_json::json!([["plan", 123], ["verify", 456]])

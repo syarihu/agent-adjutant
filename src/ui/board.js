@@ -49,6 +49,9 @@ function stuckOf(task) {
   // Time only counts while the ball is the worker's. A card waiting on a person's answer to a
   // gate is not the worker being stuck.
   if (openGate(task)) return null;
+  // Nor is one that is waiting for a person to allow what it asked for.
+  const asked = sessionOfTask(task);
+  if (asked && sessionState(asked) === 'permission') return null;
   const mins = workerMinutes(task, w);
   const limit = state.stuckAfterMinutes;
   if (mins != null && limit > 0 && mins >= limit) return `${minutesLabel(mins)} 同じ工程`;

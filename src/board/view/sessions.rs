@@ -11,6 +11,9 @@ use crate::task;
 use super::state::{Lines, Listing, split_main};
 use super::waiting::{GateCache, waiting_hub, waiting_worker};
 
+/// How many characters of the agent's activity or request the board carries.
+const AGENT_TEXT_CHARS: usize = 200;
+
 // ── what the board reads ─────────────────────────────────────────────
 
 /// Where a session runs: what its record says it was started in (`recorded`), or — for a
@@ -281,6 +284,37 @@ impl Poll<'_> {
         )
     }
 
+    /// What the agent's hooks last said about a session that runs, joined by its session id and
+    /// then by its process (never by where it runs). A ledger that cannot be listed is said in
+    /// `error`, not taken for a session with no row.
+    fn agent_session(
+        &self,
+        present: bool,
+        identity: crate::registry::AgentIdentity,
+    ) -> Option<board::SessionAgentState> {
+        if !present {
+            return None;
+        }
+        match crate::registry::agent_session_of(
+            &self.server.ctx.state,
+            self.listing.processes,
+            &identity,
+        ) {
+            Ok(Some(row)) => Some(agent_state_of(&row)),
+            Ok(None) => None,
+            Err(error) => Some(board::SessionAgentState {
+                status: None,
+                pending: None,
+                updated_at: None,
+                last_event_at: None,
+                activity: None,
+                request: None,
+                subagents: 0,
+                error: Some(error),
+            }),
+        }
+    }
+
     fn worker_waiting(
         &mut self,
         hub_id: &str,
@@ -291,6 +325,25 @@ impl Poll<'_> {
         let hubs = self.hubs;
         let hub = hubs.iter().find(|h| h.id == hub_id)?;
         waiting_worker(hub, self.gates.of(&hub.slug), worktree, started, phase_at)
+    }
+}
+
+/// A ledger row as the board carries it: the first line of the activity and the request, cut
+/// short, and the sub-agents as a count.
+fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentState {
+    let first_line = |text: &Option<String>| {
+        let line = text.as_deref()?.lines().next()?.trim();
+        (!line.is_empty()).then(|| super::waiting::cut_chars(line, AGENT_TEXT_CHARS))
+    };
+    board::SessionAgentState {
+        status: row.status.as_ref().map(|s| s.as_str().to_string()),
+        pending: row.pending_status.as_ref().map(|s| s.as_str().to_string()),
+        updated_at: row.updated_at,
+        last_event_at: row.last_event_at,
+        activity: first_line(&row.activity),
+        request: first_line(&row.request),
+        subagents: row.subagents.len(),
+        error: None,
     }
 }
 
@@ -356,19 +409,29 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
             continue;
         }
         let recorded = match crate::registry::read_hub_record(&server.ctx.state, &h.slug) {
-            crate::registry::Recorded::Found(r) => r.terminal,
-            _ => None,
+            crate::registry::Recorded::Found(r) => (r.terminal, r.ps_started),
+            _ => (None, None),
         };
+        let (recorded, ps_started) = recorded;
         let terminal = poll.terminal(recorded.as_ref(), h.state.pid);
         let (last_activity_at, attached) = poll.tmux_activity(&terminal);
         let agent = poll.hub_agent.clone();
         let line = poll.last_line(true, &terminal, &agent, h.state.present, last_activity_at);
         let waiting = waiting_hub(h, &poll.gates.of(&h.slug).open);
+        let conversation =
+            crate::registry::hub_session(&server.ctx.state, &h.slug).map(|s| s.session_id);
+        let agent_session = poll.agent_session(
+            h.state.present,
+            crate::registry::AgentIdentity {
+                session_id: conversation.as_deref(),
+                pid: h.state.pid,
+                ps_started: ps_started.as_deref(),
+            },
+        );
 
         sessions.push(board::Session {
             id: h.id.clone(),
-            conversation: crate::registry::hub_session(&server.ctx.state, &h.slug)
-                .map(|s| s.session_id),
+            conversation,
             kind: "hub".to_string(),
             agent,
             terminal,
@@ -390,6 +453,7 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
             last_line: line,
             attached,
             waiting,
+            agent_session,
         });
     }
     sessions
@@ -488,6 +552,14 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         let slug = crate::kernel::identity::slug_for(&repo.nwo, hub_key.as_deref());
         linked_task_title(&poll.gates.state_dir, &slug, id)
     });
+    let agent_session = poll.agent_session(
+        status.present,
+        crate::registry::AgentIdentity {
+            session_id: conversation.as_deref(),
+            pid: status.pid,
+            ps_started: record.as_ref().and_then(|r| r.ps_started.as_deref()),
+        },
+    );
 
     board::Session {
         id,
@@ -513,6 +585,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         last_line: line,
         attached,
         waiting,
+        agent_session,
     }
 }
 
@@ -585,6 +658,7 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
                 last_line: line,
                 attached,
                 waiting,
+                agent_session: None,
             })
         }
         (_, None) => None,
@@ -686,4 +760,34 @@ pub fn session_git(
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
     git_state_of(server, &session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::{AgentSession, AgentStatus, Subagent};
+
+    #[test]
+    fn a_ledger_row_is_carried_by_its_words_first_lines_and_a_subagent_count() {
+        let row = AgentSession {
+            status: Some(AgentStatus::Other("thinking".to_string())),
+            pending_status: Some(AgentStatus::Done),
+            updated_at: Some(5),
+            last_event_at: Some(6),
+            activity: Some(format!("Bash: {}\nsecond line", "x".repeat(500))),
+            request: Some("\n".to_string()),
+            subagents: vec![Subagent::default(), Subagent::default()],
+            ..AgentSession::default()
+        };
+        let state = agent_state_of(&row);
+        assert_eq!(state.status.as_deref(), Some("thinking"));
+        assert_eq!(state.pending.as_deref(), Some("done"));
+        assert_eq!((state.updated_at, state.last_event_at), (Some(5), Some(6)));
+        let activity = state.activity.unwrap();
+        assert_eq!(activity.chars().count(), AGENT_TEXT_CHARS + 1);
+        assert!(activity.ends_with('…') && !activity.contains('\n'));
+        assert_eq!(state.request, None);
+        assert_eq!(state.subagents, 2);
+        assert_eq!(state.error, None);
+    }
 }

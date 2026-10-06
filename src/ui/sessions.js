@@ -7,20 +7,26 @@
 const IDLE_AFTER_SECS = 60;
 /* The phases at which a worker that is gone has finished rather than stopped (see stuckOf). */
 const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
-const STATE_ORDER = { waiting: 0, stopped: 1, restarting: 1, idle: 2, working: 3, ended: 4, none: 5 };
+/* A person is asked: by a gate (`waiting`), or by the agent's own permission prompt (`permission`). */
+const WAITS_ON_PERSON = ['waiting', 'permission'];
+/* What a `permission` session is called where it is drawn from its own session. The ledger's
+   `waiting` also covers other dialogs the agent asks, so it is 許可待ち only with a request to
+   say what is asked; the tables below hold the neutral word, for where there is no session. */
+const permissionLabel = s => s?.agentSession?.request ? '許可待ち' : '入力待ち';
+const STATE_ORDER = { waiting: 0, permission: 1, stopped: 2, restarting: 2, failed: 2, idle: 3, done: 3, working: 4, ended: 5, none: 6 };
 const STATE_LABEL = {
-  waiting: '確認待ち', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
+  waiting: '確認待ち', permission: '入力待ち', done: '待機中', failed: 'エラー（API）', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
   pending: '起動を依頼中…', restarting: '再起動しています…',
 };
 const STATE_ICON = {
-  waiting: 'help', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
+  waiting: 'help', permission: 'front_hand', done: 'hourglass_empty', failed: 'error', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
 };
 const STATE_PILL = {
-  waiting: 'pill-warn', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
+  waiting: 'pill-warn', permission: 'pill-warn', done: 'pill-neutral', failed: 'pill-err', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
 };
 /* A row's state in the few words it has room for. A quiet window is running too: it only has
    the neutral pill (STATE_PILL), so it is not taken for one that is writing. */
-const ROW_LABEL = { waiting: '入力待ち', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了', restarting: '再起動' };
+const ROW_LABEL = { waiting: '入力待ち', permission: '入力待ち', done: '待機', failed: 'エラー', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了', restarting: '再起動' };
 
 const hubOfSession = s => s.kind === 'hub' ? s.id : s.hub;
 
@@ -46,7 +52,39 @@ function sessionActivity(s, data = state) {
     ? 'idle' : 'working';
 }
 
-/* waiting / stopped / idle / working / ended, or none for a worktree that has no session. The
+/* What the agent's hooks say, as a state of this page, or null when there is no row, the ledger
+   could not be read, or the status is one this page does not know. */
+function agentStateOf(s) {
+  const a = s.agentSession;
+  if (!s.present || !a || a.error) return null;
+  const states = { running: 'working', waiting: 'permission', idle: 'done', done: 'done', failed: 'failed' };
+  return Object.hasOwn(states, a.status) ? states[a.status] : null;
+}
+
+/* The state of a session that runs: the ledger's, except `running`, which defers to the pane. No
+   hook fires when a turn is interrupted with Esc, so a row can stay `running` long after the agent
+   stopped; the pane going quiet is what tells (on tmux). */
+function ledgerState(s, data) {
+  const st = agentStateOf(s);
+  return st && st !== 'working' ? st : sessionActivity(s, data);
+}
+
+/* What the agent's hooks say beyond its state, as plain text (escaped where it is drawn), or
+   empty when they say nothing. */
+function agentText(s, data = state) {
+  const a = s.agentSession;
+  if (!s.present || !a) return '';
+  if (a.error) return 'エージェントの状態を読めません';
+  const parts = [];
+  if (agentStateOf(s) === 'permission' && a.request) parts.push(`許可を求めています: ${a.request}`);
+  // What the row says it is: a `running` the pane has gone quiet on is not doing the tool.
+  else if (a.activity && ledgerState(s, data) === 'working') parts.push(a.activity);
+  if (a.subagents > 0) parts.push(`サブエージェント ${a.subagents}`);
+  if (a.pending) parts.push('ターンは終わり、サブエージェントの終了待ち');
+  return parts.join(' · ');
+}
+
+/* waiting / permission / stopped / idle / done / failed / working / ended, or none for a worktree that has no session. The
    record says a worker is gone but not why, so a worker that is gone at a phase where its work
    is done reads as ended, as its card does. */
 function sessionState(s, data = state) {
@@ -59,12 +97,12 @@ function sessionState(s, data = state) {
    session that waits on a gate is too. The server sets `waiting` for one that is not running. */
 function restingState(s, data = state) {
   if (s.kind === 'hub') {
-    if (s.present) return sessionActivity(s, data);
+    if (s.present) return ledgerState(s, data);
     // A parent-task hub none of whose checkouts report to it any more is finished.
     const h = (data.hubs || []).find(x => x.id === s.id);
     return h && h.parent && !h.children ? 'ended' : 'stopped';
   }
-  if (s.present) return sessionActivity(s, data);
+  if (s.present) return ledgerState(s, data);
   if (s.stale) return FINISHED_PHASES.includes(s.phase) ? 'ended' : 'stopped';
   return s.conversation ? 'ended' : 'none';
 }
@@ -153,11 +191,12 @@ function sessionTree(data = state, pendingHubs = new Set()) {
     g.rows.sort((a, b) =>
       STATE_ORDER[a.state] - STATE_ORDER[b.state]
       || (a.state === 'waiting' ? (stampSecs(a.s.waiting.openedAt) || 0) - (stampSecs(b.s.waiting.openedAt) || 0) : 0)
+      || (a.state === 'permission' ? (a.s.agentSession?.updatedAt || 0) - (b.s.agentSession?.updatedAt || 0) : 0)
       || (a.s.id < b.s.id ? -1 : a.s.id > b.s.id ? 1 : 0));
     g.orphans.sort((a, b) => sessionKey(a, data) < sessionKey(b, data) ? -1 : sessionKey(a, data) > sessionKey(b, data) ? 1 : 0);
     // What the header counts: workers listed, and the sessions (a hub's own too) that wait.
     g.count = g.rows.length;
-    g.waiting = g.rows.filter(r => r.state === 'waiting').length + (g.own.waiting ? 1 : 0);
+    g.waiting = g.rows.filter(r => WAITS_ON_PERSON.includes(r.state)).length + (g.own.waiting || g.state === 'permission' ? 1 : 0);
     g.data = data;
   }
   // A parent task's hub that is over, with nothing left to show, is not worth a header.
@@ -343,14 +382,24 @@ function sessionTip(s, st, data = state) {
   const { title } = sessionTitle(s, false, data);
   const where = s.kind === 'hub' ? '' : `${sessionKey(s, data)}${s.branch ? ` (${s.branch})` : ''}`;
   const sub = st ? [STATE_LABEL[st], s.present ? lastOutputText(s, data) : null].filter(Boolean).join(' · ') : '';
-  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub].filter(Boolean).join('\n');
+  // The ledger's own word, as it was written: only here and in the panel, and never as a class.
+  const said = s.present && s.agentSession?.status ? `エージェントの報告: ${s.agentSession.status}` : '';
+  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub, agentText(s, data), said].filter(Boolean).join('\n');
 }
 
-/* What a row says under its title: the last line the session wrote, else when it last did. */
+/* What a row says under its title: what it asks permission for, else the last line the session
+   wrote, else what the agent's hooks say (which is all an iTerm2 row has), else when it last
+   wrote. The sub-agents are counted whichever of them it was. */
 function sessionLastText(s, data) {
-  if (s.lastLine) return s.lastLine;
+  const asks = !s.waiting && agentStateOf(s) === 'permission' && s.agentSession.request;
   const when = s.present ? lastOutputText(s, data) : null;
-  return when ? `最後の出力: ${when}` : '';
+  const n = s.present ? s.agentSession?.subagents : 0;
+  const counted = n > 0 ? `サブエージェント ${n}` : '';
+  // `agentText` has the count in it already; the others do not.
+  const add = text => counted ? `${text}${text ? ' · ' : ''}${counted}` : text;
+  if (asks) return add(`許可を求めています: ${s.agentSession.request}`);
+  if (s.lastLine) return add(s.lastLine);
+  return agentText(s, data) || add(when ? `最後の出力: ${when}` : '');
 }
 
 /* A worker's row, or a worktree's with no session (state `none`). */
@@ -359,7 +408,7 @@ function sessionRowHtml(s, st, g) {
   const label = sessionLabel(s, false, data);
   const phase = st === 'working' && s.phase ? agentLabel(AGENT_COL_OF_PHASE[s.phase]) || s.phase : '';
   const pill = st === 'none' ? ''
-    : `<span class="m3-pill sess-row-pill ${STATE_PILL[st]}">${esc(ROW_LABEL[st] + (phase ? ` · ${phase}` : ''))}</span>`;
+    : `<span class="m3-pill sess-row-pill ${STATE_PILL[st]}">${esc((st === 'permission' ? permissionLabel(s) : ROW_LABEL[st]) + (phase ? ` · ${phase}` : ''))}</span>`;
   const last = st === 'none' ? s.branch || '' : sessionLastText(s, data);
   return `<button type="button" class="sess-row ${st}" data-sref="${esc(sessionRef(s))}" title="${esc(sessionTip(s, st, data))}">
     ${pill}<span class="sess-row-main"><span class="sess-row-title">${esc(label.text)}</span><span class="sess-row-last">${esc(last)}</span></span>
@@ -369,8 +418,10 @@ function sessionRowHtml(s, st, g) {
 /* How a hub is, in the words the header has room for. */
 function groupPill(g) {
   if (g.state === 'waiting') return ['hub が入力待ち', 'pill-warn'];
+  if (g.state === 'permission') return [`hub が${permissionLabel(g.own)}`, 'pill-warn'];
   if (g.state === 'working') return ['稼働中', 'pill-good'];
-  if (g.state === 'idle') return ['稼働中', 'pill-neutral'];
+  if (g.state === 'idle' || g.state === 'done') return ['稼働中', 'pill-neutral'];
+  if (g.state === 'failed') return ['エラー（API）', 'pill-err'];
   if (g.state === 'ended') return ['終了', 'pill-neutral'];
   const since = g.hub && multiBoard ? sinceLabel(boards.find(b => b.slug === g.hub.slug)?.hubLastAlive) : '';
   return [`停止中${since ? ` · ${since}` : ''}`, 'pill-err'];
@@ -443,7 +494,9 @@ function renderSessionList() {
   const opened = g => open.has(`orphans:${g.gid}`);
   // What each row draws, one signature per row, so that a row is redrawn only when its own
   // words change and not whenever any other row's do.
-  const rowSig = (s, st, g) => JSON.stringify([sessionRef(s), st, sessionLabel(s, false, g.data), sessionTip(s, st, g.data), sessionLastText(s, g.data), s.phase || '']);
+  const rowSig = (s, st, g) => JSON.stringify([sessionRef(s), st, sessionLabel(s, false, g.data), sessionTip(s, st, g.data), sessionLastText(s, g.data), s.phase || '',
+    // What the state, the text and the tip are made of; the times that move with every event are not.
+    [s.agentSession?.status, s.agentSession?.pending, s.agentSession?.subagents, s.agentSession?.error]]);
   const rows = new Map();
   for (const g of groups) {
     rows.set(`head:${g.gid}`, groupHeadHtml(g));

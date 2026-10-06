@@ -1267,3 +1267,191 @@ fn a_record_written_after_a_gate_shows_its_worker_moved_on_from_a_parent_hubs_bo
             .is_none()
     );
 }
+
+// ── what each running session's agent says about itself ──
+
+/// A ledger row as the hooks write it, in the state directory's `agent-sessions`.
+fn write_ledger_row(fixture: &Fixture, id: &str, row: serde_json::Value) {
+    let dir = fixture.state.join("agent-sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{id}.json")), row.to_string()).unwrap();
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[test]
+fn a_running_worker_carries_what_its_hooks_last_said() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "one", None, None, running.pid());
+    write_ledger_row(
+        &fixture,
+        "sid-1",
+        serde_json::json!({
+            "sessionId": "sid-1",
+            "status": "waiting",
+            "request": "Bash: rm -rf build\nmore",
+            "pid": running.pid(),
+            "psStarted": ps_started(running.pid()),
+            "updatedAt": 100,
+            "lastEventAt": now_secs(),
+            "subagents": [{"id": "a1"}],
+        }),
+    );
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let one = session_of(&state, "worker-one");
+    assert_eq!(one["agentSession"]["status"], "waiting", "{one}");
+    assert_eq!(one["agentSession"]["request"], "Bash: rm -rf build");
+    assert_eq!(one["agentSession"]["updatedAt"], 100);
+    assert_eq!(one["agentSession"]["subagents"], 1);
+    // A prompt for permission is not a gate.
+    assert!(one.get("waiting").is_none(), "{one}");
+}
+
+#[test]
+fn after_a_clear_the_worker_is_joined_by_its_process() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "one", None, None, running.pid());
+    write_ledger_row(
+        &fixture,
+        "sid-after-clear",
+        serde_json::json!({
+            "sessionId": "sid-after-clear",
+            "status": "running",
+            "activity": "Edit",
+            "pid": running.pid(),
+            "psStarted": ps_started(running.pid()),
+            "lastEventAt": now_secs(),
+        }),
+    );
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let one = session_of(&state, "worker-one");
+    assert_eq!(one["agentSession"]["status"], "running", "{one}");
+    assert_eq!(one["agentSession"]["activity"], "Edit");
+}
+
+#[test]
+fn a_stopped_worker_or_one_without_a_row_has_no_agent_state() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "alive", None, None, running.pid());
+    // A pid that is not running: the worker is stopped, and its row says so too.
+    session_worktree(&fixture, "stopped", None, None, 999_999);
+    write_ledger_row(
+        &fixture,
+        "sid-1",
+        serde_json::json!({"sessionId": "sid-1", "status": "waiting", "lastEventAt": now_secs()}),
+    );
+    let resident = Resident::start(&fixture);
+    let state = state_of(&resident);
+    // The alive worker's saved session is sid-1, so that row is its own, by id.
+    let alive = session_of(&state, "worker-alive");
+    assert_eq!(alive["agentSession"]["status"], "waiting", "{alive}");
+    let stopped = session_of(&state, "worker-stopped");
+    assert_eq!(stopped["present"], false, "{stopped}");
+    assert!(stopped.get("agentSession").is_none(), "{stopped}");
+
+    // A worker whose id and process no row names has none, and never another's by where it runs.
+    let other = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&other, "one", None, None, running.pid());
+    let resident = Resident::start(&other);
+    let state = state_of(&resident);
+    assert!(
+        session_of(&state, "worker-one")
+            .get("agentSession")
+            .is_none()
+    );
+}
+
+#[test]
+fn an_unreadable_ledger_is_said_and_not_taken_for_no_row() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "one", None, None, running.pid());
+    // A file where the directory should be: it cannot be listed.
+    std::fs::create_dir_all(&fixture.state).unwrap();
+    std::fs::write(fixture.state.join("agent-sessions"), "not a directory").unwrap();
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let one = session_of(&state, "worker-one");
+    assert!(one["agentSession"]["error"].is_string(), "{one}");
+    assert!(one["agentSession"].get("status").is_none(), "{one}");
+}
+
+#[test]
+fn the_hubs_row_reaches_its_session() {
+    let fixture = Fixture::new(QUIET);
+    let sleeper = Sleeper::new();
+    let record = fixture.state.join("hubs").join(format!("{SLUG}.json"));
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(
+        &record,
+        serde_json::json!({
+            "pid": sleeper.pid(),
+            "psStarted": ps_started(sleeper.pid()),
+            "hubName": HUB,
+            "cwd": fixture.repo.to_str().unwrap(),
+            "nameInCommand": false,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    write_ledger_row(
+        &fixture,
+        "hub-conversation",
+        serde_json::json!({
+            "sessionId": "hub-conversation",
+            "status": "running",
+            "pid": sleeper.pid(),
+            "psStarted": ps_started(sleeper.pid()),
+            "lastEventAt": now_secs(),
+        }),
+    );
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let hub = session_of(&state, "hub");
+    assert_eq!(hub["present"], true, "{hub}");
+    assert_eq!(hub["agentSession"]["status"], "running", "{hub}");
+}
+
+#[test]
+fn a_row_where_a_worker_runs_is_not_its_row_unless_its_session_or_process_say_so() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "one", None, None, running.pid());
+    let place = worktree.to_str().unwrap();
+    // Another live process, so the row is not dropped for being dead before any join.
+    let other = Sleeper::new();
+    write_ledger_row(
+        &fixture,
+        "sid-elsewhere",
+        serde_json::json!({
+            "sessionId": "sid-elsewhere",
+            "status": "waiting",
+            "cwd": place,
+            "worktree": place,
+            "pid": other.pid(),
+            "psStarted": ps_started(other.pid()),
+            "lastEventAt": now_secs(),
+        }),
+    );
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let one = session_of(&state, "worker-one");
+    assert_eq!(one["present"], true, "{one}");
+    assert!(one.get("agentSession").is_none(), "{one}");
+}

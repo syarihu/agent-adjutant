@@ -285,7 +285,11 @@ function agentCard(task) {
   const hcol = owner ? owner.humanCol : humanColOf(task);
   const compact = task.status === 'backlog' || task.status === 'done';
   const stuck = stuckOf(task);
-  el.className = 'card' + (hcol ? ' waiting' : '') + (stuck && !hcol ? ' stuck' : '') + (compact ? ' compact' : '') + (selectedTaskId === task.id ? ' selected' : '');
+  // A worker waiting on a permission prompt asks a person too, though no gate is open. Not
+  // known in 「すべて」, which has no sessions of its own (sessionOfTask is then not a session).
+  const asking = ['dispatched', 'pr'].includes(task.status) && !hcol ? sessionOfTask(task) : null;
+  const asks = !!asking && sessionState(asking) === 'permission';
+  el.className = 'card' + (hcol || asks ? ' waiting' : '') + (stuck && !hcol ? ' stuck' : '') + (compact ? ' compact' : '') + (selectedTaskId === task.id ? ' selected' : '');
   el.id = `agent-${task.id}`;
   el.dataset.id = task.id;
   if (task._slug) el.dataset.slug = task._slug;
@@ -333,12 +337,15 @@ function agentCard(task) {
     h += `
       <div class="card-worker-status">
         ${hcol ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-warning);">pause_circle</span>'
+               : asks ? '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:14px;color:var(--md-sys-color-warning);">front_hand</span>'
                : alarm ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">pause</span>'
                : stopped ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">pause</span>'
                : '<span class="pulse-dot"></span>'}
         <span style="font-weight:700;${alarm ? 'color:var(--md-sys-color-error);' : ''}">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${alarm ? ' (停止)' : ''}</span>
+        ${asks ? `<span style="font-weight:700;color:var(--md-sys-color-warning);">${permissionLabel(asking)}</span>` : ''}
         ${mins != null ? `<span class="ago" style="margin-left:auto;color:var(--md-sys-color-outline);font-size:11px;">${minutesLabel(mins)}</span>` : ''}
       </div>
+      ${asks && asking.agentSession.request ? `<div style="font-size:11px;color:var(--md-sys-color-outline);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(asking.agentSession.request)}">${esc(asking.agentSession.request)}</div>` : ''}
     `;
   }
 
@@ -487,6 +494,7 @@ function sessionCard(w) {
     ${st ? `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>`
          : `<span class="m3-pill ${w.present ? 'pill-good' : 'pill-neutral'}">${w.present ? '稼働' : '停止'}</span>`}
     ${last ? `<span>最後の出力 ${esc(last)}</span>` : ''}
+    ${s && agentText(s) ? `<span>${esc(agentText(s))}</span>` : ''}
   </div>`;
 
   // Linking writes the task and tells the worker, which a session that is not running cannot read.
