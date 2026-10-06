@@ -20,6 +20,7 @@ use crate::infra::paths::{default_state_dir, state_dir};
 use crate::kernel::identity::current_worktree;
 
 mod address;
+mod agent_session_of;
 mod agent_sessions;
 mod board_record;
 mod claim;
@@ -39,6 +40,9 @@ mod store;
 mod unregister;
 
 pub use address::*;
+// Its first caller is the board (a later issue).
+#[allow(unused_imports)]
+pub use agent_session_of::*;
 pub use agent_sessions::*;
 pub use board_record::*;
 pub use claim::*;

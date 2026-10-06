@@ -295,10 +295,11 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session (or tmux literal `send-keys` with `preset: "tmux"`) |
 | `hubWake` / `workerWake` | the same | override `wake` for one direction |
 | | | *the built-in `focus`, `close` and `wake` reach a session through the terminal it was started in (recorded when it registered), so changing `preset` does not strand sessions started before; sessions with no such record, or one started by a `spawn` template outside tmux, follow the current `preset`* |
-| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` | `claude --session-id {sessionId} --permission-mode auto {prompt}` |
-| `hubRunner` | `{name}` `{sessionId}` `{prompt}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}` |
-| `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {prompt}` |
-| `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {prompt}` |
+| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
+| `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
+| | | *`{settings}` becomes `--settings <file>`, the file holding adjutant's hooks for the session. It is added after `claude` when a template does not name it, unless the template passes its own `--settings`; do not quote it. A binary older than this does not know it, so write it by hand only once every binary sharing the config does* |
 | | | *drop `{name}` and the session is nameless in every listing* |
 | `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
 | `ide` | `{worktree}` | none — the procedures ask rather than guess |

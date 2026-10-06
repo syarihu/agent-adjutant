@@ -676,7 +676,7 @@ fn expected_state(sessions: Value) -> Value {
         "available": true,
         "reason": null
       },
-      "hubRunner": "claude -n {name} --session-id {sessionId} --permission-mode auto {prompt}",
+      "hubRunner": "claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}",
       "hubStart": {
         "available": true
       },

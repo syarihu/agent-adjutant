@@ -1,6 +1,6 @@
 use super::{saved_worker_session, worker_worktree};
 use crate::kernel::{identity, runner};
-use crate::lifecycle::resume_template;
+use crate::lifecycle::{Hooks, agent_hooks_for, resume_template};
 use crate::registry::{self, Context, SavedSession, agent_env, context_as, context_of};
 use std::path::PathBuf;
 
@@ -36,6 +36,8 @@ pub struct Launch {
     pub fresh_session: Option<String>,
     /// The saved session a `--resume` reopens.
     pub resumed: Option<SavedSession>,
+    /// What came of the hook settings the runner may take; `Skipped` is for the caller to say.
+    pub hooks: Hooks,
 }
 
 /// Start the worker agent in the tab `work` just opened.
@@ -96,31 +98,47 @@ pub fn plan_launch(request: &WorkerRequest) -> Result<Planned, String> {
         .unwrap_or("")
         .to_string();
     let prompt = request.prompt.as_deref();
-    let (command, fresh_session) = match &resumed {
-        Some(saved) => {
-            let template = resume_template(
+    // The hook settings are a file, not a record: written on a dry run too, and the same
+    // bytes every time for one binary.
+    let (configured, default) = match &resumed {
+        Some(_) => (
+            resume_template(
                 ctx.settings.agent_resume_runner.as_deref(),
                 "agentResumeRunner",
-            )?;
+            )?,
+            runner::DEFAULT_AGENT_RESUME_RUNNER,
+        ),
+        None => (
+            ctx.settings.agent_runner.as_deref(),
+            runner::DEFAULT_AGENT_RUNNER,
+        ),
+    };
+    let hooks = agent_hooks_for(&ctx.state, configured.unwrap_or(default));
+    let settings = hooks.path().map(|path| path.to_string_lossy());
+    let settings = settings.as_deref();
+    let (command, fresh_session) = match &resumed {
+        Some(saved) => {
             let command = runner::worker_resume_command(
-                template,
+                configured,
                 &agent_env(&ctx),
                 &saved.session_id,
                 prompt.unwrap_or(runner::WORKER_RESUME_PROMPT),
                 &worktree_text,
                 &title,
+                settings,
             );
             (command, None)
         }
         None => {
             let session = registry::new_session_id()?;
             let command = runner::worker_command(
-                ctx.settings.agent_runner.as_deref(),
+                configured,
                 &agent_env(&ctx),
                 &session,
                 prompt.unwrap_or(runner::WORKER_STARTUP_PROMPT),
                 &worktree_text,
                 &title,
+                settings,
             );
             let records = runner::records_session(
                 ctx.settings.agent_runner.as_deref(),
@@ -137,5 +155,6 @@ pub fn plan_launch(request: &WorkerRequest) -> Result<Planned, String> {
         command,
         fresh_session,
         resumed,
+        hooks,
     })))
 }

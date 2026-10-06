@@ -90,5 +90,21 @@ pub fn exe_path() -> String {
         .unwrap_or_else(|_| "adjutant".to_string())
 }
 
+/// `exe_path` for a caller that writes the path into a file a later process runs, where the
+/// fallback `adjutant` (found through a `PATH` the hook may not have) would be a silent
+/// no-op. The reason is in the error because it is what the person is told.
+pub fn exe_path_absolute() -> Result<String, String> {
+    let path = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+    if !path.is_absolute() {
+        return Err(format!(
+            "this binary's path is not absolute: {}",
+            path.display()
+        ));
+    }
+    path.into_os_string()
+        .into_string()
+        .map_err(|path| format!("this binary's path is not valid UTF-8: {path:?}"))
+}
+
 #[cfg(test)]
 mod tests;

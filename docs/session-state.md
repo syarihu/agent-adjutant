@@ -241,16 +241,17 @@ Both routes are needed, for different sessions.
 file under the state dir holding the table above, and passes it with `--settings <file>`. Nobody
 edits a global settings file, and removing adjutant leaves nothing behind in the agent's settings.
 
-- The command names `adj` by absolute path (`infra::paths::exe_path`; `PATH` is not reliable inside
-  a hook), guarded so that the command always exits 0: `[ ! -x <path> ] || <path> hook claude ||
-  true`. Claude Code treats exit 2 as blocking (on `Stop` it keeps the agent from stopping and feeds
-  it the text) and any other non-zero exit as a hook error. A binary that is gone, or one too old to
-  know `adj hook` (clap refuses unknown arguments with exit 2), then leaves a running session's
-  hooks doing nothing until it is restarted. The receiver itself also catches panics and exits 0.
+- The command names `adj` by absolute path (`infra::paths::exe_path_absolute`; `PATH` is not
+  reliable inside a hook), guarded so that the command always exits 0: `[ ! -x <path> ] || <path>
+  hook claude || true`. Claude Code treats exit 2 as blocking (on `Stop` it keeps the agent from
+  stopping and feeds it the text) and any other non-zero exit as a hook error. A binary that is
+  gone, or one too old to know `adj hook` (clap refuses unknown arguments with exit 2), then leaves
+  a running session's hooks doing nothing until it is restarted. The receiver itself also catches
+  panics and exits 0.
   The path is shell-quoted wherever it appears in a command, here and in the `--global` entries; a
   path with a space would otherwise turn every hook into a no-op that the guard hides. When
-  `exe_path` cannot give an absolute path, the launch skips the injection and says why, rather than
-  writing its fallback into the file.
+  `exe_path_absolute` cannot give an absolute path, the launch skips the injection and says why,
+  rather than writing a fallback into the file.
 - The file is named after the binary it calls, `agent-hooks/claude-<digest of the path>.json`, so a
   development build and an installed one sharing the state dir do not keep rewriting one file. It is
   written when missing or different, through a temporary file and a rename. Files for binaries that
@@ -259,15 +260,16 @@ edits a global settings file, and removing adjutant leaves nothing behind in the
   it is. Like any key under rule 10, a user writes `{settings}` into a template by hand only once
   every binary in use knows it; the default runners are each binary's own, so they are safe.
 - The runner templates gain a `{settings}` placeholder, rendered in `kernel::runner::worker_line`
-  and `hub_line` as `--settings <file>`, with the path quoted like the other placeholders
-  (`Sub::Quoted`). When the runner's agent is `claude` (`runner::agent_from_runner`) and the
-  template does not name `{settings}`, it is added after the agent's name, unless the template
-  already passes its own `--settings`: adjutant leaves the user's alone, and that session has no
-  injected hooks. A second `--settings` would not add to the user's: Claude Code takes the last
-  `--settings` flag and drops the earlier ones without an error (checked on Claude Code 2.1.291),
-  so the rule of not adding one stands. adjutant does not try to parse a template the shell does
-  not read as one command (a pipe, `;`): it inserts after the agent's name as above, and a user
-  whose template needs it elsewhere names `{settings}` there. The four default runners name it.
+  and `hub_line` as `--settings <file>`, with the path quoted but the flag itself not (`Sub::Raw`,
+  since it is two words, or none when there is no file). When the runner's agent is `claude`
+  (`runner::agent_from_runner`) and the template does not name `{settings}`, it is added after the
+  agent's name, unless the template already passes its own `--settings`: adjutant leaves the
+  user's alone, and that session has no injected hooks. A second `--settings` would not add to the
+  user's: Claude Code takes the last `--settings` flag and drops the earlier ones without an error
+  (checked on Claude Code 2.1.291), so the rule of not adding one stands. adjutant does not try to
+  parse a template the shell does not read as one command (a pipe, `;`): it inserts after the
+  agent's name as above, and a user whose template needs it elsewhere names `{settings}` there. The
+  four default runners name it.
 
 **Written once by `adj setup claude`, for everything else.** Sessions adjutant did not start, and
 agents with no per-session settings flag (Codex and Antigravity read hooks only from a global file),

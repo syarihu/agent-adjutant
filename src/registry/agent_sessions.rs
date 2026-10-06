@@ -5,8 +5,6 @@ use super::*;
 
 /// The row of one session, with nothing judged about whether its process is still there.
 /// An id that is not a file name is no row at all.
-// Not called yet: the join from a hub or worker to its row is the first caller.
-#[allow(dead_code)]
 pub fn agent_session(root: &Path, session_id: &str) -> Recorded<AgentSession> {
     if !valid_session_id(session_id) {
         return Recorded::Absent;

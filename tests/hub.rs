@@ -573,3 +573,50 @@ fn a_relative_xdg_config_home_reaches_the_hub_tab_as_an_absolute_path() {
         "XDG_CONFIG_HOME is not absolute: {value}"
     );
 }
+
+/// The one file under `agent-hooks/` a dry run wrote, read back.
+fn written_hooks(fixture: &Fixture) -> (PathBuf, serde_json::Value) {
+    let files: Vec<PathBuf> = std::fs::read_dir(fixture.state.join("agent-hooks"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    let settings = serde_json::from_str(&std::fs::read_to_string(&files[0]).unwrap()).unwrap();
+    (files[0].clone(), settings)
+}
+
+#[test]
+fn the_default_runner_passes_the_hook_settings_the_launch_wrote() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.ok(&["hub", "--dry-run"]);
+    let (file, settings) = written_hooks(&fixture);
+    assert!(
+        out.contains(&format!("--settings {}", file.display())),
+        "{out}"
+    );
+    assert!(
+        file.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("claude-")
+    );
+    // The file names the binary that ran, by its absolute path.
+    let command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(command.contains(BIN), "{command}");
+    assert!(command.ends_with(" hook claude || true"), "{command}");
+}
+
+#[test]
+fn a_runner_that_is_not_claude_is_given_no_hook_settings() {
+    let fixture = Fixture::new(
+        r#"{"notification": "true",
+            "defaults": {"hubRunner": "true {name} {prompt}"},
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget"}}}"#,
+    );
+    let out = fixture.ok(&["hub", "--dry-run"]);
+    assert!(out.contains("true "), "{out}");
+    assert!(!out.contains("--settings"), "{out}");
+    assert!(!fixture.state.join("agent-hooks").exists());
+}
