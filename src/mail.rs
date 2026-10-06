@@ -16,13 +16,15 @@ use std::path::{Path, PathBuf};
 use crate::infra::clock::{now_secs, utc_stamp};
 use crate::infra::fs::{CLAIM_ATTEMPTS, remove_if_present, stage};
 use crate::registry::{
-    Context, ProcessTable, hub_records, hub_session, hub_sessions_for, hub_status, hub_status_with,
-    worker_hub_key, worker_status,
+    AgentSession, Context, ProcessTable, hub_agent_session, hub_records, hub_session,
+    hub_sessions_for, hub_status, hub_status_with, worker_agent_session, worker_hub_key,
+    worker_status,
 };
 
 mod ack;
 mod clear_outbox;
 mod deliver;
+mod hold;
 mod list;
 mod list_hubs;
 mod model;

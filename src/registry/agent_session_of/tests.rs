@@ -116,3 +116,46 @@ fn a_ledger_that_cannot_be_listed_is_an_error_and_not_an_absence() {
     };
     assert!(agent_session_of(dir.path(), &table(), &identity).is_err());
 }
+
+#[test]
+fn a_hub_is_found_by_the_session_it_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    put(dir.path(), &row("hub-1", Some(5), Some("A"), 10));
+    save_hub_session(
+        dir.path(),
+        "acme-widget",
+        "acme/widget",
+        None,
+        "adjutant-x",
+        "hub-1",
+    )
+    .unwrap();
+    let found = hub_agent_session(dir.path(), &table(), "acme-widget");
+    assert_eq!(found.map(|row| row.session_id).as_deref(), Some("hub-1"));
+}
+
+#[test]
+fn a_worker_is_found_by_its_record_after_a_clear() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    put(state.path(), &row("after-clear", Some(5), Some("A"), 30));
+    save_worker_session(dir.path(), "t", None, None, "before-clear").unwrap();
+    crate::infra::fs::write_json(
+        &worker_record_path(dir.path()),
+        &serde_json::json!({"pid": 5, "psStarted": "A"}),
+    )
+    .unwrap();
+    let found = worker_agent_session(state.path(), &table(), dir.path());
+    assert_eq!(
+        found.map(|row| row.session_id).as_deref(),
+        Some("after-clear")
+    );
+}
+
+#[test]
+fn an_agent_with_no_saved_session_and_no_record_has_no_row() {
+    let dir = tempfile::tempdir().unwrap();
+    put(dir.path(), &row("s1", Some(5), Some("A"), 10));
+    assert!(hub_agent_session(dir.path(), &table(), "acme-widget").is_none());
+    assert!(worker_agent_session(dir.path(), &table(), dir.path()).is_none());
+}

@@ -91,6 +91,33 @@ pub fn deliver_to_hub_with_wake(
     Ok(post_to_hub_with_wake(ctx, message, wake)?.follow_up(ctx, announce))
 }
 
+/// Hold the wake while the session's row says its agent is busy, whatever the terminal: the
+/// screen is read for tmux alone, and a row is the one thing that says it for iTerm2 or a
+/// generic runner. A wake that is turned off is left to answer for itself.
+fn hold_for_row(
+    wake: &Wake,
+    pid: u32,
+    read: impl Fn() -> Option<AgentSession>,
+) -> Result<(), terminal::Performed> {
+    if wake.hook.is_off() {
+        return Ok(());
+    }
+    hold::wait_for_row(read, std::thread::sleep, now_secs, pid)
+}
+
+/// Whether the wake to a hub or to the worker in `worktree` will look at the session's row
+/// before typing, because the session has one.
+pub fn wake_holds_for_session(ctx: &Context, worktree: &Path, to_hub: bool) -> bool {
+    let (wake, _, _) = wake_settings(&ctx.settings, to_hub);
+    !wake.hook.is_off()
+        && if to_hub {
+            hub_agent_session(&ctx.state, &ProcessTable::each(), &ctx.repo.slug)
+        } else {
+            worker_agent_session(&ctx.state, &ProcessTable::each(), worktree)
+        }
+        .is_some()
+}
+
 /// Poke the hub's tab with the wake line, without leaving a message for it. `None` when the hub
 /// is not running; otherwise what the wake came to, which for a running hub with no process to
 /// find a tab by is an error saying so.
@@ -104,16 +131,23 @@ pub fn wake_hub(ctx: &Context, subject: &str) -> Option<Result<terminal::Perform
     }
     let (wake, default_line, runner) = wake_settings(&ctx.settings, true);
     Some(match hub.pid {
-        Some(pid) => terminal::wake(
-            &ctx.settings.terminal,
-            hub.terminal.as_ref(),
-            wake,
-            pid,
-            subject,
-            default_line,
-            look_before_typing(wake_agent(runner)),
-            false,
-        ),
+        Some(pid) => {
+            if let Err(held) = hold_for_row(wake, pid, || {
+                hub_agent_session(&ctx.state, &ProcessTable::each(), &ctx.repo.slug)
+            }) {
+                return Some(Ok(held));
+            }
+            terminal::wake(
+                &ctx.settings.terminal,
+                hub.terminal.as_ref(),
+                wake,
+                pid,
+                subject,
+                default_line,
+                look_before_typing(wake_agent(runner)),
+                false,
+            )
+        }
         None => Err("the hub has no process to find its tab by".to_string()),
     })
 }
@@ -202,16 +236,21 @@ pub fn deliver_to_worker(
     let (wake, default_line, runner) = wake_settings(&ctx.settings, false);
     let reached = reached_after(status.present, wake_needed, || {
         status.pid.map(|pid| {
-            terminal::wake(
-                &ctx.settings.terminal,
-                status.terminal.as_ref(),
-                wake,
-                pid,
-                subject,
-                default_line,
-                look_before_typing(wake_agent(runner)),
-                false,
-            )
+            match hold_for_row(wake, pid, || {
+                worker_agent_session(&ctx.state, &ProcessTable::each(), worktree)
+            }) {
+                Err(held) => Ok(held),
+                Ok(()) => terminal::wake(
+                    &ctx.settings.terminal,
+                    status.terminal.as_ref(),
+                    wake,
+                    pid,
+                    subject,
+                    default_line,
+                    look_before_typing(wake_agent(runner)),
+                    false,
+                ),
+            }
         })
     });
     if wake_needed

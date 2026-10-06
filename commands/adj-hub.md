@@ -727,7 +727,8 @@ itself.
   same thing in two places and ack only one of them.
   **When woken, start by looking at `adjutant_pending`.** On tmux the wake is typed only at an empty
   prompt: while this tab shows a question or someone's own typing (or a screen it does not
-  recognise), nothing is typed and the person is notified instead.
+  recognise), nothing is typed and the person is notified instead. On any terminal, a session with a
+  row in `adj agent-sessions` is not woken while the row is `running` or `waiting`.
 
 - **Even so, do not count on being woken.** Some setups turn `hubWake` off, and waking can fail
   (delivery succeeded, so the sender gets no error). That is why when to look at `adjutant_pending`
@@ -761,7 +762,7 @@ so it arrives whatever that tab is running.
   reads it itself, and notices that do not wake need no human interrupt either). On tmux the wake
   is typed only at the worker's empty prompt: while its screen shows a question or someone's own
   typing (or one it does not recognise), nothing is typed, `woken` is false and the reply's
-  `wakeNote` says why
+  `wakeNote` says why. On any terminal, a worker whose row is `running` or `waiting` is held too
 
 **The first line of `subject` is the signal.** `[question {YYYYMMDD-HHMMSS}]` / `[ack]` / anything
 else (a notice). Always give `[question]` an identifier — the worker's answer comes back to the inbox
