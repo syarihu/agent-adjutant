@@ -124,7 +124,8 @@ event: a sweep checks processes, and `PostToolUse` fires after every tool call. 
 
 A sweep only runs when some session sends one of those events, so with nothing else running a closed
 tab's row stays on disk. Readers therefore apply the same check: `agent_sessions` leaves out rows
-the sweep would remove (a dead pid, or no pid and quiet for 24 hours), through `agent_sessions_with(root, table)` (rule 7), so the board's
+the sweep would remove (a dead pid, or no pid and quiet for 24 hours), through
+`agent_sessions_with(root, table)` (rule 7), so the board's
 poll and `adj agent-sessions` never show a closed tab as `running`.
 
 Claude Code sets `CLAUDE_PID` for hook commands (documented from v2.1.214), so a Claude Code row
