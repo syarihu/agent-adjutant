@@ -567,9 +567,10 @@ function renderTaskView() {
   // left an entry would make it change the address without changing the page.
   history.replaceState(null, '', `#task/${encodeURIComponent(task.id)}/${taskView.tab}`);
 
-  // The queue beside the task only while the task is on it: otherwise the list is about
-  // something else, and the page is better spent on the task.
-  const onQueue = columnOf(task) === 'attention';
+  // The queue beside the task only while the task is on the person's board (an open gate, or a
+  // PR waiting on the person), decided as the board's columns decide it: otherwise the list is
+  // about something else, and the page is better spent on the task.
+  const onQueue = !!humanColOf(task);
   root.classList.toggle('with-rail', onQueue);
   rail.classList.toggle('hidden', !onQueue);
   if (onQueue) {
