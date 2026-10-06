@@ -6,7 +6,7 @@ build it. Today that state comes only from
 [agent-proctor](https://github.com/syarihu/agent-proctor)'s hooks and ledger, which means installing
 proctor and wiring its hooks into each agent's global settings. This page covers the foundation: the
 hook receiver, the ledger, and how the hooks reach the sessions adjutant starts. Showing the state
-on the board is a later piece of work. The sections follow the questions in
+on the board has landed ([#506](https://github.com/syarihu/agent-adjutant/issues/506)). The sections follow the questions in
 [#496](https://github.com/syarihu/agent-adjutant/issues/496); the last one splits the work into
 issues.
 
@@ -26,7 +26,7 @@ the ledger are the parts adjutant needs.
 | Naming hint on `UserPromptSubmit` and `proctor title` | Stays. adjutant names its sessions when it starts them; a second hint would be injected twice next to proctor's |
 | `proctor setup`, which prints a guide for the agent to merge by hand | Replaced by injection at launch and an `adj setup` that writes the hooks itself |
 | `proctor worktree ls`, worktree conventions, `proctor-worktree` skill | Stays in proctor (see [Worktree conventions and the hub procedure](#worktree-conventions-and-the-hub-procedure)) |
-| iTerm2 sidebar app, its reaper, read marks, approval watcher for Antigravity, notifications | Stays. The board is adjutant's view, and its sessions tab is a later issue |
+| iTerm2 sidebar app, its reaper, read marks, approval watcher for Antigravity, notifications | Stays. The board is adjutant's view, and its sessions tab landed in [#506](https://github.com/syarihu/agent-adjutant/issues/506) |
 | `attach`, `rm`, avatars, logs | Stays |
 
 Two behaviours of proctor's receiver carry over as rules, because each one fixes something seen in
@@ -370,18 +370,20 @@ until its own issue lands.
 
 ## How adjutant uses it
 
-None of this is in the foundation; it is listed so the ledger carries what it will need.
+The board, the permission part of gates and cards, and the hub's line landed in
+[#506](https://github.com/syarihu/agent-adjutant/issues/506); the rest is not in the foundation and
+is listed so the ledger carries what it will need.
 
-- **The board.** A sessions tab in the sidebar, and the session cards, read `agent_sessions` on the
+- **The board** (landed, #506). A sessions tab in the sidebar, and the session cards, read `agent_sessions` on the
   existing 2-second poll of `/api/state`. No push channel is added.
 - **Waking.** `mail::read_screen` guesses an agent's state from a tmux screen, and works for neither
   iTerm2 nor `Generic`. A row in `waiting` or `running` says not to type now; `idle` or `done` says
   it is safe; a `running` row not heard from in ten minutes is not believed, since an interrupted turn
   sends no `Stop`. The screen check stays for typing the line itself, and as the fallback with no row.
 - **Gates and cards.** A worker in `waiting` on a permission prompt is waiting on a person even with
-  no gate open; the card can say so. A worker whose row went `done` and stayed there with no phase
+  no gate open, and the card says so (landed, #506). Not yet: a worker whose row went `done` and stayed there with no phase
   change is a better "stuck" signal than the phase age alone.
-- **The hub's line on the board.** [#497](https://github.com/syarihu/agent-adjutant/issues/497)
+- **The hub's line on the board** (landed, #506). [#497](https://github.com/syarihu/agent-adjutant/issues/497)
   puts one line for the hub above the board's columns, with its last tmux line and its inbox. The
   hub's row adds whether it is running, idle or waiting on a question, and how many sub-agents it
   has. The hub is joined to its row the same way as a worker (`registry::agent_session_of`).

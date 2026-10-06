@@ -40,8 +40,6 @@ mod store;
 mod unregister;
 
 pub use address::*;
-// Its first caller is the board (a later issue).
-#[allow(unused_imports)]
 pub use agent_session_of::*;
 pub use agent_sessions::*;
 pub use board_record::*;

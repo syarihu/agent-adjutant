@@ -84,6 +84,26 @@ function gitFactsHtml(s) {
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
 }
 
+/* What the agent's hooks say about a running session, as facts for the panel; empty for a
+   session that is not running or has no row. The ledger's words are text, escaped where they
+   are drawn, and never a class. */
+function agentFactsHtml(s) {
+  const a = s?.present ? s.agentSession : null;
+  if (!a) return '';
+  if (a.error) return `<div class="tp-muted">${esc(`エージェントの状態を読めません: ${a.error}`)}</div>`;
+  const known = agentStateOf(s) && ledgerState(s, state);
+  const mins = a.updatedAt != null && state.now != null ? minutesSince(a.updatedAt, state.now) : null;
+  const doing = known === 'permission' && a.request ? monoKv('許可を求めている内容', a.request)
+    : a.activity && known === 'working' ? monoKv('作業中', a.activity) : '';
+  return `<div class="tp-kvs">
+    ${kv('エージェントの状態', esc(known === 'permission' ? permissionLabel(s) : known ? STATE_LABEL[known] : a.status || '—'))}
+    ${mins != null ? kv('いつから', esc(agoLabel(mins))) : ''}
+    ${doing}
+    ${a.pending ? kv('ターン終了（保留）', esc(a.pending)) : ''}
+    ${a.subagents > 0 ? kv('サブエージェント', esc(`${a.subagents} 件`)) : ''}
+  </div>`;
+}
+
 /* ── 詳細 of a session with no task ── */
 
 const sideNote = text => `<div class="tp-muted">${esc(text)}</div>`;
@@ -117,7 +137,7 @@ function sessDetailHtml(s, pane) {
   const busy = sessBusy.size > 0;
   const acts = sessionButtons(s).menu.map(m => actionButtonHtml(m, { busy })).join('');
   return `<div class="sess-detail">
-    <div class="m3-filled-card">${secTitle('このセッション')}${sideNote(what)}${jump}${link}</div>
+    <div class="m3-filled-card">${secTitle('このセッション')}${sideNote(what)}${agentFactsHtml(s)}${jump}${link}</div>
     <div class="m3-filled-card">${secTitle('ブランチと worktree')}
       <div class="tp-kvs">${monoKv('ブランチ', s.branch || '—')}${s.worktree ? monoKv('worktree', baseName(s.worktree), s.worktree) : ''}</div>
       ${gitFactsHtml(s)}

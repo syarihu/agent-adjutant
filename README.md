@@ -771,6 +771,14 @@ the gate directories.
   while its record is still there; a record removed by stop or cleanup starts fresh. An older
   record without `phases` reads as its current phase only. `phase` and `phaseAt` remain the
   current one.
+- `agentSession`: what the agent's hooks last said about a running session, from the agent session
+  ledger (`adjutant agent-sessions`): `status` (`idle`, `running`, `waiting` on a permission prompt,
+  `done`, `failed`, or a newer word passed through), `pending`, `updatedAt`, `lastEventAt`,
+  `activity` and `request` (first line, cut to 200 characters), and `subagents` (a count). Left out
+  for a session that is not running or has no row (no hooks). When the ledger cannot be listed it is
+  `{error}`. The セッション tab, the hub's entry and the cards show a session `waiting` on a
+  permission prompt as waiting on a person even with no gate open (許可待ち with a `request`,
+  入力待ち without).
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
 `name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether
@@ -917,6 +925,8 @@ when it is stopped; for a queued child the sidebar can start its hub, or ask a r
 take the head of the queue), the note, and the cached issue body cut to six lines with its refetch. For a
 hub it shows the inbox, the workers it started, a parent-task hub's children and the command it
 runs; for a session with no task or a worktree with no session, what it is and its git state.
+For a running session it also shows what the agent's hooks last said (state, since when, the tool
+or the permission asked for, sub-agents).
 The task, gates and history of a session under a parent-task hub are read from that hub's own
 board. The git state is read when a session is selected, when its phase or branch changes and
 on the refresh button, never on a timer. From 1400px up the choice to show the sidebar is kept
