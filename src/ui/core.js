@@ -258,13 +258,13 @@ function updateNotifyButton() {
     return;
   }
   if (Notification.permission === 'granted') {
-    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
+    btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
     btn.title = '確認依頼のデスクトップ通知が有効です';
   } else if (Notification.permission === 'denied') {
-    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
+    btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
-    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">notifications</span><span>通知を許可</span>';
+    btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications</span><span>通知を許可</span>';
     btn.title = '確認依頼が届いたときにデスクトップ通知を受け取る';
   }
 }

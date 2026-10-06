@@ -161,7 +161,7 @@ function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiti
   const term = st.stopped ? ''
     : `<button type="button" class="hubterm-btn" data-hub-term="${esc(b.slug)}" title="この hub を開く" aria-label="この hub を開く"><span class="material-symbols-outlined" aria-hidden="true">terminal</span></button>`;
   const toggle = chevron
-    ? `<button type="button" class="repo-toggle" data-fold="${esc(b.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : '';
+    ? `<button type="button" class="repo-toggle" data-fold="${esc(b.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : '';
   return `<div class="board-row ${child ? 'child' : 'repo'}${st.stopped ? ' stopped' : ' live'}" role="link" tabindex="0" data-board="${esc(b.slug)}"${current ? ' aria-current="page"' : ''} title="${esc(boardName(b))}">
     <span class="avatar" aria-hidden="true">${esc(initialsOf(b))}<span class="mini-badge">${own || ''}</span></span>
     <span class="hub-dot ${st.tone}" title="${esc(st.stopped ? '停止中' : '稼働中')}"></span>
@@ -220,7 +220,7 @@ function renderBoardRows() {
       rows += `<div class="board-row repo unlinked" title="${esc(r.nwo)}">
         <span class="avatar" aria-hidden="true">${esc((r.nwo.split('/').pop() || '').slice(0, 2).toUpperCase())}</span>
         <span class="txt"><span class="name">${esc(r.nwo.split('/').pop())}</span><span class="sub">${esc(r.nwo.split('/')[0])}</span></span>
-        <button type="button" class="repo-toggle" data-fold="${esc(r.nwo)}" aria-expanded="${!folded}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button></div>`;
+        <button type="button" class="repo-toggle" data-fold="${esc(r.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button></div>`;
     }
     for (const c of r.children) {
       rows += boardRowHtml(c, { child: true, waiting: c.waiting || 0, working: c.working || 0 });
