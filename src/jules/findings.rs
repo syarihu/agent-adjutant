@@ -9,19 +9,41 @@ use crate::task;
 /// Given up on after `LOGIN_TIMEOUT`: `gh` waiting on a login prompt or a network that has
 /// gone should not hold up a command that has more to do.
 pub fn github_login(main: &str) -> Option<String> {
+    login(main).ok()
+}
+
+/// `github_login`, or an error that says why `gh` could not tell: it did not run or answer in
+/// time, it exited with an error, or it printed nothing.
+pub(super) fn login(main: &str) -> Result<String, String> {
+    asked_login(main).map_err(|reason| {
+        format!("cannot tell which GitHub account gh is signed in as (`gh auth status`): {reason}")
+    })
+}
+
+fn asked_login(main: &str) -> Result<String, String> {
     let run = crate::infra::gh::run(
         Some(main),
         &["api", "user", "--jq", ".login"],
         std::time::Instant::now() + LOGIN_TIMEOUT,
-    )
-    .ok()
-    .filter(|run| run.ok)?;
+    )?;
+    if !run.ok {
+        let stderr = run.stderr.trim();
+        return Err(if stderr.is_empty() {
+            "gh exited with an error".to_string()
+        } else {
+            stderr.to_string()
+        });
+    }
     let login = run.stdout.trim().to_string();
-    (!login.is_empty()).then_some(login)
+    if login.is_empty() {
+        return Err("gh printed no login".to_string());
+    }
+    Ok(login)
 }
 
-/// How long `github_login` waits for `gh`.
-const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long `login` waits for `gh`. As long as the other `gh` deadlines: a loaded machine can
+/// take seconds just to start it, while one hanging on a login prompt is still given up on.
+const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// How long `findings` waits for `gh`: a paginated listing can be several requests, and a
 /// board connection thread waits on it.
@@ -94,10 +116,10 @@ fn not_findings_by(main: &str) -> Result<Vec<String>, String> {
 fn signed_in(main: &str) -> Result<String, String> {
     static ME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
     let mut me = ME.lock().unwrap_or_else(|e| e.into_inner());
-    if me.is_none() {
-        *me = github_login(main);
+    if let Some(cached) = me.as_ref() {
+        return Ok(cached.clone());
     }
-    me.clone().ok_or_else(|| {
-        "cannot tell which GitHub account gh is signed in as (`gh auth status`)".to_string()
-    })
+    let who = login(main)?;
+    *me = Some(who.clone());
+    Ok(who)
 }

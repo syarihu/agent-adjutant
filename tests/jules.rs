@@ -737,6 +737,36 @@ fn review_bot_comments_are_listed_and_passed_on_once_in_the_person_s_name() {
     assert!(!posted.exists(), "posted a second time");
 }
 
+/// `gh` not saying who is signed in is an error that carries gh's own reason.
+#[test]
+fn why_gh_could_not_say_who_is_signed_in_reaches_the_error() {
+    let fixture = Fixture::new(&config("false"));
+    let id = task_in_review(&fixture);
+    let stubs = fixture.repo.join("stub-bin");
+    stub_bin(
+        &stubs,
+        "gh",
+        "#!/bin/sh\n\
+         case \"$1 $2\" in\n\
+         'api user') echo boom >&2; exit 1 ;;\n\
+         *) exit 1 ;;\n\
+         esac\n",
+    );
+    let path = path_with(&stubs);
+    let out = fixture
+        .command(["jules", "findings", "--id", &id, "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cannot tell which GitHub account"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("boom"), "{stderr}");
+}
+
 #[test]
 fn a_comment_that_is_not_a_finding_is_not_passed_on() {
     let fixture = Fixture::new(&config("false"));
@@ -791,7 +821,8 @@ fn new_review_comments_on_a_jules_pr_are_brought_to_the_hub_once() {
     let (path, _) = stub_gh(&fixture);
     let (mut board, url) = serve_board(&fixture, &[("PATH", &path)]);
 
-    // The board read drives the work, so it stays in the wait.
+    // The board read drives the work, so it stays in the wait. The hub is told first and the
+    // task written after, so the wait is for both before the board is killed.
     let listed = wait_until("the hub was told about the review", || {
         let _ = fetch_state(&url);
         let listed = fixture.json(&["pending", "--json"]);
@@ -800,7 +831,9 @@ fn new_review_comments_on_a_jules_pr_are_brought_to_the_hub_once() {
             .unwrap()
             .iter()
             .any(|m| m["kind"] == "jules-review");
-        (told, listed)
+        let written =
+            fixture.json(&["task", "show", "--id", &id])["announced"] == serde_json::json!(["11"]);
+        (told && written, listed)
     });
     board.kill().unwrap();
     board.wait().unwrap();

@@ -55,8 +55,7 @@ pub fn relay(
         // to `gh auth switch`, and a board that remembered the old account would go on
         // refusing — or, switched the other way, let the comment go up in the wrong name.
         if let Some(by) = &task.jules_by {
-            let me = github_login(&ctx.repo.main)
-                .ok_or("cannot tell which GitHub account gh is signed in as (`gh auth status`)")?;
+            let me = login(&ctx.repo.main)?;
             if &me != by {
                 return Err(format!(
                     "gh is signed in as {me}, but {by} started this Jules session and Jules answers only {by}: switch accounts with `gh auth switch`"
