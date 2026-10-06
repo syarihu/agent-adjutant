@@ -290,9 +290,9 @@ script, piping its stdin to it. Without it the rows simply lack those fields.
 adjutant already depends on the user's status line in one place: `task::pick_review_engine` reads
 `rate-limit-cache.json`, which a status line script writes. Once the relay exists, `adj
 review-engine` reads the five-hour and seven-day figures from the row with the caller's agent and
-`configDir` and the newest `lastEventAt`, if it is under 15 minutes old as the cache must be (the cache file is per config dir today, and two accounts have two sets of
-limits) instead, and keeps the cache file as the fallback for a user who has it and not the
-relay. That is a separate issue, so the review engine does not change in the foundation.
+`configDir` and the newest `lastEventAt`, if it is under 15 minutes old as the cache must be. The
+cache file is per config dir today, and two accounts have two sets of limits. It keeps the cache
+file as the fallback for a user who has it and not the relay. That is a separate issue, so the review engine does not change in the foundation.
 
 ## Which agents, in what order
 
@@ -470,8 +470,8 @@ cannot read iTerm2 or a generic runner, so there adjutant types blind.
 
 ## Proposal
 
-Use the session's row when there is one: hold the wake while it is `running` or `waiting`. Keep the screen
-check as the fallback.
+Use the session's row when there is one: hold the wake while it is `running` or `waiting`. Keep the
+screen check as the fallback.
 ```
 
 **7. The review engine reads rate limits from a cache file the user's status line must write**
