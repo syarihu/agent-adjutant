@@ -442,17 +442,25 @@ function renderColumns(force = false) {
     ab.innerHTML = '';
     // A session with no task has no phase to place it by, so it sits with the work that is
     // under way; a column that does not draw these cards sends them to 実装 so none vanishes.
-    const known = new Set((state.tasks || []).map(t => t.worktree).filter(Boolean));
+    // The repository's board also lists the parent-task hubs' tasks (`hubTasks`), so their workers have cards.
+    const all = [...(state.tasks || []), ...(state.hubTasks || [])];
+    const known = new Set(all.map(t => t.worktree).filter(Boolean));
+    // The hub this worker's board is: its own tag in 「すべて」, else this page's. Unknown means nothing is told apart.
+    const ownSlugOf = w => w._slug || pageHub()?.slug || null;
+    // A task id is only unique within a hub, so a worker belongs to a card of the hub it reports to.
+    const ofHub = (t, w) => t.ownerHub ? t.ownerHub.slug === w.hubSlug : !ownSlugOf(w) || !w.hubSlug || w.hubSlug === ownSlugOf(w);
     // A worker that names a task of the board belongs to that task's card, which finds its session by `s.task`.
-    const ofBoard = w => w.task && (state.tasks || []).some(t => t.id === w.task && (!w._slug || t._slug === w._slug));
-    const bare = (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w));
+    const ofBoard = w => w.task && all.some(t => t.id === w.task && (!w._slug || t._slug === w._slug) && ofHub(t, w));
+    // A worker that reports to another hub is that hub's, and its board has the card.
+    const elsewhere = w => !!w.task && !!ownSlugOf(w) && !!w.hubSlug && w.hubSlug !== ownSlugOf(w);
+    const bare = (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w) && !elsewhere(w));
     const bareCol = w => {
       const c = AGENT_COL_OF_PHASE[w.phase];
       return c && c !== 'before' && c !== 'done' ? c : 'implement';
     };
     for (const def of AGENT_COLUMNS) {
       const bareIn = def.id === 'before' || def.id === 'done' ? [] : bare.filter(w => bareCol(w) === def.id);
-      const items = (state.tasks || []).filter(t => agentColOf(t) === def.id);
+      const items = all.filter(t => agentColOf(t) === def.id);
       const isNarrow = def.id === 'before' || def.id === 'done';
       let older = [];
       let displayItems = items;
@@ -651,8 +659,8 @@ function relayHtml(task) {
   return h + `</div>`;
 }
 
-/* The board a card came from, which only 「すべて」 draws cards of. */
-const slugOf = el => scopeAll() ? el.closest('[data-slug]')?.dataset.slug || null : null;
+/* The board a card came from: 「すべて」 draws cards of several, and a parent-task hub's card on the repository board is that hub's. */
+const slugOf = el => el.closest('[data-owner]')?.dataset.slug || (scopeAll() ? el.closest('[data-slug]')?.dataset.slug || null : null);
 
 document.addEventListener('click', e => {
   if (!e.target.closest('#boards')) return;

@@ -198,6 +198,14 @@ fn board() -> (Fixture, Resident) {
         );
     }
 
+    // A task of the parent-task hub, which the repository's board shows apart from its own.
+    write(
+        &state.join("tasks").join(FEATURE_SLUG).join("WID-9.json"),
+        json!({"id": "WID-9", "kind": "start", "title": "Task WID-9", "doneWhen": "pr",
+               "autoStart": true, "order": 0, "status": "dispatched",
+               "createdAt": "20260922T035200Z", "updatedAt": "20260922T035200Z"}),
+    );
+
     let gates = state.join("gates").join(SLUG);
     write(
         &gates.join("answered/20260922T040500Z-plan.json"),
@@ -548,6 +556,32 @@ fn expected_tasks() -> Value {
     ])
 }
 
+fn expected_hub_tasks() -> Value {
+    json!([
+      {
+        "autoStart": true,
+        "createdAt": "20260922T035200Z",
+        "doneWhen": "pr",
+        "id": "WID-9",
+        "kind": "start",
+        "order": 0,
+        "ownerHub": {
+          "humanCol": null,
+          "key": FEATURE,
+          "slug": FEATURE_SLUG
+        },
+        "prTurn": null,
+        "records": [],
+        "approvedPlan": null,
+        "status": "dispatched",
+        "stopAt": "plan",
+        "title": "Task WID-9",
+        "updatedAt": "20260922T035200Z",
+        "waitsOnPerson": false
+      }
+    ])
+}
+
 fn expected_workers() -> Value {
     json!([
       {
@@ -555,6 +589,7 @@ fn expected_workers() -> Value {
         "name": "scratch",
         "phase": null,
         "phaseAt": null,
+        "hubSlug": FEATURE_SLUG,
         "present": false,
         "stale": true,
         "task": null,
@@ -563,6 +598,7 @@ fn expected_workers() -> Value {
       },
       {
         "branch": "wid-1",
+        "hubSlug": SLUG,
         "name": "wid-1",
         "phase": "review",
         "phaseAt": 1790051400,
@@ -673,6 +709,7 @@ fn expected_state(sessions: Value) -> Value {
     state["hubs"] = expected_hubs();
     state["sessions"] = sessions;
     state["tasks"] = expected_tasks();
+    state["hubTasks"] = expected_hub_tasks();
     state["workers"] = expected_workers();
     state["gates"] = expected_gates();
     state["pending"] = expected_pending();
@@ -755,7 +792,7 @@ fn expected_boards() -> Value {
         "title": "Ship the feature",
         "url": "http://127.0.0.1:<port>/b/acme-widget-wid-957-5283c95d4f4cc314/?token=<token>",
         "waiting": 0,
-        "working": 0
+        "working": 1
       }
     ])
 }
@@ -769,6 +806,25 @@ fn the_board_state_is_pinned_whole() {
     let gates = fixture.state.join("gates").join(SLUG);
     assert!(gates.join("g-wait.json").exists());
     assert!(!gates.join("answered/g-wait.json").exists());
+}
+
+#[test]
+fn a_parent_hubs_board_lists_none_of_the_other_hubs_tasks() {
+    let (fixture, resident) = board();
+    let state = read(
+        &fixture,
+        &resident,
+        &format!("/b/{FEATURE_SLUG}/api/state"),
+        "",
+    );
+    assert_eq!(state["hubTasks"], json!([]), "{state}");
+    let ids: Vec<&str> = state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["WID-9"]);
 }
 
 #[test]

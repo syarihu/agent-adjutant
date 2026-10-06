@@ -13,7 +13,8 @@ use crate::task;
 
 use super::view::{
     GateCard, HumanCol, WorkerRow, WorkerSeen, board_counts, board_session, branch_of, cut_chars,
-    history_of, socket_key_in, state, waits_on_person, with_records, worker_of, worker_session_ids,
+    history_of, hub_task_cards, socket_key_in, state, waits_on_person, with_records, worker_of,
+    worker_session_ids,
 };
 use super::*;
 
@@ -743,6 +744,7 @@ fn a_card_joins_the_first_worker_row_in_its_worktree_that_is_its_own_or_no_one_s
         stale: false,
         title: None,
         task: task.map(str::to_string),
+        hub_slug: "acme-widget".to_string(),
         phase: Some(phase.to_string()),
         phase_at: None,
     };
@@ -848,6 +850,7 @@ fn a_stored_unknown_key_the_card_writes_itself_is_written_once_with_the_cards_va
     live.extra.insert("records".to_string(), json!("stale"));
     live.extra
         .insert("waitsOnPerson".to_string(), json!("stale"));
+    live.extra.insert("ownerHub".to_string(), json!("stale"));
     let mut done = a_task("t2", task::Status::Done);
     done.extra.insert("records".to_string(), json!("kept"));
     done.extra
@@ -859,6 +862,8 @@ fn a_stored_unknown_key_the_card_writes_itself_is_written_once_with_the_cards_va
     // Once per card, finished ones too, and once on the one record.
     assert_eq!(body.matches("\"waitsOnPerson\"").count(), 2, "{body}");
     assert_eq!(body.matches("\"answeredByHub\"").count(), 1, "{body}");
+    // Only a card of another hub's carries it, and that is not a key kept from disk.
+    assert_eq!(body.matches("\"ownerHub\"").count(), 0, "{body}");
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed[0]["records"][0]["diffSize"], 3);
     assert_eq!(parsed[0]["records"][0]["answeredByHub"], false);
@@ -1269,4 +1274,102 @@ fn stopping_forgets_a_record_of_a_process_that_is_gone() {
     assert_eq!(status(&root), None);
     assert_eq!(stop(&root), Ok(None));
     assert!(!root.join("server.json").exists());
+}
+
+fn a_repo_hub(slug: &str, key: Option<&str>) -> crate::mail::RepoHub {
+    crate::mail::RepoHub {
+        id: key.map_or("hub".to_string(), |k| format!("hub-{k}")),
+        parent: key.is_some(),
+        key: key.map(str::to_string),
+        name: format!("adjutant-{slug}"),
+        title: None,
+        slug: slug.to_string(),
+        state: crate::mail::RepoHubState {
+            present: false,
+            stale: false,
+            pid: None,
+            started_at: None,
+        },
+        inbox_count: 0,
+        inbox: Vec::new(),
+        children: 0,
+    }
+}
+
+fn a_repo(hub: Option<&str>, slug: &str) -> crate::kernel::identity::RepoInfo {
+    crate::kernel::identity::RepoInfo {
+        main: "/nonexistent/repo".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: hub.map(str::to_string),
+        slug: slug.to_string(),
+        hub_name: format!("adjutant-{slug}"),
+        nwo_source: "dirname",
+    }
+}
+
+#[test]
+fn the_repository_board_carries_the_parent_hubs_tasks_apart_from_its_own() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let hubs = [
+        a_repo_hub("acme-widget", None),
+        a_repo_hub("acme-widget-ABC-1", Some("ABC-1")),
+        a_repo_hub("acme-widget-ABC-2", Some("ABC-2")),
+    ];
+    let put = |dir: &str, slug: &str, id: &str, body: Value| {
+        let d = sandbox.state().join(dir).join(slug);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(format!("{id}.json")), body.to_string()).unwrap();
+    };
+    let task_of = |id| serde_json::to_value(a_task(id, task::Status::Dispatched)).unwrap();
+    put("tasks", "acme-widget", "own", task_of("own"));
+    put("tasks", "acme-widget-ABC-1", "t1", task_of("t1"));
+    put("tasks", "acme-widget-ABC-2", "t2", task_of("t2"));
+    // No open gate, and its worker is in the `pr` phase: the PR is the person's ball.
+    let mut pr = serde_json::to_value(a_task("t3", task::Status::Pr)).unwrap();
+    pr["pr"] = json!("https://github.com/acme/widget/pull/3");
+    pr["worktree"] = json!("/w3");
+    put("tasks", "acme-widget-ABC-2", "t3", pr);
+    let worker = WorkerRow {
+        worktree: "/w3".to_string(),
+        name: None,
+        branch: None,
+        present: true,
+        stale: false,
+        title: None,
+        task: Some("t3".to_string()),
+        hub_slug: "acme-widget-ABC-2".to_string(),
+        phase: Some("pr".to_string()),
+        phase_at: None,
+    };
+    put(
+        "gates",
+        "acme-widget-ABC-1",
+        "g1",
+        serde_json::to_value(a_gate("g1", gate::Kind::Plan, "t1")).unwrap(),
+    );
+
+    let repo = a_repo(None, "acme-widget");
+    let cards = serde_json::to_value(hub_task_cards(
+        &sandbox.state(),
+        &repo,
+        &hubs,
+        std::slice::from_ref(&worker),
+    ))
+    .unwrap();
+    let cards = cards.as_array().unwrap();
+    assert_eq!(cards.len(), 3, "{cards:?}");
+    let find = |id: &str| cards.iter().find(|c| c["id"] == id).unwrap();
+    assert_eq!(find("t1")["ownerHub"]["slug"], "acme-widget-ABC-1");
+    assert_eq!(find("t1")["ownerHub"]["key"], "ABC-1");
+    assert_eq!(find("t1")["ownerHub"]["humanCol"], "plan");
+    assert_eq!(find("t2")["ownerHub"]["key"], "ABC-2");
+    assert_eq!(find("t2")["ownerHub"]["humanCol"], Value::Null);
+    assert_eq!(find("t3")["ownerHub"]["humanCol"], "prreview");
+
+    // A parent-task hub's own board shows only its own tasks; a hub with no directory is none.
+    let own = a_repo(Some("ABC-1"), "acme-widget-ABC-1");
+    assert!(hub_task_cards(&sandbox.state(), &own, &hubs, &[]).is_empty());
+    let hubs = [a_repo_hub("acme-widget-ABC-9", Some("ABC-9"))];
+    assert!(hub_task_cards(&sandbox.state(), &repo, &hubs, &[]).is_empty());
 }

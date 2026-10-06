@@ -54,6 +54,10 @@ pub struct BoardState {
     pub session_start: SessionStart,
     pub sessions: Vec<Session>,
     pub tasks: Vec<TaskCard>,
+    /// The tasks of the parent-task hubs of this repository, which only the repository's own
+    /// board lists: its workers include theirs, and a card for each says so. Apart from `tasks`
+    /// because those are this board's own, which every action on the page assumes.
+    pub hub_tasks: Vec<TaskCard>,
     pub workers: Vec<WorkerRow>,
     /// The slot count `adj work` decides by, counted the same way — a worker still
     /// starting up holds one — so the header and the refusal cannot disagree.
@@ -128,6 +132,9 @@ pub struct WorkerRow {
     /// The task this worker reports for, which is what the card joins on: a worker
     /// with none is a session that has no card until it is linked.
     pub task: Option<String>,
+    /// The slug of the hub this worker reports to: a task id is only unique within one hub, so
+    /// the page joins a worker to a card on this and the id together.
+    pub hub_slug: String,
     pub phase: Option<String>,
     pub phase_at: Option<i64>,
 }
@@ -157,6 +164,20 @@ pub struct TaskCard {
     /// Whether its PR is the person's ball, see `waits_on_person`. On every card, false on a
     /// finished one; set by `state`, which has the worker rows and Jules's answer.
     pub waits_on_person: bool,
+    /// Set on a card of a parent-task hub shown on the repository's board; absent on this
+    /// board's own tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_hub: Option<OwnerHub>,
+}
+
+/// The parent-task hub a card on the repository's board belongs to.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerHub {
+    pub slug: String,
+    pub key: Option<String>,
+    /// The column its open gate puts it in, else the PR's, as `humanColOf` reads on the page.
+    pub human_col: Option<HumanCol>,
 }
 
 /// What a live task's card carries beyond the record.
@@ -331,6 +352,10 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
             stale: status.stale,
             title: status.title.clone(),
             task,
+            hub_slug: crate::kernel::identity::slug_for(
+                &repo.nwo,
+                crate::registry::worker_hub_key(Path::new(path)).as_deref(),
+            ),
             phase: status.phase.clone(),
             phase_at: status.phase_at,
         });
@@ -345,6 +370,8 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
             card.jules.as_ref(),
         );
     }
+
+    let hub_tasks = hub_task_cards(&server.ctx.state, repo, &hubs, &workers);
 
     let sessions = if with_sessions {
         sessions_of(
@@ -413,6 +440,7 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
         },
         sessions,
         tasks,
+        hub_tasks,
         workers,
         worker_slots: WorkerSlots {
             busy,
@@ -430,6 +458,51 @@ pub fn state(server: &Server, with_sessions: bool, with_lines: bool) -> BoardSta
             .map(GateCard::of)
             .collect(),
     }
+}
+
+/// The tasks of the parent-task hubs of this repository, for the repository's own board: the
+/// workers it lists include theirs, and each should have a card rather than a session that
+/// names a task nobody here knows. Read-only, from the records of each hub's directory, and
+/// empty on a parent-task hub's own board, which shows only its own tasks. A hub whose
+/// directory cannot be read has no cards, not an error. No Jules lookup: that answer belongs
+/// to the board that owns the task.
+pub fn hub_task_cards(
+    state_dir: &Path,
+    repo: &crate::kernel::identity::RepoInfo,
+    hubs: &[crate::mail::RepoHub],
+    workers: &[WorkerRow],
+) -> Vec<TaskCard> {
+    if repo.hub.is_some() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for h in hubs.iter().filter(|h| h.parent && h.slug != repo.slug) {
+        let open = gate::list(state_dir, &h.slug, gate::Shelf::Open);
+        let cards = with_records(
+            task::list(state_dir, &h.slug),
+            gate::list(state_dir, &h.slug, gate::Shelf::Record),
+            gate::list_of_kind(state_dir, &h.slug, gate::Shelf::Answered, gate::Kind::Plan),
+        );
+        for mut card in cards {
+            card.waits_on_person = waits_on_person(
+                &card.task,
+                worker_of(&card.task, workers).map(|w| w.phase.as_deref()),
+                None,
+            );
+            let human_col = open
+                .iter()
+                .find(|g| g.task.as_deref() == Some(card.task.id.as_str()))
+                .map(|g| HumanCol::of_gate(g.kind))
+                .or_else(|| card.waits_on_person.then_some(HumanCol::PrReview));
+            card.owner_hub = Some(OwnerHub {
+                slug: h.slug.clone(),
+                key: h.key.clone(),
+                human_col,
+            });
+            out.push(card);
+        }
+    }
+    out
 }
 
 /// The worker row the page joins a task to (`workerOf`): the first in the task's worktree that
@@ -516,12 +589,15 @@ pub fn with_records(
                 }
             }
             // Written on every card, finished ones too.
-            t.extra.remove("waitsOnPerson");
+            for key in ["waitsOnPerson", "ownerHub"] {
+                t.extra.remove(key);
+            }
             TaskCard {
                 task: t,
                 live,
                 jules: None,
                 waits_on_person: false,
+                owner_hub: None,
             }
         })
         .collect()
