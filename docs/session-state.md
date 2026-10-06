@@ -33,7 +33,7 @@ practice:
 
 - A row is created only by a `running`, `waiting` or `idle` event. A stray `done` or `clear` (from a
   session that ended before its row was written) never registers one.
-- `SessionStart` on an existing row changes nothing but the pending request. It also fires on
+- `SessionStart` on an existing row only clears `request`. It also fires on
   resume, compaction and `/clear`, and must not wipe a turn in progress.
 
 ## The ledger
@@ -52,8 +52,8 @@ in `sessions/<slug>.json` for a hub and `<worktree>/.claude/adjutant-session.jso
 a ledger row joins to a hub or worker by that id, never by worktree or cwd: two sessions can share a
 worktree, and a hub shares the main checkout with anything else run there. A session started by a
 custom runner whose template lacks `{sessionId}` still gets a row, keyed by the id the agent chose,
-but it joins to no hub or worker. It shows as an unattached session, the same as one started by
-hand.
+and joins by pid (below). A session adjutant did not start joins to nothing and shows as an
+unattached session.
 
 The agent's id can change under a running process: `/clear` ends the session (`SessionEnd`) and
 starts a new one with a new `session_id`, and `--fork-session` does the same. The process stays,
@@ -129,7 +129,9 @@ rule is for agents that give none (Codex, as proctor found).
 shows it. (The board's "sessions" are its hub and worker cards; a row here is what the agent behind
 one of them is doing, hence the longer name.) One join is shared by every consumer:
 `registry::agent_session_of(root, table, identity)` takes a hub's or worker's saved session id, pid
-and start time and returns its row, by `sessionId` first and pid plus start time second.
+and start time and returns its row, by `sessionId` first and pid plus start time second. When
+several rows share the pid (an old row whose `SessionEnd` was missed after a `/clear`), the one with
+the newest `lastEventAt` wins.
 
 Two deliberate exceptions to rule 4: the reads take no hub slug, because the ledger is one
 per machine, not one per hub, and the write (`registry::record_agent_event(root, event)`) takes a
@@ -160,7 +162,7 @@ The events, taken from proctor's table:
 | `UserPromptSubmit` | | `running`; clears `pendingStatus` |
 | `PostToolUse` | `*` | `running`, and `activity` |
 | `PostToolUseFailure` | `*` | `running` (`PostToolUse` fires only on success) |
-| `PermissionRequest` | `*` | `waiting`, and `request` (immediate; the permission `Notification` comes about 6 seconds later) |
+| `PermissionRequest` | `*` | `waiting`, and `request` (immediate; the permission `Notification` comes about 6 seconds later), also from a sub-agent |
 | `Notification` | | `waiting` for `permission_prompt`, `elicitation_dialog` and unknown types; back from `waiting` to `idle` for `idle_prompt`; nothing for the rest |
 | `Stop` | | `done`, or held in `pendingStatus` while sub-agents run |
 | `StopFailure` | | `failed`, held the same way (it fires instead of `Stop` on rate limits and overload) |
@@ -169,9 +171,15 @@ The events, taken from proctor's table:
 | `SubagentStop` | | removes it; applies `pendingStatus` when it was the last |
 
 An event that carries `agent_id` comes from a sub-agent: it updates that sub-agent's `lastSeenAt`
-and never the parent's `status`, with one exception. A `PermissionRequest` from a sub-agent sets the
-parent to `waiting`, since the person is asked in the parent's terminal either way; otherwise the row
-looks busy until the `Notification` some seconds later.
+and does not set the parent's `status`, with these exceptions:
+
+- A `PermissionRequest` from a sub-agent sets the parent to `waiting`, since the person is asked in
+  the parent's terminal either way; otherwise the row looks busy until the `Notification` some
+  seconds later.
+- A sub-agent's `PostToolUse` or `PostToolUseFailure` moves a `waiting` parent back to `running` and
+  clears `request`: the prompt was answered. Without it the parent stays `waiting` until the
+  sub-agent ends.
+- `SubagentStop` for the last sub-agent applies the parent's `pendingStatus`.
 
 No hook is run in the background (`async`). A background `PostToolUse` that finished after `Stop`
 would put a finished row back to `running`. Run in order, the receiver has to be fast instead, which
@@ -187,7 +195,7 @@ sequenceDiagram
     participant Reg as registry
     participant Board as board view
     Agent->>Hook: PostToolUse payload on stdin
-    Hook->>Hook: parse, git rev-parse cwd (no lock)
+    Hook->>Hook: parse, read row, git and ps only if new or moved (no lock)
     Hook->>Reg: record_agent_event(root, event)
     Reg->>Reg: lock row, apply, save if changed
     opt SessionStart or Stop
@@ -229,10 +237,12 @@ edits a global settings file, and removing adjutant leaves nothing behind in the
 agents with no per-session settings flag (Codex and Antigravity read hooks only from a global file),
 are reached only through the agent's global settings. `adj setup claude` adds the same table to
 `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`), appending to existing hook arrays and never
-removing any, with `adj hook claude --global`; `adj setup claude --remove` takes out exactly the
+removing any, with `adj hook claude --global` (the flag only marks adjutant's entries; the receiver
+behaves the same with or without it); `adj setup claude --remove` takes out exactly the
 entries it added and nothing else, recognising them by `adj hook claude --global` whatever path
 they name. Those entries name the binary by absolute path too, so after an upgrade that moves it,
-`adj setup claude` is run again and rewrites its own entries in place. It is opt-in: adjutant works
+`adj setup claude` is run again and rewrites its own entries in place. It writes the user's file
+through a temporary file and a rename. It is opt-in: adjutant works
 without it.
 
 Claude Code merges hook entries across settings levels rather than letting one replace another, and
@@ -279,8 +289,8 @@ script, piping its stdin to it. Without it the rows simply lack those fields.
 
 adjutant already depends on the user's status line in one place: `task::pick_review_engine` reads
 `rate-limit-cache.json`, which a status line script writes. Once the relay exists, `adj
-review-engine` reads the five-hour and seven-day figures from the newest row with the caller's
-agent and `configDir` (the cache file is per config dir today, and two accounts have two sets of
+review-engine` reads the five-hour and seven-day figures from the row with the caller's agent and
+`configDir` and the newest `lastEventAt`, if it is under 15 minutes old as the cache must be (the cache file is per config dir today, and two accounts have two sets of
 limits) instead, and keeps the cache file as the fallback for a user who has it and not the
 relay. That is a separate issue, so the review engine does not change in the foundation.
 
@@ -348,8 +358,11 @@ Both follow rule 10: new keys optional, unknown keys kept, names fixed once rele
 The hook table itself (events, matchers, the command) is plain data with no records, so it lives in
 `kernel` (`kernel::agent_hooks`), with the function that merges it into an agent's settings JSON or
 takes it out again. `lifecycle` writes the injected file from it at launch, and `adj setup` in
-`transport/cli/setup.rs` reads and writes the user's settings file with it, the way `adj
-install-mcp` reaches the agents' own configuration today.
+`transport/cli/setup.rs` reads and writes the user's settings file with it.
+
+`record_agent_event` runs `ps` and git, so it has a `record_agent_event_with(root, event, table)`
+variant for tests (rule 7). Git runs through `infra::git`: the hook inherits the agent's
+environment, `GIT_DIR` included if it has one.
 
 ## Implementation split
 
@@ -373,8 +386,8 @@ rows, the hidden `adj hook claude` that reads a payload from stdin, and `adj age
 [--json]` to read the rows. Tests feed recorded payloads through `adj hook` and check the rows. Add
 `adj agent-sessions` to `README.md` and `README.ja.md`.
 
-Also confirm with a real session, using a hand-written settings file, two facts the design takes
-from Claude Code's documentation without it saying them outright: that the `session_id` in hook
+Also confirm with a real session, using a hand-written settings file, what the design takes
+from Claude Code's documentation without it saying it outright: that the `session_id` in hook
 payloads is the one passed with `--session-id` and stays the same after `--resume <id>`, that hooks
 passed with `--settings` run alongside the user's own, and what Claude Code does with two
 `--settings` flags. Record the answers in the doc.
@@ -443,7 +456,8 @@ waiting on a permission prompt or done, and on iTerm2 it cannot tell at all.
 ## Proposal
 
 Join each board session to its row with `registry::agent_session_of` in `board::view`, add the state to
-`/api/state`, and show it in a sessions tab in the sidebar and on the session cards.
+`/api/state`, and show it in a sessions tab in the sidebar and on the session cards. A worker
+waiting on a permission prompt shows as waiting on a person even with no gate open.
 ```
 
 **6. adjutant decides when to type into a session from its screen alone**
@@ -452,13 +466,12 @@ Join each board session to its row with `registry::agent_session_of` in `board::
 ## What happens
 
 Before waking a session, `mail::read_screen` guesses from a tmux screen whether the agent is busy. It
-cannot read iTerm2 or a generic runner, and a permission prompt waiting with no gate open looks like
-work in progress on the board.
+cannot read iTerm2 or a generic runner, so there adjutant types blind.
 
 ## Proposal
 
-Use the session's row when there is one: hold the wake while it is `running` or `waiting`, and show a
-worker waiting on a permission prompt as waiting on a person. Keep the screen check as the fallback.
+Use the session's row when there is one: hold the wake while it is `running` or `waiting`. Keep the screen
+check as the fallback.
 ```
 
 **7. The review engine reads rate limits from a cache file the user's status line must write**
@@ -472,9 +485,9 @@ ledger holds the same figures.
 
 ## Proposal
 
-Take the five-hour and seven-day figures from the newest row with the same agent and `configDir`,
-and fall back to
-`rate-limit-cache.json` when no row has them.
+Take the five-hour and seven-day figures from the row with the same agent and `configDir` and the
+newest `lastEventAt`, under the same 15-minute staleness rule the cache has, and fall back to
+`rate-limit-cache.json` otherwise.
 ```
 
 **8. The hub procedure still points at proctor's row for a worker's progress**
