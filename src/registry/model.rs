@@ -925,6 +925,27 @@ fn apply_from_subagent(row: &mut AgentSession, event: &AgentEvent) {
     }
 }
 
+/// What a draw gave of one rate limit window over what the row has: a field the draw left out,
+/// or a key this version does not know, stays as it was.
+fn merge_window(stored: &mut Option<RateWindow>, drawn: Option<&RateWindow>) {
+    let Some(drawn) = drawn else {
+        return;
+    };
+    let window = stored.get_or_insert_with(RateWindow::default);
+    if drawn.used_percent.is_some() {
+        window.used_percent = drawn.used_percent;
+    }
+    if drawn.resets_at.is_some() {
+        window.resets_at = drawn.resets_at;
+    }
+    window.other.extend(
+        drawn
+            .other
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
+}
+
 fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
     match &event.hook {
         HookEvent::SessionStart => match row.status {
@@ -1000,12 +1021,8 @@ fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
             }
             if five_hour.is_some() || seven_day.is_some() {
                 let limits = row.rate_limits.get_or_insert_with(RateLimits::default);
-                if five_hour.is_some() {
-                    limits.five_hour = five_hour.clone();
-                }
-                if seven_day.is_some() {
-                    limits.seven_day = seven_day.clone();
-                }
+                merge_window(&mut limits.five_hour, five_hour.as_ref());
+                merge_window(&mut limits.seven_day, seven_day.as_ref());
             }
         }
         HookEvent::SessionEnd | HookEvent::Other(_) => {}

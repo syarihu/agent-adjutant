@@ -970,6 +970,31 @@ fn figures_a_draw_does_not_carry_keep_their_last_value() {
 }
 
 #[test]
+fn a_window_a_draw_gives_without_its_reset_time_keeps_the_stored_one_and_unknown_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    record(root, &event(HookEvent::SessionStart, T0));
+    let mut stored = window(23.5, 5);
+    stored
+        .other
+        .insert("x-unknown".into(), serde_json::json!(1));
+    record(root, &draw(T0 + 1, None, None, Some(stored), None));
+    let without_reset = RateWindow {
+        used_percent: Some(30.0),
+        resets_at: None,
+        other: serde_json::Map::new(),
+    };
+    record(root, &draw(T0 + 2, None, None, Some(without_reset), None));
+    let five_hour = read(root, "s1").rate_limits.unwrap().five_hour.unwrap();
+    assert_eq!(five_hour.used_percent, Some(30.0));
+    assert_eq!(five_hour.resets_at, Some(5));
+    assert_eq!(
+        five_hour.other.get("x-unknown"),
+        Some(&serde_json::json!(1))
+    );
+}
+
+#[test]
 fn a_status_line_leaves_an_unreadable_row_as_it_is() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
