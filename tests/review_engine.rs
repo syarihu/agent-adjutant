@@ -7,6 +7,7 @@ mod common;
 
 use common::*;
 use std::ffi::{OsStr, OsString};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
@@ -262,4 +263,120 @@ fn without_json_it_prints_the_message_alone() {
         .to_string();
 
     assert_eq!(plain_message, expected_message);
+}
+
+const SESSION: &str = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
+
+/// A session of `config_dir`'s account that the hooks and the status line relay reported, with
+/// `five_hour` percent of the 5-hour window used.
+fn report_session(fixture: &Fixture, config_dir: &Path, five_hour: f64) {
+    let send = |args: &[&str], mut payload: serde_json::Value| {
+        payload["cwd"] = fixture.repo.to_string_lossy().to_string().into();
+        let mut child = fixture
+            .command(args)
+            .env("CLAUDE_CONFIG_DIR", config_dir)
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    send(
+        &["hook", "claude"],
+        serde_json::from_str(include_str!(
+            "../src/fixtures/hooks/claude/session-start.json"
+        ))
+        .unwrap(),
+    );
+    let mut draw: serde_json::Value = serde_json::from_str(include_str!(
+        "../src/fixtures/hooks/claude/status-line.json"
+    ))
+    .unwrap();
+    draw["rate_limits"] = serde_json::json!({
+        "five_hour": {"used_percentage": five_hour, "resets_at": now() + 3600},
+        "seven_day": {"used_percentage": 10.0, "resets_at": now() + 86400}
+    });
+    send(&["hook", "claude", "--status-line"], draw);
+}
+
+fn row_file(fixture: &Fixture) -> std::path::PathBuf {
+    fixture
+        .state
+        .join("agent-sessions")
+        .join(format!("{SESSION}.json"))
+}
+
+#[test]
+fn a_fresh_ledger_row_decides_without_a_cache() {
+    let fixture = Fixture::new(QUIET);
+    let tmp = tempfile::tempdir().unwrap();
+    report_session(&fixture, tmp.path(), 62.0);
+    let path = with_codex(tmp.path());
+
+    let out = review_engine(&fixture, tmp.path(), &path, true);
+    assert!(out.status.success());
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    assert_eq!(j["engine"], "codex");
+    assert_eq!(j["reason"], "tripped");
+    assert_eq!(j["source"], "ledger");
+    assert_eq!(j["window"], "5h");
+}
+
+#[test]
+fn a_row_of_another_account_leaves_the_decision_to_the_cache() {
+    let fixture = Fixture::new(QUIET);
+    let tmp = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    report_session(&fixture, other.path(), 90.0);
+    write_cache(
+        tmp.path(),
+        serde_json::json!({
+            "captured_at": now(),
+            "five_hour": {"used_percentage": 10}
+        }),
+    );
+    let path = with_codex(tmp.path());
+
+    let out = review_engine(&fixture, tmp.path(), &path, true);
+    assert!(out.status.success());
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    assert_eq!(j["engine"], "claude");
+    assert_eq!(j["reason"], "within-limits");
+    assert_eq!(j["source"], "cache");
+}
+
+#[test]
+fn a_stale_ledger_row_and_no_cache_skips_the_check() {
+    let fixture = Fixture::new(QUIET);
+    let tmp = tempfile::tempdir().unwrap();
+    report_session(&fixture, tmp.path(), 90.0);
+    let file = row_file(&fixture);
+    let mut row: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    row["lastEventAt"] = (now() - 3600).into();
+    std::fs::write(&file, row.to_string()).unwrap();
+    let path = with_codex(tmp.path());
+
+    let out = review_engine(&fixture, tmp.path(), &path, true);
+    assert!(out.status.success());
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    assert_eq!(j["engine"], "claude");
+    assert_eq!(j["reason"], "cache-missing");
+    assert_eq!(j["source"], "cache");
 }

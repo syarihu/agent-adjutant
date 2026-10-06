@@ -340,15 +340,15 @@ number, and `rateLimits` as `{ fiveHour, sevenDay }`, each `{ usedPercent, reset
 value as it is. The write rules are the ordinary ones: a change moves `lastEventAt`, and an
 unchanged draw writes at most once a minute. So `lastEventAt` is not the time the rate limits were
 captured; it also moves for hooks. Whatever reads the limits from the row (the review engine
-follow-up below) must keep that in mind.
+below) must keep that in mind.
 
-adjutant already depends on the user's status line in one place: `task::pick_review_engine` reads
-`rate-limit-cache.json`, which a status line script writes. Once the relay exists, `adj
-review-engine` reads the five-hour and seven-day figures from the row with the caller's agent and
-`configDir` and the newest `lastEventAt`, if it is under 15 minutes old as the cache must be. The
-cache file is per config dir today, and two accounts have two sets of limits. It keeps the cache
-file as the fallback for a user who has it and not the relay. That is a separate issue, so the
-review engine does not change in the foundation.
+The review engine used to depend on the user's status line: `task::pick_review_engine` read
+`rate-limit-cache.json`, which a status line script writes. Now `adj review-engine` reads the
+five-hour and seven-day figures from the Claude row with the caller's `configDir` and the newest
+`lastEventAt` among the rows that carry a figure, if it is under 15 minutes old as the cache must be (a row in the future is not
+used either). Two accounts have two sets of limits, so the row has to be of the same config
+directory, found by the same rule the hook stores it by. The cache file stays as the fallback for a
+user who has it and not the relay, and `--json` says which one decided in `source`.
 
 ## Which agents, in what order
 

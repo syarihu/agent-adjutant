@@ -71,3 +71,18 @@ fn the_message_names_the_window_and_when_it_resets() {
     assert!(text.contains("was skipped"));
     assert!(text.contains("/cache"));
 }
+
+#[test]
+fn a_missing_cache_says_no_session_reported_either() {
+    let text = message(
+        Engine::Claude,
+        &Reason::CacheMissing,
+        "auto",
+        Path::new("/cache"),
+        NOW,
+    );
+    assert_eq!(
+        text,
+        "The usage check was skipped (no session reported rate limits in the last 15 minutes and /cache does not exist), so Claude reviews this round"
+    );
+}

@@ -7,7 +7,9 @@ use serde_json::json;
 use std::path::Path;
 
 use super::args::ReviewEngineArgs;
-use crate::task::{Engine, Reason, cache_path, decide, read_cache};
+use crate::task::{
+    Engine, Reason, Usage, cache_path, claude_config_dir, decide, ledger_usage, read_cache,
+};
 
 /// The one line the worker tells the user.
 fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i64) -> String {
@@ -51,7 +53,7 @@ fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i6
             )
         }
         Reason::CacheMissing => format!(
-            "The usage check was skipped ({} does not exist), so Claude reviews this round",
+            "The usage check was skipped (no session reported rate limits in the last 15 minutes and {} does not exist), so Claude reviews this round",
             cache_disp
         ),
         Reason::CacheBroken => format!(
@@ -80,12 +82,20 @@ pub fn run(args: &ReviewEngineArgs) -> Result<(), String> {
     let ctx = crate::registry::context_without_hub(args.repo.as_deref())?;
     let setting = &ctx.settings.review_engine;
 
-    let cache = cache_path(
-        std::env::var_os("CLAUDE_CONFIG_DIR").as_deref(),
-        &crate::infra::paths::home_dir(),
-    );
-    let usage = read_cache(&cache);
+    let config_var = std::env::var_os("CLAUDE_CONFIG_DIR");
+    let home = crate::infra::paths::home_dir();
+    let config_dir = claude_config_dir(config_var.as_deref(), &home);
+    let cache = cache_path(config_var.as_deref(), &home);
     let now = crate::infra::clock::now_secs();
+    // The ledger first; a ledger that cannot be read is the same as one with nothing to say.
+    let root = crate::registry::hook_state_root(std::env::current_dir().ok().as_deref());
+    let from_ledger = crate::registry::agent_sessions(&root)
+        .ok()
+        .and_then(|rows| ledger_usage(&rows, &config_dir, now));
+    let (usage, source) = match from_ledger {
+        Some(l) => (Usage::Ledger(l), "ledger"),
+        None => (read_cache(&cache), "cache"),
+    };
     let (engine, reason) = decide(setting, &usage, now, || {
         crate::infra::shell::on_path("codex")
     })?;
@@ -106,6 +116,7 @@ pub fn run(args: &ReviewEngineArgs) -> Result<(), String> {
             "window": window,
             "usedPercentage": used_percentage,
             "resetsAt": resets_at,
+            "source": source,
             "cache": cache.to_string_lossy(),
             "message": text
         });

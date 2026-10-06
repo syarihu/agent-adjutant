@@ -1,4 +1,5 @@
-//! Which engine reads the diff in a self-review round, decided from the rate-limit cache.
+//! Which engine reads the diff in a self-review round, decided from the rate limits of the agent
+//! session ledger (`adj hook claude --status-line` fills it) or, failing that, the rate-limit cache.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -6,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::kernel::config::ReviewEngine;
+use crate::registry::{AgentSession, RateWindow};
 
 /// The 5-hour window trips at or above this.
 const FIVE_HOUR_LIMIT: f64 = 50.0;
@@ -13,7 +15,8 @@ const FIVE_HOUR_LIMIT: f64 = 50.0;
 const SEVEN_DAY_LIMIT: f64 = 70.0;
 /// A cache older than this says nothing about now.
 const STALE_AFTER_SECS: i64 = 15 * 60;
-/// Written by the status line on every draw, per account, directly under the config directory.
+/// The fallback for a user whose status line script writes it on every draw, per account,
+/// directly under the config directory.
 const CACHE_FILE: &str = "rate-limit-cache.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,23 +87,39 @@ impl Reason {
     }
 }
 
-/// The cache as read, not yet judged.
+/// The usage as read, not yet judged.
 #[derive(Debug)]
 pub enum Usage {
     Missing,
     Broken,
     Read(Value),
+    /// A session row of the agent session ledger that is fresh enough to say something.
+    Ledger(LedgerUsage),
 }
 
-/// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/rate-limit-cache.json`. Takes both inputs as arguments so a
-/// test answers for values it chose rather than for the machine it runs on.
-pub fn cache_path(claude_config_dir: Option<&OsStr>, home: &Path) -> PathBuf {
-    let mut dir = claude_config_dir
-        .filter(|s| !s.is_empty())
+/// The rate limit windows of one ledger row, as `ledger_usage` picked it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LedgerUsage {
+    pub session_id: String,
+    pub last_event_at: i64,
+    pub five_hour: Option<RateWindow>,
+    pub seven_day: Option<RateWindow>,
+}
+
+/// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`: the variable when it says something, else the default
+/// account's directory. Takes both inputs as arguments so a test answers for values it chose
+/// rather than for the machine it runs on. The rule mirrors the one `adj hook claude` stores a
+/// row's `configDir` by, so the two name the same directory for the same account.
+pub fn claude_config_dir(var: Option<&OsStr>, home: &Path) -> PathBuf {
+    var.and_then(OsStr::to_str)
+        .filter(|dir| !dir.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".claude"));
-    dir.push(CACHE_FILE);
-    dir
+        .unwrap_or_else(|| home.join(".claude"))
+}
+
+/// `rate-limit-cache.json` under `claude_config_dir`.
+pub fn cache_path(claude_config_dir_var: Option<&OsStr>, home: &Path) -> PathBuf {
+    claude_config_dir(claude_config_dir_var, home).join(CACHE_FILE)
 }
 
 /// NotFound -> Missing; any other read error, invalid JSON -> Broken; otherwise Read.
@@ -112,6 +131,83 @@ pub fn read_cache(path: &Path) -> Usage {
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Usage::Missing,
         Err(_) => Usage::Broken,
+    }
+}
+
+/// The figures of the Claude row under `config_dir` with the newest `lastEventAt` that has at
+/// least one window with a `usedPercent`, if that row is no older than the cache may be.
+///
+/// `lastEventAt` also moves for hooks, so it is when the session was last seen alive, not when
+/// the figures were drawn; the figures may be older than the age says. The row is picked by
+/// `lastEventAt` here, whatever order `rows` come in; of equal times the first wins.
+pub fn ledger_usage(rows: &[AgentSession], config_dir: &Path, now: i64) -> Option<LedgerUsage> {
+    let mut best: Option<(&AgentSession, i64)> = None;
+    for row in rows {
+        let Some(at) = row.last_event_at else {
+            continue;
+        };
+        if row.agent.as_deref() != Some("claude")
+            || row.config_dir.as_deref().map(Path::new) != Some(config_dir)
+        {
+            continue;
+        }
+        let Some(limits) = &row.rate_limits else {
+            continue;
+        };
+        let has_figure = [&limits.five_hour, &limits.seven_day]
+            .into_iter()
+            .any(|w| w.as_ref().is_some_and(|w| w.used_percent.is_some()));
+        if has_figure && best.is_none_or(|(_, newest)| at > newest) {
+            best = Some((row, at));
+        }
+    }
+    let (row, at) = best?;
+    let age = now - at;
+    if !(0..=STALE_AFTER_SECS).contains(&age) {
+        return None;
+    }
+    let limits = row.rate_limits.as_ref()?;
+    Some(LedgerUsage {
+        session_id: row.session_id.clone(),
+        last_event_at: at,
+        five_hour: limits.five_hour.clone(),
+        seven_day: limits.seven_day.clone(),
+    })
+}
+
+/// The trip rules, over figures already known to be fresh. The 5-hour window is judged first; a
+/// window that is missing is judged alone. `codex_on_path` is only called when a window trips.
+fn judge(
+    five: Option<(f64, Option<i64>)>,
+    seven: Option<(f64, Option<i64>)>,
+    codex_on_path: impl FnOnce() -> bool,
+) -> (Engine, Reason) {
+    if five.is_none() && seven.is_none() {
+        return (Engine::Claude, Reason::NoUsage);
+    }
+    let tripped = match (five, seven) {
+        (Some((f, resets_at)), _) if f >= FIVE_HOUR_LIMIT => Some(Window {
+            name: "5h",
+            used: f,
+            resets_at,
+        }),
+        (_, Some((s, resets_at))) if s > SEVEN_DAY_LIMIT => Some(Window {
+            name: "7d",
+            used: s,
+            resets_at,
+        }),
+        _ => None,
+    };
+    match tripped {
+        None => (
+            Engine::Claude,
+            Reason::WithinLimits {
+                five_hour: five.map(|(f, _)| f),
+                seven_day: seven.map(|(s, _)| s),
+            },
+        ),
+        Some(w) if codex_on_path() => (Engine::Codex, Reason::Tripped(w)),
+        Some(w) => (Engine::Claude, Reason::CodexMissing(w)),
     }
 }
 
@@ -130,6 +226,18 @@ pub fn decide(
         ReviewEngine::Auto => match usage {
             Usage::Missing => Ok((Engine::Claude, Reason::CacheMissing)),
             Usage::Broken => Ok((Engine::Claude, Reason::CacheBroken)),
+            // Its age was judged when it was picked.
+            Usage::Ledger(l) => {
+                let window = |w: &Option<RateWindow>| {
+                    w.as_ref()
+                        .and_then(|w| w.used_percent.map(|used| (used, w.resets_at)))
+                };
+                Ok(judge(
+                    window(&l.five_hour),
+                    window(&l.seven_day),
+                    codex_on_path,
+                ))
+            }
             Usage::Read(v) => {
                 if !v.is_object() {
                     return Ok((Engine::Claude, Reason::CacheBroken));
@@ -151,75 +259,20 @@ pub fn decide(
                     return Ok((Engine::Claude, Reason::CacheStale { age_secs: age }));
                 }
 
-                let used = |key: &str| {
-                    v.get(key)
-                        .and_then(|w| w.get("used_percentage"))
+                let window = |key: &str| {
+                    let w = v.get(key)?;
+                    let used = w.get("used_percentage").and_then(|u| u.as_f64())?;
+                    let resets_at = w
+                        .get("resets_at")
                         .and_then(|u| u.as_f64())
+                        .map(|u| u as i64);
+                    Some((used, resets_at))
                 };
-                let resets_at = |key: &str| {
-                    v.get(key)
-                        .and_then(|w| w.get("resets_at"))
-                        .and_then(|u| u.as_f64())
-                        .map(|u| u as i64)
-                };
-
-                let five = used("five_hour");
-                let seven = used("seven_day");
-
-                if five.is_none() && seven.is_none() {
-                    return Ok((Engine::Claude, Reason::NoUsage));
-                }
-
-                let tripped = if let Some(f) = five {
-                    if f >= FIVE_HOUR_LIMIT {
-                        Some(Window {
-                            name: "5h",
-                            used: f,
-                            resets_at: resets_at("five_hour"),
-                        })
-                    } else if let Some(s) = seven {
-                        if s > SEVEN_DAY_LIMIT {
-                            Some(Window {
-                                name: "7d",
-                                used: s,
-                                resets_at: resets_at("seven_day"),
-                            })
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else if let Some(s) = seven {
-                    if s > SEVEN_DAY_LIMIT {
-                        Some(Window {
-                            name: "7d",
-                            used: s,
-                            resets_at: resets_at("seven_day"),
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                match tripped {
-                    None => Ok((
-                        Engine::Claude,
-                        Reason::WithinLimits {
-                            five_hour: five,
-                            seven_day: seven,
-                        },
-                    )),
-                    Some(w) => {
-                        if codex_on_path() {
-                            Ok((Engine::Codex, Reason::Tripped(w)))
-                        } else {
-                            Ok((Engine::Claude, Reason::CodexMissing(w)))
-                        }
-                    }
-                }
+                Ok(judge(
+                    window("five_hour"),
+                    window("seven_day"),
+                    codex_on_path,
+                ))
             }
         },
         ReviewEngine::Other(text) => Err(format!(
