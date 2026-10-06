@@ -1355,8 +1355,9 @@ The hub is the dispatcher: it picks, claims, creates the worktree, hands over an
 
 Why a session and not a subagent: a subagent cannot ask the user anything, cannot be resumed
 tomorrow, and its whole transcript piles up in the hub. A real session in the worktree fixes
-all three, and it gets its own tab and its own proctor row, so progress is visible without
-asking the hub.
+all three, and it gets its own tab and its own row in `adj agent-sessions` and the board's セッション
+tab, so progress is visible without asking the hub (a Codex worker only after `adj setup codex`;
+Antigravity does not report yet, #520).
 
 **Do not fork (carry over the hub's context).** The resident hub's transcript is full of other tasks,
 and carrying it over would load the worker with a whole unrelated context. The hub does no
@@ -1604,8 +1605,9 @@ adjutant work --worktree '{worktree}' --task {task_id}
   template in `settings.terminal.spawn` and that is used instead.
 
 **Step 4** — tell the user the worker is running and which tab it is, then **go back to waiting**.
-The hub's job for this task is over. Do not poll the worker: the tab name and the proctor row show
-progress, and reading the screen is a waste of context.
+The hub's job for this task is over. Do not poll the worker: the tab name and its row in
+`adj agent-sessions` (the board's セッション tab) show progress, and reading the screen is a waste
+of context.
 
 ### 5. Hand it to Jules
 
