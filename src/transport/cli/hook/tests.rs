@@ -284,3 +284,88 @@ fn a_status_line_with_a_bad_session_id_is_refused() {
         assert!(status_line(&p).is_err());
     }
 }
+
+fn codex_fixture(name: &str) -> Value {
+    let text = match name {
+        "session-start" => include_str!("../../../fixtures/hooks/codex/session-start.json"),
+        "user-prompt-submit" => {
+            include_str!("../../../fixtures/hooks/codex/user-prompt-submit.json")
+        }
+        "post-tool-use" => include_str!("../../../fixtures/hooks/codex/post-tool-use.json"),
+        "permission-request" => {
+            include_str!("../../../fixtures/hooks/codex/permission-request.json")
+        }
+        "subagent-start" => include_str!("../../../fixtures/hooks/codex/subagent-start.json"),
+        "subagent-post-tool-use" => {
+            include_str!("../../../fixtures/hooks/codex/subagent-post-tool-use.json")
+        }
+        "subagent-stop" => include_str!("../../../fixtures/hooks/codex/subagent-stop.json"),
+        "stop" => include_str!("../../../fixtures/hooks/codex/stop.json"),
+        "interrupt" => include_str!("../../../fixtures/hooks/codex/interrupt.json"),
+        "session-end" => include_str!("../../../fixtures/hooks/codex/session-end.json"),
+        other => panic!("no codex fixture called {other}"),
+    };
+    serde_json::from_str(text).unwrap()
+}
+
+fn codex(payload: &Value) -> Result<AgentEvent, String> {
+    codex_event(payload, None, Path::new("/home/user"), 1_000)
+}
+
+#[test]
+fn each_codex_hook_name_is_the_event_it_says_and_an_interrupt_is_a_stop() {
+    let hook = |name: &str| codex(&codex_fixture(name)).unwrap().hook;
+    assert_eq!(hook("session-start"), HookEvent::SessionStart);
+    assert_eq!(hook("user-prompt-submit"), HookEvent::UserPromptSubmit);
+    assert_eq!(hook("post-tool-use"), HookEvent::PostToolUse);
+    assert_eq!(hook("permission-request"), HookEvent::PermissionRequest);
+    assert_eq!(hook("subagent-start"), HookEvent::SubagentStart);
+    assert_eq!(hook("subagent-post-tool-use"), HookEvent::PostToolUse);
+    assert_eq!(hook("subagent-stop"), HookEvent::SubagentStop);
+    assert_eq!(hook("stop"), HookEvent::Stop);
+    assert_eq!(hook("interrupt"), HookEvent::Stop);
+    assert_eq!(hook("session-end"), HookEvent::SessionEnd);
+    let unknown = serde_json::json!({"session_id": "s", "hook_event_name": "PreCompact"});
+    assert_eq!(
+        codex(&unknown).unwrap().hook,
+        HookEvent::Other("PreCompact".to_string())
+    );
+}
+
+#[test]
+fn a_codex_event_has_no_pid_and_names_the_session_the_place_and_the_sub_agent() {
+    let main = codex(&codex_fixture("session-start")).unwrap();
+    assert_eq!(main.agent, "codex");
+    assert_eq!(main.pid, None);
+    assert_eq!(main.session_id, "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d");
+    assert_eq!(main.cwd.as_deref(), Some("/work/repo"));
+    assert_eq!((main.agent_id, main.agent_type), (None, None));
+
+    let sub = codex(&codex_fixture("subagent-post-tool-use")).unwrap();
+    assert_eq!(sub.agent_id.as_deref(), Some("agent-example-1"));
+    assert_eq!(sub.agent_type.as_deref(), Some("worker"));
+    assert_eq!(sub.summary.as_deref(), Some("Bash: ls"));
+    assert_eq!(
+        codex(&codex_fixture("post-tool-use"))
+            .unwrap()
+            .summary
+            .as_deref(),
+        Some("Bash: cargo test")
+    );
+}
+
+#[test]
+fn the_codex_config_dir_falls_back_to_the_default_install() {
+    let payload = codex_fixture("stop");
+    let at = |dir: Option<&str>| {
+        codex_event(&payload, dir, Path::new("/home/user"), 1)
+            .unwrap()
+            .config_dir
+    };
+    assert_eq!(at(None).as_deref(), Some("/home/user/.codex"));
+    assert_eq!(at(Some("  ")).as_deref(), Some("/home/user/.codex"));
+    assert_eq!(at(Some("/cx")).as_deref(), Some("/cx"));
+    let mut bad = payload;
+    bad["session_id"] = serde_json::json!("../x");
+    assert!(codex(&bad).is_err());
+}

@@ -1,0 +1,21 @@
+Hook payloads Codex sends to `adj hook codex`, read by `src/transport/cli/hook/tests.rs` and
+`tests/agent_sessions.rs`. One file per event:
+
+    session-start.json            SessionStart
+    user-prompt-submit.json       UserPromptSubmit
+    post-tool-use.json            PostToolUse, a Bash command
+    permission-request.json       PermissionRequest
+    subagent-start.json           SubagentStart
+    subagent-post-tool-use.json   PostToolUse sent by a sub-agent (carries agent_id)
+    subagent-stop.json            SubagentStop
+    stop.json                     Stop
+    interrupt.json                Interrupt, the turn cut short
+    session-end.json              SessionEnd
+
+All of them are written by hand from the hook input types in openai/codex
+`codex-rs/hooks/src/schema.rs`, with the keys it lists for each event and neutral values
+(`/work/repo`, a fixed session id). None was recorded from a running Codex. When one is recorded,
+replace the hand-written file and note it here.
+
+The tests rewrite `cwd` to the fixture repository and `session_id` where they need more than one
+session; nothing else is edited.

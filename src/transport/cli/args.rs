@@ -372,8 +372,8 @@ pub(crate) struct AgentSessionsArgs {
 
 #[derive(Args)]
 pub(crate) struct SetupArgs {
-    /// Which agent's settings: claude
-    #[arg(value_parser = ["claude"])]
+    /// Which agent's settings: claude, codex
+    #[arg(value_parser = ["claude", "codex"])]
     pub(crate) agent: String,
     /// Take out only the entries `adj setup` added (any `adj` path), and nothing else
     #[arg(long)]
@@ -382,12 +382,12 @@ pub(crate) struct SetupArgs {
 
 #[derive(Args)]
 pub(crate) struct HookArgs {
-    /// Which agent's payload this is: claude
+    /// Which agent's payload this is: claude, codex
     pub(crate) agent: String,
     /// Marks an entry `adj setup` wrote into a global settings file; it changes nothing here
     #[arg(long, hide = true)]
     pub(crate) global: bool,
-    /// Read Claude Code's status line input instead of a hook payload: record the model, context use and rate limits on the session's existing row, print nothing
+    /// Read Claude Code's status line input instead of a hook payload: record the model, context use and rate limits on the session's existing row, print nothing (claude only)
     #[arg(long)]
     pub(crate) status_line: bool,
 }

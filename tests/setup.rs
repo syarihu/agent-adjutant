@@ -1,7 +1,7 @@
-//! `adj setup claude`: the hooks in the user's Claude Code settings.
+//! `adj setup <agent>`: the hooks in the user's Claude Code settings and Codex hooks file.
 //!
-//! Every run here names its own settings directory, through `CLAUDE_CONFIG_DIR` (or, for the
-//! fallback, `HOME`). The binary would otherwise edit the developer's real `~/.claude`.
+//! Every run here names its own settings directory, through `CLAUDE_CONFIG_DIR` or `CODEX_HOME`
+//! (or, for the fallback, `HOME`). The binary would otherwise edit the developer's real `~/.claude`.
 
 mod common;
 use common::*;
@@ -291,7 +291,7 @@ fn a_written_command_runs_and_its_session_shows_up() {
 #[test]
 fn a_missing_or_unknown_agent_is_a_usage_error_and_creates_nothing() {
     let s = Setup::new();
-    for args in [&["setup"][..], &["setup", "codex"][..]] {
+    for args in [&["setup"][..], &["setup", "agy"][..]] {
         let out = s.run(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
     }
@@ -304,4 +304,86 @@ fn help_lists_setup_and_still_hides_hook() {
     let help = s.ok(&["--help"]);
     assert!(help.lines().any(|l| l.trim_start().starts_with("setup ")));
     assert!(!help.lines().any(|l| l.trim_start().starts_with("hook ")));
+}
+
+/// `CODEX_EVENTS.len()`; a unit test in `kernel::agent_hooks` pins it.
+const CODEX_EVENTS: usize = 9;
+
+fn codex_command(exe: &str) -> String {
+    let q = quoted(exe);
+    format!("[ ! -x {q} ] || {q} hook codex --global || true")
+}
+
+fn codex_file(s: &Setup) -> PathBuf {
+    s.dir.with_file_name("codex-home").join("hooks.json")
+}
+
+fn codex_run(s: &Setup, args: &[&str]) -> String {
+    let mut command = s.fx.command(args);
+    command.env("CODEX_HOME", s.dir.with_file_name("codex-home"));
+    let out = command.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+fn codex_settings(s: &Setup) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(codex_file(s)).unwrap()).unwrap()
+}
+
+#[test]
+fn codex_gets_its_own_file_under_codex_home_and_a_note_about_trust() {
+    let s = Setup::new();
+    let out = codex_run(&s, &["setup", "codex"]);
+    assert!(out.contains("Added adjutant's hooks to"), "{out}");
+    assert!(out.contains("hooks.json"), "{out}");
+    assert!(out.contains(&format!(
+        "{CODEX_EVENTS} events run {BIN} hook codex --global"
+    )));
+    assert!(out.contains("trust"), "{out}");
+    let settings = codex_settings(&s);
+    assert_eq!(settings["hooks"].as_object().unwrap().len(), CODEX_EVENTS);
+    assert_eq!(ours(&settings, &codex_command(BIN)), CODEX_EVENTS);
+    assert_eq!(settings["hooks"]["PermissionRequest"][0]["matcher"], "*");
+    assert_eq!(settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 3);
+    assert!(settings["hooks"]["Interrupt"][0].get("matcher").is_none());
+    assert!(!s.file().exists());
+
+    let before = std::fs::read(codex_file(&s)).unwrap();
+    let out = codex_run(&s, &["setup", "codex"]);
+    assert!(out.contains("nothing to change"), "{out}");
+    assert_eq!(std::fs::read(codex_file(&s)).unwrap(), before);
+
+    let out = codex_run(&s, &["setup", "codex", "--remove"]);
+    assert!(
+        out.contains(&format!(
+            "Removed {CODEX_EVENTS} adjutant hook entries from"
+        )),
+        "{out}"
+    );
+    let out = codex_run(&s, &["setup", "codex", "--remove"]);
+    assert!(out.contains("nothing to remove"), "{out}");
+}
+
+#[test]
+fn removing_codex_hooks_from_a_file_that_also_has_claudes_leaves_claudes() {
+    let s = Setup::new();
+    let mut mixed: Value = serde_json::from_str(USER).unwrap();
+    mixed["hooks"]["SessionStart"] = json!([
+        { "hooks": [{ "type": "command", "command": global_command(BIN) }] }
+    ]);
+    std::fs::create_dir_all(codex_file(&s).parent().unwrap()).unwrap();
+    std::fs::write(codex_file(&s), mixed.to_string()).unwrap();
+
+    codex_run(&s, &["setup", "codex"]);
+    let both = codex_settings(&s);
+    assert_eq!(ours(&both, &global_command(BIN)), 1);
+    assert_eq!(ours(&both, &codex_command(BIN)), CODEX_EVENTS);
+
+    let out = codex_run(&s, &["setup", "codex", "--remove"]);
+    assert!(out.contains(&format!("Removed {CODEX_EVENTS}")), "{out}");
+    assert_eq!(codex_settings(&s), mixed);
 }

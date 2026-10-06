@@ -160,7 +160,8 @@ root rather than a `Context`, because the receiver loads no config (below).
 One hidden command, `adj hook <agent>`, reads the payload from stdin and takes the event from the
 payload's `hook_event_name`, so every entry in the generated settings is the same command. It lives
 in `transport/cli/hook.rs`, calls `registry::record_agent_event`, and prints only what the event's
-contract needs (`{}` for `PermissionRequest`, nothing otherwise).
+contract needs (Claude Code: `{}` for `PermissionRequest`, nothing otherwise; Codex: nothing at all,
+see [Codex](#codex)).
 
 It runs after every tool call, so it must be fast and must not fail the agent:
 
@@ -365,8 +366,31 @@ hook files. Their differences, from proctor's guides, decide the details of thos
 - Antigravity has no hook for waiting on approval (proctor polls its conversation store) and reports
   sub-agents only through `PreToolUse` on `invoke_subagent`.
 
-adjutant runs Codex as `Agent::Generic` today, and a `Generic` session gets no injection and no row
-until its own issue lands.
+### Codex
+
+`adj setup codex` appends adjutant's hooks to Codex's global `hooks.json` (`$CODEX_HOME/hooks.json`,
+else `~/.codex/hooks.json`), in the same shape and with the same rules as `adj setup claude`:
+existing entries are kept, a rerun changes nothing, and `--remove` takes out only adjutant's.
+
+- Nine events run `adj hook codex --global`: `SessionStart`, `UserPromptSubmit`, `PostToolUse` and
+  `PermissionRequest` (the last two with matcher `*`), `Stop`, `Interrupt`, `SessionEnd`,
+  `SubagentStart`, `SubagentStop`. `Interrupt` (a turn cut short) is recorded as `Stop`, so the row
+  goes to done, except that an `Interrupt` while sub-agents are still running leaves the row
+  running until their `SubagentStop` or the silence sweep. A Codex that does not know `Interrupt` ignores that key.
+- `SessionEnd` gets `"timeout": 3` (Codex's default of 1 s would kill `adj hook` before it removed
+  the row; 3 s is its maximum).
+- The hook prints nothing on every event, `PermissionRequest` included, since Codex reads stdout as
+  a decision.
+- Codex asks the user to trust each new hook command the next time it starts. The trust record is
+  Codex's own config, which adjutant never writes; after moving `adj`, run `adj setup codex` again
+  and trust the hooks again.
+- Codex gives a hook no pid, so a row has none and is aged out by the 24-hour rule.
+- `--status-line` is Claude Code's; with `codex` it only says so on stderr.
+
+**Antigravity is still pending**, as a follow-up: `adj setup agy` and its receiver are not there yet.
+
+adjutant runs Codex as `Agent::Generic` today, and a `Generic` session gets no injection; its row
+comes from the global hooks above.
 
 ## How adjutant uses it
 
@@ -379,7 +403,8 @@ is listed so the ledger carries what it will need.
 - **Waking.** `mail::read_screen` guesses an agent's state from a tmux screen, and works for neither
   iTerm2 nor `Generic`. A row in `waiting` or `running` says not to type now; `idle` or `done` says
   it is safe; a `running` row not heard from in ten minutes is not believed, since an interrupted turn
-  sends no `Stop`. The screen check stays for typing the line itself, and as the fallback with no row.
+  sends no `Stop` (Claude Code; Codex sends `Interrupt`, which is mapped to done). The screen check
+  stays for typing the line itself, and as the fallback with no row.
 - **Gates and cards.** A worker in `waiting` on a permission prompt is waiting on a person even with
   no gate open, and the card says so (landed, #506). Not yet: a worker whose row went `done` and stayed there with no phase
   change is a better "stuck" signal than the phase age alone.
