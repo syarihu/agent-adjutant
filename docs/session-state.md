@@ -20,7 +20,7 @@ and the ledger are the parts adjutant needs.
 | Sub-agent tracking keyed by `agent_id`, with the parent's `done` held until the last one ends | Comes over |
 | Notification types told apart (permission prompt against idle prompt) | Comes over |
 | Status line relay (`_stats`: context use, rate limits, model) | Comes over, as a relay the user wires in (see [What comes from the status line](#what-comes-from-the-status-line)) |
-| Pruning of dead sessions by pid and start time | Comes over, reusing `registry::liveness` |
+| Pruning of dead sessions by pid and start time | Comes over, reusing the `registry::liveness` module's process table |
 | Ledger as one `state.json` for every repository under one lock | Not as it is: one file per session (see [The ledger](#the-ledger)) |
 | Naming hint on `UserPromptSubmit` and `proctor title` | Stays. adjutant names its sessions when it starts them; a second hint would be injected twice next to proctor's |
 | `proctor setup`, which prints a guide for the agent to merge by hand | Replaced by injection at launch and an `adj setup` that writes the hooks itself |
@@ -56,11 +56,17 @@ but it joins to no hub or worker. It shows as an unattached session, the same as
 hand.
 
 The agent's id can change under a running process: `/clear` ends the session (`SessionEnd`) and
-starts a new one with a new `session_id`, and `--fork-session` does the same. So adjutant also puts
-the id it minted into the agent's environment at launch, as `ADJUTANT_SESSION_ID`. Hook processes
-inherit the agent's environment, and that variable does not change on `/clear`, so the receiver
-copies it into the row as `launchId`. A hub or worker is joined by `launchId` first and by
-`sessionId` second, and the join survives a `/clear`.
+starts a new one with a new `session_id`, and `--fork-session` does the same. The process stays,
+though, and both a hub record and a worker record hold its pid with its `ps` start time: `adj hub`
+and `adj worker` record their own pid and then exec the runner line, which `sh -c` normally execs
+into the agent. Claude Code gives hooks its pid as `CLAUDE_PID`. So a hub or worker is joined by
+`sessionId` first and by `pid` plus start time second, and the join survives a `/clear`, and a
+custom runner without `{sessionId}`. It does not survive a runner line the shell cannot exec into
+(a pipe, `;`): there the recorded pid is the shell's, and only `sessionId` joins.
+
+The join is not carried in an environment variable on purpose. Everything the agent starts inherits
+its environment, so a `claude` or `codex exec` run from a worker's shell would carry the worker's
+mark and be joined to it.
 
 **Shape.** Every field but the key is optional (rule 10 in [architecture.md](architecture.md)), and
 keys this binary does not know are kept in `other`, as `WorkerRecord.other` does.
@@ -68,15 +74,14 @@ keys this binary does not know are kept in `other`, as `WorkerRecord.other` does
 | Key | What |
 |---|---|
 | `sessionId` | The key, as above |
-| `launchId` | `ADJUTANT_SESSION_ID` from the hook's environment: the id adjutant minted at launch |
 | `agent` | `claude` first; `codex` and `agy` later |
 | `status` | `idle`, `running`, `waiting`, `done` or `failed` |
 | `pendingStatus` | A `done` or `failed` held back while sub-agents run |
 | `cwd`, `worktree` | The payload's `cwd` and its `git rev-parse --show-toplevel` (absent outside git; the row is still written) |
 | `launchedBy` | `injected` or `global`: which set of hooks wrote the row (see [Getting hooks into a session](#getting-hooks-into-a-session)) |
-| `pid`, `psStarted` | The agent's process (`CLAUDE_PID` in the hook's environment) and its start time, for liveness |
+| `pid`, `psStarted` | The agent's process (`CLAUDE_PID` in the hook's environment) and its start time, for the join and for liveness |
 | `createdAt`, `updatedAt` | `updatedAt` moves only when `status` changes, so tool activity does not reset "how long in this state" |
-| `lastEventAt` | Moves on every event that writes; the "seen alive" mark |
+| `lastEventAt` | The "seen alive" mark. Moves with any other change, and on its own at most once a minute |
 | `activity` | The tool in use (`Edit: src/lib.rs`) |
 | `request` | What a permission prompt is asking for, while `waiting` |
 | `subagents` | Running sub-agents: `[{ id, type, startedAt, lastSeenAt }]`, keyed by `agent_id` |
@@ -89,25 +94,30 @@ what the worker says about its work; the ledger is what the agent's hooks say ab
 They answer different questions, and neither replaces the other.
 
 **Writes.** Load, change and save under the row's lock, replacing the file through a rename
-(`infra::fs`); skip the write when nothing changed, as proctor does, so the file's mtime means
-something. `git rev-parse` runs before the lock is taken.
+(`infra::fs`). A change is any field but `lastEventAt`; with none, the write is skipped unless
+`lastEventAt` is a minute old, as proctor does with its sub-agent heartbeat. So `PostToolUse` on the
+same tool writes at most once a minute. `git rev-parse` runs before the lock is taken.
 
 **Pruning.** `SessionEnd` removes the row. For a row that ends without one (the tab was closed, the
 process was killed), the receiver sweeps the other rows on `SessionStart` and `Stop`. Not on every
-event: a sweep checks processes, and `PostToolUse` fires after every tool call.
+event: a sweep checks processes, and `PostToolUse` fires after every tool call. A sweep takes one
+`ProcessTable::snapshot` and checks every row against it, rather than one `ps` per row.
 
-- A row joined to a hub or worker record is dead when that record's liveness
-  (`registry::hub_liveness` / `worker_liveness`, pid plus `ps` start time) says so.
-- Any other row with a `pid` is dead when the pid is gone or its start time differs.
-- A row with neither is dropped when it has not been `running` and `lastEventAt` is older than
+- A row with a `pid` is dead when the pid is gone or its start time differs. The row's own pid is
+  used, not the joined hub or worker record: a record can be missing while its agent still runs.
+- When the table cannot be read, nothing is removed (`Liveness::CannotTell` keeps the row).
+- A row without a pid is dropped when it is not `running` now and `lastEventAt` is older than
   24 hours.
+- A removed row's `.lock` goes with it.
 
 Claude Code sets `CLAUDE_PID` for hook commands, so every Claude Code row has a pid; the 24-hour
 rule is for agents that give none (Codex, as proctor found).
 
-**Reading.** `registry::agent_session(root, session_id)` and `registry::agent_sessions(root)`, taking
-a state root like the other reads (rule 4), and `adj sessions [--json]` on the CLI so the foundation
-can be checked end to end before the board shows it.
+**Reading.** `registry::agent_session(root, session_id)` and `registry::agent_sessions(root)`, and
+`adj sessions [--json]` on the CLI so the foundation can be checked end to end before the board
+shows it. Two deliberate exceptions to rule 4: the reads take no hub slug, because the ledger is one
+per machine, not one per hub, and the write (`registry::record_agent_event(root, event)`) takes a
+state root rather than a `Context`, because the receiver loads no config (below).
 
 ## Receiving hooks
 
@@ -143,8 +153,13 @@ The events, taken from proctor's table:
 | `SubagentStop` | | removes it; applies `pendingStatus` when it was the last |
 
 An event that carries `agent_id` comes from a sub-agent: it updates that sub-agent's `lastSeenAt`
-and never the parent's `status`. `SessionEnd`, `SubagentStart`, `SubagentStop` and
-`UserPromptSubmit` are not run in the background, so the process is not killed before it writes.
+and never the parent's `status`, with one exception. A `PermissionRequest` from a sub-agent sets the
+parent to `waiting`, since the person is asked in the parent's terminal either way; otherwise the row
+looks busy until the `Notification` some seconds later.
+
+No hook is run in the background (`async`). A background `PostToolUse` that finished after `Stop`
+would put a finished row back to `running`. Run in order, the receiver has to be fast instead, which
+is what the next points are for.
 
 One known gap stays as it is in proctor: cancelling a permission prompt fires no hook, so the row
 stays `waiting` until the `idle_prompt` notification about a minute later.
@@ -170,15 +185,24 @@ sequenceDiagram
 
 Both routes are needed, for different sessions.
 
-**Injected at launch, for the Claude Code sessions adjutant starts.** adjutant writes one settings
-file, `agent-hooks/claude-settings.json` under the state dir, holding the table above with the
-absolute path of the running `adj` (`std::env::current_exe`; `PATH` is not reliable inside a hook),
-and passes it with `--settings <file>`. The runner templates gain a `{settings}` placeholder,
-rendered in `kernel::runner::worker_line` and `hub_line`; when a template does not name it and the
-runner's agent is `claude` (`runner::agent_from_runner`), it is added the way `{prompt}` is. The
-four default runners get it. Nobody edits a global settings file, and removing adjutant leaves
-nothing behind in the agent's settings. The file is rewritten when its contents would change (a new
-`adj` path after an upgrade), never while a session reads it: write to a temporary file and rename.
+**Injected at launch, for the Claude Code sessions adjutant starts.** adjutant writes a settings
+file under the state dir holding the table above, and passes it with `--settings <file>`. Nobody
+edits a global settings file, and removing adjutant leaves nothing behind in the agent's settings.
+
+- The command names `adj` by absolute path (`infra::paths::exe_path`; `PATH` is not reliable inside a
+  hook), guarded as proctor's guides do: `[ -x <path> ] && <path> hook claude`. An upgrade that
+  removes the old binary then leaves a running session's hooks doing nothing, rather than failing on
+  every tool call, until the session is restarted.
+- The file is named after the binary it calls, `agent-hooks/claude-<digest of the path>.json`, so a
+  development build and an installed one sharing the state dir do not keep rewriting one file. It
+  is written when missing or different, through a temporary file and a rename.
+- The runner templates gain a `{settings}` placeholder, rendered in `kernel::runner::worker_line`
+  and `hub_line` as `--settings <file>`. When the runner's agent is `claude`
+  (`runner::agent_from_runner`) and the template does not name `{settings}`, it is added after the
+  agent's name, unless the template already passes its own `--settings`: Claude Code takes one such
+  flag, so adjutant leaves the user's alone and that session has no injected hooks. A template the
+  shell does not read as one command (a pipe, `;`) places `{settings}` itself. The four default
+  runners name it.
 
 **Written once by `adj setup claude`, for everything else.** Sessions adjutant did not start, and
 agents with no per-session settings flag (Codex and Antigravity read hooks only from a global file),
@@ -192,16 +216,17 @@ Claude Code merges hook entries across settings levels rather than letting one r
 hooks run next to whatever hooks the user has, and the user's are untouched.
 
 **No double counting between the two.** When both are present, a session adjutant started runs both
-sets. Claude Code runs an identical handler defined in two settings files only once, but the two
-commands differ (`--global`), and whether an inline or temporary `--settings` file takes part in that
-is not documented, so adjutant does not rely on it. Instead the receiver run with `--global` returns
-at once when `ADJUTANT_SESSION_ID` is set. adjutant sets that variable at launch (through
-`runner::with_env`, which adjutant controls, so it is certain to be there) and hook commands inherit
-the agent's environment, so the global copy steps aside only in sessions where the injected copy
-runs.
+sets, and both write the same row. That is harmless by construction: every event sets a status,
+adds or removes a sub-agent by `agent_id`, or removes the row, so applying it twice gives the same
+row as applying it once. Nothing is counted. To save the second write, the receiver run with
+`--global` returns at once when the row already says `launchedBy: injected`; when the two race on
+the first event, the injected one's `launchedBy` wins. (Claude Code also runs an identical handler
+from two settings files only once, but the two commands differ by `--global`, so adjutant does not
+rely on that.)
 
 **Next to proctor.** proctor's hooks write proctor's ledger and adjutant's write adjutant's, so
-neither counts the other's sub-agents twice. What can happen is that the two disagree, for instance
+neither counts the other's sub-agents twice (and, as above, events applied twice would not count
+twice anyway). What can happen is that the two disagree, for instance
 if proctor's hooks are wrapped in a script that filters an event adjutant sees. That is acceptable:
 adjutant reads only its own ledger. Running both costs a second short process per hook.
 
@@ -290,9 +315,15 @@ plain JSON with one file per session, so it could.
 | Path (under the state dir) | What | Owner |
 |---|---|---|
 | `agent-sessions/<session id>.json` (+ `.lock`, `.json.broken`) | one agent session's state | registry (`store.rs`) |
-| `agent-hooks/claude-settings.json` | the hook settings passed with `--settings` | lifecycle (written at launch) |
+| `agent-hooks/claude-<digest>.json` | the hook settings passed with `--settings`, one per `adj` binary | lifecycle (written at launch) |
 
 Both follow rule 10: new keys optional, unknown keys kept, names fixed once released.
+
+The hook table itself (events, matchers, the command) is plain data with no records, so it lives in
+`kernel` (`kernel::agent_hooks`), with the function that merges it into an agent's settings JSON or
+takes it out again. `lifecycle` writes the injected file from it at launch, and `adj setup` in
+`transport/cli/setup.rs` reads and writes the user's settings file with it, the way `adj
+install-mcp` reaches the agents' own configuration today.
 
 ## Implementation split
 
@@ -315,10 +346,10 @@ Code events (sub-agents keyed by `agent_id`, a held `done`, notification types),
 rows, the hidden `adj hook claude` that reads a payload from stdin, and `adj sessions [--json]` to
 read the rows. Tests feed recorded payloads through `adj hook` and check the rows.
 
-Also confirm with a real session two facts the design takes from Claude Code's documentation
-without it saying them outright: that the `session_id` in hook payloads is the one passed with
-`--session-id`, and that hooks passed with `--settings` run alongside the user's own. Record the
-answers in the doc.
+Also confirm with a real session, using a hand-written settings file, two facts the design takes
+from Claude Code's documentation without it saying them outright: that the `session_id` in hook
+payloads is the one passed with `--session-id`, and that hooks passed with `--settings` run
+alongside the user's own. Record the answers in the doc.
 ```
 
 **2. Hooks do not reach the Claude Code sessions adjutant starts**
@@ -331,10 +362,11 @@ added the hooks to their own Claude Code settings by hand.
 
 ## Proposal
 
-Write `agent-hooks/claude-settings.json` under the state dir with the absolute path of `adj`, add a
-`{settings}` placeholder to the runner templates (appended for a `claude` runner that does not name
-it, like `{prompt}`), pass it in the four default runners, and set `ADJUTANT_SESSION_ID` to the
-minted session id in the agent's environment, so a row keeps its hub or worker across `/clear`. Rewrite the file only when its contents change, through a rename.
+Add the hook table to `kernel::agent_hooks` and write it at launch to
+`agent-hooks/claude-<digest>.json` under the state dir, naming `adj` by its guarded absolute path.
+Add a `{settings}` placeholder to the runner templates, added for a `claude` runner that does not
+name it unless the template passes its own `--settings`, and name it in the four default runners.
+Join rows to hubs and workers by `sessionId`, then by pid and start time, as the doc describes.
 ```
 
 **3. Claude Code sessions adjutant did not start cannot report their state**
@@ -349,8 +381,7 @@ A Claude Code session started by hand, or by a runner adjutant does not control,
 
 Add `adj setup claude`, which appends the hook table with `adj hook claude --global` to the user's
 Claude Code settings without removing any existing hook, and `adj setup claude --remove`, which
-takes out only those entries. `adj hook --global` returns at once when `ADJUTANT_SESSION_ID` is
-set, so a session adjutant started is not recorded twice.
+takes out only those entries. `adj hook --global` skips a row the injected hooks already write.
 ```
 
 **4. Context use and rate limits never reach the session ledger**
@@ -395,10 +426,24 @@ work in progress on the board.
 
 Use the session's row when there is one: hold the wake while it is `running` or `waiting`, and show a
 worker waiting on a permission prompt as waiting on a person. Keep the screen check as the fallback.
-Also let `adj review-engine` take the rate limits from the newest row before `rate-limit-cache.json`.
 ```
 
-**7. The hub procedure still points at proctor's row for a worker's progress**
+**7. The review engine reads rate limits from a cache file the user's status line must write**
+
+```markdown
+## What happens
+
+`adj review-engine` decides between Claude and codex from `rate-limit-cache.json`, which exists
+only if the user's own status line script writes it. With the status line relay, the session
+ledger holds the same figures.
+
+## Proposal
+
+Take the five-hour and seven-day figures from the newest row of the agent, and fall back to
+`rate-limit-cache.json` when no row has them.
+```
+
+**8. The hub procedure still points at proctor's row for a worker's progress**
 
 ```markdown
 ## What happens
@@ -412,7 +457,7 @@ Point those passages at `adj sessions` and the board. Leave "Where proctor ends"
 worktree conventions, which stay with proctor.
 ```
 
-**8. Codex and Antigravity sessions cannot report their state**
+**9. Codex and Antigravity sessions cannot report their state**
 
 ```markdown
 ## What happens
