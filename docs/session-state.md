@@ -98,10 +98,14 @@ They answer different questions, and neither replaces the other.
 `lastEventAt` is a minute old, as proctor does with its sub-agent heartbeat. So `PostToolUse` on the
 same tool writes at most once a minute.
 
-What costs a process is done only when it can change the row. The receiver reads the row once
-without the lock; it runs `git rev-parse` only when the row is new or `cwd` differs, and takes the
-`ps` start time only when the row is new or `pid` differs. Both run before the lock is taken. A
-`PostToolUse` on a settled row then costs one read and, at most once a minute, one write.
+What costs a process is done only when it can change the row. The receiver first reads the row
+without the lock, only to decide whether it needs `git rev-parse` (the row is new or `cwd` differs)
+or the `ps` start time (the row is new or `pid` differs), and runs those before taking the lock. The
+write always reloads the row under the lock and applies the event to that, never to the first read,
+so a parent's and a sub-agent's events that overlap both survive. If the locked read shows a lookup
+is needed after all (another event moved the row in between), it releases the lock, runs it, and
+tries again. A `PostToolUse` on a settled row then costs two reads and, at most once a minute, one
+write.
 
 **Pruning.** `SessionEnd` removes the row. For a row that ends without one (the tab was closed, the
 process was killed), the receiver sweeps the other rows on `SessionStart` and `Stop`. Not on every
@@ -112,17 +116,22 @@ event: a sweep checks processes, and `PostToolUse` fires after every tool call. 
   could not be read is judged by the pid alone). The row's own pid is used, not the joined hub or
   worker record: a record can be missing while its agent still runs.
 - When the table cannot be read, nothing is removed (`Liveness::CannotTell` keeps the row).
-- A row without a pid is dropped when it is not `running` now and `lastEventAt` is older than 24
-  hours.
+- A row without a pid is dropped when `lastEventAt` is older than 24 hours, whatever its status. A
+  live session sends events far more often than that (every tool call, every turn), so a row that
+  has been quiet that long is a process that died without `Stop` or `SessionEnd`. Unlike proctor, a
+  `running` row is not exempt; there it could stay `running` for ever.
 - A removed row's `.lock` goes with it, and a `.json.broken` file older than a week.
 
 A sweep only runs when some session sends one of those events, so with nothing else running a closed
 tab's row stays on disk. Readers therefore apply the same check: `agent_sessions` leaves out rows
-the process table says are dead, through `agent_sessions_with(root, table)` (rule 7), so the board's
+the sweep would remove (a dead pid, or no pid and quiet for 24 hours), through `agent_sessions_with(root, table)` (rule 7), so the board's
 poll and `adj agent-sessions` never show a closed tab as `running`.
 
-Claude Code sets `CLAUDE_PID` for hook commands, so every Claude Code row has a pid; the 24-hour
-rule is for agents that give none (Codex, as proctor found).
+Claude Code sets `CLAUDE_PID` for hook commands (documented from v2.1.214), so a Claude Code row
+normally has a pid. adjutant does not require a version: on an older Claude Code, or an agent that
+gives none (Codex, as proctor found), the row has no pid, joins by `sessionId` alone, and is pruned
+by the 24-hour rule. The reader filter applies the same rule, so such a row stops being shown once
+it has been quiet for 24 hours.
 
 **Reading.** `registry::agent_session(root, session_id)` and `registry::agent_sessions(root)`, and
 `adj agent-sessions [--json]` on the CLI so the foundation can be checked end to end before the
@@ -395,8 +404,9 @@ Add the agent session ledger from `docs/session-state.md`: one file per session 
 `agent-sessions/<session id>.json` in `registry`'s private store, the state machine for the Claude
 Code events (sub-agents keyed by `agent_id`, a held `done`, notification types), the sweep of dead
 rows, the hidden `adj hook claude` that reads a payload from stdin, and `adj agent-sessions
-[--json]` to read the rows. Tests feed recorded payloads through `adj hook` and check the rows. Add
-`adj agent-sessions` to `README.md` and `README.ja.md`.
+[--json]` to read the rows. Tests feed recorded payloads through `adj hook` and check the rows,
+including a parent's and a sub-agent's events applied at once with both updates kept. Add `adj
+agent-sessions` to `README.md` and `README.ja.md`.
 
 Also confirm with a real session, using a hand-written settings file, what the design takes from
 Claude Code's documentation without it saying it outright: that the `session_id` in hook payloads is
