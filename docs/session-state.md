@@ -125,8 +125,8 @@ event: a sweep checks processes, and `PostToolUse` fires after every tool call. 
 A sweep only runs when some session sends one of those events, so with nothing else running a closed
 tab's row stays on disk. Readers therefore apply the same check: `agent_sessions` leaves out rows
 the sweep would remove (a dead pid, or no pid and quiet for 24 hours), through
-`agent_sessions_with(root, table)` (rule 7), so the board's
-poll and `adj agent-sessions` never show a closed tab as `running`.
+`agent_sessions_with(root, table)` (rule 7), so the board's poll and `adj agent-sessions` never
+show a closed tab as `running`.
 
 Claude Code sets `CLAUDE_PID` for hook commands (documented from v2.1.214), so a Claude Code row
 normally has a pid. adjutant does not require a version: on an older Claude Code, or an agent that
@@ -346,6 +346,20 @@ None of this is in the foundation; it is listed so the ledger carries what it wi
 - **Gates and cards.** A worker in `waiting` on a permission prompt is waiting on a person even with
   no gate open; the card can say so. A worker whose row went `done` and stayed there with no phase
   change is a better "stuck" signal than the phase age alone.
+- **The hub's line on the board.** [#497](https://github.com/syarihu/agent-adjutant/issues/497)
+  puts one line for the hub above the board's columns, with its last tmux line and its inbox. The
+  hub's row adds whether it is running, idle or waiting on a question, and how many sub-agents it
+  has. The hub is joined to its row the same way as a worker (`registry::agent_session_of`).
+- **Keeping the hub on its inbox.** A hub often goes back to waiting without reading its inbox. An
+  injected `Stop` hook for hubs could refuse to end the turn while messages are unhandled, and a
+  `UserPromptSubmit` hook could add the inbox subjects to the prompt. Both add text at the end of
+  the conversation, so prompt caching is unaffected; the text stays small (subjects only, nothing when
+  the inbox is empty). They must count only messages the hub has not parked on purpose (one marked
+  for the user, a question waiting on its answer), or the hub loops. These hooks decide something,
+  so they are a separate command, not the state receiver: `adj hook` never blocks (see
+  [Receiving hooks](#receiving-hooks)), and a hook that may refuse `Stop` has to be allowed to. They
+  would go in a second settings file passed to hubs only (`agent-hooks/claude-hub-<digest>.json`);
+  injecting per session is what makes a hub-only hook possible.
 
 ## Worktree conventions and the hub procedure
 
