@@ -539,7 +539,8 @@ function renderColumns(force = false) {
       }
 
       const totalCount = (def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length) + bareIn.length;
-      const isEmpty = totalCount === 0;
+      // Done cards folded away still count: the column holds them behind the 以前の完了 button.
+      const isEmpty = totalCount === 0 && !older.length;
       const col = document.createElement('section');
       col.className = 'col' + (isNarrow ? ' narrow' : '') + (isEmpty ? ' empty' : '');
       col.dataset.col = def.id;
