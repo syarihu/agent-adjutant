@@ -268,26 +268,28 @@ function prNoteOf(task) {
 }
 /* The number of a PR record, which is a URL or, when written by hand, a bare "123" or "#123". */
 const prRefNumber = pr => (httpUrl(pr) ? prNumberOf(pr) : /^#?(\d+)$/.exec(pr || '')?.[1] || '');
-/* Issue number and PR number for a card's header; each opens on GitHub. */
+/* Issue and PR chips for a card's header; each opens on GitHub. Grouped in one element so they
+   sit together on the left instead of being spread apart by the header's space-between. */
 function ghChipsHtml(task) {
   const issueUrl = httpUrl(task.issueUrl);
   const prUrl = httpUrl(task.pr);
   const issueNumber = issueUrl ? issueNumberOf(issueUrl) : '';
+  const issueLabel = issueUrl ? issueLabelOf(issueUrl) : '';
   const prNumber = prRefNumber(task.pr);
   const issue = issueNumber
-    ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" class="card-issue-link" title="GitHub Issue #${esc(issueNumber)} を開く">
+    ? `<a href="${esc(issueUrl)}" target="_blank" rel="noopener noreferrer" class="card-issue-link" title="${esc(issueLabel)} を開く">
           <span class="material-symbols-outlined" style="font-size:12px;">tag</span>
-          <span>${esc(issueNumber)}</span>
+          <span>${esc(issueLabel)}</span>
         </a>`
     : '';
   // A PR that is not a link is still a PR: shown, but not clickable.
-  const prLabel = `<span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span><span>${prNumber ? `#${esc(prNumber)}` : esc(task.pr)}</span>`;
+  const prLabel = `<span class="material-symbols-outlined" style="font-size:12px;" aria-hidden="true">merge</span><span>${prNumber ? `PR #${esc(prNumber)}` : esc(task.pr)}</span>`;
   const prTitle = esc(`PR${prNumber ? ` #${prNumber}` : ''}・${prNoteOf(task)}${prStale()}`);
   const prClass = `gh-pr ${esc(prStateOf(task) || 'unknown')}`;
   const pr = prUrl
     ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" class="${prClass}" title="${prTitle}">${prLabel}</a>`
     : task.pr ? `<span class="${prClass}" title="${prTitle}">${prLabel}</span>` : '';
-  return issue + pr;
+  return issue || pr ? `<span class="card-gh-chips">${issue}${pr}</span>` : '';
 }
 /* The label of an issue link: GitHub's number, a tracker key (Jira `/browse/ABC-12`, Linear
    `/team/issue/ABC-12/slug`), or just "Issue" where the URL names neither. */

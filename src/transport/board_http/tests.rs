@@ -1135,6 +1135,13 @@ fn the_page_has_the_hubs_entry_and_its_wake_button() {
 }
 
 #[test]
+fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_320px() {
+    assert!(UI_HTML.contains("<span class=\"card-gh-chips\">${issue}${pr}</span>"));
+    assert!(UI_HTML.contains("PR #${esc(prNumber)}"));
+    assert!(UI_HTML.contains("#board-agent .col { flex: 0 0 320px; max-width: 320px; }"));
+}
+
+#[test]
 fn the_terminal_bar_links_the_task_issue_and_pr() {
     assert!(UI_HTML.contains("function ghBarLinksHtml"));
     assert!(UI_HTML.contains("function issueLabelOf"));

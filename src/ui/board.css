@@ -85,10 +85,10 @@
   min-width: 135px;
 }
 /* The .col rule above caps both boards' columns at 240px; the agent board's columns with
-   cards lift that cap and stay 400px here too. */
+   cards lift that cap and stay 320px here too. */
 #boards.layout-split.arrange-left #board-agent .col:not(.empty) {
-  flex: 0 0 400px;
-  max-width: 400px;
+  flex: 0 0 320px;
+  max-width: 320px;
 }
 #boards.layout-split.arrange-left .col.human.empty {
   flex: 0 0 135px;
@@ -164,10 +164,10 @@
   padding: 10px 6px;
 }
 /* The agent board's columns keep one width whether a sidebar is open or not; what no longer
-   fits scrolls sideways instead of narrowing them. A column with cards is 400px wide, even
+   fits scrolls sideways instead of narrowing them. A column with cards is 320px wide, even
    'before'/'done' (max-width lifts the caps of .col and .col.narrow); only an empty column
    stays narrow. */
-#board-agent .col { flex: 0 0 400px; max-width: 400px; }
+#board-agent .col { flex: 0 0 320px; max-width: 320px; }
 #board-agent .col.empty { flex: 0 0 142px; }
 .col.empty .col-title-badge {
   font-size: 11.5px;
@@ -433,6 +433,10 @@
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
 }
+/* A card's Issue and PR chips, kept together on the left; what follows them in the header
+   (wait time, pills) is pushed to the right. They wrap inside the group rather than overflow a
+   narrow human column. */
+.card-gh-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; margin-right: auto; }
 .card .title {
   font-weight: 600;
   font-size: 13px;
