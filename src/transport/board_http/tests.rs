@@ -1162,3 +1162,11 @@ fn the_panel_head_links_the_task_issue_and_pr() {
     assert!(!UI_HTML.contains("ghBarLinksHtml"));
     assert!(!UI_HTML.contains("tp-bar-link"));
 }
+
+#[test]
+fn the_panel_head_does_not_show_the_task_record_id() {
+    let head = UI_HTML.split("function panelHeadHtml").nth(1).unwrap();
+    let head = &head[..head.find("\n\u{7d}\n").unwrap()];
+    assert!(!head.contains("tp-key"));
+    assert!(!head.contains("task.id"));
+}
