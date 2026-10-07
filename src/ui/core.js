@@ -71,11 +71,11 @@ function applyLayout() {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', String(on));
   });
-  // The layout switches belong to the two boards; the review queue and the task view have no tabs.
+  // The layout switches belong to the two boards; the review queue has no tabs.
   const tools = document.getElementById('view-tools');
   if (tools) tools.hidden = view !== 'board' || nav.view === 'sessions';
   const tabsRow = document.getElementById('view-tabs-row');
-  if (tabsRow) tabsRow.hidden = view === 'review' || view === 'task';
+  if (tabsRow) tabsRow.hidden = view === 'review';
   document.querySelectorAll('[data-layout]').forEach(b => {
     const on = b.dataset.layout === prefs.layout;
     b.classList.toggle('active', on);
@@ -660,7 +660,7 @@ function renderCounts() {
    tab lets go of the address it waits on before the panel's terminal goes, whose going redraws
    that tab. */
 const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'sessions-tab', 'pending-session',
-  'sessions-view', 'task-panel', 'review', 'task-view', 'layout'];
+  'sessions-view', 'task-panel', 'review', 'layout'];
 const viewsByName = new Map();
 
 /* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets

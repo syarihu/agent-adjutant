@@ -12,7 +12,7 @@ pub struct TaskHistory {
     pub records: Vec<gate::Gate>,
 }
 
-/// Everything one task's gates left behind, for its full view: the gates a person answered
+/// Everything one task's gates left behind, for its panel: the gates a person answered
 /// (`answered`) and the records its worker kept (`records`), each oldest first.
 ///
 /// Asked for by the page when it opens the view rather than joined into `/api/state`: the

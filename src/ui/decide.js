@@ -1,5 +1,5 @@
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
-   the `data-gate` around it, so the same panel works in the review view and a task's view. */
+   the `data-gate` around it, so the same panel works in the review view and the task panel. */
 const BUTTONS = {
   approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${decisionLabel('approve', g.kind)}</span></button>`,
   changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${decisionLabel('changes', g.kind)}</span></button>`,
@@ -230,10 +230,9 @@ document.addEventListener('change', e => {
   if (box.checked) ticked.add(i); else ticked.delete(i);
 });
 
-/* The comment box of the view on screen. The review view, a task's view and the task panel can
+/* The comment box of the view on screen. The review view and the task panel can
    each hold one at once, the hidden ones included, so it is looked up inside the one being shown. */
-const commentBox = () => document.querySelector(view === 'task' ? '#task-view .gate-comment'
-  : view === 'review' ? '#review .gate-comment' : '#task-panel .gate-comment');
+const commentBox = () => document.querySelector(view === 'review' ? '#review .gate-comment' : '#task-panel .gate-comment');
 
 /* An answered gate leaves the list and the counts at once; the round that follows confirms it.
    In a merged state that round can be a while off. */

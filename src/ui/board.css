@@ -547,7 +547,7 @@
 .tp-tab.on { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
 .tp-tab:disabled { opacity: .55; cursor: not-allowed; }
 .tp-tab-hint { font-size: 10.5px; font-weight: 600; }
-/* The panel's tabs are the task view's segmented tabs, narrower so five fit the panel; the rest
+/* The panel's tabs are segmented tabs, narrower so five fit the panel; the rest
    scroll sideways rather than wrap. The .tp-tab rules above are still the review view's. */
 #tp-tabs.m3-segmented-tabs { margin: 8px 12px; max-width: calc(100% - 24px); flex-shrink: 0; overflow-x: auto; scrollbar-width: none; }
 #tp-tabs .m3-seg-tab { padding: 6px 12px; white-space: nowrap; flex-shrink: 0; }

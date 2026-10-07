@@ -49,8 +49,8 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         "function renderDrawer",
         "let panelPop",
         "sidesheet-header",
-        // The card's button for the terminal tab outside the board. The task view and the
-        // review view keep theirs, which have a `style=` between the class and the title.
+        // The card's button for the terminal tab outside the board. The review view keeps
+        // its own, which have a `style=` between the class and the title.
         "class=\"m3-icon-button\" title=\"ターミナルのworkerタブを前面表示\"",
     ] {
         assert!(!UI_HTML.contains(gone), "{gone}");
@@ -63,7 +63,7 @@ fn the_page_has_one_task_panel_and_no_drawer() {
 }
 
 #[test]
-fn the_task_panel_has_the_tabs_of_the_task_view() {
+fn the_task_panel_has_the_tabs_and_the_full_view_is_gone() {
     for piece in [
         "const PANES = ['detail', 'term', 'review', 'check', 'history']",
         "id=\"tp-tabs\"",
@@ -73,8 +73,24 @@ fn the_task_panel_has_the_tabs_of_the_task_view() {
         "動作確認",
         "function drawTaskPane",
         "function showPanelTab",
+        "function openTask(",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The task's own full view was retired into these tabs.
+    for gone in [
+        "renderTaskView",
+        "backToBoard",
+        "redrawTaskView",
+        "id=\"task-view\"",
+        "view === 'task'",
+        "view !== 'task'",
+        "taskView",
+        "TASK_TABS",
+        "#task-view",
+        "with-rail",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
     }
     // The panel's decision buttons go through `decideAct`; `bindDecide` would bind `data-ide` a
     // second time next to the panel's own delegated handler.
@@ -999,7 +1015,6 @@ fn the_views_register_themselves() {
         "renderSessionsView",
         "renderTaskPanel",
         "redrawReview",
-        "redrawTaskView",
         "hideTaskPanelState",
         "disposeTermSlot",
         "sessView",
@@ -1019,7 +1034,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 12);
+    assert_eq!(names.len(), 11);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1034,31 +1049,6 @@ fn the_views_register_themselves() {
     }
     // No registration outside the order (it would throw at load).
     assert_eq!(UI_HTML.matches("registerView('").count(), names.len());
-}
-
-// The rail once keyed on a column id that no longer existed, so it never showed.
-#[test]
-fn the_task_view_shows_the_queue_beside_a_task_on_the_persons_board() {
-    let start = UI_HTML
-        .find("function renderTaskView(")
-        .expect("the page defines renderTaskView");
-    let rest = &UI_HTML[start..];
-    let end = rest[1..]
-        .find("\nfunction ")
-        .map_or(rest.len(), |at| at + 1);
-    let body = &rest[..end];
-    for piece in [
-        "const onQueue = !!humanColOf(task);",
-        "root.classList.toggle('with-rail', onQueue);",
-        "要対応 ${gates.length} 件",
-    ] {
-        assert!(body.contains(piece), "renderTaskView lacks {piece}");
-    }
-    assert!(UI_HTML.contains("<div class=\"rail hidden\"></div>"));
-    assert!(
-        !body.contains("'attention'"),
-        "renderTaskView still names the old column"
-    );
 }
 
 #[test]

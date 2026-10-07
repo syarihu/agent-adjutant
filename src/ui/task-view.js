@@ -1,29 +1,11 @@
-// ── the full view of one task ─────────────────────────────────────────
+// ── what the task panel's tabs draw ───────────────────────────────────
 
-const TASK_TABS = [['overview', '概要'], ['review', 'コードレビュー'], ['check', '動作確認'], ['history', '経過']];
 /* The tab a gate of each kind is read in. The other kinds are the hub's or a question, and
    show only in 経過. */
 const TAB_OF_KIND = { plan:'overview', diff:'review', verify:'check' };
 const KIND_OF_TAB = { overview:'plan', review:'diff', check:'verify' };
 
-/* `pick` is the gate a tab shows when a person chose one from 経過; otherwise a tab shows the
-   one waiting, else the latest. */
-let taskView = { id: null, tab: 'overview', pick: {} };
-
-function openTask(id, tab = 'overview', gateId = null) {
-  taskView = { id, tab, pick: gateId ? { [tab]: gateId } : {} };
-  // Back on the board, the panel is open on the task that was being read.
-  selectedTaskId = id;
-  setView('task');
-}
-
-function backToBoard() {
-  // The card being read stays open on the board.
-  // The tab of another task's panel is not carried over to this one.
-  go({ view: prefs.tab === 'agent' ? 'agent' : 'human', task: selectedTaskId, ...(selectedTaskId === nav.task ? {} : { pane: 'detail' }) });
-}
-
-/* What a task's gates left in the archive, read when its view or the task panel opens
+/* What a task's gates left in the archive, read when the task panel opens
    on it rather than on every poll: the archive only grows. Read again when a gate of the task has been answered since,
    which is when it can have changed. */
 const histories = {};
@@ -69,10 +51,9 @@ function historyOf(task, base = baseOf(task), data = state) {
   return entry;
 }
 
-/* Redraws what shows a task's history: its view, or the task panel open on it. The panel
+/* Redraws what shows a task's history: the task panel open on it. The panel
    keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
-  if (view === 'task' && taskView.id === id) redrawTaskView();
   if ((view === 'board' || view === 'sessions') && selectedTaskId === id) renderTaskPanel();
   // A record's diff arrives with the history, and nothing else redraws a quiet board.
   // Only the record on screen, and held while a comment is being typed there.
@@ -116,7 +97,7 @@ const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 const isWaiting = g => (state.gates || []).some(x => gateRef(x) === gateRef(g));
 
 /* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. `pick`
-   is what was picked: the task view's own, or the task panel's, which draws the same tabs. */
+   is what was picked in the task panel. */
 function gateForTab(task, tab, all, pick) {
   const picked = pick[tab] && all.find(g => g.id === pick[tab]);
   if (picked) return picked;
@@ -176,7 +157,7 @@ function gateHeadHtml(g, all) {
   return h + `</div>`;
 }
 
-/* The three frames, for a gate read in a task's view. */
+/* The three frames, for a gate read in the task panel. */
 function framesHtml(g) {
   let h = '';
   if (g.facts?.length) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
@@ -325,8 +306,9 @@ function ghHeadLinksHtml(task) {
   }
   return h;
 }
-/* The Issue and the PR as rows for the top of the task panel's タスクサマリ and the review view's 判断: number and title, and for the PR
-   its state, checks and review. Empty for a task with neither a PR to show nor an Issue. */
+/* The Issue and the PR as rows for the top of the task panel's タスクサマリ and the review view's
+   判断: number and title, and for the PR its state, checks and review. Empty for a task with
+   neither a PR to show nor an Issue. */
 function ghRowsHtml(task) {
   if (!task) return '';
   const out = '<span class="material-symbols-outlined gh-out" aria-hidden="true">open_in_new</span>';
@@ -536,7 +518,7 @@ function historyEventsOf(task, all, waiting = isWaiting) {
   return events.sort((a, b) => a.at - b.at);
 }
 
-/* The timeline of 経過, drawn by the tab in the full view and in the task panel. The
+/* The timeline of 経過, drawn by the 経過 tab. The
    worker's phase is not kept as a history — only the one it is in now — so it closes the
    list rather than running through it. */
 function timelineHtml(task, all, data = state, base = baseOf(task)) {
@@ -562,192 +544,6 @@ function historyTab(task, all, pick) {
   return h + `<div class="panel"><h3>経過</h3>${timelineHtml(task, all)}</div>`;
 }
 
-/* A redraw that came while a comment was being typed in the task view, held until the box is
-   left. Replacing the markup under the box cuts an IME composition short even when the text
-   is put back, and the view is redrawn on every change of state, not once a minute. */
-let taskViewHeld = false;
-function redrawTaskView() {
-  if (view === 'task' && document.activeElement?.matches('#task-view .gate-comment')) {
-    taskViewHeld = true;
-    return;
-  }
-  renderTaskView();
-}
-document.getElementById('task-view').addEventListener('focusout', e => {
-  if (!taskViewHeld || !e.target.matches('.gate-comment')) return;
-  // After the focus has moved: a click on a button in the view redraws through its own handler,
-  // and this one should not draw over it with the old state.
-  setTimeout(() => {
-    if (!taskViewHeld || document.activeElement?.matches('#task-view .gate-comment')) return;
-    taskViewHeld = false;
-    renderTaskView();
-  });
-});
-
-let taskViewShown = null;
-function renderTaskView() {
-  taskViewHeld = false;
-  const root = document.getElementById('task-view');
-  if (view !== 'task') return;
-  const rail = root.querySelector('.rail');
-  const main = root.querySelector('.tv-main');
-  const task = (state.tasks || []).find(t => t.id === taskView.id);
-  if (!task) {
-    rail.classList.add('hidden');
-    root.classList.remove('with-rail');
-    main.innerHTML = `<div class="tv-top"><div class="row"><button type="button" class="btn-m3-tonal" data-back style="padding:6px 14px;border-radius:var(--md-shape-corner-full);display:inline-flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span><span>ボード</span></button></div></div>` +
-      `<div class="empty-state">このタスクは見つからない。${state.tasks?.length ? '取り消されたか、別のリポジトリのもの' : '読み込み中'}なのかもしれない。</div>`;
-    main.querySelector('[data-back]').addEventListener('click', backToBoard);
-    return;
-  }
-  // Replaced rather than pushed: nothing listens for the back button, and a tab switch that
-  // left an entry would make it change the address without changing the page.
-  history.replaceState(null, '', `#task/${encodeURIComponent(task.id)}/${taskView.tab}`);
-
-  // The queue beside the task only while the task is on the person's board (an open gate, or a
-  // PR waiting on the person), decided as the board's columns decide it: otherwise the list is
-  // about something else, and the page is better spent on the task.
-  const onQueue = !!humanColOf(task);
-  root.classList.toggle('with-rail', onQueue);
-  rail.classList.toggle('hidden', !onQueue);
-  if (onQueue) {
-    const gates = state.gates || [];
-    rail.innerHTML = `<h2>要対応 ${gates.length} 件</h2>`;
-    for (const g of gates) {
-      const [label, colour] = kindOf(g.kind);
-      const b = document.createElement('button');
-      b.className = 'item';
-      b.setAttribute('aria-current', String(g.task === task.id));
-      b.innerHTML = `<span class="tag"><span class="dot" style="background:${esc(colour)}"></span>${esc(label)}</span>
-        <span class="t">${esc(g.title)}</span><span class="w">${ago(g.openedAt)}から待ち</span>`;
-      b.onclick = () => judgeGate(g.id);
-      rail.appendChild(b);
-    }
-  }
-
-  const all = gatesOf(task);
-  const shown = gateShownIn(task, taskView.tab, all, taskView.pick);
-  // Read before the tabs are drawn, so the one open now does not keep its dot.
-  if (shown && shown.wait === false && recordById(shown.id)) markSeen(shown.id);
-  const colObj = COLUMNS.find(c => c.id === columnOf(task));
-  const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task) : null;
-  const count = kind => all.filter(g => g.kind === kind).length;
-  const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && recordById(g.id) && isUnread(g));
-  let h = `<div class="tv-top">
-    <div class="row" style="display:flex;align-items:center;gap:12px;">
-      <button type="button" class="btn-m3-tonal" data-back title="ボードに戻る (Esc)" style="padding:6px 14px;border-radius:var(--md-shape-corner-full);display:inline-flex;align-items:center;gap:6px;">
-        <span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span>
-        <span>ボード</span>
-      </button>
-      <h1 style="flex:1;min-width:0;font-size:20px;font-weight:800;color:var(--md-sys-color-on-surface);margin:0;line-height:1.35;">${esc(task.title)}${titlePendingPill(task)}</h1>
-      ${httpUrl(task.issueUrl) ? `<a href="${esc(task.issueUrl)}" target="_blank" rel="noopener noreferrer" style="font-size:13px;color:var(--md-sys-color-primary);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><span>Issue #${esc(issueNumberOf(task.issueUrl))}</span><span class="material-symbols-outlined" style="font-size:16px;">open_in_new</span></a>` : ''}
-    </div>
-    <div class="row" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-      <span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>
-      ${worker && worker.present && worker.phase ? `<span style="font-size:12px;color:var(--md-sys-color-primary);font-weight:600;">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${phaseMinutes(worker) != null ? `（${minutesLabel(phaseMinutes(worker))}）` : ''}</span>` : ''}
-      ${task.worktree ? `<span>worktree: <code style="font-family:var(--font-mono);font-size:12px;">${esc(baseName(task.worktree))}</code></span>` : ''}
-      ${task.branch ? `<span>ブランチ: <code style="font-family:var(--font-mono);font-size:12px;">${esc(task.branch)}</code></span>` : ''}
-      ${stuckOf(task) ? `<span class="m3-pill pill-critical" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">timer</span><span>${esc(stuckOf(task))}</span></span>` : ''}
-      ${task.worktree ? `
-        <span style="display:inline-flex;gap:6px;margin-left:auto;">
-          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="ターミナルのworkerタブを前面表示" data-focus="${esc(task.worktree)}">
-            <span class="material-symbols-outlined" style="font-size:14px;">terminal</span>
-            <span>端末</span>
-          </button>
-          <button class="m3-icon-button" style="padding:4px 10px;font-size:11px;" title="${ideTitle()}" data-ide="${esc(task.worktree)}">
-            <span class="material-symbols-outlined" style="font-size:14px;">code</span>
-            <span>IDE</span>
-          </button>
-        </span>
-      ` : ''}
-    </div>
-    <div class="m3-segmented-tabs" role="tablist" style="margin-top:6px;margin-bottom:12px;">${TASK_TABS.map(([id, label]) => {
-      const kind = KIND_OF_TAB[id];
-      const n = kind && kind !== 'plan' ? count(kind) : 0;
-      const icon = id === 'overview' ? 'description' : id === 'review' ? 'rate_review' : id === 'check' ? 'fact_check' : 'history';
-      return `<button role="tab" id="tv-tab-${id}" class="m3-seg-tab${id === taskView.tab ? ' active' : ''}" aria-controls="tv-panel" data-tab="${id}" aria-selected="${id === taskView.tab}">` +
-        `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
-        `<span>${label}</span>` +
-        (n ? ` <span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${n}</span>` : '') +
-        (kind && unreadIn(kind) ? '<span class="m3-tab-badge">新着</span>' : '') +
-        `</button>`;
-    }).join('')}</div>
-  </div><div class="tv-body pane" id="tv-panel" role="tabpanel" aria-labelledby="tv-tab-${taskView.tab}" style="padding:24px 36px 80px;max-width:1080px;margin:0 auto;width:100%;">`;
-
-  // A gate waiting on a person comes first whichever tab is open: it is the ball.
-  const waiting = openGate(task);
-  if (waiting) {
-    const [label, colour] = kindOf(waiting.kind);
-    const tab = TAB_OF_KIND[waiting.kind] || 'history';
-    const here = tab === taskView.tab && gateShownIn(task, tab, all, taskView.pick)?.id === waiting.id;
-    h += `
-      <div class="m3-card-attention-box" style="padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-          <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px;">
-            <span class="material-symbols-outlined" style="font-size:18px;">pending_actions</span>
-            <span>【${esc(label)}】あなたの判定待ち</span>
-          </div>
-          <span style="font-size:11.5px;opacity:.9">${ago(waiting.openedAt)}から待ち (ID: ${esc(waiting.id)})</span>
-        </div>
-        ${stopWhy(waiting).length ? `<div style="font-size:12.5px;"><strong>止めた理由:</strong> <ul style="margin:4px 0 0;padding-left:18px;">${stopWhy(waiting).map(w => `<li${stopBad(waiting) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
-        ${waiting.focus ? `<div style="font-size:12.5px;background:rgba(0,0,0,.04);padding:8px 12px;border-radius:var(--md-shape-corner-xs);"><strong>確認してほしい点:</strong> ${md(waiting.focus)}</div>` : ''}
-        ${here ? `<div style="font-size:12px;color:var(--md-sys-color-outline);display:flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span><span>判定パネルは${tab === 'review' ? 'この下、差分より前' : 'このページの下'}にあります</span></div>`
-          : `<div><button type="button" class="btn-m3-tonal" data-judge="${esc(waiting.id)}" style="padding:4px 12px;font-size:12px;border-radius:var(--md-shape-corner-full);"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>判定対象タブを開く</span></button></div>`}
-      </div>
-    `;
-  }
-
-  h += { overview: overviewTab, review: reviewTab, check: checkTab, history: historyTab }[taskView.tab](task, all, taskView.pick);
-  h += `</div>`;
-
-  // Whether this is what was on screen: a comment is only carried across a redraw of the same one.
-  const commentEl = main.querySelector('.gate-comment');
-  const same = shown && taskViewShown === `${task.id}/${taskView.tab}/${shown.id}`;
-  const commentVal = commentEl && same ? commentEl.value : '';
-  const isCommentFocused = document.activeElement === commentEl;
-  const scroll = taskViewShown?.startsWith(`${task.id}/${taskView.tab}/`) ? main.scrollTop : 0;
-  taskViewShown = `${task.id}/${taskView.tab}/${shown?.id || ''}`;
-  const openDetails = [...main.querySelectorAll('details')].map(d => d.open);
-
-  main.innerHTML = h;
-  if (same) main.querySelectorAll('details').forEach((d, i) => { if (openDetails[i] != null) d.open = openDetails[i]; });
-  main.querySelector('[data-back]').addEventListener('click', backToBoard);
-  main.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
-    taskView.tab = b.dataset.tab;
-    renderTaskView();
-  }));
-  main.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', () => {
-    taskView.pick[taskView.tab] = b.dataset.pick;
-    renderTaskView();
-  }));
-  main.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
-    const g = all.find(x => x.id === b.dataset.open);
-    if (!g) return;
-    const tab = TAB_OF_KIND[g.kind] || 'history';
-    taskView.tab = tab;
-    taskView.pick[tab] = g.id;
-    renderTaskView();
-  }));
-  main.querySelectorAll('[data-unpick]').forEach(b => b.addEventListener('click', () => {
-    delete taskView.pick[taskView.tab];
-    renderTaskView();
-  }));
-  main.querySelectorAll('[data-judge]').forEach(b => b.addEventListener('click', () => {
-    const tab = TAB_OF_KIND[waiting.kind] || 'history';
-    taskView.tab = tab;
-    taskView.pick[tab] = waiting.id;
-    renderTaskView();
-  }));
-  main.querySelectorAll('[data-focus]').forEach(b =>
-    b.addEventListener('click', () => worktreeAct('focus', b.dataset.focus)));
-  main.querySelectorAll('[data-ide]').forEach(b =>
-    b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
-  main.querySelectorAll('[data-fetch-issue]').forEach(b =>
-    b.addEventListener('click', e => fetchIssue(b.dataset.fetchIssue, e)));
-  bindDecide(main);
-  restoreComment(main, commentVal, isCommentFocused, scroll);
-}
-
 /* The gate a tab has on screen, if it shows one. */
 function gateShownIn(task, tab, all, pick) {
   if (tab === 'history') return (pick.history && all.find(g => g.id === pick.history)) || null;
@@ -762,12 +558,3 @@ function gateShownIn(task, tab, all, pick) {
   }
   return gateForTab(task, tab, all, pick);
 }
-
-registerView('task-view', {
-  render: () => redrawTaskView(),
-  // Keyed by a bare task id: they belong to the board being left.
-  reset: () => {
-    for (const k of Object.keys(histories)) delete histories[k];
-    historyFailed.clear();
-  },
-});

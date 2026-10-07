@@ -6,15 +6,16 @@
 const tp = id => document.getElementById(id);
 const taskById = id => (state.tasks || []).find(t => t.id === id);
 
-/* The gate each tab of the open task shows when a person picked one in 経過, as the task view's
-   `pick` does for its tabs (keyed by the full view's tab names). It belongs to one task: another task starts with none. */
+/* The gate each tab of the open task shows when a person picked one in 経過 (keyed by the tab
+   renderers' names, task-view.js). It belongs to one task: another task starts with none. */
 let panelPick = { id: null, pick: {} };
 function panelPickOf(id) {
   if (panelPick.id !== id) panelPick = { id, pick: {} };
   return panelPick.pick;
 }
 
-/* The panel's tabs are the full view's, 概要 being タスクサマリ, whose address stays `detail`. */
+/* The panel's tabs are named by the tab renderers' (task-view.js) names, 概要 being タスクサマリ, whose
+   address stays `detail`. */
 const paneOfTab = tab => tab === 'overview' ? 'detail' : tab;
 const tabOfPane = pane => pane === 'detail' ? 'overview' : pane;
 /* The tab a gate is judged in. Read inside functions only: the table is in task-view.js, which
@@ -33,7 +34,7 @@ function markSelectedCards() {
 /* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
 function showTaskPanel(id) {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = null; }
   selectedTaskId = id;
   markSelectedCards();
   renderTaskPanel();
@@ -43,11 +44,34 @@ function showTaskPanel(id) {
    of the card that is open replaces the one it is on. */
 function openTaskPanel(id, pane = 'detail') {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = null; }
   selectedTaskId = id;
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
 }
+
+/* A link from outside the panel (a gate or record on a card, the review queue, a notification):
+   the panel on `tab` of the task, with `gateId` shown in it. There is more to read than the
+   sidebar fits, so it opens as the dialog; the saved placement is not changed, and the next
+   card or the close puts it back (panelPop). */
+function openTask(id, tab = 'overview', gateId = null) {
+  pendingTask = null;
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
+  if (gateId) {
+    panelPickOf(id)[tab] = gateId;
+    // A gate picked is read from the top.
+    panelScrolledFor = null;
+  }
+  selectedTaskId = id;
+  dialogFor = id;
+  markSelectedCards();
+  go({ ...(view === 'review' ? { view: prefs.tab === 'agent' ? 'agent' : 'human' } : {}), task: id, pane: paneOfTab(tab) },
+    { replace: id === nav.task });
+}
+
+/* Whether the panel is the dialog now: the placement saved, or a link that wants room. */
+let dialogFor = null;
+const panelPop = () => prefs.panelDialog || (dialogFor !== null && dialogFor === selectedTaskId);
 
 /* The panel's state, without the address: for a move the address already made. */
 function hideTaskPanelState() {
@@ -57,6 +81,7 @@ function hideTaskPanelState() {
   // Opened again, a session's git state is read again.
   sessView.git = null;
   panelPick = { id: null, pick: {} };
+  dialogFor = null;
   // Drawn again when opened, so what was typed in the body does not come back.
   panelSig.links = panelSig.gate = panelSig.rest = null;
   panelShown = null;
@@ -80,6 +105,7 @@ function closeTaskPanel() {
 /* Where panels open is a remembered mode: 'pop' is the dialog, 'left' and 'right' the sidebar on that side.
    Closing never changes it; only choosing one of these does. */
 function placePanel(where) {
+  dialogFor = null;
   if (where === 'pop') prefs.panelDialog = true;
   else {
     prefs.panelDialog = false;
@@ -148,10 +174,10 @@ function renderTaskPanel() {
   const shown = !!(task || hub || sess) && (view === 'board' || view === 'sessions');
   const cls = document.body.classList;
   panel.hidden = !shown;
-  tp('tp-scrim').hidden = !(shown && prefs.panelDialog);
+  tp('tp-scrim').hidden = !(shown && panelPop());
   cls.toggle('panel-open', shown);
   cls.toggle('panel-right', prefs.panelDock === 'right');
-  cls.toggle('panel-pop', shown && prefs.panelDialog);
+  cls.toggle('panel-pop', shown && panelPop());
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
   applyRailMode();
   // The list marks the session the panel is open on.
@@ -159,7 +185,7 @@ function renderTaskPanel() {
   markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
   if (!task && !hub && !sess) return renderHandForm(null);
-  // In the task view the panel waits, with its terminal, for the board to come back.
+  // On a screen with no panel (the review queue) the panel waits, with its terminal, for the board to come back.
   if (!shown) return;
 
   const colId = task ? columnOf(task) : null;
@@ -227,7 +253,7 @@ function renderTaskPanel() {
   }
 }
 
-/* The parts of #tp-detail for one of a task's tabs. Its body is what the full view draws in the
+/* The parts of #tp-detail for one of a task's tabs. Its body is what the tab renderers (task-view.js) draw in the
    same tab, from the same functions. */
 function drawTaskPane(task, colId, gate, pane, all, pick, shownGate) {
   const key = `${task.id}/${pane}/${shownGate?.id || ''}`;
@@ -282,15 +308,14 @@ function panelBtnsHtml(jump) {
     `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
   return `<div class="tp-head-btns">
       ${jump}
-      ${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !prefs.panelDialog)}
-      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !prefs.panelDialog)}
-      ${place('pop', 'open_in_new', 'ダイアログで開く', prefs.panelDialog)}
+      ${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !panelPop())}
+      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !panelPop())}
+      ${place('pop', 'open_in_new', 'ダイアログで開く', panelPop())}
       <button type="button" class="tool-btn" data-tp-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
     </div>`;
 }
 
-/* `off` is why the tab cannot be used (its tooltip), or falsy. The same segmented tabs as the
-   task's full view. */
+/* `off` is why the tab cannot be used (its tooltip), or falsy. */
 const panelTab = (pane, id, label, extra, off) =>
   `<button type="button" role="tab" id="tp-tab-${id}" class="m3-seg-tab${pane === id ? ' active' : ''}" data-pane="${id}" aria-selected="${pane === id}" aria-controls="${id === 'term' ? 'tp-term' : 'tp-detail'}"${off ? ` disabled title="${esc(off)}"` : ''}>${label}${extra}</button>`;
 
@@ -302,7 +327,7 @@ function panelTabsHtml(task, gate, s, pane, all = []) {
   const term = panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
     : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
   if (!task) return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '') + term;
-  // The dot is on the tab the open gate is judged in; the counts and 新着 are the full view's.
+  // The dot is on the tab the open gate is judged in; the counts and 新着 come from the gates.
   const owner = gate ? paneOfGate(gate) : null;
   const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && (r => r && isUnread(r))(liveRecordOf(task, g)));
   const tab = (id, label, kind) => {
@@ -357,8 +382,8 @@ function panelGateHtml(task, gate, here = false) {
 
 const STEPS = [['plan', '計画'], ['implement', '実装'], ['selfreview', 'セルフレビュー'], ['pr', 'PR']];
 
-/* The body of a task's tab: 経過, コードレビュー and 動作確認 are what the full view draws; タスクサマリ
-   is the rest of the card with the full view's 概要 in the middle. */
+/* The body of a task's tab: 経過, コードレビュー and 動作確認 are the tab renderers'; タスクサマリ
+   is the rest of the card with the 概要 in the middle. */
 function panelRestHtml(task, colId, pane, all, pick) {
   if (pane === 'review') return reviewTab(task, all, pick);
   if (pane === 'check') return checkTab(task, all, pick);
@@ -637,14 +662,14 @@ tp('task-panel').addEventListener('click', e => {
   if (hit('[data-tp-jump]')) {
     // A dialog covers the card, so it closes first; a docked panel stays beside it.
     const id = task.id;
-    if (prefs.panelDialog) closeTaskPanel(); else renderTaskPanel();
+    if (panelPop()) closeTaskPanel(); else renderTaskPanel();
     return jump('agent', id);
   }
   if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);
   // The decision panel and a gate's choices, which `bindDecide` wires in the other views; not
   // here, since it would bind [data-ide] a second time next to the one below.
   if ((b = hit('[data-gate] [data-act], [data-gate] .pick[data-choice]'))) return decideAct(b);
-  // Links to a gate or a record show it in the tab it is read in, not in the full view.
+  // Links to a gate or a record show it in the tab it is read in, not on a page of their own.
   if ((b = hit('[data-record]'))) {
     const r = recordById(b.dataset.record);
     return r ? showPanelTab(task, paneOfGate(r), r.id) : goToGate(b.dataset.record);
@@ -745,7 +770,7 @@ function hubPanelClick(e, h) {
   if (hit('[data-tp-board]')) {
     // The hub's board, with the hub still in the panel on the tab it was on; a dialog would cover
     // the board, so it closes instead.
-    if (prefs.panelDialog) {
+    if (panelPop()) {
       hideTaskPanelState();
       return go({ board: h.slug, task: null, pane: 'detail' });
     }
@@ -790,7 +815,7 @@ function setPanelWidth(raw) {
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
 }
 tp('tp-resize').addEventListener('keydown', e => {
-  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || prefs.panelDialog || matchMedia('(max-width: 720px)').matches) return;
+  if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop() || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();
   // The panel grows away from its side: toward the right on the left, toward the left on the right.
   const grow = (e.key === 'ArrowRight') === (prefs.panelDock !== 'right');
@@ -798,7 +823,7 @@ tp('tp-resize').addEventListener('keydown', e => {
   savePrefs();
 });
 tp('tp-resize').addEventListener('pointerdown', e => {
-  if (prefs.panelDialog || matchMedia('(max-width: 720px)').matches) return;
+  if (panelPop() || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();
   const handle = e.currentTarget;
   handle.setPointerCapture(e.pointerId);
@@ -880,4 +905,12 @@ function renderHandForm(task) {
   });
 }
 
-registerView('task-panel', { render: () => renderTaskPanel(), reset: () => hideTaskPanelState() });
+registerView('task-panel', {
+  render: () => renderTaskPanel(),
+  reset: () => {
+    hideTaskPanelState();
+    // Keyed by a bare task id: they belong to the board being left.
+    for (const k of Object.keys(histories)) delete histories[k];
+    historyFailed.clear();
+  },
+});

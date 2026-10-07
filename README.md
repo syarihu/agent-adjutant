@@ -522,13 +522,13 @@ that acted last decides.
 **The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
 another card shows that one instead. Its header has the task's key, the board it comes from, its
 state and its title, with 「カードへ」, three placement buttons and a close button. Inside are five
-tabs: the full view's four (概要, shown as タスクサマリ, and コードレビュー, 動作確認 and 経過) and ターミナル. タスクサマリ
+tabs: タスクサマリ, ターミナル, コードレビュー, 動作確認 and 経過. タスクサマリ
 shows, from the top, the Issue and the PR (a row each, with its number and title; the PR
 also with its state, its CI and its review status, or a note that there is no PR yet), the open
 gate and what can be done about it (one click for a decision that needs no comment, 「判定画面を開く」
-for the rest, which opens the tab the gate is judged in), the phases, the full view's 概要 (the
+for the rest, which opens the tab the gate is judged in), the phases, the 概要 (the
 problem, the goal, the instructions, the plan with its decision panel, the worktree and branch with
-「IDE」) and the records. コードレビュー, 動作確認 and 経過 show what the same tabs of the full view show,
+「IDE」) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
 with the decision panel in place; a dot marks the tab of the open gate. A card carries the same
 two numbers in its header, each opening on GitHub, and
 the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
@@ -553,7 +553,7 @@ all boards, and opens the first one on its own. The list is grouped by board in 
 order (a repository, then its parent-task hubs), the longest-waiting first, with each group's
 header pinned while the list scrolls. The right side has two tabs. 判断 is one column: the task's
 Issue and PR rows (as at the top of タスクサマリ), what is waiting and why, what the kind of gate needs read (the plan or question, the
-diff and findings, or the verify checks), 経過をすべて見る to the task's full view, and the buttons the
+diff and findings, or the verify checks), 経過をすべて見る (the task's panel, as the dialog, on the tab of this gate), and the buttons the
 gate's options name, with the comment box. ターミナル opens the session the gate waits on in place (the
 worker, or the hub for the gates it opens); 「ターミナルで話す」 switches to it, and switching tabs keeps
 the connection. Only the board of the item shown is asked for its sessions, and only while that
@@ -1035,27 +1035,27 @@ On the board, a card carries a chip for the latest review and check its worker r
 (`レビュー 3R ✓ 収束`, `verify ✓`, `手で見る 2件`; a failure is red and marked ✗), with a dot
 until the record has been opened. Which records have been opened is kept in the browser's
 localStorage: it is one reader's state, not the task's. The task panel lists each record with a
-short summary and a button that opens it in the task's full view, where it can be sent back
+short summary and a button that opens it in its tab of the panel, where it can be sent back
 with a comment — that answer goes to the worktree's outbox. A gate that stopped the worker
 says which rule stopped it, on the card, in the task panel and in the review view. The new-task
 form takes the stop point.
 
-The full view (`#task/<id>/<tab>`, or 経過をすべて見る in the task panel) is where everything a task's
-gates left can be read at any time, whether they stopped the worker or not. The way back,
-the title, the state and the tabs stay pinned at the top. 概要 has the problem and the goal
-with where each came from, the plan with when a person approved it (or that it is waiting),
-and the task's details. コードレビュー has the facts, the rounds, the findings (open, fixed,
+The task panel's tabs are where everything a task's gates left can be read at any time, whether
+they stopped the worker or not. タスクサマリ has the problem and the goal with where each came from,
+the plan with when a person approved it (or that it is waiting), and the task's details.
+コードレビュー has the facts, the rounds, the findings (open, fixed,
 then false positives with the reason) and the files and diff; 動作確認 has the verify
 commands (folded, a failure open, a pass that took a second run marked — `attempts` on the
 command), the checks left for a person and how to run it. 経過 lists, in time order, the
 gates that waited, the records that did not and what people answered; the worker's phase is
 kept only as the one it is in now, so it closes the list. A gate waiting on a person is
 answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
-notification all open it there, and a gate with no task on the board opens in the review view
-instead. 要対応レビュー in the sidebar opens the review queue, not the task's view — and the 要対応
-queue is shown beside the task only while the task is on it. The answered gates come from `GET
-/api/tasks/<id>/history`, read when the view opens rather than on every poll, since the archive
-only grows.
+notification all open it there (as the dialog, when the link comes from outside the panel, and
+the placement you saved is left as it was), and a gate with no task on the board opens in the
+review view instead. 要対応レビュー in the sidebar opens the review queue, not a task. The
+answered gates come from `GET /api/tasks/<id>/history`, read when the panel opens rather than on
+every poll, since the archive only grows. An address from before the panel had these tabs
+(`#task/<id>/<tab>`) opens the panel on the matching one.
 
 **The port is bound on `127.0.0.1` and everything needs a token**, kept in
 `~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.

@@ -549,3 +549,6 @@ body.panel-pop #task-panel {
 .single-board .rail-boards-label, .single-board #board-rows { display: none; }
 #btn-hub[hidden], #btn-resync[hidden] { display: none; }
 #btn-hub.on { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+
+footer { border-top:1px solid var(--hairline); background:var(--surface-1); padding:7px 14px;
+  max-height:96px; overflow:auto; }
