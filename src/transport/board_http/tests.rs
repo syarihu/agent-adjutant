@@ -1147,10 +1147,14 @@ fn the_panel_head_links_the_task_issue_and_pr() {
     assert!(UI_HTML.contains("function issueLabelOf"));
     let head = UI_HTML.split("function panelHeadHtml").nth(1).unwrap();
     let head = &head[..head.find("\n\u{7d}\n").unwrap()];
-    let pill = head.find("${pill}").unwrap();
     let links = head.find("ghHeadLinksHtml(task)").unwrap();
-    let title = head.find("tp-title").unwrap();
-    assert!(pill < links && links < title);
+    let origin = head.find("origin-chip").unwrap();
+    let pill = head.find("${pill}").unwrap();
+    assert!(links < origin && origin < pill);
+    for other in ["function hubPanelHeadHtml", "function sessPanelHeadHtml"] {
+        let f = UI_HTML.split(other).nth(1).unwrap();
+        assert!(!f[..f.find("\n\u{7d}\n").unwrap()].contains("ghHeadLinksHtml"));
+    }
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     assert!(!bar.contains("ghHeadLinksHtml") && !bar.contains("ghBarLinksHtml"));

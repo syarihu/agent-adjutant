@@ -302,9 +302,9 @@ function issueLabelOf(url) {
   } catch { /* not a URL: no key to read */ }
   return 'Issue';
 }
-/* The task's Issue and PR as link buttons for the panel's header, after the hub or repository and
-   the status; each opens in a new tab. Only the ones the task has: the Issue from its URL alone, as
-   on the card, the PR only where it is a link. */
+/* The task's Issue and PR as link buttons at the start of the panel's top line; each opens in a
+   new tab. Only the ones the task has: the Issue from its URL alone, as on the card, the PR only
+   where it is a link. */
 function ghHeadLinksHtml(task) {
   if (!task) return '';
   const link = (url, icon, label, title) =>

@@ -176,9 +176,10 @@ function panelHeadHtml(task) {
   return `
     <div class="tp-head-main">
       <div class="tp-badges">
+        ${ghHeadLinksHtml(task)}
         <span class="tp-key" title="${esc(task.id)}">${esc(task.id)}</span>
         ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
-        ${pill}${ghHeadLinksHtml(task)}
+        ${pill}
       </div>
       <h2 class="tp-title">${esc(task.title)}${titlePendingPill(task)}</h2>
     </div>
