@@ -132,7 +132,7 @@ a.gh-row:hover { background: var(--md-sys-color-surface-container-high); }
 .gh-row > .material-symbols-outlined { font-size: 16px; flex-shrink: 0; color: var(--md-sys-color-outline); }
 .gh-kind { font-size: 11px; font-weight: 800; color: var(--md-sys-color-outline); flex-shrink: 0; }
 .gh-num { font-family: var(--font-mono); font-weight: 700; color: var(--md-sys-color-primary); flex-shrink: 0; }
-.gh-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .gh-row .m3-pill { flex-shrink: 0; }
 .gh-row > .gh-out { font-size: 14px; }
 .gh-none { color: var(--md-sys-color-outline); border-style: dashed; }

@@ -921,9 +921,12 @@ fn title_is_derived_from_the_first_non_empty_line_of_the_body() {
 }
 
 #[test]
-fn title_is_capped_at_eighty_characters() {
+fn title_keeps_the_whole_first_line() {
     let derived = derive_title(None, &"a".repeat(120)).expect("derived");
-    assert_eq!(derived.len(), 80);
+    assert_eq!(derived, "a".repeat(120));
+    let japanese = "あ".repeat(100);
+    let derived = derive_title(None, &format!("{japanese}\nsecond")).expect("derived");
+    assert_eq!(derived, japanese);
 }
 
 /// A form sends the stop point whether or not one was picked, and nothing picked is the

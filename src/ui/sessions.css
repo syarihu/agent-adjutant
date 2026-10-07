@@ -20,7 +20,7 @@
 .sess-head.wait { border-color:var(--md-sys-color-warning); }
 .sess-head.off .sess-head-name { color:var(--md-sys-color-on-surface-variant); }
 .sess-head-ico { flex:none; font-size:18px; color:var(--md-sys-color-on-surface-variant); }
-.sess-head-name { min-width:0; flex:1 1 90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:800; }
+.sess-head-name { min-width:0; flex:1 1 90px; overflow-wrap:anywhere; font-size:13px; font-weight:800; }
 .sess-head-name .key { font-family:var(--font-mono); font-weight:800; margin-right:8px; color:var(--md-sys-color-primary); }
 .sess-head-count { font-size:11.5px; color:var(--md-sys-color-on-surface-variant); white-space:nowrap; }
 .sess-head-count b { color:var(--md-sys-color-warning); font-weight:800; }
@@ -42,7 +42,6 @@ button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
 .sess-row-pill { flex:none; width:84px; text-align:center; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sess-row-main { flex:1; display:flex; flex-direction:column; min-width:0; }
 .sess-row-title {
-  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
   overflow-wrap:anywhere; font-size:12.5px; font-weight:600; line-height:1.35;
 }
 .sess-row-last { font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-on-surface-variant); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

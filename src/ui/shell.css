@@ -259,6 +259,8 @@ body:not(.layout-split) #arrange-switch { display: none; }
 .page-title-area {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .page-title {
   font-size: 18px;
@@ -368,7 +370,7 @@ main { flex: 1; overflow: hidden; position: relative; }
   text-align: center;
 }
 .board-row .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.board-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-row .name { overflow-wrap: anywhere; }
 .board-row .sub {
   font-size: 10.5px;
   font-weight: 500;
@@ -452,6 +454,7 @@ main { flex: 1; overflow: hidden; position: relative; }
 .origin-chip .material-symbols-outlined { font-size: 12px; }
 .crumbs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   font-size: 11.5px;
