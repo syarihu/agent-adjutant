@@ -302,12 +302,13 @@ function issueLabelOf(url) {
   } catch { /* not a URL: no key to read */ }
   return 'Issue';
 }
-/* The task's Issue and PR as link buttons for the terminal bar; each opens in a new tab. Only the
-   ones the task has: the Issue from its URL alone, as on the card, the PR only where it is a link. */
-function ghBarLinksHtml(task) {
+/* The task's Issue and PR as link buttons at the start of the panel's top line; each opens in a
+   new tab. Only the ones the task has: the Issue from its URL alone, as on the card, the PR only
+   where it is a link. */
+function ghHeadLinksHtml(task) {
   if (!task) return '';
   const link = (url, icon, label, title) =>
-    `<a class="btn-m3-tonal sess-act tp-bar-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">`
+    `<a class="btn-m3-tonal sess-act tp-head-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">`
     + `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span><span>${esc(label)}</span></a>`;
   const issueUrl = httpUrl(task.issueUrl);
   const prUrl = httpUrl(task.pr);

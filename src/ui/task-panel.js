@@ -148,7 +148,7 @@ function renderTaskPanel() {
     tp('tp-detail').scrollTop = 0;
   }
   syncPanelTerminal(selectedTaskId, s, pane);
-  setPanelPart('bar', tp('tp-term-bar'), termBarHtml(s, panelTerm, true, task));
+  setPanelPart('bar', tp('tp-term-bar'), termBarHtml(s));
   const ph = tp('tp-term-ph');
   ph.hidden = !!panelTerm.term;
   setPanelPart('ph', ph, panelTerm.term ? '' : termPlaceholderHtml(s));
@@ -176,6 +176,7 @@ function panelHeadHtml(task) {
   return `
     <div class="tp-head-main">
       <div class="tp-badges">
+        ${ghHeadLinksHtml(task)}
         <span class="tp-key" title="${esc(task.id)}">${esc(task.id)}</span>
         ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
         ${pill}
@@ -493,14 +494,13 @@ function disposeTermSlot(slot) {
   Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
 }
 
-function termBarHtml(s, slot = panelTerm, actions = true, task = null) {
+function termBarHtml(s, slot = panelTerm, actions = true) {
   if (!s || !hasSession(s)) return '';
   const st = sessionState(s);
   const last = s.present ? lastOutputText(s) : null;
   const again = slot.term && slot.ended != null && boardTerminalReady(s);
   const reset = actions ? hubResetButton(s) : null;
   return `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(STATE_LABEL[st])}</span>`
-    + ghBarLinksHtml(task)
     + (last ? `<span class="tp-muted">最後の出力: ${esc(last)}</span>` : '')
     + `<span class="tp-bar-gap"></span>`
     + (reset ? actionButtonHtml(reset) : '')

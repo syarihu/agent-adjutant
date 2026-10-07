@@ -539,6 +539,9 @@
 .tp-head-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
 .tp-badges { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .tp-key { font-family: var(--font-mono); font-size: 11.5px; color: var(--md-sys-color-outline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+.tp-head-link { text-decoration: none; white-space: nowrap; }
+.tp-badges .tp-head-link { font-size: 11.5px; padding: 3px 10px; }
+.tp-badges .tp-head-link .material-symbols-outlined { font-size: 14px; }
 .tp-title { font-size: 15px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
 .tp-head-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .tp-jump { padding: 4px 8px; font-size: 12px; }
@@ -560,7 +563,6 @@
 .tp-term-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .tp-term-bar:empty { display: none; }
 .tp-bar-gap { flex: 1; }
-.tp-bar-link { text-decoration: none; white-space: nowrap; }
 .tp-term-host { flex: 1; min-height: 0; min-width: 0; }
 .tp-term-ph { position: absolute; inset: 0; z-index: 1; padding: 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; overflow: auto; background: var(--md-sys-color-surface-container-low); }
 .tp-term-ph[hidden] { display: none; }
