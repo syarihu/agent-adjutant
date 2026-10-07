@@ -289,6 +289,38 @@ function ghChipsHtml(task) {
     : task.pr ? `<span class="${prClass}" title="${prTitle}">${prLabel}</span>` : '';
   return issue + pr;
 }
+/* The label of an issue link: GitHub's number, a tracker key (Jira `/browse/ABC-12`, Linear
+   `/team/issue/ABC-12/slug`), or just "Issue" where the URL names neither. */
+function issueLabelOf(url) {
+  const last = issueNumberOf(url);
+  if (/^\d+$/.test(last)) return `Issue #${last}`;
+  try {
+    const key = new URL(url).pathname.split('/').find(seg => /^[A-Z][A-Z0-9]+-\d+$/i.test(seg));
+    if (key) return `Issue ${key.toUpperCase()}`;
+  } catch { /* not a URL: no key to read */ }
+  return 'Issue';
+}
+/* The task's Issue and PR as link buttons for the terminal bar; each opens in a new tab. Only the
+   ones the task has: the Issue from its URL alone, as on the card, the PR only where it is a link. */
+function ghBarLinksHtml(task) {
+  if (!task) return '';
+  const link = (url, icon, label, title) =>
+    `<a class="btn-m3-tonal sess-act tp-bar-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">`
+    + `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span><span>${esc(label)}</span></a>`;
+  const issueUrl = httpUrl(task.issueUrl);
+  const prUrl = httpUrl(task.pr);
+  let h = '';
+  if (issueUrl) {
+    const label = issueLabelOf(issueUrl);
+    h += link(issueUrl, 'tag', label, `${label} を開く`);
+  }
+  if (prUrl) {
+    const n = prRefNumber(task.pr);
+    const label = n ? `PR #${n}` : 'PR';
+    h += link(prUrl, 'merge', label, `${label}・${prNoteOf(task)}${prStale()}`);
+  }
+  return h;
+}
 /* The Issue and the PR as rows for the top of 詳細 and 判断: number and title, and for the PR
    its state, checks and review. Empty for a task with neither a PR to show nor an Issue. */
 function ghRowsHtml(task) {
