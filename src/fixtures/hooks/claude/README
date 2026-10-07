@@ -6,6 +6,8 @@ Hook payloads an agent sends to `adj hook claude`, read by `src/transport/cli/ho
     post-tool-use.json                 PostToolUse, an Edit
     post-tool-use-failure.json         PostToolUseFailure, a Bash command
     permission-request.json            PermissionRequest
+    permission-request-ask-user-question.json
+                                       PermissionRequest for AskUserQuestion (a question, no command)
     notification-permission.json       Notification, permission_prompt
     notification-idle.json             Notification, idle_prompt
     subagent-start.json                SubagentStart
@@ -24,6 +26,10 @@ file whose hooks wrote their stdin to a file): the keys of `session-start.json` 
 `subagent-post-tool-use.json` (a sub-agent's Bash call) and `subagent-stop.json`, from a session
 that had a sub-agent run `ls`. A sub-agent's events carry `agent_id` and `agent_type`; its
 `PostToolUse` also carries `effort`.
+
+Recorded on Claude Code 2.1.292 (same method): `permission-request-ask-user-question.json`, the
+`PermissionRequest` Claude Code sends when the model asks a question with the `AskUserQuestion`
+tool. Its `tool_input` holds `questions`, not a command or a path.
 
 Written by hand from the Claude Code hooks reference, with the keys it lists for the event (and
 `prompt_id` and `duration_ms`, which the recorded tool events carry): both `notification-*.json`,

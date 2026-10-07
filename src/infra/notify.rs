@@ -1,9 +1,10 @@
 //! Telling the human something happened.
 //!
-//! Two moments need it: a worker finishing and wanting hands-on verification, and a report
-//! arriving for a hub nobody is watching. Both are "come back to this tab", and both are
-//! useless if the channel is one the person does not look at — hence a template rather than
-//! a hardcoded notifier.
+//! Three moments need it: a worker finishing and wanting hands-on verification, a report
+//! arriving for a hub nobody is watching, and a session that has waited a few seconds on a
+//! permission prompt or a question with nobody at its terminal (`board::jobs::wait_watch`). All
+//! are "come back to this tab", and all are useless if the channel is one the person does not
+//! look at — hence a template rather than a hardcoded notifier.
 
 use crate::infra::shell::on_path;
 use crate::infra::template::{Sub, contains_placeholder, render, sh_quote};

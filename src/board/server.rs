@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::LastLines;
 use crate::board::jobs::Watch as JulesWatch;
-use crate::board::jobs::{HubTitles, PrPoll};
+use crate::board::jobs::{HubTitles, PrPoll, WaitWatch};
 
 /// Everything a connection needs. Shared across threads, read-only after startup — the
 /// state that changes lives on disk, where the hub and its workers can also reach it.
@@ -33,6 +33,9 @@ pub(crate) struct Server {
     /// The resident server's PR poll, whose health the page shows. `None` on a board that is
     /// served by itself: nothing polls there, and the page says nothing about it.
     pub pr_poll: Option<Arc<PrPoll>>,
+    /// The sessions waiting on a person and the board terminals that are open, shared by every
+    /// board of the process: a wait is announced once, by whichever board lists the session.
+    pub waits: Arc<WaitWatch>,
 }
 
 /// The settings as `adj work` would read them now. Resolved on every poll rather than taken

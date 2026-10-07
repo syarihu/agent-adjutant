@@ -22,6 +22,8 @@ pub struct Resident {
     pub terminals: Arc<AtomicUsize>,
     /// The poll that keeps the cards' pull requests up to date, over all boards.
     pub pr_poll: Arc<crate::board::jobs::PrPoll>,
+    /// What waits on a person and which terminals are open, over all boards.
+    pub waits: Arc<crate::board::jobs::WaitWatch>,
 }
 
 impl Resident {
@@ -66,6 +68,7 @@ impl Resident {
                 tmux: self.tmux,
                 terminals: Arc::clone(&self.terminals),
                 pr_poll: Some(Arc::clone(&self.pr_poll)),
+                waits: Arc::clone(&self.waits),
             });
             let mut boards = self.boards.lock().ok()?;
             // Asked again under the lock: what was built is only put in place while it is still

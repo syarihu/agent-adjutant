@@ -1,0 +1,26 @@
+{
+  "session_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "transcript_path": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d.jsonl",
+  "cwd": "/home/user/repo",
+  "scratchpad_dir": "/home/user/.claude/projects/-home-user-repo/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/scratchpad",
+  "prompt_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Which fruit?",
+        "header": "Fruit",
+        "options": [
+          { "label": "Apple", "description": "Apple" },
+          { "label": "Banana", "description": "Banana" }
+        ],
+        "multiSelect": false
+      }
+    ]
+  }
+}

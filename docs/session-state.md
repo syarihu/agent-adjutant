@@ -214,8 +214,22 @@ No hook is run in the background (`async`). A background `PostToolUse` that fini
 would put a finished row back to `running`. Run in order, the receiver has to be fast instead, which
 is what the next points are for.
 
+A question the model asks with the `AskUserQuestion` tool arrives as a `PermissionRequest` whose
+`tool_name` is `AskUserQuestion`, then as a `permission_prompt` `Notification` about 6 seconds
+later (measured on Claude Code 2.1.292). It never sends `elicitation_dialog`, and no `idle_prompt`
+comes while the question is up. Its `tool_input` has `questions`, not a command or a path, so the
+receiver reads `AskUserQuestion: <the first line of the first question>` as the `request`
+(`tool_summary`, fixture `permission-request-ask-user-question.json`). Pressing Esc on it fires no
+hook at all, and no `idle_prompt` came for it either (observed on 2.1.292): the row stayed
+`waiting` for the 5 minutes watched, so it stays so until the next prompt or event. A question
+dismissed within the 5 seconds before it is announced may still ring once, since Esc fires no hook to
+take the row out of `waiting`. A question the model writes as
+text and then ends the turn on is not a prompt: it is a finished turn (`Stop`, and `idle_prompt`
+60 seconds later) and cannot be told from any other, so nothing notifies it.
+
 One known gap stays as it is in proctor: cancelling a permission prompt fires no hook, so the row
-stays `waiting` until the `idle_prompt` notification about a minute later.
+stays `waiting` until the `idle_prompt` notification about a minute later (not re-measured; for
+`AskUserQuestion` no `idle_prompt` came, see above).
 
 ```mermaid
 sequenceDiagram
@@ -400,6 +414,25 @@ is listed so the ledger carries what it will need.
 
 - **The board** (landed, #506). A sessions tab in the sidebar, and the session cards, read `agent_sessions` on the
   existing 2-second poll of `/api/state`. No push channel is added.
+- **Notifying a wait** (#524). A row that turns `waiting` is announced once, when it has stayed
+  `waiting` for 5 seconds (`board/jobs/wait_watch.rs`, a job beside `sweep_gates` in the resident
+  server and in a dedicated board). It reads `registry::waiting_agent_sessions` (every `waiting`
+  row with its `updatedAt`, no liveness check) on the 2-second clock, and only when a wait is due
+  lists the board's sessions to find whose it is. A wait is the pair of the row's `sessionId` and its
+  `updatedAt`, which moves only when the status does, so the `permission_prompt` that follows a
+  `PermissionRequest` is the same wait. The waits found when the server starts are not announced.
+  A session held by a gate, a session that is gone, and a hub on a board that is not its own are
+  not announced, and neither is one whose terminal is open on the board (the person is looking at
+  it). Several processes can watch one ledger (a board per hub with no resident server, or one
+  started by hand beside it), so a wait is claimed through a marker file made with `create_new`
+  under `<state>/wait-notified/`: only the process that makes it runs the configured command, so
+  it rings once, and the marker goes when the wait ends (or a day later, swept when a watch
+  starts). Each board still records the notice for its own page, which notifies on its own. The
+  open-terminal check is per process: a terminal open on one board does not stop another process
+  that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
+  {request}"`, or `"{name} is asking: {question}"` for an AskUserQuestion), and `/api/state` and
+  `/api/boards` carry it as `waits` so the page rings its own desktop notification, which opens
+  that session's terminal when clicked.
 - **Waking.** `mail::read_screen` guesses an agent's state from a tmux screen, and works for neither
   iTerm2 nor `Generic`. A row in `waiting` or `running` says not to type now; `idle` or `done` says
   it is safe; a `running` row not heard from in ten minutes is not believed, since an interrupted turn

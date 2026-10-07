@@ -538,6 +538,22 @@ fn notifications_say_waiting_idle_or_nothing_by_their_type() {
     }
 }
 
+#[test]
+fn a_prompt_notification_after_the_request_keeps_when_the_wait_began_and_what_it_asked() {
+    // The wait notice is keyed by `updatedAt` and says the request: the notification that
+    // follows a permission request seconds later must change neither.
+    let asked = AgentEvent {
+        summary: Some("AskUserQuestion: which one?".to_string()),
+        ..event(HookEvent::PermissionRequest, T0)
+    };
+    let mut row = rows(&[tool(T0 - 10, "Edit: a"), asked]);
+    step_keep(&mut row, &notification(Some("permission_prompt"), T0 + 6));
+    let row = row.unwrap();
+    assert_eq!(status(&Some(row.clone())), Some("waiting"));
+    assert_eq!(row.updated_at, Some(T0));
+    assert_eq!(row.request.as_deref(), Some("AskUserQuestion: which one?"));
+}
+
 // ── the row on disk ──────────────────────────────────────────────
 
 #[test]
@@ -833,6 +849,32 @@ fn readers_leave_a_dead_row_out_without_deleting_it() {
     let blocked = tempfile::tempdir().unwrap();
     std::fs::write(agent_sessions_dir(blocked.path()), "").unwrap();
     assert!(agent_sessions_with(blocked.path(), &table).is_err());
+}
+
+#[test]
+fn the_waiting_rows_are_listed_with_when_they_began_whether_or_not_their_process_is_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let waiting = |id: &str, since: i64| AgentSession {
+        status: Some(AgentStatus::Waiting),
+        updated_at: Some(since),
+        ..row_of(id, Some(999), Some(since))
+    };
+    put(root, &waiting("gone", 7));
+    put(root, &waiting("here", 9));
+    put(root, &row_of("busy", Some(5), Some(1)));
+    std::fs::write(agent_session_path(root, "garbled"), "{").unwrap();
+    let mut listed = waiting_agent_sessions(root).unwrap();
+    listed.sort();
+    assert_eq!(listed, [("gone".to_string(), 7), ("here".to_string(), 9)]);
+    assert!(
+        waiting_agent_sessions(&root.join("none"))
+            .unwrap()
+            .is_empty()
+    );
+    let blocked = tempfile::tempdir().unwrap();
+    std::fs::write(agent_sessions_dir(blocked.path()), "").unwrap();
+    assert!(waiting_agent_sessions(blocked.path()).is_err());
 }
 
 // ── the status line ──────────────────────────────────────────────

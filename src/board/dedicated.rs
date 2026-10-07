@@ -73,6 +73,7 @@ impl Board {
                 tmux: None,
                 terminals: Arc::default(),
                 pr_poll: None,
+                waits: Arc::default(),
             }),
             listener,
             recorded,
@@ -87,6 +88,11 @@ impl Board {
         // The board's one clock: it ends with the process, as the accept loop below does.
         let ctx = self.server.ctx.clone();
         std::thread::spawn(move || jobs::sweep_gates::run(move || vec![ctx.clone()]));
+        let server = Arc::clone(&self.server);
+        std::thread::spawn(move || {
+            let waits = Arc::clone(&server.waits);
+            waits.run(&server.ctx.state.clone(), move || vec![Arc::clone(&server)]);
+        });
         for stream in self.listener.incoming() {
             match stream {
                 Ok(stream) => {

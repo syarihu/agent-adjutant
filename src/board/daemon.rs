@@ -214,6 +214,7 @@ impl BoundResident {
             tmux: board_terminal_tmux(),
             terminals: Arc::default(),
             pr_poll: Arc::default(),
+            waits: Arc::default(),
         });
         {
             let resident = Arc::clone(&resident);
@@ -256,6 +257,20 @@ impl BoundResident {
                         })
                         .filter_map(|a| resident.board(&a.slug))
                         .map(|server| server.ctx.clone())
+                        .collect()
+                });
+            });
+        }
+        {
+            let resident = Arc::clone(&resident);
+            std::thread::spawn(move || {
+                let waits = Arc::clone(&resident.waits);
+                waits.run(&resident.root.clone(), || {
+                    // Asked only when a wait is due, so a board is opened (which asks git where
+                    // its checkout is) for a wait and not every two seconds.
+                    addresses(&resident.root)
+                        .iter()
+                        .filter_map(|a| resident.board(&a.slug))
                         .collect()
                 });
             });

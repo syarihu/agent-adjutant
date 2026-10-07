@@ -107,7 +107,7 @@ pub fn worker_session_ids(paths: &[String], main_listed: bool) -> Vec<String> {
 /// A tmux socket as a lookup key: the path of the server it names, so that no setting, a bare
 /// name and the path a record kept for the same server are one key and one pair of `list-*`
 /// calls. The directory is resolved when it can be, because `/tmp` is `/private/tmp` on a Mac.
-pub(super) fn socket_key(socket: Option<&str>) -> PathBuf {
+pub fn socket_key(socket: Option<&str>) -> PathBuf {
     #[cfg(unix)]
     let uid = unsafe { libc::getuid() };
     #[cfg(not(unix))]
@@ -303,6 +303,7 @@ impl Poll<'_> {
             Ok(Some(row)) => Some(agent_state_of(&row)),
             Ok(None) => None,
             Err(error) => Some(board::SessionAgentState {
+                session_id: None,
                 status: None,
                 pending: None,
                 updated_at: None,
@@ -336,6 +337,7 @@ fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentSta
         (!line.is_empty()).then(|| super::waiting::cut_chars(line, AGENT_TEXT_CHARS))
     };
     board::SessionAgentState {
+        session_id: Some(row.session_id.clone()).filter(|id| !id.is_empty()),
         status: row.status.as_ref().map(|s| s.as_str().to_string()),
         pending: row.pending_status.as_ref().map(|s| s.as_str().to_string()),
         updated_at: row.updated_at,
@@ -665,13 +667,13 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
     }
 }
 
-/// The session `id` of this board, resolved without listing the others: no `ps` or `git` for
-/// another worktree, no gates of another hub. Equal to its entry in the list `state` carries.
-pub fn board_session(
+/// The session `only` of this board, or all of them for `None`, with no more than `only` asks
+/// for read or run: no `ps` or `git` for another worktree, no gates of another hub.
+fn board_sessions_of(
     server: &Server,
     settings: &crate::kernel::config::Settings,
-    id: &str,
-) -> Option<board::Session> {
+    only: Option<&str>,
+) -> Vec<board::Session> {
     let repo = &server.ctx.repo;
     let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
@@ -690,7 +692,7 @@ pub fn board_session(
             main_branch,
             lines: Lines::None,
         },
-        Some(id),
+        only,
         |index, path| {
             (
                 crate::registry::worker_status_with(&processes, Path::new(path)),
@@ -698,8 +700,27 @@ pub fn board_session(
             )
         },
     )
-    .into_iter()
-    .next()
+}
+
+/// The session `id` of this board, resolved without listing the others. Equal to its entry in
+/// the list `state` carries.
+pub fn board_session(
+    server: &Server,
+    settings: &crate::kernel::config::Settings,
+    id: &str,
+) -> Option<board::Session> {
+    board_sessions_of(server, settings, Some(id))
+        .into_iter()
+        .next()
+}
+
+/// Every session of this board, from its own records and with no pane read. What a job that
+/// watches the sessions reads, so that it and the page agree on who is waiting.
+pub fn board_sessions(
+    server: &Server,
+    settings: &crate::kernel::config::Settings,
+) -> Vec<board::Session> {
+    board_sessions_of(server, settings, None)
 }
 
 /// How long the git check of one session may take in all. A worktree on a slow disk or a

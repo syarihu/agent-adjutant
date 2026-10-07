@@ -404,6 +404,12 @@ sessions — a terminal sidebar, a tmux status line — `false` is the honest an
 banner. `adjutant notify --message … --dry-run` prints the command a template resolves to without
 sending anything.
 
+`notification` also rings when a worker or a hub has been waiting on a permission prompt or a
+question for a few seconds and nobody has its terminal open on the board: the message says which
+session waits and on what (`worker-x is waiting: Bash: make`, or `worker-x is asking: <question>`
+for a question), once per wait. The board page, if it is open with notifications allowed, shows its
+own desktop notification for the same wait, and clicking it opens that session's terminal.
+
 `wake` splits along the line the rest of the config does not: **how** to poke a session is a
 property of the terminal, and **what to say** once poked is a property of the agent. So
 `hubWake` / `workerWake` take a long form that overrides either half —
@@ -780,9 +786,13 @@ the gate directories.
   `done`, `failed`, or a newer word passed through), `pending`, `updatedAt`, `lastEventAt`,
   `activity` and `request` (first line, cut to 200 characters), and `subagents` (a count). Left out
   for a session that is not running or has no row (no hooks). When the ledger cannot be listed it is
-  `{error}`. The セッション tab, the hub's entry and the cards show a session `waiting` on a
-  permission prompt as waiting on a person even with no gate open (許可待ち with a `request`,
-  入力待ち without).
+  `{error}`; `sessionId` is the row's own id. The セッション tab, the hub's entry and the cards show
+  a session `waiting` on a permission prompt as waiting on a person even with no gate open (許可待ち
+  with a `request`, 入力待ち without; 質問への回答待ち when the `request` is an `AskUserQuestion`).
+- `waits` (on `/api/state` and on each `/api/boards` entry; left out when empty): the sessions that
+  have waited on a permission prompt or a question for a few seconds and still do, each
+  `{agentSessionId, since, session, kind, name, request}`. The page rings its desktop notification
+  from it, once per `(agentSessionId, since)`, and opens `session` when it is clicked.
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
 `name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether

@@ -94,8 +94,14 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         ("GET", "/api/boards") => http::json(
             out,
             200,
-            &serde_json::to_string(&boards(&resident.root, resident.port, &resident.token))
-                .unwrap_or_default(),
+            &serde_json::to_string(&{
+                let mut boards = boards(&resident.root, resident.port, &resident.token);
+                for board in &mut boards {
+                    board.waits = resident.waits.notices(&board.slug);
+                }
+                boards
+            })
+            .unwrap_or_default(),
         ),
         _ => no_such_route(out),
     }
