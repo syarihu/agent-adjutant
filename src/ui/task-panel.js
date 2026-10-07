@@ -20,6 +20,9 @@ const tabOfPane = pane => pane === 'detail' ? 'overview' : pane;
 /* The tab a gate is judged in. Read inside functions only: the table is in task-view.js, which
    loads after this file. */
 const paneOfGate = g => paneOfTab(TAB_OF_KIND[g.kind] || 'history');
+/* The board's own record behind a gate of the task, found by the task's board as the card's chips
+   name it: a copy from the history may lack its board, and ids are only unique within one. */
+const liveRecordOf = (task, g) => recordByRef(gateRef(task._slug && !g._slug ? { ...g, _slug: task._slug } : g));
 
 function markSelectedCards() {
   for (const card of document.querySelectorAll('#boards .card')) {
@@ -168,8 +171,15 @@ function renderTaskPanel() {
   const all = task ? gatesOf(task) : [];
   const pick = task ? panelPickOf(task.id) : {};
   const shownGate = task && pane !== 'term' ? gateShownIn(task, tabOfPane(pane), all, pick) : null;
-  // Marked by ref, as the tab's isUnread reads it and as markSeen keeps its live ones.
-  if (shownGate && shownGate.wait === false && recordByRef(gateRef(shownGate))) markSeen(gateRef(shownGate));
+  // Opening a tab reads every record judged in it, not only the one shown: the others are earlier
+  // rounds behind the round chips, and a 新着 kept for them stays on the tab and the card. Marked
+  // by the live record's ref, as isUnread reads it; a copy from the history may lack its board.
+  if (task && pane !== 'term') {
+    for (const g of all) {
+      const r = g.wait === false && paneOfGate(g) === pane ? liveRecordOf(task, g) : null;
+      if (r && isUnread(r)) markSeen(gateRef(r));
+    }
+  }
 
   setPanelPart('head', tp('tp-head'), hub ? hubPanelHeadHtml(hub, s) : sess ? sessPanelHeadHtml(s) : panelHeadHtml(task));
   const tabs = tp('tp-tabs');
@@ -294,7 +304,7 @@ function panelTabsHtml(task, gate, s, pane, all = []) {
   if (!task) return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '') + term;
   // The dot is on the tab the open gate is judged in; the counts and 新着 are the full view's.
   const owner = gate ? paneOfGate(gate) : null;
-  const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && recordById(g.id) && isUnread(g));
+  const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && (r => r && isUnread(r))(liveRecordOf(task, g)));
   const tab = (id, label, kind) => {
     const n = kind ? all.filter(g => g.kind === kind).length : 0;
     return panelTab(pane, id, label, (owner === id ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '')
