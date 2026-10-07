@@ -88,15 +88,20 @@ function decideHtml(g) {
   </div>`;
 }
 
+const deciding = new Set(); // gates with an answer in flight: a second click must not send it again
 /* What a button of `decideHtml` or a gate's choices does, for the gate it sits in. The task panel
    calls this from its own delegated click handler instead of `bindDecide`. */
-function decideAct(b) {
+async function decideAct(b) {
   const id = b.closest('[data-gate]').dataset.gate;
-  if (b.matches('.pick[data-choice]')) return answer('choice', b.dataset.choice, id);
-  const act = b.dataset.act;
-  if (act === 'talk') talk(id);
-  else if (act === 'close') closeGate(id);
-  else answer(act, undefined, id);
+  const act = b.matches('.pick[data-choice]') ? 'choice' : b.dataset.act;
+  if (act === 'talk') return talk(id);
+  if (deciding.has(id)) return;
+  deciding.add(id);
+  try {
+    if (act === 'choice') await answer('choice', b.dataset.choice, id);
+    else if (act === 'close') await closeGate(id);
+    else await answer(act, undefined, id);
+  } finally { deciding.delete(id); }
 }
 
 /* The buttons `decideHtml` and a gate's choices draw, wired to the gate they sit in. */
