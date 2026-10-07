@@ -495,7 +495,7 @@ none of these has seen is added by running `adj server start` inside it. Without
 server, everything is as described above.
 
 **A session's terminal in the board.** On the resident server's boards, the tabs under the
-board's title (人 / エージェント / セッション) include a セッション tab. It lists the board's hubs,
+board's title (エージェント / 人 / セッション) include a セッション tab. It lists the board's hubs,
 each with its workers: a repository's board lists its own hub and then its parent-task hubs
 (indented), a parent-task board only its own hub, and 「すべて」 every repository's. A hub's header
 sticks to the top while its sessions scroll, and shows the hub's state, how many sessions it has and

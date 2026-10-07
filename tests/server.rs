@@ -76,6 +76,12 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         assert!(page.contains(piece), "{piece}");
     }
     assert!(!page.contains("id=\"nav-sessions\""));
+    // The tabs run エージェント, 人, セッション.
+    let tab = |name: &str| page.find(&format!("data-tab=\"{name}\"")).expect(name);
+    assert!(
+        tab("agent") < tab("human") && tab("human") < tab("sessions"),
+        "the view tabs are not ordered agent, human, sessions"
+    );
     // 要対応レビュー opens the queue, not the first gate's task.
     assert!(page.contains("id=\"nav-review\" title=\"要対応レビュー\" data-action=\"queue\""));
     // 着手を促す is the hub panel's, not the title bar's.

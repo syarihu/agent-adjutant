@@ -274,7 +274,7 @@ document.getElementById('board-rows').addEventListener('keydown', e => {
 /* A row of the sidebar: that board, in the view that is open. The review queue is not a view of
    a board, so it opens the board's cards. */
 function openBoard(slug) {
-  const keep = nav.view === 'review' ? 'human' : nav.view;
+  const keep = nav.view === 'review' ? 'agent' : nav.view;
   go({ board: slug, view: keep, task: null, item: null });
 }
 
@@ -284,7 +284,7 @@ function openHubPanelOf(b) {
   const ref = HUB_REF + b.hubId;
   const listed = !scopeAll() && nav.view !== 'review' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
   if (listed) return openTaskPanel(ref, 'term');
-  go({ board: b.slug, view: nav.view === 'review' ? 'human' : nav.view, task: ref, pane: 'term' });
+  go({ board: b.slug, view: nav.view === 'review' ? 'agent' : nav.view, task: ref, pane: 'term' });
 }
 
 /* The hub of the board on screen, which the title's 「hub」 button opens. */

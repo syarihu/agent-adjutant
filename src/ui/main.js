@@ -205,7 +205,7 @@ async function boot() {
   navApplying = false;
   if (deepTaskId) {
     // The task's own view on the board the address names; the hash stays as it is.
-    nav.view = 'human';
+    nav.view = 'agent';
     const epoch = navEpoch;
     refresh(true).then(() => {
       // The person may have gone to another board while the first state was on its way.
