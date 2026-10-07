@@ -104,6 +104,10 @@ pub struct Session {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionAgentState {
+    /// The ledger row's own session id, which is not the session's `conversation` after `/clear`.
+    /// With `updatedAt` it names one wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     /// The ledger's own word: idle, running, waiting, done, failed, or one a newer binary wrote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
@@ -128,6 +132,27 @@ pub struct SessionAgentState {
     /// Set instead of the rest when the ledger could not be read: not the same as no row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// A session that has waited on a permission prompt or a question long enough to have been
+/// announced, for as long as it still waits. The page rings its own desktop notification from
+/// it, once per `(agentSessionId, since)`, and opens `session` when that is clicked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitNotice {
+    /// The ledger row's session id, which with `since` names the wait.
+    pub agent_session_id: String,
+    /// When the row turned `waiting`, epoch seconds.
+    pub since: i64,
+    /// The board's id of the session that waits (`hub`, `worker-x`), which opens its terminal.
+    pub session: String,
+    /// `hub` or `worker`.
+    pub kind: String,
+    /// What the person knows it by: its title, else its id.
+    pub name: String,
+    /// What it asks, as the ledger has it. Left out when the agent said nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
 }
 
 /// The oldest open gate a session waits on: the one a worker opened and is waiting to have
@@ -329,6 +354,7 @@ mod tests {
             focus: None,
         });
         session.agent_session = Some(SessionAgentState {
+            session_id: Some("agent-1".to_string()),
             status: Some("waiting".to_string()),
             pending: None,
             updated_at: Some(7),
@@ -339,6 +365,7 @@ mod tests {
             error: None,
         });
         let full = serde_json::to_value(&session).unwrap();
+        assert_eq!(full["agentSession"]["sessionId"], "agent-1");
         assert_eq!(full["agentSession"]["status"], "waiting");
         assert_eq!(full["agentSession"]["updatedAt"], 7);
         assert_eq!(full["agentSession"]["lastEventAt"], 8);

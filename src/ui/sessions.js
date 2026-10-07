@@ -12,7 +12,22 @@ const WAITS_ON_PERSON = ['waiting', 'permission'];
 /* What a `permission` session is called where it is drawn from its own session. The ledger's
    `waiting` also covers other dialogs the agent asks, so it is 許可待ち only with a request to
    say what is asked; the tables below hold the neutral word, for where there is no session. */
-const permissionLabel = s => s?.agentSession?.request ? '許可待ち' : '入力待ち';
+const permissionLabel = s => isQuestion(s) ? '質問への回答待ち' : s?.agentSession?.request ? '許可待ち' : '入力待ち';
+/* A question the agent asks with its AskUserQuestion tool reaches the ledger as a permission
+   request whose text starts with this (src/transport/cli/hook.rs, tool_summary). */
+const QUESTION_PREFIX = 'AskUserQuestion: ';
+const isQuestion = s => {
+  const request = s?.agentSession?.request || '';
+  // Bare when the tool call carried no question text.
+  return request.startsWith(QUESTION_PREFIX) || request === QUESTION_PREFIX.trim();
+};
+/* What the agent asks, in a sentence: a question, or the permission for a tool. Plain text. */
+const requestText = s => {
+  const request = s?.agentSession?.request || '';
+  if (!isQuestion(s)) return `許可を求めています: ${request}`;
+  const question = request.slice(QUESTION_PREFIX.length).trim();
+  return question ? `質問しています: ${question}` : '質問しています';
+};
 const STATE_ORDER = { waiting: 0, permission: 1, stopped: 2, restarting: 2, failed: 2, idle: 3, done: 3, working: 4, ended: 5, none: 6 };
 const STATE_LABEL = {
   waiting: '確認待ち', permission: '入力待ち', done: '待機中', failed: 'エラー（API）', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
@@ -76,7 +91,7 @@ function agentText(s, data = state) {
   if (!s.present || !a) return '';
   if (a.error) return 'エージェントの状態を読めません';
   const parts = [];
-  if (agentStateOf(s) === 'permission' && a.request) parts.push(`許可を求めています: ${a.request}`);
+  if (agentStateOf(s) === 'permission' && a.request) parts.push(requestText(s));
   // What the row says it is: a `running` the pane has gone quiet on is not doing the tool.
   else if (a.activity && ledgerState(s, data) === 'working') parts.push(a.activity);
   if (a.subagents > 0) parts.push(`サブエージェント ${a.subagents}`);
@@ -397,7 +412,7 @@ function sessionLastText(s, data) {
   const counted = n > 0 ? `サブエージェント ${n}` : '';
   // `agentText` has the count in it already; the others do not.
   const add = text => counted ? `${text}${text ? ' · ' : ''}${counted}` : text;
-  if (asks) return add(`許可を求めています: ${s.agentSession.request}`);
+  if (asks) return add(requestText(s));
   if (s.lastLine) return add(s.lastLine);
   return agentText(s, data) || add(when ? `最後の出力: ${when}` : '');
 }

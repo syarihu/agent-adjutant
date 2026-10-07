@@ -345,7 +345,7 @@ function agentCard(task) {
         ${asks ? `<span style="font-weight:700;color:var(--md-sys-color-warning);">${permissionLabel(asking)}</span>` : ''}
         ${mins != null ? `<span class="ago" style="margin-left:auto;color:var(--md-sys-color-outline);font-size:11px;">${minutesLabel(mins)}</span>` : ''}
       </div>
-      ${asks && asking.agentSession.request ? `<div style="font-size:11px;color:var(--md-sys-color-outline);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(asking.agentSession.request)}">${esc(asking.agentSession.request)}</div>` : ''}
+      ${asks && asking.agentSession.request ? `<div style="font-size:11px;color:var(--md-sys-color-outline);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(isQuestion(asking) ? requestText(asking) : asking.agentSession.request)}">${esc(isQuestion(asking) ? requestText(asking) : asking.agentSession.request)}</div>` : ''}
     `;
   }
 

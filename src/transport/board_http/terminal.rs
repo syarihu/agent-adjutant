@@ -43,6 +43,7 @@ pub(super) fn serve(
 #[cfg(unix)]
 mod imp {
     use super::*;
+    use crate::board::jobs::{OpenGuard, target_key};
     use crate::board::settings_now;
     use crate::board::target_of;
     use crate::board::view::board_session;
@@ -172,6 +173,8 @@ mod imp {
         _release: Release,
         /// The window the terminal was opened on, which it ends with.
         window: String,
+        /// Says to the wait watch that a person is at this window, while the terminal lives.
+        _open: OpenGuard,
     }
 
     /// Gives the session `name` back when dropped.
@@ -210,6 +213,8 @@ mod imp {
                 "no such tmux session on this board".to_string(),
             ))?;
         let socket = socket.as_deref();
+        // From here the person is looking at the window: a prompt it shows is not announced.
+        let open = Arc::clone(&server.waits).terminal_open(&target_key(socket, &window));
 
         // Before anything is made: a window that is gone must not start a server or leave a
         // session behind.
@@ -254,6 +259,7 @@ mod imp {
             pty,
             _release: release,
             window,
+            _open: open,
         })
     }
 
@@ -311,6 +317,7 @@ mod imp {
             _release,
             mut pty,
             window,
+            _open,
         } = attached;
         let mut master = pty.reader()?;
         // Set once the connection's side has sent its own close frame, so that the client going

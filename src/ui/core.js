@@ -260,13 +260,13 @@ function updateNotifyButton() {
   }
   if (Notification.permission === 'granted') {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
-    btn.title = '確認依頼のデスクトップ通知が有効です';
+    btn.title = '確認依頼と入力待ちのデスクトップ通知が有効です';
   } else if (Notification.permission === 'denied') {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications</span><span>通知を許可</span>';
-    btn.title = '確認依頼が届いたときにデスクトップ通知を受け取る';
+    btn.title = '確認依頼が届いたときや、セッションが入力待ちになったときにデスクトップ通知を受け取る';
   }
 }
 
@@ -313,6 +313,39 @@ function checkNewGates(gates) {
   seenGateIds = currentIds;
 }
 
+let seenWaitKeys = null;
+/* A session that has waited on a person for a few seconds, as the server announces it
+   (`waits` of /api/state and /api/boards): once per wait, and not for the ones already there
+   when the page opened. The server rings the configured notifier itself; this is the page's. */
+function checkNewWaits(waits) {
+  const list = waits || [];
+  const keyOf = w => `${w._slug || ''}/${w.agentSessionId}/${w.since}`;
+  const current = new Set(list.map(keyOf));
+  if (seenWaitKeys === null) {
+    seenWaitKeys = current;
+    return;
+  }
+  if (window.Notification && Notification.permission === 'granted') {
+    for (const w of list) {
+      if (seenWaitKeys.has(keyOf(w))) continue;
+      // The board's own wording (sessions.js), from a session shaped like the ones it reads.
+      const asked = { agentSession: { request: w.request } };
+      const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
+        body: w.request ? requestText(asked) : 'ターミナルで入力を待っています',
+        tag: 'wait-' + keyOf(w),
+      });
+      n.onclick = () => {
+        window.focus();
+        onBoard(w._slug, () => openSessionRef(scopeAll() && w._slug ? `${w._slug}/${w.session}` : w.session));
+      };
+    }
+  }
+  seenWaitKeys = current;
+}
+
+/* The waits of every board, as /api/boards lists them. */
+const everyWait = () => boards.flatMap(b => (b.waits || []).map(w => ({ ...w, _slug: b.slug })));
+
 /* The gates of every board, as /api/boards lists them: with several boards, a gate that opens
    on one that is not shown is still announced. */
 const everyGate = () => boards.flatMap(b => (b.gates || []).map(g => ({ ...g, _slug: b.slug })));
@@ -351,6 +384,7 @@ async function fetchBoards() {
       b.waiting = Math.max(0, (b.waiting || 0) - gone.length);
     }
     checkNewGates(everyGate());
+    checkNewWaits(everyWait());
     renderBoardRows();
     renderTitle();
     renderGateCount();
@@ -543,7 +577,10 @@ async function refresh(force = false) {
     const next = await boardApi(base, view === 'sessions' ? '/api/state?lines=1' : view === 'board' ? '/api/state?lines=hub' : '/api/state');
     // The person moved to another board while this was on its way.
     if (epoch !== navEpoch) return;
-    if (!multiBoard) checkNewGates(next.gates);
+    if (!multiBoard) {
+      checkNewGates(next.gates);
+      checkNewWaits(next.waits);
+    }
     // Compared without the server's clock, which changes on every poll: with it in, every
     // refresh redrew the page, and a comment being typed into a gate lost its IME
     // composition every two seconds. The clock only moves the elapsed times on the board, so

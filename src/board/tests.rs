@@ -977,6 +977,7 @@ fn reading_the_state_leaves_a_resumable_gate_open() {
         tmux: None,
         terminals: Arc::default(),
         pr_poll: None,
+        waits: Arc::default(),
     };
 
     let read = state(&server, false, crate::board::view::Lines::None);
@@ -1101,6 +1102,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         tmux: None,
         terminals: Arc::default(),
         pr_poll: None,
+        waits: Arc::default(),
     };
     let settings = settings_now(&server);
 

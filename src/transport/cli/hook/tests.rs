@@ -14,6 +14,9 @@ fn fixture(name: &str) -> Value {
         "permission-request" => {
             include_str!("../../../fixtures/hooks/claude/permission-request.json")
         }
+        "permission-request-ask-user-question" => {
+            include_str!("../../../fixtures/hooks/claude/permission-request-ask-user-question.json")
+        }
         "notification-permission" => {
             include_str!("../../../fixtures/hooks/claude/notification-permission.json")
         }
@@ -99,6 +102,11 @@ fn a_tool_is_named_with_the_first_thing_its_input_names() {
         Some("Bash: cargo test")
     );
     assert_eq!(summary("session-start"), None);
+    // A question names no file or command: its first line is what is asked.
+    assert_eq!(
+        summary("permission-request-ask-user-question").as_deref(),
+        Some("AskUserQuestion: Which fruit?")
+    );
 
     let payload = |input: Value| {
         let mut p = fixture("post-tool-use");
@@ -118,6 +126,14 @@ fn a_tool_is_named_with_the_first_thing_its_input_names() {
         Some("Edit")
     );
     assert_eq!(payload(Value::Null).as_deref(), Some("Edit"));
+    assert_eq!(
+        payload(serde_json::json!({"questions": [{"question": "\n First?\nsecond"}]})).as_deref(),
+        Some("Edit: First?")
+    );
+    assert_eq!(
+        payload(serde_json::json!({"questions": []})).as_deref(),
+        Some("Edit")
+    );
     // Cut on a character boundary.
     let long = "é".repeat(200);
     let cut = payload(serde_json::json!({ "file_path": long })).unwrap();

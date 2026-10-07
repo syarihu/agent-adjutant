@@ -303,7 +303,15 @@ fn tool_summary(payload: &Value) -> Option<String> {
         "description",
     ]
     .iter()
-    .find_map(|key| input.and_then(|input| text(input, key)));
+    .find_map(|key| input.and_then(|input| text(input, key)))
+    // `AskUserQuestion` names none of those: what it asks is the first question.
+    .or_else(|| {
+        input?
+            .get("questions")?
+            .as_array()?
+            .first()
+            .and_then(|first| text(first, "question"))
+    });
     let summary = match named {
         Some(what) => format!("{tool}: {}", first_line(&what)),
         None => tool,

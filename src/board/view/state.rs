@@ -71,6 +71,10 @@ pub struct BoardState {
     pub now: i64,
     pub pending: Vec<PendingRow>,
     pub gates: Vec<GateCard>,
+    /// The sessions that have waited on a person long enough to be announced and still wait,
+    /// for the page's desktop notification. Left out when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub waits: Vec<crate::board::WaitNotice>,
 }
 
 /// The repository's own hub. Unlike `mail::RepoHubState`, `pid` and `startedAt` are written
@@ -472,6 +476,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
             .into_iter()
             .map(GateCard::of)
             .collect(),
+        waits: server.waits.notices(&repo.slug),
     }
 }
 

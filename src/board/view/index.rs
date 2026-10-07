@@ -121,6 +121,10 @@ pub struct BoardSummary {
     pub title: Option<String>,
     pub url: String,
     pub waiting: usize,
+    /// The sessions announced as waiting on a person that still wait. Not read from the
+    /// records: `boards` leaves it empty, and the resident server fills it from its watch.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub waits: Vec<crate::board::WaitNotice>,
     pub working: usize,
 }
 
@@ -222,6 +226,7 @@ pub fn boards(root: &Path, port: u16, token: &str) -> Vec<BoardSummary> {
                     .and_then(|_| crate::board::jobs::cached_title(root, &a.slug)),
                 url: resident_board_url(port, &a.slug, token),
                 waiting,
+                waits: Vec::new(),
                 working,
             }
         })
