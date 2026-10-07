@@ -63,6 +63,27 @@ fn the_page_has_one_task_panel_and_no_drawer() {
 }
 
 #[test]
+fn the_task_panel_has_the_tabs_of_the_task_view() {
+    for piece in [
+        "const PANES = ['detail', 'term', 'review', 'check', 'history']",
+        "id=\"tp-tabs\"",
+        "m3-segmented-tabs",
+        "タスクサマリ",
+        "コードレビュー",
+        "動作確認",
+        "function drawTaskPane",
+        "function showPanelTab",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The panel's decision buttons go through `decideAct`; `bindDecide` would bind `data-ide` a
+    // second time next to the panel's own delegated handler.
+    let panel = include_str!("../../ui/task-panel.js");
+    assert!(panel.contains("decideAct("));
+    assert!(!panel.contains("bindDecide("));
+}
+
+#[test]
 fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
     for piece in [
         "id=\"sessions-view\"",

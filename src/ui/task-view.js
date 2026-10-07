@@ -115,9 +115,10 @@ const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 
 const isWaiting = g => (state.gates || []).some(x => gateRef(x) === gateRef(g));
 
-/* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. */
-function gateForTab(task, tab, all) {
-  const picked = taskView.pick[tab] && all.find(g => g.id === taskView.pick[tab]);
+/* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. `pick`
+   is what was picked: the task view's own, or the task panel's, which draws the same tabs. */
+function gateForTab(task, tab, all, pick) {
+  const picked = pick[tab] && all.find(g => g.id === pick[tab]);
   if (picked) return picked;
   const ofKind = all.filter(g => g.kind === KIND_OF_TAB[tab]);
   return ofKind.find(isWaiting) || ofKind[ofKind.length - 1] || null;
@@ -324,7 +325,7 @@ function ghHeadLinksHtml(task) {
   }
   return h;
 }
-/* The Issue and the PR as rows for the top of 詳細 and 判断: number and title, and for the PR
+/* The Issue and the PR as rows for the top of the task panel's タスクサマリ and the review view's 判断: number and title, and for the PR
    its state, checks and review. Empty for a task with neither a PR to show nor an Issue. */
 function ghRowsHtml(task) {
   if (!task) return '';
@@ -349,9 +350,11 @@ function ghRowsHtml(task) {
   return `<div class="gh-block">${h}</div>`;
 }
 
-function overviewTab(task, all) {
+/* `opts.panel` is the task panel's: its top already shows the Issue and the PR, and `opts.handForm`
+   is set when its hand-over form shows the 申し送り, so neither is said twice. */
+function overviewTab(task, all, pick, opts = {}) {
   const plans = all.filter(g => g.kind === 'plan');
-  const plan = gateShownIn(task, 'overview', all);
+  const plan = gateShownIn(task, 'overview', all, pick);
   let h = '';
 
   // Where each came from: the plan's own words when the worker wrote them, otherwise the
@@ -382,7 +385,7 @@ function overviewTab(task, all) {
   else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
   h += `</div>`;
 
-  if (task.instruction) {
+  if (task.instruction && !opts.handForm) {
     h += `<div class="panel" style="border-left: 3px solid var(--md-sys-color-primary, #6750A4);">` +
       `<h3>エージェントへの申し送り（指示）</h3>` +
       `<div class="body" style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;">${esc(task.instruction)}</div>` +
@@ -423,15 +426,17 @@ function overviewTab(task, all) {
     ['止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)],
     ['着手設定', task.autoStart ? '確認なしで着手' : '着手前に確認が必要'],
   ];
-  if (task.instruction) rows.push(['申し送り', `<span style="white-space:pre-wrap">${esc(task.instruction)}</span>`]);
+  if (task.instruction && !opts.handForm) rows.push(['申し送り', `<span style="white-space:pre-wrap">${esc(task.instruction)}</span>`]);
   const link = u => httpUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(u)}</a>` : esc(u);
   const issueRef = task.issueUrl || task.issue;
   if (issueRef) {
     const fetchButton = !task.issueSnapshot && isGithubIssue(issueRef)
       ? ` <button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">本文を取得</button>` : '';
-    rows.push(['Issue', link(issueRef) + fetchButton]);
+    // The panel's top has the link; the button to read the body stays.
+    if (!opts.panel) rows.push(['Issue', link(issueRef) + fetchButton]);
+    else if (fetchButton) rows.push(['Issue', fetchButton.trim()]);
   }
-  if (task.pr) rows.push(['PR', link(task.pr)]);
+  if (task.pr && !opts.panel) rows.push(['PR', link(task.pr)]);
   if (task.executor === 'jules') {
     rows.push(['実装', task.jules?.url ? `Jules ${esc(julesText(task.jules))} — ${link(task.jules.url)}`
       : task.julesSession ? `Jules ${task.jules ? esc(julesText(task.jules)) : ''}（session <span class="mono2">${esc(task.julesSession)}</span>）`
@@ -447,8 +452,8 @@ function overviewTab(task, all) {
   return h;
 }
 
-function reviewTab(task, all) {
-  const g = gateForTab(task, 'review', all);
+function reviewTab(task, all, pick) {
+  const g = gateForTab(task, 'review', all, pick);
   if (!g) return `<div class="empty-state">コードレビューはまだ無い。worker がセルフレビューを終えると、ここに出る。</div>`;
   // A gate waiting is judged on what the worker says about it, so the decision sits right under
   // that, above the rounds, the findings and the diff it can be checked against. A record's
@@ -469,8 +474,8 @@ function reviewTab(task, all) {
   return h + (waiting ? '' : actHtml(g));
 }
 
-function checkTab(task, all) {
-  const g = gateForTab(task, 'check', all);
+function checkTab(task, all, pick) {
+  const g = gateForTab(task, 'check', all, pick);
   if (!g) return `<div class="empty-state">動作確認はまだ無い。worker が verify を回すと、ここに出る。</div>`;
   let h = gateHeadHtml(g, all);
   if (isWaiting(g)) {
@@ -531,18 +536,15 @@ function historyEventsOf(task, all, waiting = isWaiting) {
   return events.sort((a, b) => a.at - b.at);
 }
 
-/* The timeline of 経過, shared by the tab and the task panel. `limit` keeps only the latest
-   entries, for the panel, where a long history would push the actions out of reach. The
+/* The timeline of 経過, drawn by the tab in the full view and in the task panel. The
    worker's phase is not kept as a history — only the one it is in now — so it closes the
    list rather than running through it. */
-function timelineHtml(task, all, limit = Infinity, data = state, base = baseOf(task)) {
+function timelineHtml(task, all, data = state, base = baseOf(task)) {
   // The waiting gates are those of the board the task is on, not of this page's.
   const events = historyEventsOf(task, all, data === state ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));
-  const shown = events.slice(-limit);
   const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task, data) : null;
   let h = '';
-  if (shown.length < events.length) h += `<div class="source">古い ${events.length - shown.length} 件は省いている</div>`;
-  h += `<ol class="timeline">` + shown.map(e =>
+  h += `<ol class="timeline">` + events.map(e =>
     `<li><span class="at" title="${esc(ago(e.stamp))}">${esc(when(e.stamp))}</span><div class="what">${e.html}</div></li>`).join('');
   if (worker && worker.present && worker.phase) {
     const mins = phaseMinutes(worker);
@@ -554,8 +556,8 @@ function timelineHtml(task, all, limit = Infinity, data = state, base = baseOf(t
   return h;
 }
 
-function historyTab(task, all) {
-  const picked = taskView.pick.history && all.find(g => g.id === taskView.pick.history);
+function historyTab(task, all, pick) {
+  const picked = pick.history && all.find(g => g.id === pick.history);
   let h = picked ? gateDetailHtml(picked, all) : '';
   return h + `<div class="panel"><h3>経過</h3>${timelineHtml(task, all)}</div>`;
 }
@@ -624,7 +626,7 @@ function renderTaskView() {
   }
 
   const all = gatesOf(task);
-  const shown = gateShownIn(task, taskView.tab, all);
+  const shown = gateShownIn(task, taskView.tab, all, taskView.pick);
   // Read before the tabs are drawn, so the one open now does not keep its dot.
   if (shown && shown.wait === false && recordById(shown.id)) markSeen(shown.id);
   const colObj = COLUMNS.find(c => c.id === columnOf(task));
@@ -677,7 +679,7 @@ function renderTaskView() {
   if (waiting) {
     const [label, colour] = kindOf(waiting.kind);
     const tab = TAB_OF_KIND[waiting.kind] || 'history';
-    const here = tab === taskView.tab && gateShownIn(task, tab, all)?.id === waiting.id;
+    const here = tab === taskView.tab && gateShownIn(task, tab, all, taskView.pick)?.id === waiting.id;
     h += `
       <div class="m3-card-attention-box" style="padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
@@ -695,7 +697,7 @@ function renderTaskView() {
     `;
   }
 
-  h += { overview: overviewTab, review: reviewTab, check: checkTab, history: historyTab }[taskView.tab](task, all);
+  h += { overview: overviewTab, review: reviewTab, check: checkTab, history: historyTab }[taskView.tab](task, all, taskView.pick);
   h += `</div>`;
 
   // Whether this is what was on screen: a comment is only carried across a redraw of the same one.
@@ -747,18 +749,18 @@ function renderTaskView() {
 }
 
 /* The gate a tab has on screen, if it shows one. */
-function gateShownIn(task, tab, all) {
-  if (tab === 'history') return (taskView.pick.history && all.find(g => g.id === taskView.pick.history)) || null;
+function gateShownIn(task, tab, all, pick) {
+  if (tab === 'history') return (pick.history && all.find(g => g.id === pick.history)) || null;
   if (tab === 'overview') {
     // The plan being worked to is the one approved last; a plan waiting now is the one to judge.
     // /api/state names it only for a live task, so a finished one finds it the same way.
     const plans = all.filter(g => g.kind === 'plan');
     const approved = plans.filter(g => ['approve', 'choice'].includes(g.decision))
       .sort((a, b) => (a.answeredAt || '').localeCompare(b.answeredAt || '')).pop();
-    return (taskView.pick.overview && all.find(g => g.id === taskView.pick.overview))
+    return (pick.overview && all.find(g => g.id === pick.overview))
       || plans.find(isWaiting) || task.approvedPlan || approved || plans[plans.length - 1] || null;
   }
-  return gateForTab(task, tab, all);
+  return gateForTab(task, tab, all, pick);
 }
 
 registerView('task-view', {

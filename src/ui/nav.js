@@ -1,13 +1,16 @@
 /* ── Where the page is: one board, every board, or the review queue ──────────────────────
    Navigation state lives in the address, so back/forward and a pasted link land on the same
    screen without a reload; what is only a preference (layout, folded repositories) does not.
-     /b/<slug>/?view=human&task=<id>&pane=term             one board
+     /b/<slug>/?view=human&task=<id>&pane=term             one board; pane is detail (the default),
+                                                           term, review, check or history
      /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
      /b/<slug>/?view=sessions&task=session:<id>&pane=term  its sessions, one with no task in the panel
      /                                                     すべて, every board
      /review?item=<id>                                     要対応レビュー, every board
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. */
+/* The task panel's tabs, as `pane=` names them; anything else is 詳細 (タスクサマリ). */
+const PANES = ['detail', 'term', 'review', 'check', 'history'];
 const nav = { board: null, view: 'agent', task: null, pane: 'detail', item: null };
 let boards = [];                 // /api/boards: the sidebar's rows
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
@@ -23,7 +26,7 @@ const scopeAll = () => multiBoard && nav.board === 'all';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
-  const out = { board: null, view: 'agent', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item') };
+  const out = { board: null, view: 'agent', task: q.get('task'), pane: PANES.includes(q.get('pane')) ? q.get('pane') : 'detail', item: q.get('item') };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   if (loc.pathname === '/review') {
     out.board = multiBoard ? 'all' : null;
@@ -50,7 +53,7 @@ function urlOf(n = nav) {
   let url = path + '?token=' + encodeURIComponent(TOKEN);
   if (n.view === 'human' || n.view === 'sessions') url += `&view=${n.view}`;
   if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
-  if (n.task && n.view !== 'review' && n.pane === 'term') url += '&pane=term';
+  if (n.task && n.view !== 'review' && n.pane !== 'detail') url += `&pane=${n.pane}`;
   if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
   return url;
 }
