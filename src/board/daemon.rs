@@ -268,10 +268,14 @@ impl BoundResident {
                 waits.run(&resident.root.clone(), || {
                     // Asked only when a wait is due, so a board is opened (which asks git where
                     // its checkout is) for a wait and not every two seconds.
-                    addresses(&resident.root)
+                    let addresses = addresses(&resident.root);
+                    let boards: Vec<_> = addresses
                         .iter()
                         .filter_map(|a| resident.board(&a.slug))
-                        .collect()
+                        .collect();
+                    // A board that could not be opened is a board not looked at.
+                    let complete = boards.len() == addresses.len();
+                    (boards, complete)
                 });
             });
         }

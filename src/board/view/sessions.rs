@@ -673,16 +673,20 @@ fn board_sessions_of(
     server: &Server,
     settings: &crate::kernel::config::Settings,
     only: Option<&str>,
-) -> Vec<board::Session> {
+) -> (Vec<board::Session>, bool) {
     let repo = &server.ctx.repo;
-    let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
+    // Whether the worktrees could be listed: a failure leaves the main checkout alone, which is
+    // not the same as the repository having no other.
+    let listed = crate::kernel::identity::worktrees(&repo.main);
+    let complete = listed.is_ok();
+    let listed = listed.unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // A `ps` for each of the few it is asked about, not the whole process table.
     let processes = crate::registry::ProcessTable::each();
     let hubs =
         crate::mail::all_repo_hubs_among_with(&server.ctx.state, &processes, repo, &linked_paths);
-    sessions_of(
+    let sessions = sessions_of(
         server,
         settings,
         &hubs,
@@ -699,7 +703,8 @@ fn board_sessions_of(
                 linked[index].branch.clone(),
             )
         },
-    )
+    );
+    (sessions, complete)
 }
 
 /// The session `id` of this board, resolved without listing the others. Equal to its entry in
@@ -710,16 +715,18 @@ pub fn board_session(
     id: &str,
 ) -> Option<board::Session> {
     board_sessions_of(server, settings, Some(id))
+        .0
         .into_iter()
         .next()
 }
 
-/// Every session of this board, from its own records and with no pane read. What a job that
+/// Every session of this board, from its own records and with no pane read, and whether the
+/// list is the whole of them (`false` when the worktrees could not be listed). What a job that
 /// watches the sessions reads, so that it and the page agree on who is waiting.
 pub fn board_sessions(
     server: &Server,
     settings: &crate::kernel::config::Settings,
-) -> Vec<board::Session> {
+) -> (Vec<board::Session>, bool) {
     board_sessions_of(server, settings, None)
 }
 

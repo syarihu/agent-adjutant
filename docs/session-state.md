@@ -426,10 +426,13 @@ is listed so the ledger carries what it will need.
   it). Several processes can watch one ledger (a board per hub with no resident server, or one
   started by hand beside it), so a wait is claimed through a marker file made with `create_new`
   under `<state>/wait-notified/`: only the process that makes it runs the configured command, so
-  it rings once, and the marker goes when the wait ends (or a day later, swept when a watch
-  starts). Each board still records the notice for its own page, which notifies on its own. The
-  open-terminal check is per process: a terminal open on one board does not stop another process
-  that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
+  it rings once. The marker stays until it is a day old and is swept when a watch starts: a wait
+  is the pair of row id and `updatedAt`, so a later wait never reuses one, and removing it early
+  would let a row that dropped out of one ledger read be rung again. A wait with no matching
+  session is looked for again next round when any board or session list of that round was
+  incomplete, for up to a minute. Each board still records the notice for its own page, which
+  notifies on its own. The open-terminal check is per process: a terminal open on one board does
+  not stop another process that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
   {request}"`, or `"{name} is asking: {question}"` for an AskUserQuestion), and `/api/state` and
   `/api/boards` carry it as `waits` so the page rings its own desktop notification, which opens
   that session's terminal when clicked.

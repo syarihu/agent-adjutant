@@ -133,6 +133,20 @@ fn pick(sessions: &[Session], due: &[Key], nwo: &str, slug: &str) -> Vec<Picked>
 /// What `tool_summary` (transport/cli/hook.rs) makes of an `AskUserQuestion` request.
 const QUESTION_TOOL: &str = "AskUserQuestion";
 
+/// How long a wait no session is found for is looked for again while a listing keeps failing,
+/// so a board that never opens does not have every board listed every round for good.
+const RETRY_SECS: i64 = 60;
+
+/// The due waits that are done with this round: the ones a session was found for, and, when
+/// every board and session was listed, the others too. A listing that failed is not an answer
+/// that nothing waits there, until the wait is older than `RETRY_SECS`.
+fn settled(due: &[Key], matched: &HashSet<Key>, complete: bool, now: i64) -> Vec<Key> {
+    due.iter()
+        .filter(|key| complete || matched.contains(*key) || now - key.1 > RETRY_SECS)
+        .cloned()
+        .collect()
+}
+
 /// What the configured notification says.
 fn message(name: &str, request: Option<&str>) -> String {
     let request = request.map(str::trim).filter(|request| !request.is_empty());
@@ -164,8 +178,8 @@ fn marker_path(root: &Path, key: &Key) -> std::path::PathBuf {
     root.join("wait-notified").join(format!("{safe}-{}", key.1))
 }
 
-/// How long a marker is kept if nothing removed it: a process that ended while its wait went on
-/// leaves one behind.
+/// How long a marker is kept. The sweep is the only thing that removes one: a wait is the pair
+/// of row id and `updatedAt`, so a marker is never claimed by a later wait.
 const MARKER_KEPT: Duration = Duration::from_secs(86_400);
 
 /// Remove the markers older than `kept`, by their modification time. Errors are ignored: a marker
@@ -233,8 +247,9 @@ impl WaitWatch {
     }
 
     /// Watch for as long as the process lives. `root` is the ledger's state directory and
-    /// `boards` is asked each round, so a board opened since is watched too.
-    pub fn run(&self, root: &Path, boards: impl Fn() -> Vec<Arc<Server>>) {
+    /// `boards` is asked each round, so a board opened since is watched too. It answers with the
+    /// boards and whether it has them all: one it could not open is not the same as none.
+    pub fn run(&self, root: &Path, boards: impl Fn() -> (Vec<Arc<Server>>, bool)) {
         loop {
             // A round that panics is a failed round, not the end of the watch, as in
             // `sweep_gates`.
@@ -245,7 +260,7 @@ impl WaitWatch {
         }
     }
 
-    fn round(&self, root: &Path, boards: &impl Fn() -> Vec<Arc<Server>>, now: i64) {
+    fn round(&self, root: &Path, boards: &impl Fn() -> (Vec<Arc<Server>>, bool), now: i64) {
         // A ledger that cannot be listed is a round of nothing: no row is taken to be gone.
         let Ok(waiting) = crate::registry::waiting_agent_sessions(root) else {
             return;
@@ -253,10 +268,6 @@ impl WaitWatch {
         let due = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let still: HashSet<&Key> = waiting.iter().collect();
-            // A wait that is over needs no claim: its moment never comes again.
-            for key in state.handled.iter().filter(|key| !still.contains(key)) {
-                let _ = std::fs::remove_file(marker_path(root, key));
-            }
             state.handled.retain(|key| still.contains(key));
             for notices in state.notices.values_mut() {
                 notices.retain(|(key, _)| still.contains(key));
@@ -279,7 +290,8 @@ impl WaitWatch {
         let mut matched: HashSet<Key> = HashSet::new();
         let mut announced: Vec<(String, Picked)> = Vec::new();
         let mut rings: Vec<String> = Vec::new();
-        for server in boards() {
+        let (servers, mut complete) = boards();
+        for server in servers {
             let left: Vec<Key> = due
                 .iter()
                 .filter(|key| !matched.contains(*key))
@@ -290,7 +302,12 @@ impl WaitWatch {
             }
             let repo = &server.ctx.repo;
             let settings = settings_now(&server);
-            let sessions = board_sessions(&server, &settings);
+            let (sessions, listed) = board_sessions(&server, &settings);
+            // A session whose ledger row could not be read looks like one that does not wait.
+            complete &= listed
+                && !sessions
+                    .iter()
+                    .any(|s| s.agent_session.as_ref().is_some_and(|a| a.error.is_some()));
             for picked in pick(&sessions, &left, &repo.nwo, &repo.slug) {
                 matched.insert(picked.key.clone());
                 // Claimed first, open terminal or not: only the process that makes the marker
@@ -322,9 +339,10 @@ impl WaitWatch {
         }
         {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            // Every due wait, matched or not: one that belongs to no session this process
-            // lists is not looked for again, and one that is found is announced once.
-            state.handled.extend(due);
+            // The waits that were found, and, after a complete sweep, the rest of the due ones:
+            // one that belongs to no session this process lists is not looked for again. After
+            // an incomplete one they are tried again next round.
+            state.handled.extend(settled(&due, &matched, complete, now));
             for (slug, picked) in announced {
                 state
                     .notices
@@ -494,6 +512,23 @@ mod tests {
         assert_eq!(
             message("worker-a", Some("  ")),
             "worker-a is waiting for input"
+        );
+    }
+
+    #[test]
+    fn an_incomplete_listing_leaves_the_unmatched_waits_to_the_next_round() {
+        let due = [key("a", 1), key("b", 2)];
+        let matched: HashSet<Key> = [key("a", 1)].into();
+        assert_eq!(
+            settled(&due, &matched, true, 10),
+            vec![key("a", 1), key("b", 2)]
+        );
+        assert_eq!(settled(&due, &matched, false, 10), vec![key("a", 1)]);
+        assert!(settled(&due, &HashSet::new(), false, 10).is_empty());
+        // Not for good: past `RETRY_SECS` an unmatched wait is let go even then.
+        assert_eq!(
+            settled(&due, &matched, false, 2 + RETRY_SECS + 1),
+            vec![key("a", 1), key("b", 2)]
         );
     }
 
