@@ -12,6 +12,17 @@ function gateByRef(ref) {
     || (ref && !String(ref).includes('/') ? gates.find(g => g.id === ref) : undefined);
 }
 
+/* A session waiting on a permission prompt or a question, listed beside the gates: it cannot be
+   answered here, so its button opens that session's terminal. Named by board, row id and moment,
+   since the wait is that pair. */
+const waitRef = w => `${w._slug ? w._slug + '/' : ''}wait:${w.agentSessionId}:${w.since}`;
+const itemRef = x => x._wait ? waitRef(x) : gateRef(x);
+const reviewWaits = () => (state.waits || []).map(w => ({ ...w, _wait: true }));
+const waitByRef = ref => reviewWaits().find(w => waitRef(w) === ref);
+/* What the pill of a wait says: 許可待ち, 質問への回答待ち or 入力待ち. */
+const waitLabel = w => permissionLabel({ agentSession: { request: w.request } });
+const terminalIcon = '<span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">terminal</span>';
+
 const renderDiff = d => esc(d).split('\n').map(l => {
   const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
             : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : '';
@@ -44,23 +55,38 @@ function setReviewPart(part, el, html) {
 
 /* The item on screen: what was answered here keeps the copy it had, the rest is read from the
    state, a record included. */
-const reviewCurrent = () => reviewDone.get(focused)?.gate || gateByRef(focused);
+const reviewCurrent = () => reviewDone.get(focused)?.gate || gateByRef(focused) || waitByRef(focused);
 
-/* The waiting gates by board, in the sidebar's order, the longest-waiting first. A gate
-   answered here is out even if a poll that was already on its way still lists it. */
+/* The waiting gates and waiting sessions by board, in the sidebar's order, the longest-waiting
+   first. A gate answered here is out even if a poll that was already on its way still lists it. */
 function reviewGroups() {
-  const open = (state.gates || []).filter(g => !reviewDone.has(gateRef(g)));
+  const open = [...(state.gates || []).filter(g => !reviewDone.has(gateRef(g))), ...reviewWaits()];
+  const since = x => x._wait ? x.since : stampSecs(x.openedAt) ?? 0;
   const slugs = multiBoard ? orderedBoards(readBoards()).map(b => b.slug) : [''];
   for (const g of open) if (!slugs.includes(g._slug || '')) slugs.push(g._slug || '');
   return slugs.map(slug => {
     const items = open.filter(g => (g._slug || '') === slug)
-      .sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || '') || a.id.localeCompare(b.id));
+      .sort((a, b) => since(a) - since(b) || itemRef(a).localeCompare(itemRef(b)));
     const b = boards.find(x => x.slug === slug);
     return { slug, items, title: b ? boardName(b) : repoName() || '', repo: b?.hub ? repoNameOf(b) : '' };
   }).filter(grp => grp.items.length);
 }
 
+/* A waiting session's row: a pill of its own kind, not a gate's, and when it began to wait. */
+function reviewWaitRowHtml(w, cur) {
+  const ref = waitRef(w);
+  return `<button type="button" class="review-inbox-item item" data-rv-item="${esc(ref)}" aria-current="${ref === cur}">
+    <div class="rv-row-top">
+      <span class="m3-pill pill-neutral">${terminalIcon}${esc(waitLabel(w))}</span>
+      <span class="w rv-row-when">${sinceLabel(w.since)}</span>
+    </div>
+    <div class="t">${esc(w.name)}</div>
+    <div class="rv-row-wt">${esc(w.kind)}</div>
+  </button>`;
+}
+
 function reviewRowHtml(g, cur, done) {
+  if (g._wait) return reviewWaitRowHtml(g, cur);
   const ref = gateRef(g);
   const [label] = kindOf(g.kind);
   return `<button type="button" class="review-inbox-item item${done ? ' done' : ''}" data-rv-item="${esc(ref)}" aria-current="${ref === cur}">
@@ -103,7 +129,7 @@ function renderReviewList(groups, cur) {
 /* The ref after `ref` that is still waiting: the next in the list, else the first that is left
    so that none is skipped. */
 function nextUnansweredAfter(ref) {
-  const live = r => !reviewDone.has(r) && (state.gates || []).some(g => gateRef(g) === r);
+  const live = r => !reviewDone.has(r) && ((state.gates || []).some(g => gateRef(g) === r) || !!waitByRef(r));
   const at = reviewOrder.indexOf(ref);
   return reviewOrder.slice(at + 1).find(live) || reviewOrder.find(r => r !== ref && live(r)) || null;
 }
@@ -138,16 +164,16 @@ function reviewStep(dir) {
 
 function reviewHeadHtml(g, ref) {
   const done = reviewDone.get(ref);
-  const [label] = kindOf(g.kind);
+  const [label] = g._wait ? [waitLabel(g)] : kindOf(g.kind);
   const b = boards.find(x => x.slug === g._slug);
   const at = reviewOrder.indexOf(ref);
   const prevOk = at > 0;
   const nextOk = at < 0 ? reviewOrder.length > 0 : at < reviewOrder.length - 1;
   return `<div class="rv-head-main">
       ${b ? `<span class="tag rv-board-tag">${esc(boardName(b))}</span>` : ''}
-      <span class="m3-pill pill-warn">${esc(label)}</span>
+      <span class="m3-pill ${g._wait ? 'pill-neutral' : 'pill-warn'}">${esc(label)}</span>
       ${done ? '<span class="m3-pill pill-neutral">処理済み</span>' : ''}
-      <span class="rv-head-title">${esc(g.title)}</span>
+      <span class="rv-head-title">${esc(g._wait ? g.name : g.title)}</span>
     </div>
     <div class="rv-head-nav">
       <button type="button" class="btn-m3-tonal" data-rv-step="-1"${prevOk ? '' : ' disabled'}><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span><span>前へ</span></button>
@@ -183,6 +209,8 @@ function reviewTermUsable(g) {
 const reviewSessionsRead = g => !scopeAll() || state.reviewSessionsOf === g._slug;
 
 function reviewTabsHtml(g) {
+  // A waiting session is answered in its terminal, which is not the board's to mount here.
+  if (g._wait) return '';
   const usable = reviewTermUsable(g);
   const hint = state.boardTerminal?.available ? 'セッションなし' : '端末はボードから開けません';
   const tab = (id, label, extra, off) =>
@@ -222,7 +250,23 @@ function reviewDockHtml(g) {
 }
 
 /* The 判断 tab: one column, from what waits to the buttons that answer it. */
+/* A session waiting on a prompt or a question: what it waits on, and the way to its terminal. */
+function reviewWaitJudgeHtml(w) {
+  const asked = { agentSession: { request: w.request } };
+  return `<div class="m3-card-attention-box rv-wait">
+    <div class="rv-wait-head">
+      <span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">terminal</span>
+      <span>【${esc(waitLabel(w))}】ターミナルで入力を待っています</span>
+      <span class="rv-wait-when">${sinceLabel(w.since)}から待ち</span>
+    </div>
+    <div class="rv-wait-title">${esc(w.name)}</div>
+    ${w.request ? `<div class="rv-wait-why">${esc(requestText(asked))}</div>` : ''}
+  </div>
+  <div><button type="button" class="btn-m3-primary" data-rv-open-wait>${terminalIcon}<span>ターミナルを開く</span></button></div>`;
+}
+
 function reviewJudgeHtml(g, task, done) {
+  if (g._wait) return reviewWaitJudgeHtml(g);
   const record = g.wait === false;
   const [label] = kindOf(g.kind);
   let h = reviewRefsHtml(g, task);
@@ -345,7 +389,7 @@ function renderReviewJudge(g, ref) {
 function renderReviewTerm() {
   if (view !== 'review') return;
   const g = reviewCurrent();
-  const ref = g ? gateRef(g) : null;
+  const ref = g ? itemRef(g) : null;
   // Shown before the terminal is mounted: a hidden host has no size to fit to.
   const wantTerm = !!g && reviewPane === 'term';
   const reveal = wantTerm && rv('rv-term').hidden;
@@ -387,7 +431,7 @@ function setReviewPane(pane) {
 function renderReview({ holdJudge = false } = {}) {
   reviewHeld = holdJudge;
   const groups = reviewGroups();
-  reviewOrder = groups.flatMap(grp => grp.items.map(gateRef));
+  reviewOrder = groups.flatMap(grp => grp.items.map(itemRef));
   // Nothing is known before the first round: say so rather than "nothing left", and leave the
   // address alone, so the item it names is still there to be found.
   if (scopeAll() ? !allRound : state.now == null) {
@@ -409,7 +453,7 @@ function renderReview({ holdJudge = false } = {}) {
     focused = reviewOrder[0] || null;
     g = reviewCurrent();
   }
-  const ref = g ? gateRef(g) : null;
+  const ref = g ? itemRef(g) : null;
   renderReviewList(groups, ref);
   if (!g) {
     reviewShown = null;
@@ -420,7 +464,7 @@ function renderReview({ holdJudge = false } = {}) {
     reviewSig.judge = '';
     rv('rv-judge').innerHTML = `<div class="empty-state rv-empty">
       <span class="material-symbols-outlined" style="font-size:48px;opacity:.5;display:block;margin-bottom:12px;" aria-hidden="true">done_all</span>
-      <div style="font-size:15px;font-weight:700;color:var(--md-sys-color-on-surface);">${reviewDone.size ? 'すべて処理しました' : '対応待ちの判定はありません'}</div>
+      <div style="font-size:15px;font-weight:700;color:var(--md-sys-color-on-surface);">${reviewDone.size ? 'すべて処理しました' : '対応待ちはありません'}</div>
       <div style="font-size:13px;margin-top:6px;">${reviewDone.size ? `処理済み ${reviewDone.size} 件` : ''}</div></div>`;
     renderReviewTerm();
     if (view === 'review' && nav.item) setNav({ item: null });
@@ -480,6 +524,11 @@ document.getElementById('review').addEventListener('click', e => {
     const g = reviewCurrent();
     // Where the terminal can open it is this tab; elsewhere, the outside tab is brought forward.
     if (g && reviewTermUsable(g)) setReviewPane('term'); else talk(focused);
+    return;
+  }
+  if (e.target.closest('[data-rv-open-wait]')) {
+    const w = reviewCurrent();
+    if (w?._wait) openWait(w);
     return;
   }
   if (e.target.closest('[data-rv-history]')) {

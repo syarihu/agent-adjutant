@@ -313,6 +313,11 @@ function checkNewGates(gates) {
   seenGateIds = currentIds;
 }
 
+/* Open the terminal of the session a wait is about: the notification's click, and 要対応's button. */
+function openWait(w) {
+  onBoard(w._slug, () => openSessionRef(scopeAll() && w._slug ? `${w._slug}/${w.session}` : w.session));
+}
+
 let seenWaitKeys = null;
 /* A session that has waited on a person for a few seconds, as the server announces it
    (`waits` of /api/state and /api/boards): once per wait, and not for the ones already there
@@ -327,7 +332,8 @@ function checkNewWaits(waits) {
   }
   if (window.Notification && Notification.permission === 'granted') {
     for (const w of list) {
-      if (seenWaitKeys.has(keyOf(w))) continue;
+      // Listed in 要対応 without a ring: the person was at its terminal, or it was up first.
+      if (seenWaitKeys.has(keyOf(w)) || w.quiet) continue;
       // The board's own wording (sessions.js), from a session shaped like the ones it reads.
       const asked = { agentSession: { request: w.request } };
       const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
@@ -336,7 +342,7 @@ function checkNewWaits(waits) {
       });
       n.onclick = () => {
         window.focus();
-        onBoard(w._slug, () => openSessionRef(scopeAll() && w._slug ? `${w._slug}/${w.session}` : w.session));
+        openWait(w);
       };
     }
   }
@@ -507,6 +513,7 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
     resident: true,
     tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
     gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !reviewDone.has(gateRef(g))),
+    waits: parts.flatMap(p => tag(p.data.waits, p.slug)),
     workers,
     // Each repository's carrier board, in the order the tab lists them.
     carriers: carried.map(slug => ({ slug, nwo: nwoOf(slug) })),
@@ -628,7 +635,10 @@ function waitingIn(data = state) {
 }
 
 function renderGateCount() {
-  const mine = multiBoard ? boards.reduce((n, b) => n + (b.gates || []).length, 0) : (state.gates || []).length;
+  // The sessions waiting on a prompt or a question are in the queue beside the gates.
+  const mine = multiBoard
+    ? boards.reduce((n, b) => n + (b.gates || []).length + (b.waits || []).length, 0)
+    : (state.gates || []).length + (state.waits || []).length;
   const gateCount = document.getElementById('gate-count');
   if (gateCount) {
     gateCount.textContent = mine;

@@ -4,8 +4,10 @@
 //! terminal, and the board shows it only to whoever has the board open. This watches the agent
 //! session ledger on the board's own clock: a row that has said `waiting` for a few seconds is
 //! announced once, through the configured `notification` and through the page's own desktop
-//! notification (`/api/state` and `/api/boards` carry `waits`), unless that session's terminal
-//! is open on the board.
+//! notification, unless that session's terminal is open on the board. `/api/state` and
+//! `/api/boards` carry every such wait as `waits`, which the page lists in 要対応. A wait that was
+//! not announced (it was already up when the watch started, or its terminal was open) is listed
+//! all the same, marked `quiet`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -31,9 +33,11 @@ type Key = (String, i64);
 struct State {
     /// Whether the waits that were already there when this started have been taken in.
     seeded: bool,
-    /// The waits that have been looked at, announced or not, so that none is looked at twice.
+    /// The waits that have been looked at, listed or not, so that none is looked at twice.
     handled: HashSet<Key>,
-    /// The announced waits that go on, by the slug of the board that announced them.
+    /// The waits that were already up when the watch started: listed, never announced.
+    quiet: HashSet<Key>,
+    /// The listed waits that go on, by the slug of the board that listed them.
     notices: HashMap<String, Vec<(Key, WaitNotice)>>,
 }
 
@@ -121,6 +125,7 @@ fn pick(sessions: &[Session], due: &[Key], nwo: &str, slug: &str) -> Vec<Picked>
                     kind: session.kind.clone(),
                     name,
                     request: state.request.clone(),
+                    quiet: false,
                 },
                 target: target_of(session)
                     .map(|(socket, window)| target_key(socket.as_deref(), &window)),
@@ -145,6 +150,16 @@ fn settled(due: &[Key], matched: &HashSet<Key>, complete: bool, now: i64) -> Vec
         .filter(|key| complete || matched.contains(*key) || now - key.1 > RETRY_SECS)
         .cloned()
         .collect()
+}
+
+/// What to do with a wait a session was found for: whether to ring it, and whether it is listed
+/// as `quiet`. A wait that was up when the watch started is listed and never rings, and takes no
+/// claim, so that the process that did see it begin keeps the marker. One whose terminal is open
+/// was seen by the person, but still holds the claim so no other process rings it. `claim` is
+/// asked at most once.
+fn route(seeded: bool, open: bool, claim: impl FnOnce() -> bool) -> (bool, bool) {
+    let mine = !seeded && claim();
+    (mine && !open, seeded || open)
 }
 
 /// What the configured notification says.
@@ -220,7 +235,7 @@ fn claim(root: &Path, key: &Key) -> bool {
 }
 
 impl WaitWatch {
-    /// The waits announced on board `slug` that still go on.
+    /// The waits on board `slug` that still go on, announced or `quiet`.
     pub fn notices(&self, slug: &str) -> Vec<WaitNotice> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state
@@ -265,22 +280,26 @@ impl WaitWatch {
         let Ok(waiting) = crate::registry::waiting_agent_sessions(root) else {
             return;
         };
-        let due = {
+        let (due, quiet) = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let still: HashSet<&Key> = waiting.iter().collect();
             state.handled.retain(|key| still.contains(key));
+            state.quiet.retain(|key| still.contains(key));
             for notices in state.notices.values_mut() {
                 notices.retain(|(key, _)| still.contains(key));
             }
             if !state.seeded {
                 prune_old_markers(root, MARKER_KEPT);
                 // Waits that began before this did not wait for it: announcing them now would
-                // ring for every prompt that is up when the board starts.
+                // ring for every prompt that is up when the board starts. They are still
+                // looked up below, to be listed.
                 state.seeded = true;
-                state.handled.extend(waiting);
-                return;
+                state.quiet.extend(waiting.iter().cloned());
             }
-            due(&waiting, &state.handled, now, NOTIFY_AFTER_SECS)
+            (
+                due(&waiting, &state.handled, now, NOTIFY_AFTER_SECS),
+                state.quiet.clone(),
+            )
         };
         if due.is_empty() {
             return;
@@ -313,18 +332,18 @@ impl WaitWatch {
                 // Claimed first, open terminal or not: only the process that makes the marker
                 // may run the configured command, and one that sees the person at the
                 // terminal keeps every other process from ringing it too.
-                let mine = claim(root, &picked.key);
-                // The person is at that terminal: they have seen it.
-                if picked
+                let open = picked
                     .target
                     .as_deref()
-                    .is_some_and(|key| self.is_open(key))
-                {
-                    continue;
-                }
+                    .is_some_and(|key| self.is_open(key));
+                let (ring, is_quiet) = route(quiet.contains(&picked.key), open, || {
+                    claim(root, &picked.key)
+                });
+                let mut picked = picked;
+                picked.notice.quiet = is_quiet;
                 // The page's notice is this board's own, whoever wins the claim: a browser
                 // served by any process still gets its desktop notification.
-                if mine
+                if ring
                     && let Some(command) = notify::repo_command(
                         &settings.notification,
                         &repo.nwo,
@@ -530,6 +549,32 @@ mod tests {
             settled(&due, &matched, false, 2 + RETRY_SECS + 1),
             vec![key("a", 1), key("b", 2)]
         );
+    }
+
+    #[test]
+    fn a_wait_is_listed_quietly_when_it_was_there_first_or_its_terminal_is_open() {
+        let mut asked = 0;
+        // Normal: claimed, rung, announced.
+        assert_eq!(
+            route(false, false, || {
+                asked += 1;
+                true
+            }),
+            (true, false)
+        );
+        // Another process holds the claim: listed, not rung, not quiet.
+        assert_eq!(route(false, false, || false), (false, false));
+        // The person is at the terminal: claimed so nobody else rings, listed quiet.
+        assert_eq!(route(false, true, || true), (false, true));
+        // Up before the watch started: listed quiet, and the claim is never asked.
+        assert_eq!(
+            route(true, false, || {
+                asked += 1;
+                true
+            }),
+            (false, true)
+        );
+        assert_eq!(asked, 1);
     }
 
     #[test]
