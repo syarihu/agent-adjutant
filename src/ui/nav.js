@@ -1,14 +1,14 @@
 /* ── Where the page is: one board, every board, or the review queue ──────────────────────
    Navigation state lives in the address, so back/forward and a pasted link land on the same
    screen without a reload; what is only a preference (layout, folded repositories) does not.
-     /b/<slug>/?view=agent&task=<id>&pane=term             one board
+     /b/<slug>/?view=human&task=<id>&pane=term             one board
      /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
      /b/<slug>/?view=sessions&task=session:<id>&pane=term  its sessions, one with no task in the panel
      /                                                     すべて, every board
      /review?item=<id>                                     要対応レビュー, every board
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. */
-const nav = { board: null, view: 'human', task: null, pane: 'detail', item: null };
+const nav = { board: null, view: 'agent', task: null, pane: 'detail', item: null };
 let boards = [];                 // /api/boards: the sidebar's rows
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
@@ -23,7 +23,7 @@ const scopeAll = () => multiBoard && nav.board === 'all';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
-  const out = { board: null, view: 'human', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item') };
+  const out = { board: null, view: 'agent', task: q.get('task'), pane: q.get('pane') === 'term' ? 'term' : 'detail', item: q.get('item') };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   if (loc.pathname === '/review') {
     out.board = multiBoard ? 'all' : null;
@@ -32,7 +32,8 @@ function parseUrl(loc = location) {
   }
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   const v = q.get('view');
-  if (v === 'agent' || v === 'sessions') out.view = v;
+  // `view=agent`, from before エージェント became the default, lands here by falling through.
+  if (v === 'human' || v === 'sessions') out.view = v;
   // `session=<id>`, from before a session opened in the panel: it is `task=session:<id>` now.
   const oldSession = q.get('session');
   if (out.view === 'sessions' && out.board !== 'all' && oldSession && !out.task) {
@@ -47,7 +48,7 @@ function parseUrl(loc = location) {
 function urlOf(n = nav) {
   const path = n.view === 'review' ? '/review' : n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
-  if (n.view === 'agent' || n.view === 'sessions') url += `&view=${n.view}`;
+  if (n.view === 'human' || n.view === 'sessions') url += `&view=${n.view}`;
   if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
   if (n.task && n.view !== 'review' && n.pane === 'term') url += '&pane=term';
   if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
@@ -167,7 +168,7 @@ function applyPendingTask(final = false) {
    after its first state is in, since what `fn` opens is read from that state. */
 function onBoard(slug, fn) {
   if (!slug || !multiBoard || (nav.board === slug && nav.view !== 'review')) return fn();
-  go({ board: slug, view: nav.view === 'agent' ? 'agent' : 'human' });
+  go({ board: slug, view: nav.view === 'human' ? 'human' : 'agent' });
   boardJob = { slug, fn };
 }
 function runBoardJob() {

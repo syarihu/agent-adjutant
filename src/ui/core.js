@@ -41,7 +41,7 @@ const PREF_KEY = 'adj-board-split';
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering in the review view moves on to the next item.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'human', sessionsFolded:[], boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true },
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', sessionsFolded:[], boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
