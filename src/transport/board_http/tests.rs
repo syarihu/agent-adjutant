@@ -1133,3 +1133,17 @@ fn the_page_has_the_hubs_entry_and_its_wake_button() {
     assert!(at("id=\"pane-agent\"") < at("id=\"hub-strip-slot\""));
     assert!(at("id=\"hub-strip-slot\"") < at("id=\"board-agent\""));
 }
+
+#[test]
+fn the_terminal_bar_links_the_task_issue_and_pr() {
+    assert!(UI_HTML.contains("function ghBarLinksHtml"));
+    assert!(UI_HTML.contains("function issueLabelOf"));
+    let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
+    let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
+    let pill = bar.find("STATE_LABEL[st]").unwrap();
+    let links = bar.find("ghBarLinksHtml(task)").unwrap();
+    let gap = bar.find("tp-bar-gap").unwrap();
+    assert!(pill < links && links < gap);
+    assert!(UI_HTML.contains("termBarHtml(s, panelTerm, true, task)"));
+    assert!(UI_HTML.contains("termBarHtml(s, reviewTerm, false)"));
+}
