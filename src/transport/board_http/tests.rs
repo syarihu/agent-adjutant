@@ -1142,15 +1142,19 @@ fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_320px() {
 }
 
 #[test]
-fn the_terminal_bar_links_the_task_issue_and_pr() {
-    assert!(UI_HTML.contains("function ghBarLinksHtml"));
+fn the_panel_head_links_the_task_issue_and_pr() {
+    assert!(UI_HTML.contains("function ghHeadLinksHtml"));
     assert!(UI_HTML.contains("function issueLabelOf"));
+    let head = UI_HTML.split("function panelHeadHtml").nth(1).unwrap();
+    let head = &head[..head.find("\n\u{7d}\n").unwrap()];
+    let pill = head.find("${pill}").unwrap();
+    let links = head.find("ghHeadLinksHtml(task)").unwrap();
+    let title = head.find("tp-title").unwrap();
+    assert!(pill < links && links < title);
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
-    let pill = bar.find("STATE_LABEL[st]").unwrap();
-    let links = bar.find("ghBarLinksHtml(task)").unwrap();
-    let gap = bar.find("tp-bar-gap").unwrap();
-    assert!(pill < links && links < gap);
-    assert!(UI_HTML.contains("termBarHtml(s, panelTerm, true, task)"));
+    assert!(!bar.contains("ghHeadLinksHtml") && !bar.contains("ghBarLinksHtml"));
     assert!(UI_HTML.contains("termBarHtml(s, reviewTerm, false)"));
+    assert!(!UI_HTML.contains("ghBarLinksHtml"));
+    assert!(!UI_HTML.contains("tp-bar-link"));
 }
