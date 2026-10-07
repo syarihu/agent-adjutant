@@ -144,7 +144,7 @@ function reviewHeadHtml(g, ref) {
   const prevOk = at > 0;
   const nextOk = at < 0 ? reviewOrder.length > 0 : at < reviewOrder.length - 1;
   return `<div class="rv-head-main">
-      ${b ? `<span class="tag">${esc(boardName(b))}</span>` : ''}
+      ${b ? `<span class="tag rv-board-tag">${esc(boardName(b))}</span>` : ''}
       <span class="m3-pill pill-warn">${esc(label)}</span>
       ${done ? '<span class="m3-pill pill-neutral">処理済み</span>' : ''}
       <span class="rv-head-title">${esc(g.title)}</span>

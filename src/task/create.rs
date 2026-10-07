@@ -5,14 +5,14 @@ use super::*;
 use crate::mail::DeliveryOutcome;
 use crate::registry::Context;
 
-/// Derive a card title from the given title or the first non-empty line of the body.
+/// Derive a card title from the given title or the first non-empty line of the body. The whole
+/// line is kept: every place that shows a title wraps it rather than shortening it.
 pub(super) fn derive_title(title: Option<&str>, body: &str) -> Option<String> {
     if let Some(title) = title.map(str::trim).filter(|t| !t.is_empty()) {
         return Some(title.to_string());
     }
     let first_line = body.lines().map(str::trim).find(|l| !l.is_empty())?;
-    let title: String = first_line.chars().take(80).collect();
-    if title.is_empty() { None } else { Some(title) }
+    Some(first_line.to_string())
 }
 
 /// A worktree name as the hub will use it: a path and a branch, so its characters are

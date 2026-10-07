@@ -443,10 +443,6 @@
   line-height: 1.4;
   color: var(--md-sys-color-on-surface);
   overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 .card-worker-status {
   display: flex;
@@ -590,7 +586,7 @@
 
 /* ── Split Board Cards (Agent / Human) ── */
 .card.compact { padding: 7px 10px; gap: 4px; }
-.card.compact .title { -webkit-line-clamp: 2; font-size: 12px; }
+.card.compact .title { font-size: 12px; }
 
 /* Agent card waiting on human */
 .card.waiting {
@@ -784,7 +780,7 @@
   cursor: pointer;
 }
 .hub-strip-main:hover .hub-strip-name { text-decoration: underline; }
-.hub-strip-name { flex: none; max-width: 40%; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-strip-name { flex: 0 1 auto; max-width: 40%; font-weight: 700; overflow-wrap: anywhere; }
 .hub-strip-last {
   flex: 1;
   min-width: 0;

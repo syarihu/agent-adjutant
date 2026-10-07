@@ -35,7 +35,7 @@
 .rv-group-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 6px; padding: 8px 16px;
   background: var(--md-sys-color-surface-container-low); border-bottom: 1px solid var(--md-sys-color-outline-variant);
   font-size: 12px; font-weight: 800; color: var(--md-sys-color-on-surface-variant); }
-.rv-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rv-group-name { overflow-wrap: anywhere; min-width: 0; }
 .rv-group-repo { font-weight: 600; color: var(--md-sys-color-outline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-group-count { margin-left: auto; font-weight: 700; color: var(--md-sys-color-outline); }
 .rv-group-head.done { margin-top: 6px; }
@@ -111,6 +111,7 @@
 .tag { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px;
   color: var(--md-sys-color-on-surface-variant); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-full); padding: 2px 8px; }
 .tag .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.tag.rv-board-tag { white-space: normal; overflow-wrap: anywhere; }
 
 .panel {
   background: var(--md-sys-color-surface-container);
