@@ -309,7 +309,7 @@ function reviewJudgeHtml(g, task, done) {
   if (done) {
     h += `<div class="decision-dock panel rv-done-note"><span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">task_alt</span><span>処理済み: ${esc(DECISION[done.decision === 'close' ? 'closed' : done.decision] || done.decision)}</span></div>`;
   } else {
-    // A record is sent back from the same form a task's view has.
+    // A record is sent back from the same form the task panel has.
     h += record ? decideHtml(g) : reviewDockHtml(g);
   }
   return h;
@@ -452,7 +452,7 @@ function renderReview({ holdJudge = false } = {}) {
 }
 
 /* A redraw that came while a comment was being typed in the review view: the list and the head
-   can be drawn, #rv-judge is held until the box is left, as the task view does: replacing the
+   can be drawn, #rv-judge is held until the box is left, as the task panel does: replacing the
    markup under the box cuts an IME composition short even when the text is put back. A person's
    own action still redraws at once. */
 let reviewHeld = false;

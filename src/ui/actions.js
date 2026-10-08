@@ -312,7 +312,7 @@ function renderTitle() {
   const resync = document.getElementById('btn-resync');
   if (resync) resync.hidden = scopeAll();
   const hubBtn = document.getElementById('btn-hub');
-  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review' || view === 'task';
+  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review';
   markHubButtons();
   const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + (b.waiting || 0), 0) : waitingIn();
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();

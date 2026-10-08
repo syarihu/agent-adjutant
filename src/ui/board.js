@@ -62,8 +62,8 @@ function stuckOf(task) {
    comes from the server, which knows which states mean Jules is busy. */
 const JULES_LABEL = { QUEUED:'待機中', PLANNING:'計画中', IN_PROGRESS:'作業中', AWAITING_PLAN_APPROVAL:'計画の承認待ち',
                       AWAITING_USER_FEEDBACK:'返事待ち', PAUSED:'一時停止', COMPLETED:'完了', FAILED:'失敗' };
-/* The one rule for what a session's state reads as, for the card, the task panel and the full
-   view alike: an answer not in yet, or one that failed, is said as such rather than as a state. */
+/* The one rule for what a session's state reads as, for the card and the task panel alike:
+   an answer not in yet, or one that failed, is said as such rather than as a state. */
 const julesText = j => j.error ? '状態を読めません' : j.checking ? '確認中' : (JULES_LABEL[j.state] || j.state || '');
 function julesLine(task) {
   const j = task.jules;
@@ -164,7 +164,6 @@ window.addEventListener('storage', e => {
   if (e.key !== SEEN_KEY()) return;
   seenCache = null;
   if (view === 'board') render();
-  else if (view === 'task') redrawTaskView();
   // The task panel's tabs show the unread mark too; the board's render reaches it already.
   if (view === 'sessions') renderTaskPanel();
 });
@@ -627,9 +626,9 @@ function goToGate(gateId, slug = null) {
   renderReview();
 }
 
-/* Where a waiting gate is read and answered: its task's view, in the tab of its kind, when the
+/* Where a waiting gate is read and answered: its task's panel, in the tab of its kind, when the
    task is on the board. A gate with no task — the hub's, or one whose task is gone — has no
-   such view and opens in the review view. */
+   such panel and opens in the review view. */
 function judgeGate(gateId) {
   const g = (state.gates || []).find(x => x.id === gateId);
   const owner = g?.task && (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
