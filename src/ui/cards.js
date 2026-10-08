@@ -494,7 +494,7 @@ function sessionCard(w) {
     ${st ? `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>`
          : `<span class="m3-pill ${w.present ? 'pill-good' : 'pill-neutral'}">${w.present ? '稼働' : '停止'}</span>`}
     ${last ? `<span>最後の出力 ${esc(last)}</span>` : ''}
-    ${s && agentText(s) ? `<span>${esc(agentText(s))}</span>` : ''}
+    ${s && agentText(s) ? `<span class="card-worker-cmd">${esc(agentText(s))}</span>` : ''}
   </div>`;
 
   // Linking writes the task and tells the worker, which a session that is not running cannot read.

@@ -284,6 +284,8 @@ fn a_session_with_no_task_is_a_card_on_the_agent_board() {
         "lastOutputText(s)",
         "+ bareIn.length;",
         "!displayItems.length && !bareIn.length",
+        "<span class=\"card-worker-cmd\">${esc(agentText(s))}</span>",
+        ".session-card .card-worker-status { flex-wrap: wrap; }",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }

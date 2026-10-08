@@ -454,6 +454,10 @@
   padding: 4px 8px;
   border-radius: var(--md-shape-corner-xs);
 }
+/* A card with no task puts what the agent is running on a line of its own under the status and
+   the last output, so neither is squeezed into a few characters in a 320px column. */
+.session-card .card-worker-status { flex-wrap: wrap; }
+.card-worker-cmd { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
 .card-footer-row {
   display: flex;
   flex-wrap: wrap;
