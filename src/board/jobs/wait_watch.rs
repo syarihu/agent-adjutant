@@ -494,9 +494,14 @@ mod tests {
                 last_event_at: Some(since),
                 activity: None,
                 request: request.map(str::to_string),
-                subagents: 0,
+                model: None,
+                context_percent: None,
+                subagents: Vec::new(),
                 error: None,
             }),
+            uncommitted: None,
+            uncommitted_error: None,
+            branch_pr: None,
         }
     }
 

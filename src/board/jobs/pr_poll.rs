@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use super::branch_prs::BranchPrs;
 use super::notifications::{self as gh, Notified};
 use crate::registry::Context;
 use crate::task::{self, PrRef, PrTurn, Task};
@@ -37,7 +38,7 @@ const BACKOFF_CAP: u64 = 900;
 const STATE_REREAD: Duration = Duration::from_secs(5 * 60);
 
 /// How long one round may spend waiting on `gh`.
-const ROUND_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const ROUND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What the poll remembers between rounds. Nothing here is kept on a record: it is only what
 /// lets the next round be cheap, and it starts empty when the server does.
@@ -176,6 +177,16 @@ pub struct PollHealth {
 #[derive(Default)]
 pub struct PrPoll {
     state: Mutex<PollState>,
+    /// The pull request of each branch a session with no task works on, asked in the same round.
+    branches: BranchPrs,
+}
+
+/// The repositories a round's notifications name, which makes their branches due.
+#[derive(Default)]
+struct Named {
+    repos: HashSet<String>,
+    /// The page was full, so there may be news it did not hold: every repository is named.
+    all: bool,
 }
 
 impl PrPoll {
@@ -228,8 +239,30 @@ impl PrPoll {
         wait(&state)
     }
 
-    /// One round: ask for news, read what it concerns, apply it. How long to wait after.
+    /// The pull request last found for `branch` of the repository `nwo`, for a session that has
+    /// no task. Read from memory, never from GitHub.
+    pub fn branch_pr(&self, nwo: &str, branch: &str) -> Option<crate::board::SessionPr> {
+        self.branches.look(nwo, branch)
+    }
+
+    /// One round: the cards, then the branches of the sessions that have none. How long to wait
+    /// after.
     fn round(&self, boards: &[Context], tried: &mut HashSet<PrRef>) -> Duration {
+        let mut named = Named::default();
+        let pause = self.card_round(boards, tried, &mut named);
+        // Not skipped when no card holds a PR: a session needs its branch looked up whatever
+        // the cards say.
+        self.branches.round(boards, HOST, &named.repos, named.all);
+        pause
+    }
+
+    /// One round for the cards: ask for news, read what it concerns, apply it.
+    fn card_round(
+        &self,
+        boards: &[Context],
+        tried: &mut HashSet<PrRef>,
+        named: &mut Named,
+    ) -> Duration {
         let mut cards: Vec<Card> = Vec::new();
         for (board, ctx) in boards.iter().enumerate() {
             let tasks = task::candidates(ctx);
@@ -283,6 +316,9 @@ impl PrPoll {
                 full,
             } => {
                 read.extend(wanted(&refs, prs, check_repos, *full || catch_up));
+                named.repos.extend(prs.iter().map(PrRef::nwo));
+                named.repos.extend(check_repos.iter().cloned());
+                named.all = *full;
                 (*interval, Some(last_modified.clone()))
             }
         };

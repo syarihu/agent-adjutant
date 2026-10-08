@@ -79,7 +79,11 @@ impl WorktreeDiffs {
 
     /// Asks for `path` to be read, and again as it falls due while it is asked for.
     pub fn want(&self, path: &str, present: bool) {
-        self.lock().by_path.entry(path.to_string()).or_default().present = present;
+        self.lock()
+            .by_path
+            .entry(path.to_string())
+            .or_default()
+            .present = present;
     }
 
     /// What a read of `path` at `at` found: a count, nothing for a directory that is gone, or

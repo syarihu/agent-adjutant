@@ -319,7 +319,7 @@ fn read_chunk(host: &str, refs: &[&PrRef], deadline: Instant) -> (Vec<Answer>, O
 /// names no alias. Those pass, and the round counts as a failed read. A typed error that names
 /// an alias (`NOT_FOUND`, `FORBIDDEN`, `INSUFFICIENT_SCOPES`, ...) is that card's own business:
 /// it will not go away by asking again, so it must not hold up the others.
-fn unread_error(answer: &Value) -> Option<String> {
+pub(super) fn unread_error(answer: &Value) -> Option<String> {
     answer
         .get("errors")?
         .as_array()?
@@ -342,7 +342,7 @@ fn unread_error(answer: &Value) -> Option<String> {
 }
 
 /// The message of the first error in a GraphQL answer.
-fn first_error(stdout: &str) -> Option<String> {
+pub(super) fn first_error(stdout: &str) -> Option<String> {
     serde_json::from_str::<Value>(stdout)
         .ok()?
         .pointer("/errors/0/message")?

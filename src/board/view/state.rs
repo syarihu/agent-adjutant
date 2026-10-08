@@ -13,6 +13,7 @@ use crate::kernel::runner;
 use crate::task;
 
 use super::columns::{HumanCol, waits_on_person};
+use super::rate_limits::{RateLimitsState, rate_limits_of};
 use super::sessions::sessions_of;
 
 /// The state document `/api/state` sends. Every key the page reads is a field here, and the
@@ -53,6 +54,9 @@ pub struct BoardState {
     /// The agent a session started from the board runs, which is the only one its dialog offers.
     pub session_start: SessionStart,
     pub sessions: Vec<Session>,
+    /// What each account's newest session last drew of its rate limit windows. Read from the
+    /// agent session ledger on every poll, whether or not `sessions` is listed.
+    pub rate_limits: RateLimitsState,
     pub tasks: Vec<TaskCard>,
     /// The tasks of the parent-task hubs of this repository, which only the repository's own
     /// board lists: its workers include theirs, and a card for each says so. Apart from `tasks`
@@ -402,6 +406,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
                 processes: &processes,
                 main_branch,
                 lines,
+                diffs: true,
             },
             None,
             |index, _| workers_data[index].clone(),
@@ -409,6 +414,11 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     } else {
         Vec::new()
     };
+
+    let rate_limits = rate_limits_of(crate::registry::agent_sessions_with(
+        &server.ctx.state,
+        &processes,
+    ));
 
     let pending: Vec<PendingRow> = crate::mail::pending(&server.ctx.state, &repo.slug)
         .messages
@@ -458,6 +468,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
             ),
         },
         sessions,
+        rate_limits,
         tasks,
         hub_tasks,
         workers,
@@ -547,6 +558,9 @@ pub(super) struct Listing<'a> {
     /// Which sessions carry the last line of their pane: reading it runs a command per
     /// session, so only the page that shows it asks.
     pub(super) lines: Lines,
+    /// Whether the worktrees of the workers listed are asked to be read for their diff. Only
+    /// the poll that lists every session does: the others take what is there.
+    pub(super) diffs: bool,
 }
 
 /// The main checkout's branch and the linked worktrees, out of one listing. The branch is

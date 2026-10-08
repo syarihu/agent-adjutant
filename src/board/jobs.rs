@@ -3,6 +3,7 @@
 //! and what Jules says about the sessions the cards follow, the sweep that closes the gates
 //! whose worker has moved on, and the watch that announces a session waiting on a person.
 
+mod branch_prs;
 mod hub_titles;
 mod jules_watch;
 mod notifications;
