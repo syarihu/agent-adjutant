@@ -1154,6 +1154,9 @@ fn the_page_has_the_work_view_beside_the_review_queue() {
         "id=\"work-view\"",
         "id=\"wk-term-host\"",
         "id=\"wk-list-resize\"",
+        // The page's own notification settings, and the end-of-turn notifications read from the document.
+        "id=\"notify-dialog\"",
+        "function notifyEndEvents",
         "id=\"rail-resize\"",
         // The list is the resident's own document, not a merge made in the page.
         "boardApi('', '/api/work')",

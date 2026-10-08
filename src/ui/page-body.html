@@ -331,6 +331,36 @@
   </form>
 </dialog>
 
+<dialog id="notify-dialog" aria-labelledby="notify-title">
+  <form method="dialog" id="notify-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">notifications</span>
+        <span id="notify-title">デスクトップ通知</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="notify-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <div class="field">
+        <span id="notify-permission-text"></span>
+        <button type="button" class="btn-m3-text" id="notify-permission-btn" data-action="notify-permission">ブラウザに通知を許可する</button>
+      </div>
+      <fieldset class="field notify-kinds" aria-describedby="notify-help">
+        <legend>いつ通知しますか</legend>
+        <label><input type="checkbox" id="notify-waiting"> 確認待ち（確認依頼が届いたとき、入力や許可を待ち始めたとき）</label>
+        <label class="notify-multi"><input type="checkbox" id="notify-done"> 完了（worker のターンが終わったとき）</label>
+        <label class="notify-multi"><input type="checkbox" id="notify-failed"> 失敗（セッションが失敗したとき）</label>
+        <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。この設定はこのページの通知だけに効きます。サーバーが鳴らす通知（<code>notification</code>）は別で、ここでは変わりません</span>
+      </fieldset>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="notify-dialog">閉じる</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="park-dialog" aria-labelledby="park-title">
   <form method="dialog" id="park-form">
     <div class="head">

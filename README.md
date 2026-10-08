@@ -411,7 +411,12 @@ sending anything.
 question for a few seconds and nobody has its terminal open on the board: the message says which
 session waits and on what (`worker-x is waiting: Bash: make`, or `worker-x is asking: <question>`
 for a question), once per wait. The board page, if it is open with notifications allowed, shows its
-own desktop notification for the same wait, and clicking it opens that session's terminal.
+own desktop notification for the same wait, and clicking it opens the task in 「いまの仕事」 (on the
+resident server's page; a board served alone has no such list, and there it opens the session's
+terminal).
+Which of waiting, done and failed the page notifies for is set in the page's notification dialog (the
+bell button; waiting and failed are on by default) and is kept in the browser; it does not change
+`notification`, which the server rings by itself.
 
 `wake` splits along the line the rest of the config does not: **how** to poke a session is a
 property of the terminal, and **what to say** once poked is a property of the agent. So

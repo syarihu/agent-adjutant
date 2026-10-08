@@ -420,6 +420,26 @@ const workIsSelected = r => !!nav.task && !!nav.board && nav.board !== 'all' && 
 
 /* ── the document ── */
 
+let endState = null;
+/* A session that finishes or fails, as the document shows it: one desktop notification each, for the kinds the person
+   chose (「通知」), and not for what was already there when the page opened. The keys are learned whether or not the
+   browser lets the page ring. Waits are rung by checkNewGates/checkNewWaits (core.js). */
+function checkNewEnds() {
+  // The gates and waits that were rung for before the document knew their task (core.js).
+  flushNotifyPending(true);
+  const result = notifyEndEvents(workEntries(work.doc, key => reviewDone.has(key)), endState,
+    { prefs: prefs.notify, openId: work.open?.id, visible: document.visibilityState === 'visible',
+      okRepos: (work.doc.repos || []).filter(r => !r.error).map(r => r.nwo) });
+  endState = result;
+  const { events } = result;
+  if (!(window.Notification && Notification.permission === 'granted')) return;
+  for (const { kind, entry, key } of events) {
+    const { title, body } = notifyContent(kind, entry);
+    const n = new Notification(title, { body, tag: `adj-${kind}-${key}` });
+    n.onclick = () => openNotified(entry, n);
+  }
+}
+
 async function refreshWork(force = false) {
   if (!multiBoard) return;
   if (work.busy) {
@@ -433,6 +453,7 @@ async function refreshWork(force = false) {
     const failed = work.error != null;
     work.error = null;
     work.doc = doc;
+    checkNewEnds();
     workTrackParks();
     // The sidebar counts what is new on every view; the list is drawn on its own.
     renderWorkBadge();
@@ -452,6 +473,8 @@ async function refreshWork(force = false) {
     renderTaskPanel();
   } catch (e) {
     work.error = e.message;
+    // The gates and waits that were to be rung with the document must not wait for one that does not come.
+    flushNotifyPending();
     if (view === 'work') renderWorkView();
   } finally {
     work.busy = false;

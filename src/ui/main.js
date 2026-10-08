@@ -142,6 +142,7 @@ const ACTIONS = {
   queue: () => goToQueue(),
   work: () => go({ board: 'all', view: 'work', task: null, pane: 'detail' }),
   notify: () => toggleNotify(),
+  'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
   'own-hub': () => openOwnHub(),
   resync: () => refreshAll(),

@@ -63,6 +63,8 @@ if (!(prefs.railWidth >= 180 && prefs.railWidth <= 400)) prefs.railWidth = 240;
 if (!(prefs.workListWidth >= 260 && prefs.workListWidth <= 640)) prefs.workListWidth = 380;
 if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
+// Which of the page's desktop notifications ring (my-work-notify.js); the server's own notifier is not governed by this.
+prefs.notify = notifyPrefs(prefs.notify);
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 function applyLayout() {
@@ -268,6 +270,12 @@ let lastStateJson = '';
 let lastMinute = null;
 let seenGateIds = null;
 
+/* The kinds the page rings for, in words, for the button's tooltip. Single-board mode has no 「いまの仕事」, so only waits. */
+function notifyKindsText() {
+  const on = [prefs.notify.waiting && '確認待ち', multiBoard && prefs.notify.done && '完了', multiBoard && prefs.notify.failed && '失敗'].filter(Boolean);
+  return on.length ? on.join('・') : 'なし';
+}
+
 function updateNotifyButton() {
   const btn = document.getElementById('btn-notify');
   if (!btn || !('Notification' in window)) {
@@ -276,30 +284,114 @@ function updateNotifyButton() {
   }
   if (Notification.permission === 'granted') {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
-    btn.title = '確認依頼と入力待ちのデスクトップ通知が有効です';
+    btn.title = `デスクトップ通知が有効です（${notifyKindsText()}）。クリックで設定`;
   } else if (Notification.permission === 'denied') {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications</span><span>通知を許可</span>';
-    btn.title = '確認依頼が届いたときや、セッションが入力待ちになったときにデスクトップ通知を受け取る';
+    btn.title = `通知を許可すると、確認待ち・完了・失敗のデスクトップ通知を選んで受け取れます（いまは ${notifyKindsText()}）`;
   }
 }
 
-async function toggleNotify() {
+/* The button opens the settings; the dialog asks the browser's permission and keeps the choice of kinds. */
+function toggleNotify() {
+  if (!('Notification' in window)) return;
+  openNotifyDialog();
+}
+
+/* Ask the browser's permission to notify: the dialog's button. */
+async function requestNotifyPermission() {
   if (!('Notification' in window)) return;
   if (Notification.permission === 'default') {
     const perm = await Notification.requestPermission();
     updateNotifyButton();
     if (perm === 'granted') {
       new Notification('adj', {
-        body: '確認依頼が届いたときにデスクトップ通知でお知らせします',
+        body: '通知の設定に合わせて、デスクトップ通知でお知らせします',
         tag: 'adj-notify-init',
       });
     }
   } else if (Notification.permission === 'denied') {
     alert('ブラウザの設定で通知がブロックされています。ブラウザのアドレスバーのサイト設定から通知を許可してください。');
   }
+}
+
+/* The work entry a notification is about, found in the document the page last read; null when there is none (a
+   board served alone has no document), and the notification then says what it always said. */
+function notifyEntryOf(match) {
+  if (!multiBoard || !work.doc) return null;
+  return workEntries(work.doc, key => reviewDone.has(key)).find(match) || null;
+}
+
+/* Open the task a notification is about in 「いまの仕事」. */
+function openNotified(entry, notification) {
+  try { notification?.close(); } catch {}
+  window.focus();
+  const { rows, turns } = workListRows();
+  const r = [...rows, ...turns].find(x => x.id === entry.id);
+  if (r) selectWorkRow(r);
+  else go({ board: entry.board, view: 'work', task: entry.ref, pane: 'detail' });
+}
+
+/* What the page last read of /api/work may be a poll behind /api/boards, so a gate or wait whose task it does not
+   know yet is kept (`notifyPending`) and rung when the next document is in (checkNewEnds, my-work.js); one retry,
+   then it rings in its old wording, so nothing is lost. */
+let notifyPending = [];
+const NOTIFY_PENDING_MS = 15000;
+
+/* Ring the queued items that have waited for a document longer than NOTIFY_PENDING_MS (or all, `all`): /api/work may
+   be slow or failing, and a gate must not wait on it for ever. Called from the boards poll and from a failed one. */
+function flushNotifyPending(all = false) {
+  const now = Date.now();
+  const due = notifyPending.filter(i => all || now - i.at >= NOTIFY_PENDING_MS);
+  if (!due.length) return;
+  notifyPending = notifyPending.filter(i => !due.includes(i));
+  for (const item of due) ringWaiting(item, true);
+}
+
+/* Ring a gate or a wait (`item`: {gate} or {wait}) the person is to be told of. `final` is the retry. */
+function ringWaiting(item, final) {
+  if (!(window.Notification && Notification.permission === 'granted' && prefs.notify.waiting)) return;
+  const { gate: g, wait: w } = item;
+  // A retry is for what is still open: answered or gone meanwhile, it is not rung.
+  if (final && !(g ? seenGateIds?.has(item.ref) : seenWaitKeys?.has(item.ref))) return;
+  const entry = !multiBoard || !work.doc ? null : notifyEntryOf(g
+    ? e => notifyGateMatch(e, g._slug, g.id, g.task)
+    : e => notifyWaitMatch(e, w._slug, w.session, w.agentSessionId));
+  if (entry) {
+    // The row open on screen, and a parked task, are not rung for.
+    if (notifyQuiet(entry, work.open?.id, document.visibilityState === 'visible')) return;
+    const content = g ? notifyContent('gate', entry, { gate: g.title, label: kindOf(g.kind)[0] })
+      : notifyContent('permission', entry, { request: w.request ? requestText({ agentSession: { request: w.request } }) : 'ターミナルで入力を待っています' });
+    const n = new Notification(content.title, { body: content.body, tag: g ? 'gate-' + item.ref : 'wait-' + item.ref });
+    n.onclick = () => openNotified(entry, n);
+    return;
+  }
+  if (multiBoard && !final) { notifyPending.push({ ...item, at: Date.now() }); return; }
+  if (g) {
+    const [label] = kindOf(g.kind);
+    const wtName = baseName(g.worktree);
+    const n = new Notification(`【${label}】${g.title}`, {
+      body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
+      tag: 'gate-' + item.ref,
+    });
+    n.onclick = () => {
+      window.focus();
+      onBoard(g._slug, () => judgeGate(g.id));
+    };
+    return;
+  }
+  // The board's own wording (sessions.js), from a session shaped like the ones it reads.
+  const asked = { agentSession: { request: w.request } };
+  const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
+    body: w.request ? requestText(asked) : 'ターミナルで入力を待っています',
+    tag: 'wait-' + item.ref,
+  });
+  n.onclick = () => {
+    window.focus();
+    openWait(w);
+  };
 }
 
 function checkNewGates(gates) {
@@ -310,23 +402,11 @@ function checkNewGates(gates) {
     seenGateIds = currentIds;
     return;
   }
-  if (window.Notification && Notification.permission === 'granted') {
-    for (const g of list) {
-      if (!seenGateIds.has(refOf(g))) {
-        const [label] = kindOf(g.kind);
-        const wtName = baseName(g.worktree);
-        const n = new Notification(`【${label}】${g.title}`, {
-          body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
-          tag: 'gate-' + refOf(g),
-        });
-        n.onclick = () => {
-          window.focus();
-          onBoard(g._slug, () => judgeGate(g.id));
-        };
-      }
-    }
+  for (const g of list) {
+    if (!seenGateIds.has(refOf(g))) ringWaiting({ gate: g, ref: refOf(g) }, false);
   }
   seenGateIds = currentIds;
+  flushNotifyPending();
 }
 
 /* Open the terminal of the session a wait is about: the notification's click, and 要対応's button. */
@@ -346,23 +426,13 @@ function checkNewWaits(waits) {
     seenWaitKeys = current;
     return;
   }
-  if (window.Notification && Notification.permission === 'granted') {
-    for (const w of list) {
-      // Listed in 要対応 without a ring: the person was at its terminal, or it was up first.
-      if (seenWaitKeys.has(keyOf(w)) || w.quiet) continue;
-      // The board's own wording (sessions.js), from a session shaped like the ones it reads.
-      const asked = { agentSession: { request: w.request } };
-      const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
-        body: w.request ? requestText(asked) : 'ターミナルで入力を待っています',
-        tag: 'wait-' + keyOf(w),
-      });
-      n.onclick = () => {
-        window.focus();
-        openWait(w);
-      };
-    }
+  for (const w of list) {
+    // Listed in 要対応 without a ring: the person was at its terminal, or it was up first.
+    if (seenWaitKeys.has(keyOf(w)) || w.quiet) continue;
+    ringWaiting({ wait: w, ref: keyOf(w) }, false);
   }
   seenWaitKeys = current;
+  flushNotifyPending();
 }
 
 /* The waits of every board, as /api/boards lists them. */

@@ -867,6 +867,35 @@ async function setPark(task, base, parked) {
   }
 }
 
+/* The notification settings: the browser's permission, and which kinds of the page's notifications ring. */
+const NOTIFY_BOXES = { waiting: 'notify-waiting', done: 'notify-done', failed: 'notify-failed' };
+function drawNotifyDialog() {
+  const perm = Notification.permission;
+  parkEl('notify-permission-text').textContent = perm === 'granted' ? 'ブラウザの通知は許可されています'
+    : perm === 'denied' ? 'ブラウザの設定で通知がブロックされています。アドレスバーのサイト設定から許可してください' : 'ブラウザの通知はまだ許可されていません';
+  // A blocked permission can only be given back in the browser's settings, which a button here cannot open.
+  parkEl('notify-permission-btn').hidden = perm !== 'default';
+  for (const [kind, id] of Object.entries(NOTIFY_BOXES)) parkEl(id).checked = prefs.notify[kind];
+}
+
+function openNotifyDialog() {
+  drawNotifyDialog();
+  parkEl('notify-dialog').showModal();
+}
+
+for (const [kind, id] of Object.entries(NOTIFY_BOXES)) {
+  parkEl(id).addEventListener('change', e => {
+    prefs.notify[kind] = e.target.checked;
+    savePrefs();
+    updateNotifyButton();
+  });
+}
+
+async function requestNotifyFromDialog() {
+  await requestNotifyPermission();
+  if (parkEl('notify-dialog').open) drawNotifyDialog();
+}
+
 function openParkDialog(task, base) {
   parkDlg.task = task;
   parkDlg.base = base;
