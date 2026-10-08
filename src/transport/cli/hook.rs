@@ -291,7 +291,6 @@ fn percent(value: Option<&Value>) -> Option<f64> {
         .filter(|percent| percent.is_finite() && *percent >= 0.0)
 }
 
-/// A string key, with blank the same as absent.
 /// Whether a `UserPromptSubmit` payload's prompt is the person's: present, and not one of the
 /// wake lines adjutant types into a terminal. A payload with no `prompt` says nothing of who
 /// wrote it, so it is not counted.
@@ -299,6 +298,7 @@ fn typed(payload: &Value) -> bool {
     text(payload, "prompt").is_some_and(|prompt| !is_wake_line(&prompt))
 }
 
+/// A string key, with blank the same as absent.
 fn text(payload: &Value, key: &str) -> Option<String> {
     payload
         .get(key)

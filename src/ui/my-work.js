@@ -50,7 +50,6 @@ const work = {
   structure: '',      // what the list was last built from (renderWorkList)
   cells: new Map(),   // each row's and header's own html, by key
   rowsByKey: new Map(),
-  fetchedAt: 0,       // when `doc` was read, on this page's clock: the server's `now` ages from here
   open: null,         // the row the person has open: { nwo, id, nav }, the mark `left` is written when it is left
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
 };
@@ -159,15 +158,22 @@ function workMarks(nwo) {
   try { return workParseMarks(localStorage.getItem(WORK_SEEN_PREFIX + nwo) || ''); } catch { return {}; }
 }
 
-/* The server's clock now, from the document's `now` and how long ago this page read it. */
-const workServerNow = () => (work.doc?.now || Date.now() / 1000) + (work.doc ? (Date.now() - work.fetchedAt) / 1000 : 0);
+/* The server's clock as of the document last drawn: a mark covers what that document showed and nothing that came after. */
+const workServerNow = () => work.doc?.now || Date.now() / 1000;
 
 /* Write `patches` ([id, { left | back | cleared }]) onto the marks of `nwo`. The marks are read again first and each time
    only moves later, so another tab's write is not undone; the ones of rows long gone are dropped, unless the document is
    not a complete reading of the repository (a failed read is not absence). */
 function workWriteMarks(nwo, patches) {
   let marks = workMarks(nwo);
-  for (const [id, patch] of patches) marks = workMarkMerge(marks, id, patch);
+  for (const [id, patch] of patches) {
+    // Read after a send back, and sent back after a read: each is later than the other's time, whatever the document's clock says.
+    const cur = marks[id] || {};
+    const p = { ...patch };
+    if (p.left != null && cur.back != null) p.left = Math.max(p.left, cur.back);
+    if (p.back != null) p.back = Math.max(p.back, cur.left ?? -Infinity) + 0.001;
+    marks = workMarkMerge(marks, id, p);
+  }
   const repo = workRepos().find(r => r.nwo === nwo);
   if (work.doc && !work.error && repo && !repo.error) {
     const live = new Set(workEntries(work.doc).filter(e => e.nwo === nwo).map(e => e.id));
@@ -411,7 +417,6 @@ async function refreshWork(force = false) {
     const failed = work.error != null;
     work.error = null;
     work.doc = doc;
-    work.fetchedAt = Date.now();
     // The sidebar counts what is new on every view; the list is drawn on its own.
     renderWorkBadge();
     if (view !== 'work') return;
