@@ -14,8 +14,10 @@ write that the board shows a person** (gates and their titles, questions, the pl
 verification notes, card notes, the final report you give at this tab) **is in the language the
 brief's "Language" line names**; when that line is `-` (or a brief has none), it is the language
 the task is written in, else the language above. Text from the tracker is quoted as it is. Commit
-messages, PR bodies, issues and code follow the repository's conventions, not this line. A quoted
-line in this procedure says what to tell them, not the words to use.
+messages, PR bodies, issues and code follow the repository's conventions, not this line. Headings
+and tags the hub reads by name stay as written: the `## …` lines of the done and `adj-report`
+bodies, and the `[question {id}]` identifier you answer with. A quoted line in this procedure says
+what to tell them, not the words to use.
 
 ## Where you stand
 
@@ -548,8 +550,9 @@ JSON
 - `plan` has `problem` and `goal` (step 3 of §1).
 - **Do not skimp on `title` and `focus`.** On the board they are all that gets read.
 - Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `facts`, the choices' `label`,
-  `why` and `points` (not `id`, which you branch on) and `body` in the brief's "Language"; the
-  examples here are in English only because this file is.
+  `why` and `points` (not `id`, which you branch on), `body`, `findings[].text`,
+  `findings[].reason` and `manual[]` in the brief's "Language"; the examples here are in English
+  only because this file is. `commands[].command` and `output` stay as the command printed them.
 
 `diff` and `verify` carry structured fields apart from the text slots. The board builds its tables
 from them. To keep it as a record, `"wait": false`; to wait, put the rules that stopped it in

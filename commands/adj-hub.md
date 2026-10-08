@@ -23,8 +23,9 @@ the repository follow its conventions.
 **Markers that code or a procedure matches stay as written**, in English, and the text around them
 is in the person's language: the note's leading `Could not start:` (`adj task next` skips such a
 task) and `(resume with --resume)` (the hub looks for it), and the tag that opens a message's
-`subject` (`[question {id}]`, `[ack]`, `[gate]`, `[linked {id}]`, `[issue {id}]`), which decides
-whether the receiver is woken.
+`subject`, which the receiver's procedure or adj matches (it also decides whether the receiver is
+woken). The tags you write are `[question {id}]`, `[ack]` and `[issue {id}]`; `[gate {id}]` and
+`[linked {id}]` are written by the tool, not by you.
 
 ## Starting (for the user)
 
@@ -2031,7 +2032,9 @@ worker's `report`; only the two ends differ.**
   ```
 
   The strings shown are in English only because this file is: write `title`, `focus`, `decided` and
-  any labels in the person's language, and keep the choice `id`s as they are.
+  any labels in the person's language, and keep the choice `id`s as they are. Write the words
+  around `{task_title}` in the person's language and keep `{task_title}` as it is (an issue's title
+  stays as written).
 
   ```bash
   adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'
@@ -2349,7 +2352,9 @@ heredoc):
 ```
 
 The strings shown are in English only because this file is: write `title`, `focus`, `decided`,
-`unsure` and any labels in the person's language, and keep the choice `id`s as they are.
+`unsure` and any labels in the person's language, and keep the choice `id`s as they are. Write the
+words around `{task_title}` in the person's language and keep `{task_title}` as it is (an issue's
+title stays as written).
 
 ```bash
 adj gate open --file '{main}/.claude/gate-relay-{task}.json' --json && rm '{main}/.claude/gate-relay-{task}.json'
