@@ -152,8 +152,8 @@ says the opposite.
 ## When the change adds or moves Rust code under `src/`
 
 These items come from the rules in [architecture.md](architecture.md#rules-and-what-enforces-them),
-not from the bots' history: they are the parts of those rules that no script checks. The rule has
-the details.
+not from the bots' history: they are the parts of those rules that only review keeps (item 17 also
+has a CI job, which is not a required check). The rule has the details.
 
 ### 11. One operation per file, in the module that owns it
 
