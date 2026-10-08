@@ -341,8 +341,11 @@ whole**, never half a layout, and a warning names the column and what is wrong. 
   the human side), or a role carried by two columns of one side;
 - a human side on which `waitsOnPerson` alone (no gate, nothing else) reaches no column: such a
   card would be the person's turn and nowhere on the board;
-- a column whose `when` names only `parked`, placed after a column that names `step`, `gate`,
-  `status` or `prTurn`: parked cards would be pulled into the earlier column by their other facts;
+- a column whose `when` names only `parked`, placed after a column that can catch a task in
+  progress, that is any column but one whose `when` names only `status` with values from
+  `backlog`, `queued`, `done` and `cancelled` (a parked task waiting in 着手前 stays there on
+  purpose, and a finished one has no `parked`): parked cards would be pulled into the earlier
+  column by their other facts, `work` included;
 - a column nothing can reach: one whose `when` is an empty list (`[]`), one after a column whose
   `when` is empty (`{}`), and one whose
   `when` is the same as an earlier column's (the fallback is not counted, since it is tried
@@ -404,8 +407,8 @@ hand, and a layout decides where parked cards show.
 - **What stops a fact from pulling it out**: nothing moves a parked card but a person, as long as
   the parked column comes before the columns its other facts match. The `waiting` preset puts it
   first on the human side and right after 着手前 on the agent side. A layout that puts a
-  parked-only column after a column naming `step`, `gate`, `status` or `prTurn` gets a warning
-  (above).
+  parked-only column after a column that can catch a task in progress gets a warning (above);
+  `waiting`'s place after 着手前 does not, since 着手前 names only `backlog` and `queued`.
 - **What ends it anyway**: the `parked` fact is absent once the task is `done` or `cancelled`, so
   a merged PR still takes the card to 完了, even when the binary that wrote `done` does not know
   about parking and left the park on the record. Clearing it when the status is written is only
