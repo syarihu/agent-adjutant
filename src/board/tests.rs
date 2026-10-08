@@ -361,6 +361,7 @@ fn read_pr(state: &str, review: &str, fail: u32, pending: u32) -> task::Task {
             fail,
             pending,
         },
+        head: None,
     });
     t
 }

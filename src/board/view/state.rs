@@ -13,6 +13,7 @@ use crate::kernel::runner;
 use crate::task;
 
 use super::columns::{HumanCol, waits_on_person};
+use super::parents::{self, ParentGroup, ParentIssue};
 use super::rate_limits::{RateLimitsState, rate_limits_of};
 use super::sessions::sessions_of;
 
@@ -62,6 +63,10 @@ pub struct BoardState {
     /// board lists: its workers include theirs, and a card for each says so. Apart from `tasks`
     /// because those are this board's own, which every action on the page assumes.
     pub hub_tasks: Vec<TaskCard>,
+    /// The parent issues of those tasks and what each has of its children. Left out when no
+    /// task has a parent.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<ParentGroup>,
     pub workers: Vec<WorkerRow>,
     /// The slot count `adj work` decides by, counted the same way — a worker still
     /// starting up holds one — so the header and the refusal cannot disagree.
@@ -176,6 +181,10 @@ pub struct TaskCard {
     /// board's own tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_hub: Option<OwnerHub>,
+    /// The issue this task is a child of: the tracker's word when it has one, else the record's
+    /// `parent`. Absent when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_issue: Option<ParentIssue>,
 }
 
 /// The parent-task hub a card on the repository's board belongs to.
@@ -396,7 +405,23 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
         );
     }
 
-    let hub_tasks = hub_task_cards(&server.ctx.state, repo, &hubs, &workers);
+    let mut hub_tasks = hub_task_cards(&server.ctx.state, repo, &hubs, &workers);
+    let parents = parents::attach(
+        &mut tasks,
+        &mut hub_tasks,
+        &parents::Inputs {
+            slug: &repo.slug,
+            issue_keys: &settings.issue_keys,
+            linked: &linked,
+            // Not resident: nothing asked the tracker, so the record is all there is.
+            tracker: &|url| {
+                server
+                    .pr_poll
+                    .as_ref()
+                    .and_then(|poll| poll.issue_parent(url))
+            },
+        },
+    );
 
     let sessions = if with_sessions {
         sessions_of(
@@ -474,6 +499,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
         rate_limits,
         tasks,
         hub_tasks,
+        parents,
         workers,
         worker_slots: WorkerSlots {
             busy,
@@ -634,7 +660,7 @@ pub fn with_records(
                 }
             }
             // Written on every card, finished ones too.
-            for key in ["waitsOnPerson", "ownerHub"] {
+            for key in ["waitsOnPerson", "ownerHub", "parentIssue"] {
                 t.extra.remove(key);
             }
             TaskCard {
@@ -643,6 +669,7 @@ pub fn with_records(
                 jules: None,
                 waits_on_person: false,
                 owner_hub: None,
+                parent_issue: None,
             }
         })
         .collect()

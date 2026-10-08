@@ -332,6 +332,47 @@ function ghRowsHtml(task) {
   return `<div class="gh-block">${h}</div>`;
 }
 
+/* The entry of the board's `parents` for this task's parent: in the tab of every board, the one
+   its own board listed. */
+function parentGroupOf(task) {
+  const key = task.parentIssue?.key;
+  return (state.parents || []).find(g => g.key === key && (!task._slug || g._slug === task._slug));
+}
+
+/* The 親タスク row: the parent the board joined to the task, where that came from, how many of its
+   children are merged, and the place in a stack. A task whose parent is only in its record shows the
+   record's own text. */
+function parentRowHtml(task) {
+  const p = task.parentIssue;
+  if (!p) return task.parent ? esc(task.parent) : '';
+  const name = p.number ? `#${p.number}${p.title ? ' ' + p.title : ''}` : p.key;
+  const link = httpUrl(p.url)
+    ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(name)}</a>`
+    : esc(name);
+  const dim = text => ` <span style="color:var(--ink-2)">${esc(text)}</span>`;
+  let h = link + dim(p.source === 'tracker' ? '(GitHub)' : '(記録)');
+  const group = parentGroupOf(task);
+  if (group) {
+    h += dim(`${group.merged} / ${group.total} マージ`);
+    const kids = group.children || [];
+    const me = p.hub;
+    // The chain a child is in: what is cut from the same root, in the order the server listed them.
+    const same = (c, id, hub) => c.id === id && c.hub === hub;
+    const upOf = c => c.on && kids.find(d => same(d, c.on, c.onHub));
+    const rootOf = c => { let at = c; for (let i = 0; i <= kids.length && upOf(at); i++) at = upOf(at); return at; };
+    const mine = kids.find(c => same(c, task.id, me));
+    const inStack = c => c.on || kids.some(d => same(c, d.on, d.onHub));
+    const chain = mine ? kids.filter(c => inStack(c) && rootOf(c) === rootOf(mine)) : [];
+    const at = chain.indexOf(mine);
+    if (group.stacked && at >= 0) h += dim(`stack ${at + 1}/${chain.length}`);
+  }
+  if (p.source === 'tracker' && p.recordKey && p.recordKey !== p.key) h += dim('記録と違う');
+  if (httpUrl(p.url)) {
+    h += ` <button type="button" class="iconbtn" data-add-child="${esc(p.url)}" data-add-child-board="${esc(task._slug || '')}">子タスクを足す</button>`;
+  }
+  return h;
+}
+
 /* `opts.panel` is the task panel's: its top already shows the Issue and the PR, and `opts.handForm`
    is set when its hand-over form shows the 申し送り, so neither is said twice. */
 function overviewTab(task, all, pick, opts = {}) {
@@ -424,7 +465,8 @@ function overviewTab(task, all, pick, opts = {}) {
       : task.julesSession ? `Jules ${task.jules ? esc(julesText(task.jules)) : ''}（session <span class="mono2">${esc(task.julesSession)}</span>）`
       : 'Jules（計画の承認後に渡す）']);
   }
-  if (task.parent) rows.push(['親タスク', esc(task.parent)]);
+  const parentHtml = parentRowHtml(task);
+  if (parentHtml) rows.push(['親タスク', parentHtml]);
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
   if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);
   if (task.worktree) rows.push(['worktree', `<span class="mono2">${esc(task.worktree)}</span> <button type="button" class="iconbtn" title="${ideTitle()}" data-ide="${esc(task.worktree)}">IDE で開く</button>`]);

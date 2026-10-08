@@ -769,6 +769,23 @@ function openForm() {
   document.getElementById('form').showModal();
   syncForm();
 }
+/* The new-task form for a child of the parent at `parentUrl`: a task that is filed first and then
+   started, with the parent filled in, and the details open so that it can be seen. `slug` is the board
+   the parent's task is on, which 「すべて」 would otherwise ask about. */
+function openChildForm(parentUrl, slug) {
+  openForm();
+  const form = document.getElementById('form');
+  if (!form.open) return;
+  // An entry left from an earlier time would be sent with this child.
+  form.querySelector('form').reset();
+  const kind = form.querySelector('input[name=kind][value=file-and-start]');
+  if (kind) kind.checked = true;
+  form.querySelector('input[name=parent]').value = parentUrl;
+  form.querySelector('details.more').open = true;
+  const board = form.querySelector('#f-board select');
+  if (slug && board && [...board.options].some(o => o.value === slug)) board.value = slug;
+  syncForm();
+}
 function syncForm() {
   const kind = document.querySelector('input[name=kind]:checked').value;
   document.getElementById('f-issue').classList.toggle('hidden', kind !== 'start');

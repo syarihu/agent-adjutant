@@ -104,7 +104,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief` | the records that board is a view of (`brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief` | the records that board is a view of (`brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one)) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -531,7 +531,10 @@ also with its state, its CI and its review status, or a note that there is no PR
 gate and what can be done about it (one click for a decision that needs no comment, 「判定画面を開く」
 for the rest, which opens the tab the gate is judged in), the phases, the 概要 (the
 problem, the goal, the instructions, the plan with its decision panel, the worktree and branch with
-「IDE」) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
+「IDE」), the details (among them the 親タスク row: the parent with whether it came from GitHub's
+sub-issues or the record, how many of its children are merged, the place in a stack, a note when the
+record names another parent, and 「子タスクを足す」, which opens the new-task form to file and start a
+child of that parent) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
 with the decision panel in place; a dot marks the tab of the open gate. A card carries the same
 two numbers in its header, each opening on GitHub, and
 the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
@@ -828,6 +831,34 @@ the gate directories.
   lists each in 要対応 and rings its desktop notification from it, once per
   `(agentSessionId, since)`, unless `quiet` (listed but not announced: its terminal was open, or it
   was already waiting when the server started). `session` is opened when it is clicked.
+- `parentIssue` (on a task, in `tasks` and `hubTasks`; left out when there is none): the issue the
+  task is a child of, `{key, url, number?, title?, source, hub, recordKey?}`. `hub` is the slug of the
+  hub that owns the task, the same name `parents[].children[].hub` gives it, and `recordKey` is the
+  record's own `parent` as a `key` when it names an issue (absent when there is none, or a key no
+  repository is known for); the page says the record differs when it is present and not `key`. `source` is `tracker` when GitHub says
+  the task's issue is a sub-issue of it, else `record` for the task's own `parent` (a key such as
+  `ALPHA-233` is turned into its issue through `issueKeys`; one that names no repository is shown as
+  written, with no `number`). The tracker's word wins, and the tracker never clears the record's: with
+  no parent there (or none read yet) the record's stands. `key` is `owner/repo#N` (lower case) for an
+  issue on github.com, so two spellings of one issue are one parent. The resident server asks GitHub
+  for the parents of the tasks' issues that are on github.com in the poll's round, holds the answers
+  in memory and reads each again at the first poll round after 10 minutes (after 2 minutes while no
+  read of it has succeeded and the last one failed as a whole, not for that issue alone; a task that
+  is done or cancelled is read once while the server lives); a failed read keeps the last answer the tracker gave, and a parent that
+  was read and found to have none is not the same as one never read, though the record is shown in
+  both. Without the resident server only the record is used. `adjutant task update --parent` fixes a
+  record's value.
+- `parents` (on `/api/state`; left out when no task has a parent): each parent with its children
+  from `tasks` and `hubTasks`, sorted by `key`: `{key, url, number?, title?, children, merged,
+  total, stacked}`. A child is `{hub, id, merged, on?, onHub?}`: `hub` is the slug of the hub that owns it
+  (an id is unique only within one hub), `merged` is whether its PR is merged, and `on` (with `onHub`, the sibling's hub) is the
+  sibling whose branch it is cut from (its `base`, less one leading `origin/`, equal to the
+  sibling's branch: the one its worktree is on, else its PR's head). `stacked` is whether any child
+  has an `on`, and the children then come in stack order, root first, and the rest in queue order.
+  `total` is the number of sub-issues GitHub counts under the parent when a child brought it, else
+  the number of children listed, and never fewer than the children listed; `merged` counts the
+  merged children. With several chains the children come chain by chain, each root followed by what
+  is cut from it (children sharing a base in queue order).
 
 `rateLimits` (on `/api/state`, whether or not sessions are listed) is `{accounts, error?}`: one entry
 for each Claude account (config directory) the ledger has a figure for, `{agent, configDir,
@@ -973,8 +1004,8 @@ is for a worker.
 ### The sessions tab's sidebar
 
 The セッション tab has a right sidebar for the selected session, shown or hidden as a whole.
-For a worker with a task it shows the task (key and issue link, parent, where the card sits on
-the two boards), the latest five entries of what was asked and answered with a link to the
+For a worker with a task it shows the task (key and issue link, parent with where it came from
+and how many of its children are merged, where the card sits on the two boards), the latest five entries of what was asked and answered with a link to the
 full history, the phase timeline with times, the done-when and stop-at settings, the PR link
 and its state from the record, the branch, base and worktree with its git state, the children
 of the same parent (a backlog child is handed over from the sidebar, starting its hub first

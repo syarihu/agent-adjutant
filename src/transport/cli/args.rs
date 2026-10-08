@@ -1030,6 +1030,9 @@ pub(crate) struct TaskUpdateArgs {
     /// The branch it is cut from, as `git worktree add` takes it ('' clears it)
     #[arg(long)]
     pub(crate) base: Option<String>,
+    /// The parent task's URL, or a key the hub turns into one ('' clears it)
+    #[arg(long)]
+    pub(crate) parent: Option<String>,
     /// The Jules session implementing it ('' clears it)
     #[arg(long)]
     pub(crate) jules_session: Option<String>,

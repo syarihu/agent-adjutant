@@ -126,6 +126,7 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
         issue: text(args.issue.as_deref()),
         pr: text(args.pr.as_deref()),
         base: text(args.base.as_deref()),
+        parent: text(args.parent.as_deref()),
         jules_session: text(args.jules_session.as_deref()),
         jules_by: None,
         note: text(note.as_deref()),

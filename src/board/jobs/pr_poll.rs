@@ -16,13 +16,14 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::branch_prs::BranchPrs;
+use super::issue_parents::IssueParents;
 use super::notifications::{self as gh, Notified};
 use crate::registry::Context;
 use crate::task::{self, PrRef, PrTurn, Task};
 
 /// The only host polled. Notifications of another host would need its own `Last-Modified`
 /// and its own login, and a refresh already reads those.
-const HOST: &str = "github.com";
+pub const HOST: &str = "github.com";
 
 /// How long to wait when GitHub has not said, and when no card holds a PR on `HOST`: nothing
 /// is asked then, and the records are looked at again after this.
@@ -179,6 +180,8 @@ pub struct PrPoll {
     state: Mutex<PollState>,
     /// The pull request of each branch a session with no task works on, asked in the same round.
     branches: BranchPrs,
+    /// The parent GitHub says each task's issue has, asked in the same round.
+    parents: IssueParents,
 }
 
 /// The boards a round looks after: those with a card on a PR for the cards, and one board of each
@@ -187,6 +190,8 @@ pub struct PrPoll {
 pub struct PollBoards {
     pub cards: Vec<Context>,
     pub branches: Vec<Context>,
+    /// The boards with a task on an issue of `HOST`, whose parents the tracker is asked for.
+    pub parents: Vec<Context>,
 }
 
 /// The repositories a round's notifications name, which makes their branches due.
@@ -257,8 +262,14 @@ impl PrPoll {
         self.branches.look(nwo, branch)
     }
 
-    /// One round: the cards, then the branches of the sessions that have none. How long to wait
-    /// after.
+    /// The parent the tracker last said the issue at `url` has, if it said one. Read from memory,
+    /// never from GitHub.
+    pub fn issue_parent(&self, url: &str) -> Option<task::TrackerParent> {
+        self.parents.look(url)
+    }
+
+    /// One round: the cards, the branches of the sessions that have none, then the parents of
+    /// the tasks' issues. How long to wait after.
     fn round(&self, boards: &PollBoards, tried: &mut HashSet<PrRef>) -> Duration {
         let mut named = Named::default();
         let pause = self.card_round(&boards.cards, tried, &mut named);
@@ -266,6 +277,7 @@ impl PrPoll {
         // the cards say.
         self.branches
             .round(&boards.branches, HOST, &named.repos, named.all);
+        self.parents.round(&boards.parents, HOST);
         pause
     }
 

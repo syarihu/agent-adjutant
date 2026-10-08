@@ -4,6 +4,7 @@
 mod columns;
 mod history;
 mod index;
+mod parents;
 mod rate_limits;
 mod sessions;
 mod state;

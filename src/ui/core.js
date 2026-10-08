@@ -516,6 +516,7 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
     tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
     gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !reviewDone.has(gateRef(g))),
     waits: parts.flatMap(p => tag(p.data.waits, p.slug)),
+    parents: parts.flatMap(p => tag(p.data.parents, p.slug)),
     workers,
     // Each repository's carrier board, in the order the tab lists them.
     carriers: carried.map(slug => ({ slug, nwo: nwoOf(slug) })),

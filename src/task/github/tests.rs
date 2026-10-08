@@ -301,3 +301,41 @@ fn an_issue_that_looks_like_a_flag_is_not_handed_to_gh() {
         Err(why) if why.contains("--web")
     ));
 }
+
+#[test]
+fn the_query_asks_for_the_branch_a_pull_request_is_from_and_it_is_kept() {
+    assert!(graphql_query(1).contains("headRefName"));
+    let with_head = pr_json("OPEN", false, None, 0, "null").replacen(
+        r#""title":"#,
+        r#""headRefName":"feature/a","title":"#,
+        1,
+    );
+    assert_eq!(one(with_head).1.head.as_deref(), Some("feature/a"));
+    // A record or an answer without it has none, and it is not written out.
+    let status = one(pr_json("OPEN", false, None, 0, "null")).1;
+    assert_eq!(status.head, None);
+    assert!(!serde_json::to_string(&status).unwrap().contains("head"));
+}
+
+#[test]
+fn a_parent_is_named_by_the_issue_it_is_whatever_the_url_is_spelled_like() {
+    assert_eq!(
+        parent_key(" https://GitHub.com/Acme/Widget/issues/549/?x=1#top "),
+        "acme/widget#549"
+    );
+    assert_eq!(
+        parent_key("https://github.com/acme/widget/issues/549"),
+        "acme/widget#549"
+    );
+    // Another host, a key and anything else are compared as written (trimmed).
+    assert_eq!(
+        parent_key(" https://git.example.test/Acme/Widget/issues/549 "),
+        "https://git.example.test/Acme/Widget/issues/549"
+    );
+    assert_eq!(parent_key("ALPHA-549"), "ALPHA-549");
+    assert_eq!(
+        issue_number("https://git.example.test/a/b/issues/7"),
+        Some(7)
+    );
+    assert_eq!(issue_number("ALPHA-549"), None);
+}

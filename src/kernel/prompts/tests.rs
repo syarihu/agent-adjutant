@@ -2846,3 +2846,119 @@ fn every_brief_command_in_the_hub_procedure_passes_the_language() {
     }
     assert!(raw.contains("`settings.language`"));
 }
+
+/// `adj task update` takes `--parent`, and the hub is told to fill and correct a record's parent
+/// with it. A paragraph that still said there is no such flag would send the hub to leave a record
+/// wrong, or to rewrite it on every brief.
+#[test]
+fn the_hub_corrects_a_records_parent_with_task_update_and_no_paragraph_says_it_cannot() {
+    let hub = find("adj-hub").unwrap().raw_content;
+    let flowed = flow(hub);
+    assert!(
+        flowed.contains("adj task update --id {task_id} --parent '{url}'"),
+        "the hub is never told to fill a parent with `adj task update --parent`"
+    );
+    // `brief --parent` is a one-brief override, said so where the two are told apart.
+    assert!(
+        flowed.contains("`adj task brief --parent` is a one-brief override"),
+        "the hub is not told what `adj task brief --parent` is now"
+    );
+    // The plain-URL rule covers the new flag, since it puts a URL on a command line too.
+    assert!(
+        flowed.contains("The same rule holds for `adj task update --parent`"),
+        "the plain-URL rule does not cover `adj task update --parent`"
+    );
+    // No paragraph still says update has no such flag.
+    for old in [
+        "`adj task update` has no `--parent`",
+        "adj task update has no --parent",
+        "(`adj task update` has no `--parent`)",
+    ] {
+        assert!(!flowed.contains(old), "an old paragraph remains: {old}");
+    }
+    for prompt in &PROMPTS {
+        let text = flow(prompt.raw_content);
+        assert!(
+            !text.contains("update` has no `--parent"),
+            "{} still says `adj task update` has no `--parent`",
+            prompt.name
+        );
+    }
+}
+
+/// The structure of a parent's children belongs to the hub, and a dashboard request that adds a
+/// child is filed under its parent without the stand-alone-or-sub-issue judgement.
+#[test]
+fn the_hub_keeps_the_structure_and_files_a_dashboard_child_under_its_parent() {
+    let hub = find("adj-hub").unwrap().raw_content;
+    let keeping = step(hub, "### Keeping the structure");
+    let flowed = flow(&keeping);
+    assert!(
+        flowed.contains("alone makes, splits, adds and re-parents"),
+        "{keeping}"
+    );
+    assert!(
+        flowed.contains("adj task update --id {task_id} --parent '{new url}'"),
+        "re-parenting does not say to fix the record: {keeping}"
+    );
+    assert!(flowed.contains("tracker's first"), "{keeping}");
+    // The dashboard route and Step 3 both carry the rule.
+    let dashboard = flow(&step(
+        hub,
+        "### A request from the dashboard (`kind: request`)",
+    ));
+    assert!(
+        dashboard.contains("file the issue as a sub-issue of that parent"),
+        "the dashboard route does not file a 子タスクを足す request under its parent"
+    );
+    let filing = flow(&step(hub, "### Step 3 — File"));
+    assert!(
+        filing.contains("with no stand-alone-or-sub-issue decision at all"),
+        "Step 3 still decides stand-alone or sub-issue for a child added on the board"
+    );
+    // The base is still not taken from sub-issue links.
+    assert!(
+        flow(hub).contains("Do not infer them from sub-issue links"),
+        "the rule that the base is not inferred from sub-issue links is gone"
+    );
+}
+
+/// A worker that thinks its task should be split hands that to the hub through `adj-report`, and
+/// files and splits nothing itself; the hub has a way to take it and a person approves first.
+#[test]
+fn a_worker_asks_for_a_split_through_the_report_and_never_files() {
+    let worker = section(find("adj-worker").unwrap().raw_content, "## 7. ");
+    let flowed = flow(&worker);
+    assert!(
+        flowed.contains("`adj-report` using `## Kind split`"),
+        "the worker is not told to ask for a split through the report: {worker}"
+    );
+    assert!(
+        flowed.contains("do not split it and do not file or start anything yourself"),
+        "{worker}"
+    );
+    assert!(
+        flowed.contains("do not re-parent a task either (no `adj task update --parent`"),
+        "the worker is not told to leave re-parenting to the hub: {worker}"
+    );
+    assert!(
+        flowed.contains("go on with the task as planned"),
+        "{worker}"
+    );
+    let report = flow(find("adj-report").unwrap().raw_content);
+    assert!(
+        report.contains("`## Kind split` line") && report.contains("a report without it is a bug"),
+        "adj-report does not describe the split kind and its default"
+    );
+    let hub = find("adj-hub").unwrap().raw_content;
+    let handling = flow(&step(hub, "### When a worker asks to split its task"));
+    assert!(
+        handling.contains("The person approves before anything is filed"),
+        "the hub files a worker's proposal without asking: {handling}"
+    );
+    // A report of this kind does not go through the bug-filing steps.
+    assert!(
+        flow(hub).contains("A report whose `## Kind` is `split` is not a bug report"),
+        "the hub reads a split proposal as a bug"
+    );
+}

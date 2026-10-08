@@ -274,6 +274,10 @@ pub struct PrStatus {
     /// someone has been asked) or `none`.
     pub review: String,
     pub ci: CheckCounts,
+    /// The branch the pull request is from. Read for the stack order of a task whose worktree is
+    /// gone; a record written before it was read has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
 }
 
 /// Whose turn a pull request is, read from what GitHub said about it. Derived on every read
@@ -597,6 +601,9 @@ pub struct TaskPatch {
     /// The branching point the hub decided, for a task whose record did not bring one:
     /// `adj jules start` reads it after the hub may have restarted.
     pub base: Option<Option<String>>,
+    /// The parent task: a URL, or a key the hub turns into one. Checked like the one a new task
+    /// is given (`check`).
+    pub parent: Option<Option<String>>,
     pub jules_session: Option<Option<String>>,
     pub jules_by: Option<Option<String>>,
     pub note: Option<Option<String>>,
@@ -637,7 +644,7 @@ impl TaskPatch {
                 .transpose()
         }
         // Struct fields are evaluated in source order, which is the order of the refusals.
-        Ok(TaskPatch {
+        let patch = TaskPatch {
             status: word(input, "status")
                 .map(|s| Status::parse(&s).ok_or(format!("no such status: {s}")))
                 .transpose()?,
@@ -652,11 +659,23 @@ impl TaskPatch {
             issue: text_field(input, "issue")?,
             pr: text_field(input, "pr")?,
             base: text_field(input, "base")?,
+            parent: text_field(input, "parent")?,
             jules_session: text_field(input, "julesSession")?,
             jules_by: text_field(input, "julesBy")?,
             note: text_field(input, "note")?,
             instruction: text_field(input, "instruction")?,
-        })
+        };
+        patch.check()?;
+        Ok(patch)
+    }
+
+    /// Refuse a value that cannot be written, before any record is touched. The parent is
+    /// quoted on a command line later, so it has to pass what a new task's parent passes.
+    pub fn check(&self) -> Result<(), String> {
+        if let Some(Some(parent)) = &self.parent {
+            super::create::check_parent(parent)?;
+        }
+        Ok(())
     }
 }
 

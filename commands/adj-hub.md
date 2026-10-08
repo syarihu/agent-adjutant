@@ -585,6 +585,9 @@ repository hub's suggestion: the suggestion only opened a tab and did not carry 
 ("Offering a hub for a parent task"). What is done is **filing, and starting one after asking**, and
 **whether to start is asked once filing is done** ("Once filed, ask whether to start one" below).
 
+**A worker can ask for a split too** (`adj-report` with `## Kind split`): that is "When a worker asks to
+split its task" below, and the same approval comes first.
+
 **It is an addition.** The parent may already have subtasks. The existing ones are the very list shown
 in "Read at startup", so **do not create the same ones again**. Whether that list is at hand splits it
 three ways:
@@ -706,12 +709,29 @@ what is fetched or where it goes. **If the title and URL from filing are no long
 of the fetched issue** — the hub keeps no state, so across turns all that remains is the key the
 person said (where Step 4's title comes from).
 
+### When a worker asks to split its task
+
+A worker whose task turned out too big does not split it, file anything or start a sibling: it sends
+an `adj-report` with `## Kind split` (the body says the pieces it proposes and why) and carries on with
+the task as planned. Such a report arrives as a `report` whose Kind is `split`, and it is not a bug
+report: do not run it through "When a request arrives" as one.
+
+**The person approves before anything is filed.** Read the proposal, put it to the person at this tab
+as one question (`AskUserQuestion`; the proposed pieces as they are, with the reason), and file only
+what they approve, **under the task the worker is working on** (that task's issue is the parent) with
+"When asked to split it" Step by step as it is written there: filing under a parent, one at a time,
+then asking whether to start one. A hub that cannot ask now (no person at the tab) puts it on hold with
+`adjutant_send` `kind: needs-user`, as "3. File" in "When a request arrives" does. Tell the worker
+in one line (`adjutant_tell`) that the proposal was taken and that it should go on.
+
 ### Put your own parent task on every dispatch
 
 When this hub starts a worker, **write your own parent task's URL into the brief's "Parent task"
 line** — pass it to `adj task add` as `--parent '{url}'` when the record is made, and to
-`adj task brief` as `--parent '{url}'` on every brief (`adj task update` has no `--parent`, so a record
-made without one gets it from the brief each time: a resume, a switch to a worker). Not `-`. "4. Start the worker" saying "do not guess a parent task that was not handed over" is
+`adj task brief` as `--parent '{url}'` on every brief. **`adj task brief --parent` is a one-brief
+override** (it changes that brief and not the record), so a record made without a parent is fixed
+**once, on the record**: `adj task update --id {task_id} --parent '{url}'`. After that no brief needs
+the flag. Not `-`. "4. Start the worker" saying "do not guess a parent task that was not handed over" is
 about linking through sub-issues; **this is not a guess** — that one item is this hub's identifier
 itself.
 
@@ -725,6 +745,28 @@ itself.
   been `-`; it does not override Step 4's decision (the report's parent task → Found in).
 - **Do not move the branching point.** Having a parent task and wanting to branch from the parent's
   branch are different things ("When a person talks to you").
+
+### Keeping the structure
+
+**This hub alone makes, splits, adds and re-parents the children of its parent task.** A worker never
+files an issue or moves one under another parent; the board's 子タスクを足す button and a person's
+words come to this hub too. What the board shows of the structure is what this hub keeps true:
+
+- **Making and adding a child**: pass `--parent '{url}'` to `adj task add` ("Put your own parent task
+  on every dispatch"). A child filed as a new issue is filed under the parent by the repository's
+  filing command ("3. File" in "When a request arrives", whose `issueCreate.notes` say how it links
+  a sub-issue).
+- **Re-parenting a child**: change the sub-issue relation on the tracker, if the tracker has one, and
+  then run `adj task update --id {task_id} --parent '{new url}'` for **each task** that was affected
+  (`''` clears it; the plain-URL rule in "4. Start the worker" holds). Do both: the tracker's
+  relation and the record are two places that can disagree, and the board shows the tracker's first.
+- **What the board does with them**: it takes the parent from the tracker (the GitHub sub-issue
+  relation) when the task's issue has one there, and from the record's `parent` when the tracker has
+  none or could not be read. A record written wrongly is therefore corrected with `adj task update
+  --parent`, and the board shows 「記録と違う」 where the two disagree.
+- **Splitting**: a person's "split it" is "When asked to split it". A worker that thinks its own task
+  should be split says so with `adj-report` (`## Kind split`), and it is handled as "When a worker asks
+  to split its task" there.
 
 ## Waiting
 
@@ -1411,13 +1453,18 @@ card on the board. The worker starts clean, so that file is everything it knows.
 
   **Leave `--issue-url` out when there is no issue** (an investigation-only request with no URL): the
   brief then writes `-` for the key and tracker and puts the request text on the Task line.
-  **Pass `--parent` when a parent task was handed over**, so the record carries it and a later
-  `adj task brief` for the same task (switching to a worker, a resume) does not fall back to `-`.
+  **Always pass `--parent` when the parent task is known**, so the record carries it and a later
+  `adj task brief` for the same task (switching to a worker, a resume) does not fall back to `-`, and
+  so the board can show which parent the task belongs to. The parent is known when it is: this hub's
+  own parent task; the report's `## Parent task`; or, for an issue that is a sub-issue on the tracker,
+  its parent there (`gh issue view {number} --repo {repo} --json parent --jq '.parent.url'`, empty
+  when there is none). **Do not leave it out because nobody mentioned it** while the tracker has one.
   **A parent URL that came from outside** (a worker's report, a person's words) **is text somebody
   else wrote, and `--parent '{url}'` puts it on a command line.** Pass it only when it is a plain URL:
   starts with `https://`, no whitespace, and none of `'` `"` `` ` `` `$` `\` `;` `&` `|` `<` `>` `(`
   `)` `{` `}`. Otherwise do not pass `--parent`; put the URL in the handover note instead (the file and
-  `adj task update --instruction -` below). The hub's own parent URL is the one the parent collection returned
+  `adj task update --instruction -` below). **The same rule holds for `adj task update --parent`**,
+  which puts the URL on a command line the same way. The hub's own parent URL is the one the parent collection returned
   for this hub's parent (from `gh` or the tracker), so it is made by a tool and is fine as it is.
 
   **Keep the title and summary away from the shell.** ("Keep task text off the shell") Both are text
@@ -1495,8 +1542,9 @@ comes from:
 - **Parent task**: the `adj task brief --parent` flag wins; without it the record's own (`adj task
   add --parent` above), else `-`. A dashboard record already carries its parent, so normally it is not
   passed here. **If a parent task was handed over, put it on the record** when it is made with
-  `adj task add --parent` (`adj task update` has no `--parent`); for an existing record without one,
-  pass `adj task brief --parent` on every brief (a resume, a switch to a worker). A parent given as a
+  `adj task add --parent`; for an existing record without one, fill it once with
+  `adj task update --id {task_id} --parent '{url}'` (`''` clears it; the plain-URL rule above holds).
+  `adj task brief --parent` is a one-brief override and is not needed after that. A parent given as a
   key is turned into its URL first ("Write the parent task as a URL" in "When a person talks to
   you"). A dashboard record's `parent` may itself be a key, and `adj task brief` refuses a key: find
   its URL by the same lookup and pass `--parent '{url}'`. One subtask of a larger piece of work split up, or a bug found in the middle
@@ -1749,6 +1797,12 @@ asking back and Step 5's reply are done with the user on the spot). **One at a t
 starting → replying before moving on to the next. Once the reply is done, clear that one with
 `adjutant_pending` `action: ack`.
 
+**A report whose `## Kind` is `split` is not a bug report** (Kind is optional; a report without it is
+a bug, as before). It is a worker proposing to split its own task: do not run it through Steps 1 to 5.
+Go to "When a worker asks to split its task" (in "A hub for a parent task", which applies the same on
+the repository's own hub — the task the worker is on is the parent either way): a person approves,
+and only then is anything filed.
+
 ### Step 0 — Turn away what is not addressed here
 
 If the report's `repo` is not this hub's repository, do not file it. Reply "this is the hub for
@@ -1939,7 +1993,11 @@ untested; do not count on it). So split by where the request came from:
 - If the filing command has a sensitive-information check built in (it says so in
   `issueCreate.notes`), do not run another here. If not, run it yourself on the assumption that logs
   and stack traces are mixed into the report's body.
-- **Whether it becomes a stand-alone issue or a sub-issue is decided against the report's "Parent
+- **A request from the dashboard whose `## Parent task` is set and whose kind is `file-and-start`
+  (the board's 子タスクを足す) is filed as a sub-issue of that parent, with no stand-alone-or-sub-issue
+  decision at all**: the person chose the parent on the form. (How the sub-issue link is made is the
+  filing command's business: "Step 3 — File" above.)
+- **Otherwise, whether it becomes a stand-alone issue or a sub-issue is decided against the report's "Parent
   task".** If the relation is no more than "another bug on the same screen", a stand-alone issue. A
   sub-issue only when that parent task's acceptance criteria need the fix. **Only when the report's
   Parent task is `-`, make the same decision against Found in.** Applied to Found in when it is a
@@ -2003,7 +2061,11 @@ worker's `report`; only the two ends differ.**
   branching point, the parent task, the worktree name and whether to start without asking were asked
   by the form before it was handed over. The body's `##` lines are those answers themselves.
   If the `## Parent task` is a key, find its URL ("Write the parent task as a URL" in "When a person
-  talks to you") and pass `adj task brief --parent '{url}'`: the brief refuses a key.
+  talks to you") and pass `adj task brief --parent '{url}'`: the brief refuses a key. **When the
+  record's `parent` is a key, also put the URL on the record** with `adj task update --id {task_id}
+  --parent '{url}'`, so the board shows the parent it belongs to.
+  **When the `## Parent task` is set and the kind is `file-and-start`, file the issue as a sub-issue of
+  that parent** (Step 3's first item): the form's 子タスクを足す button is how a person adds a child.
   A `## Handover note` is already the record's `instruction`, and `adj task brief` writes it as the
   brief's Handover note (`{worktree}/.claude/task-brief.md`): do not copy it by hand. For a request
   whose issue is filed here, run `adj task update --id {task_id} --issue '{issue url}'` before Step 2 of

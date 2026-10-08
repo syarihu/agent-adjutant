@@ -31,6 +31,24 @@ fn the_page_pieces_join_into_one_document() {
 }
 
 #[test]
+fn the_page_shows_the_parent_and_adds_a_child_through_the_new_task_form() {
+    for piece in [
+        // The row, and the button that opens the form with the parent filled in.
+        "function parentRowHtml",
+        "data-add-child=",
+        "function openChildForm",
+        "子タスクを足す",
+        "記録と違う",
+        // The page merging several boards keeps their parents.
+        "parents: parts.flatMap(p => tag(p.data.parents, p.slug))",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The button carries its parent in an attribute and is wired by a listener, not inline.
+    assert!(!UI_HTML.contains("onclick=\"openChildForm"));
+}
+
+#[test]
 fn the_page_has_one_task_panel_and_no_drawer() {
     for piece in [
         "id=\"task-panel\"",

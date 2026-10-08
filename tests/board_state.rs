@@ -192,6 +192,14 @@ fn board() -> (Fixture, Resident) {
         if let Some(worktree) = worktree {
             task["worktree"] = json!(worktree);
         }
+        // Two children of one parent, the second cut from the first's branch. Neither names an
+        // issue, so no query goes to GitHub for them: the record's `parent` is all there is.
+        if id != "WID-3" {
+            task["parent"] = json!("WID-957");
+        }
+        if id == "WID-2" {
+            task["base"] = json!("origin/wid-1");
+        }
         write(
             &state.join("tasks").join(SLUG).join(format!("{id}.json")),
             task,
@@ -202,7 +210,7 @@ fn board() -> (Fixture, Resident) {
     write(
         &state.join("tasks").join(FEATURE_SLUG).join("WID-9.json"),
         json!({"id": "WID-9", "kind": "start", "title": "Task WID-9", "doneWhen": "pr",
-               "autoStart": true, "order": 0, "status": "dispatched",
+               "parent": "https://github.com/acme/widget/issues/957", "autoStart": true, "order": 0, "status": "dispatched",
                "createdAt": "20260922T035200Z", "updatedAt": "20260922T035200Z"}),
     );
 
@@ -525,6 +533,8 @@ fn expected_tasks() -> Value {
         "id": "WID-1",
         "kind": "start",
         "order": 0,
+        "parent": "WID-957",
+        "parentIssue": expected_parent_issue(SLUG),
         "prTurn": null,
         "records": [
           {
@@ -550,11 +560,14 @@ fn expected_tasks() -> Value {
       {
         "approvedPlan": null,
         "autoStart": true,
+        "base": "origin/wid-1",
         "createdAt": "20260922T035100Z",
         "doneWhen": "pr",
         "id": "WID-2",
         "kind": "start",
         "order": 1,
+        "parent": "WID-957",
+        "parentIssue": expected_parent_issue(SLUG),
         "prTurn": null,
         "records": [],
         "status": "queued",
@@ -579,6 +592,39 @@ fn expected_tasks() -> Value {
     ])
 }
 
+/// What the three tasks that name issue 957 as their parent show: the record's word, as a key and
+/// as a URL, joined as one parent.
+fn expected_parent_issue(hub: &str) -> Value {
+    json!({
+      "hub": hub,
+      "key": "acme/widget#957",
+      "number": 957,
+      "recordKey": "acme/widget#957",
+      "source": "record",
+      "url": "https://github.com/acme/widget/issues/957"
+    })
+}
+
+/// The parent those tasks share, with its children from both hubs: the second cut from the
+/// first's branch, which is the one its worktree is on.
+fn expected_parents() -> Value {
+    json!([
+      {
+        "children": [
+          {"hub": SLUG, "id": "WID-1", "merged": false},
+          {"hub": SLUG, "id": "WID-2", "merged": false, "on": "WID-1", "onHub": SLUG},
+          {"hub": FEATURE_SLUG, "id": "WID-9", "merged": false}
+        ],
+        "key": "acme/widget#957",
+        "merged": 0,
+        "number": 957,
+        "stacked": true,
+        "total": 3,
+        "url": "https://github.com/acme/widget/issues/957"
+      }
+    ])
+}
+
 fn expected_hub_tasks() -> Value {
     json!([
       {
@@ -593,6 +639,8 @@ fn expected_hub_tasks() -> Value {
           "key": FEATURE,
           "slug": FEATURE_SLUG
         },
+        "parent": "https://github.com/acme/widget/issues/957",
+        "parentIssue": expected_parent_issue(FEATURE_SLUG),
         "prTurn": null,
         "records": [],
         "approvedPlan": null,
@@ -736,6 +784,7 @@ fn expected_state(sessions: Value) -> Value {
     state["sessions"] = sessions;
     state["tasks"] = expected_tasks();
     state["hubTasks"] = expected_hub_tasks();
+    state["parents"] = expected_parents();
     state["workers"] = expected_workers();
     state["gates"] = expected_gates();
     state["pending"] = expected_pending();
@@ -900,4 +949,58 @@ fn server_status_lists_the_boards_as_the_board_list_does() {
     );
     let boards = read(&fixture, &resident, "/api/boards", "");
     assert_same(&status["boards"], &boards);
+}
+
+fn parent_of(fixture: &Fixture, resident: &Resident, id: &str) -> Value {
+    let state = read(fixture, resident, &state_path(), "sessions=0");
+    state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap()["parentIssue"]
+        .clone()
+}
+
+#[test]
+fn a_tasks_parent_is_set_cleared_and_checked_through_the_board() {
+    let (fixture, resident) = board();
+    let url = format!("/b/{SLUG}/api/tasks/WID-3");
+    assert_eq!(parent_of(&fixture, &resident, "WID-3"), Value::Null);
+
+    let (status, body) = resident.post(
+        &url,
+        &json!({"parent": "https://github.com/acme/widget/issues/12"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let set: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        set["task"]["parent"],
+        "https://github.com/acme/widget/issues/12"
+    );
+    assert_eq!(
+        parent_of(&fixture, &resident, "WID-3")["key"],
+        "acme/widget#12"
+    );
+
+    // A value that cannot be quoted on a command line is refused, and nothing is written.
+    let (status, body) = resident.post(&url, &json!({"parent": "x; rm -rf /"}).to_string());
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        parent_of(&fixture, &resident, "WID-3")["key"],
+        "acme/widget#12"
+    );
+
+    let (status, body) = resident.post(&url, &json!({"parent": ""}).to_string());
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parent_of(&fixture, &resident, "WID-3"), Value::Null);
+    let state = read(&fixture, &resident, &state_path(), "sessions=0");
+    // The parent the other tasks share is still listed, and this one no longer is in it.
+    let listed: Vec<&str> = state["parents"][0]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, ["WID-1", "WID-2", "WID-9"]);
 }

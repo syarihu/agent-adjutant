@@ -254,7 +254,25 @@ impl BoundResident {
                             branches.push(server.ctx.clone());
                         }
                     }
-                    jobs::PollBoards { cards, branches }
+                    // A board is asked for the parents of its tasks' issues only when one of
+                    // them is on an issue of the host that is polled.
+                    let parents = all
+                        .iter()
+                        .filter(|a| {
+                            task::list(&resident.root, &a.slug).iter().any(|t| {
+                                task::issue_to_fetch(t)
+                                    .and_then(task::issue_ref_of)
+                                    .is_some_and(|r| r.host == jobs::HOST)
+                            })
+                        })
+                        .filter_map(|a| resident.board(&a.slug))
+                        .map(|server| server.ctx.clone())
+                        .collect();
+                    jobs::PollBoards {
+                        cards,
+                        branches,
+                        parents,
+                    }
                 });
             });
         }

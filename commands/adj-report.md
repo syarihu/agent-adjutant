@@ -54,6 +54,14 @@ report; just fix it.
 ## Reported from     {repo} / {branch} / this session's name
 ```
 
+**To propose splitting your own task instead of reporting a bug**, add a `## Kind split` line (the
+heading `## Kind`, the value `split`; it is optional, and **a report without it is a bug**). The body
+then is not a bug: **Symptom** says why the task should be split, **Location** the pieces you propose
+(one line each, with what each would do), and **Why it is outside the current task** can be left as
+`-`. Found in and Parent task are written as usual. Do not file the pieces, start them or move any task under another
+parent (`adj task update --parent`, sub-issue changes): the hub does that, after asking a person.
+Carry on with your task as planned.
+
 - Found in comes from the "Task" line of `.claude/task-brief.md`. If there is none, take the key
   from the branch name (`{user}/ALPHA-957` → `ALPHA-957`). **It is not the brief's "Parent task"
   line** — what goes here is the task you are holding now, because that is the work in which the

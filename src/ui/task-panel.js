@@ -717,6 +717,7 @@ tp('task-panel').addEventListener('click', e => {
     return renderTaskPanel();
   }
   if ((b = hit('[data-focus]'))) return worktreeAct('focus', b.dataset.focus);
+  if ((b = hit('[data-add-child]'))) return openChildForm(b.dataset.addChild, b.dataset.addChildBoard);
   // The button is what is disabled while it asks, not the panel this handler is on.
   if ((b = hit('[data-fetch-issue]'))) return fetchIssue(b.dataset.fetchIssue, { currentTarget: b });
   if ((b = hit('[data-ide]'))) return worktreeAct('ide', b.dataset.ide);

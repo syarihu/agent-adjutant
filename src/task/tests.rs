@@ -732,6 +732,7 @@ fn pr(state: &str, review: &str, fail: u32, pending: u32) -> PrStatus {
             fail,
             pending,
         },
+        head: None,
     }
 }
 
@@ -1043,6 +1044,98 @@ fn a_text_field_of_a_patch_is_left_alone_absent_cleared_by_null_or_empty_and_set
     for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
         assert!(pr(json!({ "pr": bad })).is_err(), "{bad} was taken");
     }
+}
+
+#[test]
+fn the_parent_of_a_patch_is_set_by_a_url_or_key_and_cleared_by_null_or_empty() {
+    let parent = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.parent);
+    assert_eq!(parent(json!({})).unwrap(), None);
+    assert_eq!(parent(json!({ "parent": null })).unwrap(), Some(None));
+    assert_eq!(parent(json!({ "parent": "" })).unwrap(), Some(None));
+    assert_eq!(
+        parent(json!({ "parent": "https://github.com/acme/widget/issues/549" })).unwrap(),
+        Some(Some(
+            "https://github.com/acme/widget/issues/549".to_string()
+        ))
+    );
+    assert_eq!(
+        parent(json!({ "parent": "ABC-123" })).unwrap(),
+        Some(Some("ABC-123".to_string()))
+    );
+    assert_eq!(
+        parent(json!({ "parent": 549 })).unwrap_err(),
+        "parent has to be a string or null, not 549"
+    );
+}
+
+#[test]
+fn a_parent_new_task_would_refuse_is_refused_by_a_patch_before_any_write() {
+    for bad in [
+        "ABC-123 && id",
+        "not a url",
+        "https://x.test/a'b",
+        "javascript:1",
+    ] {
+        assert!(
+            check_parent(bad).is_err(),
+            "{bad} passed check_parent, which this test assumes it does not"
+        );
+        let err = TaskPatch::from_json(&json!({ "parent": bad })).unwrap_err();
+        assert!(err.contains(bad), "{err}");
+    }
+    // The same check guards a patch built by hand, which is what the command line does.
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let patch = TaskPatch {
+        parent: Some(Some("a; b".to_string())),
+        status: Some(Status::Done),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &task.id, &patch, false).is_err());
+    let after = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(after, task, "a refused update wrote something");
+}
+
+#[test]
+fn an_update_sets_and_clears_the_parent_and_keeps_what_it_does_not_know() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    let mut raw = serde_json::to_value(&task).unwrap();
+    raw["futureField"] = json!({"n": 1});
+    std::fs::create_dir_all(dir(&ctx.state, &ctx.repo.slug)).unwrap();
+    std::fs::write(record_path(&ctx, &task.id), raw.to_string()).unwrap();
+
+    let url = "https://github.com/acme/widget/issues/549".to_string();
+    let set = TaskPatch {
+        parent: Some(Some(url.clone())),
+        ..TaskPatch::default()
+    };
+    let (updated, _) = update(&ctx, &task.id, &set, false).unwrap();
+    assert_eq!(updated.parent.as_deref(), Some(url.as_str()));
+    assert_eq!(updated.extra["futureField"], json!({"n": 1}));
+    let stored = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(stored.parent.as_deref(), Some(url.as_str()));
+
+    // A patch that does not name it leaves it.
+    let other = TaskPatch {
+        note: Some(Some("n".to_string())),
+        ..TaskPatch::default()
+    };
+    assert_eq!(
+        update(&ctx, &task.id, &other, false).unwrap().0.parent,
+        Some(url)
+    );
+
+    let clear = TaskPatch {
+        parent: Some(None),
+        ..TaskPatch::default()
+    };
+    let (cleared, _) = update(&ctx, &task.id, &clear, false).unwrap();
+    assert_eq!(cleared.parent, None);
+    assert_eq!(cleared.extra["futureField"], json!({"n": 1}));
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("\"parent\""), "{text}");
 }
 
 #[test]

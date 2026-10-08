@@ -26,6 +26,8 @@ pub fn update_checked(
     hand: bool,
     check: impl FnOnce(&Task) -> Result<(), String>,
 ) -> Result<(Task, Option<DeliveryOutcome>), String> {
+    // Before the lock, so a refusal takes nothing.
+    patch.check()?;
     let lock = store::lock(ctx, id)?;
     let mut task = get(&ctx.state, &ctx.repo.slug, id)?;
     check(&task)?;
@@ -49,6 +51,7 @@ pub fn update_checked(
         (&patch.issue, &mut task.issue),
         (&patch.pr, &mut task.pr),
         (&patch.base, &mut task.base),
+        (&patch.parent, &mut task.parent),
         (&patch.jules_session, &mut task.jules_session),
         (&patch.jules_by, &mut task.jules_by),
         (&patch.note, &mut task.note),

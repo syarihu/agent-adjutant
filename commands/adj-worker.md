@@ -413,6 +413,12 @@ stock once, right before handing over (§4)**:
 Two reasons. A fix on the side dirties this task's diff and breaks review and revert. And a worktree
 cannot be cut from inside a worktree, so you cannot start it as another task on the spot either.
 
+**If the task itself should be split** (it has grown into pieces that would each be a task), do not
+split it and do not file or start anything yourself, and do not re-parent a task either (no
+`adj task update --parent`, no sub-issue changes): the structure belongs to the hub. Hand it over with
+`adj-report` using `## Kind split`, the body naming the pieces you propose and why, and go on with
+the task as planned. A person approves at the hub before anything is filed.
+
 **When the hub replies after you hand it over**: if the first line is `[ack]` (received), send
 nothing back. If it starts with `[question`, followed by an identifier and `]` (asking for what it
 needs to file), **answer once** — the hub is

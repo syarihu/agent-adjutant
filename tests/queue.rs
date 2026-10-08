@@ -90,3 +90,33 @@ fn next_skips_held_tasks_and_names_the_ones_that_need_a_dispatch_gate() {
         output
     );
 }
+
+#[test]
+fn a_task_parent_is_set_and_cleared_by_update_and_a_bad_one_changes_nothing() {
+    let fixture = Fixture::new(QUIET);
+    let id =
+        fixture.json(&["task", "add", "--title", "child", "--body", "x", "--json"])["task"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let parent = || fixture.json(&["task", "show", "--id", &id])["parent"].clone();
+    assert!(parent().is_null());
+
+    let url = "https://github.com/acme/widget/issues/549";
+    fixture.ok(&["task", "update", "--id", &id, "--parent", url]);
+    assert_eq!(parent(), url);
+
+    // A bad value is refused, and the record keeps what it had.
+    let refused = fixture.cmd(&["task", "update", "--id", &id, "--parent", "a; b"]);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("a; b"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(parent(), url);
+
+    // An empty one clears it.
+    fixture.ok(&["task", "update", "--id", &id, "--parent", ""]);
+    assert!(parent().is_null());
+}
