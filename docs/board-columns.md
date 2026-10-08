@@ -91,7 +91,7 @@ use it are unaffected. Each fact's value is one word, or absent.
 | `work` | `implement`, `investigate`, `design`, and any added in config | The task's new `work` field ([below](#what-kind-of-work-a-task-is)) |
 | `doneWhen` | `report-only`, `verify`, `pr`, `review` | `task::DoneWhen` |
 | `gate` | `plan`, `diff`, `verify`, `dispatch`, `issue`, `question`, `result`, `relay` | The kind of the task's open (waiting) gate |
-| `prTurn` | `draft`, `unrequested`, `other-reviewer`, `checks`, `changes`, `merge`, `ci-failed`, `merged`, `closed` | `task::PrTurn` from the stored `prStatus` |
+| `prTurn` | `draft`, `unrequested`, `other-reviewer`, `checks`, `changes`, `merge`, `ci-failed`, `merged`, `closed` | `task::PrTurn` from the stored `prStatus`, whatever the status (today's `prTurn` is sent only on live cards) |
 | `waitsOnPerson` | `yes`, absent | `waits_on_person`, unchanged |
 | `session` | `idle`, `running`, `waiting`, `done`, `failed`, `unknown` | The ledger row of the task's worker session (a status this binary does not know reads as absent) |
 | `parked` | A park reason (`pdm`, `design`, `review`, `merge-timing`, `other`, and any added in config) | The task's park ([#555](https://github.com/syarihu/agent-adjutant/issues/555)); absent once `status` is `done` or `cancelled` |
@@ -100,17 +100,22 @@ A phase this binary does not know reads as absent too, so a record written by a 
 breaks a card.
 
 `session` is read from the ledger for every card on every poll, whatever the poll asks for
-(`sessions=0` skips listing sessions, the dear part with tmux, `ps` and git; reading a ledger row
-by the worker's session id is cheap), so the cross-repository view has it too. It is absent when
+(`sessions=0` skips listing sessions, the dear part with tmux and each session's git state; the
+process table that the row's liveness check needs is read on every poll either way), so the
+cross-repository view has it too. The row comes from `registry::agent_session_of`, which drops dead
+rows and returns an error when the ledger cannot be listed; a helper that turns that error into
+"no row" would read a failure as absent. It is absent when
 the task has no worker present (a stopped worker has no row to read, so `done` and `failed` are seen
 only while the process is up). When the ledger could not be read, it is the word `unknown`, which is
 not the same as absent: a condition naming any other value does not match it, and the views say
 "not known" rather than "no session". `jules` likewise is absent while adjutant has not yet heard
-from Jules or could not ask, as `t.jules?.state` is today.
+from Jules or could not ask, as `t.jules?.state` is today; a Jules task with no state still gets
+`step` from its PR or its gate, so nothing hangs on telling the two apart there.
 
 `step` is the one derived fact: where work in progress stands, whoever does it. It is `plan`,
-`implement`, `self-review` or `pr`, computed exactly as steps 2 to 5 of `agentColOf` above, in that
-order: for Jules, a PR or `COMPLETED` first, then the Jules state, then the open gate (status `pr`
+`implement`, `self-review` or `pr`, computed as steps 2 to 5 of `agentColOf` above, in that order,
+with the worker row joined the way the server already joins it (`worker_of` over the hub's own
+rows, not the page's `workerOf`, which takes any row in the worktree): for Jules, a PR or `COMPLETED` first, then the Jules state, then the open gate (status `pr`
 alone does not say `pr` for Jules); for a worker, `phase`, then the open gate, then `pr` for status
 `pr` or a PR; and `plan` when nothing says anything. It is absent when the task is
 not in progress (status `backlog`, `queued`, `done` or `cancelled`), so a column that names `step`
@@ -203,9 +208,9 @@ Without 調査 that is the `default` preset's agent side: `before` (`status`: `b
   hub's gate optimistically, so no pair is needed there.
 - Every worker row carries `agentColumn`, computed from its own `phase`, `step` and `session`. The
   page still decides which rows are bare and places them by it. The sessions view labels a
-  session's phase by its `step` with the `default` labels (計画, 実装, セルフレビュー,
-  PR・レビュー対応) instead of `AGENT_COL_OF_PHASE`, and shows a phase it does not know as the raw
-  word, as now; a column would make the label depend on the layout.
+  session's known phase by its `step` with the `default` labels (計画, 実装, セルフレビュー,
+  PR・レビュー対応) instead of `AGENT_COL_OF_PHASE`, a phase it does not know as the raw word, and
+  nothing without a phase, as now; a column would make the label depend on the layout.
 - The new keys are written by the card, so like `humanCol` today they are scrubbed from a record's
   `extra` before the card adds them, and a stale key on disk never comes out twice.
 
@@ -229,7 +234,8 @@ folding and narrow width by `before` and `done`; the human board's PR確認 and 
   sections and 次を流す) and `done` (folding old cards) on the agent side, `prreview` (PR確認 and
   the poll warning) on the human side. At most one column per side carries each role; the
   `default` preset gives them to `before`, `done` and `prreview`. Narrow width goes with `queue`
-  and `done`, as now.
+  and `done`, as now. A layout with no `queue` column shows no 待ち / Backlog sections and no
+  次を流す, and one with no `done` column folds nothing.
 - `label`, `icon` and `hint` come from the config, so the page escapes them like any other text
   (today they are constants put straight into the HTML).
 
@@ -287,7 +293,7 @@ Each repository's board can have its own layout.
   removed or relabelled. `adj task park --reason` and `--work` accept them through one check each in
   `task`, which the layout check calls too.
 - An empty config is the `default` preset, which is today's board exactly: the same twelve columns,
-  ids, labels, icons, hints, order and placement.
+  ids, labels, icons, hints, order and placement, except a parent's hub card (above).
 
 Presets shipped:
 
@@ -312,6 +318,8 @@ whole**, never half a layout, and a warning names the column and what is wrong. 
 - a `gate` value no human column matches: the human side has no fallback, so such a gate would be
   open, counted as the person's turn, and nowhere on the board;
 - a `when` on the fallback, or a column other than the fallback with none;
+- an unknown `role`, a role on the wrong side (`prreview` on the agent side, `queue` or `done` on
+  the human side), or a role carried by two columns of one side;
 - a human side on which a card with no gate and `waitsOnPerson` reaches no column: it would be
   the person's turn and nowhere on the board;
 - a column nothing can reach: one whose `when` is an empty list (`[]`), one after a column whose
@@ -439,8 +447,8 @@ differ from one repository to the next, and a layout must not change what "it is
 ## Implementation split
 
 In order. Each one is a sub-issue of #559 and lands on its own. Until the fourth, the columns stay
-the same as today (the third adds only a pill on the card; a parent's hub card follows its hub's
-gate from the first, as above).
+the same as today (the third adds only a pill on the card). The one exception is a parent's hub
+card: its facts read the hub's gate from the first, and its column follows them from the second.
 
 **1. The agent board's column is decided only in the page, and its precedence is untested**
 
@@ -489,7 +497,8 @@ labels a session's phase by its `step`, and names columns with their side outsid
 labels come from `columns`. Scrub the new keys from `extra` as `humanCol` is.
 Drop `AGENT_COLUMNS`, `HUMAN_COLUMNS`, `AGENT_COL_OF_PHASE` and `agentColOf`. Replace the page
 test's checks of the dropped tables with Rust tests that every value lands where it lands today,
-and move the tests that pin `humanCol`. The board must look the same.
+and move the tests that pin `humanCol`. The board must look the same, except a parent's hub card,
+which is placed by its hub's open gate.
 ```
 
 **3. adjutant cannot tell an investigation or a design from an implementation**
@@ -524,8 +533,8 @@ other people has nowhere to put those cards.
 
 Add the `board` setting from `docs/board-columns.md` (taken whole from the repository, `defaults`
 or the top level, read on every poll) with `preset`, `agentColumns` and `humanColumns`, and the
-`workTypes` setting, which `--work` then accepts through the same check. Ship the `default` and
-`investigation` presets. Check a layout against the fact vocabulary and fall back to the preset as
+`workTypes` setting, which `--work` then accepts through the same check. Ship the
+`investigation` preset. Check a layout against the fact vocabulary and fall back to the preset as
 a whole, with a warning in `adj config`, `adjutant_config` and on the board, for each problem the
 doc lists. 「すべて」 asks each board for the `default` columns (`?columns=default`). Document both
 settings in `config.example.json` and both READMEs.
@@ -546,6 +555,7 @@ Add `parked` to the facts (absent once the task is `done` or `cancelled`), the `
 setting (accepted by `adj task park --reason` through one check in `task`), and the `waiting`
 preset with its parked columns early. Parking and unparking stay #555's actions (置く with a
 reason, 置くのをやめる, `adj task park` / `unpark`); the reason picker lists first the reasons the
-layout has a column for. `yourTurn` and the counts leave parked tasks out. Document `parkReasons`
+layout has a column for. `yourTurn` and the counts leave parked tasks out, the gate-count badge
+and `/api/boards`' `gates` included. Document `parkReasons`
 and the `waiting` preset in `config.example.json` and both READMEs.
 ```
