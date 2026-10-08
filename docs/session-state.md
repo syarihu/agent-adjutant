@@ -418,7 +418,9 @@ The board, the permission part of gates and cards, and the hub's line landed in
 is listed so the ledger carries what it will need.
 
 - **The board** (landed, #506). A sessions tab in the sidebar, and the session cards, read `agent_sessions` on the
-  existing 2-second poll of `/api/state`. No push channel is added.
+  existing 2-second poll of `/api/state`. No push channel is added. The 「いまの仕事」 view reads the
+  same ledger fields through `GET /api/work` on the same 2-second clock: one document for every
+  repository, built from one carrier board each, and still no push channel.
 - **Notifying a wait** (#524). A row that turns `waiting` is announced once, when it has stayed
   `waiting` for 5 seconds (`board/jobs/wait_watch.rs`, a job beside `sweep_gates` in the resident
   server and in a dedicated board). It reads `registry::waiting_agent_sessions` (every `waiting`

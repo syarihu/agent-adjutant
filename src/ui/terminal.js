@@ -35,7 +35,7 @@ function terminalEndText(code, reason) {
 
 /* `base` is the board's path; a view across boards, where `BASE` is empty, names the board of
    the session. */
-function mountSessionTerminal(container, { sessionId, onEnd, base = BASE } = {}) {
+function mountSessionTerminal(container, { sessionId, onEnd, base = BASE, focus = true } = {}) {
   container.classList.add('adj-terminal');
   let term = null;
   let fit = null;
@@ -99,7 +99,7 @@ function mountSessionTerminal(container, { sessionId, onEnd, base = BASE } = {})
     });
     observer = new ResizeObserver(scheduleFit);
     observer.observe(container);
-    term.focus();
+    if (focus) term.focus();
   })();
 
   return {

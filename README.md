@@ -522,6 +522,31 @@ detaches: the window and the agent in it keep running. The board attaches as a c
 so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
 that acted last decides.
 
+**いまの仕事 (the work under way).** Under 全体 in the sidebar, on the resident server only, 「いまの仕事」 is one view of
+the work under way in every repository, in three columns. The list on the left has two groupings: 「親 Issue」
+(the default: repository, then parent issue, then task, with the tasks that have no parent under 「親なし」) and
+「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
+not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
+hub as a row marked "hub". A task whose worker is gone is not. A parent's header shows a bar with a segment per
+child (merged, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
+folded header says how many rows are in each state. A row carries the state icon, the agent with its model
+and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
+what a permission prompt asks, the tool that is running, and a line such as "設計レビュー · あなたの判定待ち" while
+a gate waits on you. The rate limits are under the list. The middle column is the terminal of the selected
+session (selecting a parent shows the terminal of the hub that runs it), never behind a tab; the right column
+is the task panel on the selected row's board, without its ターミナル tab (「ターミナルで話す」 moves the keyboard to
+the middle terminal), or, for a parent, its overview: how far it is, the stack from the base branch up,
+「次を着手させる」 and 「子タスクを足す」. The address is `/?view=work` with nothing selected and
+`/b/<slug>/?view=work&task=<ref>&pane=<tab>` with a row selected, where `<ref>` is a task id, `hub:<id>`,
+`session:<id>` or `parent:<key>`. The widths of the list, the task panel and the sidebar are dragged from their
+edges (arrow keys too; a double click puts one back) and kept in this browser. The list is
+`GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
+where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, error?}`; `parents` are the board's
+(see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
+as `{board, session, task?}` (`board` is the slug of the board the row opens on, `task` is
+`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson}`), and `hubSessions` are the sessions of
+the parent-task hubs.
+
 **The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
 another card shows that one instead. Its header has the task's key, the board it comes from, its
 state and its title, with 「カードへ」, three placement buttons and a close button. Inside are five
@@ -850,8 +875,13 @@ the gate directories.
   record's value.
 - `parents` (on `/api/state`; left out when no task has a parent): each parent with its children
   from `tasks` and `hubTasks`, sorted by `key`: `{key, url, number?, title?, children, merged,
-  total, stacked}`. A child is `{hub, id, merged, on?, onHub?}`: `hub` is the slug of the hub that owns it
-  (an id is unique only within one hub), `merged` is whether its PR is merged, and `on` (with `onHub`, the sibling's hub) is the
+  total, stacked, hub}`. `hub` is the slug of the hub that runs the children: a parent-task hub among the
+  children's, else the repository's own. A child is `{hub, id, merged, progress, branch?, base?, on?, onHub?}`:
+  `hub` is the slug of the hub that owns it
+  (an id is unique only within one hub), `merged` is whether its PR is merged, `progress` is `merged` (its PR is
+  merged, or the task is done), `pr` (a PR is set, or the task says `pr`, and it is not merged), `working` (the
+  task was handed to a worker) or `not-started`, `branch` is the branch its work is on and `base` what it is cut
+  from (less one leading `origin/`), and `on` (with `onHub`, the sibling's hub) is the
   sibling whose branch it is cut from (its `base`, less one leading `origin/`, equal to the
   sibling's branch: the one its worktree is on, else its PR's head). `stacked` is whether any child
   has an `on`, and the children then come in stack order, root first, and the rest in queue order.

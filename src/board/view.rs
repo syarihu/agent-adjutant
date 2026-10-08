@@ -9,12 +9,16 @@ mod rate_limits;
 mod sessions;
 mod state;
 mod waiting;
+mod work;
 
 #[cfg(test)]
 pub use columns::*;
 pub use history::*;
 pub use index::*;
+#[cfg(test)]
+pub use parents::Progress;
 pub use sessions::*;
 pub use state::*;
 #[cfg(test)]
 pub use waiting::cut_chars;
+pub use work::*;

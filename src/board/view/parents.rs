@@ -68,6 +68,23 @@ pub struct ParentGroup {
     pub total: usize,
     /// Whether some child branches from another's branch.
     pub stacked: bool,
+    /// The slug of the hub that runs the children: a parent-task hub among the children's when
+    /// there is one, else the repository's own. Which terminal the page opens for the parent.
+    pub hub: String,
+}
+
+/// How far a child has got, for the one bar a parent draws with a segment per child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Progress {
+    /// Its pull request is merged, or the task is done.
+    Merged,
+    /// A pull request is set (or the task says `pr`) and is not merged.
+    Pr,
+    /// A worker was handed it and has not made a pull request.
+    Working,
+    /// Anything else: not handed over yet, or cancelled.
+    NotStarted,
 }
 
 /// A child, joined by the hub that owns it and its id: an id is unique only within one hub.
@@ -77,6 +94,14 @@ pub struct ParentChild {
     pub hub: String,
     pub id: String,
     pub merged: bool,
+    pub progress: Progress,
+    /// The branch its work is on, which the page names a stack's steps by.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// What it is cut from, without a leading `origin/`: the root of a stack names the branch
+    /// the series starts from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     /// The sibling whose branch this one is cut from: its id, and `on_hub` the hub that owns it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<String>,
@@ -91,6 +116,9 @@ pub(super) struct Inputs<'a> {
     pub issue_keys: &'a serde_json::Map<String, serde_json::Value>,
     /// The linked worktrees, which say which branch a task's worktree is on.
     pub linked: &'a [Worktree],
+    /// The slugs of the parent-task hubs of the repository, which a parent's children may be
+    /// run by.
+    pub parent_hubs: &'a [String],
     /// What the tracker last said the issue at a URL has for a parent.
     pub tracker: &'a dyn Fn(&str) -> Option<TrackerParent>,
 }
@@ -178,6 +206,7 @@ struct Kid {
     /// What it is cut from, without a leading `origin/`.
     base: Option<String>,
     merged: bool,
+    progress: Progress,
 }
 
 struct Acc {
@@ -220,6 +249,7 @@ pub(super) fn attach(
                 .filter(|b| !b.is_empty())
                 .map(str::to_string),
             merged: t.pr_status.as_ref().is_some_and(|p| p.state == "merged"),
+            progress: progress_of(t),
         };
         let acc = groups
             .entry(resolved.parent.key.clone())
@@ -241,7 +271,23 @@ pub(super) fn attach(
         shown.hub = kid_hub;
         card.parent_issue = Some(shown);
     }
-    groups.into_values().map(group_of).collect()
+    groups
+        .into_values()
+        .map(|acc| group_of(acc, inputs))
+        .collect()
+}
+
+fn progress_of(task: &task::Task) -> Progress {
+    let merged = task.pr_status.as_ref().is_some_and(|p| p.state == "merged");
+    if merged || task.status == task::Status::Done {
+        Progress::Merged
+    } else if task.pr.is_some() || task.status == task::Status::Pr {
+        Progress::Pr
+    } else if task.status == task::Status::Dispatched {
+        Progress::Working
+    } else {
+        Progress::NotStarted
+    }
 }
 
 /// The branch a task's work is on: its worktree's, when that is still there, else the head of
@@ -256,7 +302,7 @@ fn branch_of(task: &task::Task, linked: &[Worktree]) -> Option<String> {
     from_worktree.or_else(|| task.pr_status.as_ref().and_then(|p| p.head.clone()))
 }
 
-fn group_of(mut acc: Acc) -> ParentGroup {
+fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     acc.kids
         .sort_by(|a, b| (a.order, &a.created_at).cmp(&(b.order, &b.created_at)));
     // Whose branch each child is cut from, among the others; the first when two share a branch.
@@ -295,6 +341,15 @@ fn group_of(mut acc: Acc) -> ParentGroup {
     let total = acc
         .tracker_total
         .map_or(acc.kids.len(), |total| (total as usize).max(acc.kids.len()));
+    // A parent-task hub that runs one of the children runs the parent; otherwise the children
+    // are the repository's own.
+    let hub = acc
+        .kids
+        .iter()
+        .map(|k| k.hub.as_str())
+        .find(|hub| inputs.parent_hubs.iter().any(|p| p == hub))
+        .unwrap_or(inputs.slug)
+        .to_string();
     ParentGroup {
         key: acc.parent.key,
         url: acc.parent.url,
@@ -306,6 +361,9 @@ fn group_of(mut acc: Acc) -> ParentGroup {
                 hub: acc.kids[i].hub.clone(),
                 id: acc.kids[i].id.clone(),
                 merged: acc.kids[i].merged,
+                progress: acc.kids[i].progress,
+                branch: acc.kids[i].branch.clone(),
+                base: acc.kids[i].base.clone(),
                 on: on[i].map(|j| acc.kids[j].id.clone()),
                 on_hub: on[i].map(|j| acc.kids[j].hub.clone()),
             })
@@ -313,6 +371,7 @@ fn group_of(mut acc: Acc) -> ParentGroup {
         merged,
         total,
         stacked: on.iter().any(Option::is_some),
+        hub,
     }
 }
 

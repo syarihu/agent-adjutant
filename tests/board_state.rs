@@ -275,8 +275,8 @@ fn read(fixture: &Fixture, resident: &Resident, path: &str, query: &str) -> Valu
     normalize(&mut value, &run(fixture, resident), true);
     // What the server reads in the background after the poll asked (a worktree's diff, the PR
     // of a branch) is there or not by timing, so it is left out of what is pinned.
-    if let Some(sessions) = value.get_mut("sessions").and_then(Value::as_array_mut) {
-        for session in sessions.iter_mut().filter_map(Value::as_object_mut) {
+    let unsettled = |session: &mut Value| {
+        if let Some(session) = session.as_object_mut() {
             for key in [
                 "uncommitted",
                 "uncommittedError",
@@ -284,6 +284,29 @@ fn read(fixture: &Fixture, resident: &Resident, path: &str, query: &str) -> Valu
                 "branchPrError",
             ] {
                 session.remove(key);
+            }
+        }
+    };
+    if let Some(sessions) = value.get_mut("sessions").and_then(Value::as_array_mut) {
+        sessions.iter_mut().for_each(unsettled);
+    }
+    // The work list carries the same sessions, a row each.
+    for repo in value
+        .get_mut("repos")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        for list in ["rows", "hubSessions"] {
+            for row in repo
+                .get_mut(list)
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(session) = row.get_mut("session") {
+                    unsettled(session);
+                }
             }
         }
     }
@@ -611,16 +634,229 @@ fn expected_parents() -> Value {
     json!([
       {
         "children": [
-          {"hub": SLUG, "id": "WID-1", "merged": false},
-          {"hub": SLUG, "id": "WID-2", "merged": false, "on": "WID-1", "onHub": SLUG},
-          {"hub": FEATURE_SLUG, "id": "WID-9", "merged": false}
+          {
+            "branch": "wid-1",
+            "hub": SLUG,
+            "id": "WID-1",
+            "merged": false,
+            "progress": "working"
+          },
+          {
+            "base": "wid-1",
+            "hub": SLUG,
+            "id": "WID-2",
+            "merged": false,
+            "on": "WID-1",
+            "onHub": SLUG,
+            "progress": "not-started"
+          },
+          {
+            "hub": FEATURE_SLUG,
+            "id": "WID-9",
+            "merged": false,
+            "progress": "working"
+          }
         ],
+        "hub": FEATURE_SLUG,
         "key": "acme/widget#957",
         "merged": 0,
         "number": 957,
         "stacked": true,
         "total": 3,
         "url": "https://github.com/acme/widget/issues/957"
+      }
+    ])
+}
+
+fn expected_work() -> Value {
+    let mut work = json!({
+      "now": "<now>",
+      "rateLimits": {
+        "accounts": []
+      },
+      "repos": [
+        {
+          "carrier": SLUG,
+          "hubs": expected_hubs(),
+          "nwo": "acme/widget",
+          "parents": expected_parents()
+        }
+      ]
+    });
+    work["repos"][0]["hubSessions"] = expected_work_hub_sessions();
+    work["repos"][0]["rows"] = expected_work_rows();
+    work
+}
+
+fn expected_work_hub_sessions() -> Value {
+    json!([
+      {
+        "board": FEATURE_SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "main",
+          "id": "hub-wid-957",
+          "key": "wid-957",
+          "kind": "hub",
+          "pid": GONE,
+          "present": false,
+          "stale": true,
+          "startedAt": "20260922T030000Z",
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "adjutant-acme-widget-wid-957-5283c95d4f4cc314",
+          "worktree": "<tmp>/widget"
+        }
+      }
+    ])
+}
+
+fn expected_work_rows() -> Value {
+    json!([
+      {
+        "board": SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "main",
+          "conversation": "sid-hub",
+          "id": "hub",
+          "kind": "hub",
+          "present": false,
+          "stale": false,
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "adjutant-acme-widget-898449509108182c",
+          "worktree": "<tmp>/widget"
+        }
+      },
+      {
+        "board": FEATURE_SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "scratch",
+          "conversation": "sid-scratch",
+          "hub": "hub-wid-957",
+          "id": "worker-scratch",
+          "kind": "worker",
+          "pid": GONE,
+          "present": false,
+          "stale": true,
+          "startedAt": "20260922T041000Z",
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "scratch",
+          "worktree": "<tmp>/scratch"
+        }
+      },
+      {
+        "board": SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "wid-1",
+          "conversation": "sid-wid-1",
+          "hub": "hub",
+          "id": "worker-wid-1",
+          "kind": "worker",
+          "phase": "review",
+          "phaseAt": 1790051400,
+          "phases": [
+            [
+              "plan",
+              1790049660
+            ],
+            [
+              "implement",
+              1790050200
+            ],
+            [
+              "review",
+              1790051400
+            ]
+          ],
+          "pid": "<pid>",
+          "present": true,
+          "stale": false,
+          "startedAt": "20260922T040000Z",
+          "task": "WID-1",
+          "taskTitle": "Task WID-1",
+          "terminal": {
+            "backend": "tmux",
+            "pane": "%7",
+            "session": "work",
+            "socket": "<tmp>/tmux-none",
+            "window": "@3"
+          },
+          "title": "WID-1 Fix widget",
+          "waiting": {
+            "choices": [
+              {
+                "id": "a",
+                "label": "A"
+              },
+              {
+                "id": "b",
+                "label": "B"
+              }
+            ],
+            "count": 1,
+            "focus": "How the click is handled",
+            "hub": "hub",
+            "id": "g-wait",
+            "kind": "question",
+            "openedAt": "20260922T044500Z",
+            "options": [
+              "answer"
+            ],
+            "slug": SLUG,
+            "title": "Which way?"
+          },
+          "worktree": "<tmp>/wid-1"
+        },
+        "task": {
+          "id": "WID-1",
+          "parent": "acme/widget#957",
+          "status": "dispatched",
+          "title": "Task WID-1",
+          "waitsOnPerson": false
+        }
+      },
+      {
+        "board": SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "main",
+          "conversation": "sid-main",
+          "hub": "hub",
+          "id": "worker-main",
+          "kind": "worker",
+          "present": false,
+          "stale": false,
+          "task": "WID-2",
+          "taskTitle": "Task WID-2",
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "Main checkout worker",
+          "worktree": "<tmp>/widget"
+        },
+        "task": {
+          "id": "WID-2",
+          "parent": "acme/widget#957",
+          "status": "queued",
+          "title": "Task WID-2",
+          "waitsOnPerson": false
+        }
       }
     ])
 }
@@ -927,6 +1163,13 @@ fn a_live_tasks_history_is_pinned_whole() {
         "",
     );
     assert_same(&history, &expected_history());
+}
+
+#[test]
+fn the_work_list_is_pinned_whole() {
+    let (fixture, resident) = board();
+    let work = read(&fixture, &resident, "/api/work", "");
+    assert_same(&work, &expected_work());
 }
 
 #[test]

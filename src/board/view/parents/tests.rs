@@ -68,6 +68,7 @@ fn run(
             slug: SLUG,
             issue_keys: &keys(),
             linked,
+            parent_hubs: &["acme-widget-9".to_string()],
             tracker,
         },
     )
@@ -372,10 +373,11 @@ fn the_shape_the_page_reads() {
             "key": "acme/widget#5",
             "url": "https://github.com/acme/widget/issues/5",
             "number": 5,
-            "children": [{"hub": SLUG, "id": "a", "merged": false}],
+            "children": [{"hub": SLUG, "id": "a", "merged": false, "progress": "not-started"}],
             "merged": 0,
             "total": 1,
-            "stacked": false
+            "stacked": false,
+            "hub": SLUG
         })
     );
 }
@@ -469,4 +471,96 @@ fn the_record_key_is_sent_beside_a_trackers_parent_and_names_the_hub_of_the_card
     );
     let json = serde_json::to_value(shown(1)).unwrap();
     assert!(json.get("recordKey").is_none(), "{json}");
+}
+
+#[test]
+fn a_child_is_as_far_as_its_status_and_pull_request_say() {
+    let p = "https://github.com/acme/widget/issues/9";
+    let mut merged = with_parent("merged", 1, p);
+    merged.pr_status = Some(pr("merged", None));
+    let mut done = with_parent("done", 2, p);
+    done.status = task::Status::Done;
+    let mut with_pr = with_parent("pr", 3, p);
+    with_pr.pr = Some("https://github.com/acme/widget/pull/3".to_string());
+    with_pr.status = task::Status::Dispatched;
+    let mut status_pr = with_parent("status-pr", 4, p);
+    status_pr.status = task::Status::Pr;
+    let mut working = with_parent("working", 5, p);
+    working.status = task::Status::Dispatched;
+    let mut queued = with_parent("queued", 6, p);
+    queued.status = task::Status::Queued;
+    let mut cancelled = with_parent("cancelled", 7, p);
+    cancelled.status = task::Status::Cancelled;
+    let mut tasks = cards(vec![
+        merged, done, with_pr, status_pr, working, queued, cancelled,
+    ]);
+    let g = &run(&mut tasks, &mut [], &[], &never)[0];
+    let seen: Vec<(&str, Progress)> = g
+        .children
+        .iter()
+        .map(|c| (c.id.as_str(), c.progress))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("merged", Progress::Merged),
+            ("done", Progress::Merged),
+            ("pr", Progress::Pr),
+            ("status-pr", Progress::Pr),
+            ("working", Progress::Working),
+            ("queued", Progress::NotStarted),
+            ("cancelled", Progress::NotStarted),
+        ]
+    );
+    let shown = serde_json::to_value(g).unwrap();
+    assert_eq!(shown["children"][2]["progress"], "pr");
+    assert_eq!(shown["children"][5]["progress"], "not-started");
+}
+
+#[test]
+fn a_stacked_chain_names_its_branches_and_what_the_root_is_cut_from() {
+    let (a, wa) = stacked("a", 1, "origin/main", "feature/a");
+    let (b, wb) = stacked("b", 2, "feature/a", "feature/b");
+    let mut tasks = cards(vec![b, a]);
+    let g = &run(&mut tasks, &mut [], &[wa, wb], &never)[0];
+    let seen: Vec<(&str, Option<&str>, Option<&str>)> = g
+        .children
+        .iter()
+        .map(|c| (c.id.as_str(), c.branch.as_deref(), c.base.as_deref()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("a", Some("feature/a"), Some("main")),
+            ("b", Some("feature/b"), Some("feature/a"))
+        ]
+    );
+}
+
+#[test]
+fn the_parent_is_run_by_a_parent_task_hub_among_its_children_else_the_repository() {
+    let p = "https://github.com/acme/widget/issues/9";
+    let mut own = cards(vec![with_parent("1", 1, p)]);
+    assert_eq!(run(&mut own, &mut [], &[], &never)[0].hub, SLUG);
+    // Mixed: one child on the board, one in a parent-task hub.
+    let mut tasks = cards(vec![with_parent("1", 1, p)]);
+    let mut hub_tasks = cards(vec![with_parent("2", 2, p)]);
+    hub_tasks[0].owner_hub = Some(OwnerHub {
+        slug: "acme-widget-9".to_string(),
+        key: None,
+        human_col: None,
+    });
+    assert_eq!(
+        run(&mut tasks, &mut hub_tasks, &[], &never)[0].hub,
+        "acme-widget-9"
+    );
+    // A hub that is not a parent-task hub of the repository does not own the parent.
+    let mut tasks = cards(vec![with_parent("1", 1, p)]);
+    let mut hub_tasks = cards(vec![with_parent("2", 2, p)]);
+    hub_tasks[0].owner_hub = Some(OwnerHub {
+        slug: "acme-widget-other".to_string(),
+        key: None,
+        human_col: None,
+    });
+    assert_eq!(run(&mut tasks, &mut hub_tasks, &[], &never)[0].hub, SLUG);
 }

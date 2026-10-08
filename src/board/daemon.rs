@@ -215,6 +215,7 @@ impl BoundResident {
             terminals: Arc::default(),
             pr_poll: Arc::default(),
             waits: Arc::default(),
+            work_cache: Mutex::default(),
         });
         {
             let resident = Arc::clone(&resident);

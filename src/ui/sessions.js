@@ -347,6 +347,9 @@ function panelRefOf(id) {
   const s = sessOfRef(id);
   if (!s) return id;
   if (s.kind === 'hub') return HUB_REF + s.id;
+  // The work view opens a worker on this board when the board of its task is not served: a bare task
+  // id here would be the repository's own task of that id.
+  if (view === 'work' && s.task && boardOfSession(s).slug && boardOfSession(s).slug !== nav.board) return id;
   const t = taskOfSession(s);
   return t ? t.id : id;
 }

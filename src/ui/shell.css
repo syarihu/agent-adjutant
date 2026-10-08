@@ -1,6 +1,6 @@
 /* ── M3 Navigation Rail / Drawer (Left Side) ── */
 #nav-rail {
-  width: 240px;
+  width: var(--rail-w, 240px);
   background: var(--md-sys-color-surface-container-low);
   border-right: 1px solid var(--md-sys-color-outline-variant);
   display: flex;

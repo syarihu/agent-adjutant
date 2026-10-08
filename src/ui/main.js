@@ -15,7 +15,7 @@ document.addEventListener('keydown', e => {
     }
     // Escape in a text field must not close what it is in and drop what was typed.
     if (e.target.matches('textarea,input,select')) return;
-    if ((view === 'board' || view === 'sessions') && selectedTaskId) {
+    if ((view === 'board' || view === 'sessions' || view === 'work') && selectedTaskId) {
       closeTaskPanel();
       return;
     }
@@ -32,6 +32,7 @@ function setView(v) {
   const boardView = document.getElementById('board-view');
   const reviewView = document.getElementById('review');
   const sessionsView = document.getElementById('sessions-view');
+  const workView = document.getElementById('work-view');
 
   if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
   if (reviewView) {
@@ -40,6 +41,10 @@ function setView(v) {
   }
 
   if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
+  if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
+  document.body.classList.toggle('view-work', v === 'work');
+  // The middle terminal is not kept behind another view.
+  if (prev === 'work' && v !== 'work') disposeTermSlot(workTerm);
   if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
   // The review view's terminal is not kept behind another view.
   if (prev === 'review' && v !== 'review') disposeTermSlot(reviewTerm);
@@ -50,14 +55,19 @@ function setView(v) {
     if (v === 'review') navReview.setAttribute('aria-current', 'page');
     else navReview.removeAttribute('aria-current');
   }
+  const navWork = document.getElementById('nav-work');
+  if (navWork) {
+    if (v === 'work') navWork.setAttribute('aria-current', 'page');
+    else navWork.removeAttribute('aria-current');
+  }
   applyLayout();
 
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
-    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : null;
+    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : v === 'work' ? 'work' : null;
     if (want && nav.view !== want) {
       nav.view = want;
-      if (want !== 'sessions' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
+      if (want !== 'sessions' && want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
       history.replaceState(null, '', urlOf());
     }
   }
@@ -71,6 +81,9 @@ function setView(v) {
     } else if (v === 'review') {
       pageTitle.textContent = '要対応';
       pageSub.textContent = '全ボードのあなたの対応待ち。左で選んで、右で答える';
+    } else if (v === 'work') {
+      pageTitle.textContent = 'いまの仕事';
+      pageSub.textContent = '全リポジトリの動いている仕事。左で選び、中央で話し、右で判定する';
     }
   }
 
@@ -82,6 +95,9 @@ function setView(v) {
   if (v === 'sessions') {
     renderSessionsTab();
     renderSessionsView();
+    renderTaskPanel();
+  } else if (v === 'work') {
+    renderWorkView();
     renderTaskPanel();
   } else if (v !== 'board') {
     dismissTaskPanel();
@@ -124,6 +140,7 @@ function toggleTheme() {
 const ACTIONS = {
   'new-task': () => openForm(),
   queue: () => goToQueue(),
+  work: () => go({ board: 'all', view: 'work', task: null, pane: 'detail' }),
   notify: () => toggleNotify(),
   theme: () => toggleTheme(),
   'own-hub': () => openOwnHub(),

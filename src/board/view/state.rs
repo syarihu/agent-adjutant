@@ -406,6 +406,11 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     }
 
     let mut hub_tasks = hub_task_cards(&server.ctx.state, repo, &hubs, &workers);
+    let parent_hubs: Vec<String> = hubs
+        .iter()
+        .filter(|h| h.parent)
+        .map(|h| h.slug.clone())
+        .collect();
     let parents = parents::attach(
         &mut tasks,
         &mut hub_tasks,
@@ -413,6 +418,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
             slug: &repo.slug,
             issue_keys: &settings.issue_keys,
             linked: &linked,
+            parent_hubs: &parent_hubs,
             // Not resident: nothing asked the tracker, so the record is all there is.
             tracker: &|url| {
                 server

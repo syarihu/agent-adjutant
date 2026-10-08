@@ -19,6 +19,10 @@
   <div class="rail-destinations">
     <div class="rail-global">
       <div class="rail-section-label">全体</div>
+      <button class="rail-item" id="nav-work" title="いまの仕事" data-action="work">
+        <span class="material-symbols-outlined" aria-hidden="true">work_history</span>
+        <span class="rail-label">いまの仕事</span>
+      </button>
       <button class="rail-item" id="nav-review" title="要対応" data-action="queue">
         <span class="material-symbols-outlined">mark_chat_unread</span>
         <span class="rail-label">要対応</span>
@@ -40,6 +44,7 @@
       </button>
     </div>
   </div>
+  <div class="rail-resize" id="rail-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="サイドバーの幅" aria-valuemin="180" aria-valuemax="400" aria-valuenow="240" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
 </aside>
 
 <!-- The task panel is a child of body, between the sidebar and the page, and is never moved:
@@ -151,6 +156,32 @@
           <div class="tp-term-ph" id="rv-term-ph" hidden></div>
         </div>
       </div>
+    </div>
+    <!-- The work under way in every repository: the list, the selected session's terminal, and (the task
+         panel, which is the body's own) what to judge. Nothing here is drawn from the board's state: the
+         list is /api/work, and only the panel and the terminal read the board that was selected. -->
+    <div id="work-view">
+      <section class="wk-list" aria-label="いまの仕事の一覧">
+        <div class="pane-head wk-list-head">
+          <span class="material-symbols-outlined" aria-hidden="true">work_history</span>
+          <span class="pane-title">いまの仕事</span>
+          <div class="m3-segmented-tabs wk-group-switch" role="group" aria-label="まとめ方">
+            <button type="button" class="m3-seg-tab" data-wk-group="parent" aria-pressed="true">親 Issue</button>
+            <button type="button" class="m3-seg-tab" data-wk-group="state" aria-pressed="false">状態</button>
+          </div>
+        </div>
+        <div class="wk-list-scroll"><div id="wk-groups"></div></div>
+        <div class="wk-rate" id="wk-rate"></div>
+        <div class="wk-resize" id="wk-list-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="一覧の幅" aria-valuemin="260" aria-valuemax="640" aria-valuenow="380" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
+      </section>
+      <section class="wk-term" aria-label="選んだ仕事のターミナル">
+        <div class="wk-term-head" id="wk-term-head"></div>
+        <div class="tp-pane tp-term wk-term-pane">
+          <div class="tp-term-bar" id="wk-term-bar"></div>
+          <div class="tp-term-host" id="wk-term-host"></div>
+          <div class="tp-term-ph" id="wk-term-ph"></div>
+        </div>
+      </section>
     </div>
     <div id="sessions-view" role="tabpanel">
       <!-- Above the list, so a notice is seen whether or not the panel is open. -->

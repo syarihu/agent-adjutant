@@ -484,7 +484,7 @@ fn serde_name(v: impl serde::Serialize) -> String {
 
 #[test]
 fn the_page_has_a_word_for_every_value_the_server_sends() {
-    use crate::board::view::HumanCol;
+    use crate::board::view::{HumanCol, Progress};
     use crate::gate::Kind;
     use crate::task::PrTurn;
 
@@ -549,6 +549,16 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
         | HumanCol::Question => {}
     };
 
+    let progress = [
+        Progress::Merged,
+        Progress::Pr,
+        Progress::Working,
+        Progress::NotStarted,
+    ];
+    let _ = |p: Progress| match p {
+        Progress::Merged | Progress::Pr | Progress::Working | Progress::NotStarted => {}
+    };
+
     let kinds_table = page_table("const KINDS = {", "};");
     let phase_label = page_table("const PHASE_LABEL = {", "};");
     let phase_col = page_table("const AGENT_COL_OF_PHASE = {", "};");
@@ -556,6 +566,7 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
     let human_columns = page_table("const HUMAN_COLUMNS = [", "];");
     let turn_why = page_table("const PR_TURN_WHY = {", "};");
     let turn_pill = page_table("const PR_TURN = {", "};");
+    let work_progress = page_table("const WORK_PROGRESS = {", "};");
 
     for kind in kinds {
         let name = serde_name(kind);
@@ -586,6 +597,13 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
                 "PR_TURN_WHY has no turn {name}, which waits on the person"
             );
         }
+    }
+    for step in progress {
+        let name = serde_name(step);
+        assert!(
+            has_key(work_progress, &name),
+            "WORK_PROGRESS has no progress {name}"
+        );
     }
     for column in columns {
         let name = serde_name(column);
@@ -1054,7 +1072,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 11);
+    assert_eq!(names.len(), 12);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1096,6 +1114,32 @@ fn a_session_waiting_on_a_prompt_is_listed_in_the_queue_the_person_checks() {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
     assert!(UI_HTML.matches("boardWaiting(").count() >= 5);
+}
+
+#[test]
+fn the_page_has_the_work_view_beside_the_review_queue() {
+    for piece in [
+        // The sidebar entry, the three-column view and the middle terminal's host.
+        "id=\"nav-work\"",
+        "data-action=\"work\"",
+        "id=\"work-view\"",
+        "id=\"wk-term-host\"",
+        "id=\"wk-list-resize\"",
+        "id=\"rail-resize\"",
+        // The list is the resident's own document, not a merge made in the page.
+        "boardApi('', '/api/work')",
+        "view=work",
+        "const DEFAULT_MULTI_VIEW = 'agent'",
+        "const PARENT_REF = 'parent:'",
+        // 「ターミナルで話す」 goes to the middle terminal in this view.
+        "if (view === 'work') return focusWorkTerm();",
+    ] {
+        assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+    // A board served alone has no list of boards to read the work from.
+    assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
+    // The panel has no terminal tab in this view.
+    assert!(UI_HTML.contains("const term = view === 'work' ? ''"));
 }
 
 #[test]

@@ -68,7 +68,8 @@ function openTask(id, tab = 'overview', gateId = null) {
   const inPanel = tp('task-panel').contains(from);
   if (!(dialogFor !== null && inPanel)) dialogReturn = from && from !== document.body && !inPanel ? from : null;
   selectedTaskId = id;
-  dialogFor = id;
+  // The work view keeps the panel in its right column: nothing there is a dialog.
+  dialogFor = view === 'work' ? null : id;
   markSelectedCards();
   go({ ...(view === 'review' ? { view: prefs.tab === 'agent' ? 'agent' : 'human' } : {}), task: id, pane: paneOfTab(tab) },
     { replace: id === nav.task });
@@ -82,7 +83,7 @@ function openTask(id, tab = 'overview', gateId = null) {
 /* Whether the panel is the dialog now: the placement saved, or a link that wants room. */
 let dialogFor = null;
 let dialogReturn = null;
-const panelPop = () => prefs.panelDialog || (dialogFor !== null && dialogFor === selectedTaskId);
+const panelPop = () => view !== 'work' && (prefs.panelDialog || (dialogFor !== null && dialogFor === selectedTaskId));
 
 /* The panel's state, without the address: for a move the address already made. */
 function hideTaskPanelState() {
@@ -124,6 +125,8 @@ function dismissTaskPanel() {
 
 function closeTaskPanel() {
   hideTaskPanelState();
+  // The work view's list belongs to no board: closing the selection goes back to it, as the sidebar's entry does.
+  if (view === 'work') return go({ board: 'all', task: null, pane: 'detail' });
   if (nav.task) go({ task: null, pane: 'detail' });
 }
 
@@ -143,10 +146,10 @@ function placePanel(where) {
 /* A session is there to open a terminal on when its worktree has one at all. */
 const hasSession = s => !!s && sessionState(s) !== 'none';
 /* The tab shown: ターミナル only where there is a session, whatever the address says. */
-const paneOf = task => nav.pane === 'term' ? (hasSession(sessionOfTask(task)) ? 'term' : 'detail')
+const paneOf = task => nav.pane === 'term' ? (view !== 'work' && hasSession(sessionOfTask(task)) ? 'term' : 'detail')
   : PANES.includes(nav.pane) ? nav.pane : 'detail';
 /* The same for a session with no task, which is its own subject. */
-const sessPaneOf = s => nav.pane === 'term' && hasSession(s) ? 'term' : 'detail';
+const sessPaneOf = s => nav.pane === 'term' && view !== 'work' && hasSession(s) ? 'term' : 'detail';
 
 /* The sidebar is the icon rail when the window is narrow, and while the panel sits on its left. */
 const narrowRail = matchMedia('(max-width: 1024px)');
@@ -193,15 +196,28 @@ function renderTaskPanel() {
   const hub = hubOfRef(selectedTaskId);
   const task = selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
+  const parent = view === 'work' ? parentOfRef(selectedTaskId) : null;
+  // The work view marks the row, and draws the terminal, of what the address names.
+  // The middle terminal is the work view's: one the panel mounted earlier is not kept beside it.
+  if (view === 'work') {
+    if (panelTerm.term) disposePanelTerminal();
+    syncWorkSelection();
+  }
   // A card the board no longer lists, a hub that left its list, or a session that is gone takes
-  // the panel with it.
-  if (selectedTaskId && !task && !hub && !sess) return dismissTaskPanel();
-  const shown = !!(task || hub || sess) && (view === 'board' || view === 'sessions');
+  // the panel with it. In the work view the panel stays and says so: the row was opened from a
+  // list that may know more than the board it is on.
+  // A parent is not gone while the work document that lists it has not been read.
+  const gone = !!selectedTaskId && !task && !hub && !sess && !parent && !(isParentRef(selectedTaskId) && !work.doc);
+  if (gone && view !== 'work') return dismissTaskPanel();
+  // Until the board has answered once, what it lacks is not known to be missing.
+  if (gone && state.now == null) return;
+  const shown = (!!(task || hub || sess || parent) || gone) && (view === 'board' || view === 'sessions' || view === 'work');
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop());
   cls.toggle('panel-open', shown);
-  cls.toggle('panel-right', prefs.panelDock === 'right');
+  // The work view keeps the panel in its right column, whichever side it is docked on elsewhere.
+  cls.toggle('panel-right', prefs.panelDock === 'right' || view === 'work');
   cls.toggle('panel-pop', shown && panelPop());
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
   applyRailMode();
@@ -209,9 +225,11 @@ function renderTaskPanel() {
   if (view === 'sessions') applySessionSelection();
   markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
-  if (!task && !hub && !sess) return renderHandForm(null);
+  if (!task && !hub && !sess && !parent && !gone) return renderHandForm(null);
   // On a screen with no panel (the review queue) the panel waits, with its terminal, for the board to come back.
   if (!shown) return;
+  if (parent || gone) return renderWorkPanelOnly(parent);
+  tp('tp-tabs').hidden = false;
 
   const colId = task ? columnOf(task) : null;
   const gate = task ? openGate(task) : null;
@@ -331,11 +349,13 @@ function panelHeadHtml(task) {
 function panelBtnsHtml(jump) {
   const place = (where, icon, label, on) =>
     `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+  // The work view keeps the panel in its right column.
+  const placing = view === 'work' ? '' : `${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !panelPop())}
+      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !panelPop())}
+      ${place('pop', 'open_in_new', 'ダイアログで開く', panelPop())}`;
   return `<div class="tp-head-btns">
       ${jump}
-      ${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !panelPop())}
-      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !panelPop())}
-      ${place('pop', 'open_in_new', 'ダイアログで開く', panelPop())}
+      ${placing}
       <button type="button" class="tool-btn" data-tp-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
     </div>`;
 }
@@ -349,7 +369,8 @@ function panelTabsHtml(task, gate, s, pane, all = []) {
   const usable = hasSession(s) && !!state.boardTerminal?.available;
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
   // The tab shows a word, so five tabs fit; the reason is its tooltip.
-  const term = panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
+  // The work view has the terminal in the middle, beside the panel.
+  const term = view === 'work' ? '' : panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
     : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
   if (!task) return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '') + term;
   // The dot is on the tab the open gate is judged in; the counts and 新着 come from the gates.
@@ -470,7 +491,8 @@ function hubTermWhy(h, s) {
   if (!boardTerminalReady(s)) return ['tmux の外', 'tmux の外で動いている hub は、ボードから端末を開けません'];
   return null;
 }
-const hubPaneOf = (h, s) => nav.pane === 'term' && !hubTermWhy(h, s) ? 'term' : 'detail';
+// The work view has the terminal in the middle, so the panel has no such tab there.
+const hubPaneOf = (h, s) => nav.pane === 'term' && view !== 'work' && !hubTermWhy(h, s) ? 'term' : 'detail';
 
 function hubPanelHeadHtml(h, s) {
   const row = hubRowOf(h);
@@ -501,6 +523,7 @@ function hubPanelHeadHtml(h, s) {
 
 function hubPanelTabsHtml(h, s, pane) {
   const why = hubTermWhy(h, s);
+  if (view === 'work') return panelTab(pane, 'detail', '詳細', '', '');
   return panelTab(pane, 'detail', '詳細', '', '')
     + panelTab(pane, 'term', 'ターミナル', why ? `<span class="tp-tab-hint">${esc(why[0])}</span>` : s.waiting ? '<span class="tp-wait">入力待ち</span>'
       : sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', why && why[1]);
@@ -616,6 +639,7 @@ function syncTermSlot(slot, subject, s, pane) {
   const handle = mountSessionTerminal(slot.host(), {
     sessionId: s.id,
     base: slot.base(),
+    focus: slot.focus !== false,
     onEnd: code => {
       if (slot.term !== handle) return;
       slot.ended = code;
@@ -674,10 +698,15 @@ tp('task-panel').addEventListener('click', e => {
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
-  if (!task && !hub && !sess) return;
+  if (!task && !hub && !sess) return view === 'work' ? workPanelClick(e) : undefined;
   const hit = sel => e.target.closest(sel);
   let b;
-  if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
+  if ((b = hit('[data-pane]'))) {
+    // 「ターミナルで答える」 in the work view moves to the middle terminal, and the tab stays.
+    if (view === 'work' && b.dataset.pane === 'term') return focusWorkTerm();
+    if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true });
+    return;
+  }
   if (hit('[data-tp-close]')) {
     return closeTaskPanel();
   }
@@ -840,6 +869,13 @@ function setPanelWidth(raw) {
   prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
 }
+// A double click puts the width back to where it started.
+tp('tp-resize').addEventListener('dblclick', () => {
+  if (panelPop()) return;
+  prefs.panelWidth = 520;
+  document.body.style.setProperty('--panel-w', '520px');
+  savePrefs();
+});
 tp('tp-resize').addEventListener('keydown', e => {
   if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop() || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();

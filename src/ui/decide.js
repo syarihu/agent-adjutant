@@ -290,6 +290,9 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
    the ball is still with the human until they come back and close it. */
 function talk(id = focused) {
+  // The work view has the worker's terminal in the middle, already open: the focus goes to it, and
+  // the panel's tab stays.
+  if (view === 'work') return focusWorkTerm();
   const g = gateByRef(id);
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the

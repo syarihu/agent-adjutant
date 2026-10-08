@@ -34,6 +34,12 @@ const SESS_REF = 'session:';
 const isSessRef = id => typeof id === 'string' && id.startsWith(SESS_REF);
 const sessIdOfRef = id => id.slice(SESS_REF.length);
 const sessOfRef = (id, data = state) => isSessRef(id) ? (data.sessions || []).find(s => s.id === sessIdOfRef(id)) || null : null;
+/* A parent issue opens in the work view as `parent:<key>`: its overview in the panel, the terminal
+   of the hub that runs it in the middle. The key is the one `parents[].key` carries. */
+const PARENT_REF = 'parent:';
+const isParentRef = id => typeof id === 'string' && id.startsWith(PARENT_REF);
+const parentKeyOfRef = id => id.slice(PARENT_REF.length);
+const parentOfRef = id => isParentRef(id) ? workParentOf(parentKeyOfRef(id)) : null;
 
 const PREF_KEY = 'adj-board-split';
 // sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
@@ -41,7 +47,8 @@ const PREF_KEY = 'adj-board-split';
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering in the review view moves on to the next item.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', sessionsFolded:[], boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true },
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', sessionsFolded:[], boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
+  railWidth:240, workListWidth:380, workGroup:'parent', workFolded:[] },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -50,11 +57,20 @@ if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
+// What is in the browser's storage is not trusted: a width outside its range is the default, a fold
+// list is a list of strings.
+if (!(prefs.railWidth >= 180 && prefs.railWidth <= 400)) prefs.railWidth = 240;
+if (!(prefs.workListWidth >= 260 && prefs.workListWidth <= 640)) prefs.workListWidth = 380;
+if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
+prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 function applyLayout() {
   const boards = document.getElementById('boards');
   if (!boards) return;
+  // The widths of the sidebar and of the work view's list; the panel's own is set by renderTaskPanel.
+  document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
+  document.body.style.setProperty('--wk-list-w', `${prefs.workListWidth}px`);
   boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
   document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
   document.body.classList.toggle('layout-split', prefs.layout === 'split');
@@ -75,7 +91,7 @@ function applyLayout() {
   const tools = document.getElementById('view-tools');
   if (tools) tools.hidden = view !== 'board' || nav.view === 'sessions';
   const tabsRow = document.getElementById('view-tabs-row');
-  if (tabsRow) tabsRow.hidden = view === 'review';
+  if (tabsRow) tabsRow.hidden = view === 'review' || view === 'work';
   document.querySelectorAll('[data-layout]').forEach(b => {
     const on = b.dataset.layout === prefs.layout;
     b.classList.toggle('active', on);
@@ -466,7 +482,7 @@ async function refreshAllBoards(force) {
       }
     }
     // The person may have moved on while the last board was answering.
-    if (epoch !== navEpoch) return;
+    if (epoch !== navEpoch || !scopeAll()) return;
     const slugs = new Set(listed.map(b => b.slug));
     for (const slug of Object.keys(boardStates)) {
       if (!slugs.has(slug)) { delete boardStates[slug]; changed = true; }
@@ -575,6 +591,12 @@ function minuteSessions(sessions, now, mode = 'sessions') {
 }
 
 async function refresh(force = false) {
+  // The work view's list is its own document; the selected board's state below is what the panel and
+  // the terminal read, and there is none while nothing is selected.
+  if (view === 'work') {
+    refreshWork(force);
+    if (nav.board === 'all' || !nav.board) return;
+  }
   if (scopeAll()) {
     // Every board is read, so this runs half as often.
     if (!force) {
@@ -609,7 +631,7 @@ async function refresh(force = false) {
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
     const changed = nextJson !== lastStateJson;
-    const clockOnly = !changed && minute !== lastMinute && (view === 'board' || view === 'sessions');
+    const clockOnly = !changed && minute !== lastMinute && (view === 'board' || view === 'sessions' || view === 'work');
     if (!force && !changed && !clockOnly) return;
     lastStateJson = nextJson;
     lastMinute = minute;
@@ -677,7 +699,7 @@ function renderCounts() {
    tab lets go of the address it waits on before the panel's terminal goes, whose going redraws
    that tab. */
 const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'sessions-tab', 'pending-session',
-  'sessions-view', 'task-panel', 'review', 'layout'];
+  'sessions-view', 'work-view', 'task-panel', 'review', 'layout'];
 const viewsByName = new Map();
 
 /* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets

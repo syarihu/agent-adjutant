@@ -110,6 +110,7 @@ function pageHub() {
 /* The tab's title. The board's name comes first so a narrow tab still shows it, and a parent-task
    hub's title is the one the session tree shows (`hubTitle`), so the two never disagree. */
 function boardTitle() {
+  if (view === 'work') return 'いまの仕事 — adj';
   if (scopeAll()) return nav.view === 'review' ? '要対応 — adj' : 'すべて — adj';
   const entry = selectedBoard();
   if (entry) {
@@ -159,7 +160,7 @@ const boardWaiting = b => (b.waiting || 0) + (b.waits || []).length;
 
 function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiting }) {
   const st = boardState(b);
-  const current = nav.board === b.slug && nav.view !== 'review';
+  const current = nav.board === b.slug && nav.view !== 'review' && nav.view !== 'work';
   const sub = st.stopped ? st.text : (b.hub ? '親タスク hub' : `${(b.nwo || '').split('/')[0]} · リポジトリ hub`);
   const start = st.stopped
     ? `<button type="button" class="start-btn" data-start-slug="${esc(b.slug)}" title="hub を起動します" ${rowStartingNow(b) ? 'disabled' : ''}>起動</button>` : '';
@@ -279,7 +280,7 @@ document.getElementById('board-rows').addEventListener('keydown', e => {
 /* A row of the sidebar: that board, in the view that is open. The review queue is not a view of
    a board, so it opens the board's cards. */
 function openBoard(slug) {
-  const keep = nav.view === 'review' ? 'agent' : nav.view;
+  const keep = nav.view === 'review' || nav.view === 'work' ? 'agent' : nav.view;
   go({ board: slug, view: keep, task: null, item: null });
 }
 
@@ -287,9 +288,9 @@ function openBoard(slug) {
    hub, else on the board it belongs to, where the address opens it after the first poll. */
 function openHubPanelOf(b) {
   const ref = HUB_REF + b.hubId;
-  const listed = !scopeAll() && nav.view !== 'review' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
+  const listed = !scopeAll() && nav.view !== 'review' && nav.view !== 'work' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
   if (listed) return openTaskPanel(ref, 'term');
-  go({ board: b.slug, view: nav.view === 'review' ? 'agent' : nav.view, task: ref, pane: 'term' });
+  go({ board: b.slug, view: nav.view === 'review' || nav.view === 'work' ? 'agent' : nav.view, task: ref, pane: 'term' });
 }
 
 /* The hub of the board on screen, which the title's 「hub」 button opens. */
@@ -315,9 +316,9 @@ function markHubButtons() {
 function renderTitle() {
   // The hub's own buttons have no board to act on in 「すべて」 and the review queue.
   const resync = document.getElementById('btn-resync');
-  if (resync) resync.hidden = scopeAll();
+  if (resync) resync.hidden = scopeAll() || view === 'work';
   const hubBtn = document.getElementById('btn-hub');
-  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review';
+  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review' || view === 'work';
   markHubButtons();
   const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + boardWaiting(b), 0) : waitingIn() + (state.waits || []).length;
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
@@ -330,6 +331,8 @@ function renderTitle() {
   let trail;
   if (view === 'review') {
     trail = ['全体', '要対応'];
+  } else if (view === 'work') {
+    trail = ['全体', 'いまの仕事'];
   } else if (scopeAll()) {
     trail = ['すべてのボード'];
   } else if (entry) {
@@ -756,12 +759,12 @@ function handedNote(handed) {
 }
 
 function openForm() {
-  if (scopeAll() && !boards.some(b => !b.finished)) return note('新しいタスク', true, '作り先のボードがありません');
+  if (noBoard() && !boards.some(b => !b.finished)) return note('新しいタスク', true, '作り先のボードがありません');
   // 「すべて」 has no board of its own to create the task in: ask which.
   const field = document.getElementById('f-board');
   if (field) {
-    field.hidden = !scopeAll();
-    if (scopeAll()) {
+    field.hidden = !noBoard();
+    if (noBoard()) {
       field.querySelector('select').innerHTML = boards.filter(b => !b.finished)
         .map(b => `<option value="${esc(b.slug)}">${esc(b.hub ? `${repoNameOf(b)} › ${boardName(b)}` : repoNameOf(b))}</option>`).join('');
     }
@@ -818,9 +821,9 @@ async function submitForm(e) {
   const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` +
     (body.stopAt && body.stopAt !== 'plan' ? ` --stop-at ${body.stopAt}` : '') +
     (body.executor === 'jules' ? ' --executor jules' : '') + (status === 'queued' ? ' --queue' : '');
-  if (scopeAll() && !f.get('board')) return note('adj task add', true, '作り先のボードを選んでください');
+  if (noBoard() && !f.get('board')) return note('adj task add', true, '作り先のボードを選んでください');
   try {
-    const into = scopeAll() ? `/b/${f.get('board')}` : BASE;
+    const into = noBoard() ? `/b/${f.get('board')}` : BASE;
     const data = await boardApi(into, '/api/tasks', { method:'POST', body: JSON.stringify(body) });
     note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed) +
       (data.task?.titlePending ? '。Issue を読めませんでした。タイトルは着手時に取得します' : ''));

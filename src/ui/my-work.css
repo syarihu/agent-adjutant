@@ -1,0 +1,156 @@
+/* ── いまの仕事: the list, the terminal of the selected session, and (the body's own task panel) the right column ── */
+/* The sidebar's width is the person's to set; the narrow window's icon rail (shell.css) is more specific and wins. */
+body { --rail-w: var(--rail-w-set, 240px); }
+#nav-rail { position: relative; }
+.rail-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+.rail-resize:hover, .rail-resize:focus-visible, body.wk-dragging .rail-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+body.rail-icons .rail-resize { display: none; }
+body.wk-dragging { user-select: none; cursor: col-resize; }
+.single-board #nav-work { display: none; }
+
+#work-view {
+  display: none; height: 100%; min-width: 0; overflow: hidden;
+  grid-template-columns: var(--wk-list-w, 380px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+/* The panel stays in the right column here, whatever side it was left on elsewhere. */
+body.view-work #task-panel { order: 3; border-right: 0; border-left: 1px solid var(--md-sys-color-outline-variant); }
+body.view-work .tp-head-btns [data-tp-place] { display: none; }
+
+.wk-list {
+  position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--md-sys-color-surface-container-low);
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+}
+.wk-list-head { padding: 10px 14px 8px; color: var(--md-sys-color-primary); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.wk-list-head .pane-title { color: var(--md-sys-color-on-surface); }
+.wk-group-switch { margin-left: auto; }
+.wk-group-switch .m3-seg-tab { padding: 3px 10px; font-size: 12px; }
+.wk-group-switch .m3-seg-tab[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.wk-list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 12px; }
+.wk-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+.wk-resize:hover, .wk-resize:focus-visible, body.wk-dragging .wk-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+.wk-empty { padding: 14px 8px; font-size: 12.5px; color: var(--md-sys-color-outline); }
+
+/* Headers: a repository, a parent issue, a box, an organisation. They fold. */
+.wk-group { margin-top: 10px; }
+.wk-group .wk-group { margin-top: 6px; margin-left: 6px; }
+.wk-head {
+  display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px;
+  border-radius: var(--md-shape-corner-sm); background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--md-sys-color-outline-variant);
+}
+.wk-head.repo { position: sticky; top: 0; z-index: 2; }
+.wk-fold { flex: none; display: inline-flex; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: 50%; }
+.wk-fold .material-symbols-outlined { font-size: 18px; transition: transform .15s; }
+.wk-fold[aria-expanded="false"] .material-symbols-outlined { transform: rotate(-90deg); }
+.wk-head-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; border: 0;
+  background: transparent; color: var(--md-sys-color-on-surface); font: inherit; padding: 2px 4px; border-radius: var(--md-shape-corner-xs);
+}
+button.wk-head-main { cursor: pointer; }
+button.wk-head-main:hover { background: var(--md-sys-color-surface-container-highest); }
+.wk-head-main[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.wk-head-name { min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; font-weight: 800; line-height: 1.35; }
+.wk-head-name .key { font-family: var(--font-mono); margin-right: 6px; color: var(--md-sys-color-primary); }
+.wk-head-sub { font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; }
+.wk-count { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
+.wk-body { padding-top: 3px; }
+/* What a folded header still says: how many rows are in each state. */
+.wk-sum { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
+.wk-sum span { display: inline-flex; align-items: center; gap: 2px; }
+.wk-sum .wk-glyph { font-size: 15px; }
+
+/* The progress bar of a parent: a segment per child. */
+.wk-bar { display: flex; gap: 2px; height: 6px; min-width: 60px; flex: 1; max-width: 220px; }
+.wk-bar i { flex: 1; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); }
+.wk-bar i.merged { background: var(--md-sys-color-success); }
+.wk-bar i.pr { background: var(--md-sys-color-tertiary); }
+.wk-bar i.working { background: var(--md-sys-color-primary); }
+.wk-bar i.not-started { background: var(--md-sys-color-outline-variant); }
+.wk-stack { font-size: 10.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+
+/* A row: the state icon, then what the session is and says. */
+.wk-row {
+  display: flex; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; text-align: left;
+  padding: 7px 8px; border: 0; border-radius: var(--md-shape-corner-sm); background: transparent;
+  color: var(--md-sys-color-on-surface); cursor: pointer; font: inherit;
+}
+.wk-row:hover { background: var(--md-sys-color-surface-container-high); }
+.wk-row[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.wk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wk-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
+.wk-row[aria-current="true"] .wk-agent, .wk-row[aria-current="true"] .wk-meta { color: inherit; }
+/* A title is never tinted: the state is the icon's. */
+.wk-title { overflow-wrap: anywhere; font-size: 12.5px; font-weight: 600; line-height: 1.35; }
+.wk-tag { font-size: 10.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; margin-right: 6px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.wk-meta { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); font-family: var(--font-mono); }
+.wk-meta .sub { font-family: inherit; color: var(--md-sys-color-tertiary); }
+.wk-row[aria-current="true"] .wk-meta .sub { color: inherit; }
+.wk-meta .add { color: var(--md-sys-color-success); }
+.wk-meta .del { color: var(--md-sys-color-error); }
+.wk-line { font-size: 11px; font-family: var(--font-mono); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.wk-line.ask { color: var(--md-sys-color-warning); }
+.wk-line.tree { color: var(--md-sys-color-tertiary); }
+.wk-gate { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 800; color: var(--md-sys-color-warning); }
+.wk-gate .material-symbols-outlined { font-size: 15px; }
+.wk-ctx { display: inline-flex; align-items: center; gap: 4px; }
+.wk-ctx-bar { width: 38px; height: 4px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
+.wk-ctx-bar i { display: block; height: 100%; background: var(--md-sys-color-primary); }
+.wk-ctx.warn .wk-ctx-bar i { background: var(--md-sys-color-warning); }
+.wk-ctx.crit .wk-ctx-bar i { background: var(--md-sys-color-error); }
+
+/* State icons: Material Symbols in the M3 roles. */
+.wk-glyph { flex: none; font-size: 20px; line-height: 1; margin-top: 1px; }
+.wk-glyph.waiting, .wk-glyph.permission { color: var(--md-sys-color-warning); }
+.wk-glyph.working, .wk-glyph.restarting { color: var(--md-sys-color-primary); animation: wk-spin 1.1s linear infinite; }
+.wk-glyph.done { color: var(--md-sys-color-success); font-variation-settings: 'FILL' 1; }
+.wk-glyph.seen { color: var(--md-sys-color-success); opacity: .45; }
+.wk-glyph.failed { color: var(--md-sys-color-error); }
+.wk-glyph.stopped, .wk-glyph.idle { color: var(--md-sys-color-on-surface-variant); }
+@keyframes wk-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .wk-glyph.working, .wk-glyph.restarting { animation: none; } }
+
+/* The rate limits under the list. */
+.wk-rate { flex: none; padding: 8px 14px; border-top: 1px solid var(--md-sys-color-outline-variant); font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-direction: column; gap: 4px; }
+.wk-rate:empty { display: none; }
+.wk-rate-acct { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+.wk-rate-acct b { font-weight: 800; color: var(--md-sys-color-on-surface); }
+.wk-rate-win { display: inline-flex; align-items: center; gap: 4px; }
+.wk-rate-win .wk-ctx-bar { width: 44px; }
+.wk-rate-err { color: var(--md-sys-color-error); }
+
+/* The middle: the terminal of what is selected, never behind a tab. */
+.wk-term { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--md-sys-color-surface); }
+.wk-term-head { flex: none; padding: 8px 14px; border-bottom: 1px solid var(--md-sys-color-outline-variant); min-height: 20px; }
+.wk-term-head:empty { display: none; }
+.wk-term-title { font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
+.wk-term-sub { font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.wk-term-pane { flex: 1; min-height: 0; }
+
+/* The parent's overview in the panel. */
+.wk-overview { display: flex; flex-direction: column; gap: 12px; }
+.wk-ov-bar { display: flex; align-items: center; gap: 10px; }
+.wk-ov-bar .wk-bar { max-width: none; height: 8px; }
+.wk-ov-n { flex: none; font-size: 12.5px; font-weight: 800; }
+.wk-stack-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.wk-stack-list li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.wk-stack-list .base { font-family: var(--font-mono); font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
+.wk-stack-list .seg { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.wk-stack-list .seg.merged { background: var(--md-sys-color-success); }
+.wk-stack-list .seg.pr { background: var(--md-sys-color-tertiary); }
+.wk-stack-list .seg.working { background: var(--md-sys-color-primary); }
+.wk-stack-list .seg.not-started { background: var(--md-sys-color-outline-variant); }
+
+/* Narrow: the list above and the terminal under it. The sidebar, the 520px panel, the list and a terminal worth
+   having do not fit side by side below this. */
+@media (max-width: 1400px) {
+  #work-view { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 45%) minmax(0, 1fr); }
+  .wk-list { border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+  .wk-resize { display: none; }
+}
+
+/* A parent's overview has no tabs: the flex of the tab strip would show it empty. */
+#tp-tabs[hidden] { display: none; }
+
+.wk-notice { margin-top: 8px; padding: 6px 8px; border-radius: var(--md-shape-corner-sm); font-size: 11.5px; overflow-wrap: anywhere; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }

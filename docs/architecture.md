@@ -181,7 +181,13 @@ answers the same routes except the ones `Route::resident_only` lists (a session'
 open and clean-up; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
-resident also serves the page at `/` and `GET /api/boards`.
+resident also serves the page at `/`, `GET /api/boards` and `GET /api/work`. The last is the work
+under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
+repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,
+else each parent-task board), joins each worker session to its task, and lists a session once
+however many carriers name it. The resident keeps the serialized document for 1500 ms
+(`Resident::work_cache`), so several open pages polling every couple of seconds read the boards once
+between them. A board served on its own answers it with 404.
 
 ## Walk-through: adding a task
 
