@@ -1545,6 +1545,9 @@ fn the_rate_limits_of_an_account_come_from_its_newest_session_with_a_figure() {
     assert_eq!(accounts[0]["lastEventAt"], at - 100);
     assert_eq!(accounts[0]["fiveHour"]["usedPercent"], 30.0);
     assert_eq!(accounts[0]["fiveHour"]["resetsAt"], at + 100);
-    assert_eq!(accounts[0]["sevenDay"], serde_json::json!({"usedPercent": 5.0}));
+    assert_eq!(
+        accounts[0]["sevenDay"],
+        serde_json::json!({"usedPercent": 5.0})
+    );
     assert!(state["rateLimits"].get("error").is_none());
 }

@@ -524,7 +524,11 @@ fn a_session_with_no_task_shows_the_pr_of_its_branch_and_a_tasks_worker_does_not
         "https://github.com/acme/widget/pull/12"
     );
     let state = state_of(&resident);
-    assert!(session_of(&state, "worker-tasked").get("branchPr").is_none());
+    assert!(
+        session_of(&state, "worker-tasked")
+            .get("branchPr")
+            .is_none()
+    );
     assert!(session_of(&state, "hub").get("branchPr").is_none());
     // One query for the one branch; the cards' own query was never made, and polling the state
     // does not ask again.
@@ -551,7 +555,11 @@ fn a_branch_whose_only_pr_comes_from_a_fork_has_none() {
     // A moment for the answer to be stored, then it is still no PR.
     std::thread::sleep(std::time::Duration::from_millis(500));
     let state = state_of(&resident);
-    assert!(session_of(&state, "worker-feature").get("branchPr").is_none());
+    assert!(
+        session_of(&state, "worker-feature")
+            .get("branchPr")
+            .is_none()
+    );
     assert!(state["prPoll"]["error"].is_null());
 }
 

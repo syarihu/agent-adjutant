@@ -696,6 +696,9 @@ fn expected_state(sessions: Value) -> Value {
         "active": true,
         "error": null
       },
+      "rateLimits": {
+        "accounts": []
+      },
       "repo": "acme/widget",
       "resident": true,
       "sessionOpen": {
