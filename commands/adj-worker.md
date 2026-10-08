@@ -9,8 +9,15 @@ The hub (`adj-hub`) picked the task, created the worktree and opened this tab. *
 work out.** Carrying this task to the end is yours, and when in doubt **ask the user, not the hub** —
 the user is at this tab.
 
-Talk to the user in the language they use with you (or the one your agent is set to). A quoted line
-in this procedure says what to tell them, not the words to use.
+Talk to the user in the language they use with you (or the one your agent is set to). **Everything you
+write that the board shows a person** (gates and their titles, questions, the plan, self-review and
+verification notes, card notes, the final report you give at this tab) **is in the language the
+brief's "Language" line names**; when that line is `-` (or a brief has none), it is the language
+the task is written in, else the language above. Text from the tracker is quoted as it is. Commit
+messages, PR bodies, issues and code follow the repository's conventions, not this line. Headings
+and tags the hub reads by name stay as written: the `## …` lines of the done and `adj-report`
+bodies, and the `[question {id}]` identifier you answer with. A quoted line in this procedure says
+what to tell them, not the words to use.
 
 ## Where you stand
 
@@ -38,10 +45,10 @@ in this procedure says what to tell them, not the words to use.
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
   holds the results, and removal goes through the hub's cleanup alone (§9 says how to ask).
-- The task, the parent task, the base branch, Done when, Stop at and the `verify` commands are in
-  `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all`) is one of the rules that
-  decides whether the diff and the verification wait on a person ("Appendix — Wait or record"). A
-  brief without that line is read as `plan`.
+- The task, the parent task, the base branch, Done when, Stop at, the Language and the `verify`
+  commands are in `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all`) is one
+  of the rules that decides whether the diff and the verification wait on a person ("Appendix —
+  Wait or record"). A brief without that line is read as `plan`.
 - **Do not miss what the hub sends you.** Messages from the hub are read with `adjutant_outbox`
   (they pile up in this worktree's `.claude/adjutant-outbox.md`, one `##` heading each). Direct
   messages between agents are not used because only some coding agents have them; a file stays
@@ -74,7 +81,7 @@ in this procedure says what to tell them, not the words to use.
   `reviewBots` / `ide` / `draftPr` / `verify` / `taskSources[].projectFields`. **`taskSources` is
   always an array**, and **which source's `projectFields`** is decided by "the board the brief's URL
   repo sits on = the source that has `projectFields`". The brief carries only the task, the parent
-  task, the branch, the base, Done when, Stop at, the Copilot review line and
+  task, the branch, the base, Done when, Stop at, the Copilot review line, the Language line and
   `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
   output. The schema is the distributed `config.example.json`.
 
@@ -542,6 +549,10 @@ JSON
   report).
 - `plan` has `problem` and `goal` (step 3 of §1).
 - **Do not skimp on `title` and `focus`.** On the board they are all that gets read.
+- Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `facts`, the choices' `label`,
+  `why` and `points` (not `id`, which you branch on), `body`, `findings[].text`,
+  `findings[].reason` and `manual[]` in the brief's "Language"; the examples here are in English
+  only because this file is. `commands[].command` and `output` stay as the command printed them.
 
 `diff` and `verify` carry structured fields apart from the text slots. The board builds its tables
 from them. To keep it as a record, `"wait": false`; to wait, put the rules that stopped it in
@@ -733,6 +744,8 @@ Run round 1 first, show the results in order of severity (High → Medium → Lo
   `title: "Self-review: continue until convergence?"`,
   `focus: "Self-review round 1 found must-level issues. Should I continue reviewing and fixing until convergence?"`,
   `choices`: `[{"id": "continue", "label": "Keep going", "recommended": true}, {"id": "once", "label": "Fix once"}, {"id": "skip", "label": "Do not fix"}]`.
+  These strings are in English only because this file is: write `title`, `focus` and the labels in
+  the brief's "Language", and keep the choice `id`s as they are.
   - **Keep going (Recommended)** (choice: `continue`) → from then on, run to convergence **without asking each round**.
   - **Fix once** (choice: `once`) → fix once, re-review once, and stop.
   - **Do not fix** (choice: `skip`) → skip and move on.

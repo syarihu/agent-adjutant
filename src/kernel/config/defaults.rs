@@ -47,7 +47,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-pub(super) const SETTING_KEYS: [&str; 18] = [
+pub(super) const SETTING_KEYS: [&str; 19] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -86,6 +86,9 @@ pub(super) const SETTING_KEYS: [&str; 18] = [
     // How to get the Jules API key. The key belongs to a person's account and sits in their
     // keychain, not to any one repository, so there is one answer per machine.
     "julesKey",
+    // Which language the person reads what agents write for the board in. About the person at
+    // this machine, not the repository's work, which keeps its own conventions.
+    "language",
 ];
 
 /// How long a worker may sit in one phase before the board calls it stuck, when nothing is

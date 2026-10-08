@@ -13,6 +13,20 @@ a worker in another tab, without exception, and the hub goes back to waiting. Th
 Talk to the user in the language they use with you (or the one your agent is set to). A quoted line
 in this procedure says what to tell them, not the words to use.
 
+**The person's language** is `adjutant_config`'s `settings.language` when it is set, otherwise the
+language the person uses with you (or your agent's). Write in it everything the board shows a
+person or you send one: the task summary (`adj task add --body`) and the title of a task that has no
+issue, notes (`--note`), the gates you open (dispatch, relay, Jules plan) and your `adjutant_tell`
+replies. An issue's own title and body stay as written. Issues you file and anything that goes into
+the repository follow its conventions.
+
+**Markers that code or a procedure matches stay as written**, in English, and the text around them
+is in the person's language: the note's leading `Could not start:` (`adj task next` skips such a
+task) and `(resume with --resume)` (the hub looks for it), and the tag that opens a message's
+`subject`, which the receiver's procedure or adj matches (it also decides whether the receiver is
+woken). The tags you write are `[question {id}]`, `[ack]` and `[issue {id}]`; `[gate {id}]` and
+`[linked {id}]` are written by the tool, not by you.
+
 ## Starting (for the user)
 
 One per day, started with the `adj hub` command. **Do not type the agent's launch command by hand.**
@@ -1381,9 +1395,11 @@ card on the board. The worker starts clean, so that file is everything it knows.
   record already. Otherwise (a worker's report of something else, something asked in the tab), create
   the record now that the worktree exists, and use the id that comes back:
 
-  First run `mkdir -p '{worktree}/.claude'`, then write `{worktree}/.claude/task-summary.md`, with the title on line 1, a blank line, then a
-  summary. **Write it with a file-writing tool; do not go through the shell with `echo`, a heredoc or
-  the like.** Then:
+  First run `mkdir -p '{worktree}/.claude'`, then write `{worktree}/.claude/task-summary.md`, with the
+  title on line 1, a blank line, then a summary. The summary is in the person's language; line 1 is
+  the issue's own title as it is (not a translation of it), or a title in the person's language when
+  there is no issue. **Write it with a file-writing tool; do not go through the shell with `echo`, a
+  heredoc or the like.** Then:
 
   ```bash
   adj task add --body - [--issue-url '{issue url}'] [--parent '{parent task url}'] --done-when {done when} --stop-at {stop at} --executor {implementer} --waiting-in '{worktree}' --json < '{worktree}/.claude/task-summary.md' \
@@ -1448,7 +1464,7 @@ card on the board. The worker starts clean, so that file is everything it knows.
 Then write the brief:
 
 ```bash
-adj task brief --id {task_id} --worktree '{worktree}' --base '{base}' [--parent '{parent task url}'] --json
+adj task brief --id {task_id} --worktree '{worktree}' --base '{base}' [--parent '{parent task url}'] [--language '{language}'] --json
 ```
 
 It prints the path it wrote, and it overwrites a brief left there by an earlier start. Where each line
@@ -1469,6 +1485,9 @@ comes from:
   from `defaults` and `repos.<repo>`. Do not resolve them again yourself. After opening the PR, the
   worker decides by the Copilot review line whether to ask Copilot for a review, and whether to ask the
   user first.
+- **Language**: the config's `language`. When `settings.language` is not set, pass
+  `--language '{language}'` with the language the person uses with you, as one word (a language name
+  or tag); when you do not know it, pass nothing and the brief writes `-`.
 - **Workspace**: the branch the worktree is on.
 - **Base branch**: `--base`, the commit-ish given to `git worktree add` in "3. Create the worktree"
   (with its `origin/`). Pass `-` only when handing over an existing worktree whose base is not known;
@@ -1526,8 +1545,9 @@ adjutant work --worktree '{worktree}' --task {task_id}
   name. The title is text from an issue or a report; write `--title '…'` and a `'` closes the quote
   and what follows runs as shell. The id is a value this tool assigned, so write it as it is.
 - **If it fails with an exit code other than 3**, put it back to queued and write "Could not start:
-  {reason}" in the note. The reason often quotes the error message, so it does not go on the command
-  line either — as "Keep task text off the shell" says, write it to a file and read it with
+  {reason}" in the note (the leading `Could not start:` stays in English, because `adj task next`
+  matches it; the reason is in the person's language). The reason often quotes the error message,
+  so it does not go on the command line either — as "Keep task text off the shell" says, write it to a file and read it with
   `--note -`:
 
   ```bash
@@ -1571,6 +1591,8 @@ adjutant work --worktree '{worktree}' --task {task_id}
   resume. The record should be `dispatched` or `pr`, so put the status back to queued too —
   otherwise the side that takes from the queue does not pick it up:
   `adj task update --id {task_id} --status queued --no-hand-over --note 'Waiting for a worker slot (resume with --resume)'`
+  (the note is in the person's language, but `(resume with --resume)` stays as written: the hub
+  looks for it)
   (if there is no record, create one with `--waiting-in` first).
   When resuming, also write the status **before starting it**. Instead of `dispatched` above, **if
   the record has a `pr`, `--status pr`**, and otherwise `--status dispatched` (with `--note ''`
@@ -1706,7 +1728,7 @@ from that plan instead of planning again:
    ```bash
    adj task update --id {task_id} --instruction - < '{worktree}/.claude/task-handover.md' \
      && rm '{worktree}/.claude/task-handover.md'
-   adj task brief --id {task_id} --worktree '{worktree}' --base '{base}' [--parent '{parent task url}'] --json
+   adj task brief --id {task_id} --worktree '{worktree}' --base '{base}' [--parent '{parent task url}'] [--language '{language}'] --json
    ```
 
    The brief writes it as the Handover note. Delete
@@ -2009,6 +2031,11 @@ worker's `report`; only the two ends differ.**
   }
   ```
 
+  The strings shown are in English only because this file is: write `title`, `focus`, `decided` and
+  any labels in the person's language, and keep the choice `id`s as they are. Write the words
+  around `{task_title}` in the person's language and keep `{task_title}` as it is (an issue's title
+  stays as written).
+
   ```bash
   adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'
   ```
@@ -2034,7 +2061,8 @@ worker's `report`; only the two ends differ.**
   ```
 
   "Could not start: {reason}", for when it could not be started, is written to a file and read in, as
-  in Step 3.
+  in Step 3. Keep `Could not start:` in English (`adj task next` matches it); the reason is in the
+  person's language.
 
   The value of the `## task` line is `{task_id}`. **Drop it and, to the person who handed it over, it
   only looks as if "I put it on the board and nothing happens".**
@@ -2080,7 +2108,7 @@ made or picked there and the session is told; that is not the hub's step.
    Then:
 
    ```bash
-   adj task brief --worktree '{path}' --base '{base}' --instruction - < '{path}/.claude/session-instruction.md' \
+   adj task brief --worktree '{path}' --base '{base}' --instruction - [--language '{language}'] < '{path}/.claude/session-instruction.md' \
      && rm '{path}/.claude/session-instruction.md'
    ```
 
@@ -2323,6 +2351,11 @@ heredoc):
 }
 ```
 
+The strings shown are in English only because this file is: write `title`, `focus`, `decided`,
+`unsure` and any labels in the person's language, and keep the choice `id`s as they are. Write the
+words around `{task_title}` in the person's language and keep `{task_title}` as it is (an issue's
+title stays as written).
+
 ```bash
 adj gate open --file '{main}/.claude/gate-relay-{task}.json' --json && rm '{main}/.claude/gate-relay-{task}.json'
 ```
@@ -2395,8 +2428,8 @@ The hub does not go into worktrees, so all that can be done here is **handing ov
    - **A) Start a worker and hand over the work (Recommended)** — the same procedure as "4. Start the
      worker". A record is made for that worktree's task (`adj task add --issue-url` of that task,
      `--done-when` from the user's instruction), and `adj task brief --base -` (or the base, when it is
-     known) follows. A detached worktree is refused by `adj task brief` (the brief names a branch):
-     switch to or create its branch first, or tell the person. Build the issue URL from the key and
+     known, and `--language` as in "4. Start the worker") follows. A detached worktree is refused by
+     `adj task brief` (the brief names a branch): switch to or create its branch first, or tell the person. Build the issue URL from the key and
      the source found in step 3, and pass `--issue-url '{url}'` only when it can be built; without it
      the brief's Task line carries no ticket.
      If there is already a tab with a worker running, **do not start another**; send the extra
@@ -2748,10 +2781,12 @@ If there are no subtasks at all, write "none" and return. **Do not work out how 
 ## Appendix — Brief for the Jules planning agent
 
 Handed to the sub-agent in Step 2 of "5. Hand it to Jules". Fill in the placeholders. `{task_id}`,
-`{task_title}`, `{tracker}`, `{task_url}`, `{parent_task}`, `{base_branch}` and `{instruction}` are
-the tracker's key, the record's title, the source's `type`, the issue URL, the parent task's URL or `-`,
-the base decided in "3. Create the worktree", and the record's handover note or `-`; `{verify}` is
-the config's `verify`. **`{record_id}` is the record's id** from Step 1 — not the tracker's key in `{task_id}`.
+`{task_title}`, `{tracker}`, `{task_url}`, `{parent_task}`, `{base_branch}`, `{instruction}` and
+`{language}` are the tracker's key, the record's title, the source's `type`, the issue URL, the
+parent task's URL or `-`, the base decided in "3. Create the worktree", the record's handover note
+or `-`, and the person's language: `settings.language`, else the language the person uses with you
+(as on the brief's Language line in "4. Start the worker"), else `-`. `{verify}` is the config's
+`verify`. **`{record_id}` is the record's id** from Step 1 — not the tracker's key in `{task_id}`.
 The hub reads the task back out of the gate's answer by that id, so a key there leaves the approval
 with no task to hand over.
 
@@ -2771,6 +2806,7 @@ You only plan. Do not implement, commit, push, or open or comment on any issue o
 - Worktree (read only): {worktree}  — detached at {base_branch}. Read the code here.
 - Handover note: {instruction}
 - Verify commands: {verify}
+- Language: {language}
 
 Read the task's body and comments first (`github` / `github-project`: `gh issue view <n> -R <the
 repo of the URL> --json title,body,comments`; `jira` / `linear`: that tracker's read tool). Then read
@@ -2795,8 +2831,9 @@ Write two files, with a file-writing tool (not a heredoc: they carry text taken 
    - **Tests** — the tests to add, by name and content, and the verify commands above.
    - **Commit / PR** — the commit message convention (match the repository's recent commits). For
      the PR body, only "summarise the change briefly"; it is rewritten later.
-2. `{worktree}/.claude/jules-gate.json` — the plan gate's payload, in the person's language, without
-   a body (the plan file becomes the body):
+2. `{worktree}/.claude/jules-gate.json` — the plan gate's payload, in the language on the Language line
+   (if `-`, the language the task is written in, else the person's), without a body (the plan
+   file becomes the body):
 
    {
      "kind": "plan",

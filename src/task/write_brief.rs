@@ -14,6 +14,8 @@ pub struct BriefRequest {
     pub base: String,
     /// Where to write it, as given (`~` expanded); `None` is `{worktree}/.claude/task-brief.md`.
     pub out: Option<String>,
+    /// The language the person reads, from `--language`; used only when `settings.language` is not set.
+    pub language: Option<String>,
     pub of: BriefOf,
 }
 
@@ -72,6 +74,22 @@ pub fn write_brief(ctx: &Context, request: &BriefRequest) -> Result<Brief, Strin
     if base.is_empty() {
         return Err("--base is empty: pass the commit-ish the worktree was cut from, or -".into());
     }
+
+    // Written once for both kinds of brief. What the person set wins over the hub's guess at
+    // it; `-` is "not known", and the worker then falls back to the language the person uses
+    // with it.
+    let flag = request
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|language| !language.is_empty());
+    let language = ctx
+        .settings
+        .language
+        .as_deref()
+        .or(flag)
+        .unwrap_or("-")
+        .to_string();
 
     let rendered = match &request.of {
         BriefOf::Task {
@@ -158,6 +176,7 @@ pub fn write_brief(ctx: &Context, request: &BriefRequest) -> Result<Brief, Strin
                     .filter(|note| !note.trim().is_empty())
                     .unwrap_or_else(|| "-".to_string()),
                 copilot_review: ctx.settings.copilot_review.as_str().to_string(),
+                language,
                 verify: ctx.settings.verify.clone(),
             })
         }
@@ -169,6 +188,7 @@ pub fn write_brief(ctx: &Context, request: &BriefRequest) -> Result<Brief, Strin
             text::render_session(&text::SessionBrief {
                 branch: branch.clone(),
                 base: base.to_string(),
+                language,
                 instruction,
             })
         }

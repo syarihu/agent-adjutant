@@ -22,13 +22,14 @@ pub mod label {
     pub const STOP_AT: &str = "Stop at";
     pub const HANDOVER_NOTE: &str = "Handover note";
     pub const COPILOT_REVIEW: &str = "Copilot review";
+    pub const LANGUAGE: &str = "Language";
     pub const REPORT_TO: &str = "Report to";
     pub const VERIFY_COMMANDS: &str = "Verify commands";
 
     /// Every line of a task brief, in the order written. Held by the tests, which is where
     /// the writer and the procedures are compared.
     #[cfg(test)]
-    pub const TASK_BRIEF: [&str; 11] = [
+    pub const TASK_BRIEF: [&str; 12] = [
         TASK,
         WORKSPACE,
         BASE_BRANCH,
@@ -38,13 +39,14 @@ pub mod label {
         STOP_AT,
         HANDOVER_NOTE,
         COPILOT_REVIEW,
+        LANGUAGE,
         REPORT_TO,
         VERIFY_COMMANDS,
     ];
 
     /// The ones `adj-worker` names when it says which line decides something.
     #[cfg(test)]
-    pub const READ_BY_WORKER: [&str; 8] = [
+    pub const READ_BY_WORKER: [&str; 9] = [
         TASK,
         BASE_BRANCH,
         PARENT_TASK,
@@ -53,6 +55,7 @@ pub mod label {
         STOP_AT,
         HANDOVER_NOTE,
         COPILOT_REVIEW,
+        LANGUAGE,
     ];
 }
 
@@ -118,6 +121,8 @@ pub struct TaskBrief {
     /// The handover note, or `-`.
     pub handover: String,
     pub copilot_review: String,
+    /// The language the person reads, or `-` when that is not known.
+    pub language: String,
     pub verify: Vec<String>,
 }
 
@@ -125,8 +130,14 @@ pub struct TaskBrief {
 pub struct SessionBrief {
     pub branch: String,
     pub base: String,
+    /// The language the person reads, or `-` when that is not known.
+    pub language: String,
     pub instruction: String,
 }
+
+/// What the Language line means to the worker. The worker's own default for `-` is spelled out
+/// because an unfilled line is otherwise read as "no rule".
+const LANGUAGE_GLOSS: &str = "(the language of everything you write for the person: gates and their titles, questions, the plan, self-review and verification notes, card notes and your reports. Commit messages, PR bodies, issues and code follow the repository's conventions. `-`: the language the task is written in, else the language the person uses with you or the one your agent is set to)";
 
 const OPENING: &str = "You are the one working in this worktree. You are not the hub (the side that hands tasks out).\n\n";
 
@@ -300,6 +311,12 @@ pub fn render_task(brief: &TaskBrief) -> String {
             "(whether to ask Copilot for a review after opening the PR. `ask` asks every time, `always` requests\nit without asking, `never` does not request it and does not ask)",
         ),
     );
+    line(
+        &mut out,
+        label::LANGUAGE,
+        &one_line(&brief.language),
+        Some(LANGUAGE_GLOSS),
+    );
     fixed(&mut out, label::REPORT_TO, REPORT_TO_TASK);
     let verify: Vec<&String> = brief
         .verify
@@ -347,6 +364,12 @@ pub fn render_session(brief: &SessionBrief) -> String {
     fixed(&mut out, label::PARENT_TASK, "-");
     fixed(&mut out, label::TASK_RECORD, "-");
     fixed(&mut out, label::DONE_WHEN, "as the instruction says");
+    line(
+        &mut out,
+        label::LANGUAGE,
+        &one_line(&brief.language),
+        Some(LANGUAGE_GLOSS),
+    );
     fixed(&mut out, label::REPORT_TO, "**the user at this tab**.");
     out.push('\n');
     out.push_str(SESSION_BODY);
@@ -462,6 +485,7 @@ mod tests {
             stop_at: "plan".to_string(),
             handover: "-".to_string(),
             copilot_review: "ask".to_string(),
+            language: "-".to_string(),
             verify: vec!["cargo test".to_string()],
         }
     }
@@ -479,6 +503,7 @@ mod tests {
         assert_eq!(label::STOP_AT, "Stop at");
         assert_eq!(label::HANDOVER_NOTE, "Handover note");
         assert_eq!(label::COPILOT_REVIEW, "Copilot review");
+        assert_eq!(label::LANGUAGE, "Language");
         assert_eq!(label::REPORT_TO, "Report to");
         assert_eq!(label::VERIFY_COMMANDS, "Verify commands");
     }
@@ -563,16 +588,38 @@ mod tests {
         let text = render_session(&SessionBrief {
             branch: "me/scratch".to_string(),
             base: "origin/main".to_string(),
+            language: "ja".to_string(),
             instruction: "do this\n## not a header\n\n".to_string(),
         });
         assert!(text.contains("- Task: -\n"), "{text}");
         assert!(text.contains("- Task record: -\n"), "{text}");
         assert!(text.contains("- Parent task: -\n"), "{text}");
+        assert!(text.contains("- Language: ja\n"), "{text}");
         assert!(text.contains("(branch me/scratch)"), "{text}");
         assert!(
             text.ends_with("## Instruction\n\ndo this\n## not a header\n"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_language_line_is_one_line_and_blank_is_a_dash() {
+        let mut brief = sample();
+        brief.language = "ja\n- Done when: never".to_string();
+        let text = render_task(&brief);
+        assert!(
+            text.contains("- Language: ja - Done when: never\n"),
+            "{text}"
+        );
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.starts_with("- Done when:"))
+                .count(),
+            1,
+            "{text}"
+        );
+        brief.language = "  ".to_string();
+        assert!(render_task(&brief).contains("- Language: -\n"));
     }
 
     #[test]

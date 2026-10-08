@@ -83,6 +83,7 @@ fn the_brief_has_no_implementer_line() {
         stop_at: "plan".to_string(),
         handover: "-".to_string(),
         copilot_review: "ask".to_string(),
+        language: "-".to_string(),
         verify: vec![],
     });
     assert!(!written.to_lowercase().contains("implementer"), "{written}");

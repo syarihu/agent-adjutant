@@ -176,7 +176,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
                "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
-               "maxWorkers": 3, "stuckAfterMinutes": 30, "julesKey": "print-key",
+               "maxWorkers": 3, "stuckAfterMinutes": 30, "julesKey": "print-key", "language": "ja",
                "hubResumeRunner": "again {name} {sessionId}",
                "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false, "hubServe": false,
                "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
@@ -199,6 +199,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         "maxWorkers",
         "stuckAfterMinutes",
         "julesKey",
+        "language",
     ] {
         assert!(text.get(key).is_some(), "{key} is missing from {text}");
     }
@@ -236,7 +237,7 @@ fn per_key_documentation_is_dropped_too() {
             "verify": ["cargo test"],
             "issueCreate": {"//notes": "prose about notes", "command": "x"},
             "taskSource": "github", "issueRepo": "acme/app",
-            "issueKeys": {"acme/app": "WID"}, "ide": "code"
+            "issueKeys": {"acme/app": "WID"}, "ide": "code", "language": "ja"
         }}}),
         "acme/app",
     );
@@ -455,9 +456,24 @@ fn machine_settings_stay_out_of_the_repo_config() {
         "worktreePattern",
         "notification",
         "startupDashboard",
+        "language",
     ] {
         assert!(config.get(key).is_none(), "{key} leaked into config");
     }
+}
+
+#[test]
+fn a_blank_language_is_none_and_a_non_string_is_reported() {
+    for blank in ["", "   "] {
+        let (_, settings, warnings) = resolve(a_repo(json!({"language": blank})), "acme/app");
+        assert_eq!(settings.language, None, "{blank:?}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+    let (_, settings, _) = resolve(a_repo(json!({"language": " ja "})), "acme/app");
+    assert_eq!(settings.language.as_deref(), Some("ja"));
+    let (_, settings, warnings) = resolve(a_repo(json!({"language": 3})), "acme/app");
+    assert_eq!(settings.language, None);
+    assert!(warning_about(&warnings, "language").contains("a string"));
 }
 
 #[test]

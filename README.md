@@ -104,7 +104,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief` | the records that board is a view of (`brief --id … --worktree … --base …`: write the worker's `.claude/task-brief.md` from the record and the config; without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief` | the records that board is a view of (`brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -342,12 +342,15 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *`false` turns handing tasks to Jules off* |
 | `maxWorkers` | — (a whole number, 1 or more) | no limit |
 | | | *counted per checkout; a worker parked at a gate or still starting up takes a slot, a dead one does not* |
+| `language` | — (a language name or tag, e.g. `ja`) | none: the hub uses the language you talk to it in |
+| | | *what agents write for a person on the board (gates, questions, plans, notes, reports, the task summary) is in this language; commits, PR bodies, issues and code follow the repository, and text from the tracker stays as written* |
 
 Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
-different answer. The two settings that are not commands take their own values instead:
+different answer. Settings that are not commands take their own values instead:
 `startupDashboard` and `hubServe` are `true` / `false`, `hubAutoResumeHours` is a number, turned off by
-`0` — a `false` there is reported in `warnings` and the default is used — and `maxWorkers`
-is a whole number, where anything else is reported and means no limit. `terminal` and the `wake` family merge key by key, so a repository can
+`0` — a `false` there is reported in `warnings` and the default is used — `maxWorkers`
+is a whole number, where anything else is reported and means no limit, and `language` is a plain
+string (a blank one counts as unset). `terminal` and the `wake` family merge key by key, so a repository can
 change one half without restating the other. A setting of the wrong type is dropped *and*
 reported in `warnings` — `adj config` is where to look when something silently does nothing.
 

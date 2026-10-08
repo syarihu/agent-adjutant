@@ -2826,3 +2826,23 @@ fn every_alias_agent_parse_takes_is_taken() {
         assert_eq!(r.text, render_for(prompt, "x", r.agent), "{value}");
     }
 }
+
+/// A brief the hub writes without `--language` says `-` where the person's language was
+/// known, and the worker then writes the board's text in whichever language it guesses.
+#[test]
+fn every_brief_command_in_the_hub_procedure_passes_the_language() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let commands: Vec<&str> = raw
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("adj task brief --"))
+        .collect();
+    assert!(commands.len() >= 3, "{commands:?}");
+    for command in commands {
+        assert!(
+            command.contains("--language '{language}'"),
+            "this brief command leaves the language out: {command}"
+        );
+    }
+    assert!(raw.contains("`settings.language`"));
+}

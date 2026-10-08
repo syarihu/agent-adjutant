@@ -83,7 +83,7 @@ adjutant setup codex --remove    # Codex の分も同様に取り除く
 | `adjutant notify --message …` | 人間にデスクトップ通知を送る |
 | `adjutant worktree-path --name … [--unique]` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力（`--unique`: パスもブランチも空いている最初の `name`、`name-2`、`name-3`… を選び、`name` として返す） |
 | `adjutant task fetch-issue --id …` | タスクの GitHub Issue を読み直し、タイトルと本文をレコードの `issueSnapshot` に保存する。`task add` / `task update` は、タスクが着手済み（dispatched か pr）になったとき、または Issue が変わったときに同じ読み取りをする。タイトルは256文字、本文は16 KiB まで。板は表示のたびに GitHub へ問い合わせず、「再取得」を押したときだけ読み直す。板のフォームで Issue URL があり内容が空のときは、サーバーがレコード作成時にこの読み取りをしてタイトルを最初から表示する（GitHub の Issue URL でなければ従来どおり内容が必要。GitHub の Issue で `gh` が読めない場合は、仮タイトル `owner/repo#N` と `titlePending: true` で残し、最初に読めたときに置き換える） |
-| `adjutant task brief --id … --worktree … --base …` | worker の `.claude/task-brief.md` を、タスクのレコードと設定から書く。`--id` を省くと、タスクのないセッションの brief になる（指示文は標準入力から）。既にあれば上書きする |
+| `adjutant task brief --id … --worktree … --base … [--language …]` | worker の `.claude/task-brief.md` を、タスクのレコードと設定から書く。`--language` は人が読む言語で、設定に `language` が無いときに使われる。`--id` を省くと、タスクのないセッションの brief になる（指示文は標準入力から）。既にあれば上書きする |
 | `adjutant jules start\|show\|findings\|relay` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する。レビュー指摘を Jules に回す（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
 | `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
 | `adjutant hub-close --hub KEY` | 親タスクの hub を閉じる（この hub に報告する checkout が残っていないときだけ）。実行記録を消し、ボードの一覧から外す。プロセスは止めないので、hub 自身から、または動いていない hub に対して使い、動いている hub を外から閉じようとすると断る。保存済みのセッション・タスク・gate・受信箱は残る |
@@ -205,10 +205,11 @@ hub はメインチェックアウトで動作します。手順書によって�
 | `stuckAfterMinutes` | なし（数値。`0` で無効） | `120`（worker が同じ工程にこの分数とどまると板のカードを赤くする。worker が止まっているカードはこの値に関係なく赤くなる。ただし PR を出したあとのカードは worker のタブが閉じても赤くしない。PR が review bot を待っている間（`pr-bots`）は、PR が人の番でない限りエージェント側の列に待ちバッジ無しで置く。修正の依頼・承認済み・CI 失敗・マージされずに閉じられたときは `pr-bots` でも人待ちになる。Jules のタスクも Jules が作業中でなければ同じ PR の状態に従う。それ以外は PR の状態で決まり、修正の依頼・承認済み・CI 失敗・マージされずに閉じられたときは人待ちで、他の人のレビュー待ちや bot・CI 待ちのときは人待ちにならない） |
 | `julesKey` | なし（Jules の API キーを出力するコマンド） | macOS のキーチェーン項目 `jules-api`（`false` にすると Jules に渡せなくなる） |
 | `maxWorkers` | なし（1以上の整数） | 制限なし（チェックアウトごとに数える。gate で待っている worker と起動中の worker は枠を使い、止まった worker は使わない） |
+| `language` | なし（言語名またはタグ。例: `ja`） | なし（hub は話しかけられた言語を使う。板に出る agent の文章（gate・質問・計画・メモ・報告・タスクの要約）はこの言語で書く。コミット・PR 本文・Issue・コードはリポジトリの流儀に従い、トラッカー由来のテキストはそのまま） |
 | `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
 | `hubServe` | なし（`true` / `false`） | `true`（hub の MCP サーバーがその hub の板を hub と同じ寿命で立てる。`127.0.0.1:4577` が空いていればそこ、埋まっていれば空いている port。URL は `adjutant_config` の `board` に入る。手で立てた板が既に動いていればそのままにする。`false` にすると板は `adj serve` で手で立てる） |
 
-キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。ただしコマンドではない2つの設定は別の値を取ります。`startupDashboard` と `hubServe` は `true` / `false` で、`hubAutoResumeHours` は数値です。`hubAutoResumeHours` を無効にするには `0` を指定します。`false` を指定すると `warnings` に報告され、既定値が使われます。`maxWorkers` は整数で、それ以外の値は `warnings` に報告されて制限なしになります。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
+キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。ただしコマンドではない設定は別の値を取ります。`startupDashboard` と `hubServe` は `true` / `false` で、`hubAutoResumeHours` は数値です。`hubAutoResumeHours` を無効にするには `0` を指定します。`false` を指定すると `warnings` に報告され、既定値が使われます。`maxWorkers` は整数で、それ以外の値は `warnings` に報告されて制限なしになります。`language` は単なる文字列で、空白だけの値は未設定として扱われます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
 
 `{pid}` と `{tty}` は OS 側から見たセッションの名前（プロセスIDと、そのセッションが載っている端末デバイス `ttys004`）であって、**ターミナル自身の pane / window の id ではありません**。そのため `focus` / `close` / `wake` のテンプレートは、動く前にその id を自分で引き当てる必要があります。`{pid}` を pane id を期待する引数（`--pane-id` など）に渡すと別の番号空間を指すことになり、その番号を持っていた無関係な pane に対して動作します。id 解決を行うラッパースクリプトを指定してください。`close` を「実行できたら成功」とみなさないのも同じ理由です。テンプレートは終了コードだけで判断されるため、adjutant は close 後に**その worker が実際に居なくなったこと**を確認してから記録を消し、居たままなら exit 1 を返します。
 
