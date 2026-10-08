@@ -32,9 +32,10 @@ The board has two halves, and a task can be on both at once.
 
 A worker with no card (a bare session) goes by `AGENT_COL_OF_PHASE`, or `implement` when it has no
 phase (`src/ui/board.js`). Only its coverage of the phases is tested (every phase has an entry in
-`AGENT_COL_OF_PHASE`), not its precedence. [#466](https://github.com/syarihu/agent-adjutant/issues/466)
-moved the human-side rules to the server because the page had copies of Rust rules; it left this
-one in the page because the server had no copy of it to share.
+`AGENT_COL_OF_PHASE`), not its precedence. [#465](https://github.com/syarihu/agent-adjutant/issues/465)
+put the human-side rules on the server and [#466](https://github.com/syarihu/agent-adjutant/issues/466)
+removed the page's copies of them; this one stayed in the page because the server had no copy of
+it to share.
 
 **The human board** has six columns: `dispatch` 着手確認, `plan` 計画の承認, `diff` 差分レビュー,
 `verify` 動作確認, `prreview` PRレビュー, `question` 質問. Since
@@ -108,8 +109,8 @@ once (`registry::agent_sessions_with`, which drops dead rows) and joins each car
 row in memory as `agent_session_of` does for one worker: by the session id saved in the worktree
 (`.claude/adjutant-session.json`), else by the pid together with its start time from the worker
 record, never by a pid alone. That saved file is one small read per worktree; a poll with
-`sessions=0` reads it today only where the worker record is missing, and now reads it for every
-worker. Calling `agent_session_of` once per card would list the whole ledger again for every card
+`sessions=0` reads it today only in some cases (a missing worker record, or one without a hub),
+and now reads it for every worker. Calling `agent_session_of` once per card would list the whole ledger again for every card
 whose session id changed. A listing that fails makes `session` `unknown` for every card; the helpers
 `worker_agent_session` and `hub_agent_session` turn that error into "no row", so they are not
 used here. It is absent when
@@ -211,13 +212,16 @@ Without 調査 that is the `default` preset's agent side: `before` (`status`: `b
 - Each card carries `facts`, `agentColumn`, `humanColumn` and `yourTurn` (below) computed
   **without** its open gate.
 - Each open gate carries the same four computed from its card's facts **with** the gate.
-- The page reads the open gate's set, else the card's, as `humanColOf` does now. When the page
+- The page reads the open gate's set (the first open gate, as `openGate` finds it today), else the
+  card's, as `humanColOf` does now. When the page
   drops a gate it just answered, everything that hangs on the gate (both columns, the stepper, the
   waiting mark, the counts) falls at once to what the next poll will say, as today.
 - A gate with no card on the board is evaluated with only its own `gate` fact.
 - A parent's hub card carries its set under `ownerHub`, evaluated with the hub's open gate (above).
   The page reads only `ownerHub`'s set for a hub card, never the board's gates; it never drops a
-  hub's gate optimistically, so no pair is needed there.
+  hub's gate optimistically, so no pair is needed there. As today, the human half and the counts
+  leave hub cards out (the hub's own board has them); `ownerHub`'s `humanColumn` and `yourTurn`
+  serve the card's waiting mark, the sort and the panel's pill.
 - Every worker row carries `agentColumn`, computed from its own `phase`, `step` and `session`.
   The row keeps its raw `phase` string as now; the facts are a key of their own beside it. The
   page still decides which rows are bare and places them by it. The sessions view labels a
@@ -256,7 +260,9 @@ folding and narrow width by `before` and `done`; the human board's PR確認 and 
   次を流す, and one with no `done` column folds nothing. The page skips bare sessions for a column
   with the `queue` or `done` role whatever its `when` says, as `bareIn` skips 着手前 and 完了 today.
 - `label`, `icon` and `hint` come from the config, so the page escapes all three. Today `label`
-  and `hint` are already escaped, and `icon`, a constant, is put straight into the HTML.
+  and `hint` are already escaped, and `icon`, a constant, is put straight into the HTML. A column
+  `id` ends up in attributes and keys, so the layout check refuses an `id` that is not lower-case
+  letters, digits and `-`, rather than relying on escaping at every place it is used.
 
 Shipping the layout to the page and evaluating there was the other option. It would put the
 condition language in JavaScript next to the Rust one, which is what #466 removed, and the page has
@@ -338,7 +344,8 @@ whole**, never half a layout, and a warning names the column and what is wrong. 
 
 - an unknown `preset`, fact, or value of a fact whose values adjutant owns (`work` and `parked`
   accept the configured additions; `jules` and `session` are open and take any word);
-- a column without `id` or `label`, or a duplicate `id` on the same side;
+- a column without `id` or `label`, an `id` that is not lower-case letters, digits and `-`, or a
+  duplicate `id` on the same side;
 - on the agent side, no fallback or more than one; on the human side, any fallback;
 - a `gate` value no human column matches when the gate is the only fact (as for a gate with no
   card): the human side has no fallback, so such a gate would be open, counted as the person's
@@ -378,6 +385,8 @@ the person asked the hub to do, the other what the work is.
 - It is stored as a plain string, not a closed enum as `kind` is, so a configured type never stops
   a record from loading. A stored type the config no longer lists reads as that word: it shows as
   it is and matches only a `"*"` condition. The park reason is stored the same way.
+- A blank or `null` `work` (or park reason) on a record reads as absent; a blank `--work` or
+  `--reason` is refused like an unknown one.
 - An absent `work` reads as `investigate` when `kind` is `investigate` or `doneWhen` is
   `report-only`, else `implement`. Old
   records need no change, and a binary that does not know `work` keeps it in `extra` (rule 10 in
@@ -607,7 +616,9 @@ Add `parked` to the facts (absent once the task is `done` or `cancelled`), the `
 setting (accepted by `adj task park --reason` through one check in `task`), and the `waiting`
 preset with its parked columns early. Parking and unparking stay #555's actions (置く with a
 reason, 置くのをやめる, `adj task park` / `unpark`); the reason picker lists first the reasons the
-layout has a column for. `yourTurn` and the counts leave parked tasks out, the gate-count badge
-and `/api/boards`' `gates` included. Document `parkReasons`
+layout has a column for. `yourTurn` and the counts leave parked tasks out. Every reader that asks
+whether a gate is the person's (the gate-count badge on one board and on 「すべて」, the review
+queue, the new-gate announcement) filters gates by the gate's `yourTurn`; `/api/boards` keeps
+sending every gate, so they all agree. Document `parkReasons`
 and the `waiting` preset in `config.example.json` and both READMEs.
 ```
