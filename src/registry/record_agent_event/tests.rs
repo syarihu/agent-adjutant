@@ -209,6 +209,26 @@ fn a_tool_call_sets_the_activity_and_the_same_one_is_not_written_again_within_a_
 }
 
 #[test]
+fn a_subagents_tool_call_sets_its_own_activity_and_not_the_parents() {
+    let row = rows(&[
+        tool(T0, "Edit: a"),
+        started("a1", T0 + 1),
+        started("a2", T0 + 1),
+        from_sub("a1", tool(T0 + 2, "Bash: b")),
+    ])
+    .unwrap();
+    assert_eq!(row.activity.as_deref(), Some("Edit: a"));
+    let activity = |id: &str| {
+        row.subagents
+            .iter()
+            .find(|sub| sub.id == id)
+            .and_then(|sub| sub.activity.clone())
+    };
+    assert_eq!(activity("a1").as_deref(), Some("Bash: b"));
+    assert_eq!(activity("a2"), None);
+}
+
+#[test]
 fn updated_at_moves_only_when_the_status_does() {
     let mut row = None;
     step_keep(&mut row, &tool(T0, "Edit: a"));
@@ -1089,6 +1109,7 @@ fn a_key_this_binary_does_not_know_survives_an_event_and_so_does_an_unknown_stat
     assert_eq!(written["rateLimits"], raw["rateLimits"]);
     assert_eq!(written["subagents"][0]["x-sub"], true);
     assert_eq!(written["subagents"][0]["lastSeenAt"], T0 + 100);
+    assert_eq!(written["subagents"][0]["activity"], "Bash: b");
     assert_eq!(written["status"], "snoozing");
 
     record(root, &tool(T0 + 200, "Edit: a"));

@@ -528,6 +528,9 @@ pub struct Subagent {
     pub started_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<i64>,
+    /// The tool it last ran, as the parent's `activity` words one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
     #[serde(flatten)]
     pub other: Map<String, Value>,
 }
@@ -811,6 +814,7 @@ fn see_subagent(row: &mut AgentSession, id: &str, kind: Option<&str>, now: i64) 
             kind: kind.map(str::to_string),
             started_at: Some(now),
             last_seen_at: Some(now),
+            activity: None,
             other: Map::new(),
         }),
     }
@@ -879,7 +883,7 @@ pub(super) fn apply(row: Option<AgentSession>, event: &AgentEvent, lookups: &Loo
                         | HookEvent::PermissionRequest
                 ) {
                     see_subagent(&mut cur, id, event.agent_type.as_deref(), now);
-                    apply_from_subagent(&mut cur, event);
+                    apply_from_subagent(&mut cur, id, event);
                 }
             }
             _ => apply_from_session(&mut cur, event, now),
@@ -910,17 +914,26 @@ pub(super) fn apply(row: Option<AgentSession>, event: &AgentEvent, lookups: &Loo
 
 /// An event from a sub-agent (already noted by `see_subagent`): it leaves the parent's status
 /// alone, except that the person is asked in the parent's terminal either way.
-fn apply_from_subagent(row: &mut AgentSession, event: &AgentEvent) {
+fn apply_from_subagent(row: &mut AgentSession, id: &str, event: &AgentEvent) {
     match &event.hook {
         HookEvent::PermissionRequest => {
             set_status(row, AgentStatus::Waiting);
             row.request = event.summary.clone();
         }
-        HookEvent::PostToolUse | HookEvent::PostToolUseFailure => match row.status {
-            // The prompt was answered, or the sub-agent would not be running tools.
-            Some(AgentStatus::Waiting) | None => set_status(row, AgentStatus::Running),
-            _ => {}
-        },
+        HookEvent::PostToolUse | HookEvent::PostToolUseFailure => {
+            match row.status {
+                // The prompt was answered, or the sub-agent would not be running tools.
+                Some(AgentStatus::Waiting) | None => set_status(row, AgentStatus::Running),
+                _ => {}
+            }
+            // Its own tool, not the parent's: `activity` of the row stays the parent's.
+            if let Some(summary) = &event.summary
+                && let Some(sub) = row.subagents.iter_mut().find(|sub| sub.id == id)
+                && sub.activity.as_ref() != Some(summary)
+            {
+                sub.activity = Some(summary.clone());
+            }
+        }
         _ => {}
     }
 }
