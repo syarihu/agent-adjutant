@@ -119,13 +119,13 @@ fn the_last_message_is_trimmed_and_blank_or_missing_is_none() {
 
 #[test]
 fn a_long_last_message_is_cut_on_a_character_boundary_and_keeps_its_line_breaks() {
-    let long = format!("one\n\ntwo\n{}", "あ".repeat(MESSAGE_CHARS));
+    let long = format!("one\n\ntwo\n{}", "あ".repeat(LAST_MESSAGE_CHARS));
     let message = stop_message(&stop_saying(Some(&long))).unwrap();
     assert!(message.starts_with("one\n\ntwo\n"), "{message:?}");
     assert!(message.ends_with("あ…"));
-    assert_eq!(message.chars().count(), MESSAGE_CHARS + 1);
+    assert_eq!(message.chars().count(), LAST_MESSAGE_CHARS + 1);
     // Exactly the limit is not cut.
-    let exact = "x".repeat(MESSAGE_CHARS);
+    let exact = "x".repeat(LAST_MESSAGE_CHARS);
     assert_eq!(stop_message(&stop_saying(Some(&exact))), Some(exact));
 }
 

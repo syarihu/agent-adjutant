@@ -14,9 +14,6 @@ use super::waiting::{GateCache, waiting_hub, waiting_worker};
 /// How many characters of the agent's activity or request the board carries.
 const AGENT_TEXT_CHARS: usize = 200;
 
-/// How many characters of the agent's last message the board carries, as the ledger keeps it.
-const AGENT_MESSAGE_CHARS: usize = 1000;
-
 // ── what the board reads ─────────────────────────────────────────────
 
 /// Where a session runs: what its record says it was started in (`recorded`), or — for a
@@ -364,7 +361,7 @@ fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentSta
             .last_message
             .as_deref()
             .filter(|message| !message.trim().is_empty())
-            .map(|message| super::waiting::cut_chars(message, AGENT_MESSAGE_CHARS)),
+            .map(|message| super::waiting::cut_chars(message, crate::registry::LAST_MESSAGE_CHARS)),
         last_message_at: row.last_message_at,
         subagents: row
             .subagents
@@ -919,9 +916,12 @@ mod tests {
             })
             .last_message
         };
-        let cut = of(format!("{}\nmore", "z".repeat(AGENT_MESSAGE_CHARS)));
+        let cut = of(format!(
+            "{}\nmore",
+            "z".repeat(crate::registry::LAST_MESSAGE_CHARS)
+        ));
         let cut = cut.unwrap();
-        assert_eq!(cut.chars().count(), AGENT_MESSAGE_CHARS + 1);
+        assert_eq!(cut.chars().count(), crate::registry::LAST_MESSAGE_CHARS + 1);
         assert!(cut.ends_with('…'));
         assert_eq!(of("  \n".to_string()), None);
     }

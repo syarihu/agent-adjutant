@@ -15,14 +15,11 @@ use super::args::HookArgs;
 use crate::infra::clock::now_secs;
 use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CLAUDE_PID_ENV, CODEX_HOME_ENV};
 use crate::infra::paths::home_dir;
-use crate::registry::{self, AgentEvent, HookEvent, RateWindow};
+use crate::registry::{self, AgentEvent, HookEvent, LAST_MESSAGE_CHARS, RateWindow};
 
 /// What is shown of a tool call or a notification: enough to tell what is going on, and a
 /// bounded size for the row that keeps it.
 const SHOWN_CHARS: usize = 80;
-
-/// What is kept of the agent's last message of a turn: a paragraph or two, line breaks and all.
-const MESSAGE_CHARS: usize = 1000;
 
 /// A line on stderr that cannot panic: `eprintln!` does on a closed stderr, outside `catch_unwind`.
 fn say(message: std::fmt::Arguments) {
@@ -299,11 +296,11 @@ fn text(payload: &Value, key: &str) -> Option<String> {
 }
 
 /// What the agent said last in the turn the payload ends: trimmed, blank the same as absent,
-/// line breaks kept, and cut to `MESSAGE_CHARS` on a character boundary with an ellipsis.
+/// line breaks kept, and cut to `LAST_MESSAGE_CHARS` on a character boundary with an ellipsis.
 fn last_message(payload: &Value) -> Option<String> {
     let message = text(payload, "last_assistant_message")?;
     let message = message.trim();
-    Some(match message.char_indices().nth(MESSAGE_CHARS) {
+    Some(match message.char_indices().nth(LAST_MESSAGE_CHARS) {
         Some((end, _)) => format!("{}…", message[..end].trim_end()),
         None => message.to_string(),
     })

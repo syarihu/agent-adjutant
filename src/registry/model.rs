@@ -337,6 +337,10 @@ pub const PHASES: [&str; 8] = [
     "report",
 ];
 
+/// What is kept of the agent's last message of a turn (`lastMessage`): a paragraph or two, line
+/// breaks and all. The hook cuts it on write and the board cuts it again for rows of other binaries.
+pub const LAST_MESSAGE_CHARS: usize = 1000;
+
 /// How long a worker that was dispatched but has not registered yet still holds its slot.
 ///
 /// Registration happens inside the new tab, seconds after `adj work` returns. A hub that
