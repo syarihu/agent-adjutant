@@ -40,8 +40,13 @@ pub enum HookEvent {
         kind: Option<String>,
         message: Option<String>,
     },
-    Stop,
-    StopFailure,
+    /// The end of a turn, with what the agent said last when the payload carried it.
+    Stop {
+        message: Option<String>,
+    },
+    StopFailure {
+        message: Option<String>,
+    },
     SessionEnd,
     SubagentStart,
     SubagentStop,
@@ -128,7 +133,7 @@ pub fn record_agent_event_with(
         }
         drop(guard);
         return match event.hook {
-            HookEvent::SessionStart | HookEvent::Stop => sweep(root, table, event.at, id),
+            HookEvent::SessionStart | HookEvent::Stop { .. } => sweep(root, table, event.at, id),
             _ => Ok(()),
         };
     }

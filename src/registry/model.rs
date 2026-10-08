@@ -439,7 +439,8 @@ pub(crate) struct Address {
 ///
 /// Every field but the key is optional and keys this version does not know stay in `other`
 /// (rule 10 in `docs/architecture.md`). `model`, `contextPercent` and `rateLimits` come from the
-/// status line (`adj hook claude --status-line`), never from a hook. A known key of the wrong
+/// status line (`adj hook claude --status-line`), never from a hook; `lastMessage` is the
+/// opposite, from the `Stop` and `StopFailure` hooks. A known key of the wrong
 /// type fails the load, and the row is then moved aside like any unreadable one.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -490,6 +491,13 @@ pub struct AgentSession {
     pub context_percent: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limits: Option<RateLimits>,
+    /// What the agent said at the end of its last turn that said anything, kept until the next
+    /// one replaces it. Line breaks are kept; the receiver caps its length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    /// When `last_message` was received.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<i64>,
     #[serde(flatten)]
     pub other: Map<String, Value>,
 }
@@ -696,8 +704,8 @@ pub(super) fn can_create(event: &AgentEvent) -> bool {
         HookEvent::Notification { kind, .. } => {
             matches!(notified(kind.as_deref()), Notified::Waiting)
         }
-        HookEvent::Stop
-        | HookEvent::StopFailure
+        HookEvent::Stop { .. }
+        | HookEvent::StopFailure { .. }
         | HookEvent::SessionEnd
         | HookEvent::SubagentStop
         | HookEvent::StatusLine { .. }
@@ -764,6 +772,24 @@ fn set_status(row: &mut AgentSession, status: AgentStatus) {
 fn apply_pending(row: &mut AgentSession) {
     if let Some(pending) = row.pending_status.take() {
         set_status(row, pending);
+    }
+}
+
+/// What a turn's last message was, when it had one. Kept even while `done` is held for
+/// sub-agents: it is said, whatever the status shows. A turn without one leaves the last, and
+/// the same words again within the heartbeat leave their time, so that a repeated `Stop` is not
+/// a write of its own.
+fn remember_message(row: &mut AgentSession, message: Option<&str>, now: i64) {
+    let Some(message) = message else {
+        return;
+    };
+    let repeated = row.last_message.as_deref() == Some(message)
+        && row
+            .last_message_at
+            .is_some_and(|at| now - at < HEARTBEAT_SECS);
+    if !repeated {
+        row.last_message = Some(message.to_string());
+        row.last_message_at = Some(now);
     }
 }
 
@@ -998,8 +1024,14 @@ fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
             }
             Notified::Nothing => {}
         },
-        HookEvent::Stop => finish(row, AgentStatus::Done),
-        HookEvent::StopFailure => finish(row, AgentStatus::Failed),
+        HookEvent::Stop { message } => {
+            remember_message(row, message.as_deref(), now);
+            finish(row, AgentStatus::Done);
+        }
+        HookEvent::StopFailure { message } => {
+            remember_message(row, message.as_deref(), now);
+            finish(row, AgentStatus::Failed);
+        }
         HookEvent::SubagentStart => {
             if let Some(id) = &event.agent_id
                 && !row.finished_subagents.contains_key(id)

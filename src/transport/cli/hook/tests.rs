@@ -62,14 +62,79 @@ fn each_hook_name_is_the_event_it_says() {
     ));
     assert_eq!(hook("subagent-start"), HookEvent::SubagentStart);
     assert_eq!(hook("subagent-stop"), HookEvent::SubagentStop);
-    assert_eq!(hook("stop"), HookEvent::Stop);
-    assert_eq!(hook("stop-failure"), HookEvent::StopFailure);
+    assert_eq!(
+        hook("stop"),
+        HookEvent::Stop {
+            message: Some("The test passes now.".to_string())
+        }
+    );
+    assert_eq!(
+        hook("stop-failure"),
+        HookEvent::StopFailure {
+            message: Some("API Error: Rate limit reached".to_string())
+        }
+    );
     assert_eq!(hook("session-end"), HookEvent::SessionEnd);
     let unknown = serde_json::json!({"session_id": "s", "hook_event_name": "PreCompact"});
     assert_eq!(
         event(&unknown).unwrap().hook,
         HookEvent::Other("PreCompact".to_string())
     );
+}
+
+/// The Claude `stop` fixture with `last_assistant_message` set to `message`, or removed.
+fn stop_saying(message: Option<&str>) -> Value {
+    let mut payload = fixture("stop");
+    match message {
+        Some(message) => payload["last_assistant_message"] = Value::from(message),
+        None => {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .remove("last_assistant_message");
+        }
+    }
+    payload
+}
+
+fn stop_message(payload: &Value) -> Option<String> {
+    match event(payload).unwrap().hook {
+        HookEvent::Stop { message } => message,
+        other => panic!("not a stop: {other:?}"),
+    }
+}
+
+#[test]
+fn the_last_message_is_trimmed_and_blank_or_missing_is_none() {
+    assert_eq!(
+        stop_message(&stop_saying(Some("  \n Fixed it.\n"))).as_deref(),
+        Some("Fixed it.")
+    );
+    assert_eq!(stop_message(&stop_saying(Some(" \n\t "))), None);
+    assert_eq!(stop_message(&stop_saying(None)), None);
+    let mut not_text = stop_saying(None);
+    not_text["last_assistant_message"] = serde_json::json!(5);
+    assert_eq!(stop_message(&not_text), None);
+}
+
+#[test]
+fn a_long_last_message_is_cut_on_a_character_boundary_and_keeps_its_line_breaks() {
+    let long = format!("one\n\ntwo\n{}", "あ".repeat(MESSAGE_CHARS));
+    let message = stop_message(&stop_saying(Some(&long))).unwrap();
+    assert!(message.starts_with("one\n\ntwo\n"), "{message:?}");
+    assert!(message.ends_with("あ…"));
+    assert_eq!(message.chars().count(), MESSAGE_CHARS + 1);
+    // Exactly the limit is not cut.
+    let exact = "x".repeat(MESSAGE_CHARS);
+    assert_eq!(stop_message(&stop_saying(Some(&exact))), Some(exact));
+}
+
+#[test]
+fn a_sub_agent_stop_gives_the_session_no_message() {
+    let stop = event(&fixture("subagent-stop")).unwrap();
+    assert_eq!(stop.hook, HookEvent::SubagentStop);
+    let stop = codex(&codex_fixture("subagent-stop")).unwrap();
+    assert_eq!(stop.hook, HookEvent::SubagentStop);
 }
 
 #[test]
@@ -338,8 +403,14 @@ fn each_codex_hook_name_is_the_event_it_says_and_an_interrupt_is_a_stop() {
     assert_eq!(hook("subagent-start"), HookEvent::SubagentStart);
     assert_eq!(hook("subagent-post-tool-use"), HookEvent::PostToolUse);
     assert_eq!(hook("subagent-stop"), HookEvent::SubagentStop);
-    assert_eq!(hook("stop"), HookEvent::Stop);
-    assert_eq!(hook("interrupt"), HookEvent::Stop);
+    assert_eq!(
+        hook("stop"),
+        HookEvent::Stop {
+            message: Some("Done.".to_string())
+        }
+    );
+    // Cut short: there is nothing it said.
+    assert_eq!(hook("interrupt"), HookEvent::Stop { message: None });
     assert_eq!(hook("session-end"), HookEvent::SessionEnd);
     let unknown = serde_json::json!({"session_id": "s", "hook_event_name": "PreCompact"});
     assert_eq!(

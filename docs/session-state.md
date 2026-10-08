@@ -87,6 +87,7 @@ keys this binary does not know are kept in `other`, as `WorkerRecord.other` does
 | `subagents` | Running sub-agents: `[{ id, type, startedAt, lastSeenAt, activity? }]`, keyed by `agent_id`. `activity` is the tool it last ran, as the parent's `activity` words one. `lastSeenAt` moves at most once a minute, like `lastEventAt`; a sub-agent not seen for ten minutes (its `SubagentStop` never came) is dropped on the next event, and the parent's `pendingStatus` applied if it was the last |
 | `finishedSubagents` | `{ agent_id: time }` for five minutes after each stop, so a late event cannot bring one back |
 | `model`, `contextPercent`, `rateLimits` | From the status line relay, when wired in |
+| `lastMessage`, `lastMessageAt` | What the agent said at the end of its last turn (`last_assistant_message` of `Stop` and `StopFailure`), cut to 1000 characters with its line breaks kept, and when it was received. Only the latest is kept, until the next one replaces it: a turn with no message, a new prompt and a sub-agent's events leave it. The same words again within a minute leave `lastMessageAt` alone, so that a repeated `Stop` is not a write. It goes with the row on `SessionEnd`. Held `done` records it too, since it was said. On `StopFailure` it is the error text Claude Code puts there (such as the rate-limit message), and it replaces what the agent said before |
 
 Every other record stays where it is. The worker record keeps its phase, and the task its status;
 the ledger says what the agent is doing right now, and neither of the others does. `adj phase` is
@@ -188,8 +189,8 @@ The events, taken from proctor's table:
 | `PostToolUseFailure` | `*` | `running` (`PostToolUse` fires only on success) |
 | `PermissionRequest` | `*` | `waiting`, and `request` (immediate; the permission `Notification` comes about 6 seconds later), also from a sub-agent |
 | `Notification` | | `waiting` for `permission_prompt`, `elicitation_dialog` and unknown types; back from `waiting` to `idle` for `idle_prompt`; nothing for the rest |
-| `Stop` | | `done`, or held in `pendingStatus` while sub-agents run |
-| `StopFailure` | | `failed`, held the same way (it fires instead of `Stop` on rate limits and overload) |
+| `Stop` | | `done`, or held in `pendingStatus` while sub-agents run; records `lastMessage` when the payload has one |
+| `StopFailure` | | `failed`, held the same way (it fires instead of `Stop` on rate limits and overload); records `lastMessage` the same way |
 | `SessionEnd` | | removes the row |
 | `SubagentStart` | | adds the sub-agent by `agent_id` |
 | `SubagentStop` | | removes it; applies `pendingStatus` when it was the last |
@@ -393,6 +394,7 @@ existing entries are kept, a rerun changes nothing, and `--remove` takes out onl
   `SubagentStart`, `SubagentStop`. `Interrupt` (a turn cut short) is recorded as `Stop`, so the row
   goes to done, except that an `Interrupt` while sub-agents are still running leaves the row
   running until their `SubagentStop` or the silence sweep. A Codex that does not know `Interrupt` ignores that key.
+  It carries no message, so it records no `lastMessage`.
 - `SessionEnd` gets `"timeout": 3` (Codex's default of 1 s would kill `adj hook` before it removed
   the row; 3 s is its maximum).
 - The hook prints nothing on every event, `PermissionRequest` included, since Codex reads stdout as
@@ -400,10 +402,11 @@ existing entries are kept, a rerun changes nothing, and `--remove` takes out onl
 - Codex asks the user to trust each new hook command the next time it starts. The trust record is
   Codex's own config, which adjutant never writes; after moving `adj`, run `adj setup codex` again
   and trust the hooks again.
+- Codex's `Stop` carries `last_assistant_message`, and the row records it as Claude Code's does.
 - Codex gives a hook no pid, so a row has none and is aged out by the 24-hour rule.
 - `--status-line` is Claude Code's; with `codex` it only says so on stderr.
 
-**Antigravity is still pending**, as a follow-up: `adj setup agy` and its receiver are not there yet.
+**Antigravity is still pending**, as a follow-up: `adj setup agy` and its receiver are not there yet. Its last message is recorded when the receiver lands ([#520](https://github.com/syarihu/agent-adjutant/issues/520)).
 
 adjutant runs Codex as `Agent::Generic` today, and a `Generic` session gets no injection; its row
 comes from the global hooks above.

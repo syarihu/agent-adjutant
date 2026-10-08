@@ -14,6 +14,9 @@ use super::waiting::{GateCache, waiting_hub, waiting_worker};
 /// How many characters of the agent's activity or request the board carries.
 const AGENT_TEXT_CHARS: usize = 200;
 
+/// How many characters of the agent's last message the board carries, as the ledger keeps it.
+const AGENT_MESSAGE_CHARS: usize = 1000;
+
 // ── what the board reads ─────────────────────────────────────────────
 
 /// Where a session runs: what its record says it was started in (`recorded`), or — for a
@@ -314,6 +317,8 @@ impl Poll<'_> {
                 request: None,
                 model: None,
                 context_percent: None,
+                last_message: None,
+                last_message_at: None,
                 subagents: Vec::new(),
                 error: Some(error),
             }),
@@ -334,8 +339,8 @@ impl Poll<'_> {
 }
 
 /// A ledger row as the board carries it: the first line of the activity and the request, cut
-/// short, the model and context use as the status line showed them, and the sub-agents that
-/// run.
+/// short, the model and context use as the status line showed them, the last message of the
+/// turn whole, and the sub-agents that run.
 fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentState {
     let first_line = |text: &Option<String>| {
         let line = text.as_deref()?.lines().next()?.trim();
@@ -354,6 +359,13 @@ fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentSta
             .context_percent
             .filter(|p| p.is_finite())
             .map(|p| p.round().clamp(0.0, 100.0) as u8),
+        // The whole text, line breaks and all, not the first line the other two are.
+        last_message: row
+            .last_message
+            .as_deref()
+            .filter(|message| !message.trim().is_empty())
+            .map(|message| super::waiting::cut_chars(message, AGENT_MESSAGE_CHARS)),
+        last_message_at: row.last_message_at,
         subagents: row
             .subagents
             .iter()
@@ -857,6 +869,8 @@ mod tests {
             request: Some("\n".to_string()),
             model: Some("Opus 5".to_string()),
             context_percent: Some(42.6),
+            last_message: Some("First line.\nSecond line.".to_string()),
+            last_message_at: Some(7),
             subagents: vec![
                 Subagent {
                     id: "a1".to_string(),
@@ -882,6 +896,11 @@ mod tests {
         assert_eq!(state.request, None);
         assert_eq!(state.model.as_deref(), Some("Opus 5"));
         assert_eq!(state.context_percent, Some(43));
+        assert_eq!(
+            state.last_message.as_deref(),
+            Some("First line.\nSecond line.")
+        );
+        assert_eq!(state.last_message_at, Some(7));
         assert_eq!(state.subagents.len(), 2);
         assert_eq!(state.subagents[0].kind.as_deref(), Some("Explore"));
         assert_eq!(state.subagents[0].started_at, Some(3));
@@ -889,6 +908,22 @@ mod tests {
         assert_eq!(sub_activity.chars().count(), AGENT_TEXT_CHARS + 1);
         assert_eq!(state.subagents[1].activity, None);
         assert_eq!(state.error, None);
+    }
+
+    #[test]
+    fn a_last_message_is_cut_long_and_a_blank_one_is_none() {
+        let of = |message: String| {
+            agent_state_of(&AgentSession {
+                last_message: Some(message),
+                ..AgentSession::default()
+            })
+            .last_message
+        };
+        let cut = of(format!("{}\nmore", "z".repeat(AGENT_MESSAGE_CHARS)));
+        let cut = cut.unwrap();
+        assert_eq!(cut.chars().count(), AGENT_MESSAGE_CHARS + 1);
+        assert!(cut.ends_with('…'));
+        assert_eq!(of("  \n".to_string()), None);
     }
 
     #[test]

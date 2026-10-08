@@ -496,6 +496,8 @@ mod tests {
                 request: request.map(str::to_string),
                 model: None,
                 context_percent: None,
+                last_message: None,
+                last_message_at: None,
                 subagents: Vec::new(),
                 error: None,
             }),

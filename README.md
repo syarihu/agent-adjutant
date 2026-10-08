@@ -96,7 +96,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
 | `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
 | `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate limits (from the agent session ledger when the status line relay fills it, else the rate-limit cache) and whether `codex` is on `PATH` — and the line to tell the user |
-| `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, and the last tool it reported; sessions whose process has gone are left out |
+| `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, the last tool it reported, and what it said at the end of its last turn; sessions whose process has gone are left out |
 | `adjutant setup claude\|codex [--remove]` | add adjutant's hooks to your Claude Code user settings or Codex hooks file, so sessions adjutant did not start report to `agent-sessions` too (see [Install](#install)) |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
@@ -800,7 +800,9 @@ the gate directories.
   `activity` and `request` (first line, cut to 200 characters), `model` (the status line's display
   name) and `contextPercent` (0 to 100, rounded) when the status line has said them, and `subagents`:
   the ones that run, each `{id, type, startedAt, activity}` (`activity` is the tool it last ran, first
-  line, cut to 200 characters; keys it has not said are left out). Left out
+  line, cut to 200 characters; keys it has not said are left out). `lastMessage` and `lastMessageAt`
+  are what the agent said at the end of its last turn (whole, line breaks kept, cut to 1000
+  characters) and when, left out until it has said one. Left out
   for a session that is not running or has no row (no hooks). When the ledger cannot be listed it is
   `{error}`; `sessionId` is the row's own id. The セッション tab, the hub's entry and the cards show
   a session `waiting` on a permission prompt as waiting on a person even with no gate open (許可待ち

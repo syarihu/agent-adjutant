@@ -549,10 +549,11 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
    been idle at `now`, which is as fine as the page shows it. `mode` is the view being drawn: the
    board and the sessions tab draw the last activity, and others leave it out. The agent's own part
    is cut to what the view draws, since activity and request change on every tool call: the
-   sessions tab has all of it (`updatedAt` as minutes, `lastEventAt` not drawn), the board only
+   sessions tab has all of it, the last message too (`updatedAt` as minutes, `lastEventAt` not drawn), the board only
    the state and, while it waits on a permission prompt, the request its card shows, and any other
-   view only the state. In board mode the activity is left out on purpose, though the session card
-   and the task panel draw it: it shows with the next real change or the minute redraw. Clamped
+   view only the state. In board mode the activity and the last message are left out on purpose,
+   though the session card and the task panel draw them: they show with the next real change or the
+   minute redraw (a new last message comes with a change of the state or the held state). Clamped
    at 0: tmux's activity can be a second later than the poll's clock, and -1 against 0 between two
    polls would redraw for nothing. */
 function minuteSessions(sessions, now, mode = 'sessions') {
@@ -564,7 +565,7 @@ function minuteSessions(sessions, now, mode = 'sessions') {
   return (sessions || []).map(({ lastActivityAt, agentSession: a, uncommitted, uncommittedError, branchPr, branchPrError, ...s }) => {
     const agent = !a ? {} : { agentSession: {
       status: a.status, pending: a.pending, subagents: a.subagents?.length || 0, error: a.error,
-      ...(mode === 'sessions' ? { activity: a.activity, request: a.request }
+      ...(mode === 'sessions' ? { activity: a.activity, request: a.request, lastMessage: a.lastMessage }
         : mode === 'board' && a.status === 'waiting' ? { request: a.request } : {}),
       ...(shows && a.updatedAt != null ? { updatedAt: minutes(a.updatedAt) } : {}),
     } };

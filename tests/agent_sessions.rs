@@ -150,6 +150,8 @@ fn a_turn_ends_done_with_the_worktree_the_pid_and_its_start_time() {
     assert!(!row["psStarted"].as_str().unwrap().trim().is_empty());
     assert!(row["configDir"].as_str().unwrap().ends_with(".claude"));
     assert!(row.get("activity").is_none() && row.get("request").is_none());
+    assert_eq!(row["lastMessage"], "The test passes now.");
+    assert!(row["lastMessageAt"].as_i64().unwrap() > 0);
 }
 
 #[test]
@@ -403,6 +405,7 @@ fn codex_sent(fixture: &Fixture, name: &str) -> Json {
         "session-start" => include_str!("../src/fixtures/hooks/codex/session-start.json"),
         "permission-request" => include_str!("../src/fixtures/hooks/codex/permission-request.json"),
         "interrupt" => include_str!("../src/fixtures/hooks/codex/interrupt.json"),
+        "stop" => include_str!("../src/fixtures/hooks/codex/stop.json"),
         other => panic!("no fixture called {other}"),
     };
     let mut payload: Json = serde_json::from_str(text).unwrap();
@@ -438,6 +441,11 @@ fn a_codex_hook_records_a_row_without_a_pid_and_prints_nothing() {
     assert_eq!(rows[0]["status"], "waiting");
     assert!(rows[0].get("pid").is_none());
 
+    // A turn cut short says nothing.
     quiet_success(&codex_hook(&fx, &codex_sent(&fx, "interrupt")));
     assert_eq!(self::rows(&fx)[0]["status"], "done");
+    assert!(self::rows(&fx)[0].get("lastMessage").is_none());
+
+    quiet_success(&codex_hook(&fx, &codex_sent(&fx, "stop")));
+    assert_eq!(self::rows(&fx)[0]["lastMessage"], "Done.");
 }

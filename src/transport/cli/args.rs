@@ -43,7 +43,7 @@ pub(crate) enum Commands {
     Phase(PhaseArgs),
     /// Which engine reads the diff in this self-review round: reviewEngine, then Claude's rate limits
     ReviewEngine(ReviewEngineArgs),
-    /// What each agent session's hooks last said: running, waiting, done, sub-agents
+    /// What each agent session's hooks last said: running, waiting, done, sub-agents, its last message
     AgentSessions(AgentSessionsArgs),
     /// Add adjutant's hooks to an agent's user settings, so sessions adjutant did not start report too
     Setup(SetupArgs),

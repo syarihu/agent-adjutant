@@ -84,6 +84,14 @@ function gitFactsHtml(s) {
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
 }
 
+/* What the agent said at the end of its last turn, as plain text with its line breaks and how
+   long ago it said it; never HTML or markdown. */
+function lastMessageHtml(a) {
+  if (!a.lastMessage) return '';
+  const mins = a.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
+  return `<div class="tp-lastmsg"><span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div>${esc(a.lastMessage)}</div></div>`;
+}
+
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a
    session that is not running or has no row. The ledger's words are text, escaped where they
    are drawn, and never a class. */
@@ -103,7 +111,7 @@ function agentFactsHtml(s) {
     ${doing}
     ${a.pending ? kv('ターン終了（保留）', esc(a.pending)) : ''}
     ${a.subagents?.length > 0 ? kv('サブエージェント', esc(`${a.subagents.length} 件`)) : ''}
-  </div>`;
+  </div>${lastMessageHtml(a)}`;
 }
 
 /* ── 詳細 of a session with no task ── */

@@ -158,6 +158,12 @@ pub struct SessionAgentState {
     /// How much of the context window is in use, a whole number of percent from 0 to 100.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_percent: Option<u8>,
+    /// What the agent said at the end of its last turn, line breaks kept, cut long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    /// When it said it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<i64>,
     /// The sub-agents that are running, oldest first.
     #[serde(default)]
     pub subagents: Vec<SessionSubagent>,
@@ -424,6 +430,8 @@ mod tests {
             request: Some("Bash: ls".to_string()),
             model: Some("Opus 5".to_string()),
             context_percent: Some(43),
+            last_message: Some("Done.\nAll green.".to_string()),
+            last_message_at: Some(9),
             subagents: vec![
                 SessionSubagent {
                     id: "a1".to_string(),

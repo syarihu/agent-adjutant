@@ -1303,6 +1303,8 @@ fn a_running_worker_carries_what_its_hooks_last_said() {
             "lastEventAt": now_secs(),
             "model": "Opus 5",
             "contextPercent": 42.6,
+            "lastMessage": "All green.\nShip it.",
+            "lastMessageAt": 90,
             "subagents": [
                 {"id": "a1", "type": "Explore", "startedAt": 50, "activity": "Grep: foo\nmore"},
                 {"id": "a2"},
@@ -1318,6 +1320,9 @@ fn a_running_worker_carries_what_its_hooks_last_said() {
     assert_eq!(one["agentSession"]["contextPercent"], 43);
     assert_eq!(one["agentSession"]["request"], "Bash: rm -rf build");
     assert_eq!(one["agentSession"]["updatedAt"], 100);
+    // Whole, with its line break, unlike the request above.
+    assert_eq!(one["agentSession"]["lastMessage"], "All green.\nShip it.");
+    assert_eq!(one["agentSession"]["lastMessageAt"], 90);
     assert_eq!(
         one["agentSession"]["subagents"],
         serde_json::json!([

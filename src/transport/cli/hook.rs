@@ -21,6 +21,9 @@ use crate::registry::{self, AgentEvent, HookEvent, RateWindow};
 /// bounded size for the row that keeps it.
 const SHOWN_CHARS: usize = 80;
 
+/// What is kept of the agent's last message of a turn: a paragraph or two, line breaks and all.
+const MESSAGE_CHARS: usize = 1000;
+
 /// A line on stderr that cannot panic: `eprintln!` does on a closed stderr, outside `catch_unwind`.
 fn say(message: std::fmt::Arguments) {
     use std::io::Write;
@@ -134,8 +137,12 @@ fn claude_event(
             kind: text(payload, "notification_type"),
             message: text(payload, "message").map(|message| first_line(&message)),
         },
-        "Stop" => HookEvent::Stop,
-        "StopFailure" => HookEvent::StopFailure,
+        "Stop" => HookEvent::Stop {
+            message: last_message(payload),
+        },
+        "StopFailure" => HookEvent::StopFailure {
+            message: last_message(payload),
+        },
         "SessionEnd" => HookEvent::SessionEnd,
         "SubagentStart" => HookEvent::SubagentStart,
         "SubagentStop" => HookEvent::SubagentStop,
@@ -182,7 +189,11 @@ fn codex_event(
         "UserPromptSubmit" => HookEvent::UserPromptSubmit,
         "PostToolUse" => HookEvent::PostToolUse,
         "PermissionRequest" => HookEvent::PermissionRequest,
-        "Stop" | "Interrupt" => HookEvent::Stop,
+        "Stop" => HookEvent::Stop {
+            message: last_message(payload),
+        },
+        // Cut short, so there is no message of its own to keep.
+        "Interrupt" => HookEvent::Stop { message: None },
         "SessionEnd" => HookEvent::SessionEnd,
         "SubagentStart" => HookEvent::SubagentStart,
         "SubagentStop" => HookEvent::SubagentStop,
@@ -285,6 +296,17 @@ fn text(payload: &Value, key: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
+}
+
+/// What the agent said last in the turn the payload ends: trimmed, blank the same as absent,
+/// line breaks kept, and cut to `MESSAGE_CHARS` on a character boundary with an ellipsis.
+fn last_message(payload: &Value) -> Option<String> {
+    let message = text(payload, "last_assistant_message")?;
+    let message = message.trim();
+    Some(match message.char_indices().nth(MESSAGE_CHARS) {
+        Some((end, _)) => format!("{}…", message[..end].trim_end()),
+        None => message.to_string(),
+    })
 }
 
 /// `Edit: src/lib.rs`: the tool, and the first thing its input names.
