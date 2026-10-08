@@ -50,6 +50,7 @@ const work = {
   structure: '',      // what the list was last built from (renderWorkList)
   cells: new Map(),   // each row's and header's own html, by key
   rowsByKey: new Map(),
+  backed: null,       // the address of an open row that was sent back: not opened again until it moves
   open: null,         // the row the person has open: { nwo, id, nav }, the mark `left` is written when it is left
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
 };
@@ -204,10 +205,13 @@ const workNewest = r => Math.max(0, ...(r.live || []).map(i => i.since).filter(N
 /* A row for an entry the list has no session row for: a task that waits on the person with nothing running, or a session
    the list does not show (one that is gone). */
 function workTurnRow(e, judged, repo) {
-  const board = e.board;
+  // The board and ref as `workRows` resolves them: a board this server does not serve is read on the carrier, where the
+  // session (if any) is what opens.
+  const board = workBoardOf(repo, e.board);
+  const ref = board !== e.board && e.session ? SESS_REF + e.session.id : e.ref;
   const gate = e.items.some(i => i.kind === 'gate');
   return {
-    id: e.id, key: `${board}/${e.ref}`, raw: `${repo.nwo}/${e.board}`, board, ref: e.ref, repo, nwo: repo.nwo,
+    id: e.id, key: `${board}/${ref}`, raw: `${repo.nwo}/${e.board}`, board, ref, repo, nwo: repo.nwo,
     s: {}, st: gate ? 'waiting' : 'done', data: { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] },
     task: e.task, isHub: e.isHub, turn: true, entry: e, cls: judged.cls, live: judged.live,
   };
@@ -265,7 +269,7 @@ function workSelectedId(sel) {
   const r = sel?.row;
   if (!r) return null;
   const s = r.session;
-  return `${r.board}/${r.task ? r.task.id : s ? (s.kind === 'hub' ? HUB_REF : SESS_REF) + s.id : ''}`;
+  return `${r.board}/${r.task ? r.task.id : s ? (s.kind === 'hub' ? HUB_REF : SESS_REF) + s.id : nav.task}`;
 }
 
 /* Follow the address: moving it off the open row leaves that one, and arriving on a row (by a click or by a link) opens it. A
@@ -273,7 +277,9 @@ function workSelectedId(sel) {
 function workTrack() {
   const addr = nav.board && nav.board !== 'all' && nav.task && !isParentRef(nav.task) ? `${nav.board}/${nav.task}` : null;
   if (work.open && work.open.nav !== addr) workLeave();
-  if (work.open || !addr) return;
+  // A row sent back stays new until the address has moved off it and come back: it is not opened again meanwhile.
+  if (work.backed !== addr) work.backed = null;
+  if (work.open || !addr || work.backed) return;
   const sel = workSelected();
   const id = workSelectedId(sel);
   if (id && sel.repo) work.open = { nwo: sel.repo.nwo, id, nav: addr };
@@ -386,6 +392,11 @@ function workSelected() {
       if (mine && (!found || workBetter(r.session, found.session))) found = r;
     }
     if (found) return { row: found, repo, session: found.session };
+    // A gate that only has a row of its own: nothing to open beside it.
+    if (isGateRef(ref)) {
+      const slug = ref.slice(WORK_GATE_REF.length).split('/')[0];
+      if (workBoardOf(repo, slug) === nav.board) return { row: { board: slug, session: null, task: null }, repo, session: null };
+    }
     // A task that waits on the person with nothing running: there is no session to show.
     if (!isHubRef(ref) && !isSessRef(ref)) {
       const t = (repo.turns || []).find(x => x.task?.id === ref && workBoardOf(repo, x.board) === nav.board);
@@ -398,6 +409,8 @@ function workSelected() {
   }
   return null;
 }
+
+const isGateRef = ref => typeof ref === 'string' && ref.startsWith(WORK_GATE_REF);
 
 /* Whether the address names this row: its board and ref. */
 const workIsSelected = r => !!nav.task && !!nav.board && nav.board !== 'all' && !isParentRef(nav.task) && r.board === nav.board && r.ref === nav.task;
@@ -508,7 +521,7 @@ const workLaterHtml = r => `<span class="wk-line later">${esc(workLaterText(r.li
    opened with nothing running, or a session the list does not show. */
 function workTurnRowHtml(r, cell = '', band = false) {
   const e = r.entry;
-  const title = r.task?.title || (e.session ? sessionLabel(e.session, false, r.data).text : r.ref);
+  const title = r.task?.title || (e.session ? sessionLabel(e.session, false, r.data).text : e.gateTitle || r.ref);
   const prNumber = r.task ? prRefNumber(r.task.pr) : null;
   const newest = workNewest(r);
   const age = newest && r.data.now != null ? agoLabel(minutesSince(newest, r.data.now)) : '';
@@ -843,7 +856,10 @@ function workReadAll() {
 /* The buttons beside a row: back to 新着, or cleared (✓). */
 function workMarkRow(id, patch) {
   const e = work.entries.get(id);
-  if (e) workWriteMarks(e.nwo, [[id, patch]]);
+  if (!e) return;
+  // Sent back while open: leaving it later must not read it again.
+  if (patch.back != null && work.open?.id === id) { work.backed = work.open.nav; work.open = null; }
+  workWriteMarks(e.nwo, [[id, patch]]);
 }
 
 wk('work-view').addEventListener('click', e => {

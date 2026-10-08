@@ -143,8 +143,8 @@ test('a turn with no session is an entry of its own, merged into a row of the sa
   ];
   const entries = one({ rows: [row(session('w1'), task('6', { waitsOnPerson: true, prTurn: 'merge' }))], turns });
   const ids = entries.map(e => e.id).sort();
-  // The task-less gate is not on a row of its own: it belongs to the session that waits on it.
-  assert.deepEqual(ids, [`${SLUG}/5`, `${SLUG}/6`]);
+  // The task-less gate no session waits on has a row of its own.
+  assert.deepEqual(ids, [`${SLUG}/5`, `${SLUG}/6`, `${SLUG}/gate:${SLUG}/g9`]);
   assert.equal(byId(entries, `${SLUG}/5`).session, null);
   assert.deepEqual(plain(byId(entries, `${SLUG}/6`).items.map(i => i.kind)), ['pr']);
   // The session that waits on the task-less gate gets it.
@@ -203,4 +203,23 @@ test('marks of rows no longer listed are kept for a week and then dropped', () =
   const marks = { live: { left: 1 }, recent: { left: now - 86400 }, old: { left: now - 8 * 86400, back: now - 9 * 86400 }, 'old-but-newest-back': { left: 1, back: now - 86400 } };
   const kept = workPruneMarks(marks, new Set(['live']), now);
   assert.deepEqual(Object.keys(plain(kept)).sort(), ['live', 'old-but-newest-back', 'recent']);
+});
+
+test('a gate no session waits on is on the hub of its board, else a row of its own', () => {
+  const g = { id: 'g9', kind: 'question', slug: SLUG, title: 'Which way?', openedAt: stamp(T0 + 11) };
+  // The hub session waits on another gate: the stray one is the hub's too.
+  const withHub = one({
+    rows: [row(session('hub', { kind: 'hub', waiting: waiting('g1', T0 + 3) }))],
+    turns: [{ board: SLUG, gates: [g, { id: 'g1', kind: 'plan', slug: SLUG, openedAt: stamp(T0 + 3) }] }],
+  });
+  assert.equal(withHub.length, 1);
+  assert.deepEqual(plain(withHub[0].items.map(i => i.key).sort()), [`${SLUG}/g1`, `${SLUG}/g9`]);
+  // No hub row at all: an entry keyed by the gate, which carries its title.
+  const alone = one({ turns: [{ board: SLUG, gates: [g] }] });
+  assert.equal(alone.length, 1);
+  assert.equal(alone[0].id, `${SLUG}/gate:${SLUG}/g9`);
+  assert.equal(alone[0].gateTitle, 'Which way?');
+  assert.equal(workClassOf(alone[0], {}), 'new');
+  // Answered on this page: nothing.
+  assert.equal(one({ turns: [{ board: SLUG, gates: [g] }] }, () => true).length, 0);
 });

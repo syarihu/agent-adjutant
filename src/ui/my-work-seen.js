@@ -14,6 +14,8 @@
 
 const WORK_HUB_REF = 'hub:';
 const WORK_SESS_REF = 'session:';
+/* The ref of a row that is only a gate, when no hub or session can hold it. */
+const WORK_GATE_REF = 'gate:';
 /* The PR turns that are the person's to act on, as the server names them. */
 const WORK_PR_WORDS = {
   changes: '修正の依頼が残ったまま',
@@ -68,11 +70,12 @@ function workEntries(doc, isGateDone = () => false) {
       Object.assign(entry(h.board, WORK_HUB_REF + h.session.id), { row: h, session: h.session, isHub: true });
     }
     // Gates and PRs on a task: what the person has to do for a task that may have no session.
+    const orphans = [];
     for (const t of repo.turns || []) {
       for (const g of t.gates || []) {
         const id = g.task || t.task?.id;
         // A gate that names no task is the waiting of the session it was opened from, below.
-        if (!id) continue;
+        if (!id) { orphans.push(g); continue; }
         const e = entry(t.board, id);
         if (!e.task && t.task) e.task = t.task;
         addGate(e, g.slug, g, g.openedAt);
@@ -85,6 +88,14 @@ function workEntries(doc, isGateDone = () => false) {
     for (const e of [...byId.values()]) {
       const w = e.session?.waiting;
       if (w) addGate(e, w.slug, w, w.openedAt);
+    }
+    // A gate no session waits on (its hub is gone, or its `waiting` names another gate) is the hub's of its board, else its own.
+    for (const g of orphans) {
+      if (seen.has(`${g.slug}/${g.id}`) || isGateDone(`${g.slug}/${g.id}`)) continue;
+      const hub = [...byId.values()].find(e => e.isHub && e.board === g.slug);
+      const e = hub || entry(g.slug, `${WORK_GATE_REF}${g.slug}/${g.id}`);
+      if (!hub) e.gateTitle = g.title || '';
+      addGate(e, g.slug, g, g.openedAt);
     }
     for (const e of byId.values()) {
       e.items = workItems(e);
