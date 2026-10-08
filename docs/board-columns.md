@@ -107,8 +107,9 @@ part. Reading the ledger is not: the poll already takes the process table, so it
 once (`registry::agent_sessions_with`, which drops dead rows) and joins each card's worker to its
 row in memory as `agent_session_of` does for one worker: by the session id saved in the worktree
 (`.claude/adjutant-session.json`), else by the pid together with its start time from the worker
-record, never by a pid alone. That saved file is one small read per worktree, which a poll with
-`sessions=0` does not do today and now will. Calling `agent_session_of` once per card would list the whole ledger again for every card
+record, never by a pid alone. That saved file is one small read per worktree; a poll with
+`sessions=0` reads it today only where the worker record is missing, and now reads it for every
+worker. Calling `agent_session_of` once per card would list the whole ledger again for every card
 whose session id changed. A listing that fails makes `session` `unknown` for every card; the helpers
 `worker_agent_session` and `hub_agent_session` turn that error into "no row", so they are not
 used here. It is absent when
@@ -252,10 +253,10 @@ folding and narrow width by `before` and `done`; the human board's PR確認 and 
   the poll warning) on the human side. At most one column per side carries each role; the
   `default` preset gives them to `before`, `done` and `prreview`. Narrow width goes with `queue`
   and `done`, as now. A layout with no `queue` column shows no 待ち / Backlog sections and no
-  次を流す, and one with no `done` column folds nothing. A bare session is never placed in a
-  `queue` or `done` column, as `bareCol` keeps it out of 着手前 and 完了 today.
-- `label`, `icon` and `hint` come from the config, so the page escapes them like any other text
-  (today they are constants put straight into the HTML).
+  次を流す, and one with no `done` column folds nothing. The page skips bare sessions for a column
+  with the `queue` or `done` role whatever its `when` says, as `bareIn` skips 着手前 and 完了 today.
+- `label`, `icon` and `hint` come from the config, so the page escapes all three. Today `label`
+  and `hint` are already escaped, and `icon`, a constant, is put straight into the HTML.
 
 Shipping the layout to the page and evaluating there was the other option. It would put the
 condition language in JavaScript next to the Rust one, which is what #466 removed, and the page has
@@ -336,7 +337,7 @@ that side falls back to the preset (or to `default` when the preset itself is un
 whole**, never half a layout, and a warning names the column and what is wrong. The checks:
 
 - an unknown `preset`, fact, or value of a fact whose values adjutant owns (`work` and `parked`
-  accept the configured additions);
+  accept the configured additions; `jules` and `session` are open and take any word);
 - a column without `id` or `label`, or a duplicate `id` on the same side;
 - on the agent side, no fallback or more than one; on the human side, any fallback;
 - a `gate` value no human column matches when the gate is the only fact (as for a gate with no
@@ -386,8 +387,9 @@ the person asked the hub to do, the other what the work is.
   anything is written. The check is one function in `task`, given the configured `workTypes`, and
   the layout check in `board::view` calls the same one, so the two cannot disagree.
 - Every route that creates a task can set it. The hub passes `--work design` to every `adj task
-  add` in `commands/adj-hub.md` (the one in "4. Start the worker", which the Jules route reuses,
-  and the session-link route) when the request asks for a design;
+  add` in `commands/adj-hub.md`: Step 2 of "4. Start the worker", which "5. Hand it to Jules"
+  reuses, and option A of "When asked to work on an existing worktree" (a session started with no
+  task makes no record), when the request asks for a design;
   it never asks, and passes nothing otherwise, since an investigation already reads as one from
   `kind` or `doneWhen` and anything else is an implementation. A wrong guess is fixed with `adj
   task update --work`. The board's
@@ -432,11 +434,12 @@ differ from one repository to the next, and a layout must not change what "it is
 
 - **Whose turn it is** stays independent of the layout: an open gate, or `waitsOnPerson`, and
   not `parked`. The server sends it as `yourTurn`, in the pairs above (the card's without its gate,
-  the gate's with it), and computes it the same way for `board_counts`, Jules included: today `board_counts` passes no
-  Jules state, so a Jules task with a PR counts as waiting in the sidebar while the board shows it
-  working, and `yourTurn` ends that difference. Everything listed earlier that reads `humanColOf` to ask "is this the person's"
+  the gate's with it), and computes it the same way for `board_counts`. `board_counts` reads records alone and has no
+  Jules state, so, as today, a Jules task with a PR that Jules is still working on can count as
+  waiting in the sidebar while its board shows it working; closing that is not part of this design. Everything listed earlier that reads `humanColOf` to ask "is this the person's"
   rather than "where does it go" (the page's counts, the 「…を待っています」 pill, the card's waiting
-  mark, the stuck strip, the agent board's sort) reads `yourTurn` instead. The pill shows when
+  mark, the stuck strip, the agent board's sort) reads `yourTurn` instead. The card's waiting mark
+  keeps its other half, a permission wait read from the session on the page, beside it. The pill shows when
   `yourTurn` holds, and its text is the label of the card's `humanColumn`. A parked card in the
   `waiting` preset's 置いている column is shown on the human half but is not the person's turn and is
   not counted. The sidebar counts, the badges and 新着
@@ -530,7 +533,8 @@ column.
 ## Proposal
 
 Add the column evaluator and the `default` preset from `docs/board-columns.md` to `board::view`.
-Send `agentColumn`, `humanColumn` and `yourTurn` alongside each `facts` from the first step, and
+Send `agentColumn`, `humanColumn` and `yourTurn` alongside each card's and gate's `facts` from the
+first step (worker rows carry only `agentColumn`), and
 `columns` (ids, labels, icons, hints, roles) in the state, carried through `mergeStates`; the
 gate's `humanCol` and `ownerHub.humanCol` give way to `humanColumn`. The page renders both halves
 from `columns`, places cards by those fields, reads `yourTurn` wherever it asks whether a card is
@@ -542,9 +546,9 @@ labels come from `columns`. Scrub the new keys from `extra` as `humanCol` is.
 Drop `AGENT_COLUMNS`, `HUMAN_COLUMNS`, `AGENT_COL_OF_PHASE` and `agentColOf`. Replace the page
 test's checks of the dropped tables with Rust tests that every value lands where it lands today,
 and move the tests that pin `humanCol`. The board must look the same, except the two cases in the
-doc's Migration section. Extend that README subsection with the new fields, and keep the column names in the PR-turn
-table in step, in both
-languages.
+doc's Migration section. Extend that README subsection with the new fields in both languages, and
+keep the column names in README.md's PR-turn table (and the same rule in prose in README.ja.md) in
+step.
 ```
 
 **3. adjutant cannot tell an investigation or a design from an implementation**
