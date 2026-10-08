@@ -88,17 +88,26 @@ function decideHtml(g) {
   </div>`;
 }
 
+const deciding = new Set(); // gates with an answer in flight: a second click must not send it again
+/* What a button of `decideHtml` or a gate's choices does, for the gate it sits in. The task panel
+   calls this from its own delegated click handler instead of `bindDecide`. */
+async function decideAct(b) {
+  const id = b.closest('[data-gate]').dataset.gate;
+  const act = b.matches('.pick[data-choice]') ? 'choice' : b.dataset.act;
+  if (act === 'talk') return talk(id);
+  if (deciding.has(id)) return;
+  deciding.add(id);
+  try {
+    if (act === 'choice') await answer('choice', b.dataset.choice, id);
+    else if (act === 'close') await closeGate(id);
+    else await answer(act, undefined, id);
+  } finally { deciding.delete(id); }
+}
+
 /* The buttons `decideHtml` and a gate's choices draw, wired to the gate they sit in. */
 function bindDecide(root) {
-  root.querySelectorAll('[data-gate] [data-act]').forEach(b => b.addEventListener('click', () => {
-    const id = b.closest('[data-gate]').dataset.gate;
-    const act = b.dataset.act;
-    if (act === 'talk') talk(id);
-    else if (act === 'close') closeGate(id);
-    else answer(act, undefined, id);
-  }));
-  root.querySelectorAll('[data-gate] .pick[data-choice]').forEach(b =>
-    b.addEventListener('click', () => answer('choice', b.dataset.choice, b.closest('[data-gate]').dataset.gate)));
+  root.querySelectorAll('[data-gate] [data-act], [data-gate] .pick[data-choice]').forEach(b =>
+    b.addEventListener('click', () => decideAct(b)));
   root.querySelectorAll('button[data-ide]').forEach(b =>
     b.addEventListener('click', () => worktreeAct('ide', b.dataset.ide)));
   root.querySelectorAll('button[data-focus]').forEach(b =>
@@ -221,9 +230,10 @@ document.addEventListener('change', e => {
   if (box.checked) ticked.add(i); else ticked.delete(i);
 });
 
-/* The comment box of the view on screen. The review view and a task's view can both hold one
-   at once, the hidden one included, so it is looked up inside the one being shown. */
-const commentBox = () => document.querySelector(view === 'task' ? '#task-view .gate-comment' : '#review .gate-comment');
+/* The comment box of the view on screen. The review view, a task's view and the task panel can
+   each hold one at once, the hidden ones included, so it is looked up inside the one being shown. */
+const commentBox = () => document.querySelector(view === 'task' ? '#task-view .gate-comment'
+  : view === 'review' ? '#review .gate-comment' : '#task-panel .gate-comment');
 
 /* An answered gate leaves the list and the counts at once; the round that follows confirms it.
    In a merged state that round can be a while off. */

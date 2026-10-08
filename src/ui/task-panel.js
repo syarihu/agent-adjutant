@@ -6,6 +6,24 @@
 const tp = id => document.getElementById(id);
 const taskById = id => (state.tasks || []).find(t => t.id === id);
 
+/* The gate each tab of the open task shows when a person picked one in 経過, as the task view's
+   `pick` does for its tabs (keyed by the full view's tab names). It belongs to one task: another task starts with none. */
+let panelPick = { id: null, pick: {} };
+function panelPickOf(id) {
+  if (panelPick.id !== id) panelPick = { id, pick: {} };
+  return panelPick.pick;
+}
+
+/* The panel's tabs are the full view's, 概要 being タスクサマリ, whose address stays `detail`. */
+const paneOfTab = tab => tab === 'overview' ? 'detail' : tab;
+const tabOfPane = pane => pane === 'detail' ? 'overview' : pane;
+/* The tab a gate is judged in. Read inside functions only: the table is in task-view.js, which
+   loads after this file. */
+const paneOfGate = g => paneOfTab(TAB_OF_KIND[g.kind] || 'history');
+/* The board's own record behind a gate of the task, found by the task's board as the card's chips
+   name it: a copy from the history may lack its board, and ids are only unique within one. */
+const liveRecordOf = (task, g) => recordByRef(gateRef(task._slug && !g._slug ? { ...g, _slug: task._slug } : g));
+
 function markSelectedCards() {
   for (const card of document.querySelectorAll('#boards .card')) {
     card.classList.toggle('selected', card.dataset.id === selectedTaskId);
@@ -15,7 +33,7 @@ function markSelectedCards() {
 /* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
 function showTaskPanel(id) {
   pendingTask = null;
-  if (selectedTaskId !== id) sessView.git = null;
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
   selectedTaskId = id;
   markSelectedCards();
   renderTaskPanel();
@@ -25,7 +43,7 @@ function showTaskPanel(id) {
    of the card that is open replaces the one it is on. */
 function openTaskPanel(id, pane = 'detail') {
   pendingTask = null;
-  if (selectedTaskId !== id) sessView.git = null;
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
   selectedTaskId = id;
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
@@ -38,6 +56,11 @@ function hideTaskPanelState() {
   panelScrolledFor = null;
   // Opened again, a session's git state is read again.
   sessView.git = null;
+  panelPick = { id: null, pick: {} };
+  // Drawn again when opened, so what was typed in the body does not come back.
+  panelSig.links = panelSig.gate = panelSig.rest = null;
+  panelShown = null;
+  panelHeld = false;
   disposePanelTerminal();
   markSelectedCards();
   renderTaskPanel();
@@ -69,7 +92,8 @@ function placePanel(where) {
 /* A session is there to open a terminal on when its worktree has one at all. */
 const hasSession = s => !!s && sessionState(s) !== 'none';
 /* The tab shown: ターミナル only where there is a session, whatever the address says. */
-const paneOf = task => nav.pane === 'term' && hasSession(sessionOfTask(task)) ? 'term' : 'detail';
+const paneOf = task => nav.pane === 'term' ? (hasSession(sessionOfTask(task)) ? 'term' : 'detail')
+  : PANES.includes(nav.pane) ? nav.pane : 'detail';
 /* The same for a session with no task, which is its own subject. */
 const sessPaneOf = s => nav.pane === 'term' && hasSession(s) ? 'term' : 'detail';
 
@@ -86,6 +110,15 @@ applyRailMode();
 
 /* What each part was last drawn from: a part is drawn again only when it changed. */
 let panelScrolledFor = null;
+/* The task, tab and gate the task's tabs were last drawn for: a comment being typed and the open
+   `details` are carried across a redraw of the same one, and a scroll across the same tab. */
+let panelShown = null;
+let panelTabFor = null;
+/* A redraw that came while a comment was being typed in the panel, held until the box is left.
+   The minute labels change the markup at least once a minute, and a box built again loses what
+   is typed in it and cuts an IME composition short. */
+let panelHeld = false;
+const panelCommentFocused = () => !!document.activeElement?.matches('#task-panel .gate-comment');
 const panelSig = { head: '', tabs: '', gate: '', rest: '', bar: '', ph: '' };
 function setPanelPart(part, el, html) {
   if (panelSig[part] === html) return;
@@ -133,20 +166,36 @@ function renderTaskPanel() {
   const gate = task ? openGate(task) : null;
   const s = hub ? hubSessionOf(hub) : sess || sessionOfTask(task);
   const pane = hub ? hubPaneOf(hub, s) : sess ? sessPaneOf(s) : paneOf(task);
+  // The gate the open tab shows, read before the tabs are drawn so the record on screen does not
+  // keep its 新着.
+  const all = task ? gatesOf(task) : [];
+  const pick = task ? panelPickOf(task.id) : {};
+  const shownGate = task && pane !== 'term' ? gateShownIn(task, tabOfPane(pane), all, pick) : null;
+  // Opening a tab reads every record judged in it, not only the one shown: the others are earlier
+  // rounds behind the round chips, and a 新着 kept for them stays on the tab and the card. Marked
+  // by the live record's ref, as isUnread reads it; a copy from the history may lack its board.
+  if (task && pane !== 'term') {
+    for (const g of all) {
+      const r = g.wait === false && paneOfGate(g) === pane ? liveRecordOf(task, g) : null;
+      if (r && isUnread(r)) markSeen(gateRef(r));
+    }
+  }
 
   setPanelPart('head', tp('tp-head'), hub ? hubPanelHeadHtml(hub, s) : sess ? sessPanelHeadHtml(s) : panelHeadHtml(task));
-  setPanelPart('tabs', tp('tp-tabs'), hub ? hubPanelTabsHtml(hub, s, pane) : sess ? panelTabsHtml(null, s.waiting, s, pane) : panelTabsHtml(task, gate, s, pane));
+  const tabs = tp('tp-tabs');
+  setPanelPart('tabs', tabs, hub ? hubPanelTabsHtml(hub, s, pane) : sess ? panelTabsHtml(null, s.waiting, s, pane) : panelTabsHtml(task, gate, s, pane, all));
+  // The tab chosen is brought into view when the tabs scroll sideways; only when it changed, so a
+  // poll does not undo a scroll by hand.
+  const tabKey = `${selectedTaskId}/${pane}`;
+  if (panelTabFor !== tabKey) {
+    panelTabFor = tabKey;
+    tabs.querySelector('.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 
   // Shown before the terminal is mounted: a hidden host has no size to fit to.
   const reveal = pane === 'term' && tp('tp-term').hidden;
   tp('tp-detail').hidden = pane === 'term';
   tp('tp-term').hidden = pane !== 'term';
-  // Another task starts at the top, not where the last one was scrolled to: set once the pane
-  // is shown, since a hidden one has no scroll to set.
-  if (pane === 'detail' && panelScrolledFor !== selectedTaskId) {
-    panelScrolledFor = selectedTaskId;
-    tp('tp-detail').scrollTop = 0;
-  }
   syncPanelTerminal(selectedTaskId, s, pane);
   setPanelPart('bar', tp('tp-term-bar'), termBarHtml(s));
   const ph = tp('tp-term-ph');
@@ -158,10 +207,52 @@ function renderTaskPanel() {
     panelTerm.term.focus();
   }
 
-  setPanelPart('links', tp('tp-links'), hub || sess ? '' : ghRowsHtml(task));
-  setPanelPart('gate', tp('tp-gate'), hub || sess ? sessGateHtml(s) : panelGateHtml(task, gate));
-  setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : sess ? sessDetailHtml(s, pane) : panelRestHtml(task, colId));
-  renderHandForm(!hub && !sess && colId === 'backlog' ? task : null);
+  // The terminal is all that is shown, so the other tabs are left as they were: what is typed in
+  // one is still there when it is shown again, and it is drawn again then.
+  if (task && pane === 'term') return renderHandForm(colId === 'backlog' ? task : null);
+  if (task) drawTaskPane(task, colId, gate, pane, all, pick, shownGate);
+  else {
+    setPanelPart('links', tp('tp-links'), '');
+    setPanelPart('gate', tp('tp-gate'), sessGateHtml(s));
+    setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : sessDetailHtml(s, pane));
+  }
+  renderHandForm(colId === 'backlog' ? task : null);
+  tp('tp-form').hidden = !!task && pane !== 'detail';
+  // Another task, or another tab, starts at the top, not where the last one was scrolled to; a
+  // poll keeps the place. Set once the pane is shown, since a hidden one has no scroll to set.
+  const scrollKey = `${selectedTaskId}/${pane}`;
+  if (pane !== 'term' && panelScrolledFor !== scrollKey) {
+    panelScrolledFor = scrollKey;
+    tp('tp-detail').scrollTop = 0;
+  }
+}
+
+/* The parts of #tp-detail for one of a task's tabs. Its body is what the full view draws in the
+   same tab, from the same functions. */
+function drawTaskPane(task, colId, gate, pane, all, pick, shownGate) {
+  const key = `${task.id}/${pane}/${shownGate?.id || ''}`;
+  const rest = tp('tp-rest');
+  // A comment is being typed here: the gate and the body stay as they are until the box is left
+  // (the focusout below).
+  if (panelCommentFocused() && panelShown?.startsWith(`${task.id}/${pane}/`)) {
+    panelHeld = true;
+    return;
+  }
+  panelHeld = false;
+  const same = panelShown === key;
+  const commentEl = rest.querySelector('.gate-comment');
+  const comment = commentEl && same ? commentEl.value : '';
+  const openDetails = [...rest.querySelectorAll('details')].map(d => d.open);
+  panelShown = key;
+
+  const here = !!gate && paneOfGate(gate) === pane && shownGate?.id === gate.id;
+  setPanelPart('links', tp('tp-links'), pane === 'detail' ? ghRowsHtml(task) : '');
+  setPanelPart('gate', tp('tp-gate'), panelGateHtml(task, gate, here));
+  setPanelPart('rest', rest, panelRestHtml(task, colId, pane, all, pick));
+  if (!same) return;
+  const box = rest.querySelector('.gate-comment');
+  if (box && comment) box.value = comment;
+  rest.querySelectorAll('details').forEach((d, i) => { if (openDetails[i] != null) d.open = openDetails[i]; });
 }
 
 function panelHeadHtml(task) {
@@ -198,16 +289,29 @@ function panelBtnsHtml(jump) {
     </div>`;
 }
 
-/* `off` is why the tab cannot be used (its tooltip), or falsy. */
+/* `off` is why the tab cannot be used (its tooltip), or falsy. The same segmented tabs as the
+   task's full view. */
 const panelTab = (pane, id, label, extra, off) =>
-  `<button type="button" role="tab" id="tp-tab-${id}" class="tp-tab${pane === id ? ' on' : ''}" data-pane="${id}" aria-selected="${pane === id}" aria-controls="${id === 'term' ? 'tp-term' : 'tp-detail'}"${off ? ` disabled title="${esc(off)}"` : ''}>${label}${extra}</button>`;
+  `<button type="button" role="tab" id="tp-tab-${id}" class="m3-seg-tab${pane === id ? ' active' : ''}" data-pane="${id}" aria-selected="${pane === id}" aria-controls="${id === 'term' ? 'tp-term' : 'tp-detail'}"${off ? ` disabled title="${esc(off)}"` : ''}>${label}${extra}</button>`;
 
-function panelTabsHtml(task, gate, s, pane) {
+/* A task has five tabs, a session with no task the first two. `all` is the task's gates. */
+function panelTabsHtml(task, gate, s, pane, all = []) {
   const usable = hasSession(s) && !!state.boardTerminal?.available;
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
-  return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '')
-    + panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
-      : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
+  // The tab shows a word, so five tabs fit; the reason is its tooltip.
+  const term = panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
+    : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
+  if (!task) return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '') + term;
+  // The dot is on the tab the open gate is judged in; the counts and 新着 are the full view's.
+  const owner = gate ? paneOfGate(gate) : null;
+  const unreadIn = kind => all.some(g => g.kind === kind && g.wait === false && (r => r && isUnread(r))(liveRecordOf(task, g)));
+  const tab = (id, label, kind) => {
+    const n = kind ? all.filter(g => g.kind === kind).length : 0;
+    return panelTab(pane, id, label, (owner === id ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '')
+      + (n ? `<span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${n}</span>` : '')
+      + (kind && unreadIn(kind) ? '<span class="m3-tab-badge">新着</span>' : ''), '');
+  };
+  return tab('detail', 'タスクサマリ') + term + tab('review', 'コードレビュー', 'diff') + tab('check', '動作確認', 'verify') + tab('history', '経過');
 }
 
 /* ── 詳細 ── */
@@ -217,14 +321,17 @@ const monoKv = (label, value, title = '') => `<div class="tp-kv"><span>${label}<
 
 /* The open gate. A decision that needs no comment is one click; reading the plan or the diff,
    and anything that wants a comment, is the judging screen. Not humanActions(): its reply box
-   is found by `textarea[data-reply]`, which two on one page would share. */
-function panelGateHtml(task, gate) {
+   is found by `textarea[data-reply]`, which two on one page would share. `here` is when the tab
+   open already shows this gate: its panel is further down, so there is no screen to go to. */
+function panelGateHtml(task, gate, here = false) {
   if (!gate) return '';
   const [label] = kindOf(gate.kind);
   const col = gate.humanCol;
   const why = gate.problem || gate.why || '';
   const reasons = stopWhy(gate);
-  const quick = col === 'dispatch' ? [['start', 'play_arrow']]
+  // The tab's decision panel has the same button and a comment box; this one answers with no
+  // comment, so it would drop what was typed there.
+  const quick = here ? [] : col === 'dispatch' ? [['start', 'play_arrow']]
     : col === 'plan' || col === 'diff' || col === 'verify' ? [['approve', 'check']]
     : [];
   const btn = ([action, icon]) =>
@@ -241,7 +348,8 @@ function panelGateHtml(task, gate) {
       ${reasons.length ? `<div style="font-size:11.5px;">止めた理由: ${esc(reasons.join(' / '))}</div>` : ''}
       <div class="tp-gate-actions">
         ${quick.map(btn).join('')}
-        <button type="button" class="${quick.length ? 'btn-m3-tonal' : 'btn-m3-primary'}" data-judge="${esc(gate.id)}"><span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span><span>判定画面を開く</span></button>
+        ${here ? '<span class="tp-muted tp-here"><span class="material-symbols-outlined" style="font-size:14px;" aria-hidden="true">arrow_downward</span><span>判定パネルはこの下にあります</span></span>'
+          : `<button type="button" class="${quick.length ? 'btn-m3-tonal' : 'btn-m3-primary'}" data-judge="${esc(gate.id)}"><span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span><span>判定画面を開く</span></button>`}
         ${col === 'question' && readySessionOfTask(task) ? `<button type="button" class="btn-m3-tonal" data-pane="term"><span class="material-symbols-outlined" style="font-size:16px;">terminal</span><span>ターミナルで答える</span></button>` : ''}
       </div>
     </div>`;
@@ -249,7 +357,12 @@ function panelGateHtml(task, gate) {
 
 const STEPS = [['plan', '計画'], ['implement', '実装'], ['selfreview', 'セルフレビュー'], ['pr', 'PR']];
 
-function panelRestHtml(task, colId) {
+/* The body of a task's tab: 経過, コードレビュー and 動作確認 are what the full view draws; タスクサマリ
+   is the rest of the card with the full view's 概要 in the middle. */
+function panelRestHtml(task, colId, pane, all, pick) {
+  if (pane === 'review') return reviewTab(task, all, pick);
+  if (pane === 'check') return checkTab(task, all, pick);
+  if (pane === 'history') return historyTab(task, all, pick);
   const live = ['dispatched', 'pr'].includes(task.status);
   const worker = live ? workerOf(task) : null;
   const at = agentColOf(task);
@@ -262,14 +375,14 @@ function panelRestHtml(task, colId) {
     <ol class="tp-steps">${STEPS.map(([, text], i) => `<li class="${i < now ? 'done' : i === now ? 'now' : ''}">${esc(text)}</li>`).join('')}</ol>
     ${worker?.phase ? `<div class="tp-line">worker は${esc(PHASE_LABEL[worker.phase] || worker.phase)}${worker.present ? '' : '（停止）'}${mins != null ? `（${esc(agoLabel(mins))}から）` : ''}</div>` : ''}
     ${live ? agentFactsHtml(sessionOfTask(task)) : ''}
-    <div class="tp-kvs">
-      ${kv('完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—'))}
-      ${kv('止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt || '—'))}
-      ${task.executor === 'jules' ? kv('実装', httpUrl(task.jules?.url)
-        ? `<a href="${esc(task.jules.url)}" target="_blank" rel="noopener noreferrer" class="tp-link"><span>Jules ${esc(julesText(task.jules))}</span><span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span></a>`
-        : `Jules${task.julesSession ? '' : '（計画の承認後に渡す）'}`) : ''}
-    </div>
   </div>`;
+
+  // The overview names the worktree, branch, IDE, 完了条件, 止める所 and the Jules session, so the card does not; its Issue and PR rows and, with the hand-over form above, its 申し送り are left out.
+  h += overviewTab(task, all, pick, { panel: true, handForm: colId === 'backlog' });
+  // The overview's 問題 is the request itself unless the plan wrote one; then the request is here.
+  if (task.body && gateShownIn(task, 'overview', all, pick)?.problem) {
+    h += `<div class="m3-filled-card">${secTitle('依頼内容・プロンプト')}<p class="tp-text">${esc(task.body)}</p></div>`;
+  }
 
   // Newest first: the one the worker left last is the one that describes where it is now.
   const records = recordsOf(task).reverse();
@@ -282,32 +395,11 @@ function panelRestHtml(task, colId) {
       return `<div class="tp-record">
         <span class="m3-pill ${pillClass}"><span class="material-symbols-outlined" style="font-size:12px;margin-right:2px;">${icon}</span><span>${esc(label)}: ${esc(text)}</span></span>
         <div class="tp-muted">${ago(r.openedAt)}に記録</div>
-        <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;" data-record="${esc(r.id)}">全体を見る・差し戻す →</button>
+        <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;" data-record="${esc(r.id)}">開く・差し戻す →</button>
       </div>`;
     }).join('') : '<div class="tp-muted">記録はまだありません</div>'}
   </div>`;
   if (task.julesSession && httpUrl(task.pr) && live) h += relayHtml(task);
-
-  h += `<div class="m3-filled-card">${secTitle('作業場所')}
-    ${task.worktree || task.branch ? `<div class="tp-kvs">
-      ${monoKv('worktree', baseName(task.worktree) || '—', task.worktree || '')}
-      ${monoKv('ブランチ', task.branch || '—')}
-    </div>` : '<div class="tp-muted">worktree はまだありません</div>'}
-    ${task.worktree ? `<button type="button" class="btn-m3-tonal tp-ide" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;">code</span><span>IDE</span></button>` : ''}
-  </div>`;
-
-  // The latest few only: the whole history is a click away in the task view's 経過 tab.
-  const all = gatesOf(task);
-  h += `<div class="m3-filled-card" style="display:flex;flex-direction:column;">${secTitle('経過')}
-    ${timelineHtml(task, all, 5)}
-    <button type="button" class="btn-m3-text" style="padding:2px 6px;font-size:11.5px;align-self:flex-start;margin-top:6px;" data-history="${esc(task.id)}">経過をすべて見る →</button>
-  </div>`;
-  if (task.instruction && colId !== 'backlog') {
-    h += `<div class="m3-filled-card">${secTitle('エージェントへの申し送り（指示）')}<p class="tp-text">${esc(task.instruction)}</p></div>`;
-  }
-  if (task.body) {
-    h += `<div class="m3-filled-card">${secTitle('依頼内容・プロンプト')}<p class="tp-text">${esc(task.body)}</p></div>`;
-  }
   return h;
 }
 
@@ -452,7 +544,7 @@ function sessPanelHeadHtml(s) {
 
 /* ── ターミナル ── */
 /* The terminal lives in #tp-term-host from its first mount until the task changes or the panel
-   closes. 詳細 only hides the pane around it, so the socket survives; the bar and the note
+   closes. The other tabs only hide the pane around it, so the socket survives; the bar and the note
    over it are the parts that are drawn again. */
 function syncPanelTerminal(subject, s, pane) { syncTermSlot(panelTerm, subject, s, pane); }
 function disposePanelTerminal() { disposeTermSlot(panelTerm); }
@@ -549,15 +641,34 @@ tp('task-panel').addEventListener('click', e => {
     return jump('agent', id);
   }
   if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);
-  if ((b = hit('[data-record]'))) return openRecord(b.dataset.record);
-  if ((b = hit('[data-judge]'))) return judgeGate(b.dataset.judge);
-  // A gate in 経過 opens where the task view reads it, rather than being repeated here.
+  // The decision panel and a gate's choices, which `bindDecide` wires in the other views; not
+  // here, since it would bind [data-ide] a second time next to the one below.
+  if ((b = hit('[data-gate] [data-act], [data-gate] .pick[data-choice]'))) return decideAct(b);
+  // Links to a gate or a record show it in the tab it is read in, not in the full view.
+  if ((b = hit('[data-record]'))) {
+    const r = recordById(b.dataset.record);
+    return r ? showPanelTab(task, paneOfGate(r), r.id) : goToGate(b.dataset.record);
+  }
+  if ((b = hit('[data-judge]'))) {
+    const g = gatesOf(task).find(x => x.id === b.dataset.judge);
+    return g && showPanelTab(task, paneOfGate(g), g.id);
+  }
+  // A gate in 経過 opens in the tab of its kind, rather than being repeated here.
   if ((b = hit('[data-open]'))) {
     const g = gatesOf(task).find(x => x.id === b.dataset.open);
-    if (g) openTask(task.id, TAB_OF_KIND[g.kind] || 'history', g.id);
-    return;
+    return g && showPanelTab(task, paneOfGate(g), g.id);
   }
-  if ((b = hit('[data-history]'))) return openTask(b.dataset.history, 'history');
+  if ((b = hit('[data-pick]'))) {
+    panelPickOf(task.id)[tabOfPane(paneOf(task))] = b.dataset.pick;
+    return renderTaskPanel();
+  }
+  if (hit('[data-unpick]')) {
+    delete panelPickOf(task.id)[tabOfPane(paneOf(task))];
+    return renderTaskPanel();
+  }
+  if ((b = hit('[data-focus]'))) return worktreeAct('focus', b.dataset.focus);
+  // The button is what is disabled while it asks, not the panel this handler is on.
+  if ((b = hit('[data-fetch-issue]'))) return fetchIssue(b.dataset.fetchIssue, { currentTarget: b });
   if ((b = hit('[data-ide]'))) return worktreeAct('ide', b.dataset.ide);
   if ((b = hit('[data-findings]'))) return loadFindings(b.dataset.findings);
   if ((b = hit('[data-relay]'))) return relayPicked(b.dataset.relay);
@@ -573,6 +684,16 @@ tp('task-panel').addEventListener('click', e => {
     renderTaskPanel();
   }
 });
+/* Another tab of the open task, with `gateId` picked in it when given. */
+function showPanelTab(task, pane, gateId) {
+  if (gateId) {
+    panelPickOf(task.id)[tabOfPane(pane)] = gateId;
+    // A gate picked is read from its top.
+    panelScrolledFor = null;
+  }
+  if (nav.pane === pane) renderTaskPanel(); else go({ pane }, { replace: true });
+}
+
 /* A session with no task: its link and git buttons, its gate, and the terminal bar's (the
    session's own `runSessionAction`, as for a task). */
 function sessPanelClick(e, s) {
@@ -641,6 +762,17 @@ function hubPanelClick(e, h) {
     renderTaskPanel();
   }
 }
+tp('task-panel').addEventListener('focusout', e => {
+  if (!panelHeld || !e.target.matches('.gate-comment')) return;
+  // Focus moving to a button of the panel: drawing now would replace the button between its
+  // mousedown and its click and lose the click. That click (or the next poll) redraws instead.
+  if (e.relatedTarget && tp('task-panel').contains(e.relatedTarget)) return;
+  setTimeout(() => {
+    if (!panelHeld || panelCommentFocused()) return;
+    panelHeld = false;
+    renderTaskPanel();
+  });
+});
 tp('task-panel').addEventListener('change', e => {
   const b = e.target.closest('[data-relay-pick]');
   if (!b) return;

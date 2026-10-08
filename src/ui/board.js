@@ -165,6 +165,8 @@ window.addEventListener('storage', e => {
   seenCache = null;
   if (view === 'board') render();
   else if (view === 'task') redrawTaskView();
+  // The task panel's tabs show the unread mark too; the board's render reaches it already.
+  if (view === 'sessions') renderTaskPanel();
 });
 // A record of a merged state carries its board, so answering it reaches the right one.
 const allRecords = () => (state.tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);

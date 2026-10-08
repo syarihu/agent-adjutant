@@ -547,6 +547,11 @@
 .tp-tab.on { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
 .tp-tab:disabled { opacity: .55; cursor: not-allowed; }
 .tp-tab-hint { font-size: 10.5px; font-weight: 600; }
+/* The panel's tabs are the task view's segmented tabs, narrower so five fit the panel; the rest
+   scroll sideways rather than wrap. The .tp-tab rules above are still the review view's. */
+#tp-tabs.m3-segmented-tabs { margin: 8px 12px; max-width: calc(100% - 24px); flex-shrink: 0; overflow-x: auto; scrollbar-width: none; }
+#tp-tabs .m3-seg-tab { padding: 6px 12px; white-space: nowrap; flex-shrink: 0; }
+#tp-tabs .m3-seg-tab:disabled { opacity: .55; cursor: not-allowed; }
 .tp-wait { background: var(--md-sys-color-warning); color: var(--md-sys-color-on-warning); font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: var(--md-shape-corner-full); }
 .tp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--md-sys-color-warning); }
 .tp-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
@@ -555,6 +560,12 @@
 #tp-detail { padding: 16px; overflow-y: auto; }
 #tp-detail > div:empty { display: none; }
 #tp-rest { display: flex; flex-direction: column; gap: 14px; }
+/* The tabs' panels carry their own bottom margin; the gap above already spaces them. */
+#tp-rest > * { min-width: 0; }
+#tp-rest > .panel, #tp-rest > .work { margin-bottom: 0; }
+.tp-here { display: inline-flex; align-items: center; gap: 4px; }
+/* The panel is too narrow for two columns of design cards. */
+#task-panel .choices-container, #task-panel .choices { grid-template-columns: 1fr; }
 .tp-term { position: relative; gap: 0; }
 .tp-term-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .tp-term-bar:empty { display: none; }
@@ -580,7 +591,6 @@
 .tp-kv code { font-family: var(--font-mono); font-size: 12px; word-break: break-all; }
 .tp-link { color: var(--md-sys-color-primary); font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
 .tp-record { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--md-sys-color-outline-variant); }
-.tp-ide { margin-top: 10px; padding: 6px 14px; font-size: 12px; }
 .tp-reset { margin-top: 8px; padding: 2px 6px; font-size: 11.5px; }
 .tp-text { font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
