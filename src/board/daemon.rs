@@ -7,7 +7,6 @@ use crate::gate;
 use crate::registry::{
     addresses, forget_server, live_resident, note_board, record_server, recorded_server,
 };
-use crate::task;
 
 mod restart;
 mod start;
@@ -221,20 +220,10 @@ impl BoundResident {
             let poll = Arc::clone(&resident.pr_poll);
             std::thread::spawn(move || {
                 poll.run(|| {
-                    // Only a board with a card on a PR is opened for it: opening one asks git
-                    // where the checkout is, which is not worth doing every round for a board
-                    // with nothing to look after.
+                    // Every board: a session with no task has a PR to look up by its branch
+                    // whether or not a card holds one. A board already open is only looked up.
                     addresses(&resident.root)
                         .iter()
-                        .filter(|a| {
-                            task::list(&resident.root, &a.slug).iter().any(|t| {
-                                t.pr.is_some()
-                                    && !matches!(
-                                        t.status,
-                                        task::Status::Done | task::Status::Cancelled
-                                    )
-                            })
-                        })
                         .filter_map(|a| resident.board(&a.slug))
                         .map(|server| server.ctx.clone())
                         .collect()

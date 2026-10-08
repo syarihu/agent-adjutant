@@ -326,7 +326,8 @@ fn graphql_of_pr(state: &str, decision: &str) -> String {
 /// A `gh` for the poll. Notifications answer 200 with `Last-Modified: Thu, 01 Jan 2026 00:00:00 GMT` and one thread, the
 /// PR 7, the first time and 304 (which `gh` exits 1 on) while asked with `If-Modified-Since`,
 /// until a file `changed` exists: then one 200, with `Last-Modified: Thu, 01 Jan 2026 00:00:05 GMT`, and the file is
-/// taken away. GraphQL answers with `gh-graphql`. Every call is written down in `gh-calls`,
+/// taken away. GraphQL answers with `gh-graphql`, and the query for the pull request of a
+/// branch (one that names `headRefName`) with `gh-branch-graphql`, counted as `branch`. Every call is written down in `gh-calls`,
 /// whole, so a test can see what was sent.
 fn stub_gh_for_polling(fixture: &Fixture, interval: u64) -> String {
     let stubs = fixture.repo.join("stub-bin");
@@ -335,6 +336,13 @@ fn stub_gh_for_polling(fixture: &Fixture, interval: u64) -> String {
 D=@DIR@
 echo "$*" >> "$D/gh-calls"
 if [ "$1 $2" = "api graphql" ]; then
+  case "$*" in
+    *headRefName*)
+      echo branch >> "$D/gh-kinds"
+      cat "$D/gh-branch-graphql"
+      exit $?
+      ;;
+  esac
   echo graphql >> "$D/gh-kinds"
   cat "$D/gh-graphql"
   exit 0
@@ -366,7 +374,15 @@ printf '[{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/ac
     path_with(&stubs)
 }
 
-/// How many times the stub `gh` was run for `kind`: `notifications` or `graphql`.
+/// What `gh api graphql` prints for the branch query of one branch whose only pull request is
+/// number 12. Upper-case values are passed in, as for `graphql_of_pr`.
+fn graphql_of_branch(state: &str, owner: &str) -> String {
+    format!(
+        r#"{{"data":{{"b0":{{"pullRequests":{{"nodes":[{{"number":12,"url":"https://github.com/acme/widget/pull/12","state":"{state}","isDraft":false,"headRepositoryOwner":{{"login":"{owner}"}}}}]}}}}}}}}"#
+    )
+}
+
+/// How many times the stub `gh` was run for `kind`: `notifications`, `graphql` or `branch`.
 fn gh_ran(fixture: &Fixture, kind: &str) -> usize {
     std::fs::read_to_string(fixture.repo.join("gh-kinds"))
         .unwrap_or_default()
@@ -479,6 +495,64 @@ fn with_no_pr_on_a_card_github_is_never_asked() {
     std::thread::sleep(std::time::Duration::from_millis(2500));
     assert!(!fixture.repo.join("gh-calls").exists());
     assert!(state_of(&resident)["prPoll"]["error"].is_null());
+}
+
+#[test]
+fn a_session_with_no_task_shows_the_pr_of_its_branch_and_a_tasks_worker_does_not() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "feature", None, None, running.pid());
+    session_worktree(&fixture, "tasked", None, Some("t-1"), running.pid());
+    let path = stub_gh_for_polling(&fixture, 1);
+    std::fs::write(
+        fixture.repo.join("gh-branch-graphql"),
+        graphql_of_branch("OPEN", "acme"),
+    )
+    .unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    // No card holds a PR, and the branch is looked up all the same.
+    let feature = wait_until("the PR of the branch was found", || {
+        let state = state_of(&resident);
+        let session = session_of(&state, "worker-feature").clone();
+        (session.get("branchPr").is_some(), session)
+    });
+    assert_eq!(feature["branchPr"]["number"], 12, "{feature}");
+    assert_eq!(feature["branchPr"]["state"], "open");
+    assert_eq!(
+        feature["branchPr"]["url"],
+        "https://github.com/acme/widget/pull/12"
+    );
+    let state = state_of(&resident);
+    assert!(session_of(&state, "worker-tasked").get("branchPr").is_none());
+    assert!(session_of(&state, "hub").get("branchPr").is_none());
+    // One query for the one branch; the cards' own query was never made, and polling the state
+    // does not ask again.
+    assert_eq!(gh_ran(&fixture, "branch"), 1);
+    assert_eq!(gh_ran(&fixture, "graphql"), 0);
+}
+
+#[test]
+fn a_branch_whose_only_pr_comes_from_a_fork_has_none() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    session_worktree(&fixture, "feature", None, None, running.pid());
+    let path = stub_gh_for_polling(&fixture, 1);
+    std::fs::write(
+        fixture.repo.join("gh-branch-graphql"),
+        graphql_of_branch("OPEN", "someone"),
+    )
+    .unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    wait_until("the branch was asked about", || {
+        let ran = gh_ran(&fixture, "branch");
+        (ran >= 1, ran)
+    });
+    // A moment for the answer to be stored, then it is still no PR.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let state = state_of(&resident);
+    assert!(session_of(&state, "worker-feature").get("branchPr").is_none());
+    assert!(state["prPoll"]["error"].is_null());
 }
 
 #[test]

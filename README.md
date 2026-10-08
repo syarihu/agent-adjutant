@@ -797,17 +797,40 @@ the gate directories.
 - `agentSession`: what the agent's hooks last said about a running session, from the agent session
   ledger (`adjutant agent-sessions`): `status` (`idle`, `running`, `waiting` on a permission prompt,
   `done`, `failed`, or a newer word passed through), `pending`, `updatedAt`, `lastEventAt`,
-  `activity` and `request` (first line, cut to 200 characters), and `subagents` (a count). Left out
+  `activity` and `request` (first line, cut to 200 characters), `model` (the status line's display
+  name) and `contextPercent` (0 to 100, rounded) when the status line has said them, and `subagents`:
+  the ones that run, each `{id, type, startedAt, activity}` (`activity` is the tool it last ran, first
+  line, cut to 200 characters; keys it has not said are left out). Left out
   for a session that is not running or has no row (no hooks). When the ledger cannot be listed it is
   `{error}`; `sessionId` is the row's own id. The セッション tab, the hub's entry and the cards show
   a session `waiting` on a permission prompt as waiting on a person even with no gate open (許可待ち
   with a `request`, 入力待ち without; 質問への回答待ち when the `request` is an `AskUserQuestion`).
+- `uncommitted` (`files`, `untracked`, `insertions`, `deletions`, `binary`, as in `/git` below) and
+  `uncommittedError`: for a worker only, read by git on a thread of its own, never on the poll. The
+  poll that lists the sessions asks for each worktree and takes what was last read: a worktree whose
+  session runs is read again after 10 seconds, any other after a minute, each git call under a
+  3-second deadline. Left out until the first read; a failed read keeps the last counts and sets
+  `uncommittedError`.
+- `branchPr` (`{number, url, state}`, `state` being `open`, `draft`, `merged` or `closed`): the pull
+  request of the session's branch, for a session with no task (a task's own is on its card).
+  Resident server only, on a repository whose origin is github.com: it is looked up by the
+  poll in the same round as the cards, held in memory and refreshed at most every 5 minutes (sooner
+  when a notification names the repository). A pull request from a fork is not the branch's; of
+  several, an open one wins, else the newest.
 - `waits` (on `/api/state` and on each `/api/boards` entry; left out when empty): the sessions that
   have waited on a permission prompt or a question for a few seconds and still do, each
   `{agentSessionId, since, session, kind, name, request, quiet}` (`quiet` only when true). The page
   lists each in 要対応 and rings its desktop notification from it, once per
   `(agentSessionId, since)`, unless `quiet` (listed but not announced: its terminal was open, or it
   was already waiting when the server started). `session` is opened when it is clicked.
+
+`rateLimits` (on `/api/state`, whether or not sessions are listed) is `{accounts, error?}`: one entry
+for each Claude account (config directory) the ledger has a figure for, `{agent, configDir,
+sessionId, lastEventAt, fiveHour, sevenDay}` with each window `{usedPercent, resetsAt}` (epoch
+seconds; keys not said are left out). It is taken from the account's row with the newest
+`lastEventAt` that has a figure, which is when that session was last heard from and not when the
+figures were drawn, so the page judges how old they may be. `error` is set instead when the ledger
+could not be listed.
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
 `name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether
@@ -835,7 +858,7 @@ typed.
 
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
-`deletions` against HEAD; `untracked` counts entries, so a wholly new directory counts once, and
+`deletions` against HEAD, and `binary`, the tracked files whose lines git does not count; `untracked` counts entries, so a wholly new directory counts once, and
 the lines of untracked files are not in `insertions`; the files adjutant itself writes under `.claude/` — `adjutant-*` and
 `task-brief.md` — are not counted), `upstream` (as configured), `unpushed` (`count`, the newest
 20 `commits`, and what they were counted `against`) and `merged` (`base`, `ref`, `merged`, and
