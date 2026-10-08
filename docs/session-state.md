@@ -84,7 +84,7 @@ keys this binary does not know are kept in `other`, as `WorkerRecord.other` does
 | `lastEventAt` | The "seen alive" mark. Moves with any other change, and on its own at most once a minute |
 | `activity` | The tool in use (`Edit: src/lib.rs`) |
 | `request` | What a permission prompt is asking for, while `waiting` |
-| `subagents` | Running sub-agents: `[{ id, type, startedAt, lastSeenAt }]`, keyed by `agent_id`. `lastSeenAt` moves at most once a minute, like `lastEventAt`; a sub-agent not seen for ten minutes (its `SubagentStop` never came) is dropped on the next event, and the parent's `pendingStatus` applied if it was the last |
+| `subagents` | Running sub-agents: `[{ id, type, startedAt, lastSeenAt, activity? }]`, keyed by `agent_id`. `activity` is the tool it last ran, as the parent's `activity` words one. `lastSeenAt` moves at most once a minute, like `lastEventAt`; a sub-agent not seen for ten minutes (its `SubagentStop` never came) is dropped on the next event, and the parent's `pendingStatus` applied if it was the last |
 | `finishedSubagents` | `{ agent_id: time }` for five minutes after each stop, so a late event cannot bring one back |
 | `model`, `contextPercent`, `rateLimits` | From the status line relay, when wired in |
 
@@ -196,7 +196,9 @@ The events, taken from proctor's table:
 
 An event that carries `agent_id` comes from a sub-agent. Its `PostToolUse`, `PostToolUseFailure`
 and `PermissionRequest` update that sub-agent's `lastSeenAt` and do not set the parent's `status`,
-with these exceptions (any other such event sets no status and adds no sub-agent):
+with these exceptions (any other such event sets no status and adds no sub-agent). A sub-agent's
+own `PostToolUse` or `PostToolUseFailure` also sets that sub-agent's `activity` and leaves the
+parent's alone:
 
 - A `PermissionRequest` from a sub-agent sets the parent to `waiting`, since the person is asked in
   the parent's terminal either way; otherwise the row looks busy until the `Notification` some

@@ -814,8 +814,9 @@ the gate directories.
 - `branchPr` (`{number, url, state}`, `state` being `open`, `draft`, `merged` or `closed`): the pull
   request of the session's branch, for a session with no task (a task's own is on its card).
   Resident server only, on a repository whose origin is github.com: it is looked up by the
-  poll in the same round as the cards, held in memory and refreshed at most every 5 minutes (sooner
-  when a notification names the repository). A pull request from a fork is not the branch's; of
+  poll in the same round as the cards, held in memory and refreshed every 5 minutes (sooner when the
+  card poll's notifications name the repository, which only happens while a card on that board server
+  holds a PR). A pull request from a fork is not the branch's; of
   several, an open one wins, else the newest. `branchPrError` is set when the last lookup of the
   branch failed (no login, a rate limit, a repository that could not be read), with the pull
   request of an earlier lookup left beside it; the poll's own `prPoll.error` is not touched by it.
