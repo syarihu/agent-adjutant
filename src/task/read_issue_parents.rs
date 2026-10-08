@@ -170,6 +170,20 @@ fn parse_parents(value: &Value, n: usize) -> Vec<Result<Option<TrackerParent>, S
     (0..n)
         .map(|i| {
             let alias = format!("i{i}");
+            // An error under this alias, whatever field it is on (the parent, its sub-issue
+            // summary), says the read of this issue did not come whole: what came back beside it
+            // is not an answer, and a parent that is `null` there is not "no parent".
+            let own_error = errors
+                .iter()
+                .find(|e| e.pointer("/path/0").and_then(Value::as_str) == Some(alias.as_str()))
+                .and_then(|e| e.get("message").and_then(Value::as_str));
+            if let Some(said) = own_error
+                && value
+                    .pointer(&format!("/data/{alias}/issue"))
+                    .is_some_and(Value::is_object)
+            {
+                return Err(said.to_string());
+            }
             let Some(issue) = value
                 .pointer(&format!("/data/{alias}/issue"))
                 .filter(|issue| issue.is_object())

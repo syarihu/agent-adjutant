@@ -89,3 +89,32 @@ fn a_transient_error_beside_some_data_still_fails_the_round_and_keeps_the_answer
     assert_eq!(failed.as_deref(), Some("slow"));
     assert_eq!(answers[0], Ok(None));
 }
+
+#[test]
+fn an_error_under_an_issue_is_a_failed_read_of_it_and_not_an_answer() {
+    // Errors on the parent field, and on what is read beside it, with the issue itself present.
+    for path in [
+        r#"["i0","issue","parent"]"#,
+        r#"["i0","issue","parent","subIssuesSummary"]"#,
+        r#"["i0","issue","parent","title"]"#,
+    ] {
+        let stdout = format!(
+            r#"{{"data":{{"i0":{{"issue":{{"parent":null}}}},"i1":{{"issue":{{"parent":null}}}}}},"errors":[{{"type":"{}","path":{path},"message":"field refused"}}]}}"#,
+            "FORBIDDEN"
+        );
+        let (answers, failed) = answers_of(&stdout, "", 2);
+        assert_eq!(answers[0], Err("field refused".to_string()), "{path}");
+        // The other issue had no error: a parent that is null there is an answer.
+        assert_eq!(answers[1], Ok(None), "{path}");
+        // Tied to one alias, so not the round failing.
+        assert_eq!(failed, None, "{path}");
+    }
+}
+
+#[test]
+fn a_null_parent_with_no_error_is_no_parent() {
+    let stdout = r#"{"data":{"i0":{"issue":{"parent":null}}}}"#;
+    let (answers, failed) = answers_of(stdout, "", 1);
+    assert_eq!(answers[0], Ok(None));
+    assert_eq!(failed, None);
+}
