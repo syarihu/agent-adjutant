@@ -50,7 +50,7 @@ page joins them (`humanColOf`):
   column. A parent's hub card takes `ownerHub.humanCol`, built the same way on the server.
 
 The column is on the gate, not on the card, on purpose: when the person answers a gate, the page
-drops it from its copy of the state at once (`mergeStates`), and the card leaves the column without
+drops it from its copy of the state at once (`dropGate` in `src/ui/decide.js`), and the card leaves the column without
 waiting for the next poll. `agentColOf` reads the open gate too, so the agent column moves at the
 same moment.
 
@@ -93,15 +93,20 @@ use it are unaffected. Each fact's value is one word, or absent.
 | `gate` | `plan`, `diff`, `verify`, `dispatch`, `issue`, `question`, `result`, `relay` | The kind of the task's open (waiting) gate |
 | `prTurn` | `draft`, `unrequested`, `other-reviewer`, `checks`, `changes`, `merge`, `ci-failed`, `merged`, `closed` | `task::PrTurn` from the stored `prStatus` |
 | `waitsOnPerson` | `yes`, absent | `waits_on_person`, unchanged |
-| `session` | `idle`, `running`, `waiting`, `done`, `failed` | The ledger row of the task's worker session (a status this binary does not know reads as absent) |
+| `session` | `idle`, `running`, `waiting`, `done`, `failed`, `unknown` | The ledger row of the task's worker session (a status this binary does not know reads as absent) |
 | `parked` | A park reason (`pdm`, `design`, `review`, `merge-timing`, `other`, and any added in config) | The task's park ([#555](https://github.com/syarihu/agent-adjutant/issues/555)); absent once `status` is `done` or `cancelled` |
 
 A phase this binary does not know reads as absent too, so a record written by a newer binary never
-breaks a card. `session` comes from the ledger rows a board's own poll already reads for its
-cards. Where a poll does not read them (「すべて」 asks with `sessions=0`, and `board_counts` reads
-no ledger), or the ledger could not be read, `session` is **unread**, which is not the same as
-absent: a condition on `session` matches neither, and the views below say "not known" rather than
-"no session". The layouts that 「すべて」 uses do not name `session` ([below](#columns-as-conditions)).
+breaks a card.
+
+`session` is read from the ledger for every card on every poll, whatever the poll asks for
+(`sessions=0` skips listing sessions, the dear part with tmux, `ps` and git; reading a ledger row
+by the worker's session id is cheap), so the cross-repository view has it too. It is absent when
+the task has no worker present (a stopped worker has no row to read, so `done` and `failed` are seen
+only while the process is up). When the ledger could not be read, it is the word `unknown`, which is
+not the same as absent: a condition naming any other value does not match it, and the views say
+"not known" rather than "no session". `jules` likewise is absent while adjutant has not yet heard
+from Jules or could not ask, as `t.jules?.state` is today.
 
 `step` is the one derived fact: where work in progress stands, whoever does it. It is `plan`,
 `implement`, `self-review` or `pr`, computed exactly as steps 2 to 5 of `agentColOf` above, in that
@@ -196,10 +201,11 @@ Without 調査 that is the `default` preset's agent side: `before` (`status`: `b
 - A parent's hub card carries its set under `ownerHub`, evaluated with the hub's open gate (above).
   The page reads only `ownerHub`'s set for a hub card, never the board's gates; it never drops a
   hub's gate optimistically, so no pair is needed there.
-- Every worker row, and every worker entry of `state.sessions` (a different struct, read by the
-  sessions view), carries `agentColumn`, computed from its own `phase`, `step` and `session`. The
-  page still decides which rows are bare and places them by it, and the sessions view labels a
-  row's phase with that column's label instead of `AGENT_COL_OF_PHASE`.
+- Every worker row carries `agentColumn`, computed from its own `phase`, `step` and `session`. The
+  page still decides which rows are bare and places them by it. The sessions view labels a
+  session's phase by its `step` with the `default` labels (計画, 実装, セルフレビュー,
+  PR・レビュー対応) instead of `AGENT_COL_OF_PHASE`, and shows a phase it does not know as the raw
+  word, as now; a column would make the label depend on the layout.
 - The new keys are written by the card, so like `humanCol` today they are scrubbed from a record's
   `extra` before the card adds them, and a stale key on disk never comes out twice.
 
@@ -244,15 +250,17 @@ label in the task panel, a stored filter), the page names it with its side (`age
 (since closed) cannot come back with a layout that reuses an id.
 
 **「すべて」** merges several boards in the page, and their layouts can differ. It asks each board
-for its state with the `default` layout (`/api/state?columns=default`), and draws `default`'s
+for its state with the `default` layout (`columns=default` added to whatever query that board is
+asked with today: `sessions=0`, `lines=1` or none), and draws `default`'s
 columns; the state `mergeStates` builds carries those `columns`. A board's own page uses its own
 layout. The cross-repository view that replaces 「すべて」
 ([#553](https://github.com/syarihu/agent-adjutant/issues/553)) reads facts instead, as below.
 
 ## Presets and the config
 
-The key is `board`, a machine setting like `stuckAfterMinutes` (a `SETTING_KEYS` entry, with an
-"an object" shape in `accepted_shape`): read again on every poll, so a change shows without a
+The key is `board`, a setting like `stuckAfterMinutes` (a `SETTING_KEYS` entry, with an "an
+object" shape in `accepted_shape`; `SETTING_KEYS` is described as machine knobs, but `pick_level`
+reads a repository's entry first, which is what a per-repository layout needs): read again on every poll, so a change shows without a
 restart. Like most settings it is taken **whole** from the most specific level that has it (the
 repository's entry, then `defaults`, then the top level), not merged key by key as `terminal` is. In
 the example below, `acme/web` names its own `preset` because nothing comes over from `defaults`.
@@ -279,7 +287,7 @@ Each repository's board can have its own layout.
   removed or relabelled. `adj task park --reason` and `--work` accept them through one check each in
   `task`, which the layout check calls too.
 - An empty config is the `default` preset, which is today's board exactly: the same twelve columns,
-  ids, labels, order and placement.
+  ids, labels, icons, hints, order and placement.
 
 Presets shipped:
 
@@ -338,7 +346,9 @@ the person asked the hub to do, the other what the work is.
   anything is written. The check is one function in `task`, given the configured `workTypes`, and
   the layout check in `board::view` calls the same one, so the two cannot disagree.
 - Every route that creates a task can set it. The hub passes `--work investigate` for an
-  investigation-only request and `--work design` for a design task to `adj task add`. The board's
+  investigation-only request and `--work design` for a design task to `adj task add`; a design
+  task is one the person asks for as a design (as the request reads, or the issue's title says),
+  and when the hub cannot tell, it asks. The board's
   new-task form and its link dialog gain a 作業 picker (実装 / 調査 / 設計 and the configured
   types), defaulting to 調査 when 種類 is 調査だけ. A task that already exists is changed with `adj
   task update --work`. The worker never sets it.
@@ -406,7 +416,8 @@ differ from one repository to the next, and a layout must not change what "it is
   implementation step puts `agentColOf`'s rules on the server as the `step` fact, with a table test
   of every branch listed above, while the page still places cards itself; the second makes the page
   render from what the server sends. The board must look the same before and after each, and the
-  tests say so.
+  tests say so, with one exception: a parent's hub card is placed by the hub's open gate rather
+  than by today's lookup by id, which can find another task's gate (above).
 - No record change: `work` and `parked` are new optional keys, and an absent one has a defined
   value.
 - `the_page_has_a_word_for_every_value_the_server_sends` loses its checks of `AGENT_COL_OF_PHASE`
@@ -428,7 +439,8 @@ differ from one repository to the next, and a layout must not change what "it is
 ## Implementation split
 
 In order. Each one is a sub-issue of #559 and lands on its own. Until the fourth, the columns stay
-the same as today (the third adds only a pill on the card).
+the same as today (the third adds only a pill on the card; a parent's hub card follows its hub's
+gate from the first, as above).
 
 **1. The agent board's column is decided only in the page, and its precedence is untested**
 
@@ -447,7 +459,8 @@ Add the facts from `docs/board-columns.md` to `board::view`: one struct with `st
 `facts` on each card without its open gate and on each open gate with it, under `ownerHub` with the
 hub's open gate, and on each worker row and worker session entry (`phase`, `step`, `session`).
 `step` reproduces `agentColOf` branch by branch; port its precedence into a table test, bare
-sessions and a parent's hub card included. `session` is unread where the poll reads no ledger. Scrub
+sessions and a parent's hub card (which reads the hub's gate) included. `session` is read on every
+poll and is `unknown` when the ledger cannot be read. Scrub
 the new key from a record's `extra` as `humanCol` is. The task panel's stepper reads `status` and
 `step` (nothing lit before the task starts, all lit once done or cancelled). No change on the board.
 ```
@@ -471,7 +484,9 @@ gate's `humanCol` and `ownerHub.humanCol` give way to `humanColumn`. The page re
 from `columns`, places cards by those fields, reads `yourTurn` wherever it asks whether a card is
 the person's, picks a card's content and actions by its gate's kind and PR turn rather than the
 column id, hangs the queue sections, done folding and PR確認 on column roles, escapes column text,
-labels a session's phase by its column, and names columns with their side outside their own board.
+labels a session's phase by its `step`, and names columns with their side outside their own board.
+`columnOf` becomes the status for backlog and queued, else `humanColumn`, else `agentColumn`, and
+labels come from `columns`. Scrub the new keys from `extra` as `humanCol` is.
 Drop `AGENT_COLUMNS`, `HUMAN_COLUMNS`, `AGENT_COL_OF_PHASE` and `agentColOf`. Replace the page
 test's checks of the dropped tables with Rust tests that every value lands where it lands today,
 and move the tests that pin `humanCol`. The board must look the same.
