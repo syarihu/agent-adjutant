@@ -567,9 +567,9 @@ function historyEventsOf(task, all, waiting = isWaiting) {
   return events.sort((a, b) => a.at - b.at);
 }
 
-/* The timeline of 経過, drawn by the 経過 tab. The
-   worker's phase is not kept as a history — only the one it is in now — so it closes the
-   list rather than running through it. */
+/* The timeline of 経過, drawn by the 経過 tab. It holds the gates and what people did, not the
+   worker's phases: those are kept (`session.phases`) but read by 離れていた間に (my-work-away.js),
+   so the phase it is in now closes this list rather than running through it. */
 function timelineHtml(task, all, data = state, base = baseOf(task)) {
   // The waiting gates are those of the board the task is on, not of this page's.
   const events = historyEventsOf(task, all, data === state ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));

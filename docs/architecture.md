@@ -191,6 +191,8 @@ rows to tell what is new from what was looked at (`src/ui/my-work-seen.js`). The
 (`Resident::work_cache`), so several open pages polling every couple of seconds read the boards once
 between them. A board served on its own answers it with 404.
 
+The same marks bound 離れていた間に (`src/ui/my-work-away.js`): what happened to a task after the later of the time the person left it and the time they last acted on it, the events read from the document alone and the last action also from the gates the task panel has loaded, for the count on a row and the timeline above the task summary; a parent shows its children's, each by its own marks, and has no mark of its own.
+
 ## Walk-through: adding a task
 
 `adj task add` and the page's `POST /api/tasks` parse different input and word the result

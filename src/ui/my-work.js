@@ -52,15 +52,8 @@ const work = {
   cells: new Map(),   // each row's and header's own html, by key
   rowsByKey: new Map(),
   backed: null,       // the address of an open row that was sent back: not opened again until it moves
-  open: null,         // the row the person has open: { nwo, id, nav }, the mark `left` is written when it is left
+  open: null,         // the row the person has open: { nwo, id, nav, at } (`at`: the server's time it was opened), the mark `left` is written when it is left
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
-};
-/* What a PR's turn says in 新着 (my-work-seen.js has the words of 後で見る). */
-const WORK_PR_NOW = {
-  changes: '修正の依頼が来ています',
-  'ci-failed': 'CI が落ちています',
-  merge: 'マージできます',
-  closed: 'マージされずに閉じられました',
 };
 /* The middle terminal: a third slot beside the panel's and the review view's. It connects through the
    board that was selected, since `state` is that board's. */
@@ -195,7 +188,9 @@ function workJudge() {
   const out = new Map();
   for (const e of entries) {
     const mark = markOf(e.nwo)[e.id] || {};
-    out.set(e.id, { entry: e, cls: workSeenClass(e.items, mark, workActedAt(e)), live: workLiveItems(e.items, mark) });
+    out.set(e.id, { entry: e, cls: workSeenClass(e.items, mark, workActedAt(e)), live: workLiveItems(e.items, mark),
+      // The row open is read as of now: its mark still holds the last visit's `left`, which the panel reads.
+      away: workAwayCount(e, mark, work.open?.id === e.id) });
   }
   return out;
 }
@@ -215,7 +210,7 @@ function workTurnRow(e, judged, repo) {
   return {
     id: e.id, key: `${board}/${ref}`, raw: `${repo.nwo}/${e.board}`, board, ref, repo, nwo: repo.nwo,
     s: {}, st: gate ? 'waiting' : parkedOnly ? 'parked' : 'done', data: { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] },
-    task: e.task, isHub: e.isHub, turn: true, entry: e, cls: judged.cls, live: judged.live,
+    task: e.task, isHub: e.isHub, turn: true, entry: e, cls: judged.cls, live: judged.live, away: judged.away,
   };
 }
 
@@ -228,7 +223,7 @@ function workListRows() {
   for (const r of rows) {
     const j = judged.get(r.id);
     listed.add(r.id);
-    Object.assign(r, { entry: j?.entry || null, cls: j?.cls || null, live: j?.live || [] });
+    Object.assign(r, { entry: j?.entry || null, cls: j?.cls || null, live: j?.live || [], away: j?.away || 0 });
   }
   const turns = [];
   for (const [id, j] of judged) {
@@ -284,7 +279,11 @@ function workTrack() {
   if (work.open || !addr || work.backed) return;
   const sel = workSelected();
   const id = workSelectedId(sel);
-  if (id && sel.repo) work.open = { nwo: sel.repo.nwo, id, nav: addr };
+  if (id && sel.repo) {
+    work.open = { nwo: sel.repo.nwo, id, nav: addr, at: workServerNow() };
+    // The row just opened is read as of now: its count goes at once, not at the next poll.
+    if (view === 'work') renderWorkList();
+  }
 }
 
 window.addEventListener('pagehide', workLeave);
@@ -489,6 +488,7 @@ function workRowHtml(r, cell = '', band = false) {
   const u = s.uncommitted;
   const diff = u && (u.insertions || u.deletions) ? `<span class="add">+${Number(u.insertions) || 0}</span> <span class="del">-${Number(u.deletions) || 0}</span>` : '';
   const meta = [
+    workAwayChip(r.away),
     prNumber ? `#${esc(prNumber)}` : '',
     s.branch ? esc(s.branch) : '',
     age ? esc(age) : '',
@@ -513,6 +513,9 @@ function workRowHtml(r, cell = '', band = false) {
     </span></button>`;
 }
 
+/* How many things happened since the person left the task (#556): nothing is drawn for none. */
+const workAwayChip = n => n > 0 ? `<span class="wk-away" aria-label="離れていた間に ${n} 件" title="離れていた間に ${n} 件">+${n}</span>` : '';
+
 /* The first line of what the agent said at the end of its turn, cut to one line by the stylesheet. */
 const workSaidHtml = message => {
   const line = String(message).split('\n').map(x => x.trim()).find(Boolean);
@@ -535,7 +538,7 @@ function workTurnRowHtml(r, cell = '', band = false) {
   const prNumber = r.task ? prRefNumber(r.task.pr) : null;
   const newest = workNewest(r);
   const age = newest && r.data.now != null ? agoLabel(minutesSince(newest, r.data.now)) : '';
-  const meta = [prNumber ? `#${esc(prNumber)}` : '', age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('');
+  const meta = [workAwayChip(r.away), prNumber ? `#${esc(prNumber)}` : '', age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('');
   const gate = r.live.find(i => i.kind === 'gate');
   const pr = r.live.find(i => i.kind === 'pr');
   const lines = (gate ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(gate.gate)[0])} · ${esc(workGateWho(r.task))}</span>` : '')
@@ -927,6 +930,69 @@ wk('work-view').addEventListener('click', e => {
   }
 });
 
+/* ── 離れていた間に (#556) ── */
+
+/* A time as the timeline says it: `when` in the reader's time, `ago` as the hover. */
+const workAwayAt = secs => `<span class="at" title="${esc(ago(secsStamp(secs)))}">${esc(when(secsStamp(secs)))}</span>`;
+
+/* The block of 離れていた間に: the last thing the person did, when they left, what happened since, and what the task waits on
+   now. `m` is `workAwayModel` or `workParentAway` (which has no `left`); `who` of a line is a child's title, for a parent. */
+function workAwayHtml(m, now) {
+  const li = (at, html, cls = '') => `<li${cls ? ` class="${cls}"` : ''}>${at}<div class="what">${html}</div></li>`;
+  const who = ev => ev.title ? `<span class="wk-away-who">${esc(ev.title)}</span>` : '';
+  const items = [];
+  if (m.last) items.push(li(workAwayAt(m.last.at), `<div>${who(m.last)}最後にしたこと — ${esc(m.last.text)}</div>`, 'last'));
+  if (m.left != null && now != null) items.push(li(workAwayAt(m.left), `<div>${esc(agoLabel(minutesSince(m.left, now)))}に離れた</div>`, 'left'));
+  if (m.events.length) for (const ev of m.events) items.push(li(workAwayAt(ev.at), `<div>${who(ev)}${esc(workAwayText(ev))}</div>`));
+  else items.push(li('<span class="at"></span>', '<div class="tp-muted">離れていた間の動きはありません</div>'));
+  if (m.more) items.push(li('<span class="at"></span>', `<div class="tp-muted">${esc(`ほか ${m.more} 件`)}</div>`));
+  if (m.now) items.push(li('<span class="at">いま</span>', `<div>${esc(m.now)}</div>`, 'now'));
+  return `${secTitle('離れていた間に')}<ol class="timeline wk-away-list">${items.join('')}</ol>`;
+}
+
+/* The block above a task's or a session's タスクサマリ: filled into #tp-away, which the page keeps, and hidden unless the work
+   view has a task or session the person has left or acted on. `sel` is { task, sess, all } (`all` the gates of the task, answered
+   ones too), or null. */
+function renderWorkAway(sel) {
+  const el = tp('tp-away');
+  if (!el) return;
+  let html = '';
+  const id = view === 'work' && sel ? workSelectedId(workSelected()) : null;
+  const e = id ? work.entries.get(id) : null;
+  if (e && !e.isHub && work.doc) {
+    const m = workAwayModel(e, workMarks(e.nwo)[e.id], sel.all || [], workServerNow(),
+      // What happens while the row is open is this visit's, not what was missed.
+      work.open?.id === e.id ? work.open.at : Infinity);
+    if (m) html = `<div class="m3-filled-card wk-away-card">${workAwayHtml(m, workServerNow())}</div>`;
+  }
+  if (el.dataset.sig === html) return;
+  el.dataset.sig = html;
+  el.innerHTML = html;
+  el.hidden = !html;
+}
+
+/* The same for a parent, over its children, into the overview's #tp-parent-away. A child is the entry of a task whose parent
+   this is; a merged child with no row is read from its PR's time and the mark its row had, which is pruned a week after
+   it merges. Opening a parent writes no marks: each child is judged by its own. */
+function renderParentAway(p) {
+  const el = tp('tp-parent-away');
+  if (!el) return;
+  const marks = workMarks(p.repo.nwo);
+  const entries = [...work.entries.values()].filter(e => e.nwo === p.repo.nwo && !e.isHub && e.task?.parent === p.key);
+  const kids = entries.map(e => ({ title: e.task.title || e.ref, entry: e, mark: marks[e.id] }));
+  for (const c of p.children || []) {
+    if (c.progress !== 'merged' || entries.some(e => e.board === c.hub && e.task.id === c.id)) continue;
+    kids.push({ title: c.title || `#${c.id}`, entry: null, mark: marks[`${c.hub}/${c.id}`], mergedAt: awaySecs(c.prTurnAt) });
+  }
+  const m = workParentAway(kids, workServerNow());
+  const html = m ? `<div class="m3-filled-card wk-away-card">${workAwayHtml({ ...m, left: null }, workServerNow())}</div>` : '';
+  if (el.dataset.sig !== html) {
+    el.dataset.sig = html;
+    el.innerHTML = html;
+  }
+  el.hidden = !html;
+}
+
 /* ── the parent in the panel ── */
 
 /* The parent's overview, in the panel's place: how far it is, the stack, and what can be done to it. */
@@ -946,7 +1012,7 @@ function parentOverviewHtml(p) {
     const r = rowOf(c);
     const st = stateOf(c);
     const [cls, label] = WORK_PROGRESS[c.progress] || WORK_PROGRESS['not-started'];
-    return `<li><span class="seg ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>${st ? workGlyphHtml(st) : ''}<span>${esc(r?.task?.title || `#${c.id}`)}</span>${c.branch ? `<span class="base">${esc(c.branch)}</span>` : ''}</li>`;
+    return `<li><span class="seg ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>${st ? workGlyphHtml(st) : ''}<span>${esc(r?.task?.title || c.title || `#${c.id}`)}</span>${c.branch ? `<span class="base">${esc(c.branch)}</span>` : ''}</li>`;
   };
   const stack = chain.length
     ? `<div class="m3-filled-card">${secTitle('stack')}<ul class="wk-stack-list">${root?.base ? `<li><span class="base">${esc(root.base)} ←</span></li>` : ''}${chain.map(step).join('')}</ul></div>` : '';
@@ -991,6 +1057,7 @@ function renderWorkPanelOnly(parent) {
   setPanelPart('gate', tp('tp-gate'), '');
   setPanelPart('rest', tp('tp-rest'), parent ? parentOverviewHtml(parent)
     : '<div class="m3-filled-card"><div class="tp-muted">この仕事は、いまの一覧にありません</div></div>');
+  if (parent) renderParentAway(parent);
   renderHandForm(null);
   tp('tp-form').hidden = true;
 }

@@ -373,7 +373,7 @@ fn the_shape_the_page_reads() {
             "key": "acme/widget#5",
             "url": "https://github.com/acme/widget/issues/5",
             "number": 5,
-            "children": [{"hub": SLUG, "id": "a", "merged": false, "progress": "not-started"}],
+            "children": [{"hub": SLUG, "id": "a", "title": "Task a", "merged": false, "progress": "not-started"}],
             "merged": 0,
             "total": 1,
             "stacked": false,
@@ -531,6 +531,23 @@ fn a_child_is_as_far_as_its_status_and_pull_request_say() {
     let shown = serde_json::to_value(g).unwrap();
     assert_eq!(shown["children"][2]["progress"], "pr");
     assert_eq!(shown["children"][5]["progress"], "not-started");
+}
+
+#[test]
+fn a_child_carries_its_title_and_when_its_pull_requests_turn_changed() {
+    let p = "https://github.com/acme/widget/issues/9";
+    let mut merged = with_parent("merged", 1, p);
+    merged.pr_status = Some(pr("merged", None));
+    merged.pr_turn_at = Some("20261002T030405Z".to_string());
+    let quiet = with_parent("quiet", 2, p);
+    let mut tasks = cards(vec![merged, quiet]);
+    let g = &run(&mut tasks, &mut [], &[], &never)[0];
+    let shown = serde_json::to_value(g).unwrap();
+    assert_eq!(shown["children"][0]["title"], "Task merged");
+    assert_eq!(shown["children"][0]["progress"], "merged");
+    assert_eq!(shown["children"][0]["prTurnAt"], "20261002T030405Z");
+    assert_eq!(shown["children"][1]["title"], "Task quiet");
+    assert!(shown["children"][1].get("prTurnAt").is_none());
 }
 
 #[test]

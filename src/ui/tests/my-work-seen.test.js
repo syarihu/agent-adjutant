@@ -129,7 +129,7 @@ test('a gate in the turns and the same one as a session waits on is one item, on
     turns: [{ board: SLUG, task: task('1'), gates: [g] }],
   });
   assert.equal(entries.length, 1);
-  assert.deepEqual(plain(entries[0].items), [{ kind: 'gate', gate: 'plan', since: T0 + 10, key: `${SLUG}/g1` }]);
+  assert.deepEqual(plain(entries[0].items), [{ kind: 'gate', gate: 'plan', title: '', since: T0 + 10, key: `${SLUG}/g1` }]);
   // With a gate open, the turn that ended is not a thing to clear.
   assert.ok(!entries[0].items.some(i => i.kind === 'done'));
 });

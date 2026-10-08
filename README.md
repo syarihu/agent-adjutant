@@ -571,6 +571,8 @@ is answered). The sidebar badge on 「いまの仕事」 counts the new rows, an
 view is open. The marks are times on the server's clock in this browser's local storage
 (`adj.seenWork.<owner/repo>`), so another browser starts with none and other tabs of this one follow.
 
+**離れていた間に.** Opening a task or a task-less session in 「いまの仕事」 puts a block of that name at the top of its タスクサマリ: what you did last (a gate you answered, a record you sent back, a line you typed, a park), when you left, what happened since, and what it waits on now. "Since" is the later of the time you left the row and the time you last acted on it, so a row you never opened or acted on shows nothing. What counts is a phase moving on, a gate opening (a question in its own words), a permission wait, a turn that finished or failed, and the PR's turn changing; for the PR and the session's status only the latest change is known, so only that one is listed. A gate opened and answered while you were away shows only as your last action. Each row in the list carries `+N`, how many of these there are, which goes when you open the row; the panel of the row you have open does not list what happens during that visit. A parent's overview shows its children's events, each child by its own time, with the child's title, and counts what the children wait on; opening a parent writes no marks.
+
 **Parking a task.** A task you wait on on purpose (the PdM's or the designer's answer, an engineer's review, the right
 time to merge, or something else you say in words) can be parked with a reason: `adj task park --id … --reason
 pdm|design|review|merge-timing|other [--text …]`, or 置く in the task panel's タスクサマリ and next to a gate's
@@ -916,9 +918,9 @@ the gate directories.
 - `parents` (on `/api/state`; left out when no task has a parent): each parent with its children
   from `tasks` and `hubTasks`, sorted by `key`: `{key, url, number?, title?, children, merged,
   total, stacked, hub}`. `hub` is the slug of the hub that runs the children: a parent-task hub among the
-  children's, else the repository's own. A child is `{hub, id, merged, progress, branch?, base?, on?, onHub?}`:
+  children's, else the repository's own. A child is `{hub, id, title, merged, progress, prTurnAt?, branch?, base?, on?, onHub?}`:
   `hub` is the slug of the hub that owns it
-  (an id is unique only within one hub), `merged` is whether its PR is merged, `progress` is `merged` (its PR is
+  (an id is unique only within one hub), `title` is the task's, `prTurnAt` is when its PR's turn last changed (a UTC stamp), `merged` is whether its PR is merged, `progress` is `merged` (its PR is
   merged), `done` (the task is done and has no merged PR), `pr` (a PR is set, or the task says `pr`, and it is not merged), `working` (the
   task was handed to a worker) or `not-started` (anything else, a cancelled task included), `branch` is the branch its work is on and `base` what it is cut
   from (less one leading `origin/`), and `on` (with `onHub`, the sibling's hub) is the

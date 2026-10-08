@@ -174,3 +174,9 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
 
 /* A parked row (#555) is not the person's turn: the glyph is the quiet one. */
 .wk-glyph.parked { color: var(--md-sys-color-on-surface-variant); }
+
+/* 離れていた間に (#556): the count on a row, and the timeline above the summary. */
+.wk-away { font-weight: 800; padding: 0 6px; border-radius: 8px; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.wk-away-list li.last .what, .wk-away-list li.left .what { color: var(--md-sys-color-on-surface-variant); }
+.wk-away-list li.now .at { color: var(--md-sys-color-primary); font-weight: 800; }
+.wk-away-who { font-weight: 800; margin-right: 6px; }

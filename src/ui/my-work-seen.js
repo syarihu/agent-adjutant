@@ -58,7 +58,7 @@ function workEntries(doc, isGateDone = () => false) {
       const key = `${slug}/${gate.id}`;
       if (seen.has(key) || isGateDone(key)) return;
       seen.add(key);
-      e.gates.push({ kind: 'gate', gate: gate.kind, since: stampSecs(openedAt), key });
+      e.gates.push({ kind: 'gate', gate: gate.kind, title: gate.title || '', since: stampSecs(openedAt), key });
     };
 
     for (const r of repo.rows || []) {

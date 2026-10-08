@@ -228,7 +228,10 @@ function renderTaskPanel() {
   if (!task && !hub && !sess && !parent && !gone) return renderHandForm(null);
   // On a screen with no panel (the review queue) the panel waits, with its terminal, for the board to come back.
   if (!shown) return;
-  if (parent || gone) return renderWorkPanelOnly(parent);
+  if (parent || gone) {
+    renderWorkAway(null);
+    return renderWorkPanelOnly(parent);
+  }
   tp('tp-tabs').hidden = false;
 
   const colId = task ? columnOf(task) : null;
@@ -239,6 +242,8 @@ function renderTaskPanel() {
   // keep its 新着.
   const all = task ? gatesOf(task) : [];
   const pick = task ? panelPickOf(task.id) : {};
+  // The work view's 離れていた間に, above the summary (my-work.js); a hub has none.
+  renderWorkAway(!hub && (task || sess) ? { task, sess, all } : null);
   const shownGate = task && pane !== 'term' ? gateShownIn(task, tabOfPane(pane), all, pick) : null;
   // Opening a tab reads every record judged in it, not only the one shown: the others are earlier
   // rounds behind the round chips, and a 新着 kept for them stays on the tab and the card. Marked

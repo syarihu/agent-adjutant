@@ -95,8 +95,13 @@ pub enum Progress {
 pub struct ParentChild {
     pub hub: String,
     pub id: String,
+    pub title: String,
     pub merged: bool,
     pub progress: Progress,
+    /// When its PR's turn last changed, UTC stamp: a merged child has no row on the page, so this
+    /// is all the page has to say when it merged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_turn_at: Option<String>,
     /// The branch its work is on, which the page names a stack's steps by.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -201,6 +206,8 @@ fn resolve(task: &task::Task, inputs: &Inputs) -> Option<Resolved> {
 struct Kid {
     hub: String,
     id: String,
+    title: String,
+    pr_turn_at: Option<String>,
     order: u32,
     created_at: String,
     /// The branch its worktree is on, else the one its pull request is from.
@@ -240,6 +247,8 @@ pub(super) fn attach(
         let kid = Kid {
             hub,
             id: t.id.clone(),
+            title: t.title.clone(),
+            pr_turn_at: t.pr_turn_at.clone(),
             order: t.order,
             created_at: t.created_at.clone(),
             branch: branch_of(t, inputs.linked),
@@ -366,8 +375,10 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
             .map(|&i| ParentChild {
                 hub: acc.kids[i].hub.clone(),
                 id: acc.kids[i].id.clone(),
+                title: acc.kids[i].title.clone(),
                 merged: acc.kids[i].merged,
                 progress: acc.kids[i].progress,
+                pr_turn_at: acc.kids[i].pr_turn_at.clone(),
                 branch: acc.kids[i].branch.clone(),
                 base: acc.kids[i].base.clone(),
                 on: on[i].map(|j| acc.kids[j].id.clone()),

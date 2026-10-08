@@ -638,6 +638,7 @@ fn expected_parents() -> Value {
             "branch": "wid-1",
             "hub": SLUG,
             "id": "WID-1",
+            "title": "Task WID-1",
             "merged": false,
             "progress": "working"
           },
@@ -645,6 +646,7 @@ fn expected_parents() -> Value {
             "base": "wid-1",
             "hub": SLUG,
             "id": "WID-2",
+            "title": "Task WID-2",
             "merged": false,
             "on": "WID-1",
             "onHub": SLUG,
@@ -653,6 +655,7 @@ fn expected_parents() -> Value {
           {
             "hub": FEATURE_SLUG,
             "id": "WID-9",
+            "title": "Task WID-9",
             "merged": false,
             "progress": "working"
           }

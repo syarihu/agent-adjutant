@@ -219,8 +219,10 @@ fn group(key: &str, children: usize) -> ParentGroup {
             .map(|i| ParentChild {
                 hub: REPO.to_string(),
                 id: i.to_string(),
+                title: format!("Child {i}"),
                 merged: false,
                 progress: Progress::NotStarted,
+                pr_turn_at: None,
                 branch: None,
                 base: None,
                 on: None,
