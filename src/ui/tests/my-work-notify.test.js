@@ -10,7 +10,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js', 'my-work-no
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage } = ctx;
+const { notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const DEFAULTS = { waiting: true, done: false, failed: true };
@@ -178,4 +178,13 @@ test('the last message is the body only when it belongs to the turn that ended',
   assert.equal(notifyContent('done', at(T0 - 600)).body, '完了 · widget');
   assert.equal(notifyContent('done', at(T0 - 30)).body, '完了 · widget\nOld news');
   assert.equal(notifyContent('done', at(undefined)).body, '完了 · widget\nOld news');
+});
+
+test('a queued item is final once the document was fetched after it was queued, or after it has waited long enough', () => {
+  const MAX = 15000;
+  assert.equal(notifyPendingFinal(2000, 1000, 3000, MAX), false);
+  assert.equal(notifyPendingFinal(500, 1000, 3000, MAX), true);
+  assert.equal(notifyPendingFinal(2000, null, 3000, MAX), false);
+  assert.equal(notifyPendingFinal(2000, null, 17000, MAX), true);
+  assert.equal(notifyPendingFinal(2000, 1000, 17000, MAX), true);
 });

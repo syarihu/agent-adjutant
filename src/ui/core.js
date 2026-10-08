@@ -340,22 +340,25 @@ function openNotified(entry, notification) {
 let notifyPending = [];
 const NOTIFY_PENDING_MS = 15000;
 
-/* Ring the queued items that have waited for a document longer than NOTIFY_PENDING_MS (or all, `all`): /api/work may
-   be slow or failing, and a gate must not wait on it for ever. Called from the boards poll and from a failed one. */
-function flushNotifyPending(all = false) {
+/* Try the queued items again. `fetchedAt` is when the /api/work request that gave the document just read began: an item
+   queued before it had its chance with that document and is rung now, in its old wording if it still has no entry; a
+   younger one is matched against the document and, with no entry, stays queued. Without it (the boards poll, a failed
+   request) only an item that has waited NOTIFY_PENDING_MS is final: /api/work may be slow or failing, and a gate must
+   not wait on it for ever. */
+function flushNotifyPending(fetchedAt = null) {
+  if (!notifyPending.length) return;
   const now = Date.now();
-  const due = notifyPending.filter(i => all || now - i.at >= NOTIFY_PENDING_MS);
-  if (!due.length) return;
-  notifyPending = notifyPending.filter(i => !due.includes(i));
-  for (const item of due) ringWaiting(item, true);
+  const queue = notifyPending;
+  notifyPending = [];
+  for (const item of queue) ringWaiting(item, notifyPendingFinal(item.at, fetchedAt, now, NOTIFY_PENDING_MS));
 }
 
 /* Ring a gate or a wait (`item`: {gate} or {wait}) the person is to be told of. `final` is the retry. */
 function ringWaiting(item, final) {
   if (!(window.Notification && Notification.permission === 'granted' && prefs.notify.waiting)) return;
   const { gate: g, wait: w } = item;
-  // A retry is for what is still open: answered or gone meanwhile, it is not rung.
-  if (final && !(g ? seenGateIds?.has(item.ref) : seenWaitKeys?.has(item.ref))) return;
+  // A retry (an item that was queued) is for what is still open: answered or gone meanwhile, it is not rung.
+  if ((final || item.at) && !(g ? seenGateIds?.has(item.ref) : seenWaitKeys?.has(item.ref))) return;
   const entry = !multiBoard || !work.doc ? null : notifyEntryOf(g
     ? e => notifyGateMatch(e, g._slug, g.id, g.task)
     : e => notifyWaitMatch(e, w._slug, w.session, w.agentSessionId));
@@ -368,7 +371,7 @@ function ringWaiting(item, final) {
     n.onclick = () => openNotified(entry, n);
     return;
   }
-  if (multiBoard && !final) { notifyPending.push({ ...item, at: Date.now() }); return; }
+  if (multiBoard && !final) { notifyPending.push({ ...item, at: item.at ?? Date.now() }); return; }
   if (g) {
     const [label] = kindOf(g.kind);
     const wtName = baseName(g.worktree);

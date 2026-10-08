@@ -25,6 +25,13 @@ function notifyQuiet(entry, openId, visible) {
   return !!visible && openId != null && entry?.id === openId;
 }
 
+/* Whether a queued gate or wait (`queuedAt`, ms) is to be rung now whatever the document says: it was queued before the
+   request that gave the latest document began (`fetchedAt`, ms; null when no document was just read), or it has
+   waited `maxMs`. A younger one may only be missing from a document that was already on its way. */
+function notifyPendingFinal(queuedAt, fetchedAt, now, maxMs) {
+  return (fetchedAt != null && queuedAt < fetchedAt) || now - queuedAt >= maxMs;
+}
+
 /* Whether a work entry is the one a gate (`slug`, `id`, and the task it names, when it names one) is about. */
 function notifyGateMatch(entry, slug, id, task) {
   return entry.gates.some(x => x.key === `${slug}/${id}`) || (!!task && entry.board === slug && entry.ref === task);
