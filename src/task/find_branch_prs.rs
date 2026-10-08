@@ -14,9 +14,9 @@ use super::github::{first_error, unread_error};
 /// How many branches one query asks about, as `read_prs` does for pull requests.
 const PER_QUERY: usize = 50;
 
-/// How many pull requests of a branch are looked at: a branch is rarely the head of more than a
-/// few, and the newest of them are what is wanted.
-const PER_BRANCH: usize = 5;
+/// How many pull requests of a branch are looked at in each of the two lists (the open ones, and
+/// the newest of any state): a few forks or closed ones newer than an open one must not hide it.
+const PER_BRANCH: usize = 10;
 
 /// A branch of a repository, with the names in lower case where GitHub compares them so.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -55,14 +55,21 @@ pub(super) fn branch_query(n: usize) -> String {
     let aliases: Vec<String> = (0..n)
         .map(|i| {
             format!(
-                "b{i}:repository(owner:$o{i},name:$r{i}){{pullRequests(headRefName:$h{i},\
-                 first:{PER_BRANCH},states:[OPEN,MERGED,CLOSED],\
-                 orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{number url state isDraft \
-                 headRepositoryOwner{{login}}}}}}}}"
+                "b{i}:repository(owner:$o{i},name:$r{i}){{\
+                 open:pullRequests(headRefName:$h{i},first:{PER_BRANCH},states:[OPEN],\
+                 orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{...F}}}} \
+                 recent:pullRequests(headRefName:$h{i},first:{PER_BRANCH},\
+                 states:[OPEN,MERGED,CLOSED],\
+                 orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{...F}}}}}}"
             )
         })
         .collect();
-    format!("query({}){{{}}}", variables.join(","), aliases.join(" "))
+    format!(
+        "query({}){{{}}} fragment F on PullRequest {{ number url state isDraft \
+         headRepositoryOwner{{login}} }}",
+        variables.join(","),
+        aliases.join(" ")
+    )
 }
 
 /// Read the pull request of each of `refs`, one query per host and `PER_QUERY` branches.
@@ -164,10 +171,12 @@ pub(super) fn parse_branch_prs(
         .enumerate()
         .map(|(i, r)| {
             let alias = format!("b{i}");
-            let Some(nodes) = value
-                .pointer(&format!("/data/{alias}/pullRequests/nodes"))
-                .and_then(Value::as_array)
-            else {
+            let nodes_of = |list: &str| {
+                value
+                    .pointer(&format!("/data/{alias}/{list}/nodes"))
+                    .and_then(Value::as_array)
+            };
+            let (Some(open), Some(recent)) = (nodes_of("open"), nodes_of("recent")) else {
                 // The error that names this alias; failing that, the first one.
                 let said = errors
                     .iter()
@@ -176,19 +185,22 @@ pub(super) fn parse_branch_prs(
                     .and_then(|e| e.get("message").and_then(Value::as_str));
                 return Err(said.unwrap_or("no such repository").to_string());
             };
-            let own: Vec<BranchPr> = nodes
-                .iter()
-                .filter(|node| {
-                    node.pointer("/headRepositoryOwner/login")
-                        .and_then(Value::as_str)
-                        .is_some_and(|login| login.eq_ignore_ascii_case(&r.owner))
-                })
-                .filter_map(branch_pr_of)
-                .collect();
-            let live = own
-                .iter()
-                .position(|pr| matches!(pr.state.as_str(), "open" | "draft"));
-            Ok(own.into_iter().nth(live.unwrap_or(0)))
+            let own = |nodes: &Vec<Value>| -> Vec<BranchPr> {
+                nodes
+                    .iter()
+                    .filter(|node| {
+                        node.pointer("/headRepositoryOwner/login")
+                            .and_then(Value::as_str)
+                            .is_some_and(|login| login.eq_ignore_ascii_case(&r.owner))
+                    })
+                    .filter_map(branch_pr_of)
+                    .collect()
+            };
+            // The newest open (or draft) one of the branch's own, else the newest of any state.
+            Ok(own(open)
+                .into_iter()
+                .next()
+                .or_else(|| own(recent).into_iter().next()))
         })
         .collect()
 }

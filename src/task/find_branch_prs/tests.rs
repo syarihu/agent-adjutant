@@ -23,8 +23,15 @@ fn data(repos: &[Vec<String>]) -> String {
         .iter()
         .enumerate()
         .map(|(i, nodes)| {
+            // What `states:[OPEN]` answers is the open ones of what the newest of any state is.
+            let open_tag = format!(r#""state":"{}""#, "OPEN");
+            let open: Vec<&String> = nodes.iter().filter(|n| n.contains(&open_tag)).collect();
             format!(
-                r#""b{i}":{{"pullRequests":{{"nodes":[{}]}}}}"#,
+                r#""b{i}":{{"open":{{"nodes":[{}]}},"recent":{{"nodes":[{}]}}}}"#,
+                open.iter()
+                    .map(|n| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
                 nodes.join(",")
             )
         })
@@ -43,12 +50,34 @@ fn the_query_names_each_branch_by_a_variable() {
     for i in 0..2 {
         assert!(query.contains(&format!("$o{i}:String!,$r{i}:String!,$h{i}:String!")));
         assert!(query.contains(&format!(
-            "b{i}:repository(owner:$o{i},name:$r{i}){{pullRequests(headRefName:$h{i},"
+            "b{i}:repository(owner:$o{i},name:$r{i}){{open:pullRequests(headRefName:$h{i},"
         )));
     }
     assert!(!query.contains("b2"));
+    assert!(query.contains("states:[OPEN],"));
     assert!(query.contains("states:[OPEN,MERGED,CLOSED]"));
+    assert!(query.contains("fragment F on PullRequest"));
     assert!(query.contains("orderBy:{field:CREATED_AT,direction:DESC}"));
+}
+
+#[test]
+fn an_open_pr_older_than_the_newest_ones_of_any_state_is_still_found() {
+    let refs = [branch("o")];
+    let closed: Vec<String> = (20..30).map(|n| node(n, "CLOSED", false, "o")).collect();
+    let stdout = format!(
+        r#"{{"data":{{"b0":{{"open":{{"nodes":[{}]}},"recent":{{"nodes":[{}]}}}}}}}}"#,
+        node(3, "OPEN", false, "o"),
+        closed.join(",")
+    );
+    let got = parse_branch_prs(&stdout, &[&refs[0]]).remove(0);
+    assert_eq!(got.unwrap().unwrap().number, 3);
+    // One that is a fork's is passed over in the open list as well.
+    let stdout = stdout.replace(r#""number":3"#, r#""number":4"#).replace(
+        r#""headRepositoryOwner":{"login":"o"}}]}"#,
+        r#""headRepositoryOwner":{"login":"x"}}]}"#,
+    );
+    let got = parse_branch_prs(&stdout, &[&refs[0]]).remove(0);
+    assert_eq!(got.unwrap().unwrap().state, "closed");
 }
 
 #[test]
@@ -94,7 +123,7 @@ fn a_repository_that_is_not_there_is_an_error_for_that_branch_alone() {
     let refs = [branch("o"), branch("p")];
     let both = [&refs[0], &refs[1]];
     let stdout = format!(
-        r#"{{"data":{{"b0":null,"b1":{{"pullRequests":{{"nodes":[{}]}}}}}},"errors":[{{"type":"NOT_FOUND","path":["b0"],"message":"Could not resolve to a Repository"}}]}}"#,
+        r#"{{"data":{{"b0":null,"b1":{{"open":{{"nodes":[{0}]}},"recent":{{"nodes":[{0}]}}}}}},"errors":[{{"type":"NOT_FOUND","path":["b0"],"message":"Could not resolve to a Repository"}}]}}"#,
         node(3, "OPEN", false, "p")
     );
     let got = parse_branch_prs(&stdout, &both);

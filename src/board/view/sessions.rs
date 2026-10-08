@@ -418,7 +418,7 @@ pub(super) fn sessions_of(
         server.last_lines.keep_only(&poll.screens);
     }
     // The same for the diffs, and the reading of what is due starts here, off this thread.
-    if poll.listing.diffs && only.is_none() {
+    if poll.listing.diffs && poll.listing.listed && only.is_none() {
         server.diffs.keep_only(&poll.diffs);
         server.diffs.refresh(Instant::now());
     }
@@ -745,6 +745,7 @@ fn board_sessions_of(
             main_branch,
             lines: Lines::None,
             diffs: false,
+            listed: complete,
         },
         only,
         |index, path| {

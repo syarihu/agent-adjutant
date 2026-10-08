@@ -125,9 +125,17 @@ fn session_pr(pr: BranchPr) -> SessionPr {
 /// worktrees could not be listed, which says nothing of the branches: what is held for the
 /// repository stays as it is.
 pub(super) fn branches_of(ctx: &Context, host: &str) -> Result<Vec<BranchRef>, String> {
-    let repo = &ctx.repo;
+    branches_in(&ctx.repo, host)
+}
+
+/// `branches_of` for a repository. An origin that could not be read is `Err` like a listing that
+/// could not, and not a repository on another host.
+fn branches_in(
+    repo: &crate::kernel::identity::RepoInfo,
+    host: &str,
+) -> Result<Vec<BranchRef>, String> {
     if repo.nwo_source == "dirname"
-        || crate::kernel::identity::origin_host(&repo.main).as_deref() != Some(host)
+        || crate::kernel::identity::origin_host_read(&repo.main)?.as_deref() != Some(host)
     {
         return Ok(Vec::new());
     }
@@ -202,21 +210,31 @@ impl BranchPrs {
     ) {
         let mut wanted: Vec<BranchRef> = Vec::new();
         let mut listed: HashSet<String> = HashSet::new();
+        let mut unreadable: HashSet<String> = HashSet::new();
         // One listing per repository, whichever of its boards come in.
         let mut mains: HashSet<&str> = HashSet::new();
         for ctx in boards {
             if !mains.insert(ctx.repo.main.as_str()) {
                 continue;
             }
-            if let Ok(found) = branches_of(ctx, host) {
-                listed.insert(ctx.repo.nwo.to_ascii_lowercase());
-                for r in found {
-                    if !wanted.contains(&r) {
-                        wanted.push(r);
+            let nwo = ctx.repo.nwo.to_ascii_lowercase();
+            match branches_of(ctx, host) {
+                Ok(found) => {
+                    listed.insert(nwo);
+                    for r in found {
+                        if !wanted.contains(&r) {
+                            wanted.push(r);
+                        }
                     }
+                }
+                // Another checkout of the same repository listing fine does not make this
+                // one's branches gone.
+                Err(_) => {
+                    unreadable.insert(nwo);
                 }
             }
         }
+        listed.retain(|nwo| !unreadable.contains(nwo));
         let all: HashSet<String>;
         let news_repos = match all_named {
             true => {

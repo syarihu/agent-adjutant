@@ -378,7 +378,7 @@ printf '[{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/ac
 /// number 12. Upper-case values are passed in, as for `graphql_of_pr`.
 fn graphql_of_branch(state: &str, owner: &str) -> String {
     format!(
-        r#"{{"data":{{"b0":{{"pullRequests":{{"nodes":[{{"number":12,"url":"https://github.com/acme/widget/pull/12","state":"{state}","isDraft":false,"headRepositoryOwner":{{"login":"{owner}"}}}}]}}}}}}}}"#
+        r#"{{"data":{{"b0":{{"open":{{"nodes":[]}},"recent":{{"nodes":[{{"number":12,"url":"https://github.com/acme/widget/pull/12","state":"{state}","isDraft":false,"headRepositoryOwner":{{"login":"{owner}"}}}}]}}}}}}}}"#
     )
 }
 

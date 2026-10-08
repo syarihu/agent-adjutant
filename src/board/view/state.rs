@@ -308,7 +308,9 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     // does not grow with the number of worktrees. The `ps` is only run if a record names a pid.
     let processes = crate::registry::ProcessTable::snapshot();
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
-    let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
+    let listed = crate::kernel::identity::worktrees(&repo.main);
+    let listed_ok = listed.is_ok();
+    let listed = listed.unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
@@ -407,6 +409,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
                 main_branch,
                 lines,
                 diffs: true,
+                listed: listed_ok,
             },
             None,
             |index, _| workers_data[index].clone(),
@@ -561,6 +564,9 @@ pub(super) struct Listing<'a> {
     /// Whether the worktrees of the workers listed are asked to be read for their diff. Only
     /// the poll that lists every session does: the others take what is there.
     pub(super) diffs: bool,
+    /// Whether the worktrees were listed. A listing that failed leaves the linked ones out, which
+    /// is not the same as there being none, so what is held for them is not forgotten.
+    pub(super) listed: bool,
 }
 
 /// The main checkout's branch and the linked worktrees, out of one listing. The branch is

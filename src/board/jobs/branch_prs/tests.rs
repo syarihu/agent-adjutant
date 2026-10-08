@@ -192,3 +192,23 @@ fn what_is_held_goes_only_for_repositories_whose_worktrees_were_listed() {
     assert!(!entries.contains_key(&key_of(&gone)));
     assert!(entries.contains_key(&key_of(&unlisted)));
 }
+
+#[test]
+fn an_origin_that_cannot_be_read_is_an_error_and_not_another_host() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = |main: &std::path::Path| crate::kernel::identity::RepoInfo {
+        main: main.to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "origin",
+    };
+    // Not a repository: git does not answer, which says nothing of which host it is on.
+    assert!(branches_in(&repo(&dir.path().join("nowhere")), "github.com").is_err());
+    // A name taken from the directory is not on any host, and that is an answer.
+    let mut named = repo(dir.path());
+    named.nwo_source = "dirname";
+    assert_eq!(branches_in(&named, "github.com"), Ok(Vec::new()));
+}
