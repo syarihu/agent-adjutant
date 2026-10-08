@@ -141,7 +141,8 @@ derivation instead of keeping its own.
 ## Columns as conditions
 
 A layout is two ordered lists of columns, one per half of the board. A column has an `id`, a
-`label`, an optional Material Symbols `icon` and `hint`, and `when`: the condition. The agent side
+`label`, an optional Material Symbols `icon`, `hint` and `role` (see "What a card shows" below), and
+`when`: the condition. The agent side
 of today's board with an investigation column added looks like this:
 
 ```json
@@ -231,7 +232,8 @@ condition language in JavaScript next to the Rust one, which is what #466 remove
 no tests that run. Computing the columns twice per card is cheaper than a second evaluator.
 
 The server also sends the layout itself (`columns: { agent: [...], human: [...] }`, with ids,
-labels, icons, hints and roles; not `layout`, which the page already uses for its tabs and split), and the page renders the board from it. `AGENT_COLUMNS`, `HUMAN_COLUMNS` and
+labels, icons, hints and roles; not `layout`, which the page already uses for its tabs and
+split), and the page renders the board from it. `AGENT_COLUMNS`, `HUMAN_COLUMNS` and
 `AGENT_COL_OF_PHASE` leave the page.
 
 **Ids are unique per side.** The default layout keeps today's ids, including `plan` on both sides,
