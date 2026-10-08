@@ -71,6 +71,7 @@ fn carried(slug: &str) -> Carried {
         hub_tasks: Vec::new(),
         parents: Vec::new(),
         gates: Vec::new(),
+        hub_gates: Vec::new(),
     }
 }
 
@@ -327,4 +328,45 @@ fn a_task_whose_pr_waits_on_the_person_is_a_turn_even_with_no_session_or_gate() 
     let json = serde_json::to_value(&repo).unwrap();
     assert_eq!(json["turns"][0]["task"]["waitsOnPerson"], true);
     assert!(json["turns"][0]["task"].get("prTurnAt").is_none());
+}
+
+#[test]
+fn a_gate_of_a_parent_task_hub_is_a_turn_of_that_hubs_board_and_task() {
+    let mut c = carried(REPO);
+    let mut feature = card("1", "Feature task");
+    feature.owner_hub = Some(OwnerHub {
+        slug: FEATURE.to_string(),
+        key: None,
+        human_col: None,
+    });
+    c.tasks = vec![card("1", "Own task")];
+    c.hub_tasks = vec![feature];
+    c.gates = vec![gate_card("own", Some("1"), true)];
+    c.hub_gates = vec![
+        (FEATURE.to_string(), gate_card("theirs", Some("1"), true)),
+        (FEATURE.to_string(), gate_card("recorded", Some("1"), false)),
+    ];
+    // The same id on another board is another gate.
+    c.hub_gates
+        .push((FEATURE.to_string(), gate_card("own", Some("1"), true)));
+    let repo = repo_of("acme/widget".to_string(), vec![c]);
+    let shape: Vec<(&str, &str, Vec<&str>)> = repo
+        .turns
+        .iter()
+        .map(|t| {
+            (
+                t.board.as_str(),
+                t.task.as_ref().unwrap().title.as_str(),
+                t.gates.iter().map(|g| g.id.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (REPO, "Own task", vec!["own"]),
+            (FEATURE, "Feature task", vec!["theirs", "own"]),
+        ]
+    );
+    assert_eq!(repo.turns[1].gates[0].slug, FEATURE);
 }

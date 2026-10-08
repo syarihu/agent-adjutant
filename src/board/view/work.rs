@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
-use crate::board::{Resident, Session};
+use crate::board::{Resident, Server, Session};
+use crate::gate;
 use crate::mail::RepoHub;
 use crate::registry::{Address, addresses};
 use crate::task;
@@ -143,6 +144,9 @@ pub(super) struct Carried {
     pub hub_tasks: Vec<TaskCard>,
     pub parents: Vec<ParentGroup>,
     pub gates: Vec<GateCard>,
+    /// The open gates of the parent-task hubs a repository's own board lists the tasks of, with
+    /// the slug of the hub whose directory holds each: the board's `gates` are its own.
+    pub hub_gates: Vec<(String, GateCard)>,
 }
 
 /// The repositories of `addresses` with the boards that answer for each: the repository's own
@@ -200,6 +204,7 @@ pub fn work(resident: &Resident) -> WorkState {
                 };
                 let board = state(&server, true, Lines::None);
                 rate_limits.get_or_insert_with(|| board.rate_limits.clone());
+                let hub_gates = hub_gates(&server, &board.hubs);
                 carried.push(Carried {
                     slug: slug.clone(),
                     sessions: board.sessions,
@@ -208,6 +213,7 @@ pub fn work(resident: &Resident) -> WorkState {
                     hub_tasks: board.hub_tasks,
                     parents: board.parents,
                     gates: board.gates,
+                    hub_gates,
                 });
             }
             repo_of(nwo, carried)
@@ -218,6 +224,23 @@ pub fn work(resident: &Resident) -> WorkState {
         rate_limits: rate_limits.unwrap_or_default(),
         repos,
     }
+}
+
+/// The open gates of the parent-task hubs whose tasks the repository's own board lists, each with
+/// the slug of its hub. A hub whose directory cannot be read has none, as for its task cards.
+fn hub_gates(server: &Server, hubs: &[RepoHub]) -> Vec<(String, GateCard)> {
+    let repo = &server.ctx.repo;
+    if repo.hub.is_some() {
+        return Vec::new();
+    }
+    hubs.iter()
+        .filter(|h| h.parent && h.slug != repo.slug)
+        .flat_map(|h| {
+            gate::list(&server.ctx.state, &h.slug, gate::Shelf::Open)
+                .into_iter()
+                .map(|g| (h.slug.clone(), GateCard::of(g)))
+        })
+        .collect()
 }
 
 /// One repository out of what its carriers said. Everything is listed once however many
@@ -345,42 +368,55 @@ fn turns_of(carried: &[Carried]) -> Vec<WorkTurn> {
             }
         }
     }
+    // The card of a task of the board `slug`: the board's own, or one of a parent-task hub it lists.
+    let card_of = |slug: &str, id: &str| {
+        carried.iter().find_map(|c| {
+            let own = (c.slug == slug).then(|| c.tasks.iter().find(|card| card.task.id == id));
+            own.flatten().or_else(|| {
+                c.hub_tasks.iter().find(|card| {
+                    card.task.id == id && card.owner_hub.as_ref().is_some_and(|o| o.slug == slug)
+                })
+            })
+        })
+    };
     let mut seen: HashSet<(&str, &str)> = HashSet::new();
-    for c in carried {
-        for GateCard { gate, .. } in &c.gates {
-            if !gate.wait || !seen.insert((&c.slug, &gate.id)) {
-                continue;
-            }
-            let at = turns.iter().position(|t| {
-                t.board == c.slug
-                    && match &t.task {
-                        Some(task) => gate.task.as_deref() == Some(task.id.as_str()),
-                        None => t.gates.iter().any(|g| g.task == gate.task),
-                    }
-            });
-            let at = at.unwrap_or_else(|| {
-                // A task this board does not list leaves the turn without one.
-                let task = gate
-                    .task
-                    .as_deref()
-                    .and_then(|id| c.tasks.iter().find(|card| card.task.id == id))
-                    .map(work_task);
-                turns.push(WorkTurn {
-                    board: c.slug.clone(),
-                    task,
-                    gates: Vec::new(),
-                });
-                turns.len() - 1
-            });
-            turns[at].gates.push(WorkGate {
-                id: gate.id.clone(),
-                kind: gate.kind.as_str().to_string(),
-                title: Some(gate.title.clone()).filter(|t| !t.is_empty()),
-                opened_at: gate.opened_at.clone(),
-                slug: c.slug.clone(),
-                task: gate.task.clone(),
-            });
+    let gates = carried.iter().flat_map(|c| {
+        let own = c.gates.iter().map(|g| (c.slug.as_str(), g));
+        own.chain(c.hub_gates.iter().map(|(slug, g)| (slug.as_str(), g)))
+    });
+    for (board, GateCard { gate, .. }) in gates {
+        if !gate.wait || !seen.insert((board, &gate.id)) {
+            continue;
         }
+        let at = turns.iter().position(|t| {
+            t.board == board
+                && match &t.task {
+                    Some(task) => gate.task.as_deref() == Some(task.id.as_str()),
+                    None => t.gates.iter().any(|g| g.task == gate.task),
+                }
+        });
+        let at = at.unwrap_or_else(|| {
+            // A task this board does not list leaves the turn without one.
+            let task = gate
+                .task
+                .as_deref()
+                .and_then(|id| card_of(board, id))
+                .map(work_task);
+            turns.push(WorkTurn {
+                board: board.to_string(),
+                task,
+                gates: Vec::new(),
+            });
+            turns.len() - 1
+        });
+        turns[at].gates.push(WorkGate {
+            id: gate.id.clone(),
+            kind: gate.kind.as_str().to_string(),
+            title: Some(gate.title.clone()).filter(|t| !t.is_empty()),
+            opened_at: gate.opened_at.clone(),
+            slug: board.to_string(),
+            task: gate.task.clone(),
+        });
     }
     turns
 }
