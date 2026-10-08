@@ -558,10 +558,10 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
 function minuteSessions(sessions, now, mode = 'sessions') {
   const minutes = secs => Math.max(0, Math.floor((now - secs) / 60));
   const shows = mode === 'board' || mode === 'sessions';
-  // The diff, its error and the branch's PR are read in the background and change on their own;
+  // The diff, the branch's PR and their errors are read in the background and change on their own;
   // what draws them redraws with the next real change. Sub-agents are compared by how many run,
   // since each one's tool changes on every call.
-  return (sessions || []).map(({ lastActivityAt, agentSession: a, uncommitted, uncommittedError, branchPr, ...s }) => {
+  return (sessions || []).map(({ lastActivityAt, agentSession: a, uncommitted, uncommittedError, branchPr, branchPrError, ...s }) => {
     const agent = !a ? {} : { agentSession: {
       status: a.status, pending: a.pending, subagents: a.subagents?.length || 0, error: a.error,
       ...(mode === 'sessions' ? { activity: a.activity, request: a.request }

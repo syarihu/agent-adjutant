@@ -484,6 +484,7 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
             uncommitted: None,
             uncommitted_error: None,
             branch_pr: None,
+            branch_pr_error: None,
         });
     }
     sessions
@@ -599,8 +600,9 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
     let (uncommitted, uncommitted_error) = poll.server.diffs.look(&worktree);
     let branch_pr = match (&task, &branch, &poll.server.pr_poll) {
         (None, Some(branch), Some(pr_poll)) => pr_poll.branch_pr(&repo.nwo, branch),
-        _ => None,
+        _ => (None, None),
     };
+    let (branch_pr, branch_pr_error) = branch_pr;
 
     board::Session {
         id,
@@ -630,6 +632,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         uncommitted,
         uncommitted_error,
         branch_pr,
+        branch_pr_error,
     }
 }
 
@@ -706,6 +709,7 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
                 uncommitted: None,
                 uncommitted_error: None,
                 branch_pr: None,
+                branch_pr_error: None,
             })
         }
         (_, None) => None,

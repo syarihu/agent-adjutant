@@ -816,7 +816,9 @@ the gate directories.
   Resident server only, on a repository whose origin is github.com: it is looked up by the
   poll in the same round as the cards, held in memory and refreshed at most every 5 minutes (sooner
   when a notification names the repository). A pull request from a fork is not the branch's; of
-  several, an open one wins, else the newest.
+  several, an open one wins, else the newest. `branchPrError` is set when the last lookup of the
+  branch failed (no login, a rate limit, a repository that could not be read), with the pull
+  request of an earlier lookup left beside it; the poll's own `prPoll.error` is not touched by it.
 - `waits` (on `/api/state` and on each `/api/boards` entry; left out when empty): the sessions that
   have waited on a permission prompt or a question for a few seconds and still do, each
   `{agentSessionId, since, session, kind, name, request, quiet}` (`quiet` only when true). The page

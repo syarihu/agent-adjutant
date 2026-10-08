@@ -1231,6 +1231,7 @@ fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Sess
         uncommitted: None,
         uncommitted_error: None,
         branch_pr: None,
+        branch_pr_error: None,
     }
 }
 

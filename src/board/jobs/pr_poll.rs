@@ -181,6 +181,14 @@ pub struct PrPoll {
     branches: BranchPrs,
 }
 
+/// The boards a round looks after: those with a card on a PR for the cards, and one board of each
+/// repository for the branches of its sessions.
+#[derive(Default)]
+pub struct PollBoards {
+    pub cards: Vec<Context>,
+    pub branches: Vec<Context>,
+}
+
 /// The repositories a round's notifications name, which makes their branches due.
 #[derive(Default)]
 struct Named {
@@ -201,7 +209,7 @@ impl PrPoll {
 
     /// Poll for as long as the process lives. `boards` is asked each round, so a board the
     /// address book gained since is looked after too.
-    pub fn run(self: Arc<Self>, boards: impl Fn() -> Vec<Context>) {
+    pub fn run(self: Arc<Self>, boards: impl Fn() -> PollBoards) {
         let mut tried: HashSet<PrRef> = HashSet::new();
         loop {
             // A round that panics is a failed round, not the end of the poll: the thread would
@@ -240,19 +248,24 @@ impl PrPoll {
     }
 
     /// The pull request last found for `branch` of the repository `nwo`, for a session that has
-    /// no task. Read from memory, never from GitHub.
-    pub fn branch_pr(&self, nwo: &str, branch: &str) -> Option<crate::board::SessionPr> {
+    /// no task, and why the last lookup failed. Read from memory, never from GitHub.
+    pub fn branch_pr(
+        &self,
+        nwo: &str,
+        branch: &str,
+    ) -> (Option<crate::board::SessionPr>, Option<String>) {
         self.branches.look(nwo, branch)
     }
 
     /// One round: the cards, then the branches of the sessions that have none. How long to wait
     /// after.
-    fn round(&self, boards: &[Context], tried: &mut HashSet<PrRef>) -> Duration {
+    fn round(&self, boards: &PollBoards, tried: &mut HashSet<PrRef>) -> Duration {
         let mut named = Named::default();
-        let pause = self.card_round(boards, tried, &mut named);
+        let pause = self.card_round(&boards.cards, tried, &mut named);
         // Not skipped when no card holds a PR: a session needs its branch looked up whatever
         // the cards say.
-        self.branches.round(boards, HOST, &named.repos, named.all);
+        self.branches
+            .round(&boards.branches, HOST, &named.repos, named.all);
         pause
     }
 

@@ -502,6 +502,7 @@ mod tests {
             uncommitted: None,
             uncommitted_error: None,
             branch_pr: None,
+            branch_pr_error: None,
         }
     }
 

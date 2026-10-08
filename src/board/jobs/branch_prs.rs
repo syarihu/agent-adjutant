@@ -121,21 +121,20 @@ fn session_pr(pr: BranchPr) -> SessionPr {
 }
 
 /// The branches worth asking about on `ctx`'s board, if its origin is on `HOST`: a linked
-/// worktree on a branch, with no task, and not the branch the main checkout is on.
-pub(super) fn branches_of(ctx: &Context, host: &str) -> Vec<BranchRef> {
+/// worktree on a branch, with no task, and not the branch the main checkout is on. `Err` when the
+/// worktrees could not be listed, which says nothing of the branches: what is held for the
+/// repository stays as it is.
+pub(super) fn branches_of(ctx: &Context, host: &str) -> Result<Vec<BranchRef>, String> {
     let repo = &ctx.repo;
     if repo.nwo_source == "dirname"
         || crate::kernel::identity::origin_host(&repo.main).as_deref() != Some(host)
     {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let Some((owner, name)) = repo.nwo.split_once('/') else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    // A worktree list that cannot be read asks about nothing: the answers held stay as they are.
-    let Ok(listed) = crate::kernel::identity::worktrees(&repo.main) else {
-        return Vec::new();
-    };
+    let listed = crate::kernel::identity::worktrees(&repo.main)?;
     let main = Path::new(&repo.main);
     let main_branch = listed
         .iter()
@@ -159,7 +158,18 @@ pub(super) fn branches_of(ctx: &Context, host: &str) -> Vec<BranchRef> {
             out.push(r);
         }
     }
-    out
+    Ok(out)
+}
+
+/// Drops what is held for branches that are no longer wanted, in the repositories whose
+/// worktrees were listed (`listed`): a repository that could not be listed keeps what it had.
+pub(super) fn prune(
+    entries: &mut HashMap<Key, Entry>,
+    wanted: &[BranchRef],
+    listed: &HashSet<String>,
+) {
+    let keep: HashSet<Key> = wanted.iter().map(key_of).collect();
+    entries.retain(|key, _| !listed.contains(&key.0) || keep.contains(key));
 }
 
 impl BranchPrs {
@@ -167,13 +177,17 @@ impl BranchPrs {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The pull request last found for `branch` of the repository `nwo`, if there is one.
-    pub fn look(&self, nwo: &str, branch: &str) -> Option<SessionPr> {
-        self.lock()
+    /// The pull request last found for `branch` of the repository `nwo`, if there is one, and
+    /// why the last lookup failed when it did (the pull request of an earlier one stays).
+    pub fn look(&self, nwo: &str, branch: &str) -> (Option<SessionPr>, Option<String>) {
+        match self
+            .lock()
             .entries
-            .get(&(nwo.to_ascii_lowercase(), branch.to_string()))?
-            .pr
-            .clone()
+            .get(&(nwo.to_ascii_lowercase(), branch.to_string()))
+        {
+            Some(entry) => (entry.pr.clone(), entry.error.clone()),
+            None => (None, None),
+        }
     }
 
     /// One round: ask about the branches of `boards` that are due, and forget those that are
@@ -187,10 +201,19 @@ impl BranchPrs {
         all_named: bool,
     ) {
         let mut wanted: Vec<BranchRef> = Vec::new();
+        let mut listed: HashSet<String> = HashSet::new();
+        // One listing per repository, whichever of its boards come in.
+        let mut mains: HashSet<&str> = HashSet::new();
         for ctx in boards {
-            for r in branches_of(ctx, host) {
-                if !wanted.contains(&r) {
-                    wanted.push(r);
+            if !mains.insert(ctx.repo.main.as_str()) {
+                continue;
+            }
+            if let Ok(found) = branches_of(ctx, host) {
+                listed.insert(ctx.repo.nwo.to_ascii_lowercase());
+                for r in found {
+                    if !wanted.contains(&r) {
+                        wanted.push(r);
+                    }
                 }
             }
         }
@@ -205,8 +228,7 @@ impl BranchPrs {
         let now = Instant::now();
         let asked: Vec<BranchRef> = {
             let mut inner = self.lock();
-            let keep: HashSet<Key> = wanted.iter().map(key_of).collect();
-            inner.entries.retain(|key, _| keep.contains(key));
+            prune(&mut inner.entries, &wanted, &listed);
             due(&inner.entries, &wanted, now, news_repos)
                 .into_iter()
                 .map(|i| wanted[i].clone())

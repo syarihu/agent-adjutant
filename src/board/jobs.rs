@@ -13,5 +13,5 @@ mod wait_watch;
 
 pub use hub_titles::{HubTitles, cached_title};
 pub use jules_watch::{JulesSeen, Watch};
-pub use pr_poll::{PollHealth, PrPoll};
+pub use pr_poll::{PollBoards, PollHealth, PrPoll};
 pub use wait_watch::{OpenGuard, WaitWatch, target_key};

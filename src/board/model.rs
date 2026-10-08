@@ -109,6 +109,10 @@ pub struct Session {
     /// is on its card). Only where the resident server polls, and as old as its last round.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_pr: Option<SessionPr>,
+    /// Why the last lookup of `branchPr` failed (GitHub could not be asked, or the repository
+    /// could not be read); the pull request of an earlier lookup stays beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_pr_error: Option<String>,
 }
 
 /// The pull request a branch has, as a session row shows it.
@@ -374,6 +378,7 @@ mod tests {
             uncommitted: None,
             uncommitted_error: None,
             branch_pr: None,
+            branch_pr_error: None,
         };
         let bare = serde_json::to_value(&session).unwrap();
         for key in [
@@ -386,6 +391,7 @@ mod tests {
             "uncommitted",
             "uncommittedError",
             "branchPr",
+            "branchPrError",
         ] {
             assert!(bare.get(key).is_none(), "{key} should be left out");
         }
@@ -467,6 +473,9 @@ mod tests {
         assert_eq!(full["uncommittedError"], "git could not read HEAD");
         assert_eq!(full["branchPr"]["number"], 12);
         assert_eq!(full["branchPr"]["state"], "draft");
+        session.branch_pr_error = Some("API rate limit exceeded".to_string());
+        let errored = serde_json::to_value(&session).unwrap();
+        assert_eq!(errored["branchPrError"], "API rate limit exceeded");
         assert!(full["agentSession"].get("pending").is_none());
         assert!(full["agentSession"].get("error").is_none());
         assert_eq!(

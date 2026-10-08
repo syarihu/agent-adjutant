@@ -265,6 +265,20 @@ fn read(fixture: &Fixture, resident: &Resident, path: &str, query: &str) -> Valu
     assert_eq!(status, 200, "{body}");
     let mut value: Value = serde_json::from_str(&body).unwrap();
     normalize(&mut value, &run(fixture, resident), true);
+    // What the server reads in the background after the poll asked (a worktree's diff, the PR
+    // of a branch) is there or not by timing, so it is left out of what is pinned.
+    if let Some(sessions) = value.get_mut("sessions").and_then(Value::as_array_mut) {
+        for session in sessions.iter_mut().filter_map(Value::as_object_mut) {
+            for key in [
+                "uncommitted",
+                "uncommittedError",
+                "branchPr",
+                "branchPrError",
+            ] {
+                session.remove(key);
+            }
+        }
+    }
     value
 }
 

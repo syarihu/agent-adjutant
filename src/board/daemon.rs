@@ -7,6 +7,7 @@ use crate::gate;
 use crate::registry::{
     addresses, forget_server, live_resident, note_board, record_server, recorded_server,
 };
+use crate::task;
 
 mod restart;
 mod start;
@@ -220,13 +221,40 @@ impl BoundResident {
             let poll = Arc::clone(&resident.pr_poll);
             std::thread::spawn(move || {
                 poll.run(|| {
-                    // Every board: a session with no task has a PR to look up by its branch
-                    // whether or not a card holds one. A board already open is only looked up.
-                    addresses(&resident.root)
+                    let all = addresses(&resident.root);
+                    // Only a board with a card on a PR is opened for it: opening one asks git
+                    // where the checkout is, which is not worth doing every round for a board
+                    // with nothing to look after.
+                    let cards = all
                         .iter()
+                        .filter(|a| {
+                            task::list(&resident.root, &a.slug).iter().any(|t| {
+                                t.pr.is_some()
+                                    && !matches!(
+                                        t.status,
+                                        task::Status::Done | task::Status::Cancelled
+                                    )
+                            })
+                        })
                         .filter_map(|a| resident.board(&a.slug))
                         .map(|server| server.ctx.clone())
-                        .collect()
+                        .collect();
+                    // The branches of a repository's sessions are the same whichever of its
+                    // boards is asked, and the address already names the checkout: one board is
+                    // opened for each distinct checkout (the repository's own, else the first
+                    // of its hubs), and a board already open is only looked up.
+                    let mut mains: Vec<&str> = Vec::new();
+                    let mut branches = Vec::new();
+                    for a in all.iter().filter(|a| a.hub.is_none()).chain(all.iter()) {
+                        if mains.contains(&a.main.as_str()) {
+                            continue;
+                        }
+                        if let Some(server) = resident.board(&a.slug) {
+                            mains.push(&a.main);
+                            branches.push(server.ctx.clone());
+                        }
+                    }
+                    jobs::PollBoards { cards, branches }
                 });
             });
         }
