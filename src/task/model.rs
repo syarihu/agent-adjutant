@@ -475,6 +475,12 @@ pub struct Task {
     /// refresh, never taken from a caller's JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_status: Option<PrStatus>,
+    /// When the turn `pr_status` stands for last changed (UTC stamp, as `gate_answered_at`):
+    /// written by a refresh when the turn differs from the one it replaces, and cleared with the
+    /// summary when the PR changes. A record whose turn was read before this existed has none
+    /// until its turn next changes. The record's own time of change, not a fact about the PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_turn_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     /// Keys this binary does not know, kept from the file so that a record written by another

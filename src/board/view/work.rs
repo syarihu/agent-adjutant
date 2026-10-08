@@ -20,7 +20,7 @@ use crate::task;
 use super::index::boards;
 use super::parents::ParentGroup;
 use super::rate_limits::RateLimitsState;
-use super::state::{Lines, TaskCard, state};
+use super::state::{GateCard, Lines, TaskCard, state};
 
 /// The document `GET /api/work` sends.
 #[derive(Debug, Clone, Serialize)]
@@ -48,6 +48,10 @@ pub struct WorkRepo {
     pub rows: Vec<WorkRow>,
     /// The sessions of the parent-task hubs, which a parent's terminal is.
     pub hub_sessions: Vec<WorkHubSession>,
+    /// What waits on the person that a row may not show: the open gates of the carriers and the
+    /// tasks whose PR is the person's turn, with or without a session. Not deduplicated against
+    /// `rows`: the page merges them, as a gate can also be a session's `waiting`.
+    pub turns: Vec<WorkTurn>,
     /// Set when no board of the repository could be read: not the same as it having no work.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -74,6 +78,35 @@ pub struct WorkHubSession {
     pub session: Session,
 }
 
+/// What waits on the person on one board: a task (or none) and the open gates that are its.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkTurn {
+    /// The slug of the board that owns the task, or of the carrier whose gates these are.
+    pub board: String,
+    /// Absent for gates that name no task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<WorkTask>,
+    pub gates: Vec<WorkGate>,
+}
+
+/// An open gate, as much of it as the list shows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkGate {
+    pub id: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// UTC stamp, as a session's `waiting.openedAt`.
+    pub opened_at: String,
+    /// The board whose gate directory holds it.
+    pub slug: String,
+    /// The task it names, which may be one no turn above carries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+}
+
 /// As much of a task as a row shows.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,9 +125,16 @@ pub struct WorkTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_turn: Option<task::PrTurn>,
     pub waits_on_person: bool,
+    /// When a gate of this task was last answered, UTC stamp: acting on the task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_answered_at: Option<String>,
+    /// When the PR's turn last changed, UTC stamp; absent on a record that has not seen it change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_turn_at: Option<String>,
 }
 
 /// What a carrier board says that the document is made of.
+#[derive(Clone)]
 pub(super) struct Carried {
     pub slug: String,
     pub sessions: Vec<Session>,
@@ -102,6 +142,7 @@ pub(super) struct Carried {
     pub tasks: Vec<TaskCard>,
     pub hub_tasks: Vec<TaskCard>,
     pub parents: Vec<ParentGroup>,
+    pub gates: Vec<GateCard>,
 }
 
 /// The repositories of `addresses` with the boards that answer for each: the repository's own
@@ -166,6 +207,7 @@ pub fn work(resident: &Resident) -> WorkState {
                     tasks: board.tasks,
                     hub_tasks: board.hub_tasks,
                     parents: board.parents,
+                    gates: board.gates,
                 });
             }
             repo_of(nwo, carried)
@@ -189,6 +231,7 @@ pub(super) fn repo_of(nwo: String, carried: Vec<Carried>) -> WorkRepo {
             parents: Vec::new(),
             rows: Vec::new(),
             hub_sessions: Vec::new(),
+            turns: Vec::new(),
             error: Some("no board of this repository could be read".to_string()),
         };
     };
@@ -257,6 +300,7 @@ pub(super) fn repo_of(nwo: String, carried: Vec<Carried>) -> WorkRepo {
             });
         }
     }
+    let turns = turns_of(&carried);
     // A parent seen by two carriers is the one that knows more of its children.
     let mut parents: Vec<ParentGroup> = Vec::new();
     for group in carried.into_iter().flat_map(|c| c.parents) {
@@ -274,8 +318,71 @@ pub(super) fn repo_of(nwo: String, carried: Vec<Carried>) -> WorkRepo {
         parents,
         rows,
         hub_sessions,
+        turns,
         error: None,
     }
+}
+
+/// The open gates that wait on a person, grouped by the board and the task they name, and a turn
+/// for each task whose PR is the person's, each on the board that owns it. A gate that is only
+/// recorded for the board (`wait: false`) is not a turn.
+fn turns_of(carried: &[Carried]) -> Vec<WorkTurn> {
+    let mut turns: Vec<WorkTurn> = Vec::new();
+    let mut named: HashSet<(&str, &str)> = HashSet::new();
+    for c in carried {
+        let owned = c.tasks.iter().map(|card| (c.slug.as_str(), card));
+        let others = c
+            .hub_tasks
+            .iter()
+            .filter_map(|card| Some((card.owner_hub.as_ref()?.slug.as_str(), card)));
+        for (board, card) in owned.chain(others) {
+            if card.waits_on_person && named.insert((board, card.task.id.as_str())) {
+                turns.push(WorkTurn {
+                    board: board.to_string(),
+                    task: Some(work_task(card)),
+                    gates: Vec::new(),
+                });
+            }
+        }
+    }
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
+    for c in carried {
+        for GateCard { gate, .. } in &c.gates {
+            if !gate.wait || !seen.insert((&c.slug, &gate.id)) {
+                continue;
+            }
+            let at = turns.iter().position(|t| {
+                t.board == c.slug
+                    && match &t.task {
+                        Some(task) => gate.task.as_deref() == Some(task.id.as_str()),
+                        None => t.gates.iter().any(|g| g.task == gate.task),
+                    }
+            });
+            let at = at.unwrap_or_else(|| {
+                // A task this board does not list leaves the turn without one.
+                let task = gate
+                    .task
+                    .as_deref()
+                    .and_then(|id| c.tasks.iter().find(|card| card.task.id == id))
+                    .map(work_task);
+                turns.push(WorkTurn {
+                    board: c.slug.clone(),
+                    task,
+                    gates: Vec::new(),
+                });
+                turns.len() - 1
+            });
+            turns[at].gates.push(WorkGate {
+                id: gate.id.clone(),
+                kind: gate.kind.as_str().to_string(),
+                title: Some(gate.title.clone()).filter(|t| !t.is_empty()),
+                opened_at: gate.opened_at.clone(),
+                slug: c.slug.clone(),
+                task: gate.task.clone(),
+            });
+        }
+    }
+    turns
 }
 
 fn work_task(card: &TaskCard) -> WorkTask {
@@ -288,6 +395,8 @@ fn work_task(card: &TaskCard) -> WorkTask {
         pr_state: card.task.pr_status.as_ref().map(|p| p.state.clone()),
         pr_turn: card.live.as_ref().and_then(|l| l.pr_turn),
         waits_on_person: card.waits_on_person,
+        gate_answered_at: card.task.gate_answered_at.clone(),
+        pr_turn_at: card.task.pr_turn_at.clone(),
     }
 }
 

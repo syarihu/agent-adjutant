@@ -38,6 +38,7 @@ impl Task {
             issue_snapshot: None,
             title_pending: false,
             pr_status: None,
+            pr_turn_at: None,
             created_at: stamp.to_string(),
             updated_at: stamp.to_string(),
             extra: serde_json::Map::new(),
@@ -1472,4 +1473,85 @@ fn edit_returns_a_failed_save_beside_the_value() {
     let error = edited.saved.unwrap_err();
     assert!(error.starts_with("cannot write "), "{error}");
     assert!(error.contains(&task.id), "{error}");
+}
+
+fn open_pr_task(ctx: &crate::registry::Context) -> Task {
+    let mut task = sample();
+    task.pr = Some("https://github.com/acme/widget/pull/7".to_string());
+    task.status = Status::Pr;
+    save(ctx, &task).unwrap();
+    task
+}
+
+fn refreshed(ctx: &crate::registry::Context, id: &str, status: PrStatus) -> Task {
+    let task = get(&ctx.state, &ctx.repo.slug, id).unwrap();
+    let state = if status.state == "merged" {
+        PrState::Merged
+    } else {
+        PrState::Open
+    };
+    let mut checked = apply(ctx, vec![task], vec![(state, Some(status))]);
+    checked.remove(0).task
+}
+
+#[test]
+fn a_refresh_stamps_the_time_a_prs_turn_changed_and_only_then() {
+    let (_sandbox, ctx) = hub();
+    let id = open_pr_task(&ctx).id;
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &id).unwrap().pr_turn_at,
+        None
+    );
+
+    // The first read is a turn the record had none of.
+    let first = refreshed(&ctx, &id, pr("open", "none", 0, 1));
+    let at = first.pr_turn_at.clone().expect("the first turn is stamped");
+
+    // Same turn (checks), different facts: nothing is stamped.
+    let mut quiet = refreshed(&ctx, &id, pr("open", "none", 0, 2));
+    assert_eq!(quiet.pr_turn_at.as_deref(), Some(at.as_str()));
+    assert_eq!(quiet.pr_status.as_ref().unwrap().ci.pending, 2);
+
+    // A different turn moves the stamp, whatever it is stamped with.
+    quiet.pr_turn_at = Some("20200101T000000Z".to_string());
+    store::save(&ctx, &quiet).unwrap();
+    let failed = refreshed(&ctx, &id, pr("open", "none", 1, 0));
+    assert_ne!(failed.pr_turn_at.as_deref(), Some("20200101T000000Z"));
+    assert!(failed.pr_turn_at.is_some());
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &id).unwrap().pr_turn_at,
+        failed.pr_turn_at
+    );
+}
+
+#[test]
+fn a_record_whose_turn_was_read_before_the_stamp_existed_gets_none_until_the_turn_changes() {
+    let (_sandbox, ctx) = hub();
+    let mut task = open_pr_task(&ctx);
+    task.pr_status = Some(pr("open", "none", 1, 0));
+    save(&ctx, &task).unwrap();
+    // The same turn again: the summary may differ, the turn does not.
+    let same = refreshed(&ctx, &task.id, pr("open", "none", 2, 0));
+    assert_eq!(same.pr_turn_at, None);
+    let moved = refreshed(&ctx, &task.id, pr("open", "changes", 0, 0));
+    assert!(moved.pr_turn_at.is_some());
+}
+
+#[test]
+fn a_merge_stamps_its_turn_and_another_pr_clears_the_stamp_with_the_summary() {
+    let (_sandbox, ctx) = hub();
+    let task = open_pr_task(&ctx);
+    refreshed(&ctx, &task.id, pr("open", "approved", 0, 0));
+    let merged = refreshed(&ctx, &task.id, pr("merged", "approved", 0, 0));
+    assert_eq!(merged.status, Status::Done);
+    assert!(merged.pr_turn_at.is_some());
+
+    let other = open_pr_task(&ctx);
+    refreshed(&ctx, &other.id, pr("open", "none", 1, 0));
+    let patch = TaskPatch {
+        pr: Some(Some("https://github.com/acme/widget/pull/8".to_string())),
+        ..TaskPatch::default()
+    };
+    let (updated, _) = update(&ctx, &other.id, &patch, false).unwrap();
+    assert_eq!((updated.pr_status, updated.pr_turn_at), (None, None));
 }

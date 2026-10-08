@@ -15,6 +15,7 @@ use super::args::HookArgs;
 use crate::infra::clock::now_secs;
 use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CLAUDE_PID_ENV, CODEX_HOME_ENV};
 use crate::infra::paths::home_dir;
+use crate::infra::terminal::is_wake_line;
 use crate::registry::{self, AgentEvent, HookEvent, LAST_MESSAGE_CHARS, RateWindow};
 
 /// What is shown of a tool call or a notification: enough to tell what is going on, and a
@@ -126,7 +127,9 @@ fn claude_event(
     let name = text(payload, "hook_event_name").ok_or("the payload has no hook_event_name")?;
     let hook = match name.as_str() {
         "SessionStart" => HookEvent::SessionStart,
-        "UserPromptSubmit" => HookEvent::UserPromptSubmit,
+        "UserPromptSubmit" => HookEvent::UserPromptSubmit {
+            typed: typed(payload),
+        },
         "PostToolUse" => HookEvent::PostToolUse,
         "PostToolUseFailure" => HookEvent::PostToolUseFailure,
         "PermissionRequest" => HookEvent::PermissionRequest,
@@ -183,7 +186,9 @@ fn codex_event(
     let name = text(payload, "hook_event_name").ok_or("the payload has no hook_event_name")?;
     let hook = match name.as_str() {
         "SessionStart" => HookEvent::SessionStart,
-        "UserPromptSubmit" => HookEvent::UserPromptSubmit,
+        "UserPromptSubmit" => HookEvent::UserPromptSubmit {
+            typed: typed(payload),
+        },
         "PostToolUse" => HookEvent::PostToolUse,
         "PermissionRequest" => HookEvent::PermissionRequest,
         "Stop" => HookEvent::Stop {
@@ -287,6 +292,13 @@ fn percent(value: Option<&Value>) -> Option<f64> {
 }
 
 /// A string key, with blank the same as absent.
+/// Whether a `UserPromptSubmit` payload's prompt is the person's: present, and not one of the
+/// wake lines adjutant types into a terminal. A payload with no `prompt` says nothing of who
+/// wrote it, so it is not counted.
+fn typed(payload: &Value) -> bool {
+    text(payload, "prompt").is_some_and(|prompt| !is_wake_line(&prompt))
+}
+
 fn text(payload: &Value, key: &str) -> Option<String> {
     payload
         .get(key)

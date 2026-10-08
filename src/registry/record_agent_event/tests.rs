@@ -167,7 +167,10 @@ fn session_start_makes_an_idle_row_and_a_prompt_a_running_one() {
     );
 
     let other = tempfile::tempdir().unwrap();
-    record(other.path(), &event(HookEvent::UserPromptSubmit, T0));
+    record(
+        other.path(),
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0),
+    );
     assert_eq!(read(other.path(), "s1").status, Some(AgentStatus::Running));
 }
 
@@ -314,7 +317,7 @@ fn a_message_is_recorded_while_done_is_held_for_sub_agents() {
 fn a_message_is_kept_until_another_replaces_it() {
     let mut row = rows(&[tool(T0 - 1, "Edit: a"), said("First.", T0)]);
     for e in [
-        event(HookEvent::UserPromptSubmit, T0 + 5),
+        event(HookEvent::UserPromptSubmit { typed: true }, T0 + 5),
         event(HookEvent::SessionStart, T0 + 6),
         tool(T0 + 7, "Edit: a"),
         event(HookEvent::PermissionRequest, T0 + 8),
@@ -388,7 +391,7 @@ fn a_new_turn_of_the_parent_drops_what_was_held_and_later_stops_leave_it_running
 fn an_event_that_names_a_subagent_but_is_not_its_work_changes_nothing() {
     for hook in [
         HookEvent::SessionStart,
-        HookEvent::UserPromptSubmit,
+        HookEvent::UserPromptSubmit { typed: true },
         stop(None),
     ] {
         let mut row = rows(&[tool(T0, "Edit: a")]);
@@ -442,7 +445,10 @@ fn a_failure_is_held_the_same_way_and_a_new_prompt_drops_what_was_held() {
     assert_eq!(status(&row), Some("failed"));
 
     let mut row = rows(&[started("a1", T0), event(stop(None), T0 + 5)]);
-    step_keep(&mut row, &event(HookEvent::UserPromptSubmit, T0 + 6));
+    step_keep(
+        &mut row,
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0 + 6),
+    );
     let row = row.unwrap();
     assert_eq!(row.pending_status, None);
     assert_eq!(row.status, Some(AgentStatus::Running));
@@ -694,7 +700,10 @@ fn a_row_that_cannot_be_read_is_moved_aside_and_a_new_one_started() {
     let path = agent_session_path(dir.path(), "s1");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "{ not json").unwrap();
-    record(dir.path(), &event(HookEvent::UserPromptSubmit, T0));
+    record(
+        dir.path(),
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0),
+    );
     assert_eq!(
         std::fs::read_to_string(agent_session_broken_path(dir.path(), "s1")).unwrap(),
         "{ not json"
@@ -886,7 +895,7 @@ fn only_session_start_and_stop_sweep_and_never_the_sessions_own_row() {
     put(root, &row_of("gone", Some(999), Some(T0)));
     put(root, &row_of("s1", Some(998), Some(T0)));
     for hook in [
-        HookEvent::UserPromptSubmit,
+        HookEvent::UserPromptSubmit { typed: true },
         HookEvent::PostToolUse,
         HookEvent::PermissionRequest,
         failure(None),
@@ -1045,7 +1054,10 @@ fn a_status_line_sets_the_figures_and_leaves_the_status_and_updated_at() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     record(root, &event(HookEvent::SessionStart, T0));
-    record(root, &event(HookEvent::UserPromptSubmit, T0 + 1));
+    record(
+        root,
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0 + 1),
+    );
     record(
         root,
         &draw(
@@ -1244,4 +1256,57 @@ fn events_that_overlap_are_all_kept() {
     ids.sort();
     assert_eq!(ids, ["a0", "a1", "a2", "a3", "a4", "a5", "a6"]);
     assert_eq!(row.activity.as_deref(), Some("Edit: src/lib.rs"));
+}
+
+// ── when the person last typed ───────────────────────────────────
+
+#[test]
+fn a_typed_prompt_is_noted_and_a_wake_line_is_not() {
+    let prompt = |typed, at| event(HookEvent::UserPromptSubmit { typed }, at);
+    let mut row = rows(&[prompt(false, T0)]);
+    assert_eq!(row.as_ref().unwrap().last_prompt_at, None);
+    assert_eq!(status(&row), Some("running"));
+
+    step_keep(&mut row, &prompt(true, T0 + 5));
+    assert_eq!(row.as_ref().unwrap().last_prompt_at, Some(T0 + 5));
+
+    // The same turn's other events, and a wake line after it, leave the mark where it was.
+    for e in [
+        tool(T0 + 6, "Edit: a"),
+        said("Done.", T0 + 7),
+        prompt(false, T0 + 8),
+        notification(Some("permission_prompt"), T0 + 9),
+    ] {
+        step_keep(&mut row, &e);
+        assert_eq!(row.as_ref().unwrap().last_prompt_at, Some(T0 + 5));
+    }
+
+    step_keep(&mut row, &prompt(true, T0 + 20));
+    assert_eq!(row.as_ref().unwrap().last_prompt_at, Some(T0 + 20));
+}
+
+#[test]
+fn a_typed_prompt_is_a_change_to_write_even_when_the_status_stays() {
+    let mut row = rows(&[tool(T0, "Edit: a")]);
+    assert_eq!(status(&row), Some("running"));
+    assert!(step_keep(
+        &mut row,
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0 + 5)
+    ));
+    assert_eq!(row.unwrap().last_prompt_at, Some(T0 + 5));
+}
+
+#[test]
+fn the_time_the_person_typed_is_kept_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    record(
+        dir.path(),
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0),
+    );
+    record(dir.path(), &said("Done.", T0 + 5));
+    let row = read(dir.path(), "s1");
+    assert_eq!(row.last_prompt_at, Some(T0));
+    assert_eq!(row.status, Some(AgentStatus::Done));
+    let text = std::fs::read_to_string(agent_session_path(dir.path(), "s1")).unwrap();
+    assert!(text.contains("\"lastPromptAt\""), "{text}");
 }

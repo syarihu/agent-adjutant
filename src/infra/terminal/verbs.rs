@@ -605,6 +605,21 @@ pub(super) fn default_wake_command(tty: &str, line: &str) -> String {
 pub const HUB_WAKE_LINE: &str = "Something arrived in the inbox. Check it with adjutant_pending (or `adj pending` without it) and deal with it.";
 pub const WORKER_WAKE_LINE: &str = "The hub sent you something. Check it with adjutant_outbox (or `adj outbox` without it) and deal with it.";
 
+/// Where each built-in wake line starts. `adj-worker` tells a worker to take a prompt that starts
+/// with the worker's as the wake and not as the person's answer, so the stems are fixed text.
+const WAKE_LINE_STEMS: [&str; 2] = [
+    "Something arrived in the inbox",
+    "The hub sent you something",
+];
+
+/// Whether `prompt` is one of the built-in wake lines, which arrive in a session as a prompt
+/// typed into its terminal. A `workerWake` / `hubWake` template that types other text is not
+/// recognised, so it counts as the person typing.
+pub fn is_wake_line(prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    WAKE_LINE_STEMS.iter().any(|stem| prompt.starts_with(stem))
+}
+
 /// `default_line` is what to type when the config has not overridden it — the caller knows
 /// which direction this is, and the two directions read different boxes.
 ///

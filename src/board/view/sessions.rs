@@ -316,6 +316,7 @@ impl Poll<'_> {
                 context_percent: None,
                 last_message: None,
                 last_message_at: None,
+                last_prompt_at: None,
                 subagents: Vec::new(),
                 error: Some(error),
             }),
@@ -363,6 +364,7 @@ fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentSta
             .filter(|message| !message.trim().is_empty())
             .map(|message| super::waiting::cut_chars(message, crate::registry::LAST_MESSAGE_CHARS)),
         last_message_at: row.last_message_at,
+        last_prompt_at: row.last_prompt_at,
         subagents: row
             .subagents
             .iter()
@@ -868,6 +870,7 @@ mod tests {
             context_percent: Some(42.6),
             last_message: Some("First line.\nSecond line.".to_string()),
             last_message_at: Some(7),
+            last_prompt_at: Some(8),
             subagents: vec![
                 Subagent {
                     id: "a1".to_string(),
@@ -898,6 +901,7 @@ mod tests {
             Some("First line.\nSecond line.")
         );
         assert_eq!(state.last_message_at, Some(7));
+        assert_eq!(state.last_prompt_at, Some(8));
         assert_eq!(state.subagents.len(), 2);
         assert_eq!(state.subagents[0].kind.as_deref(), Some("Explore"));
         assert_eq!(state.subagents[0].started_at, Some(3));

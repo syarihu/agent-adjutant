@@ -498,6 +498,7 @@ mod tests {
                 context_percent: None,
                 last_message: None,
                 last_message_at: None,
+                last_prompt_at: None,
                 subagents: Vec::new(),
                 error: None,
             }),

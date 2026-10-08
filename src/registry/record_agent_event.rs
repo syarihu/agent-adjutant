@@ -32,7 +32,11 @@ pub struct AgentEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HookEvent {
     SessionStart,
-    UserPromptSubmit,
+    /// A prompt was submitted. `typed` is whether a person wrote it: the text adjutant types
+    /// into a terminal to wake a session arrives as a prompt too, and is not the person.
+    UserPromptSubmit {
+        typed: bool,
+    },
     PostToolUse,
     PostToolUseFailure,
     PermissionRequest,

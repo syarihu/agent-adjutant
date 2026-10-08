@@ -502,6 +502,10 @@ pub struct AgentSession {
     /// When `last_message` was received.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<i64>,
+    /// When the person last typed into the session: the last `UserPromptSubmit` whose prompt was
+    /// not one of adjutant's own wake lines. Keeps its value through everything else the row does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_prompt_at: Option<i64>,
     #[serde(flatten)]
     pub other: Map<String, Value>,
 }
@@ -700,7 +704,7 @@ pub(super) fn can_create(event: &AgentEvent) -> bool {
     }
     match &event.hook {
         HookEvent::SessionStart
-        | HookEvent::UserPromptSubmit
+        | HookEvent::UserPromptSubmit { .. }
         | HookEvent::PostToolUse
         | HookEvent::PostToolUseFailure
         | HookEvent::PermissionRequest => true,
@@ -997,9 +1001,12 @@ fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
             None => set_status(row, AgentStatus::Idle),
             Some(_) => row.request = None,
         },
-        HookEvent::UserPromptSubmit => {
+        HookEvent::UserPromptSubmit { typed } => {
             row.pending_status = None;
             set_status(row, AgentStatus::Running);
+            if *typed {
+                row.last_prompt_at = Some(now);
+            }
         }
         HookEvent::PostToolUse | HookEvent::PostToolUseFailure => {
             // A new turn: what was held from the last one is not for this one.

@@ -70,7 +70,23 @@ fn carried(slug: &str) -> Carried {
         tasks: Vec::new(),
         hub_tasks: Vec::new(),
         parents: Vec::new(),
+        gates: Vec::new(),
     }
+}
+
+fn gate_card(id: &str, task: Option<&str>, wait: bool) -> GateCard {
+    GateCard::of(
+        serde_json::from_value(json!({
+            "id": id,
+            "kind": "plan",
+            "worktree": "/w/x",
+            "task": task,
+            "title": format!("Gate {id}"),
+            "wait": wait,
+            "openedAt": "20261001T000100Z",
+        }))
+        .unwrap(),
+    )
 }
 
 #[test]
@@ -237,4 +253,78 @@ fn a_repository_no_board_of_answers_says_so() {
     let repo = repo_of("acme/widget".to_string(), Vec::new());
     assert!(repo.error.is_some());
     assert!(repo.rows.is_empty());
+}
+
+#[test]
+fn open_gates_are_grouped_by_the_task_they_name_and_the_ones_that_only_record_are_left_out() {
+    let mut c = carried(REPO);
+    let mut waiting = card("1", "Waiting on a PR");
+    waiting.waits_on_person = true;
+    waiting.task.pr_turn_at = Some("20261001T000200Z".to_string());
+    waiting.task.gate_answered_at = Some("20261001T000300Z".to_string());
+    c.tasks = vec![waiting, card("2", "Quiet task"), card("3", "Gate only")];
+    c.gates = vec![
+        gate_card("g1", Some("1"), true),
+        gate_card("g2", Some("1"), true),
+        gate_card("g3", Some("3"), true),
+        gate_card("g4", None, true),
+        gate_card("g5", None, true),
+        gate_card("g6", Some("2"), false),
+    ];
+    let repo = repo_of("acme/widget".to_string(), vec![c]);
+    let shape: Vec<(Option<&str>, Vec<&str>)> = repo
+        .turns
+        .iter()
+        .map(|t| {
+            (
+                t.task.as_ref().map(|t| t.id.as_str()),
+                t.gates.iter().map(|g| g.id.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (Some("1"), vec!["g1", "g2"]),
+            (Some("3"), vec!["g3"]),
+            (None, vec!["g4", "g5"]),
+        ]
+    );
+    assert!(repo.turns.iter().all(|t| t.board == REPO));
+    let first = &repo.turns[0];
+    let task = first.task.as_ref().unwrap();
+    assert_eq!(task.pr_turn_at.as_deref(), Some("20261001T000200Z"));
+    assert_eq!(task.gate_answered_at.as_deref(), Some("20261001T000300Z"));
+    assert_eq!(first.gates[0].slug, REPO);
+    assert_eq!(first.gates[0].opened_at, "20261001T000100Z");
+    assert_eq!(repo.turns[1].task.as_ref().unwrap().title, "Gate only");
+    assert_eq!(repo.turns[1].gates[0].task.as_deref(), Some("3"));
+}
+
+#[test]
+fn a_task_whose_pr_waits_on_the_person_is_a_turn_even_with_no_session_or_gate() {
+    let mut c = carried(REPO);
+    let mut own = card("1", "Own");
+    own.waits_on_person = true;
+    let mut feature = card("1", "Feature");
+    feature.waits_on_person = true;
+    feature.owner_hub = Some(OwnerHub {
+        slug: FEATURE.to_string(),
+        key: None,
+        human_col: None,
+    });
+    c.tasks = vec![own, card("2", "Not waiting")];
+    c.hub_tasks = vec![feature];
+    let repo = repo_of("acme/widget".to_string(), vec![c.clone(), c]);
+    let seen: Vec<(&str, &str)> = repo
+        .turns
+        .iter()
+        .map(|t| (t.board.as_str(), t.task.as_ref().unwrap().title.as_str()))
+        .collect();
+    // Two carriers that both list it do not make it twice.
+    assert_eq!(seen, [(REPO, "Own"), (FEATURE, "Feature")]);
+    assert!(repo.turns.iter().all(|t| t.gates.is_empty()));
+    let json = serde_json::to_value(&repo).unwrap();
+    assert_eq!(json["turns"][0]["task"]["waitsOnPerson"], true);
+    assert!(json["turns"][0]["task"].get("prTurnAt").is_none());
 }

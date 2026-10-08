@@ -68,6 +68,7 @@ pub fn update_checked(
         task.relay_rounds = 0;
         // Likewise what the last refresh read: it described the old PR.
         task.pr_status = None;
+        task.pr_turn_at = None;
     }
     // Only a worktree given in this update: one already stored was resolved when it was
     // given, against the directory of the command that gave it, and re-resolving it here

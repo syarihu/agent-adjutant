@@ -685,6 +685,7 @@ fn expected_work() -> Value {
     });
     work["repos"][0]["hubSessions"] = expected_work_hub_sessions();
     work["repos"][0]["rows"] = expected_work_rows();
+    work["repos"][0]["turns"] = json!([]);
     work
 }
 

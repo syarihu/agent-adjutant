@@ -152,6 +152,29 @@ fn a_turn_ends_done_with_the_worktree_the_pid_and_its_start_time() {
     assert!(row.get("activity").is_none() && row.get("request").is_none());
     assert_eq!(row["lastMessage"], "The test passes now.");
     assert!(row["lastMessageAt"].as_i64().unwrap() > 0);
+    assert!(row["lastPromptAt"].as_i64().unwrap() > 0);
+}
+
+#[test]
+fn only_a_prompt_the_person_wrote_is_noted_as_typed() {
+    let fx = fixture();
+    let prompt = |text: &str| {
+        let mut payload = sent(&fx, "user-prompt-submit");
+        payload["prompt"] = text.into();
+        quiet_success(&hook(&fx, &payload));
+    };
+    prompt(
+        "The hub sent you something. Check it with adjutant_outbox (or `adj outbox` without it) and deal with it.",
+    );
+    prompt(
+        "Something arrived in the inbox. Check it with adjutant_pending (or `adj pending` without it) and deal with it.",
+    );
+    let woken = rows(&fx);
+    assert_eq!(woken[0]["status"], "running");
+    assert!(woken[0].get("lastPromptAt").is_none());
+
+    prompt("Try again with the other fixture");
+    assert!(rows(&fx)[0]["lastPromptAt"].as_i64().unwrap() > 0);
 }
 
 #[test]

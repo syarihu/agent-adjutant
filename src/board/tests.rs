@@ -282,6 +282,7 @@ fn a_task(id: &str, status: task::Status) -> task::Task {
         issue_snapshot: None,
         title_pending: false,
         pr_status: None,
+        pr_turn_at: None,
         created_at: "20260922T000000Z".to_string(),
         updated_at: "20260922T000000Z".to_string(),
         extra: serde_json::Map::new(),

@@ -164,6 +164,9 @@ pub struct SessionAgentState {
     /// When it said it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<i64>,
+    /// When the person last typed into the session, not counting the wake lines adjutant types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_prompt_at: Option<i64>,
     /// The sub-agents that are running, oldest first.
     #[serde(default)]
     pub subagents: Vec<SessionSubagent>,
@@ -432,6 +435,7 @@ mod tests {
             context_percent: Some(43),
             last_message: Some("Done.\nAll green.".to_string()),
             last_message_at: Some(9),
+            last_prompt_at: Some(10),
             subagents: vec![
                 SessionSubagent {
                     id: "a1".to_string(),

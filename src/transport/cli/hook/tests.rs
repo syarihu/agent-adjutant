@@ -45,7 +45,10 @@ fn event(payload: &Value) -> Result<AgentEvent, String> {
 fn each_hook_name_is_the_event_it_says() {
     let hook = |name: &str| event(&fixture(name)).unwrap().hook;
     assert_eq!(hook("session-start"), HookEvent::SessionStart);
-    assert_eq!(hook("user-prompt-submit"), HookEvent::UserPromptSubmit);
+    assert_eq!(
+        hook("user-prompt-submit"),
+        HookEvent::UserPromptSubmit { typed: true }
+    );
     assert_eq!(hook("post-tool-use"), HookEvent::PostToolUse);
     assert_eq!(hook("post-tool-use-failure"), HookEvent::PostToolUseFailure);
     assert_eq!(hook("permission-request"), HookEvent::PermissionRequest);
@@ -397,7 +400,10 @@ fn codex(payload: &Value) -> Result<AgentEvent, String> {
 fn each_codex_hook_name_is_the_event_it_says_and_an_interrupt_is_a_stop() {
     let hook = |name: &str| codex(&codex_fixture(name)).unwrap().hook;
     assert_eq!(hook("session-start"), HookEvent::SessionStart);
-    assert_eq!(hook("user-prompt-submit"), HookEvent::UserPromptSubmit);
+    assert_eq!(
+        hook("user-prompt-submit"),
+        HookEvent::UserPromptSubmit { typed: true }
+    );
     assert_eq!(hook("post-tool-use"), HookEvent::PostToolUse);
     assert_eq!(hook("permission-request"), HookEvent::PermissionRequest);
     assert_eq!(hook("subagent-start"), HookEvent::SubagentStart);
@@ -455,4 +461,42 @@ fn the_codex_config_dir_falls_back_to_the_default_install() {
     let mut bad = payload;
     bad["session_id"] = serde_json::json!("../x");
     assert!(codex(&bad).is_err());
+}
+
+#[test]
+fn a_prompt_is_typed_unless_it_is_a_wake_line_or_absent() {
+    use crate::infra::terminal::{HUB_WAKE_LINE, WORKER_WAKE_LINE};
+    for (event, fixture) in [
+        (
+            event as fn(&Value) -> Result<AgentEvent, String>,
+            fixture("user-prompt-submit"),
+        ),
+        (codex, codex_fixture("user-prompt-submit")),
+    ] {
+        let hook = |prompt: Option<&str>| {
+            let mut payload = fixture.clone();
+            match prompt {
+                Some(prompt) => payload["prompt"] = Value::String(prompt.to_string()),
+                None => {
+                    payload.as_object_mut().unwrap().remove("prompt");
+                }
+            }
+            event(&payload).unwrap().hook
+        };
+        assert_eq!(hook(None), HookEvent::UserPromptSubmit { typed: false });
+        assert_eq!(
+            hook(Some("  ")),
+            HookEvent::UserPromptSubmit { typed: false }
+        );
+        assert_eq!(
+            hook(Some("hello")),
+            HookEvent::UserPromptSubmit { typed: true }
+        );
+        for line in [WORKER_WAKE_LINE, HUB_WAKE_LINE] {
+            assert_eq!(
+                hook(Some(line)),
+                HookEvent::UserPromptSubmit { typed: false }
+            );
+        }
+    }
 }
