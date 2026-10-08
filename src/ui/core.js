@@ -451,7 +451,9 @@ async function refreshAllBoards(force) {
         const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state?lines=1'
           : b.slug === rvSlug ? '/api/state' : '/api/state?sessions=0');
         if (epoch !== navEpoch) return;
-        const { now: at, ...rest } = next;
+        // The rate limits are left out as `now` is: they move on their own, and the view that draws
+        // them redraws with the next real change.
+        const { now: at, rateLimits, ...rest } = next;
         now = Math.max(now, at || 0);
         // As `refresh` compares them, so a minute turning over does not redraw each board.
         const json = JSON.stringify({ ...rest, sessions: minuteSessions(rest.sessions, at, view) });
@@ -556,9 +558,12 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
 function minuteSessions(sessions, now, mode = 'sessions') {
   const minutes = secs => Math.max(0, Math.floor((now - secs) / 60));
   const shows = mode === 'board' || mode === 'sessions';
-  return (sessions || []).map(({ lastActivityAt, agentSession: a, ...s }) => {
+  // The diff, its error and the branch's PR are read in the background and change on their own;
+  // what draws them redraws with the next real change. Sub-agents are compared by how many run,
+  // since each one's tool changes on every call.
+  return (sessions || []).map(({ lastActivityAt, agentSession: a, uncommitted, uncommittedError, branchPr, ...s }) => {
     const agent = !a ? {} : { agentSession: {
-      status: a.status, pending: a.pending, subagents: a.subagents, error: a.error,
+      status: a.status, pending: a.pending, subagents: a.subagents?.length || 0, error: a.error,
       ...(mode === 'sessions' ? { activity: a.activity, request: a.request }
         : mode === 'board' && a.status === 'waiting' ? { request: a.request } : {}),
       ...(shows && a.updatedAt != null ? { updatedAt: minutes(a.updatedAt) } : {}),
@@ -597,7 +602,7 @@ async function refresh(force = false) {
     // nearly every poll. The views that do not show it leave it out, so a minute turning over
     // does not redraw them (and cut a comment being typed there); a view switch draws its view
     // afresh.
-    const { now, ...rest } = next;
+    const { now, rateLimits, ...rest } = next;
     if (rest.sessions) rest.sessions = minuteSessions(rest.sessions, now, view);
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);

@@ -94,7 +94,8 @@ function agentText(s, data = state) {
   if (agentStateOf(s) === 'permission' && a.request) parts.push(requestText(s));
   // What the row says it is: a `running` the pane has gone quiet on is not doing the tool.
   else if (a.activity && ledgerState(s, data) === 'working') parts.push(a.activity);
-  if (a.subagents > 0) parts.push(`サブエージェント ${a.subagents}`);
+  const subs = a.subagents?.length || 0;
+  if (subs > 0) parts.push(`サブエージェント ${subs}`);
   if (a.pending) parts.push('ターンは終わり、サブエージェントの終了待ち');
   return parts.join(' · ');
 }
@@ -408,7 +409,7 @@ function sessionTip(s, st, data = state) {
 function sessionLastText(s, data) {
   const asks = !s.waiting && agentStateOf(s) === 'permission' && s.agentSession.request;
   const when = s.present ? lastOutputText(s, data) : null;
-  const n = s.present ? s.agentSession?.subagents : 0;
+  const n = s.present ? s.agentSession?.subagents?.length || 0 : 0;
   const counted = n > 0 ? `サブエージェント ${n}` : '';
   // `agentText` has the count in it already; the others do not.
   const add = text => counted ? `${text}${text ? ' · ' : ''}${counted}` : text;
@@ -511,7 +512,7 @@ function renderSessionList() {
   // words change and not whenever any other row's do.
   const rowSig = (s, st, g) => JSON.stringify([sessionRef(s), st, sessionLabel(s, false, g.data), sessionTip(s, st, g.data), sessionLastText(s, g.data), s.phase || '',
     // What the state, the text and the tip are made of; the times that move with every event are not.
-    [s.agentSession?.status, s.agentSession?.pending, s.agentSession?.subagents, s.agentSession?.error]]);
+    [s.agentSession?.status, s.agentSession?.pending, s.agentSession?.subagents?.length, s.agentSession?.error]]);
   const rows = new Map();
   for (const g of groups) {
     rows.set(`head:${g.gid}`, groupHeadHtml(g));

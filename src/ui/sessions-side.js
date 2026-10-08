@@ -96,11 +96,13 @@ function agentFactsHtml(s) {
   const doing = known === 'permission' && a.request ? monoKv('許可を求めている内容', a.request)
     : a.activity && known === 'working' ? monoKv('作業中', a.activity) : '';
   return `<div class="tp-kvs">
+    ${a.model ? kv('モデル', esc(a.model)) : ''}
+    ${a.contextPercent != null ? kv('コンテキスト', esc(`${a.contextPercent}%`)) : ''}
     ${kv('エージェントの状態', esc(known === 'permission' ? permissionLabel(s) : known ? STATE_LABEL[known] : a.status || '—'))}
     ${mins != null ? kv('いつから', esc(agoLabel(mins))) : ''}
     ${doing}
     ${a.pending ? kv('ターン終了（保留）', esc(a.pending)) : ''}
-    ${a.subagents > 0 ? kv('サブエージェント', esc(`${a.subagents} 件`)) : ''}
+    ${a.subagents?.length > 0 ? kv('サブエージェント', esc(`${a.subagents.length} 件`)) : ''}
   </div>`;
 }
 
