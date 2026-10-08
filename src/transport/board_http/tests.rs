@@ -551,12 +551,17 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
 
     let progress = [
         Progress::Merged,
+        Progress::Done,
         Progress::Pr,
         Progress::Working,
         Progress::NotStarted,
     ];
     let _ = |p: Progress| match p {
-        Progress::Merged | Progress::Pr | Progress::Working | Progress::NotStarted => {}
+        Progress::Merged
+        | Progress::Done
+        | Progress::Pr
+        | Progress::Working
+        | Progress::NotStarted => {}
     };
 
     let kinds_table = page_table("const KINDS = {", "};");

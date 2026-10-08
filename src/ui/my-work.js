@@ -21,6 +21,7 @@ const WORK_RUNNING = ['working', 'idle', 'restarting'];
 /* What a child of a parent is, as the server's `progress` says: the class of its segment and its words. */
 const WORK_PROGRESS = {
   merged: ['merged', 'マージ済み'],
+  done: ['done', '完了'],
   pr: ['pr', 'PR あり'],
   working: ['working', '作業中'],
   'not-started': ['not-started', '未着手'],

@@ -528,7 +528,7 @@ the work under way in every repository, in three columns. The list on the left h
 「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
 not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
 hub as a row marked "hub". A task whose worker is gone is not. A parent's header shows a bar with a segment per
-child (merged, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
+child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
 what a permission prompt asks, the tool that is running, and a line such as "設計レビュー · あなたの判定待ち" while
@@ -879,8 +879,8 @@ the gate directories.
   children's, else the repository's own. A child is `{hub, id, merged, progress, branch?, base?, on?, onHub?}`:
   `hub` is the slug of the hub that owns it
   (an id is unique only within one hub), `merged` is whether its PR is merged, `progress` is `merged` (its PR is
-  merged, or the task is done), `pr` (a PR is set, or the task says `pr`, and it is not merged), `working` (the
-  task was handed to a worker) or `not-started`, `branch` is the branch its work is on and `base` what it is cut
+  merged), `done` (the task is done and has no merged PR), `pr` (a PR is set, or the task says `pr`, and it is not merged), `working` (the
+  task was handed to a worker) or `not-started` (anything else, a cancelled task included), `branch` is the branch its work is on and `base` what it is cut
   from (less one leading `origin/`), and `on` (with `onHub`, the sibling's hub) is the
   sibling whose branch it is cut from (its `base`, less one leading `origin/`, equal to the
   sibling's branch: the one its worktree is on, else its PR's head). `stacked` is whether any child

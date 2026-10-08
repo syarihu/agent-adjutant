@@ -77,13 +77,15 @@ pub struct ParentGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Progress {
-    /// Its pull request is merged, or the task is done.
+    /// Its pull request is merged: what `ParentGroup.merged` counts.
     Merged,
+    /// The task is done and has no merged pull request.
+    Done,
     /// A pull request is set (or the task says `pr`) and is not merged.
     Pr,
     /// A worker was handed it and has not made a pull request.
     Working,
-    /// Anything else: not handed over yet, or cancelled.
+    /// Anything else: not handed over yet, or cancelled (whatever pull request it had).
     NotStarted,
 }
 
@@ -279,8 +281,12 @@ pub(super) fn attach(
 
 fn progress_of(task: &task::Task) -> Progress {
     let merged = task.pr_status.as_ref().is_some_and(|p| p.state == "merged");
-    if merged || task.status == task::Status::Done {
+    if task.status == task::Status::Cancelled {
+        Progress::NotStarted
+    } else if merged {
         Progress::Merged
+    } else if task.status == task::Status::Done {
+        Progress::Done
     } else if task.pr.is_some() || task.status == task::Status::Pr {
         Progress::Pr
     } else if task.status == task::Status::Dispatched {

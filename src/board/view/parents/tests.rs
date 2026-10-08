@@ -491,8 +491,22 @@ fn a_child_is_as_far_as_its_status_and_pull_request_say() {
     queued.status = task::Status::Queued;
     let mut cancelled = with_parent("cancelled", 7, p);
     cancelled.status = task::Status::Cancelled;
+    let mut done_merged = with_parent("done-merged", 8, p);
+    done_merged.status = task::Status::Done;
+    done_merged.pr_status = Some(pr("merged", None));
+    let mut cancelled_pr = with_parent("cancelled-pr", 9, p);
+    cancelled_pr.status = task::Status::Cancelled;
+    cancelled_pr.pr = Some("https://github.com/acme/widget/pull/4".to_string());
     let mut tasks = cards(vec![
-        merged, done, with_pr, status_pr, working, queued, cancelled,
+        merged,
+        done,
+        with_pr,
+        status_pr,
+        working,
+        queued,
+        cancelled,
+        done_merged,
+        cancelled_pr,
     ]);
     let g = &run(&mut tasks, &mut [], &[], &never)[0];
     let seen: Vec<(&str, Progress)> = g
@@ -504,12 +518,14 @@ fn a_child_is_as_far_as_its_status_and_pull_request_say() {
         seen,
         [
             ("merged", Progress::Merged),
-            ("done", Progress::Merged),
+            ("done", Progress::Done),
             ("pr", Progress::Pr),
             ("status-pr", Progress::Pr),
             ("working", Progress::Working),
             ("queued", Progress::NotStarted),
             ("cancelled", Progress::NotStarted),
+            ("done-merged", Progress::Merged),
+            ("cancelled-pr", Progress::NotStarted),
         ]
     );
     let shown = serde_json::to_value(g).unwrap();
