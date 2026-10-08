@@ -34,7 +34,7 @@ function markSelectedCards() {
 /* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
 function showTaskPanel(id) {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = null; }
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = dialogReturn = null; }
   selectedTaskId = id;
   markSelectedCards();
   renderTaskPanel();
@@ -44,7 +44,7 @@ function showTaskPanel(id) {
    of the card that is open replaces the one it is on. */
 function openTaskPanel(id, pane = 'detail') {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = null; }
+  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = dialogReturn = null; }
   selectedTaskId = id;
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
@@ -62,19 +62,36 @@ function openTask(id, tab = 'overview', gateId = null) {
     // A gate picked is read from the top.
     panelScrolledFor = null;
   }
+  // The dialog covers what was clicked: focus goes into it, and back when it closes (hideTaskPanelState).
+  // A link followed inside a dialog already open keeps where that one came from.
+  const from = document.activeElement;
+  const inPanel = tp('task-panel').contains(from);
+  if (!(dialogFor !== null && inPanel)) dialogReturn = from && from !== document.body && !inPanel ? from : null;
   selectedTaskId = id;
   dialogFor = id;
   markSelectedCards();
   go({ ...(view === 'review' ? { view: prefs.tab === 'agent' ? 'agent' : 'human' } : {}), task: id, pane: paneOfTab(tab) },
     { replace: id === nav.task });
+  requestAnimationFrame(() => {
+    const at = document.activeElement;
+    if (selectedTaskId === id && (at === from || at === document.body))
+      tp('tp-tabs').querySelector('[aria-selected="true"]')?.focus();
+  });
 }
 
 /* Whether the panel is the dialog now: the placement saved, or a link that wants room. */
 let dialogFor = null;
+let dialogReturn = null;
 const panelPop = () => prefs.panelDialog || (dialogFor !== null && dialogFor === selectedTaskId);
 
 /* The panel's state, without the address: for a move the address already made. */
 function hideTaskPanelState() {
+  const card = selectedTaskId;
+  // Only a close the person made: focus in the dialog, or dropped to the page by a click on the scrim.
+  const at = document.activeElement;
+  const back = dialogFor !== null && (!at || at === document.body || tp('task-panel').contains(at));
+  const opener = dialogReturn;
+  dialogReturn = null;
   pendingTask = null;
   selectedTaskId = null;
   panelScrolledFor = null;
@@ -89,6 +106,14 @@ function hideTaskPanelState() {
   disposePanelTerminal();
   markSelectedCards();
   renderTaskPanel();
+  // What opened the dialog may be gone (the review queue left behind for the board): then the
+  // task's card, if it is on screen and the only one with that id (ids repeat across boards).
+  if (back) {
+    const shown = el => el?.isConnected && el.getClientRects().length > 0;
+    const cards = [...document.querySelectorAll('#boards .card')].filter(c => c.dataset.id === card);
+    const to = shown(opener) ? opener : cards.length === 1 ? cards[0].querySelector('button') : null;
+    if (shown(to)) to.focus();
+  }
 }
 
 /* A screen with no panel (the review queue): the address follows it. */
@@ -105,7 +130,7 @@ function closeTaskPanel() {
 /* Where panels open is a remembered mode: 'pop' is the dialog, 'left' and 'right' the sidebar on that side.
    Closing never changes it; only choosing one of these does. */
 function placePanel(where) {
-  dialogFor = null;
+  dialogFor = dialogReturn = null;
   if (where === 'pop') prefs.panelDialog = true;
   else {
     prefs.panelDialog = false;
