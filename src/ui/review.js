@@ -92,6 +92,7 @@ function reviewRowHtml(g, cur, done) {
   return `<button type="button" class="review-inbox-item item${done ? ' done' : ''}" data-rv-item="${esc(ref)}" aria-current="${ref === cur}">
     <div class="rv-row-top">
       <span class="m3-pill ${g.kind === 'plan' ? 'pill-blue' : g.kind === 'diff' ? 'pill-purple' : 'pill-warn'}">${esc(label)}</span>
+      ${parkOf(taskOfGate(g)) ? '<span class="m3-pill pill-neutral">置いている</span>' : ''}
       <span class="w rv-row-when">${done ? esc(DECISION[done.decision === 'close' ? 'closed' : done.decision] || done.decision) : ago(g.openedAt)}</span>
     </div>
     <div class="t">${esc(g.title)}</div>
@@ -244,6 +245,7 @@ function reviewDockHtml(g) {
       ${(g.options || []).map(o => (BUTTON[o] || (() => ''))()).join('')}
       <button type="button" class="m3-icon-button talk" style="padding:8px 14px" data-rv-talk><span class="material-symbols-outlined" style="font-size:16px;">terminal</span><span>ターミナルで話す</span></button>
       ${g.worktree && g.kind !== 'verify' ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" title="${ideTitle()}" data-ide="${esc(g.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;">code</span><span>IDEで開く</span></button>` : ''}
+      ${parkButtonHtml(g)}
       <button type="button" class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします"><span class="material-symbols-outlined" style="font-size:16px;">done_all</span><span>解決済みとして閉じる</span></button>
     </div>
   </div>`;
@@ -284,6 +286,7 @@ function reviewJudgeHtml(g, task, done) {
       `<li${stopBad(g) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
     ${g.focus ? `<div class="rv-wait-focus"><strong>確認してほしい点:</strong> ${md(g.focus)}</div>` : ''}
   </div>`;
+  if (!record) h += parkBannerHtml(task);
 
   if (g.decided) {
     h += `<div class="panel"><details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
@@ -526,6 +529,7 @@ document.getElementById('review').addEventListener('click', e => {
     if (g && reviewTermUsable(g)) setReviewPane('term'); else talk(focused);
     return;
   }
+  if (parkClick(e)) return;
   if (e.target.closest('[data-rv-open-wait]')) {
     const w = reviewCurrent();
     if (w?._wait) openWait(w);

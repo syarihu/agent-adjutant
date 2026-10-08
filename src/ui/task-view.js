@@ -467,6 +467,13 @@ function overviewTab(task, all, pick, opts = {}) {
   }
   const parentHtml = parentRowHtml(task);
   if (parentHtml) rows.push(['親タスク', parentHtml]);
+  if (opts.panel && !['done', 'cancelled'].includes(task.status)) {
+    const park = parkOf(task);
+    const since = park && stampSecs(park.since) != null ? ` · ${esc(ago(park.since))}から` : '';
+    rows.push(['置いている', park
+      ? `${esc(parkText(park))}${since} <button type="button" class="iconbtn" ${parkAttrs(task, true)}>置くのをやめる</button>`
+      : `<span style="color:var(--muted)">置いていない</span> <button type="button" class="iconbtn" ${parkAttrs(task, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の後で見るに置く">置く</button>`]);
+  }
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
   if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);
   if (task.worktree) rows.push(['worktree', `<span class="mono2">${esc(task.worktree)}</span> <button type="button" class="iconbtn" title="${ideTitle()}" data-ide="${esc(task.worktree)}">IDE で開く</button>`]);

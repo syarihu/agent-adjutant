@@ -129,6 +129,7 @@ pub fn apply(
             let moved = now.pr == task.pr && now.status == task.status;
             if moved {
                 now.status = Status::Done;
+                now.parked = None;
                 note_turn(&mut now, summary.as_ref());
                 now.pr_status = summary.clone().or(now.pr_status);
                 now.updated_at = store::stamp();

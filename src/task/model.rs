@@ -481,6 +481,11 @@ pub struct Task {
     /// until its turn next changes. The record's own time of change, not a fact about the PR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_turn_at: Option<String>,
+    /// Waiting on somebody on purpose, with the reason (`PARK_REASONS`). Set by a person from the
+    /// board or `adj task park`; read through `park`, which leaves out a blank reason and a
+    /// finished task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<Park>,
     pub created_at: String,
     pub updated_at: String,
     /// Keys this binary does not know, kept from the file so that a record written by another
@@ -491,6 +496,65 @@ pub struct Task {
 
 fn is_zero(n: &u32) -> bool {
     *n == 0
+}
+
+/// The reasons a task can be parked for, in the order the page lists them: PdM's answer, the
+/// designer's, an engineer's review, the right moment to merge, and anything else (which needs
+/// a text). Kept in one place; `check_park` and the page's labels read it.
+pub const PARK_REASONS: &[&str] = &["pdm", "design", "review", "merge-timing", "other"];
+
+/// Refuse a park that cannot be written: an unknown reason, or `other` with nothing said about
+/// it. Called before any record is touched.
+pub fn check_park(reason: &str, text: Option<&str>) -> Result<(), String> {
+    let reason = reason.trim();
+    if !PARK_REASONS.contains(&reason) {
+        return Err(format!(
+            "no such park reason: {} ({})",
+            if reason.is_empty() { "(blank)" } else { reason },
+            PARK_REASONS.join(", ")
+        ));
+    }
+    if reason == "other" && text.map(str::trim).is_none_or(str::is_empty) {
+        return Err("a park for \"other\" needs a text saying what it waits on".to_string());
+    }
+    Ok(())
+}
+
+/// A task set aside on purpose: it waits on somebody's answer or on the right moment, and is
+/// not the person's turn until they say so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Park {
+    /// One of `PARK_REASONS`, kept as the word it was written with: a reason this binary does
+    /// not list (written by a newer one) still loads.
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// When it was parked (`store::stamp`, UTC). Written by `update`, never taken from a
+    /// caller's JSON.
+    #[serde(default)]
+    pub since: String,
+    /// Keys this binary does not know, kept like `Task.extra`.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What a caller says when it parks a task. `since` is the server's to write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParkRequest {
+    pub reason: String,
+    pub text: Option<String>,
+}
+
+impl Task {
+    /// The park, as every reader should see it: none when the reason is blank, and none once
+    /// the task is done or cancelled, whatever an older binary left on the record.
+    pub fn park(&self) -> Option<&Park> {
+        if matches!(self.status, Status::Done | Status::Cancelled) {
+            return None;
+        }
+        self.parked.as_ref().filter(|p| !p.reason.trim().is_empty())
+    }
 }
 
 /// What a caller may say about a task it creates. Every other field of the record is the
@@ -614,6 +678,9 @@ pub struct TaskPatch {
     pub jules_by: Option<Option<String>>,
     pub note: Option<Option<String>>,
     pub instruction: Option<Option<String>>,
+    /// `Some(Some(_))` parks the task, `Some(None)` takes the park back. Checked by `check`;
+    /// `update` stamps when it was parked.
+    pub parked: Option<Option<ParkRequest>>,
 }
 
 impl TaskPatch {
@@ -670,6 +737,26 @@ impl TaskPatch {
             jules_by: text_field(input, "julesBy")?,
             note: text_field(input, "note")?,
             instruction: text_field(input, "instruction")?,
+            parked: match input.get("parked") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(Value::Object(park)) => {
+                    let text = |key: &str| {
+                        park.get(key)
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                    };
+                    Some(Some(ParkRequest {
+                        reason: text("reason").unwrap_or_default(),
+                        text: text("text"),
+                    }))
+                }
+                Some(other) => {
+                    return Err(format!("parked has to be an object or null, not {other}"));
+                }
+            },
         };
         patch.check()?;
         Ok(patch)
@@ -680,6 +767,9 @@ impl TaskPatch {
     pub fn check(&self) -> Result<(), String> {
         if let Some(Some(parent)) = &self.parent {
             super::create::check_parent(parent)?;
+        }
+        if let Some(Some(park)) = &self.parked {
+            check_park(&park.reason, park.text.as_deref())?;
         }
         Ok(())
     }

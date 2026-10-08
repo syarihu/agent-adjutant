@@ -180,6 +180,7 @@ pub fn create(
         title_pending: pending,
         pr_status: None,
         pr_turn_at: None,
+        parked: None,
         created_at: stamp.clone(),
         updated_at: stamp,
         extra: Default::default(),

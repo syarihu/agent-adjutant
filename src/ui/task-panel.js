@@ -328,7 +328,9 @@ function panelHeadHtml(task) {
   const hcol = humanColOf(task);
   const stuck = stuckOf(task);
   const colObj = COLUMNS.find(c => c.id === columnOf(task));
-  const pill = hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています</span>`
+  const park = parkOf(task);
+  const pill = park ? `<span class="m3-pill pill-neutral">置いている — ${esc(parkLabel(park))}</span>`
+    : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています</span>`
     : stuck ? `<span class="m3-pill pill-err">${esc(stuck)}</span>`
     : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
   const b = selectedBoard();
@@ -414,6 +416,7 @@ function panelGateHtml(task, gate, here = false) {
         <span>【${esc(label)}】あなたの判断待ち</span>
         <span class="tp-gate-wait">${esc(minutesLabel(waitingMinutes(task)))}待ち</span>
       </div>
+      ${parkBannerHtml(task)}
       <div style="font-size:12.5px;">${esc(gate.title)}</div>
       ${why ? `<div style="font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;">${esc(why)}</div>` : ''}
       ${reasons.length ? `<div style="font-size:11.5px;">止めた理由: ${esc(reasons.join(' / '))}</div>` : ''}
@@ -719,6 +722,7 @@ tp('task-panel').addEventListener('click', e => {
     if (panelPop()) closeTaskPanel(); else renderTaskPanel();
     return jump('agent', id);
   }
+  if (parkClick(e)) return;
   if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);
   // The decision panel and a gate's choices, which `bindDecide` wires in the other views; not
   // here, since it would bind [data-ide] a second time next to the one below.

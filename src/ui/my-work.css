@@ -171,3 +171,6 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
 #tp-tabs[hidden] { display: none; }
 
 .wk-notice { margin-top: 8px; padding: 6px 8px; border-radius: var(--md-shape-corner-sm); font-size: 11.5px; overflow-wrap: anywhere; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+
+/* A parked row (#555) is not the person's turn: the glyph is the quiet one. */
+.wk-glyph.parked { color: var(--md-sys-color-on-surface-variant); }

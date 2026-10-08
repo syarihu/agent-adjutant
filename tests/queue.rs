@@ -120,3 +120,58 @@ fn a_task_parent_is_set_and_cleared_by_update_and_a_bad_one_changes_nothing() {
     fixture.ok(&["task", "update", "--id", &id, "--parent", ""]);
     assert!(parent().is_null());
 }
+
+#[test]
+fn a_task_is_parked_with_a_reason_and_taken_back_and_a_bad_park_changes_nothing() {
+    let fixture = Fixture::new(QUIET);
+    let id = fixture.json(&["task", "add", "--title", "waiting", "--body", "x", "--json"])["task"]
+        ["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let parked = || fixture.json(&["task", "show", "--id", &id])["parked"].clone();
+    assert!(parked().is_null());
+
+    let out = fixture.ok(&[
+        "task",
+        "park",
+        "--id",
+        &id,
+        "--reason",
+        "pdm",
+        "--text",
+        "資料待ち",
+    ]);
+    assert!(out.contains("(parked: pdm)"), "{out}");
+    let shown = parked();
+    assert_eq!(shown["reason"], "pdm");
+    assert_eq!(shown["text"], "資料待ち");
+    assert!(
+        shown["since"].as_str().is_some_and(|s| s.ends_with('Z')),
+        "{shown}"
+    );
+
+    // A bad reason and `other` with no text are refused, and the record keeps its park.
+    for args in [
+        vec!["task", "park", "--id", &id, "--reason", "nope"],
+        vec!["task", "park", "--id", &id, "--reason", "other"],
+        vec![
+            "task", "park", "--id", &id, "--reason", "other", "--text", " ",
+        ],
+    ] {
+        let refused = fixture.cmd(&args);
+        assert!(!refused.status.success(), "{args:?}");
+    }
+    assert_eq!(parked(), shown);
+
+    // Unparking takes the key off the record.
+    let json = fixture.json(&["task", "unpark", "--id", &id, "--json"]);
+    assert!(json["task"]["parked"].is_null(), "{json}");
+    assert!(parked().is_null());
+
+    // A finished task cannot be parked.
+    fixture.ok(&["task", "update", "--id", &id, "--status", "done"]);
+    let refused = fixture.cmd(&["task", "park", "--id", &id, "--reason", "pdm"]);
+    assert!(!refused.status.success());
+    assert!(parked().is_null());
+}

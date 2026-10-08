@@ -330,6 +330,37 @@
   </form>
 </dialog>
 
+<dialog id="park-dialog" aria-labelledby="park-title">
+  <form method="dialog" id="park-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">schedule</span>
+        <span id="park-title">置く</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="park-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <fieldset class="field park-reasons" aria-describedby="park-help">
+        <legend>何を待っていますか</legend>
+        <div class="radios" id="park-reasons"></div>
+      </fieldset>
+      <label class="field"><span>ひとこと（「その他」では必須）</span>
+        <input type="text" id="park-text" autocomplete="off" aria-describedby="park-help">
+        <span class="note" id="park-help">置いたタスクは「いまの仕事」の後で見るに入り、新着には数えません。ゲートは開いたままで、いつも通り答えられます</span></label>
+      <p id="park-error" class="dlg-error" role="alert" hidden></p>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="park-dialog">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="park-submit">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">schedule</span>
+        <span>置く</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="hubkey-dialog" aria-labelledby="hubkey-title">
   <form method="dialog" id="hubkey-form">
     <div class="head">

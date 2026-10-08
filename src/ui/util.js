@@ -29,6 +29,15 @@ function ago(stamp) {
   return agoLabel(minutesSince(secs, Date.now() / 1000));
 }
 
+/* What a task can be parked for, in the words the page uses; the ids are `task::PARK_REASONS`, the server's. A reason
+   this page does not know (written by a newer binary) is shown as it was written. */
+const PARK_REASON_LABEL = { pdm: 'PdM の確認待ち', design: 'デザイナーの確認待ち', review: 'エンジニアのレビュー待ち', 'merge-timing': 'マージのタイミング待ち', other: 'その他' };
+const parkLabel = p => PARK_REASON_LABEL[p?.reason] || p?.reason || '';
+/* The park of a task as the page reads it: none once the task is finished, whatever is left on the record. */
+const parkOf = t => t?.parked?.reason && t.status !== 'done' && t.status !== 'cancelled' ? t.parked : null;
+/* 「PdM の確認待ち（資料を待つ）」 */
+const parkText = p => `${parkLabel(p)}${p?.text ? `（${p.text}）` : ''}`;
+
 /* Render markdown into safe HTML: headings (H1-H5), code blocks, tables, lists, blockquotes,
    horizontal rules, links, and inline decorations (bold, italic, strikethrough, inline code).
    Escaping happens before parsing so untrusted HTML is never executed. */

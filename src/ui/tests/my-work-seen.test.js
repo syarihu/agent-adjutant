@@ -13,7 +13,7 @@ for (const file of ['util.js', 'my-work-seen.js']) {
 // Objects made inside the context have another Object.prototype: compare them as data.
 const plain = x => JSON.parse(JSON.stringify(x));
 const { workEntries, workItems, workActedAt, workSeenClass, workClassOf, workLaterText, workLiveItems,
-  workParseMarks, workMarkMerge, workPruneMarks } = ctx;
+  workParseMarks, workMarkMerge, workPruneMarks, workParkPatches } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -222,4 +222,93 @@ test('a gate no session waits on is on the hub of its board, else a row of its o
   assert.equal(workClassOf(alone[0], {}), 'new');
   // Answered on this page: nothing.
   assert.equal(one({ turns: [{ board: SLUG, gates: [g] }] }, () => true).length, 0);
+});
+
+const park = (since, extra = {}) => ({ reason: 'pdm', text: '', since: stamp(since), ...extra });
+const withMarks = (marks, patches) => patches.reduce((m, [id, p]) => workMarkMerge(m, id, p), marks);
+
+test('a parked task is later even with an unread gate and no marks, and never new', () => {
+  const entries = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 5) }))] });
+  const e = byId(entries, `${SLUG}/1`);
+  assert.equal(workClassOf(e, {}), 'later');
+  // Not even for a mark that sent it back by hand, or a gate newer than the park.
+  assert.equal(workClassOf(e, { [e.id]: { back: T0 + 500 } }), 'later');
+  assert.deepEqual(plain(e.items.map(i => i.kind)).sort(), ['gate', 'parked']);
+});
+
+test('a parked task with nothing waiting and no session is an entry, and a finished one is not parked', () => {
+  const entries = one({ turns: [{ board: SLUG, task: task('1', { parked: park(T0 + 5) }), gates: [] }] });
+  const e = byId(entries, `${SLUG}/1`);
+  assert.deepEqual(plain(e.items), [{ kind: 'parked', reason: 'pdm', text: '', since: T0 + 5 }]);
+  assert.equal(workClassOf(e, {}), 'later');
+  const done = one({ turns: [{ board: SLUG, task: task('2', { status: 'done', parked: park(T0 + 5) }), gates: [] }] });
+  assert.deepEqual(plain(byId(done, `${SLUG}/2`).items), []);
+  assert.equal(workClassOf(byId(done, `${SLUG}/2`), {}), null);
+  // A blank reason is no park.
+  const blank = one({ turns: [{ board: SLUG, task: task('3', { parked: park(T0 + 5, { reason: '' }) }), gates: [] }] });
+  assert.deepEqual(plain(byId(blank, `${SLUG}/3`).items), []);
+});
+
+test('a parked row says why, with the text when there is one, and how many other things are open', () => {
+  assert.equal(workLaterText([{ kind: 'parked', reason: 'pdm', text: '', since: 1 }]), '置いている — PdM の確認待ち');
+  assert.equal(workLaterText([{ kind: 'parked', reason: 'other', text: '法務の返事', since: 1 }]), '置いている — その他（法務の返事）');
+  assert.equal(
+    workLaterText([{ kind: 'gate', gate: 'plan', since: 2 }, { kind: 'parked', reason: 'merge-timing', text: '', since: 1 }]),
+    '置いている — マージのタイミング待ち ほか 1 件');
+  // With the time, the age follows the park's words and comes before the count.
+  assert.equal(
+    workLaterText([{ kind: 'parked', reason: 'pdm', text: '', since: T0 }, { kind: 'gate', gate: 'plan', since: T0 + 1 }], T0 + 7200),
+    '置いている — PdM の確認待ち · 2時間前から ほか 1 件');
+  assert.equal(workLaterText([{ kind: 'parked', reason: 'pdm', text: '', since: T0 }], T0 + 10), '置いている — PdM の確認待ち · たった今から');
+  // A reason this page does not know is shown as it was written.
+  assert.equal(workLaterText([{ kind: 'parked', reason: 'legal', text: '', since: 1 }]), '置いている — legal');
+  // Not parked: the words are as they were.
+  assert.equal(workLaterText([{ kind: 'gate', gate: 'plan', since: 2 }]), '既読 · 設計レビューが開いたまま');
+});
+
+test('a park is written once, and taking it off sends a row with something open back to new, once', () => {
+  const parked = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 20) }))] });
+  const e = byId(parked, `${SLUG}/1`);
+  let marks = {};
+  const first = plain(workParkPatches(parked, marks, T0 + 100));
+  assert.deepEqual(first, [[e.id, { parked: T0 + 20 }]]);
+  marks = withMarks(marks, first);
+  assert.deepEqual(plain(workParkPatches(parked, marks, T0 + 110)), []);
+
+  // The park is taken off while the gate is still open.
+  const off = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1'))] });
+  const back = plain(workParkPatches(off, marks, T0 + 200));
+  assert.deepEqual(back, [[e.id, { back: T0 + 200 }]]);
+  marks = withMarks(marks, back);
+  assert.equal(workClassOf(byId(off, e.id), marks), 'new');
+  assert.deepEqual(plain(workParkPatches(off, marks, T0 + 210)), []);
+
+  // Looked at again after that, it is later; a second park is a new one.
+  marks = workMarkMerge(marks, e.id, { left: T0 + 300 });
+  assert.equal(workClassOf(byId(off, e.id), marks), 'later');
+  const again = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 400) }))] });
+  assert.deepEqual(plain(workParkPatches(again, marks, T0 + 410)), [[e.id, { parked: T0 + 400 }]]);
+});
+
+test('a row parked while it is open leaves new on the next document, and a task with nothing left after the park leaves both', () => {
+  const open = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1'))] });
+  const e = byId(open, `${SLUG}/1`);
+  assert.equal(workClassOf(e, {}), 'new');
+  const parked = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 20) }))] });
+  assert.equal(workClassOf(byId(parked, e.id), {}), 'later');
+  // Nothing open once the park is off: no item, so neither section, whatever `back` says.
+  const bare = one({ turns: [{ board: SLUG, task: task('2', { parked: park(T0 + 20) }), gates: [] }] });
+  const id = byId(bare, `${SLUG}/2`).id;
+  const marks = withMarks({}, workParkPatches(bare, {}, T0 + 30));
+  const off = one({ turns: [{ board: SLUG, task: task('2'), gates: [] }] });
+  const back = workParkPatches(off, marks, T0 + 40);
+  assert.equal(workClassOf(byId(off, id), withMarks(marks, back)), null);
+});
+
+test('the parked mark is kept by parse and counted by prune', () => {
+  const text = JSON.stringify({ a: { parked: T0, junk: 1 }, b: { parked: 'x' } });
+  assert.deepEqual(plain(workParseMarks(text)), { a: { parked: T0 } });
+  const kept = workPruneMarks({ a: { parked: T0 } }, new Set(), T0 + 86400);
+  assert.deepEqual(plain(kept), { a: { parked: T0 } });
+  assert.deepEqual(plain(workPruneMarks({ a: { parked: T0 } }, new Set(), T0 + 30 * 86400)), {});
 });

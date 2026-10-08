@@ -10,7 +10,10 @@
      left     the person left the row after opening it, or pressed "mark all read"
      back     the person sent it back to 新着 by hand
      cleared  the person cleared it with ✓ (done, failed and PR items only; a gate or a permission wait
-              ends only when it is answered) */
+              ends only when it is answered)
+     parked   the start of the newest park of the task this browser saw (#555). A parked task is always 後で見る
+              and never 新着; when the park is gone and this was seen, `workParkPatches` writes `back`, so a row
+              with something still open returns to 新着. Park and un-park both while no tab is open are not seen. */
 
 const WORK_HUB_REF = 'hub:';
 const WORK_SESS_REF = 'session:';
@@ -26,7 +29,7 @@ const WORK_PR_WORDS = {
 /* Which kinds a ✓ clears: what the person only has to take notice of. */
 const WORK_CLEARABLE = ['done', 'failed', 'pr'];
 /* The order the words of a 後で見る row name what is open, most pressing first. */
-const WORK_ITEM_ORDER = ['gate', 'permission', 'failed', 'pr', 'done'];
+const WORK_ITEM_ORDER = ['parked', 'gate', 'permission', 'failed', 'pr', 'done'];
 /* How long a mark is kept for a row that is no longer listed. */
 const WORK_MARK_KEPT_SECS = 7 * 86400;
 
@@ -118,6 +121,8 @@ function workItems(e) {
     else if (a.status === 'done' && !e.isHub && !e.gates.length) items.push({ kind: 'done', since });
   }
   const t = e.task;
+  const park = parkOf(t);
+  if (park) items.push({ kind: 'parked', reason: park.reason, text: park.text || '', since: stampSecs(park.since) });
   if (t?.waitsOnPerson && WORK_PR_WORDS[t.prTurn]) items.push({ kind: 'pr', turn: t.prTurn, since: stampSecs(t.prTurnAt) });
   return items;
 }
@@ -139,6 +144,8 @@ function workLiveItems(items, mark = {}) {
 function workSeenClass(items, mark = {}, actedAt = -Infinity) {
   const live = workLiveItems(items, mark);
   if (!live.length) return null;
+  // Set aside on purpose: looked at by definition, whatever the marks say.
+  if (live.some(i => i.kind === 'parked')) return 'later';
   const read = Math.max(Number.isFinite(mark.left) ? mark.left : -Infinity, actedAt);
   if (Number.isFinite(mark.back) && mark.back > read) return 'new';
   // An item with no time (a PR record from before the time was kept) is new until the row has been read once.
@@ -151,20 +158,42 @@ function workClassOf(e, marks) {
   return workSeenClass(e.items, marks?.[e.id] || {}, workActedAt(e));
 }
 
-/* What is still open, in the words of a 後で見る row. */
-function workLaterText(items) {
+/* What is still open, in the words of a 後で見る row. `now` (the server's seconds), when given, puts how long a park has lasted after its words. */
+function workLaterText(items, now = null) {
   const sorted = [...items].sort((a, b) => WORK_ITEM_ORDER.indexOf(a.kind) - WORK_ITEM_ORDER.indexOf(b.kind));
   const first = sorted[0];
   if (!first) return '';
+  const more = sorted.length > 1 ? ` ほか ${sorted.length - 1} 件` : '';
+  if (first.kind === 'parked') {
+    const age = now != null && Number.isFinite(first.since) ? ` · ${agoLabel(minutesSince(first.since, now))}から` : '';
+    return `置いている — ${parkText(first)}${age}${more}`;
+  }
   const what = first.kind === 'gate' ? `${kindOf(first.gate)[0]}が開いたまま`
     : first.kind === 'permission' ? '許可待ちのまま'
       : first.kind === 'failed' ? '失敗したまま'
         : first.kind === 'pr' ? WORK_PR_WORDS[first.turn] || 'PR が残ったまま'
           : '片付けていない';
-  return `既読 · ${what}${sorted.length > 1 ? ` ほか ${sorted.length - 1} 件` : ''}`;
+  return `既読 · ${what}${more}`;
 }
 
 /* ── the marks ── */
+
+/* What to write on the marks (`[id, patch]`) for the parks and un-parks the document shows that the marks do not yet
+   know. A parked entry remembers the start of its park (`parked`). One that was seen parked and is not any more goes back
+   to 新着 (`back` is `now`), once: `back` then passes `parked`, which is what is asked. Times only move later, so a
+   second call over the marks it wrote answers nothing. */
+function workParkPatches(entries, marks, now) {
+  const out = [];
+  for (const e of entries) {
+    const mark = marks?.[e.id] || {};
+    const park = e.items.find(i => i.kind === 'parked');
+    if (park) {
+      const since = Number.isFinite(park.since) ? park.since : 0;
+      if (!(mark.parked >= since)) out.push([e.id, { parked: since }]);
+    } else if (Number.isFinite(mark.parked) && !(mark.back >= mark.parked)) out.push([e.id, { back: now }]);
+  }
+  return out;
+}
 
 /* What local storage held, read as marks: anything that is not an object of objects of times is dropped, so
    a damaged or foreign value is no marks and not an error. */
@@ -176,7 +205,7 @@ function workParseMarks(text) {
   for (const [id, m] of Object.entries(raw)) {
     if (id === '__proto__' || !m || typeof m !== 'object' || Array.isArray(m)) continue;
     const mark = {};
-    for (const f of ['left', 'back', 'cleared']) if (typeof m[f] === 'number' && Number.isFinite(m[f])) mark[f] = m[f];
+    for (const f of ['left', 'back', 'cleared', 'parked']) if (typeof m[f] === 'number' && Number.isFinite(m[f])) mark[f] = m[f];
     if (Object.keys(mark).length) out[id] = mark;
   }
   return out;
@@ -196,7 +225,7 @@ function workMarkMerge(marks, id, patch) {
 function workPruneMarks(marks, liveIds, now) {
   const out = {};
   for (const [id, m] of Object.entries(marks)) {
-    const newest = Math.max(-Infinity, ...['left', 'back', 'cleared'].map(f => m[f]).filter(Number.isFinite));
+    const newest = Math.max(-Infinity, ...['left', 'back', 'cleared', 'parked'].map(f => m[f]).filter(Number.isFinite));
     if (liveIds.has(id) || newest >= now - WORK_MARK_KEPT_SECS) out[id] = m;
   }
   return out;

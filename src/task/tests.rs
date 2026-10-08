@@ -39,6 +39,7 @@ impl Task {
             title_pending: false,
             pr_status: None,
             pr_turn_at: None,
+            parked: None,
             created_at: stamp.to_string(),
             updated_at: stamp.to_string(),
             extra: serde_json::Map::new(),
@@ -1554,4 +1555,243 @@ fn a_merge_stamps_its_turn_and_another_pr_clears_the_stamp_with_the_summary() {
     };
     let (updated, _) = update(&ctx, &other.id, &patch, false).unwrap();
     assert_eq!((updated.pr_status, updated.pr_turn_at), (None, None));
+}
+
+fn park_patch(reason: &str, text: Option<&str>) -> TaskPatch {
+    TaskPatch {
+        parked: Some(Some(ParkRequest {
+            reason: reason.to_string(),
+            text: text.map(str::to_string),
+        })),
+        ..TaskPatch::default()
+    }
+}
+
+fn unpark_patch() -> TaskPatch {
+    TaskPatch {
+        parked: Some(None),
+        ..TaskPatch::default()
+    }
+}
+
+#[test]
+fn a_park_in_a_patch_is_set_by_an_object_cleared_by_null_and_left_alone_when_absent() {
+    let parked = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.parked);
+    assert_eq!(parked(json!({})).unwrap(), None);
+    assert_eq!(parked(json!({ "parked": null })).unwrap(), Some(None));
+    // The client's `since` is not read; the text is trimmed and blank is none.
+    assert_eq!(
+        parked(json!({ "parked": { "reason": " pdm ", "text": " 資料待ち ", "since": "20200101T000000Z" } }))
+            .unwrap(),
+        Some(Some(ParkRequest {
+            reason: "pdm".to_string(),
+            text: Some("資料待ち".to_string()),
+        }))
+    );
+    assert_eq!(
+        parked(json!({ "parked": { "reason": "review", "text": "  " } })).unwrap(),
+        Some(Some(ParkRequest {
+            reason: "review".to_string(),
+            text: None,
+        }))
+    );
+}
+
+#[test]
+fn a_park_that_cannot_be_written_is_refused_before_any_record_is_touched() {
+    let parked = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.parked);
+    for bad in [
+        json!({ "parked": {} }),
+        json!({ "parked": { "reason": "" } }),
+        json!({ "parked": { "reason": "nope" } }),
+        json!({ "parked": { "reason": "other" } }),
+        json!({ "parked": { "reason": "other", "text": " " } }),
+        json!({ "parked": "pdm" }),
+        json!({ "parked": 1 }),
+        json!({ "parked": ["pdm"] }),
+    ] {
+        assert!(parked(bad.clone()).is_err(), "{bad} was taken");
+    }
+    assert!(
+        parked(json!({ "parked": { "reason": "nope" } }))
+            .unwrap_err()
+            .contains("pdm, design, review, merge-timing, other")
+    );
+    assert!(parked(json!({ "parked": { "reason": "other", "text": "法務" } })).is_ok());
+
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let before = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(update(&ctx, &task.id, &park_patch("other", None), false).is_err());
+    assert!(update(&ctx, &task.id, &park_patch("nope", None), false).is_err());
+    assert_eq!(
+        std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn parking_stamps_since_once_keeps_it_for_the_same_reason_and_text_and_unparking_removes_the_key() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+
+    let (first, _) = update(&ctx, &task.id, &park_patch("pdm", Some("資料待ち")), false).unwrap();
+    let park = first.parked.clone().expect("parked");
+    assert_eq!(
+        (park.reason.as_str(), park.text.as_deref()),
+        ("pdm", Some("資料待ち"))
+    );
+    assert!(stamp_ok(&park.since), "{}", park.since);
+    // A direct caller's untrimmed words are stored trimmed, and blank text is none.
+    let (trimmed, _) = update(&ctx, &task.id, &park_patch(" pdm ", Some("  ")), false).unwrap();
+    let t = trimmed.parked.unwrap();
+    assert_eq!((t.reason.as_str(), t.text), ("pdm", None));
+    update(&ctx, &task.id, &park_patch("pdm", Some("資料待ち")), false).unwrap();
+
+    // A retry of the same park keeps when it began, even if a second has passed.
+    let mut aged = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    aged.parked.as_mut().unwrap().since = "20200101T000000Z".to_string();
+    save(&ctx, &aged).unwrap();
+    let (same, _) = update(&ctx, &task.id, &park_patch("pdm", Some("資料待ち")), false).unwrap();
+    assert_eq!(same.parked.unwrap().since, "20200101T000000Z");
+    // Another reason or text is a new park.
+    let (other, _) = update(&ctx, &task.id, &park_patch("design", None), false).unwrap();
+    assert_ne!(other.parked.as_ref().unwrap().since, "20200101T000000Z");
+    assert_eq!(other.parked.unwrap().text, None);
+
+    let (gone, _) = update(&ctx, &task.id, &unpark_patch(), false).unwrap();
+    assert_eq!(gone.parked, None);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("parked"), "{text}");
+    // A patch that says nothing about it leaves a park alone.
+    update(&ctx, &task.id, &park_patch("review", None), false).unwrap();
+    let (kept, _) = update(
+        &ctx,
+        &task.id,
+        &TaskPatch {
+            note: Some(Some("n".to_string())),
+            ..TaskPatch::default()
+        },
+        false,
+    )
+    .unwrap();
+    assert_eq!(kept.parked.unwrap().reason, "review");
+}
+
+/// `YYYYMMDDTHHMMSSZ`.
+fn stamp_ok(s: &str) -> bool {
+    s.len() == 16 && s.ends_with('Z') && s.as_bytes()[8] == b'T'
+}
+
+#[test]
+fn a_key_this_binary_does_not_know_in_a_park_or_beside_it_survives_a_park_and_an_unpark() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    let mut raw = serde_json::to_value(&task).unwrap();
+    raw["futureField"] = json!(1);
+    raw["parked"] =
+        json!({ "reason": "pdm", "since": "20260101T000000Z", "futureKey": { "n": 2 } });
+    std::fs::create_dir_all(dir(&ctx.state, &ctx.repo.slug)).unwrap();
+    std::fs::write(record_path(&ctx, &task.id), raw.to_string()).unwrap();
+
+    // A save that keeps the park keeps what is inside it.
+    update(
+        &ctx,
+        &task.id,
+        &TaskPatch {
+            note: Some(Some("n".to_string())),
+            ..TaskPatch::default()
+        },
+        false,
+    )
+    .unwrap();
+    let back: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap())
+            .unwrap();
+    assert_eq!(back["parked"]["futureKey"], json!({ "n": 2 }));
+    assert_eq!(back["futureField"], json!(1));
+
+    update(&ctx, &task.id, &unpark_patch(), false).unwrap();
+    let back: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap())
+            .unwrap();
+    assert!(back.get("parked").is_none(), "{back}");
+    assert_eq!(back["futureField"], json!(1));
+}
+
+#[test]
+fn a_finished_task_is_never_parked_and_writing_done_or_cancelled_clears_the_park() {
+    let (_sandbox, ctx) = hub();
+    for finished in [Status::Done, Status::Cancelled] {
+        let mut task = sample();
+        task.id = format!("{}-{}", task.id, finished.as_str());
+        save(&ctx, &task).unwrap();
+        update(&ctx, &task.id, &park_patch("pdm", None), false).unwrap();
+        let (done, _) = update(
+            &ctx,
+            &task.id,
+            &TaskPatch {
+                status: Some(finished),
+                ..TaskPatch::default()
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(done.parked, None);
+        assert!(
+            !std::fs::read_to_string(record_path(&ctx, &task.id))
+                .unwrap()
+                .contains("parked")
+        );
+        let refused = update(&ctx, &task.id, &park_patch("pdm", None), false).unwrap_err();
+        assert!(
+            refused.contains("finished task cannot be parked"),
+            "{refused}"
+        );
+        // Parking and finishing in one patch is refused too.
+        let mut both = park_patch("pdm", None);
+        both.status = Some(finished);
+        assert!(update(&ctx, &task.id, &both, false).is_err());
+    }
+}
+
+#[test]
+fn a_blank_park_on_disk_and_a_park_on_a_finished_task_read_as_none() {
+    let mut task = sample();
+    assert!(task.park().is_none());
+    task.parked = Some(Park {
+        reason: "  ".to_string(),
+        text: None,
+        since: String::new(),
+        extra: serde_json::Map::new(),
+    });
+    assert!(task.park().is_none());
+    task.parked.as_mut().unwrap().reason = "pdm".to_string();
+    assert_eq!(task.park().map(|p| p.reason.as_str()), Some("pdm"));
+    task.status = Status::Done;
+    assert!(task.park().is_none());
+
+    // `null` on disk is none, and a park with no `since` still loads.
+    let raw = |parked: serde_json::Value| {
+        let mut v = serde_json::to_value(sample()).unwrap();
+        v["parked"] = parked;
+        serde_json::from_value::<Task>(v).unwrap()
+    };
+    assert!(raw(json!(null)).park().is_none());
+    assert!(raw(json!({ "reason": "" })).park().is_none());
+    assert_eq!(raw(json!({ "reason": "pdm" })).park().unwrap().since, "");
+}
+
+#[test]
+fn a_refresh_that_moves_a_parked_task_to_done_clears_the_park() {
+    let (_sandbox, ctx) = hub();
+    let task = open_pr_task(&ctx);
+    update(&ctx, &task.id, &park_patch("merge-timing", None), false).unwrap();
+    let merged = refreshed(&ctx, &task.id, pr("merged", "approved", 0, 0));
+    assert_eq!(merged.status, Status::Done);
+    assert_eq!(merged.parked, None);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("parked"), "{text}");
 }

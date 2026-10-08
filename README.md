@@ -104,7 +104,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief` | the records that board is a view of (`brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one)) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief\|park\|unpark` | the records that board is a view of (`park --id … --reason pdm\|design\|review\|merge-timing\|other [--text …]`: set a task aside on purpose, because you wait on someone else's answer or on the right time to merge (`--reason other` needs a `--text`; `--text -` reads stdin; a finished task is refused); `unpark --id …`: take it back; `brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one)) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -544,9 +544,9 @@ edges (arrow keys too; a double click puts one back) and kept in this browser. T
 where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
 (see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
 as `{board, session, task?}` (`board` is the slug of the board the row opens on, `task` is
-`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson, gateAnsweredAt?, prTurnAt?}`), `hubSessions` are the
+`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson, gateAnsweredAt?, prTurnAt?, parked?}`; `parked` is `{reason, text?, since}` and absent for a finished task), `hubSessions` are the
 sessions of the parent-task hubs, and `turns` are what waits on you with or without a row: `{board, task?, gates}`
-for each task whose PR is yours and each group of open gates that wait on a person (`gates` are `{id, kind, title?,
+for each task whose PR is yours or that is parked, and each group of open gates that wait on a person (`gates` are `{id, kind, title?,
 openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt` and `prTurnAt` are UTC stamps (when a
 gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
 when you last typed into it.
@@ -555,7 +555,7 @@ when you last typed into it.
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
 session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
 for a task with nothing running, which then has a row of its own. Each row shows what it asks, or else what the agent
-last said. 後で見る holds what you opened and left without finishing, and each row says what is still open
+last said. 後で見る holds what you opened and left without finishing, and every parked task (see "Parking a task" below), and each row says what is still open
 (「既読 · 設計レビューが開いたまま」). In 「親 Issue」 the two are bands above the tree (a session's row stays in the
 tree too), and in 「状態」 they are the first two boxes. A row counts as looked at once you leave it (the address
 moves to another row or another view, or the page closes) or act on it, wherever you do: answering its gate on the
@@ -564,12 +564,28 @@ board, through the hub or the CLI, or typing in its session's terminal, even out
 `hubWake` of your own that types other text is, since it cannot be told from you). Opening a task in the board's own
 panel does not count, nor does switching browser tabs. It goes back to 新着 only when something changes what you
 have to do: a gate opens, a permission prompt or question arrives, a worker finishes a turn with no gate open, a
-session fails, or the PR turns to yours again; a phase moving on, a tool, a sub-agent or a PR turning to checks does
+session fails, the PR turns to yours again, or you take a park off (置くのをやめる, `adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to checks does
 not. Three buttons: `done_all` in the 新着 header marks every new row read, `mark_email_unread` on a 後で見る row
 sends it back to 新着, and `check` clears a finished, failed or PR item (a gate or a permission wait leaves only when it
 is answered). The sidebar badge on 「いまの仕事」 counts the new rows, and is refreshed every 10 seconds while another
 view is open. The marks are times on the server's clock in this browser's local storage
 (`adj.seenWork.<owner/repo>`), so another browser starts with none and other tabs of this one follow.
+
+**Parking a task.** A task you wait on on purpose (the PdM's or the designer's answer, an engineer's review, the right
+time to merge, or something else you say in words) can be parked with a reason: `adj task park --id … --reason
+pdm|design|review|merge-timing|other [--text …]`, or 置く in the task panel's タスクサマリ and next to a gate's
+answers (in the task panel and in 要対応), which opens one dialog for the reason and a text (required for その他).
+A parked task is always in 後で見る, whatever the read marks say, even when nothing else waits on it (a draft PR with no
+worker), and is never in 新着, so the sidebar badge does not count it. The row says 「置いている — PdM の確認待ち」 with
+the text and since when. A parked task's gates stay open and are answered as usual; the gate box and the 要対応 screen
+show a 「置いている — …」 line with 置くのをやめる, and its 要対応 row and 「いまの仕事」 gate line say it is parked.
+置くのをやめる (or `adj task unpark`) sends the row back to 新着 when it still has something open, and takes it out of
+both sections when nothing is left. A task that is done or cancelled is never parked: parking one is refused, and
+moving a task to done (a merged PR included) clears its park. A GitHub review request does not park anything. The
+page makes the same change with `POST /api/tasks/<id>` and `{"parked": {"reason": "pdm", "text": "…"}}` (`{"parked":
+null}` takes it back), and the hub runs the CLI verbs when you ask it to. The record keeps `parked`
+(`{reason, text?, since}`) and an older binary keeps the key. A park and its un-park that both happen while no tab of
+this browser is open are not seen, so the row does not come back to 新着 on its own.
 
 **The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
 another card shows that one instead. Its header has the task's key, the board it comes from, its

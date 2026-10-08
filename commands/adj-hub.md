@@ -924,6 +924,28 @@ adj hub --tab --hub '{parent key}'
   after being told to split; "When asked to split it").
 - If declined, handle the named task with 2 above as it is.
 
+### Parking a task on request
+
+When the person says a task is waiting on someone on purpose (the PdM's or the designer's answer, an
+engineer's review, the right time to merge), set it aside with its reason instead of leaving it to
+count as waiting on them:
+
+```bash
+adj task park --id {task_id} --reason {pdm|design|review|merge-timing|other}
+adj task park --id {task_id} --reason {reason} --text - < '{main}/.claude/task-park-{task_id}.md' \
+    && rm '{main}/.claude/task-park-{task_id}.md'
+adj task unpark --id {task_id}
+```
+
+- **The reasons are `pdm`, `design`, `review`, `merge-timing` and `other`.** `other` needs `--text`; any
+  reason may carry one. Free text goes on standard input (`--text -`, from a file written with a
+  file-writing tool; "Keep task text off the shell"), never onto the command line.
+- **Park only when asked**, and name the task by its id from `adj task list`. Never park on your own
+  initiative: a GitHub review request does not park a task by itself. A task that is done or
+  cancelled cannot be parked.
+- Take it back with `adj task unpark` when they say the wait is over. A parked task's gates stay open
+  and are answered as usual.
+
 ---
 
 ## Dashboard — listing and cleanup
@@ -2673,6 +2695,7 @@ as standard input to an option that accepts `-`. Remove the file once read:
 | A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
 | Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
 | A handover note put on a task's record | `adj task update --instruction -` | `{worktree}/.claude/task-handover.md` |
+| What a task is parked for, in words | `adj task park --text -` | `{main}/.claude/task-park-{task_id}.md` |
 | The instruction of a session with no task | `adj task brief --instruction -` | `{path}/.claude/session-instruction.md` |
 | The hub's tab title | `adjutant title --title -` | `{main}/.claude/tab-title-{hub name}.txt` |
 

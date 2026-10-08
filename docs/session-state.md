@@ -435,6 +435,12 @@ is listed so the ledger carries what it will need.
   PR turns into the person's (changes asked, CI failed, approved, closed). A phase, a tool, a
   sub-agent, a repeated prompt for the same wait or a PR turning to checks does not. A second permission prompt
   that arrives while the session is still `waiting` is not told apart: `updatedAt` does not move.
+  A parked task ([#555](https://github.com/syarihu/agent-adjutant/issues/555), `parked` on the record, read
+  through `Task::park`, which leaves out a blank reason and a finished task) is one more item that is always
+  in 後で見る and never in 新着, whatever the marks say. Taking the park off sends the row back to 新着 through
+  `back`: the mark gains `parked`, the start of the newest park this browser saw, and a row whose park is gone
+  while that is set (and `back` does not pass it) gets `back` once (`workParkPatches`). A park and an un-park
+  that both happen while no tab of this browser is open are never seen.
 - **Notifying a wait** (#524). A row that turns `waiting` is announced once, when it has stayed
   `waiting` for 5 seconds (`board/jobs/wait_watch.rs`, a job beside `sweep_gates` in the resident
   server and in a dedicated board). It reads `registry::waiting_agent_sessions` (every `waiting`

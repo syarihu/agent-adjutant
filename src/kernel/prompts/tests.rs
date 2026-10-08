@@ -1497,6 +1497,28 @@ fn the_hub_writes_the_brief_with_adj_task_brief() {
     );
 }
 
+/// The hub parks a task with `adj task park`, only when asked, and puts free text on stdin.
+#[test]
+fn the_hub_parks_a_task_with_adj_task_park_only_when_asked() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let parking: String = flow(&step(raw, "### Parking a task on request"));
+    for piece in [
+        "adj task park --id {task_id} --reason",
+        "adj task unpark --id {task_id}",
+        "--text -",
+        "Park only when asked",
+    ] {
+        assert!(
+            parking.contains(piece),
+            "the parking note lacks {piece}: {parking}"
+        );
+    }
+    // The ids are `task::PARK_REASONS`, which `kernel` cannot name.
+    for reason in ["pdm", "design", "review", "merge-timing", "other"] {
+        assert!(parking.contains(reason), "the parking note lacks {reason}");
+    }
+}
+
 /// A subtask the tracker calls finished has to reach "done", in the tracker's own words.
 ///
 /// "Closed subtasks" is GitHub's vocabulary: Jira has `statusCategory` and Linear has

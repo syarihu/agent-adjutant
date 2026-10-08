@@ -132,6 +132,9 @@ pub struct WorkTask {
     /// When the PR's turn last changed, UTC stamp; absent on a record that has not seen it change.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_turn_at: Option<String>,
+    /// Set aside on purpose; absent for a done or cancelled task and for a blank reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parked: Option<task::Park>,
 }
 
 /// What a carrier board says that the document is made of.
@@ -347,7 +350,8 @@ pub(super) fn repo_of(nwo: String, carried: Vec<Carried>) -> WorkRepo {
 }
 
 /// The open gates that wait on a person, grouped by the board and the task they name, and a turn
-/// for each task whose PR is the person's, each on the board that owns it. A gate that is only
+/// for each task whose PR is the person's or that is parked (so a parked task with nothing
+/// waiting and no session still has a row), each on the board that owns it. A gate that is only
 /// recorded for the board (`wait: false`) is not a turn.
 fn turns_of(carried: &[Carried]) -> Vec<WorkTurn> {
     let mut turns: Vec<WorkTurn> = Vec::new();
@@ -359,7 +363,9 @@ fn turns_of(carried: &[Carried]) -> Vec<WorkTurn> {
             .iter()
             .filter_map(|card| Some((card.owner_hub.as_ref()?.slug.as_str(), card)));
         for (board, card) in owned.chain(others) {
-            if card.waits_on_person && named.insert((board, card.task.id.as_str())) {
+            if (card.waits_on_person || card.task.park().is_some())
+                && named.insert((board, card.task.id.as_str()))
+            {
                 turns.push(WorkTurn {
                     board: board.to_string(),
                     task: Some(work_task(card)),
@@ -433,6 +439,7 @@ fn work_task(card: &TaskCard) -> WorkTask {
         waits_on_person: card.waits_on_person,
         gate_answered_at: card.task.gate_answered_at.clone(),
         pr_turn_at: card.task.pr_turn_at.clone(),
+        parked: card.task.park().cloned(),
     }
 }
 

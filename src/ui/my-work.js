@@ -37,6 +37,7 @@ const WORK_GLYPH = {
   stopped: ['warning', '停止'],
   idle: ['pause_circle', '待機中（出力なし）'],
   seen: ['check_circle', '確認済み'],
+  parked: ['schedule', '置いている'],
 };
 const WORK_SUBAGENTS_SHOWN = 4;
 
@@ -210,9 +211,10 @@ function workTurnRow(e, judged, repo) {
   const board = workBoardOf(repo, e.board);
   const ref = board !== e.board && e.session ? SESS_REF + e.session.id : e.ref;
   const gate = e.items.some(i => i.kind === 'gate');
+  const parkedOnly = !gate && e.items.every(i => i.kind === 'parked');
   return {
     id: e.id, key: `${board}/${ref}`, raw: `${repo.nwo}/${e.board}`, board, ref, repo, nwo: repo.nwo,
-    s: {}, st: gate ? 'waiting' : 'done', data: { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] },
+    s: {}, st: gate ? 'waiting' : parkedOnly ? 'parked' : 'done', data: { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] },
     task: e.task, isHub: e.isHub, turn: true, entry: e, cls: judged.cls, live: judged.live,
   };
 }
@@ -299,10 +301,12 @@ const workOwnerOf = nwo => (nwo || '').split('/')[0] || nwo;
 /* A row's place among the others in its group: what waits on the person first, the longest waiting first. */
 function workRowOrder(a, b) {
   const wait = r => r.s.waiting ? stampSecs(r.s.waiting.openedAt) || 0 : r.s.agentSession?.updatedAt || 0;
-  return STATE_ORDER[a.st] - STATE_ORDER[b.st]
+  return workStateOrder(a.st) - workStateOrder(b.st)
     || (WORKS_ON_PERSON(a) ? wait(a) - wait(b) : 0)
     || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 }
+/* A row that is parked sorts with the ones that are only waiting to be looked at. */
+const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
 /* The list as a tree: repository → [hub] → parent issue → task, with the rows that belong to none under
@@ -430,6 +434,7 @@ async function refreshWork(force = false) {
     const failed = work.error != null;
     work.error = null;
     work.doc = doc;
+    workTrackParks();
     // The sidebar counts what is new on every view; the list is drawn on its own.
     renderWorkBadge();
     if (view !== 'work') return;
@@ -499,7 +504,7 @@ function workRowHtml(r, cell = '', band = false) {
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
-  const gate = s.waiting ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(s.waiting.kind)[0])} · あなたの判定待ち</span>` : '';
+  const gate = s.waiting ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(s.waiting.kind)[0])} · ${esc(workGateWho(task))}</span>` : '';
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
     ${workGlyphHtml(st)}<span class="wk-main">
       ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
@@ -514,8 +519,13 @@ const workSaidHtml = message => {
   return line ? `<span class="wk-line msg">${esc(line)}</span>` : '';
 };
 
-/* What is still open on a row the person has already looked at. */
-const workLaterHtml = r => `<span class="wk-line later">${esc(workLaterText(r.live || []))}</span>`;
+/* What is still open on a row the person has already looked at. A parked row says since when. */
+function workLaterHtml(r) {
+  return `<span class="wk-line later">${esc(workLaterText(r.live || [], r.data?.now ?? null))}</span>`;
+}
+
+/* The words after a gate's kind on a row: whose turn it is, or that it is parked (the gate stays open and answerable). */
+const workGateWho = task => parkOf(task) ? `置いている — ${parkLabel(parkOf(task))}` : 'あなたの判定待ち';
 
 /* A row for something that waits on the person and has no session row of its own: a task whose PR is theirs, or whose gate
    opened with nothing running, or a session the list does not show. */
@@ -528,10 +538,11 @@ function workTurnRowHtml(r, cell = '', band = false) {
   const meta = [prNumber ? `#${esc(prNumber)}` : '', age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('');
   const gate = r.live.find(i => i.kind === 'gate');
   const pr = r.live.find(i => i.kind === 'pr');
-  const lines = (gate ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(gate.gate)[0])} · あなたの判定待ち</span>` : '')
+  const lines = (gate ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(gate.gate)[0])} · ${esc(workGateWho(r.task))}</span>` : '')
     + (pr ? `<span class="wk-line ask">${esc(WORK_PR_NOW[pr.turn] || 'PR があなたの番です')}</span>` : '');
-  return `<button type="button" class="wk-row waiting" data-wk="${esc(r.key)}"${cell}>
-    ${workGlyphHtml('waiting')}<span class="wk-main">
+  const st = r.st === 'parked' ? 'parked' : 'waiting';
+  return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell}>
+    ${workGlyphHtml(st)}<span class="wk-main">
       <span class="wk-title">${r.isHub ? '<span class="wk-tag">hub</span>' : ''}${esc(title)}</span>
       ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${lines}${band && r.cls === 'later' ? workLaterHtml(r) : ''}
     </span></button>`;
@@ -546,7 +557,10 @@ function workItemHtml(r, place) {
   if (!band) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
   const clearable = (r.live || []).some(i => WORK_CLEARABLE.includes(i.kind));
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
-  const acts = (place === 'later' ? act('data-wk-back', 'mark_email_unread', '新着に戻す') : '') + (clearable ? act('data-wk-clear', 'check', '片付けた') : '');
+  // A parked row comes back by taking the park off, which the document then shows; there is no mark to send it back by.
+  const parked = !!parkOf(r.task);
+  const back = !parked ? act('data-wk-back', 'mark_email_unread', '新着に戻す') : workParkable(r) ? act('data-wk-unpark', 'alarm_off', '置くのをやめる') : '';
+  const acts = (place === 'later' ? back : '') + (clearable ? act('data-wk-clear', 'check', '片付けた') : '');
   return `<div class="wk-band-row"${cell}>${r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', true)}${acts ? `<span class="wk-acts">${acts}</span>` : ''}</div>`;
 }
 
@@ -554,7 +568,7 @@ function workItemHtml(r, place) {
 function workSummaryHtml(rows) {
   const counts = new Map();
   for (const r of rows) counts.set(r.st, (counts.get(r.st) || 0) + 1);
-  return `<span class="wk-sum">${[...counts].sort((a, b) => STATE_ORDER[a[0]] - STATE_ORDER[b[0]])
+  return `<span class="wk-sum">${[...counts].sort((a, b) => workStateOrder(a[0]) - workStateOrder(b[0]))
     .map(([st, n]) => `<span>${workGlyphHtml(st)}${n}</span>`).join('')}</span>`;
 }
 
@@ -612,6 +626,7 @@ function workShape(items, folded) {
 /* How to find again what has the keyboard focus in the list: a row, a fold button or a parent's header. */
 const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.dataset.wk)}"]`
   : el?.dataset?.wkBack != null ? `[data-wk-back="${CSS.escape(el.dataset.wkBack)}"]`
+  : el?.dataset?.wkUnpark != null ? `[data-wk-unpark="${CSS.escape(el.dataset.wkUnpark)}"]`
   : el?.dataset?.wkClear != null ? `[data-wk-clear="${CSS.escape(el.dataset.wkClear)}"]`
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
@@ -857,15 +872,41 @@ function workReadAll() {
 function workMarkRow(id, patch) {
   const e = work.entries.get(id);
   if (!e) return;
-  // Sent back while open: leaving it later must not read it again.
-  if (patch.back != null && work.open?.id === id) { work.backed = work.open.nav; work.open = null; }
+  if (patch.back != null) workKeepBack(id);
   workWriteMarks(e.nwo, [[id, patch]]);
 }
+
+/* Sent back while open: leaving it later must not read it again. */
+function workKeepBack(id) {
+  if (work.open?.id === id) { work.backed = work.open.nav; work.open = null; }
+}
+
+/* The parks and un-parks this document shows that the marks have not seen (`workParkPatches`), written once per repository. A
+   row whose park is taken off while it is open stays in 新着 after it is left, as one sent back by hand does. */
+function workTrackParks() {
+  const entries = workEntries(work.doc, key => reviewDone.has(key));
+  const now = workServerNow();
+  for (const repo of workRepos()) {
+    if (repo.error) continue;
+    const mine = entries.filter(e => e.nwo === repo.nwo);
+    const patches = workParkPatches(mine, workMarks(repo.nwo), now);
+    if (!patches.length) continue;
+    for (const [id, patch] of patches) if (patch.back != null) workKeepBack(id);
+    workWriteMarks(repo.nwo, patches);
+  }
+}
+
+/* Whether a row's park can be taken off from here: the board the task is on is served, not only the carrier that lists it. */
+const workParkable = r => !!r.task && !!r.entry && workBoardOf(r.repo, r.entry.board) === r.entry.board;
 
 wk('work-view').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
   if ((b = e.target.closest('[data-wk-back]'))) return workMarkRow(b.dataset.wkBack, { back: workServerNow() });
+  if ((b = e.target.closest('[data-wk-unpark]'))) {
+    const e = work.entries.get(b.dataset.wkUnpark);
+    return e?.task && setPark(e.task, `/b/${e.board}`, null);
+  }
   if ((b = e.target.closest('[data-wk-clear]'))) return workMarkRow(b.dataset.wkClear, { cleared: workServerNow() });
   if ((b = e.target.closest('[data-wk-fold]'))) {
     const at = prefs.workFolded.indexOf(b.dataset.wkFold);

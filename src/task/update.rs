@@ -70,6 +70,40 @@ pub fn update_checked(
         task.pr_status = None;
         task.pr_turn_at = None;
     }
+    // A park is a person's call about a task still in play: a finished one is refused, and one
+    // that becomes finished here loses it (as a merged PR's does in `refresh`).
+    match &patch.parked {
+        Some(Some(_)) if matches!(task.status, Status::Done | Status::Cancelled) => {
+            return Err("a finished task cannot be parked".to_string());
+        }
+        Some(Some(request)) => {
+            // As `check_park` read them: a direct caller's " pdm" is stored as "pdm".
+            let reason = request.reason.trim().to_string();
+            let text = request
+                .text
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string);
+            let same = task
+                .parked
+                .as_ref()
+                .is_some_and(|p| p.reason == reason && p.text == text && !p.since.is_empty());
+            if !same {
+                task.parked = Some(Park {
+                    reason,
+                    text,
+                    since: store::stamp(),
+                    extra: Default::default(),
+                });
+            }
+        }
+        Some(None) => task.parked = None,
+        None => {}
+    }
+    if matches!(task.status, Status::Done | Status::Cancelled) {
+        task.parked = None;
+    }
     // Only a worktree given in this update: one already stored was resolved when it was
     // given, against the directory of the command that gave it, and re-resolving it here
     // would read it against wherever this update happens to be run from.

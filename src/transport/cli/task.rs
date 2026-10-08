@@ -9,8 +9,8 @@
 use serde_json::json;
 
 use super::args::{
-    TaskAddArgs, TaskBriefArgs, TaskFetchIssueArgs, TaskListArgs, TaskNextArgs, TaskRefreshArgs,
-    TaskShowArgs, TaskUpdateArgs,
+    TaskAddArgs, TaskBriefArgs, TaskFetchIssueArgs, TaskListArgs, TaskNextArgs, TaskParkArgs,
+    TaskRefreshArgs, TaskShowArgs, TaskUnparkArgs, TaskUpdateArgs,
 };
 use crate::mail::{DeliveryOutcome, Reached};
 use crate::registry::Context;
@@ -131,6 +131,7 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
         jules_by: None,
         note: text(note.as_deref()),
         instruction: text(instruction.as_deref()),
+        parked: None,
     };
     // Read without the lock and `.ok()`: a failed or raced read can only cost one extra fetch
     // attempt, since `needs_snapshot` still guards it.
@@ -150,6 +151,50 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
     }
     println!("{} — {} ({})", task.id, task.title, task.status.as_str());
     say_where_it_went(&ctx, &task, &handed);
+    Ok(())
+}
+
+/// `adj task park`: set a task aside on purpose, with the reason. A reason or a text that
+/// `check_park` refuses leaves the record as it was.
+pub fn park_cmd(args: &TaskParkArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    // `--text -` reads stdin: the text is often what a person said, and does not belong inside
+    // quotes on a command line.
+    let text = args.text.as_deref().map(super::dash_is_stdin).transpose()?;
+    let patch = task::TaskPatch {
+        parked: Some(Some(task::ParkRequest {
+            reason: args.reason.trim().to_string(),
+            text: text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+        })),
+        ..task::TaskPatch::default()
+    };
+    let (task, _) = update(&ctx, &args.id, &patch, false)?;
+    if args.json {
+        println!("{}", json!({ "task": task }));
+        return Ok(());
+    }
+    println!(
+        "{} — {} (parked: {})",
+        task.id,
+        task.title,
+        task.parked.as_ref().map_or("", |p| p.reason.as_str())
+    );
+    Ok(())
+}
+
+/// `adj task unpark`: take the park back. A task that is not parked is left as it is.
+pub fn unpark_cmd(args: &TaskUnparkArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let patch = task::TaskPatch {
+        parked: Some(None),
+        ..task::TaskPatch::default()
+    };
+    let (task, _) = update(&ctx, &args.id, &patch, false)?;
+    if args.json {
+        println!("{}", json!({ "task": task }));
+        return Ok(());
+    }
+    println!("{} — {} (not parked)", task.id, task.title);
     Ok(())
 }
 

@@ -15,6 +15,25 @@ const roundsHintHtml = g => (g.rounds || 0) >= 2 ? `<div class="hint-bar" style=
   <span>ここまで ${g.rounds} 往復しています。<b>ターミナルで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</span>
 </div>` : '';
 
+/* The attributes that say which task a park button is for (`parkClick`, actions.js). */
+const parkAttrs = (t, off) => `data-park-task="${esc(t.id)}" data-park-board="${esc(t._slug || '')}"${off ? ' data-park-off' : ''}`;
+/* The button next to a gate's answers that parks the task the gate names, or takes the park back: not drawn for a gate whose task
+   this page does not have, nor for a finished task. The gate stays open and is answered as usual. */
+function parkButtonHtml(g) {
+  const t = taskOfGate(g);
+  if (!t || ['done', 'cancelled'].includes(t.status)) return '';
+  return parkOf(t)
+    ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, true)}><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">alarm_off</span><span>置くのをやめる</span></button>`
+    : `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の後で見るに置く"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">schedule</span><span>置く</span></button>`;
+}
+/* 「置いている — PdM の確認待ち（…） · 4分前から」 with the way to take it back, above a gate that stays open. */
+function parkBannerHtml(task) {
+  const p = parkOf(task);
+  if (!p) return '';
+  const since = stampSecs(p.since) != null ? ` · ${esc(ago(p.since))}から` : '';
+  return `<div class="park-banner" role="status"><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span class="park-banner-text">置いている — ${esc(parkText(p))}${since}</span><button type="button" class="btn-m3-text" ${parkAttrs(task, true)}>置くのをやめる</button></div>`;
+}
+
 /* The part of a gate a person acts on: the send-back form for a record, the decision for a
    gate that waits. */
 function decideHtml(g) {
@@ -71,6 +90,7 @@ function decideHtml(g) {
           <span>IDEで開く</span>
         </button>
       ` : ''}
+      ${parkButtonHtml(g)}
       <button class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">
         <span class="material-symbols-outlined" style="font-size:16px;">done_all</span>
         <span>解決済みとして閉じる</span>

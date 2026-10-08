@@ -15,3 +15,9 @@
 .checklist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
 .checklist li { display:flex; align-items:flex-start; gap:8px; font-size:13px; }
 .checklist li input[type="checkbox"] { margin-top:3px; cursor:pointer; }
+
+/* A task set aside on purpose (#555): the line above a gate that stays open, and the dialog's legend. */
+.park-banner { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px; border-radius: var(--md-shape-corner-sm); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); font-size: 12px; font-weight: 700; }
+.park-banner .material-symbols-outlined { font-size: 16px; color: var(--md-sys-color-on-surface-variant); }
+.park-banner-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.park-reasons legend { color: var(--md-sys-color-on-surface-variant); font-size: 12px; font-weight: 600; margin-bottom: 6px; }

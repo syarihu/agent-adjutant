@@ -330,6 +330,56 @@ fn a_task_whose_pr_waits_on_the_person_is_a_turn_even_with_no_session_or_gate() 
     assert!(json["turns"][0]["task"].get("prTurnAt").is_none());
 }
 
+fn parked(card: &mut TaskCard, reason: &str) {
+    card.task.parked = Some(task::Park {
+        reason: reason.to_string(),
+        text: Some("資料待ち".to_string()),
+        since: "20261002T000000Z".to_string(),
+        extra: serde_json::Map::new(),
+    });
+}
+
+#[test]
+fn a_parked_task_with_nothing_waiting_is_a_turn_and_carries_its_park_and_a_done_one_does_not() {
+    let mut c = carried(REPO);
+    let mut waiting = card("1", "Parked");
+    parked(&mut waiting, "pdm");
+    let mut finished = card("2", "Finished");
+    parked(&mut finished, "pdm");
+    finished.task.status = task::Status::Done;
+    let mut blank = card("3", "Blank");
+    parked(&mut blank, " ");
+    c.tasks = vec![waiting, finished, blank, card("4", "Plain")];
+    let repo = repo_of("acme/widget".to_string(), vec![c]);
+    let titles: Vec<&str> = repo
+        .turns
+        .iter()
+        .map(|t| t.task.as_ref().unwrap().title.as_str())
+        .collect();
+    assert_eq!(titles, ["Parked"]);
+    assert!(repo.turns[0].gates.is_empty());
+    let json = serde_json::to_value(&repo).unwrap();
+    assert_eq!(json["turns"][0]["task"]["parked"]["reason"], "pdm");
+    assert_eq!(json["turns"][0]["task"]["parked"]["text"], "資料待ち");
+    assert_eq!(
+        json["turns"][0]["task"]["parked"]["since"],
+        "20261002T000000Z"
+    );
+}
+
+#[test]
+fn a_gate_of_a_parked_task_stays_in_that_tasks_turn() {
+    let mut c = carried(REPO);
+    let mut task_card = card("1", "Parked");
+    parked(&mut task_card, "review");
+    c.tasks = vec![task_card];
+    c.gates = vec![gate_card("g1", Some("1"), true)];
+    let repo = repo_of("acme/widget".to_string(), vec![c]);
+    assert_eq!(repo.turns.len(), 1);
+    assert_eq!(repo.turns[0].gates.len(), 1);
+    assert!(repo.turns[0].task.as_ref().unwrap().parked.is_some());
+}
+
 #[test]
 fn a_gate_of_a_parent_task_hub_is_a_turn_of_that_hubs_board_and_task() {
     let mut c = carried(REPO);

@@ -838,6 +838,82 @@ document.querySelector('#form form').addEventListener('submit', submitForm);
 for (const r of document.querySelectorAll('#form input[name=kind]')) r.addEventListener('change', syncForm);
 for (const ev of ['input', 'change']) document.querySelector('#f-issue input[name=issueUrl]').addEventListener(ev, syncForm);
 
+/* ── Parking a task: setting it aside on purpose, with the reason ── */
+
+const parking = new Set();   // `<base>/<task id>` with a request in flight: a second click must not send it again
+/* The one dialog both entry points open (the task summary and the decision dock), so a redraw of the
+   page never throws away what was typed. `opening` tells an answer whether its dialog is still the same one. */
+const parkDlg = { task: null, base: '', opening: 0 };
+const parkEl = id => document.getElementById(id);
+
+/* Park `task` with `parked` ({ reason, text? }), or take the park back with `null`. Resolves to '' when it went through, else why
+   not (already logged); a caller with a box of its own shows it there. */
+async function setPark(task, base, parked) {
+  const key = `${base}/${task.id}`;
+  if (parking.has(key)) return '要求を送っています';
+  parking.add(key);
+  const line = parked ? `adj task park --id ${task.id} --reason ${parked.reason}` : `adj task unpark --id ${task.id}`;
+  try {
+    await boardApi(base, `/api/tasks/${encodeURIComponent(task.id)}`, { method: 'POST', body: JSON.stringify({ parked }) });
+    note(line, false, parked ? '置きました' : '置くのをやめました');
+    await refresh(true);
+    if (multiBoard) refreshWork(true);
+    return '';
+  } catch (err) {
+    note(`${line} → ${err.message}`, true);
+    return err.message;
+  } finally {
+    parking.delete(key);
+  }
+}
+
+function openParkDialog(task, base) {
+  parkDlg.task = task;
+  parkDlg.base = base;
+  parkDlg.opening++;
+  const now = parkOf(task);
+  parkEl('park-title').textContent = `置く — ${task.title}`;
+  parkEl('park-reasons').innerHTML = Object.entries(PARK_REASON_LABEL).map(([id, label], i) =>
+    `<label><input type="radio" name="park-reason" value="${esc(id)}"${(now ? now.reason === id : i === 0) ? ' checked' : ''}>${esc(label)}</label>`).join('');
+  parkEl('park-text').value = now?.text || '';
+  parkEl('park-submit').disabled = false;
+  showDlgError('park-error', '');
+  parkEl('park-dialog').showModal();
+  setTimeout(() => parkEl('park-reasons').querySelector('input:checked')?.focus(), 50);
+}
+
+async function submitPark(e) {
+  e.preventDefault();
+  const { task, base } = parkDlg;
+  if (!task || parking.has(`${base}/${task.id}`)) return;
+  const reason = parkEl('park-reasons').querySelector('input:checked')?.value;
+  const text = parkEl('park-text').value.trim();
+  if (!reason) return showDlgError('park-error', '待っている相手を選んでください');
+  if (reason === 'other' && !text) return showDlgError('park-error', '「その他」は何を待っているか書いてください');
+  const opening = parkDlg.opening;
+  parkEl('park-submit').disabled = true;
+  showDlgError('park-error', '');
+  const why = await setPark(task, base, { reason, ...(text ? { text } : {}) });
+  if (opening !== parkDlg.opening) return;
+  parkEl('park-submit').disabled = false;
+  // A failure keeps the dialog and what was typed in it.
+  if (why) showDlgError('park-error', why); else closeDialogById('park-dialog');
+}
+parkEl('park-form').addEventListener('submit', submitPark);
+// Enter that confirms IME text must not submit.
+parkEl('park-text').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.isComposing || e.keyCode === 229)) e.preventDefault(); });
+
+/* A click on a park button (`data-park-task`, and `data-park-off` to take the park back), wherever it is drawn: true when it was one.
+   The task is found among the board's own, on the board the button names when the page holds several. */
+function parkClick(e) {
+  const b = e.target.closest('[data-park-task]');
+  if (!b) return false;
+  const task = (state.tasks || []).find(t => t.id === b.dataset.parkTask && (!b.dataset.parkBoard || t._slug === b.dataset.parkBoard));
+  if (!task) return true;
+  if ('parkOff' in b.dataset) setPark(task, baseOf(task), null); else openParkDialog(task, baseOf(task));
+  return true;
+}
+
 function note(line, isError, why) {
   log.unshift({ line, isError, why });
   log = log.slice(0, 5);

@@ -617,6 +617,30 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
             "HUMAN_COLUMNS has no column {name}"
         );
     }
+    let park_labels = page_table("const PARK_REASON_LABEL = {", "};");
+    for reason in crate::task::PARK_REASONS {
+        assert!(
+            has_key(park_labels, reason),
+            "PARK_REASON_LABEL has no park reason {reason}"
+        );
+    }
+}
+
+#[test]
+fn the_page_parks_a_task_from_one_dialog_and_wires_it_without_inline_handlers() {
+    for piece in [
+        "id=\"park-dialog\"",
+        "aria-labelledby=\"park-title\"",
+        "data-park-task=",
+        "data-park-off",
+        "data-wk-unpark",
+        "置くのをやめる",
+        "function setPark",
+        "function parkClick",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    assert!(!UI_HTML.contains("onclick=\"openParkDialog"));
 }
 
 #[test]

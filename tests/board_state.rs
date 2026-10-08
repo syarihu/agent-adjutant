@@ -1273,3 +1273,86 @@ fn a_tasks_parent_is_set_cleared_and_checked_through_the_board() {
         .collect();
     assert_eq!(listed, ["WID-1", "WID-2", "WID-9"]);
 }
+
+fn task_json(fixture: &Fixture, resident: &Resident, id: &str) -> Value {
+    let state = read(fixture, resident, &state_path(), "sessions=0");
+    state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+fn parked_turn_of(fixture: &Fixture, resident: &Resident, id: &str) -> Option<Value> {
+    // The resident keeps the work document for 1500 ms.
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    let work = read(fixture, resident, "/api/work", "");
+    work["repos"][0]["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["task"]["id"] == id && t["task"].get("parked").is_some())
+        .cloned()
+}
+
+#[test]
+fn a_task_is_parked_and_unparked_through_the_board_and_a_bad_park_writes_nothing() {
+    let (fixture, resident) = board();
+    let url = format!("/b/{SLUG}/api/tasks/WID-2");
+    assert!(
+        task_json(&fixture, &resident, "WID-2")
+            .get("parked")
+            .is_none()
+    );
+    assert!(parked_turn_of(&fixture, &resident, "WID-2").is_none());
+
+    let (status, body) = resident.post(
+        &url,
+        &json!({"parked": {"reason": "pdm", "text": "資料待ち"}}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let parked = task_json(&fixture, &resident, "WID-2")["parked"].clone();
+    assert_eq!(parked["reason"], "pdm");
+    assert_eq!(parked["text"], "資料待ち");
+    assert!(
+        parked["since"].as_str().is_some_and(|s| s.ends_with('Z')),
+        "{parked}"
+    );
+    // The work list carries it, as a turn of its own.
+    let turn = parked_turn_of(&fixture, &resident, "WID-2").expect("a parked task is a turn");
+    assert_eq!(turn["task"]["parked"]["reason"], "pdm");
+
+    // A reason that is not one, and `other` with no text, are refused and the park stays.
+    for bad in [
+        json!({"parked": {"reason": "nope"}}),
+        json!({"parked": {"reason": "other"}}),
+        json!({"parked": "pdm"}),
+    ] {
+        let (status, body) = resident.post(&url, &bad.to_string());
+        assert_eq!(status, 400, "{bad}: {body}");
+    }
+    assert_eq!(task_json(&fixture, &resident, "WID-2")["parked"], parked);
+
+    let (status, body) = resident.post(&url, &json!({"parked": null}).to_string());
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        task_json(&fixture, &resident, "WID-2")
+            .get("parked")
+            .is_none()
+    );
+    assert!(parked_turn_of(&fixture, &resident, "WID-2").is_none());
+
+    // A finished task (WID-3) cannot be parked.
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/tasks/WID-3"),
+        &json!({"parked": {"reason": "pdm"}}).to_string(),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        task_json(&fixture, &resident, "WID-3")
+            .get("parked")
+            .is_none()
+    );
+}
