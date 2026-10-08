@@ -137,7 +137,7 @@ pub struct SessionBrief {
 
 /// What the Language line means to the worker. The worker's own default for `-` is spelled out
 /// because an unfilled line is otherwise read as "no rule".
-const LANGUAGE_GLOSS: &str = "(the language of everything you write for the person: gates and their titles, questions, the plan, self-review and verification notes, card notes and your reports. Commit messages, PR bodies, issues and code follow the repository's conventions. `-`: the language the person uses with you, or the one your agent is set to)";
+const LANGUAGE_GLOSS: &str = "(the language of everything you write for the person: gates and their titles, questions, the plan, self-review and verification notes, card notes and your reports. Commit messages, PR bodies, issues and code follow the repository's conventions. `-`: the language the task is written in, else the language the person uses with you or the one your agent is set to)";
 
 const OPENING: &str = "You are the one working in this worktree. You are not the hub (the side that hands tasks out).\n\n";
 

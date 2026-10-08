@@ -15,10 +15,16 @@ in this procedure says what to tell them, not the words to use.
 
 **The person's language** is `adjutant_config`'s `settings.language` when it is set, otherwise the
 language the person uses with you (or your agent's). Write in it everything the board shows a
-person: the task summary (`adj task add --body`) and the title of a task that has no issue, notes
-(`--note`), the gates you open (dispatch, relay, Jules plan) and your `adjutant_tell` replies. An
-issue's own title and body stay as written. Issues you file and anything that goes into the
-repository follow its conventions.
+person or you send one: the task summary (`adj task add --body`) and the title of a task that has no
+issue, notes (`--note`), the gates you open (dispatch, relay, Jules plan) and your `adjutant_tell`
+replies. An issue's own title and body stay as written. Issues you file and anything that goes into
+the repository follow its conventions.
+
+**Markers that code or a procedure matches stay as written**, in English, and the text around them
+is in the person's language: the note's leading `Could not start:` (`adj task next` skips such a
+task) and `(resume with --resume)` (the hub looks for it), and the tag that opens a message's
+`subject` (`[question {id}]`, `[ack]`, `[gate]`, `[linked {id}]`, `[issue {id}]`), which decides
+whether the receiver is woken.
 
 ## Starting (for the user)
 
@@ -1478,7 +1484,7 @@ comes from:
   from `defaults` and `repos.<repo>`. Do not resolve them again yourself. After opening the PR, the
   worker decides by the Copilot review line whether to ask Copilot for a review, and whether to ask the
   user first.
-- **Language**: the config's `language`. When `settings.language` is null, pass
+- **Language**: the config's `language`. When `settings.language` is not set, pass
   `--language '{language}'` with the language the person uses with you, as one word (a language name
   or tag); when you do not know it, pass nothing and the brief writes `-`.
 - **Workspace**: the branch the worktree is on.
@@ -1538,8 +1544,9 @@ adjutant work --worktree '{worktree}' --task {task_id}
   name. The title is text from an issue or a report; write `--title '…'` and a `'` closes the quote
   and what follows runs as shell. The id is a value this tool assigned, so write it as it is.
 - **If it fails with an exit code other than 3**, put it back to queued and write "Could not start:
-  {reason}" in the note. The reason often quotes the error message, so it does not go on the command
-  line either — as "Keep task text off the shell" says, write it to a file and read it with
+  {reason}" in the note (the leading `Could not start:` stays in English, because `adj task next`
+  matches it; the reason is in the person's language). The reason often quotes the error message,
+  so it does not go on the command line either — as "Keep task text off the shell" says, write it to a file and read it with
   `--note -`:
 
   ```bash
@@ -1583,6 +1590,8 @@ adjutant work --worktree '{worktree}' --task {task_id}
   resume. The record should be `dispatched` or `pr`, so put the status back to queued too —
   otherwise the side that takes from the queue does not pick it up:
   `adj task update --id {task_id} --status queued --no-hand-over --note 'Waiting for a worker slot (resume with --resume)'`
+  (the note is in the person's language, but `(resume with --resume)` stays as written: the hub
+  looks for it)
   (if there is no record, create one with `--waiting-in` first).
   When resuming, also write the status **before starting it**. Instead of `dispatched` above, **if
   the record has a `pr`, `--status pr`**, and otherwise `--status dispatched` (with `--note ''`
@@ -2021,6 +2030,9 @@ worker's `report`; only the two ends differ.**
   }
   ```
 
+  The strings shown are in English only because this file is: write `title`, `focus`, `decided` and
+  any labels in the person's language, and keep the choice `id`s as they are.
+
   ```bash
   adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'
   ```
@@ -2046,7 +2058,8 @@ worker's `report`; only the two ends differ.**
   ```
 
   "Could not start: {reason}", for when it could not be started, is written to a file and read in, as
-  in Step 3.
+  in Step 3. Keep `Could not start:` in English (`adj task next` matches it); the reason is in the
+  person's language.
 
   The value of the `## task` line is `{task_id}`. **Drop it and, to the person who handed it over, it
   only looks as if "I put it on the board and nothing happens".**
@@ -2334,6 +2347,9 @@ heredoc):
   "unsure": "Ones that were hard to decide (leave out if none)"
 }
 ```
+
+The strings shown are in English only because this file is: write `title`, `focus`, `decided`,
+`unsure` and any labels in the person's language, and keep the choice `id`s as they are.
 
 ```bash
 adj gate open --file '{main}/.claude/gate-relay-{task}.json' --json && rm '{main}/.claude/gate-relay-{task}.json'
@@ -2811,7 +2827,8 @@ Write two files, with a file-writing tool (not a heredoc: they carry text taken 
    - **Commit / PR** — the commit message convention (match the repository's recent commits). For
      the PR body, only "summarise the change briefly"; it is rewritten later.
 2. `{worktree}/.claude/jules-gate.json` — the plan gate's payload, in the language on the Language line
-   (if `-`, the language the task is written in), without a body (the plan file becomes the body):
+   (if `-`, the language the task is written in, else the person's), without a body (the plan
+   file becomes the body):
 
    {
      "kind": "plan",

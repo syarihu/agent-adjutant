@@ -13,9 +13,9 @@ Talk to the user in the language they use with you (or the one your agent is set
 write that the board shows a person** (gates and their titles, questions, the plan, self-review and
 verification notes, card notes, the final report you give at this tab) **is in the language the
 brief's "Language" line names**; when that line is `-` (or a brief has none), it is the language
-above. Text from the tracker is quoted as it is. Commit messages, PR bodies, issues and code follow the repository's
-conventions, not this line. A quoted line in this procedure says what to tell them, not the words to
-use.
+the task is written in, else the language above. Text from the tracker is quoted as it is. Commit
+messages, PR bodies, issues and code follow the repository's conventions, not this line. A quoted
+line in this procedure says what to tell them, not the words to use.
 
 ## Where you stand
 
@@ -547,8 +547,9 @@ JSON
   report).
 - `plan` has `problem` and `goal` (step 3 of §1).
 - **Do not skimp on `title` and `focus`.** On the board they are all that gets read.
-- Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `facts`, the choices and `body` in
-  the brief's "Language"; the examples here are in English only because this file is.
+- Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `facts`, the choices' `label`,
+  `why` and `points` (not `id`, which you branch on) and `body` in the brief's "Language"; the
+  examples here are in English only because this file is.
 
 `diff` and `verify` carry structured fields apart from the text slots. The board builds its tables
 from them. To keep it as a record, `"wait": false`; to wait, put the rules that stopped it in
@@ -740,6 +741,8 @@ Run round 1 first, show the results in order of severity (High → Medium → Lo
   `title: "Self-review: continue until convergence?"`,
   `focus: "Self-review round 1 found must-level issues. Should I continue reviewing and fixing until convergence?"`,
   `choices`: `[{"id": "continue", "label": "Keep going", "recommended": true}, {"id": "once", "label": "Fix once"}, {"id": "skip", "label": "Do not fix"}]`.
+  These strings are in English only because this file is: write `title`, `focus` and the labels in
+  the brief's "Language", and keep the choice `id`s as they are.
   - **Keep going (Recommended)** (choice: `continue`) → from then on, run to convergence **without asking each round**.
   - **Fix once** (choice: `once`) → fix once, re-review once, and stop.
   - **Do not fix** (choice: `skip`) → skip and move on.
