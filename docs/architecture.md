@@ -120,37 +120,45 @@ fixtures.
    `gate/answer.rs`). Shared helpers go in `model.rs` (pure), `store.rs` (disk) or the owning
    operation as `pub(super)`. Files that are not operations are named after what they hold
    (`registry/context.rs`, `board/view/columns.rs`). Checked by `check-layering.sh` only for the
-   names `usecase.rs`, `util.rs` and `common.rs`; the rest is convention.
+   names `usecase.rs`, `util.rs` and `common.rs`; the rest is by review
+   ([review-checklist.md](review-checklist.md)).
 3. Private store. `mod store;` is private in `registry`, `mail`, `task` and `gate`, and no other
    module builds those paths or takes those locks. The exception is
    `#[cfg(test)] pub(crate) use store::...` for fixtures in other modules' tests. Checked by the
-   compiler; no script checks that a module keeps it private. One known exception: the board's
+   compiler; no script checks that a module keeps it private, and that no other module builds the
+   paths is by review ([review-checklist.md](review-checklist.md)). One known exception: the board's
    session clean-up (`board/session/clean_up.rs`) moves `.claude/adjutant-*` and `task-brief.md`
    out of a worktree by name when git will not remove it, and `kernel::worktree_state` leaves the
    same names out of a worktree's git state; these names are fixed (rule 10).
 4. Reads as operations. Reads take a state root and a hub slug so the board can read every hub:
    `task::list(root, slug)`, `gate::list(root, slug, shelf)`, `mail::pending(root, slug)`,
-   `registry::hub_status(root, slug, hub_name)`. Writes take a `Context`. Convention, no check.
+   `registry::hub_status(root, slug, hub_name)`. Writes take a `Context`. Convention, checked by
+   review ([review-checklist.md](review-checklist.md)).
 5. Typed outcomes, worded by the transport. Operations return values (`DeliveryOutcome`,
    `Reached`, `HubStart`, `TabOutcome`), never text for stdout. CLI and MCP texts differ on
-   purpose; shared words live in `transport::wording`. Convention, no check.
+   purpose; shared words live in `transport::wording`. Convention, checked by review
+   ([review-checklist.md](review-checklist.md)).
 6. Undo through reverse operations. An operation that writes to several modules takes a failed step
    back with the other modules' own operations, latest first, never by touching their stores.
-   `lifecycle::worker::undo` calls `task::remove` and `task::update`. Convention, and that
-   module's tests.
+   `lifecycle::worker::undo` calls `task::remove` and `task::update`. Convention, checked by review
+   ([review-checklist.md](review-checklist.md)) and that module's tests.
 7. No traits for stores. Stores are built from the state dir in `Context`. Code that runs
    processes has a `_with` variant that takes the runner for tests (`hub_status_with`,
    `worker_liveness_with`, `list_tmux_panes_with`, ...); they take the process table or the runner
-   as an argument. Convention, no check.
+   as an argument. Convention, checked by review ([review-checklist.md](review-checklist.md)).
 8. `infra` is free of config and domain types. `TerminalSettings`, `Wake`, `Hook` and `Agent` are
    plain data defined in `infra`; `kernel::config` fills them in, and callers name them at
    `crate::infra::...`. Checked by `check-layering.sh` (rule 1).
 9. Moves and behavior changes go in separate PRs. A move-only PR changes nothing but the moved items
-   and the `mod`, `use`, visibility and path edits a move forces. Checked by
-   `scripts/check-move-only.sh <base>`, which you run by hand on the branch. It compares the
-   committed HEAD with the merge base (where the branch left the base) token by token and the test counts of both, and refuses
-   uncommitted changes under `src/` or `tests/`. `make check` runs only its self-test,
-   `scripts/test-check-move-only.sh`.
+   and the `mod`, `use`, visibility and path edits a move forces, and it carries the `move-only`
+   label. Checked by `scripts/check-move-only.sh <base>`: CI runs it
+   (`.github/workflows/move-only.yml`) on every pull request with that label, and you can run it by
+   hand on the branch first. It compares the committed HEAD with the merge base (where the branch
+   left the base) token by token and the test counts of both, and refuses uncommitted changes under
+   `src/` or `tests/`. `make check` runs only its self-test, `scripts/test-check-move-only.sh`. The
+   CI job is not a required check: while #340 is open, a brace inside a string or char literal can
+   fail a correct move. When it does, say so in the PR and name the item the job reports.
+   A PR without the label is not checked.
 10. Records shared across versions. `adj server restart` leaves running hubs and workers on the old
     binary, so old and new binaries share the state dir. Paths, key names, lock names, the
     `.acking-` prefix and inbox file names stay as they are. Records keep keys they do not know
@@ -160,7 +168,7 @@ fixtures.
     `a_key_this_binary_does_not_know_survives_a_load_save_and_archive` (`gate`) and
     `a_worker_record_rewrite_keeps_unknown_keys_and_unreadable_phases` and
     `an_unknown_key_in_a_hub_record_is_kept_and_the_file_left_alone` (`registry`); the rest is by
-    review.
+    review ([review-checklist.md](review-checklist.md)).
 
 ## How the board gets its handler
 
@@ -284,7 +292,8 @@ In this walk-through the piece CLI and MCP share is `transport::wording::wake_no
   `scripts/check-layering.sh`, or the script fails with "not in any list". Also update the Layout
   lists in `README.md` and `README.ja.md`, and this page (the flowchart and "What each module
   holds").
-- Before the PR: `make check`; for a move-only PR also `scripts/check-move-only.sh main`.
+- Before the PR: `make check`; for a move-only PR also `scripts/check-move-only.sh main`, and the
+  `move-only` label on the PR.
 
 ## Where state lives
 

@@ -12,7 +12,8 @@ The list comes from the review bots' history on this repository: 316 inline find
 CodeRabbit and Copilot on PRs up to #332, each checked against the commits that followed it.
 273 were fixed and 36 were left as they were. Every item below is a kind of defect that was raised
 several times and fixed nearly every time — something a self-review could have caught before the
-bots did. The PR numbers are examples, not the full list.
+bots did. The PR numbers are examples, not the full list. Items 11 to 18 are the exception: they
+come from the rules in `docs/architecture.md`.
 
 ## How to use it
 
@@ -148,6 +149,56 @@ says the opposite.
 - Keyboard focus stays visible, including on visually hidden inputs (#78).
 - Text and badges keep their contrast in dark mode (#75).
 
+## When the change adds or moves Rust code under `src/`
+
+These items come from the rules in [architecture.md](architecture.md#rules-and-what-enforces-them),
+not from the bots' history: they are the parts of those rules that only review keeps (item 17 also
+has a CI job, which is not a required check). The rule has the details.
+
+### 11. One operation per file, in the module that owns it
+
+A new operation is a file named after what it does, in the lowest module that holds every record it
+writes. Shared helpers go in `model.rs`, `store.rs` or the owning operation, not a new catch-all
+file (rule 2 and "Where does my change go?"). `check-layering.sh` refuses only `usecase.rs`,
+`util.rs` and `common.rs`.
+
+### 12. No other module's store
+
+Code outside `registry`, `mail`, `task` and `gate` does not build their paths or take their locks;
+it calls their operations (rule 3). Nothing checks that `mod store;` stays private, and the
+compiler cannot see a path built by hand.
+
+### 13. Reads take a state root and a hub slug
+
+A new read takes the state root and a hub slug so the board can read every hub; a write takes a
+`Context` (rule 4).
+
+### 14. Operations return values, transports word them
+
+An operation returns a typed outcome, never text for stdout. Words two transports share go in
+`transport::wording`, and a rule such as when to wake stays in the operation (rule 5).
+
+### 15. Undo through the other modules' operations
+
+An operation that writes to several modules takes a failed step back with their own operations,
+latest first, never by writing their stores (rule 6).
+
+### 16. No traits for stores
+
+Stores are built from the state dir in `Context`. Code that runs processes gets a `_with` variant
+that takes the runner, not a trait (rule 7).
+
+### 17. A move is its own PR
+
+A diff that moves items and also changes behaviour is split (rule 9). A move-only PR carries the
+`move-only` label, so CI runs `check-move-only.sh` on it.
+
+### 18. Records stay readable by the old binary
+
+A new key in a stored record is optional to the new binary, unknown keys are kept, and paths, key
+names, lock names and file names stay as they are (rule 10). The unit tests cover only keeping
+unknown keys.
+
 ## Do not raise
 
 These were raised by the bots and left as they are on purpose. Do not report them unless the change
@@ -167,3 +218,9 @@ anything else the usual review finds.
   `check-move-only.sh` not following nested block comments or token trees inside macros (#278, #316).
 - **Adding tests only for coverage** (#226, #275, #332). A regression test for the behaviour a change
   fixes is still worth asking for, as a want.
+- **The known exceptions to rule 3 in `docs/architecture.md`** (from that page, not the bots): the
+  board's session clean-up (`board/session/clean_up.rs`) and `kernel::worktree_state` naming
+  `.claude/adjutant-*` and `task-brief.md` in a worktree, and
+  `#[cfg(test)] pub(crate) use store::...` for other modules' test fixtures.
+- **A failing `move-only` job that the PR explains as #340**, a brace inside a string or char
+  literal in a moved item. Check that the item it reports does hold such a literal.
