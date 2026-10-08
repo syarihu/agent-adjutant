@@ -685,8 +685,33 @@ fn expected_work() -> Value {
     });
     work["repos"][0]["hubSessions"] = expected_work_hub_sessions();
     work["repos"][0]["rows"] = expected_work_rows();
-    work["repos"][0]["turns"] = json!([]);
+    work["repos"][0]["turns"] = expected_work_turns();
     work
+}
+
+fn expected_work_turns() -> Value {
+    json!([
+      {
+        "board": SLUG,
+        "gates": [
+          {
+            "id": "g-wait",
+            "kind": "question",
+            "openedAt": "20260922T044500Z",
+            "slug": SLUG,
+            "task": "WID-1",
+            "title": "Which way?"
+          }
+        ],
+        "task": {
+          "id": "WID-1",
+          "parent": "acme/widget#957",
+          "status": "dispatched",
+          "title": "Task WID-1",
+          "waitsOnPerson": false
+        }
+      }
+    ])
 }
 
 fn expected_work_hub_sessions() -> Value {

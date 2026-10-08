@@ -26,7 +26,8 @@ the ledger are the parts adjutant needs.
 | Naming hint on `UserPromptSubmit` and `proctor title` | Stays. adjutant names its sessions when it starts them; a second hint would be injected twice next to proctor's |
 | `proctor setup`, which prints a guide for the agent to merge by hand | Replaced by injection at launch and an `adj setup` that writes the hooks itself |
 | `proctor worktree ls`, worktree conventions, `proctor-worktree` skill | Stays in proctor (see [Worktree conventions and the hub procedure](#worktree-conventions-and-the-hub-procedure)) |
-| iTerm2 sidebar app, its reaper, read marks, approval watcher for Antigravity, notifications | Stays. The board is adjutant's view, and its sessions tab landed in [#506](https://github.com/syarihu/agent-adjutant/issues/506) |
+| iTerm2 sidebar app, its reaper, approval watcher for Antigravity, notifications | Stays. The board is adjutant's view, and its sessions tab landed in [#506](https://github.com/syarihu/agent-adjutant/issues/506) |
+| Read marks | Comes over as the board's 新着 and 後で見る ([#554](https://github.com/syarihu/agent-adjutant/issues/554)). The marks live in the browser's local storage, not in the ledger or the CLI; what they are compared with comes from the ledger's `lastPromptAt` and the gates' answers (see [How adjutant uses it](#how-adjutant-uses-it)), so no CLI marks anything read |
 | `attach`, `rm`, avatars, logs | Stays |
 
 Two behaviours of proctor's receiver carry over as rules, because each one fixes something seen in
@@ -87,6 +88,7 @@ keys this binary does not know are kept in `other`, as `WorkerRecord.other` does
 | `subagents` | Running sub-agents: `[{ id, type, startedAt, lastSeenAt, activity? }]`, keyed by `agent_id`. `activity` is the tool it last ran, as the parent's `activity` words one. `lastSeenAt` moves at most once a minute, like `lastEventAt`; a sub-agent not seen for ten minutes (its `SubagentStop` never came) is dropped on the next event, and the parent's `pendingStatus` applied if it was the last |
 | `finishedSubagents` | `{ agent_id: time }` for five minutes after each stop, so a late event cannot bring one back |
 | `model`, `contextPercent`, `rateLimits` | From the status line relay, when wired in |
+| `lastPromptAt` | When the person last typed into the session: the last `UserPromptSubmit` whose prompt is not one of adjutant's wake lines (the sentences it types into a terminal, which reach the session as a prompt too; recognised by their fixed start, `Something arrived in the inbox` and `The hub sent you something`). A prompt the payload does not carry does not count. A custom `wake` / `workerWake` / `hubWake` line that types other text is not recognised, so it counts as typing. Codex's payload carries `prompt` too, so it is recorded for both agents. Nothing else changes it, and it goes with the row on `SessionEnd` |
 | `lastMessage`, `lastMessageAt` | What the agent said at the end of its last turn (`last_assistant_message` of `Stop` and `StopFailure`), cut to 1000 characters with its line breaks kept, and when it was received. Only the latest is kept, until the next one replaces it: a turn with no message, a new prompt and a sub-agent's events leave it. The same words again within a minute leave `lastMessageAt` alone, so that a repeated `Stop` is not a write. It goes with the row on `SessionEnd`. Held `done` records it too, since it was said. On `StopFailure` it is the error text Claude Code puts there (such as the rate-limit message), and it replaces what the agent said before |
 
 Every other record stays where it is. The worker record keeps its phase, and the task its status;
@@ -184,7 +186,7 @@ The events, taken from proctor's table:
 | Claude Code event | Matcher | What it records |
 |---|---|---|
 | `SessionStart` | | `idle` for a new row; on an existing row only clears `request` |
-| `UserPromptSubmit` | | `running`; clears `pendingStatus` |
+| `UserPromptSubmit` | | `running`; clears `pendingStatus`; records `lastPromptAt` unless the prompt is a wake line |
 | `PostToolUse` | `*` | `running`, and `activity` |
 | `PostToolUseFailure` | `*` | `running` (`PostToolUse` fires only on success) |
 | `PermissionRequest` | `*` | `waiting`, and `request` (immediate; the permission `Notification` comes about 6 seconds later), also from a sub-agent |
@@ -421,6 +423,18 @@ is listed so the ledger carries what it will need.
   existing 2-second poll of `/api/state`. No push channel is added. The 「いまの仕事」 view reads the
   same ledger fields through `GET /api/work` on the same 2-second clock: one document for every
   repository, built from one carrier board each, and still no push channel.
+- **新着 and 後で見る** (#554). The 「いまの仕事」 view sorts what waits on the person into rows not yet
+  looked at and rows looked at and not finished. A row is read as of the later of the time the person
+  left it in the page and the time they acted on it anywhere: the answer to a gate of its task
+  (`gateAnsweredAt` on the record, written whichever route answered) or their last typed prompt
+  (`lastPromptAt`). What the row holds is compared with it: a gate's `openedAt`, the ledger's
+  `updatedAt` (which moves only when the status does, so a session that stays `waiting` is one item
+  and a new wait is another), and the task's `prTurnAt` (when the PR's turn last changed, stamped
+  by the refresh that read it). Only these move a row back to 新着: a gate opens, the session starts
+  waiting on a permission prompt or a question, a worker's turn ends with no gate open, a session fails, or the
+  PR turns into the person's (changes asked, CI failed, approved, closed). A phase, a tool, a
+  sub-agent, a repeated prompt for the same wait or a PR turning to checks does not. A second permission prompt
+  that arrives while the session is still `waiting` is not told apart: `updatedAt` does not move.
 - **Notifying a wait** (#524). A row that turns `waiting` is announced once, when it has stayed
   `waiting` for 5 seconds (`board/jobs/wait_watch.rs`, a job beside `sweep_gates` in the resident
   server and in a dedicated board). It reads `registry::waiting_agent_sessions` (every `waiting`

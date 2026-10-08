@@ -527,7 +527,7 @@ the work under way in every repository, in three columns. The list on the left h
 (the default: repository, then parent issue, then task, with the tasks that have no parent under 「親なし」) and
 「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
 not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
-hub as a row marked "hub". A task whose worker is gone is not. A parent's header shows a bar with a segment per
+hub as a row marked "hub". A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
 child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
@@ -541,11 +541,35 @@ the middle terminal), or, for a parent, its overview: how far it is, the stack f
 `session:<id>` or `parent:<key>`. The widths of the list, the task panel and the sidebar are dragged from their
 edges (arrow keys too; a double click puts one back) and kept in this browser. The list is
 `GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
-where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, error?}`; `parents` are the board's
+where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
 (see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
 as `{board, session, task?}` (`board` is the slug of the board the row opens on, `task` is
-`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson}`), and `hubSessions` are the sessions of
-the parent-task hubs.
+`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson, gateAnsweredAt?, prTurnAt?}`), `hubSessions` are the
+sessions of the parent-task hubs, and `turns` are what waits on you with or without a row: `{board, task?, gates}`
+for each task whose PR is yours and each group of open gates that wait on a person (`gates` are `{id, kind, title?,
+openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt` and `prTurnAt` are UTC stamps (when a
+gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
+when you last typed into it.
+
+**新着 and 後で見る.** 新着 holds what waits on you and that you have not looked at since it began: a gate that
+opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
+session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
+for a task with nothing running, which then has a row of its own. Each row shows what it asks, or else what the agent
+last said. 後で見る holds what you opened and left without finishing, and each row says what is still open
+(「既読 · 設計レビューが開いたまま」). In 「親 Issue」 the two are bands above the tree (a session's row stays in the
+tree too), and in 「状態」 they are the first two boxes. A row counts as looked at once you leave it (the address
+moves to another row or another view, or the page closes) or act on it, wherever you do: answering its gate on the
+board, through the hub or the CLI, or typing in its session's terminal, even outside the board (the ledger's
+`lastPromptAt`; the sentences adjutant types to wake a session are not counted, but a `wake` / `workerWake` /
+`hubWake` of your own that types other text is, since it cannot be told from you). Opening a task in the board's own
+panel does not count, nor does switching browser tabs. It goes back to 新着 only when something changes what you
+have to do: a gate opens, a permission prompt or question arrives, a worker finishes a turn with no gate open, a
+session fails, or the PR turns to yours again; a phase moving on, a tool, a sub-agent or a PR turning to checks does
+not. Three buttons: `done_all` in the 新着 header marks every new row read, `mark_email_unread` on a 後で見る row
+sends it back to 新着, and `check` clears a finished, failed or PR item (a gate or a permission wait leaves only when it
+is answered). The sidebar badge on 「いまの仕事」 counts the new rows, and is refreshed every 10 seconds while another
+view is open. The marks are times on the server's clock in this browser's local storage
+(`adj.seenWork.<owner/repo>`), so another browser starts with none and other tabs of this one follow.
 
 **The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
 another card shows that one instead. Its header has the task's key, the board it comes from, its
@@ -695,7 +719,7 @@ and the hub sets `done` when it removes the worktree. A card the board shows as 
 a worker that is actually running.
 
 **Where a pull request's card sits.** A card with a `pr` is placed by what GitHub says about
-that PR, and the state is kept on the record (`prStatus`). Whose turn it is is worked out from it on every read and never stored:
+that PR, and the state is kept on the record (`prStatus`). Whose turn it is is worked out from it on every read and never stored (only the time a refresh saw the turn change is, as `prTurnAt`, for the 「いまの仕事」 view):
 
 | The PR is | Whose turn | The card |
 | --- | --- | --- |

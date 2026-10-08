@@ -7,7 +7,7 @@
 
 const wk = id => document.getElementById(id);
 
-/* The boxes of 「状態」, in order. 新着 and 後で見る are filled by `workSeenBox`, which says nothing yet. */
+/* The boxes of 「状態」, in order. 新着 and 後で見る hold the rows `workSeenClass` (my-work-seen.js) puts in them. */
 const WORK_BOXES = [
   { id: 'new', label: '新着' },
   { id: 'later', label: '後で見る' },
@@ -50,6 +50,16 @@ const work = {
   structure: '',      // what the list was last built from (renderWorkList)
   cells: new Map(),   // each row's and header's own html, by key
   rowsByKey: new Map(),
+  fetchedAt: 0,       // when `doc` was read, on this page's clock: the server's `now` ages from here
+  open: null,         // the row the person has open: { nwo, id, nav }, the mark `left` is written when it is left
+  entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
+};
+/* What a PR's turn says in 新着 (my-work-seen.js has the words of 後で見る). */
+const WORK_PR_NOW = {
+  changes: '修正の依頼が来ています',
+  'ci-failed': 'CI が落ちています',
+  merge: 'マージできます',
+  closed: 'マージされずに閉じられました',
 };
 /* The middle terminal: a third slot beside the panel's and the review view's. It connects through the
    board that was selected, since `state` is that board's. */
@@ -57,9 +67,6 @@ const workTerm = { host: () => wk('wk-term-host'), redraw: () => renderWorkTerm(
   taskId: null, sessionId: null, term: null, ended: null, reconnect: false, board: null,
   // Selecting a row must not take the keyboard from the list: `focusWorkTerm` is the one way in.
   focus: false };
-
-/* The slot a view has not drawn yet: the hook 新着 and 後で見る fill. Null puts a row in 実行中 or そのほか. */
-const workSeenBox = row => null;
 
 /* ── what the document says ── */
 
@@ -123,7 +130,7 @@ function workRows(doc = work.doc) {
       // A task whose board is not served is read on the carrier, where a bare task id names the
       // repository's own task: the session opens instead.
       const ref = r.task && board !== r.board ? SESS_REF + s.id : ref0;
-      out.push({ key: `${board}/${ref}`, raw: `${repo.nwo}/${r.board}`, board, ref, repo, nwo: repo.nwo, s, st, data, task: r.task || null, isHub });
+      out.push({ id: `${r.board}/${ref0}`, key: `${board}/${ref}`, raw: `${repo.nwo}/${r.board}`, board, ref, repo, nwo: repo.nwo, s, st, data, task: r.task || null, isHub });
     }
   }
   // One row to a task: its best session.
@@ -142,7 +149,139 @@ function workBetter(a, b) {
   return (a.agentSession?.updatedAt || a.phaseAt || 0) > (b.agentSession?.updatedAt || b.phaseAt || 0);
 }
 
-const workBoxOf = row => workSeenBox(row) || (WORK_RUNNING.includes(row.st) ? 'running' : 'other');
+/* ── what is new and what was looked at ── */
+
+/* The marks of one repository, kept in this browser (`adj.seenWork.<nwo>`): row id to { left, back, cleared }, in seconds on
+   the server's clock (my-work-seen.js says what each means). Read from storage every time, never cached, so that what another
+   tab wrote is what is read; a value that is not marks reads as none. Also what the while-away timeline (#556) reads. */
+const WORK_SEEN_PREFIX = 'adj.seenWork.';
+function workMarks(nwo) {
+  try { return workParseMarks(localStorage.getItem(WORK_SEEN_PREFIX + nwo) || ''); } catch { return {}; }
+}
+
+/* The server's clock now, from the document's `now` and how long ago this page read it. */
+const workServerNow = () => (work.doc?.now || Date.now() / 1000) + (work.doc ? (Date.now() - work.fetchedAt) / 1000 : 0);
+
+/* Write `patches` ([id, { left | back | cleared }]) onto the marks of `nwo`. The marks are read again first and each time
+   only moves later, so another tab's write is not undone; the ones of rows long gone are dropped, unless the document is
+   not a complete reading of the repository (a failed read is not absence). */
+function workWriteMarks(nwo, patches) {
+  let marks = workMarks(nwo);
+  for (const [id, patch] of patches) marks = workMarkMerge(marks, id, patch);
+  const repo = workRepos().find(r => r.nwo === nwo);
+  if (work.doc && !work.error && repo && !repo.error) {
+    const live = new Set(workEntries(work.doc).filter(e => e.nwo === nwo).map(e => e.id));
+    marks = workPruneMarks(marks, live, workServerNow());
+  }
+  try { localStorage.setItem(WORK_SEEN_PREFIX + nwo, JSON.stringify(marks)); } catch {}
+  // The `storage` event is for the other tabs.
+  if (view === 'work') renderWorkList();
+  renderWorkBadge();
+}
+
+/* The entries of the document and the class of each ('new', 'later' or none), with the marks they were judged by. */
+function workJudge() {
+  const entries = workEntries(work.doc, key => reviewDone.has(key));
+  const marks = new Map();
+  const markOf = nwo => marks.get(nwo) || marks.set(nwo, workMarks(nwo)).get(nwo);
+  const out = new Map();
+  for (const e of entries) {
+    const mark = markOf(e.nwo)[e.id] || {};
+    out.set(e.id, { entry: e, cls: workSeenClass(e.items, mark, workActedAt(e)), live: workLiveItems(e.items, mark) });
+  }
+  return out;
+}
+
+/* When something last happened to an entry, for ordering: the newest of its items. */
+const workNewest = r => Math.max(0, ...(r.live || []).map(i => i.since).filter(Number.isFinite));
+
+/* A row for an entry the list has no session row for: a task that waits on the person with nothing running, or a session
+   the list does not show (one that is gone). */
+function workTurnRow(e, judged, repo) {
+  const board = e.board;
+  const gate = e.items.some(i => i.kind === 'gate');
+  return {
+    id: e.id, key: `${board}/${e.ref}`, raw: `${repo.nwo}/${e.board}`, board, ref: e.ref, repo, nwo: repo.nwo,
+    s: {}, st: gate ? 'waiting' : 'done', data: { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] },
+    task: e.task, isHub: e.isHub, turn: true, entry: e, cls: judged.cls, live: judged.live,
+  };
+}
+
+/* The rows of the list as it is drawn: the session rows, each with its class, and the rows of what waits on the person with no
+   session row (the bands and 「状態」 show those too). */
+function workListRows() {
+  const judged = workJudge();
+  const rows = workRows();
+  const listed = new Set();
+  for (const r of rows) {
+    const j = judged.get(r.id);
+    listed.add(r.id);
+    Object.assign(r, { entry: j?.entry || null, cls: j?.cls || null, live: j?.live || [] });
+  }
+  const turns = [];
+  for (const [id, j] of judged) {
+    const repo = workRepos().find(x => x.nwo === j.entry.nwo);
+    if (j.cls && !listed.has(id) && repo) turns.push(workTurnRow(j.entry, j, repo));
+  }
+  work.entries = new Map([...judged].map(([id, j]) => [id, j.entry]));
+  return { rows, turns, judged };
+}
+
+/* 新着 and 後で見る as two lists, newest first: each row with what it is in. */
+function workBands(rows) {
+  const band = (id, label, empty) => {
+    const mine = rows.filter(r => r.cls === id).sort((a, b) => workNewest(b) - workNewest(a) || (a.key < b.key ? -1 : 1));
+    return { key: `band:${id}`, kind: 'band', band: id, label, empty, readAll: id === 'new', rows: mine, items: mine.map(row => ({ row, place: id })) };
+  };
+  const later = band('later', '後で見る');
+  return [band('new', '新着', '新しく来たものはありません'), ...(later.rows.length ? [later] : [])];
+}
+
+/* The sidebar's count: how many rows are new, whichever view is on. */
+function renderWorkBadge() {
+  const el = wk('work-new-count');
+  if (!el) return;
+  const n = work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
+  el.textContent = n;
+  el.classList.toggle('zero', !n);
+}
+
+/* The row the person leaves: it is read from now on. Called when the address moves off it, when the view does, and when the
+   page goes. */
+function workLeave() {
+  const open = work.open;
+  work.open = null;
+  if (open && work.doc) workWriteMarks(open.nwo, [[open.id, { left: workServerNow() }]]);
+}
+
+/* The id of the row a selection is, as the entries have it. */
+function workSelectedId(sel) {
+  const r = sel?.row;
+  if (!r) return null;
+  const s = r.session;
+  return `${r.board}/${r.task ? r.task.id : s ? (s.kind === 'hub' ? HUB_REF : SESS_REF) + s.id : ''}`;
+}
+
+/* Follow the address: moving it off the open row leaves that one, and arriving on a row (by a click or by a link) opens it. A
+   poll that drops the row for a moment is not leaving, as the address has not moved. */
+function workTrack() {
+  const addr = nav.board && nav.board !== 'all' && nav.task && !isParentRef(nav.task) ? `${nav.board}/${nav.task}` : null;
+  if (work.open && work.open.nav !== addr) workLeave();
+  if (work.open || !addr) return;
+  const sel = workSelected();
+  const id = workSelectedId(sel);
+  if (id && sel.repo) work.open = { nwo: sel.repo.nwo, id, nav: addr };
+}
+
+window.addEventListener('pagehide', workLeave);
+// Another tab of this browser marked something: the list and the count follow.
+window.addEventListener('storage', e => {
+  if (e.key != null && !e.key.startsWith(WORK_SEEN_PREFIX)) return;
+  if (view === 'work') renderWorkList();
+  renderWorkBadge();
+});
+
+const workBoxOf = row => row.cls || (WORK_RUNNING.includes(row.st) ? 'running' : 'other');
 const workOwnerOf = nwo => (nwo || '').split('/')[0] || nwo;
 
 /* A row's place among the others in its group: what waits on the person first, the longest waiting first. */
@@ -157,14 +296,14 @@ const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 /* The list as a tree: repository → [hub] → parent issue → task, with the rows that belong to none under
    「親なし」. A node is `{ key, kind, label…, rows }` where `rows` are all the rows below it, and `items`
    what it holds in order: rows and nodes. */
-function workTreeByParent(rows) {
-  const tree = [];
+function workTreeByParent(rows, bands = []) {
+  const tree = [...bands];
   for (const repo of workRepos()) {
     const mine = rows.filter(r => r.repo === repo);
     if (!mine.length) continue;
     const items = [];
     const hubs = mine.filter(r => r.isHub).sort(workRowOrder);
-    items.push(...hubs.map(row => ({ row })));
+    items.push(...hubs.map(row => ({ row, place: 'tree' })));
     const byParent = new Map();
     const loose = [];
     for (const r of mine.filter(x => !x.isHub)) {
@@ -175,18 +314,19 @@ function workTreeByParent(rows) {
     for (const [key, list] of byParent) {
       const found = (repo.parents || []).find(p => p.key === key);
       const parent = found || { missing: true, key, url: key, children: [], total: list.length, merged: 0, stacked: false, hub: repo.carrier };
-      items.push({ key: `parent:${repo.nwo}/${key}`, kind: 'parent', parent: { ...parent, repo }, rows: list.sort(workRowOrder), items: list.sort(workRowOrder).map(row => ({ row })) });
+      items.push({ key: `parent:${repo.nwo}/${key}`, kind: 'parent', parent: { ...parent, repo }, rows: list.sort(workRowOrder), items: list.sort(workRowOrder).map(row => ({ row, place: 'tree' })) });
     }
     if (loose.length) {
       loose.sort(workRowOrder);
-      items.push({ key: `none:${repo.nwo}`, kind: 'none', rows: loose, items: loose.map(row => ({ row })) });
+      items.push({ key: `none:${repo.nwo}`, kind: 'none', rows: loose, items: loose.map(row => ({ row, place: 'tree' })) });
     }
     tree.push({ key: `repo:${repo.nwo}`, kind: 'repo', nwo: repo.nwo, rows: mine, items });
   }
   return tree;
 }
 
-/* The list as boxes of one state each, in order, and inside each box by organisation. A box with nothing in it is not drawn. */
+/* The list as boxes of one state each, in order, and inside each box by organisation. A box with nothing in it is not drawn.
+   The rows of 新着 and 後で見る have their actions beside them, as in the bands. */
 function workTreeByState(rows) {
   const tree = [];
   for (const box of WORK_BOXES) {
@@ -194,8 +334,9 @@ function workTreeByState(rows) {
     if (!mine.length) continue;
     const owners = new Map();
     for (const r of mine.sort(workRowOrder)) owners.set(workOwnerOf(r.nwo), [...(owners.get(workOwnerOf(r.nwo)) || []), r]);
-    const items = [...owners].map(([owner, list]) => ({ key: `org:${box.id}/${owner}`, kind: 'org', label: owner, rows: list, items: list.map(row => ({ row })) }));
-    tree.push({ key: `box:${box.id}`, kind: 'box', label: box.label, rows: mine, items });
+    const place = box.id === 'new' || box.id === 'later' ? box.id : 'box';
+    const items = [...owners].map(([owner, list]) => ({ key: `org:${box.id}/${owner}`, kind: 'org', label: owner, rows: list, items: list.map(row => ({ row, place })) }));
+    tree.push({ key: `box:${box.id}`, kind: 'box', label: box.label, readAll: box.id === 'new', rows: mine, items });
   }
   return tree;
 }
@@ -239,6 +380,11 @@ function workSelected() {
       if (mine && (!found || workBetter(r.session, found.session))) found = r;
     }
     if (found) return { row: found, repo, session: found.session };
+    // A task that waits on the person with nothing running: there is no session to show.
+    if (!isHubRef(ref) && !isSessRef(ref)) {
+      const t = (repo.turns || []).find(x => x.task?.id === ref && workBoardOf(repo, x.board) === nav.board);
+      if (t) return { row: { board: t.board, session: null, task: t.task }, repo, session: null };
+    }
     if (isHubRef(ref)) {
       const h = (repo.hubSessions || []).find(x => workBoardOf(repo, x.board) === nav.board && HUB_REF + x.session.id === ref);
       if (h) return { row: { board: h.board, session: h.session, task: null }, repo, session: h.session };
@@ -262,10 +408,13 @@ async function refreshWork(force = false) {
   work.busy = true;
   try {
     const doc = await boardApi('', '/api/work');
-    if (view !== 'work') return;
     const failed = work.error != null;
     work.error = null;
     work.doc = doc;
+    work.fetchedAt = Date.now();
+    // The sidebar counts what is new on every view; the list is drawn on its own.
+    renderWorkBadge();
+    if (view !== 'work') return;
     const json = JSON.stringify(workSig(doc));
     const minute = Math.floor((doc.now || 0) / 60);
     if (!force && !failed && json === work.json && minute === work.minute) return;
@@ -302,7 +451,7 @@ const workPercent = n => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
 /* One row, in the order the issue gives: the state, the agent and its model and context, the title, the PR and branch
    and how long ago the state changed, the sub-agents, the diff, what it asks, what it is running, and the gate. */
-function workRowHtml(r) {
+function workRowHtml(r, cell = '', band = false) {
   const { s, st, data, task } = r;
   const a = s.present ? s.agentSession || {} : {};
   const ctx = a.contextPercent != null ? workPercent(a.contextPercent) : null;
@@ -324,18 +473,63 @@ function workRowHtml(r) {
     diff,
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
   const asks = !s.waiting && agentStateOf(s) === 'permission' && a.request ? `<span class="wk-line ask">${esc(requestText(s))}</span>` : '';
+  // In 新着 and 後で見る a row says what the agent last said when it asks for nothing, and what is still open.
+  const said = band && !asks && !s.waiting && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
+  const later = band && r.cls === 'later' ? workLaterHtml(r) : '';
   const doing = st === 'working' && a.activity ? `<span class="wk-line">${esc(a.activity)}</span>` : '';
   const tree = st === 'working' && subs.length
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
   const gate = s.waiting ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(s.waiting.kind)[0])} · あなたの判定待ち</span>` : '';
-  return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}" title="${esc(sessionTip(s, st, data))}">
+  return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
     ${workGlyphHtml(st)}<span class="wk-main">
       ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
       <span class="wk-title">${r.isHub ? '<span class="wk-tag">hub</span>' : ''}${esc(title)}</span>
-      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${doing}${tree}${gate}
+      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${said}${doing}${tree}${gate}${later}
     </span></button>`;
+}
+
+/* The first line of what the agent said at the end of its turn, cut to one line by the stylesheet. */
+const workSaidHtml = message => {
+  const line = String(message).split('\n').map(x => x.trim()).find(Boolean);
+  return line ? `<span class="wk-line msg">${esc(line)}</span>` : '';
+};
+
+/* What is still open on a row the person has already looked at. */
+const workLaterHtml = r => `<span class="wk-line later">${esc(workLaterText(r.live || []))}</span>`;
+
+/* A row for something that waits on the person and has no session row of its own: a task whose PR is theirs, or whose gate
+   opened with nothing running, or a session the list does not show. */
+function workTurnRowHtml(r, cell = '', band = false) {
+  const e = r.entry;
+  const title = r.task?.title || (e.session ? sessionLabel(e.session, false, r.data).text : r.ref);
+  const prNumber = r.task ? prRefNumber(r.task.pr) : null;
+  const newest = workNewest(r);
+  const age = newest && r.data.now != null ? agoLabel(minutesSince(newest, r.data.now)) : '';
+  const meta = [prNumber ? `#${esc(prNumber)}` : '', age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('');
+  const gate = r.live.find(i => i.kind === 'gate');
+  const pr = r.live.find(i => i.kind === 'pr');
+  const lines = (gate ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(gate.gate)[0])} · あなたの判定待ち</span>` : '')
+    + (pr ? `<span class="wk-line ask">${esc(WORK_PR_NOW[pr.turn] || 'PR があなたの番です')}</span>` : '');
+  return `<button type="button" class="wk-row waiting" data-wk="${esc(r.key)}"${cell}>
+    ${workGlyphHtml('waiting')}<span class="wk-main">
+      <span class="wk-title">${r.isHub ? '<span class="wk-tag">hub</span>' : ''}${esc(title)}</span>
+      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${lines}${band && r.cls === 'later' ? workLaterHtml(r) : ''}
+    </span></button>`;
+}
+
+/* A row as the list draws it in `place`: 新着 and 後で見る rows (the bands, and those boxes of 「状態」) have their buttons beside
+   them, and the row itself stays one button, so selecting is the same everywhere. */
+function workItemHtml(r, place) {
+  const band = place === 'new' || place === 'later';
+  const cellKey = `${place}/${r.key}`;
+  const cell = ` data-wk-cell="${esc(cellKey)}"`;
+  if (!band) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
+  const clearable = (r.live || []).some(i => WORK_CLEARABLE.includes(i.kind));
+  const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+  const acts = (place === 'later' ? act('data-wk-back', 'mark_email_unread', '新着に戻す') : '') + (clearable ? act('data-wk-clear', 'check', '片付けた') : '');
+  return `<div class="wk-band-row"${cell}>${r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', true)}${acts ? `<span class="wk-acts">${acts}</span>` : ''}</div>`;
 }
 
 /* How many rows are in each state, for a header that is folded. */
@@ -369,42 +563,50 @@ function workHeadHtml(node, folded) {
       <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}><span class="wk-count">${node.rows.length}</span>`;
   }
   const name = node.kind === 'repo' ? node.nwo : node.kind === 'none' ? '親なし' : node.label;
-  return `${workFoldButton(node.key, folded, name)}<span class="wk-head-main"><span class="wk-head-name">${esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span><span class="wk-count">${node.rows.length}</span>`;
+  const readAll = node.readAll && node.rows.length
+    ? `<button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>` : '';
+  return `${workFoldButton(node.key, folded, name)}<span class="wk-head-main"><span class="wk-head-name">${esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span><span class="wk-count">${node.rows.length}</span>${readAll}`;
 }
 
 /* The tree as markup, and the pieces of it that are redrawn alone: `cells` maps a row's or header's key to its own html. */
 function workTreeHtml(items, cells, rowsByKey, folded) {
   return items.map(it => {
     if (it.row) {
-      cells.set(`row:${it.row.key}`, workRowHtml(it.row));
+      // A row can be in the list twice (a band and the tree): the cell is the row in its place.
+      const cell = `row:${it.place}/${it.row.key}`;
+      cells.set(cell, workItemHtml(it.row, it.place));
       rowsByKey.set(it.row.key, it.row);
-      return cells.get(`row:${it.row.key}`);
+      return cells.get(cell);
     }
     const isFolded = folded.has(it.key);
     cells.set(`head:${it.key}`, workHeadHtml(it, isFolded));
     return `<section class="wk-group" data-wk-g="${esc(it.key)}"><div class="wk-head ${it.kind}" data-wk-head="${esc(it.key)}">${cells.get(`head:${it.key}`)}</div>`
-      + (isFolded ? '' : `<div class="wk-body">${workTreeHtml(it.items, cells, rowsByKey, folded)}</div>`) + '</section>';
+      + (isFolded ? '' : `<div class="wk-body">${it.items.length ? workTreeHtml(it.items, cells, rowsByKey, folded) : it.empty ? `<div class="wk-empty">${esc(it.empty)}</div>` : ''}</div>`) + '</section>';
   }).join('');
 }
 
 /* The nodes with their keys and what they hold, which is what decides a rebuild: a row or a header that only changed
    its words is replaced alone. */
 function workShape(items, folded) {
-  return items.map(it => it.row ? it.row.key : [it.key, folded.has(it.key), it.kind === 'parent' ? 1 : 0, folded.has(it.key) ? [] : workShape(it.items, folded)]);
+  return items.map(it => it.row ? `${it.place}:${it.row.key}` : [it.key, folded.has(it.key), it.kind === 'parent' ? 1 : 0, folded.has(it.key) ? [] : workShape(it.items, folded)]);
 }
 
 /* How to find again what has the keyboard focus in the list: a row, a fold button or a parent's header. */
 const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.dataset.wk)}"]`
+  : el?.dataset?.wkBack != null ? `[data-wk-back="${CSS.escape(el.dataset.wkBack)}"]`
+  : el?.dataset?.wkClear != null ? `[data-wk-clear="${CSS.escape(el.dataset.wkClear)}"]`
+  : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
     : el?.dataset?.wkParent != null ? `[data-wk-parent="${CSS.escape(el.dataset.wkParent)}"]` : null;
 
 /* A row replaced by the one its html makes, keeping its selection and the keyboard focus. */
 function workSwap(old, html) {
-  const focused = document.activeElement === old;
+  const held = old.contains(document.activeElement) ? workHeldSel(document.activeElement) : null;
   const node = htmlNode(html);
   if (old.hasAttribute('aria-current')) node.setAttribute('aria-current', 'true');
   old.replaceWith(node);
-  if (focused) node.focus({ preventScroll: true });
+  // The marks follow in `markWorkSelection`; the focus is found again in the new markup.
+  if (held) (node.matches(held) ? node : node.querySelector(held))?.focus({ preventScroll: true });
   return node;
 }
 
@@ -433,9 +635,10 @@ function drawWorkList() {
     }
     return;
   }
-  const rows = workRows();
+  const { rows, turns } = workListRows();
   const byState = prefs.workGroup === 'state';
-  const tree = byState ? workTreeByState(rows) : workTreeByParent(rows);
+  // The rows with no session row of their own are in the bands and the boxes only; the tree is the sessions'.
+  const tree = byState ? workTreeByState([...rows, ...turns]) : workTreeByParent(rows, workBands([...rows, ...turns]));
   const folded = new Set(prefs.workFolded);
   for (const b of wk('work-view').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
   const cells = new Map();
@@ -454,7 +657,7 @@ function drawWorkList() {
     for (const [key, cell] of cells) {
       if (work.cells.get(key) === cell) continue;
       const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
-      const old = kind === 'row' ? [...root.querySelectorAll('.wk-row[data-wk]')].find(el => el.dataset.wk === id)
+      const old = kind === 'row' ? [...root.querySelectorAll('[data-wk-cell]')].find(el => el.dataset.wkCell === id)
         : [...root.querySelectorAll('.wk-head[data-wk-head]')].find(el => el.dataset.wkHead === id);
       if (!old) continue;
       if (kind === 'row') workSwap(old, cell);
@@ -469,7 +672,7 @@ function drawWorkList() {
   const top = scroll.scrollTop;
   const at = document.activeElement;
   const held = root.contains(at) ? workHeldSel(at) : null;
-  root.innerHTML = tree.length || notes.length ? html : '<div class="wk-empty">いま動いている仕事はありません</div>';
+  root.innerHTML = rows.length || turns.length || notes.length ? html : '<div class="wk-empty">いま動いている仕事はありません</div>';
   scroll.scrollTop = top;
   if (held) root.querySelector(held)?.focus({ preventScroll: true });
 }
@@ -535,8 +738,8 @@ function workTermHeadHtml(sel) {
   }
   const r = sel.row;
   const data = { now: work.doc?.now, repo: sel.repo.nwo, hubs: sel.repo.hubs || [], sessions: [] };
-  const title = r.task?.title || sessionLabel(r.session, false, data).text;
-  const sub = [r.session.branch, r.task?.id, sel.repo.nwo].filter(Boolean).join(' · ');
+  const title = r.task?.title || (r.session ? sessionLabel(r.session, false, data).text : r.task?.id || '');
+  const sub = [r.session?.branch, r.task?.id, sel.repo.nwo].filter(Boolean).join(' · ');
   return `<div class="wk-term-title">${esc(title)}</div><div class="wk-term-sub">${esc(sub)}</div>`;
 }
 
@@ -592,6 +795,7 @@ function focusWorkTerm() {
 
 /* The marks and the terminal of what the address names. */
 function syncWorkSelection() {
+  workTrack();
   markWorkSelection();
   renderWorkTerm();
 }
@@ -607,8 +811,11 @@ function renderWorkView() {
 
 function selectWorkRow(r) {
   // A task opens on the tab its open gate is judged in, else on the summary.
-  const pane = r.task && r.s.waiting ? paneOfGate(r.s.waiting) : 'detail';
+  const gate = r.s.waiting || (r.turn && r.live.find(i => i.kind === 'gate') ? { kind: r.live.find(i => i.kind === 'gate').gate } : null);
+  const pane = r.task && gate ? paneOfGate(gate) : 'detail';
   go({ board: r.board, view: 'work', task: r.ref, pane }, { replace: workIsSelected(r) });
+  // The panel may not draw (the board does not list the task), and what it would have drawn is what follows the address.
+  workTrack();
 }
 
 function selectWorkParent(key) {
@@ -617,8 +824,28 @@ function selectWorkParent(key) {
   go({ board: workParentBoard(p), view: 'work', task: PARENT_REF + p.key, pane: 'detail' }, { replace: nav.task === PARENT_REF + p.key });
 }
 
+/* "Mark all read": every row that is new has been looked at as of now. */
+function workReadAll() {
+  const now = workServerNow();
+  const byRepo = new Map();
+  for (const j of workJudge().values()) {
+    if (j.cls !== 'new') continue;
+    byRepo.set(j.entry.nwo, [...(byRepo.get(j.entry.nwo) || []), [j.entry.id, { left: now }]]);
+  }
+  for (const [nwo, patches] of byRepo) workWriteMarks(nwo, patches);
+}
+
+/* The buttons beside a row: back to 新着, or cleared (✓). */
+function workMarkRow(id, patch) {
+  const e = work.entries.get(id);
+  if (e) workWriteMarks(e.nwo, [[id, patch]]);
+}
+
 wk('work-view').addEventListener('click', e => {
   let b;
+  if (e.target.closest('[data-wk-read-all]')) return workReadAll();
+  if ((b = e.target.closest('[data-wk-back]'))) return workMarkRow(b.dataset.wkBack, { back: workServerNow() });
+  if ((b = e.target.closest('[data-wk-clear]'))) return workMarkRow(b.dataset.wkClear, { cleared: workServerNow() });
   if ((b = e.target.closest('[data-wk-fold]'))) {
     const at = prefs.workFolded.indexOf(b.dataset.wkFold);
     if (at >= 0) prefs.workFolded.splice(at, 1); else prefs.workFolded.push(b.dataset.wkFold);

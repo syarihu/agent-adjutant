@@ -63,7 +63,7 @@ page), `board::view` (the read model) and `board::jobs` (background work). The r
 re-exported from `src/board.rs`.
 
 Not every directory under `src/` is a module. `src/bin/` is the `adj` binary, `src/ui/` is the
-board page's HTML, JS and CSS (`make check` runs `node --check` on `src/ui/*.js`), and `src/fixtures/` holds test
+board page's HTML, JS and CSS (`make check` runs `node --check` on `src/ui/*.js` and `node --test` on `src/ui/tests/*.test.js`, which loads the pure scripts into one context the way the page's shared scope does), and `src/fixtures/` holds test
 fixtures.
 
 ## What each module holds
@@ -185,7 +185,9 @@ resident also serves the page at `/`, `GET /api/boards` and `GET /api/work`. The
 under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
 repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,
 else each parent-task board), joins each worker session to its task, and lists a session once
-however many carriers name it. The resident keeps the serialized document for 1500 ms
+however many carriers name it. It also lists what waits on the person with no row of its own (`turns`:
+the open gates of each carrier, and the tasks whose PR is the person's), which the page merges with the
+rows to tell what is new from what was looked at (`src/ui/my-work-seen.js`). The resident keeps the serialized document for 1500 ms
 (`Resident::work_cache`), so several open pages polling every couple of seconds read the boards once
 between them. A board served on its own answers it with 404.
 

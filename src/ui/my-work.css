@@ -93,6 +93,21 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
 .wk-line { font-size: 11px; font-family: var(--font-mono); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .wk-line.ask { color: var(--md-sys-color-warning); }
 .wk-line.tree { color: var(--md-sys-color-tertiary); }
+/* What the agent last said, on one line; and what is still open on a row that was looked at. */
+.wk-line.msg { font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+.wk-line.later { font-family: inherit; font-weight: 700; color: var(--md-sys-color-outline); }
+.wk-row[aria-current="true"] .wk-line.later { color: inherit; }
+/* The rows of 新着 and 後で見る: the row, and its buttons beside it. */
+.wk-band-row { display: flex; align-items: flex-start; gap: 2px; min-width: 0; }
+.wk-band-row .wk-row { flex: 1; min-width: 0; width: auto; }
+.wk-acts { flex: none; display: inline-flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+.wk-act {
+  display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; cursor: pointer;
+  padding: 3px; border-radius: 50%; color: var(--md-sys-color-on-surface-variant);
+}
+.wk-act:hover, .wk-act:focus-visible { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
+.wk-act .material-symbols-outlined { font-size: 18px; }
+.wk-head .wk-act { flex: none; }
 .wk-gate { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 800; color: var(--md-sys-color-warning); }
 .wk-gate .material-symbols-outlined { font-size: 15px; }
 .wk-ctx { display: inline-flex; align-items: center; gap: 4px; }

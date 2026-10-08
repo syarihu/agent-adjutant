@@ -43,8 +43,8 @@ function setView(v) {
   if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
   if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
   document.body.classList.toggle('view-work', v === 'work');
-  // The middle terminal is not kept behind another view.
-  if (prev === 'work' && v !== 'work') disposeTermSlot(workTerm);
+  // The middle terminal is not kept behind another view, and the row that was open is left.
+  if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
   if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
   // The review view's terminal is not kept behind another view.
   if (prev === 'review' && v !== 'review') disposeTermSlot(reviewTerm);
@@ -216,6 +216,8 @@ async function boot() {
   updateNotifyButton();
   // The server holds no clock, so the page carries one: it asks, nothing pushes.
   setInterval(refresh, 2000);
-  setInterval(refreshBoards, 10000);
+  // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
+  refreshWork();
+  setInterval(() => { refreshBoards(); if (view !== 'work') refreshWork(); }, 10000);
 }
 boot();
