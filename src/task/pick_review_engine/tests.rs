@@ -378,6 +378,14 @@ fn a_row_is_fresh_for_fifteen_minutes() {
     assert_eq!(ledger_usage(&at(NOW + 1), dir, NOW), None);
 }
 
+#[test]
+fn the_newest_usage_is_returned_whatever_its_age() {
+    let dir = Path::new("/cfg/a");
+    let rows = vec![claude_row("old", NOW - 1200, 10.0)];
+    assert_eq!(newest_usage(&rows, dir).unwrap().session_id, "old");
+    assert_eq!(ledger_usage(&rows, dir, NOW), None);
+}
+
 fn ledger(five: Option<RateWindow>, seven: Option<RateWindow>) -> Usage {
     Usage::Ledger(LedgerUsage {
         session_id: "s".to_string(),
