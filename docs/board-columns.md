@@ -420,7 +420,9 @@ hand, and a layout decides where parked cards show.
 
 - **Into it**: the board has no drag and drop, and this design does not add it. A person parks a
   task with #555's 置く (a reason picker on the task summary and the decision dock) or `adj task
-  park`; the card then goes to the first column whose condition its park reason matches. The
+  park`; the card then goes to the first column whose whole condition matches, tried in order as
+  any card is. An earlier column can therefore keep a parked card: in `waiting`, a parked task
+  still `queued` stays in 着手前. The
   picker lists the reasons the board's layout has a column for first.
 - **Out of it**: 置くのをやめる or `adj task unpark`. The card goes back to where its other facts
   put it.
