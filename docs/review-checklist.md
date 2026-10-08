@@ -13,7 +13,8 @@ CodeRabbit and Copilot on PRs up to #332, each checked against the commits that 
 273 were fixed and 36 were left as they were. Every item below is a kind of defect that was raised
 several times and fixed nearly every time — something a self-review could have caught before the
 bots did. The PR numbers are examples, not the full list. Items 11 to 18 are the exception: they
-come from the rules in `docs/architecture.md`.
+come from the rules in `docs/architecture.md`, and their examples are issues an audit against those
+rules filed.
 
 ## How to use it
 
@@ -162,6 +163,9 @@ writes. Shared helpers go in `model.rs`, `store.rs` or the owning operation, not
 file (rule 2 and "Where does my change go?"). `check-layering.sh` refuses only `usecase.rs`,
 `util.rs` and `common.rs`.
 
+Examples: a new operation added to another operation's file, or code only one operation uses kept
+in `model.rs` (#561), a rule copied into a second module instead of written once and called (#562).
+
 ### 12. No other module's store
 
 Code outside `registry`, `mail`, `task` and `gate` does not build their paths or take their locks;
@@ -173,10 +177,18 @@ compiler cannot see a path built by hand.
 A new read takes the state root and a hub slug so the board can read every hub; a write takes a
 `Context` (rule 4).
 
+Examples: a read that starts writing (a seen marker) but keeps its `(root, slug)` signature, and a
+read that takes a `Context` (#568).
+
 ### 14. Operations return values, transports word them
 
 An operation returns a typed outcome, never text for stdout. Words two transports share go in
 `transport::wording`, and a rule such as when to wake stays in the operation (rule 5).
+
+Examples: an operation that prints a warning with `eprintln!` instead of returning it (#565), a
+sentence written separately in the CLI and MCP instead of in `transport::wording` (#563), a
+transport that decides when to wake, what to write or which source wins instead of calling one
+operation (#564).
 
 ### 15. Undo through the other modules' operations
 
@@ -188,6 +200,9 @@ latest first, never by writing their stores (rule 6).
 Stores are built from the state dir in `Context`. Code that runs processes gets a `_with` variant
 that takes the runner, not a trait (rule 7).
 
+Examples: new code that runs `ps`, git, tmux or a shell with no `_with` variant or runner argument,
+a `_with` that ignores the table it is given (#567).
+
 ### 17. A move is its own PR
 
 A diff that moves items and also changes behaviour is split (rule 9). A move-only PR carries the
@@ -198,6 +213,9 @@ A diff that moves items and also changes behaviour is split (rule 9). A move-onl
 A new key in a stored record is optional to the new binary, unknown keys are kept, and paths, key
 names, lock names and file names stay as they are (rule 10). The unit tests cover only keeping
 unknown keys.
+
+Examples: a stored struct read and written back without a catch-all for unknown keys (#566), a new
+path under the state dir missing from [Where state lives](architecture.md#where-state-lives) (#569).
 
 ## Do not raise
 
