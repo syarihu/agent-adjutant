@@ -357,6 +357,7 @@ pub fn brief(args: &TaskBriefArgs) -> Result<(), String> {
             worktree: args.worktree.clone(),
             base: args.base.clone(),
             out: args.out.clone(),
+            language: given(args.language.as_deref()).map(str::to_string),
             of,
         },
     )?;

@@ -373,6 +373,10 @@ fn resolve_settings(
         max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
         stuck_after_minutes: stuck_after_minutes(pick("stuckAfterMinutes").as_ref(), warnings),
         jules_key: Hook::read(pick("julesKey")),
+        // Trimmed, so a value of spaces is as unset as an empty one.
+        language: pick("language")
+            .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty()),
         // Only a registered repo has these; `resolve_from_value` fills them in.
         copilot_review: CopilotReview::Ask,
         verify: Vec::new(),

@@ -137,6 +137,11 @@ pub struct Settings {
     /// that output. What it prints here is how to get the key, which is worth nothing without
     /// the keychain's consent.
     pub jules_key: Hook,
+    /// The language the person reads what agents write for the board in, as it was written
+    /// (`"ja"`, `"Japanese"`). `None` = not set: the hub uses the language the person talks
+    /// to it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// Skipped when serialising, with the four below: the resolved `config` printed next to
     /// `settings` already carries these keys, and a second copy would be two answers to one
     /// question (see the note on `ide` in `defaults.rs`).
@@ -204,6 +209,7 @@ impl Default for Settings {
             max_workers: None,
             stuck_after_minutes: DEFAULT_STUCK_AFTER_MINUTES,
             jules_key: Hook::default(),
+            language: None,
             copilot_review: CopilotReview::Ask,
             verify: Vec::new(),
             review_engine: ReviewEngine::Auto,

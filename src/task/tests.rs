@@ -1161,6 +1161,7 @@ fn write_brief_writes_a_task_from_the_record_and_the_settings() {
             worktree: worktree.path().display().to_string(),
             base: "origin/main".to_string(),
             out: None,
+            language: None,
             of: BriefOf::Task {
                 id: task.id.clone(),
                 key: None,
@@ -1199,6 +1200,7 @@ fn write_brief_writes_a_session_brief_ending_with_the_instruction() {
         worktree: worktree.path().display().to_string(),
         base: "-".to_string(),
         out: Some(out.display().to_string()),
+        language: None,
         of: BriefOf::Session {
             instruction: instruction.to_string(),
         },
@@ -1228,6 +1230,42 @@ fn write_brief_writes_a_session_brief_ending_with_the_instruction() {
     );
 }
 
+/// The setting beats the flag, and with neither the line is a dash for the worker to read as
+/// "ask the person's own language".
+#[test]
+fn write_brief_writes_the_language_from_the_setting_then_the_flag_then_a_dash() {
+    let (_sandbox, mut ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let worktree = worktree_on("me/wid-12");
+    let brief_with = |ctx: &crate::registry::Context, language: Option<&str>| {
+        let written = write_brief(
+            ctx,
+            &BriefRequest {
+                worktree: worktree.path().display().to_string(),
+                base: "-".to_string(),
+                out: None,
+                language: language.map(str::to_string),
+                of: BriefOf::Task {
+                    id: task.id.clone(),
+                    key: None,
+                    tracker: None,
+                    parent: None,
+                },
+            },
+        )
+        .unwrap();
+        std::fs::read_to_string(written.path).unwrap()
+    };
+
+    assert!(brief_with(&ctx, None).contains("- Language: -\n"));
+    assert!(brief_with(&ctx, Some("  ")).contains("- Language: -\n"));
+    assert!(brief_with(&ctx, Some("Korean")).contains("- Language: Korean\n"));
+    ctx.settings.language = Some("ja".to_string());
+    assert!(brief_with(&ctx, None).contains("- Language: ja\n"));
+    assert!(brief_with(&ctx, Some("Korean")).contains("- Language: ja\n"));
+}
+
 #[test]
 fn an_unknown_copilot_review_is_written_as_ask() {
     let sandbox = crate::testing::Sandbox::new(
@@ -1254,6 +1292,7 @@ fn an_unknown_copilot_review_is_written_as_ask() {
             worktree: worktree.path().display().to_string(),
             base: "-".to_string(),
             out: None,
+            language: None,
             of: BriefOf::Task {
                 id: task.id.clone(),
                 key: None,

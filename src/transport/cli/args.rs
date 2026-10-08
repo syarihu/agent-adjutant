@@ -1076,6 +1076,9 @@ pub(crate) struct TaskBriefArgs {
     /// The parent task's URL (the record's own, when this is left out)
     #[arg(long, requires = "id")]
     pub(crate) parent: Option<String>,
+    /// The language the person reads, used when the config has no `language`
+    #[arg(long)]
+    pub(crate) language: Option<String>,
     /// What the person asked of a session with no task (- reads stdin)
     #[arg(long, required_unless_present = "id", conflicts_with = "id")]
     pub(crate) instruction: Option<String>,
