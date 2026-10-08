@@ -69,8 +69,8 @@ function setView(v) {
     if (v === 'board' || v === 'sessions') {
       renderTitle();
     } else if (v === 'review') {
-      pageTitle.textContent = '要対応レビュー';
-      pageSub.textContent = '全ボードの判断待ち。左で選んで、右で答える';
+      pageTitle.textContent = '要対応';
+      pageSub.textContent = '全ボードのあなたの対応待ち。左で選んで、右で答える';
     }
   }
 

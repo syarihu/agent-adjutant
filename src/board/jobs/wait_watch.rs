@@ -4,8 +4,12 @@
 //! terminal, and the board shows it only to whoever has the board open. This watches the agent
 //! session ledger on the board's own clock: a row that has said `waiting` for a few seconds is
 //! announced once, through the configured `notification` and through the page's own desktop
-//! notification (`/api/state` and `/api/boards` carry `waits`), unless that session's terminal
-//! is open on the board.
+//! notification, unless that session's terminal is open on the board. `/api/state` and
+//! `/api/boards` carry every such wait as `waits`, which the page lists in 要対応. A wait that was
+//! not announced (it was already up when the watch started, or its terminal was open) is listed
+//! all the same, marked `quiet`. A session held by a gate has the gate's own notice, so its wait
+//! is not listed while the gate is open; it is looked at again every `HELD_RECHECK_SECS`, and
+//! listed once the gate is gone and the row still waits.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -31,9 +35,14 @@ type Key = (String, i64);
 struct State {
     /// Whether the waits that were already there when this started have been taken in.
     seeded: bool,
-    /// The waits that have been looked at, announced or not, so that none is looked at twice.
+    /// The waits that have been looked at, listed or not, so that none is looked at twice.
     handled: HashSet<Key>,
-    /// The announced waits that go on, by the slug of the board that announced them.
+    /// The waits that were already up when the watch started: listed, never announced.
+    quiet: HashSet<Key>,
+    /// The waits found held by a gate, and when each was last seen so: not handled, so that the
+    /// wait is listed once the gate closes.
+    held: HashMap<Key, i64>,
+    /// The listed waits that go on, by the slug of the board that listed them.
     notices: HashMap<String, Vec<(Key, WaitNotice)>>,
 }
 
@@ -77,18 +86,53 @@ struct Picked {
     target: Option<String>,
 }
 
-/// The waits that have lasted `after` seconds and were not looked at yet.
-fn due(waiting: &[Key], handled: &HashSet<Key>, now: i64, after: i64) -> Vec<Key> {
+/// How long a wait found held by a gate is left alone before it is looked at again, so that a
+/// gate open for hours does not have the boards listed every round.
+const HELD_RECHECK_SECS: i64 = 10;
+
+/// The waits that have lasted `after` seconds and were not looked at yet. A held one is looked at
+/// again once `HELD_RECHECK_SECS` have passed since it was last seen held.
+fn due(
+    waiting: &[Key],
+    handled: &HashSet<Key>,
+    held: &HashMap<Key, i64>,
+    now: i64,
+    after: i64,
+) -> Vec<Key> {
     waiting
         .iter()
-        .filter(|key| !handled.contains(*key) && now - key.1 >= after)
+        .filter(|key| {
+            !handled.contains(*key)
+                && now - key.1 >= after
+                && held
+                    .get(*key)
+                    .is_none_or(|at| now - at >= HELD_RECHECK_SECS)
+        })
         .cloned()
         .collect()
 }
 
+/// The `due` waits whose session runs and waits from the same moment but is held by a gate: not
+/// listed yet, and not to be settled, since the gate may close while the row goes on waiting.
+fn held_by_gate(sessions: &[Session], due: &[Key]) -> Vec<Key> {
+    sessions
+        .iter()
+        .filter(|session| session.present && session.waiting.is_some())
+        .filter_map(|session| {
+            let state = session.agent_session.as_ref()?;
+            if state.status.as_deref() != Some("waiting") {
+                return None;
+            }
+            let key = (state.session_id.clone()?, state.updated_at?);
+            due.contains(&key).then_some(key)
+        })
+        .collect()
+}
+
 /// The sessions of one board that the `due` waits are about. A session counts when it runs, no
-/// gate holds it (a gate has its own notice) and its row still says `waiting` from the same
-/// moment. A hub counts only on its own board, which lists every hub of the repository.
+/// gate holds it (a gate has its own notice, and `held_by_gate` keeps the wait for later) and
+/// its row still says `waiting` from the same moment. A hub counts only on its own board, which
+/// lists every hub of the repository.
 fn pick(sessions: &[Session], due: &[Key], nwo: &str, slug: &str) -> Vec<Picked> {
     sessions
         .iter()
@@ -121,6 +165,7 @@ fn pick(sessions: &[Session], due: &[Key], nwo: &str, slug: &str) -> Vec<Picked>
                     kind: session.kind.clone(),
                     name,
                     request: state.request.clone(),
+                    quiet: false,
                 },
                 target: target_of(session)
                     .map(|(socket, window)| target_key(socket.as_deref(), &window)),
@@ -137,14 +182,32 @@ const QUESTION_TOOL: &str = "AskUserQuestion";
 /// so a board that never opens does not have every board listed every round for good.
 const RETRY_SECS: i64 = 60;
 
-/// The due waits that are done with this round: the ones a session was found for, and, when
-/// every board and session was listed, the others too. A listing that failed is not an answer
-/// that nothing waits there, until the wait is older than `RETRY_SECS`.
-fn settled(due: &[Key], matched: &HashSet<Key>, complete: bool, now: i64) -> Vec<Key> {
+/// The due waits that are done with this round, none of those `held` by a gate: the ones a
+/// session was found for, and, when every board and session was listed, the others too. A
+/// listing that failed is not an answer that nothing waits there, until the wait is older than
+/// `RETRY_SECS`.
+fn settled(
+    due: &[Key],
+    matched: &HashSet<Key>,
+    held: &HashSet<Key>,
+    complete: bool,
+    now: i64,
+) -> Vec<Key> {
     due.iter()
+        .filter(|key| !held.contains(*key))
         .filter(|key| complete || matched.contains(*key) || now - key.1 > RETRY_SECS)
         .cloned()
         .collect()
+}
+
+/// What to do with a wait a session was found for: whether to ring it, and whether it is listed
+/// as `quiet`. A wait that was up when the watch started is listed and never rings, and takes no
+/// claim, so that the process that did see it begin keeps the marker. One whose terminal is open
+/// was seen by the person, but still holds the claim so no other process rings it. `claim` is
+/// asked at most once.
+fn route(seeded: bool, open: bool, claim: impl FnOnce() -> bool) -> (bool, bool) {
+    let mine = !seeded && claim();
+    (mine && !open, seeded || open)
 }
 
 /// What the configured notification says.
@@ -220,7 +283,7 @@ fn claim(root: &Path, key: &Key) -> bool {
 }
 
 impl WaitWatch {
-    /// The waits announced on board `slug` that still go on.
+    /// The waits on board `slug` that still go on, announced or `quiet`.
     pub fn notices(&self, slug: &str) -> Vec<WaitNotice> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state
@@ -265,22 +328,33 @@ impl WaitWatch {
         let Ok(waiting) = crate::registry::waiting_agent_sessions(root) else {
             return;
         };
-        let due = {
+        let (due, quiet) = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let still: HashSet<&Key> = waiting.iter().collect();
             state.handled.retain(|key| still.contains(key));
+            state.quiet.retain(|key| still.contains(key));
+            state.held.retain(|key, _| still.contains(key));
             for notices in state.notices.values_mut() {
                 notices.retain(|(key, _)| still.contains(key));
             }
             if !state.seeded {
                 prune_old_markers(root, MARKER_KEPT);
                 // Waits that began before this did not wait for it: announcing them now would
-                // ring for every prompt that is up when the board starts.
+                // ring for every prompt that is up when the board starts. They are still
+                // looked up below, to be listed.
                 state.seeded = true;
-                state.handled.extend(waiting);
-                return;
+                state.quiet.extend(waiting.iter().cloned());
             }
-            due(&waiting, &state.handled, now, NOTIFY_AFTER_SECS)
+            (
+                due(
+                    &waiting,
+                    &state.handled,
+                    &state.held,
+                    now,
+                    NOTIFY_AFTER_SECS,
+                ),
+                state.quiet.clone(),
+            )
         };
         if due.is_empty() {
             return;
@@ -288,6 +362,7 @@ impl WaitWatch {
         // Only now, when there is something to look for: opening the boards and listing their
         // sessions asks git and `ps`.
         let mut matched: HashSet<Key> = HashSet::new();
+        let mut held: HashSet<Key> = HashSet::new();
         let mut announced: Vec<(String, Picked)> = Vec::new();
         let mut rings: Vec<String> = Vec::new();
         let (servers, mut complete) = boards();
@@ -308,23 +383,24 @@ impl WaitWatch {
                 && !sessions
                     .iter()
                     .any(|s| s.agent_session.as_ref().is_some_and(|a| a.error.is_some()));
+            held.extend(held_by_gate(&sessions, &left));
             for picked in pick(&sessions, &left, &repo.nwo, &repo.slug) {
                 matched.insert(picked.key.clone());
                 // Claimed first, open terminal or not: only the process that makes the marker
                 // may run the configured command, and one that sees the person at the
                 // terminal keeps every other process from ringing it too.
-                let mine = claim(root, &picked.key);
-                // The person is at that terminal: they have seen it.
-                if picked
+                let open = picked
                     .target
                     .as_deref()
-                    .is_some_and(|key| self.is_open(key))
-                {
-                    continue;
-                }
+                    .is_some_and(|key| self.is_open(key));
+                let (ring, is_quiet) = route(quiet.contains(&picked.key), open, || {
+                    claim(root, &picked.key)
+                });
+                let mut picked = picked;
+                picked.notice.quiet = is_quiet;
                 // The page's notice is this board's own, whoever wins the claim: a browser
                 // served by any process still gets its desktop notification.
-                if mine
+                if ring
                     && let Some(command) = notify::repo_command(
                         &settings.notification,
                         &repo.nwo,
@@ -342,7 +418,15 @@ impl WaitWatch {
             // The waits that were found, and, after a complete sweep, the rest of the due ones:
             // one that belongs to no session this process lists is not looked for again. After
             // an incomplete one they are tried again next round.
-            state.handled.extend(settled(&due, &matched, complete, now));
+            state
+                .handled
+                .extend(settled(&due, &matched, &held, complete, now));
+            for key in &matched {
+                state.held.remove(key);
+            }
+            for key in held.difference(&matched) {
+                state.held.insert(key.clone(), now);
+            }
             for (slug, picked) in announced {
                 state
                     .notices
@@ -420,14 +504,23 @@ mod tests {
     fn a_wait_is_due_after_a_few_seconds_and_only_once() {
         let waiting = vec![key("a", 100), key("b", 98), key("c", 90)];
         let handled: HashSet<Key> = [key("c", 90)].into();
-        assert_eq!(due(&waiting, &handled, 102, 5), Vec::<Key>::new());
-        assert_eq!(due(&waiting, &handled, 103, 5), vec![key("b", 98)]);
         assert_eq!(
-            due(&waiting, &handled, 105, 5),
+            due(&waiting, &handled, &HashMap::new(), 102, 5),
+            Vec::<Key>::new()
+        );
+        assert_eq!(
+            due(&waiting, &handled, &HashMap::new(), 103, 5),
+            vec![key("b", 98)]
+        );
+        assert_eq!(
+            due(&waiting, &handled, &HashMap::new(), 105, 5),
             vec![key("a", 100), key("b", 98)]
         );
         // The same row waiting again is a new wait.
-        assert_eq!(due(&[key("c", 120)], &handled, 125, 5), vec![key("c", 120)]);
+        assert_eq!(
+            due(&[key("c", 120)], &handled, &HashMap::new(), 125, 5),
+            vec![key("c", 120)]
+        );
     }
 
     #[test]
@@ -520,16 +613,100 @@ mod tests {
         let due = [key("a", 1), key("b", 2)];
         let matched: HashSet<Key> = [key("a", 1)].into();
         assert_eq!(
-            settled(&due, &matched, true, 10),
+            settled(&due, &matched, &HashSet::new(), true, 10),
             vec![key("a", 1), key("b", 2)]
         );
-        assert_eq!(settled(&due, &matched, false, 10), vec![key("a", 1)]);
-        assert!(settled(&due, &HashSet::new(), false, 10).is_empty());
+        assert_eq!(
+            settled(&due, &matched, &HashSet::new(), false, 10),
+            vec![key("a", 1)]
+        );
+        assert!(settled(&due, &HashSet::new(), &HashSet::new(), false, 10).is_empty());
         // Not for good: past `RETRY_SECS` an unmatched wait is let go even then.
         assert_eq!(
-            settled(&due, &matched, false, 2 + RETRY_SECS + 1),
+            settled(&due, &matched, &HashSet::new(), false, 2 + RETRY_SECS + 1),
             vec![key("a", 1), key("b", 2)]
         );
+    }
+
+    #[test]
+    fn a_wait_is_listed_quietly_when_it_was_there_first_or_its_terminal_is_open() {
+        let mut asked = 0;
+        // Normal: claimed, rung, announced.
+        assert_eq!(
+            route(false, false, || {
+                asked += 1;
+                true
+            }),
+            (true, false)
+        );
+        // Another process holds the claim: listed, not rung, not quiet.
+        assert_eq!(route(false, false, || false), (false, false));
+        // The person is at the terminal: claimed so nobody else rings, listed quiet.
+        assert_eq!(route(false, true, || true), (false, true));
+        // Up before the watch started: listed quiet, and the claim is never asked.
+        assert_eq!(
+            route(true, false, || {
+                asked += 1;
+                true
+            }),
+            (false, true)
+        );
+        assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn a_wait_held_by_a_gate_is_kept_for_later_and_listed_once_the_gate_is_gone() {
+        let gated = |since| {
+            let mut s = session("worker-a", "worker", "row", since, None);
+            s.waiting = Some(crate::board::SessionWaiting {
+                id: "g".to_string(),
+                kind: "question".to_string(),
+                hub: "hub".to_string(),
+                slug: "o-r".to_string(),
+                title: None,
+                opened_at: "20260101T000000Z".to_string(),
+                count: 1,
+                options: Vec::new(),
+                choices: Vec::new(),
+                focus: None,
+            });
+            s
+        };
+        let wait = key("row", 100);
+        let due_now = [wait.clone()];
+        // Found held, not picked, and not settled even after a complete listing.
+        let held: HashSet<Key> = held_by_gate(&[gated(100)], &due_now).into_iter().collect();
+        assert_eq!(held, [wait.clone()].into());
+        assert!(pick(&[gated(100)], &due_now, "o/r", "o-r").is_empty());
+        assert!(settled(&due_now, &HashSet::new(), &held, true, 200).is_empty());
+        // A row that moved on, or a session that is gone, is not held.
+        assert!(held_by_gate(&[gated(101)], &due_now).is_empty());
+        // Left alone until HELD_RECHECK_SECS have passed since it was seen held.
+        let seen: HashMap<Key, i64> = [(wait.clone(), 110)].into();
+        let none = HashSet::new();
+        assert!(
+            due(
+                std::slice::from_ref(&wait),
+                &none,
+                &seen,
+                110 + HELD_RECHECK_SECS - 1,
+                5
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            due(
+                std::slice::from_ref(&wait),
+                &none,
+                &seen,
+                110 + HELD_RECHECK_SECS,
+                5
+            ),
+            vec![wait.clone()]
+        );
+        // The gate is gone and the row still waits: it is picked.
+        let free = session("worker-a", "worker", "row", 100, None);
+        assert_eq!(pick(&[free], &due_now, "o/r", "o-r").len(), 1);
     }
 
     #[test]

@@ -1054,6 +1054,33 @@ fn the_views_register_themselves() {
 }
 
 #[test]
+fn a_session_waiting_on_a_prompt_is_listed_in_the_queue_the_person_checks() {
+    assert!(
+        !UI_HTML.contains("要対応レビュー"),
+        "the queue is named 要対応 everywhere"
+    );
+    for piece in [
+        // The merged state of every board carries the waits.
+        "waits: parts.flatMap(p => tag(p.data.waits, p.slug))",
+        // The queue lists them, and its button opens the session's terminal.
+        "const waitRef = w =>",
+        "const itemRef = x =>",
+        "data-rv-open-wait",
+        "openWait(w)",
+        "permissionLabel({ agentSession: { request: w.request } })",
+        // The badges count them beside the gates.
+        "(b.waits || []).length",
+        "(state.waits || []).length",
+        "const boardWaiting = b =>",
+        // A quiet wait is listed without a desktop notification.
+        "w.quiet",
+    ] {
+        assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+    assert!(UI_HTML.matches("boardWaiting(").count() >= 5);
+}
+
+#[test]
 fn every_icon_only_button_has_a_name() {
     // A Material Symbols ligature alone names the button after the icon ("close").
     const ICON: &str = "<span class=\"material-symbols-outlined\"";

@@ -6,7 +6,7 @@
      /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
      /b/<slug>/?view=sessions&task=session:<id>&pane=term  its sessions, one with no task in the panel
      /                                                     すべて, every board
-     /review?item=<id>                                     要対応レビュー, every board
+     /review?item=<id>                                     要対応, every board
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. */
 /* The task panel's tabs, as `pane=` names them; anything else is 詳細 (タスクサマリ). */

@@ -134,9 +134,10 @@ pub struct SessionAgentState {
     pub error: Option<String>,
 }
 
-/// A session that has waited on a permission prompt or a question long enough to have been
-/// announced, for as long as it still waits. The page rings its own desktop notification from
-/// it, once per `(agentSessionId, since)`, and opens `session` when that is clicked.
+/// A session that has waited on a permission prompt or a question long enough to be listed, for
+/// as long as it still waits. The page lists it in 要対応, rings its own desktop notification
+/// from it unless `quiet`, once per `(agentSessionId, since)`, and opens `session` when that is
+/// clicked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WaitNotice {
@@ -153,6 +154,10 @@ pub struct WaitNotice {
     /// What it asks, as the ledger has it. Left out when the agent said nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    /// Listed for 要対応 but not announced: the person was at its terminal, or it was already
+    /// waiting when the watch started. The page does not ring a desktop notification for it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
 }
 
 /// The oldest open gate a session waits on: the one a worker opened and is waiting to have

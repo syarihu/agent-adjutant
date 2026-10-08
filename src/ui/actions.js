@@ -110,7 +110,7 @@ function pageHub() {
 /* The tab's title. The board's name comes first so a narrow tab still shows it, and a parent-task
    hub's title is the one the session tree shows (`hubTitle`), so the two never disagree. */
 function boardTitle() {
-  if (scopeAll()) return nav.view === 'review' ? '要対応レビュー — adj' : 'すべて — adj';
+  if (scopeAll()) return nav.view === 'review' ? '要対応 — adj' : 'すべて — adj';
   const entry = selectedBoard();
   if (entry) {
     const repo = entry.nwo.split('/').pop();
@@ -151,6 +151,11 @@ function boardState(b) {
     stopped: true,
   };
 }
+
+/* What waits on the person on a board: what the server counts, and the sessions waiting on a
+   permission prompt or a question, which it does not. Not stored in `b.waiting`: that is
+   lowered locally as gates are answered. */
+const boardWaiting = b => (b.waiting || 0) + (b.waits || []).length;
 
 function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiting }) {
   const st = boardState(b);
@@ -198,7 +203,7 @@ function renderBoardRows() {
   const shown = boards.filter(b => !b.finished || nav.board === b.slug);
   const repos = repoGroups(shown);
   const live = boards.filter(b => !b.finished);
-  const total = live.reduce((n, b) => n + (b.waiting || 0), 0);
+  const total = live.reduce((n, b) => n + boardWaiting(b), 0);
   const working = live.reduce((n, b) => n + (b.working || 0), 0);
   const allCurrent = scopeAll() && nav.view !== 'review';
   let html = `<div class="board-row all" role="link" tabindex="0" data-board="all"${allCurrent ? ' aria-current="page"' : ''} title="すべてのボード">
@@ -212,9 +217,9 @@ function renderBoardRows() {
     let rows = '';
     if (own) {
       const hidden = folded && withChildren;
-      const waiting = (own.waiting || 0) + (hidden ? r.children.reduce((n, c) => n + (c.waiting || 0), 0) : 0);
+      const waiting = boardWaiting(own) + (hidden ? r.children.reduce((n, c) => n + boardWaiting(c), 0) : 0);
       const busy = (own.working || 0) + (hidden ? r.children.reduce((n, c) => n + (c.working || 0), 0) : 0);
-      rows += boardRowHtml(own, { child: false, waiting, working: busy, chevron: withChildren, folded, own: own.waiting || 0 });
+      rows += boardRowHtml(own, { child: false, waiting, working: busy, chevron: withChildren, folded, own: boardWaiting(own) });
     } else {
       // Parent-task hubs whose repository has no board of its own: a header with no page.
       rows += `<div class="board-row repo unlinked" title="${esc(r.nwo)}">
@@ -223,7 +228,7 @@ function renderBoardRows() {
         <button type="button" class="repo-toggle" data-fold="${esc(r.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button></div>`;
     }
     for (const c of r.children) {
-      rows += boardRowHtml(c, { child: true, waiting: c.waiting || 0, working: c.working || 0 });
+      rows += boardRowHtml(c, { child: true, waiting: boardWaiting(c), working: c.working || 0 });
     }
     html += `<div class="repo-group${folded && withChildren ? ' collapsed' : ''}">${rows}</div>`;
   }
@@ -314,7 +319,7 @@ function renderTitle() {
   const hubBtn = document.getElementById('btn-hub');
   if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review';
   markHubButtons();
-  const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + (b.waiting || 0), 0) : waitingIn();
+  const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + boardWaiting(b), 0) : waitingIn() + (state.waits || []).length;
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
   const crumbs = document.getElementById('crumbs');
   const title = document.getElementById('page-title');
@@ -324,7 +329,7 @@ function renderTitle() {
   const sep = '<span class="sep">›</span>';
   let trail;
   if (view === 'review') {
-    trail = ['全体', '要対応レビュー'];
+    trail = ['全体', '要対応'];
   } else if (scopeAll()) {
     trail = ['すべてのボード'];
   } else if (entry) {

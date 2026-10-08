@@ -548,7 +548,7 @@ The open task and tab are in the address (`task=<id>`, `pane=term`, `review`, `c
 タスクサマリ is the default), so back and forward and a
 pasted link open the same task and tab.
 
-**The review queue.** `/review` (要対応レビュー in the sidebar) lists every gate waiting on you, across
+**The review queue.** `/review` (要対応 in the sidebar) lists every gate waiting on you, across
 all boards, and opens the first one on its own. The list is grouped by board in the sidebar's
 order (a repository, then its parent-task hubs), the longest-waiting first, with each group's
 header pinned while the list scrolls. The right side has two tabs. 判断 is one column: the task's
@@ -563,6 +563,11 @@ is reloaded, and leaves the counts and the 人 board at once. 前へ / 次へ go
 waiting. The item is in the address (`/review?item=<board>/<id>`): choosing one in the list or
 with 前へ / 次へ is a step in the history, and the move after an answer replaces the entry, so 戻る does
 not step back through answered items.
+
+A hub or worker that has waited 5 seconds on a permission prompt or a question, with no gate holding
+it, is listed there too, as 許可待ち or 質問への回答待ち, and counted in the badges. It is answered in
+its terminal, not here, so its button opens that session's terminal in the task panel. It leaves the
+list once the session stops waiting.
 
 **A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
 the right of the board's title (for the board being viewed), a terminal icon that appears when you
@@ -796,8 +801,10 @@ the gate directories.
   with a `request`, 入力待ち without; 質問への回答待ち when the `request` is an `AskUserQuestion`).
 - `waits` (on `/api/state` and on each `/api/boards` entry; left out when empty): the sessions that
   have waited on a permission prompt or a question for a few seconds and still do, each
-  `{agentSessionId, since, session, kind, name, request}`. The page rings its desktop notification
-  from it, once per `(agentSessionId, since)`, and opens `session` when it is clicked.
+  `{agentSessionId, since, session, kind, name, request, quiet}` (`quiet` only when true). The page
+  lists each in 要対応 and rings its desktop notification from it, once per
+  `(agentSessionId, since)`, unless `quiet` (listed but not announced: its terminal was open, or it
+  was already waiting when the server started). `session` is opened when it is clicked.
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
 `name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether
@@ -1052,7 +1059,7 @@ kept only as the one it is in now, so it closes the list. A gate waiting on a pe
 answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
 notification all open it there (as the dialog, when the link comes from outside the panel, and
 the placement you saved is left as it was), and a gate with no task on the board opens in the
-review view instead. 要対応レビュー in the sidebar opens the review queue, not a task. The
+review view instead. 要対応 in the sidebar opens the review queue, not a task. The
 answered gates come from `GET /api/tasks/<id>/history`, read when the panel opens rather than on
 every poll, since the archive only grows. An address from before the panel had these tabs
 (`#task/<id>/<tab>`) opens the panel on the matching one.
