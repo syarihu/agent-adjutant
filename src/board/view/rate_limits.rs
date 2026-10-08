@@ -1,6 +1,6 @@
 //! The rate limits of each account the agents run under, from the agent session ledger.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Serialize;
 
@@ -69,9 +69,7 @@ pub fn rate_limits_of(rows: Result<Vec<AgentSession>, String>) -> RateLimitsStat
             continue;
         };
         if row.agent.as_deref() == Some("claude")
-            && !dirs
-                .iter()
-                .any(|seen| PathBuf::from(seen) == Path::new(dir))
+            && !dirs.iter().any(|seen| Path::new(dir) == Path::new(seen))
         {
             dirs.push(dir);
         }

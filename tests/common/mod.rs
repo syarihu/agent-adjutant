@@ -618,6 +618,23 @@ impl Spy {
         let _ = std::fs::remove_file(&self.log);
     }
 
+    /// Waits until nothing has been asked for a moment, so that a server's own first round of
+    /// work (its poll looks at the repository when it starts) is over before a test `clear`s
+    /// the log and counts what one request asks.
+    pub fn settle(&self) {
+        let mut last = (self.calls().len(), std::time::Instant::now());
+        wait_until("the server's first calls to be over", || {
+            let now = self.calls().len();
+            if now != last.0 {
+                last = (now, std::time::Instant::now());
+            }
+            (
+                last.1.elapsed() >= std::time::Duration::from_millis(700),
+                now,
+            )
+        });
+    }
+
     /// Each call since the last `clear`, as `tool arguments`.
     pub fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(&self.log)

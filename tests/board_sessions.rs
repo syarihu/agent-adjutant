@@ -1194,6 +1194,7 @@ fn the_git_route_looks_at_its_own_worktree_and_no_other() {
     // The first request to a board has the server find its checkout, which lists the
     // worktrees once; what is counted below is the route itself.
     resident.get(&sessions_url("/worker-nobody-at-all/nothing"));
+    spy.settle();
     spy.clear();
 
     let (status, body) = resident.get(&sessions_url("/worker-spy-target/git"));
