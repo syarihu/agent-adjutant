@@ -186,16 +186,13 @@ function gateDockHtml(g) {
   </div>`;
 }
 
-/* The body of judging a gate, from what waits to the buttons that answer it: one column. `task` is
-   the gate's task when there is one (its Issue and PR, its request). */
-function gateJudgeHtml(g, task) {
+/* The box at the top of a gate being judged: what it is, how long it has waited, why it stopped. */
+/* `opts.focus` false leaves out the 確認してほしい点 the box carries, for a page that has it as a card of its own. */
+function gateWaitHeadHtml(g, opts = {}) {
   const record = g.wait === false;
   const [label] = kindOf(g.kind);
-  // Issue and PR of the task, a row each; a gate with no task has neither.
-  let h = task ? `<div class="rv-refs" data-rv-refs>${ghRowsHtml(task)}</div>` : '';
-
   const why = g.problem || g.why || '';
-  h += `<div class="m3-card-attention-box rv-wait"${expandAttrs('wait', g)}>
+  return `<div class="m3-card-attention-box rv-wait"${expandAttrs('wait', g)}>
     ${expandBtnHtml(`${label}・確認待ち`)}
     <div class="rv-wait-head">
       <span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">${record ? 'history' : 'pending_actions'}</span>
@@ -206,8 +203,18 @@ function gateJudgeHtml(g, task) {
     ${why ? `<div class="rv-wait-why">${esc(why)}</div>` : ''}
     ${stopWhy(g).length ? `<div><strong>止めた理由:</strong><ul>${stopWhy(g).map(w =>
       `<li${stopBad(g) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
-    ${g.focus ? `<div class="rv-wait-focus"><strong>確認してほしい点:</strong> ${md(g.focus)}</div>` : ''}
+    ${g.focus && opts.focus !== false ? `<div class="rv-wait-focus"><strong>確認してほしい点:</strong> ${md(g.focus)}</div>` : ''}
   </div>`;
+}
+
+/* The body of judging a gate, from what waits to the buttons that answer it: one column. `task` is
+   the gate's task when there is one (its Issue and PR, its request). */
+function gateJudgeHtml(g, task) {
+  const record = g.wait === false;
+  // Issue and PR of the task, a row each; a gate with no task has neither.
+  let h = task ? `<div class="rv-refs" data-rv-refs>${ghRowsHtml(task)}</div>` : '';
+
+  h += gateWaitHeadHtml(g);
   if (!record) h += parkBannerHtml(task);
 
   if (g.decided) {
@@ -349,10 +356,13 @@ const OUTCOME = { open:['未対応', 0], fixed:['修正済', 1], declined:['誤�
 const structuredPanels = g => reviewPanels(g) + checkPanels(g);
 
 function reviewPanels(g) {
-  let h = '';
+  return roundsCardHtml(g) + findingsCardHtml(g);
+}
+
+function roundsCardHtml(g) {
   const rounds = g.reviewRounds || [];
-  if (rounds.length) {
-    h += `<div class="panel"${expandAttrs('rounds', g)}>
+  if (!rounds.length) return '';
+  return `<div class="panel"${expandAttrs('rounds', g)}>
       ${expandBtnHtml('セルフレビュー')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">rate_review</span><span>セルフレビュー ${rounds.length}ラウンド</span></h3>
       <div class="body"><table>
@@ -360,13 +370,15 @@ function reviewPanels(g) {
       rounds.map((r, i) => `<tr><td>R${i + 1}</td><td>${esc(r.engine)}</td><td>${r.must || 0}</td>` +
         `<td>${r.want || 0}</td><td>${r.scope || 0}</td><td>${r.falsePositives || 0}</td></tr>`).join('') +
       `</table></div></div>`;
-  }
+}
+
+function findingsCardHtml(g) {
   // Open first, since those are what is left; then fixed; then the false positives, each with
   // why it was declined.
   const findings = g.findings || [];
-  if (findings.length) {
-    const groups = [...Object.keys(OUTCOME), ...new Set(findings.map(f => f.outcome).filter(o => !OUTCOME[o]))];
-    h += `<div class="panel"${expandAttrs('findings', g)}>
+  if (!findings.length) return '';
+  const groups = [...Object.keys(OUTCOME), ...new Set(findings.map(f => f.outcome).filter(o => !OUTCOME[o]))];
+  return `<div class="panel"${expandAttrs('findings', g)}>
       ${expandBtnHtml('指摘')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">rule</span><span>指摘 ${findings.length}件</span></h3>
       <div class="body">` +
@@ -381,15 +393,16 @@ function reviewPanels(g) {
             `${f.reason ? `<br><span style="color:var(--md-sys-color-outline);font-size:12px;">${f.outcome === 'declined' ? '却下の理由' : '理由'}: ${esc(f.reason)}</span>` : ''}</li>`;
         }).join('') + '</ul>';
       }).join('') + `</div></div>`;
-  }
-  return h;
 }
 
 function checkPanels(g) {
-  let h = '';
+  return commandsCardHtml(g) + manualCardHtml(g);
+}
+
+function commandsCardHtml(g) {
   const commands = g.commands || [];
-  if (commands.length) {
-    h += `<div class="panel"${expandAttrs('commands', g)}>
+  if (!commands.length) return '';
+  return `<div class="panel"${expandAttrs('commands', g)}>
       ${expandBtnHtml('Verify 実行結果')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">fact_check</span><span>Verify 実行結果</span></h3>` +
       commands.map(c => {
@@ -405,15 +418,15 @@ function checkPanels(g) {
             `<div class="diff" style="margin-top:8px;"><div>${esc(c.output).split('\n').join('</div><div>')}</div></div></details>`
           : `<div style="margin-bottom:8px;background:var(--md-sys-color-surface-container-low);padding:8px 12px;border-radius:var(--md-shape-corner-sm);display:flex;align-items:center;">${head}</div>`;
       }).join('') + `</div>`;
-  }
-  if ((g.manual || []).length) {
-    h += `<div class="panel"${expandAttrs('manual', g)}>
+}
+
+function manualCardHtml(g) {
+  if (!(g.manual || []).length) return '';
+  return `<div class="panel"${expandAttrs('manual', g)}>
       ${expandBtnHtml('人が見る確認項目')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>人が見る確認項目</span></h3>
       <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map((m, i) =>
         `<li><label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" data-manual-gate="${esc(gateRef(g))}" data-manual-index="${i}"${manualChecked(gateRef(g)).has(i) ? ' checked' : ''} style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></label></li>`).join('')}</ul></div>`;
-  }
-  return h;
 }
 
 /* Ticks on a gate's manual checks, kept per gate so a re-render or a tab switch does not
@@ -431,8 +444,13 @@ document.addEventListener('change', e => {
   if (box.checked) ticked.add(i); else ticked.delete(i);
 });
 
-/* The comment box of the panel a gate is judged in. */
-const commentBox = () => document.querySelector('#card-dialog[open] .gate-comment') || document.querySelector('#task-panel .gate-comment');
+/* The comment box of the gate `ref`: the dialog's when it is open and has one for it, else the panel's. A
+   box is the gate's own, so an answer for one gate never reads what was typed for another. */
+function commentBox(ref) {
+  const of = root => [...root.querySelectorAll('[data-gate]')].filter(el => el.dataset.gate === ref)
+    .map(el => el.querySelector('.gate-comment')).find(Boolean);
+  return of(document.querySelector('#card-dialog[open]') || document.createDocumentFragment()) || of(document.querySelector('#task-panel'));
+}
 
 /* An answered gate leaves the list and the counts at once; the round that follows confirms it.
    In a merged state that round can be a while off. */
@@ -451,7 +469,7 @@ function dropGate(g) {
 async function answer(decision, choice, id, commentOverride = null) {
   const g = gateByRef(id);
   if (!g) return false;
-  const box = commentBox();
+  const box = commentBox(id);
   const comment = commentOverride !== null ? commentOverride : box?.value.trim();
   // Sending back something the worker has moved past, without saying what is wrong, gives it
   // nothing to act on.
@@ -502,7 +520,7 @@ function talk(id) {
 async function closeGate(id) {
   const g = gateByRef(id);
   if (!g) return false;
-  const comment = commentBox()?.value.trim();
+  const comment = commentBox(id)?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
   const key = gateKey(g);
   try {

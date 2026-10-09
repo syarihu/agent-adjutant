@@ -1433,4 +1433,27 @@ fn the_card_dialog_is_in_the_page_after_what_it_calls() {
     assert!(at("function decideAct") < at("function openCardDialog"));
     assert!(at("const tp = id =>") < at("function openCardDialog"));
     assert!(!include_str!("../../ui/card-dialog.js").contains("bindDecide("));
+    // The whole task is drawn from what the panel draws it with, and the page it sits in is the index and the grid.
+    for needed in [
+        "function gatesOf",
+        "function timelineHtml",
+        "function decideHtml",
+        "function detailsKvHtml",
+        "function gateWaitHeadHtml",
+    ] {
+        assert!(at(needed) < at("function openCardDialog"), "{needed}");
+    }
+    // Called when the dialog is opened, not when the page loads, so it may come after.
+    assert!(UI_HTML.contains("function lastMessageHtml"));
+    assert!(UI_HTML.contains("class=\"card-dialog-index\""));
+    assert!(UI_HTML.contains("function cardDialogTaskGroups"));
+    // The head's button is the panel head's own, and carries no task id.
+    let head = UI_HTML.split("function panelHeadHtml").nth(1).unwrap();
+    let head = &head[..head.find("\n}\n").unwrap()];
+    assert!(head.contains("data-expand-task"));
+    assert!(!head.contains("task.id"));
+    // The panel draws, then the dialog follows.
+    let render = UI_HTML.split("function renderTaskPanel()").nth(1).unwrap();
+    let render = &render[..render.find("\n}\n").unwrap()];
+    assert!(render.contains("renderTaskPanelNow()") && render.contains("cardDialogFollow"));
 }

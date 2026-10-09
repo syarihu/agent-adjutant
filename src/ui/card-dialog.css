@@ -1,4 +1,4 @@
-/* 「拡大」: one card of the task panel in a large dialog (src/ui/card-dialog.js). */
+/* 「拡大」: the whole task under an index, or one card of the panel, in a large dialog (src/ui/card-dialog.js). */
 #card-dialog {
   width: calc(100vw - 48px);
   height: calc(100vh - 48px);
@@ -22,8 +22,47 @@
 .card-dialog-gone { margin: 0; padding: 8px 24px; font-size: 12.5px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
 /* Always rendered, so setting its text is announced; empty, it takes no room (display: none would not be announced). */
 .card-dialog-gone:empty { padding: 0; }
-.card-dialog-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.card-dialog-content { max-width: 1080px; margin: 0 auto; padding: 20px 28px 32px; display: flex; flex-direction: column; gap: 16px; }
+.card-dialog-main { flex: 1 1 auto; min-height: 0; display: flex; }
+.card-dialog-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; scroll-padding-bottom: var(--cd-dock-h, 160px); }
+.card-dialog-content { padding: 20px 28px 32px; display: flex; flex-direction: column; gap: 16px; }
+/* One card alone reads in a column of its own; a task fills the width. */
+.card-dialog-content[data-mode="card"] { width: min(100%, 1080px); margin: 0 auto; box-sizing: border-box; }
+.card-dialog-content[data-mode="task"] { gap: 28px; }
+
+/* The index: groups, and the cards in them, as buttons; it scrolls by itself. */
+.card-dialog-index { flex: 0 0 232px; width: 232px; box-sizing: border-box; overflow: auto; padding: 16px 8px 24px 16px; border-right: 1px solid var(--md-sys-color-outline-variant); font-size: 12.5px; }
+.card-dialog-index[hidden] { display: none; }
+.card-dialog-index ol { list-style: none; margin: 0; padding: 0; }
+.card-dialog-index ol ol { margin: 2px 0 8px 10px; }
+.card-dialog-index button { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 5px 8px; border-radius: 8px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
+.card-dialog-index > ol > li > button { font-weight: 700; color: var(--md-sys-color-on-surface); }
+.card-dialog-index button:hover { background: var(--md-sys-color-surface-container-high); }
+.card-dialog-index button[aria-current="location"] { background: var(--md-sys-color-secondary-container, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface); }
+.card-dialog-index button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.cd-badge { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface-variant); }
+
+/* The cards: two to a row when each can keep 440px, else one. */
+.cd-group { display: flex; flex-direction: column; gap: 12px; }
+.cd-group-title { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
+.cd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(440px, calc((100% - 16px) / 2))), 1fr)); gap: 16px; align-items: start; }
+.cd-card { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.cd-card > * { margin: 0; }
+.cd-wide { grid-column: 1 / -1; }
+.cd-group:focus-visible, .cd-card:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 4px; border-radius: 8px; }
+.cd-flash { animation: cd-flash 1.4s ease-out; }
+@keyframes cd-flash { from { outline: 3px solid var(--md-sys-color-primary); outline-offset: 4px; } to { outline: 3px solid transparent; outline-offset: 4px; } }
+@media (prefers-reduced-motion: reduce) {
+  .cd-flash { animation: none; outline: 3px solid var(--md-sys-color-primary); outline-offset: 4px; }
+}
+/* The answer band stays at the bottom of the scroll; its label names the gate it answers. */
+.cd-dock { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 6px; padding-top: 8px; background: var(--md-sys-color-surface-container-low); }
+.cd-dock-label { margin: 0; font-size: 12px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.cd-dock .decision-dock { position: static; }
+/* A read-only band kept above the live one stays in the flow. */
+.cd-dock:has(~ .cd-dock) { position: static; }
+@media (max-width: 720px) {
+  .card-dialog-index { display: none; }
+}
 /* The markdown body of a card is a `.body`, which the generic dialog rule would turn into a padded,
    scrolling flex column of its own. */
 #card-dialog .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }

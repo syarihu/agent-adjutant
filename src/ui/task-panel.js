@@ -211,6 +211,12 @@ function setPanelPart(part, el, html) {
 }
 
 function renderTaskPanel() {
+  renderTaskPanelNow();
+  // The 「拡大」 dialog of a whole task follows what the panel now shows.
+  if (typeof cardDialogFollow === 'function') cardDialogFollow();
+}
+
+function renderTaskPanelNow() {
   const panel = tp('task-panel');
   if (!panel) return;
   // A session that has been linked to a task since is shown as that task, and the address follows;
@@ -508,7 +514,8 @@ function panelHeadHtml(task) {
       </div>
       <h2 class="tp-title">${esc(task.title)}${titlePendingPill(task)}</h2>
     </div>
-    ${panelBtnsHtml('<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>')}`;
+    ${panelBtnsHtml('<button type="button" class="tool-btn" data-expand-task aria-haspopup="dialog" title="タスク全体を拡大して読む" aria-label="タスク全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>' +
+      '<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>')}`;
 }
 
 /* The head's buttons, which are the same for a task and a hub: `jump` is the one of its own. */
