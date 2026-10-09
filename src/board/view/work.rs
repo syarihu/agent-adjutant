@@ -1,6 +1,6 @@
 //! The work under way across every repository the resident server serves, in one document.
 //!
-//! One carrier board answers for each repository, the way the page's セッション tab asks: the
+//! One carrier board answers for each repository: the
 //! repository's own board, which lists the sessions and tasks of its parent-task hubs too, else
 //! each parent-task board. So a poll reads one board per repository, not one per hub.
 //!

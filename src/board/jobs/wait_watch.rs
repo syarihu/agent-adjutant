@@ -5,7 +5,7 @@
 //! session ledger on the board's own clock: a row that has said `waiting` for a few seconds is
 //! announced once, through the configured `notification` and through the page's own desktop
 //! notification, unless that session's terminal is open on the board. `/api/state` and
-//! `/api/boards` carry every such wait as `waits`, which the page lists in 要対応. A wait that was
+//! `/api/boards` carry every such wait as `waits`, which the page lists in 「いまの仕事」. A wait that was
 //! not announced (it was already up when the watch started, or its terminal was open) is listed
 //! all the same, marked `quiet`. A session held by a gate has the gate's own notice, so its wait
 //! is not listed while the gate is open; it is looked at again every `HELD_RECHECK_SECS`, and

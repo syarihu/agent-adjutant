@@ -1698,7 +1698,7 @@ adjutant work --worktree '{worktree}' --task {task_id}
 
 **Step 4** — tell the user the worker is running and which tab it is, then **go back to waiting**.
 The hub's job for this task is over. Do not poll the worker: the tab name and its row in
-`adj agent-sessions` (the board's セッション tab) show progress, and reading the screen is a waste
+`adj agent-sessions` (the board's 「いまの仕事」) show progress, and reading the screen is a waste
 of context.
 
 ### 5. Hand it to Jules

@@ -419,8 +419,8 @@ The board, the permission part of gates and cards, and the hub's line landed in
 [#506](https://github.com/syarihu/agent-adjutant/issues/506); the rest is not in the foundation and
 is listed so the ledger carries what it will need.
 
-- **The board** (landed, #506). A sessions tab in the sidebar, and the session cards, read `agent_sessions` on the
-  existing 2-second poll of `/api/state`. No push channel is added. The 「いまの仕事」 view reads the
+- **The board** (landed, #506). The session cards (and, until #558 folded it into 「いまの仕事」, a sessions tab) read
+  `agent_sessions` on the existing 2-second poll of `/api/state`. No push channel is added. The 「いまの仕事」 view reads the
   same ledger fields through `GET /api/work` on the same 2-second clock: one document for every
   repository, built from one carrier board each, and still no push channel.
 - **新着 and 後で見る** (#554). The 「いまの仕事」 view sorts what waits on the person into rows not yet
@@ -447,7 +447,7 @@ is listed so the ledger carries what it will need.
   row with its `updatedAt`, no liveness check) on the 2-second clock, and only when a wait is due
   lists the board's sessions to find whose it is. A wait is the pair of the row's `sessionId` and its
   `updatedAt`, which moves only when the status does, so the `permission_prompt` that follows a
-  `PermissionRequest` is the same wait. The waits found when the server starts are listed in 要対応 but not announced, and so are
+  `PermissionRequest` is the same wait. The waits found when the server starts are listed (as 新着 items of their rows in 「いまの仕事」) but not announced, and so are
   the waits whose terminal is open on the board (`quiet` on the notice).
   A wait whose session a gate holds is looked at again every 10 seconds and listed once the gate
   closes while the row still waits. A session that is gone, and a hub on a board that is not its own, are
@@ -463,9 +463,9 @@ is listed so the ledger carries what it will need.
   notifies on its own. The open-terminal check is per process: a terminal open on one board does
   not stop another process that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
   {request}"`, or `"{name} is asking: {question}"` for an AskUserQuestion), and `/api/state` and
-  `/api/boards` carry every wait as `waits`: the page lists them in 要対応 (a button that opens that
-  session's terminal), counts them in the badges, and rings its own desktop notification for the
-  ones that are not `quiet`, which opens that session's terminal when clicked.
+  `/api/boards` carry every wait as `waits`: the page lists each as a 新着 item of its session's row in
+  「いまの仕事」 (whose middle column is that session's terminal), counts it in the number on the sidebar entry, and rings its own
+  desktop notification for the ones that are not `quiet`, which opens that session in 「いまの仕事」 when clicked.
 - **Waking.** `mail::read_screen` guesses an agent's state from a tmux screen, and works for neither
   iTerm2 nor `Generic`. A row in `waiting` or `running` says not to type now; `idle` or `done` says
   it is safe; a `running` row not heard from in ten minutes is not believed, since an interrupted turn
