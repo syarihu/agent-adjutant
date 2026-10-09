@@ -485,8 +485,8 @@ Nothing opens a browser.
 **One resident server for every repository.** `adj server start` runs a single server per
 state directory that serves the board of every repository on this machine, each at
 `/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
-boards in place: the sidebar lists a row per repository, with its parent-task hubs under it
-(each row shows whether its hub runs and how many workers are at work; the one count in the sidebar is 新着, on 「いまの仕事」),
+boards in place: the sidebar, which has a 「ボード」 / 「いまの仕事」 switch at its top, lists on 「ボード」 a row per repository, with its parent-task hubs under it
+(each row shows whether its hub runs and how many workers are at work; the one count in the sidebar is 新着, on the 「いまの仕事」 tab),
 and "すべて" reads every board at once. The repository's board also shows its parent-task hubs' tasks as cards marked with the parent key; opening one switches to that hub's board, and without the resident server they are read-only. A parent-task hub's board shows only its own tasks. 「いまの仕事」 (see below) is one view of the work under way
 for every board, gates and sessions included. Each screen has an address that carries the board
 and the view, so back and forward and a pasted link land on the same screen. It detaches
@@ -522,8 +522,8 @@ The addresses of the old セッション tab (`?view=sessions[&task=<ref>]`, `&s
 `#sessions`) open 「いまの仕事」 on the same board and task, or the list when they name none, and the terminal
 is in the middle column whichever tab of the panel is on.
 
-**いまの仕事 (the work under way).** Under 全体 in the sidebar, on the resident server only, 「いまの仕事」 is one view of
-the work under way in every repository, in three columns. The list on the left has two groupings: 「親 Issue」
+**いまの仕事 (the work under way).** The 「いまの仕事」 tab of the sidebar's switch (`?view=work`), on the resident server only, is one view of
+the work under way in every repository, in three columns: the list in the sidebar, the terminal in the middle and the task panel on the right. The list has two groupings: 「親 Issue」
 (the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
 with the tasks that have no parent in the group of the repository's hub, which comes first, above the parent issues; the owner heading is shown even when there is only one owner,
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
@@ -552,8 +552,8 @@ is the task panel on the selected row's board, without its ターミナル tab (
 the middle terminal), or, for a parent, its overview: how far it is, the stack from the base branch up,
 「次を着手させる」 and 「子タスクを足す」. The address is `/?view=work` with nothing selected and
 `/b/<slug>/?view=work&task=<ref>&pane=<tab>` with a row selected, where `<ref>` is a task id, `hub:<id>`,
-`session:<id>`, `gate:<board>/<id>` (a gate with no task card, below) or `parent:<key>`. The widths of the list, the task panel and the sidebar are dragged from their
-edges (arrow keys too; a double click puts one back) and kept in this browser. The list is
+`session:<id>`, `gate:<board>/<id>` (a gate with no task card, below) or `parent:<key>`. The widths of the task panel and the sidebar are dragged from their
+edges (arrow keys too; a double click puts one back) and kept in this browser; the sidebar keeps one width per tab, 「ボード」 and 「いまの仕事」. The list is
 `GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
 where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
 (see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
@@ -584,7 +584,7 @@ new again only when something changes what you have to do: a gate opens, a permi
 worker finishes a turn with no gate open, a session fails, the PR turns to yours again, or you take a park off (置くのをやめる,
 `adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to
 checks does not. Two buttons: `done` on a new row marks it read, and `done_all` in the 新着 header marks every new row
-read. The sidebar badge on 「いまの仕事」 counts the new rows, and is refreshed every 10 seconds while another
+read. The badge on the sidebar's 「いまの仕事」 tab counts the new rows, and is refreshed every 10 seconds while another
 view is open; it is the only count in the sidebar, and on the resident server it is the number in front of the page's
 title (a board served alone puts what waits on you there). The checkbox 「処理したら次へ」 in the 新着 header (on by
 default, kept in the browser) opens the next new row, in the order the list shows them, once you answer or close a gate on
@@ -632,8 +632,8 @@ question, open ターミナル. The panel sits on the right (the default) or the
 opens as a large dialog (↗, 「ダイアログで開く」). The dialog is a remembered mode: while it is on,
 every panel opens as a dialog, and ×, Escape or a click outside close the panel without leaving
 the mode; the left and right sidebar buttons switch back to the sidebar. The side, the mode and
-the width are remembered by the browser; while the panel is on the left the sidebar shrinks
-to its icon rail, and on a narrow window the panel floats over the board. Moving the panel only
+the width are remembered by the browser; while the panel is on the left the sidebar (on its 「ボード」 tab; 「いまの仕事」's list has no icon form) shrinks
+to its icon rail (on the 「ボード」 tab only: on the 「いまの仕事」 tab the sidebar keeps the list, which narrows to 30% of the window (never under the list's minimum width) at 1400px or less so that the task panel and the terminal keep room, is fixed at the list's minimum width at 1024px or less, and at 720px or less puts the list above the terminal), and on a narrow window the panel floats over the board. Moving the panel only
 changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
 The open task and tab are in the address (`task=<id>`, `pane=term`, `review`, `check` or `history`;
 タスクサマリ is the default), so back and forward and a

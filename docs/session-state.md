@@ -465,7 +465,7 @@ is listed so the ledger carries what it will need.
   not stop another process that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
   {request}"`, or `"{name} is asking: {question}"` for an AskUserQuestion), and `/api/state` and
   `/api/boards` carry every wait as `waits`. On the resident server the page lists each as a 新着 item of its session's row in
-  「いまの仕事」 (whose middle column is that session's terminal), counts it in the number on the sidebar entry, and rings its own
+  「いまの仕事」 (whose middle column is that session's terminal), counts it in the badge on the sidebar's 「いまの仕事」 tab, and rings its own
   desktop notification for the ones that are not `quiet`, which opens that session in 「いまの仕事」 when clicked. A board served
   alone has no 「いまの仕事」: it marks the wait on the session's card, counts it in the tab title, and its notification opens
   that session's panel.

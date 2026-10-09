@@ -37,16 +37,15 @@ function setView(v) {
   if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
 
   // Navigation rail active states
-  const navWork = document.getElementById('nav-work');
-  if (navWork) {
-    if (v === 'work') navWork.setAttribute('aria-current', 'page');
-    else navWork.removeAttribute('aria-current');
-  }
+  // The sidebar's switch follows the view: 「いまの仕事」 is its own tab, every other view is ボード's.
+  for (const [id, on] of [['side-tab-boards', v !== 'work'], ['nav-work', v === 'work']])
+    document.getElementById(id)?.setAttribute('aria-selected', String(on));
+  applyRailMode();
   applyLayout();
 
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
-    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : 'work';
+    const want = v === 'board' ? (prefs.tab === 'human' ? 'human' : 'agent') : 'work';
     if (nav.view !== want) {
       nav.view = want;
       if (want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
@@ -111,7 +110,8 @@ function toggleTheme() {
 // entry per line: the_page_wires_no_inline_handlers reads the keys line by line.
 const ACTIONS = {
   'new-task': () => openForm(),
-  work: () => go({ board: 'all', view: 'work', task: null, pane: 'detail' }),
+  work: () => { if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
+  boards: () => { if (view === 'work') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),

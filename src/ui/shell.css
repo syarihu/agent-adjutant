@@ -313,9 +313,33 @@ main { flex: 1; overflow: hidden; position: relative; }
 }
 
 
+/* ── The sidebar's switch: ボード / いまの仕事 ── */
+.side-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.side-tab {
+  flex: 1; min-width: 0; position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 8px 4px; border: 0; border-bottom: 2px solid transparent;
+  border-radius: var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0 0;
+  background: transparent; color: var(--md-sys-color-on-surface-variant);
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.side-tab:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.side-tab:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
+.side-tab[aria-selected="true"] { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
+.side-tabs #nav-work { flex-grow: 1.4; }
+.side-tab .material-symbols-outlined { font-size: 18px; }
+.side-tab .lbl { overflow: hidden; text-overflow: ellipsis; }
+.side-tab .rail-badge { margin-left: 2px; }
+body.rail-icons .side-tabs #nav-work { flex-grow: 1; }
+body.rail-icons .side-tabs { flex-direction: column; border-bottom: 0; gap: 4px; }
+body.rail-icons .side-tab { padding: 10px; border-bottom: 0; border-radius: var(--md-shape-corner-full); }
+body.rail-icons .side-tab .lbl { display: none; }
+body.rail-icons .side-tab[aria-selected="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+body.rail-icons .side-tab .rail-badge { position: absolute; top: 0; right: 0; margin: 0; font-size: 10px; padding: 1px 5px; }
+.single-board .side-tabs { display: none; }
+
 /* ── Boards in the rail ── */
 .field[hidden] { display: none; }
-.rail-global { display: flex; flex-direction: column; gap: 4px; }
 #board-rows { display: flex; flex-direction: column; gap: 2px; }
 .repo-group { display: flex; flex-direction: column; gap: 2px; }
 .board-row {

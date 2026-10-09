@@ -325,7 +325,7 @@ function renderTitle() {
   const sep = '<span class="sep">›</span>';
   let trail;
   if (view === 'work') {
-    trail = ['全体', 'いまの仕事'];
+    trail = ['いまの仕事'];
   } else if (scopeAll()) {
     trail = ['すべてのボード'];
   } else if (entry) {
