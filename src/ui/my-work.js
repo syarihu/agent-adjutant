@@ -426,8 +426,8 @@ const workIsSelected = r => !!nav.task && !!nav.board && nav.board !== 'all' && 
 /* ── the document ── */
 
 let endState = null;
-/* The gate to show on the open task's tab, once its panel is drawn: `{ board, task, gate }` (selectWorkRow). Dropped when the
-   address moves off that board's task, and when the panel closes. */
+/* The gate to show on the open task's tab, once its panel is drawn: `{ board, task, gate }` (selectWorkRow). Replaced by the
+   next selectWorkRow, and dropped by the next panel draw whose address is off that board's task. */
 let wantedGate = null;
 /* A session that finishes or fails, as the document shows it: one desktop notification each, for the kinds the person
    chose (「通知」), and not for what was already there when the page opened. The keys are learned whether or not the
