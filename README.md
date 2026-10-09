@@ -553,7 +553,7 @@ the middle terminal), or, for a parent, its overview: how far it is, the stack f
 「次を着手させる」 and 「子タスクを足す」. The address is `/?view=work` with nothing selected and
 `/b/<slug>/?view=work&task=<ref>&pane=<tab>` with a row selected, where `<ref>` is a task id, `hub:<id>`,
 `session:<id>`, `gate:<board>/<id>` (a gate with no task card, below) or `parent:<key>`. The widths of the task panel and the sidebar are dragged from their
-edges (arrow keys too; a double click puts one back) and kept in this browser; the sidebar keeps one width per tab, 「ボード」 and 「いまの仕事」. The list is
+edges (arrow keys too; a double click puts one back) and kept in this browser; the sidebar has one width, shared by 「ボード」 and 「いまの仕事」. The list is
 `GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
 where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
 (see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
@@ -633,7 +633,7 @@ opens as a large dialog (↗, 「ダイアログで開く」). The dialog is a r
 every panel opens as a dialog, and ×, Escape or a click outside close the panel without leaving
 the mode; the left and right sidebar buttons switch back to the sidebar. The side, the mode and
 the width are remembered by the browser; while the panel is on the left the sidebar (on its 「ボード」 tab; 「いまの仕事」's list has no icon form) shrinks
-to its icon rail (on the 「ボード」 tab only: on the 「いまの仕事」 tab the sidebar keeps the list, which narrows to 30% of the window (never under the list's minimum width) at 1400px or less so that the task panel and the terminal keep room, is fixed at the list's minimum width at 1024px or less, and at 720px or less puts the list above the terminal), and on a narrow window the panel floats over the board. Moving the panel only
+to its icon rail (on the 「ボード」 tab only: on the 「いまの仕事」 tab the sidebar keeps the list, which narrows to 30% of the window (never under the sidebar's minimum width) at 1400px or less so that the task panel and the terminal keep room, is fixed at that minimum width at 1024px or less, and at 720px or less puts the list above the terminal), and on a narrow window the panel floats over the board. Moving the panel only
 changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
 The open task and tab are in the address (`task=<id>`, `pane=term`, `review`, `check` or `history`;
 タスクサマリ is the default), so back and forward and a

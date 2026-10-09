@@ -1,6 +1,6 @@
 /* ── M3 Navigation Rail / Drawer (Left Side) ── */
 #nav-rail {
-  width: var(--rail-w, 240px);
+  width: var(--rail-w, 300px);
   background: var(--md-sys-color-surface-container-low);
   border-right: 1px solid var(--md-sys-color-outline-variant);
   display: flex;
@@ -480,7 +480,7 @@ body.rail-icons .side-tab .rail-badge { position: absolute; top: 0; right: 0; ma
 /* The rail keeps only what a glance needs — repositories as their initials, parent-task hubs
    as their key number, a badge for what waits. `rail-icons` is set (applyRailMode) on a narrow
    window, and while the task panel sits on the left. */
-body { --rail-w: 240px; }
+body { --rail-w: 300px; }
 body.rail-icons { --rail-w: 72px; }
 body.rail-icons #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
 body.rail-icons .rail-brand { padding: 4px 0 10px; }
@@ -515,7 +515,7 @@ body.rail-icons .rail-tools { flex-direction: column; gap: 4px; }
   flex: none;
   width: var(--panel-w, 520px);
   /* The board keeps at least 320px beside the rail, whichever shape that is in. */
-  max-width: calc(100vw - var(--rail-w, 240px) - 320px);
+  max-width: calc(100vw - var(--rail-w, 300px) - 320px);
   min-width: 0;
   display: flex;
   flex-direction: column;

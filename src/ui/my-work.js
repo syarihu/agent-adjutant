@@ -1452,13 +1452,8 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at }) {
   });
 }
 
-bindWidthHandle(wk('wk-list-resize'), {
-  read: () => prefs.workListWidth, min: 260, max: () => 640, reset: 380,
-  at: x => x,
-  apply: w => { prefs.workListWidth = w; document.body.style.setProperty('--wk-list-w', `${w}px`); },
-});
 bindWidthHandle(wk('rail-resize'), {
-  read: () => prefs.railWidth, min: 180, max: () => 400, reset: 240,
+  read: () => prefs.railWidth, min: 260, max: () => 560, reset: 300,
   at: x => x,
   apply: w => { prefs.railWidth = w; document.body.style.setProperty('--rail-w-set', `${w}px`); },
 });

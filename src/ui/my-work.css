@@ -1,15 +1,13 @@
 /* ── いまの仕事: the list, the terminal of the selected session, and (the body's own task panel) the right column ── */
 /* The sidebar's width is the person's to set; the narrow window's icon rail (shell.css) is more specific and wins. */
-body { --rail-w: var(--rail-w-set, 240px); }
-/* 「いまの仕事」's list lives in the sidebar, and has a width of its own. */
-body.view-work { --rail-w: var(--wk-list-w, 380px); }
+body { --rail-w: var(--rail-w-set, 300px); }
 /* The task panel stays beside 「いまの仕事」's terminal, so the terminal is never covered; the sidebar's list gives way instead:
-   it narrows up to 1400px (to 30% of the window, never under the list's minimum) and is fixed at that minimum up to 1024px,
+   it narrows up to 1400px (to 30% of the window, never under the sidebar's minimum) and is fixed at that minimum up to 1024px,
    where the terminal also keeps a lower floor. */
 @media (max-width: 1400px) {
-  body.view-work { --rail-w: max(260px, min(var(--wk-list-w, 380px), 30vw)); }
+  body.view-work { --rail-w: max(260px, min(var(--rail-w-set, 300px), 30vw)); }
   /* The width is the window's here, so the handle would move nothing. */
-  body.view-work #wk-list-resize { display: none; }
+  body.view-work #rail-resize { display: none; }
 }
 @media (max-width: 1024px) {
   body.view-work { --rail-w: 260px; }
@@ -30,7 +28,6 @@ body.view-work { --rail-w: var(--wk-list-w, 380px); }
 body.rail-icons .rail-resize { display: none; }
 /* The sidebar shows the board list or 「いまの仕事」's list, by the tab. */
 body.view-work #side-boards, body:not(.view-work) #wk-list { display: none; }
-body.view-work #rail-resize, body:not(.view-work) #wk-list-resize { display: none; }
 body.wk-dragging { user-select: none; cursor: col-resize; }
 .single-board #nav-work { display: none; }
 /* Completions and failures come from the work document, which a board served alone has none of. */

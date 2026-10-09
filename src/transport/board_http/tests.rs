@@ -1199,7 +1199,6 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "data-action=\"work\"",
         "id=\"work-view\"",
         "id=\"wk-term-host\"",
-        "id=\"wk-list-resize\"",
         // The page's own notification settings, and the end-of-turn notifications read from the document.
         "id=\"notify-dialog\"",
         "function notifyEndEvents",
@@ -1237,6 +1236,8 @@ fn the_page_has_the_work_view_and_no_review_queue() {
             && at("id=\"wk-groups\"") < at("id=\"task-panel\"")
     );
     assert!(!UI_HTML.contains("rail-global"));
+    // One width for both tabs: the sidebar's handle is the only one.
+    assert!(!UI_HTML.contains("wk-list-resize"));
     // The panel has no terminal tab in this view.
     assert!(UI_HTML.contains("const term = view === 'work' ? ''"));
     // What 要対応 did is done in the panel: a gate with no task card is judged in a panel of its own,
