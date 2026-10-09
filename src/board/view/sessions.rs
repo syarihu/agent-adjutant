@@ -424,8 +424,9 @@ pub(super) fn sessions_of(
     sessions.extend(worker_sessions(&mut poll, linked_paths, worker_data));
     sessions.extend(main_worker_session(&mut poll));
     // Only a poll that reached the main checkout's turn forgets the lines nobody asked for, as
-    // before the split.
-    if poll.listing.lines == Lines::All && !poll.skipped("worker-main") {
+    // before the split. A listing that failed left the workers out, which is not the same as
+    // their panes being gone.
+    if poll.listing.lines == Lines::All && poll.listing.listed && !poll.skipped("worker-main") {
         server.last_lines.keep_only(&poll.screens);
     }
     // The same for the diffs, and the reading of what is due starts here, off this thread.

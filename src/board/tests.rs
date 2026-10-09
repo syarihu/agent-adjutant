@@ -999,6 +999,62 @@ fn reading_the_state_leaves_a_resumable_gate_open() {
     );
 }
 
+/// A worktree listing that failed leaves the workers out of the poll, which is not the same as
+/// their panes being gone: the lines held for them stay, and a good listing still forgets them.
+#[test]
+fn a_failed_worktree_listing_keeps_the_last_lines_held_for_workers() {
+    let key = "/tmp/tmux-sock\t%9";
+    let held = |main: &Path| {
+        let repo = crate::kernel::identity::RepoInfo {
+            main: main.to_string_lossy().to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        let server = Server {
+            ctx: crate::registry::context_of(repo).unwrap(),
+            token: String::new(),
+            port: 0,
+            resident: false,
+            jules: Arc::default(),
+            hub_titles: Arc::default(),
+            last_lines: Arc::default(),
+            diffs: Arc::default(),
+            tmux: None,
+            terminals: Arc::default(),
+            pr_poll: None,
+            waits: Arc::default(),
+        };
+        let t0 = Instant::now();
+        server
+            .last_lines
+            .look(key, Some(1), t0, 0, || Some("kept".to_string()));
+        state(&server, true, crate::board::view::Lines::All);
+        server
+            .last_lines
+            .look(key, Some(1), t0, 0, || Some("read again".to_string()))
+    };
+
+    let sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    // Not a git repository, so the listing fails.
+    let broken = root.join("broken");
+    std::fs::create_dir_all(&broken).unwrap();
+    assert!(crate::kernel::identity::worktrees(&broken.to_string_lossy()).is_err());
+    assert_eq!(held(&broken).as_deref(), Some("kept"));
+
+    // The control: with a listing that works, the same line is forgotten.
+    let good = root.join("good");
+    std::fs::create_dir_all(&good).unwrap();
+    crate::testing::init_repo(&good, "main");
+    assert_eq!(held(&good).as_deref(), Some("read again"));
+    drop(sandbox);
+}
+
 /// One session asked for on its own is the entry the whole list holds for it, for every
 /// shape of id: the two can only differ if a field is gathered in one path and not the other.
 #[test]
