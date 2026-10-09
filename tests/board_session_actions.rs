@@ -829,7 +829,7 @@ fn a_parent_hub_can_be_started_for_a_key_from_the_board() {
     let log = tmux.logged();
     let window = log
         .lines()
-        .find(|l| l.contains("new-window"))
+        .find(|l| l.contains("respawn-pane"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(window.contains("--hub=wid-957"), "{window}");
 

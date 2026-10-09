@@ -101,9 +101,38 @@ fn hub_start_runs_adj_hub_in_a_tmux_window() {
         "{window}"
     );
     assert!(window.contains("-n adjutant-acme-widget"), "{window}");
-    assert!(window.contains(BIN), "{window}");
-    assert!(window.contains(" hub"), "{window}");
-    assert!(!window.contains("--hub="), "{window}");
+    // The command runs by respawn-pane, so the window already holds what to keep on exit.
+    let run = log
+        .lines()
+        .find(|l| l.contains("respawn-pane"))
+        .unwrap_or_else(|| panic!("nothing was run in the window: {log}"));
+    assert!(run.contains(BIN), "{run}");
+    assert!(run.contains(" hub"), "{run}");
+    assert!(!run.contains("--hub="), "{run}");
+}
+
+#[test]
+fn hub_start_that_dies_at_once_answers_with_what_it_printed() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(format!("{}.dead", tmux.log.display()), "").unwrap();
+    std::fs::write(&tmux.screen, "adjutant: run this inside a git repository\n").unwrap();
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+
+    let (status, body) = resident.post(&format!("/b/{SLUG}/api/hubs/hub/start"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body.contains("adjutant: run this inside a git repository"),
+        "{body}"
+    );
+    assert!(body.contains("status 1"), "{body}");
+    assert!(!body.contains("started"), "{body}");
+    assert!(
+        tmux.logged().contains("kill-pane -t %99"),
+        "{}",
+        tmux.logged()
+    );
 }
 
 #[test]
@@ -353,7 +382,7 @@ fn hub_reset_stops_the_running_hub_and_starts_a_new_conversation() {
         .unwrap_or_else(|| panic!("no pane was closed: {log}"));
     let open = log
         .lines()
-        .position(|l| l.contains("new-window") && l.contains("--new"))
+        .position(|l| l.contains("respawn-pane") && l.contains("--new"))
         .unwrap_or_else(|| panic!("no new conversation was opened: {log}"));
     assert!(kill < open, "{log}");
     let window = log.lines().nth(open).unwrap();
@@ -382,7 +411,7 @@ fn hub_reset_of_a_stopped_hub_starts_it_fresh() {
     assert!(!log.contains("kill-pane"), "{log}");
     let window = log
         .lines()
-        .find(|l| l.contains("new-window"))
+        .find(|l| l.contains("respawn-pane"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(window.contains("--new"), "{window}");
 }
@@ -405,7 +434,7 @@ fn hub_reset_of_a_parent_hub_names_its_key() {
     assert!(log.contains("-L scratch kill-pane -t %3"), "{log}");
     let window = log
         .lines()
-        .find(|l| l.contains("new-window"))
+        .find(|l| l.contains("respawn-pane"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(window.contains(&format!("--hub={FEATURE}")), "{window}");
     assert!(window.contains("--new"), "{window}");
@@ -516,7 +545,7 @@ fn hub_restart_stops_the_running_hub_and_resumes_its_conversation() {
         .unwrap_or_else(|| panic!("no pane was closed: {log}"));
     let open = log
         .lines()
-        .position(|l| l.contains("new-window") && l.contains("--resume"))
+        .position(|l| l.contains("respawn-pane") && l.contains("--resume"))
         .unwrap_or_else(|| panic!("the conversation was not resumed: {log}"));
     assert!(kill < open, "{log}");
     let window = log.lines().nth(open).unwrap();
@@ -546,7 +575,7 @@ fn hub_restart_of_a_parent_hub_names_its_key() {
     assert!(log.contains("-L scratch kill-pane -t %3"), "{log}");
     let window = log
         .lines()
-        .find(|l| l.contains("new-window"))
+        .find(|l| l.contains("respawn-pane"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(window.contains(&format!("--hub={FEATURE}")), "{window}");
     assert!(window.contains("--resume"), "{window}");

@@ -138,12 +138,49 @@ fn spawn_on(
     req: &SpawnRequest,
     dry_run: bool,
 ) -> Result<Performed, String> {
+    spawn_on_inner(template, backend, req, dry_run, false).map(|(performed, _)| performed)
+}
+
+/// `spawn`, for a caller that wants to see whether what it started stays up (#182).
+///
+/// With the built-in tmux backend the new window is kept open when its command exits and the
+/// pane id comes back, so the caller can read what the command printed before it goes. A
+/// `terminal.spawn` template and iTerm2 have no such handle: the id is `None` and the tab
+/// behaves as `spawn` makes it.
+pub fn spawn_held(
+    terminal: &TerminalSettings,
+    req: &SpawnRequest,
+    dry_run: bool,
+) -> Result<(Performed, Option<String>), String> {
+    let backend = Backend::of(terminal);
+    let hold = terminal.spawn.is_none() && matches!(backend, Backend::Tmux { .. });
+    spawn_on_inner(terminal.spawn.as_deref(), &backend, req, dry_run, hold)
+}
+
+fn spawn_on_inner(
+    template: Option<&str>,
+    backend: &Backend,
+    req: &SpawnRequest,
+    dry_run: bool,
+    hold: bool,
+) -> Result<(Performed, Option<String>), String> {
     if !std::path::Path::new(req.cwd).is_dir() {
         return Err(format!("no such directory: {}", req.cwd));
     }
     if req.command.trim().is_empty() {
         return Err("the command to run is empty".to_string());
     }
+    // Absolute, once, before it is quoted anywhere: tmux resolves a relative `-c` against the
+    // client's directory, and the `cd` that follows would then start from inside it.
+    let cwd = std::path::absolute(req.cwd)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| req.cwd.to_string());
+    let req = &SpawnRequest {
+        cwd: &cwd,
+        title: req.title,
+        command: req.command,
+        title_command: req.title_command,
+    };
     let title = sanitise_title(req.title, default_title(req.cwd));
 
     if let Some(template) = template {
@@ -172,44 +209,71 @@ fn spawn_on(
             ],
         );
         if dry_run {
-            return Ok(Performed {
-                description: format!("will start in a new tab: {title} ({})", req.cwd),
-                script: cmd,
-                ran: false,
-                screen: false,
-            });
+            return Ok((
+                Performed {
+                    description: format!("will start in a new tab: {title} ({})", req.cwd),
+                    script: cmd,
+                    ran: false,
+                    screen: false,
+                },
+                None,
+            ));
         }
         run_shell(&cmd)?;
-        return Ok(Performed {
-            description: format!("started in a new tab: {title} ({})", req.cwd),
-            script: cmd,
-            ran: true,
-            screen: false,
-        });
+        return Ok((
+            Performed {
+                description: format!("started in a new tab: {title} ({})", req.cwd),
+                script: cmd,
+                ran: true,
+                screen: false,
+            },
+            None,
+        ));
     }
 
     if let Backend::Tmux { socket, session } = *backend {
-        let line = if !dry_run && req.command.len() > MAX_INLINE_COMMAND {
-            stage_command(req.command)?
+        // The window starts in the server's cwd whatever `-c` says when that directory is gone
+        // (a removed worktree, #182), so the command goes there itself. A staged script holds
+        // the `cd` too: it is run by absolute path and does not care where it starts.
+        let line = format!("cd {} && {}", sh_quote(req.cwd), req.command);
+        let line = if !dry_run && line.len() > MAX_INLINE_COMMAND {
+            stage_command(&line)?
         } else {
-            req.command.to_string()
+            line
         };
-        let script = tmux_spawn_script(socket, session, req.cwd, &title, &line);
+        // Built the same for a dry run, which shows what the real run would do; only the pane
+        // id is withheld, as nothing ran.
+        let script = tmux_spawn_script(socket, session, req.cwd, &title, &line, hold);
         if dry_run {
-            return Ok(Performed {
-                description: format!("will start in a new tab: {title} ({})", req.cwd),
-                script,
-                ran: false,
-                screen: false,
-            });
+            return Ok((
+                Performed {
+                    description: format!("will start in a new tab: {title} ({})", req.cwd),
+                    script,
+                    ran: false,
+                    screen: false,
+                },
+                None,
+            ));
         }
-        run_shell(&script)?;
-        return Ok(Performed {
-            description: format!("started in a new tab: {title} ({})", req.cwd),
-            script,
-            ran: true,
-            screen: false,
-        });
+        let out = run_shell(&script)?;
+        let pane = if hold {
+            let pane = out.trim();
+            if pane.is_empty() {
+                return Err("tmux did not say which pane it opened".to_string());
+            }
+            Some(pane.to_string())
+        } else {
+            None
+        };
+        return Ok((
+            Performed {
+                description: format!("started in a new tab: {title} ({})", req.cwd),
+                script,
+                ran: true,
+                screen: false,
+            },
+            pane,
+        ));
     }
 
     let mut line = format!("cd {} && ", sh_quote(req.cwd));
@@ -224,20 +288,26 @@ fn spawn_on(
     };
     let script = iterm_spawn_script(&line);
     if dry_run {
-        return Ok(Performed {
-            description: format!("will start in a new tab: {title} ({})", req.cwd),
-            script,
-            ran: false,
-            screen: false,
-        });
+        return Ok((
+            Performed {
+                description: format!("will start in a new tab: {title} ({})", req.cwd),
+                script,
+                ran: false,
+                screen: false,
+            },
+            None,
+        ));
     }
     osascript(&script)?;
-    Ok(Performed {
-        description: format!("started in a new tab: {title} ({})", req.cwd),
-        script,
-        ran: true,
-        screen: false,
-    })
+    Ok((
+        Performed {
+            description: format!("started in a new tab: {title} ({})", req.cwd),
+            script,
+            ran: true,
+            screen: false,
+        },
+        None,
+    ))
 }
 
 pub fn focus(

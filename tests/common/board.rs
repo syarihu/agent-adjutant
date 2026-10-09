@@ -41,7 +41,8 @@ impl FakeTmux {
              echo \"$@\" >> \"$FAKE_TMUX_LOG\"\n\
              case \"$*\" in\n\
              -V) echo \"tmux 3.4\" ;;\n\
-             *new-window*) [ -f \"$FAKE_TMUX_LOG.failnew\" ] && { echo \"no space for a new window\" >&2; exit 1; } ;;\n\
+             *new-window*) [ -f \"$FAKE_TMUX_LOG.failnew\" ] && { echo \"no space for a new window\" >&2; exit 1; }; echo %99 ;;\n\
+             *pane_dead*) if [ -f \"$FAKE_TMUX_LOG.dead\" ]; then printf '%%99\\t1\\t1\\n'; else printf '%%99\\t0\\t\\n'; fi ;;\n\
              *display-message*) cat \"$FAKE_TMUX_HOME\" ;;\n\
              *capture-pane*) cat \"$FAKE_TMUX_SCREEN\" ;;\n\
              *list-panes*) cat \"$FAKE_TMUX_PANES\" ;;\n\

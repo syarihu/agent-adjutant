@@ -176,7 +176,7 @@ fn open_hub_tab(
         parts.extend(extra.iter().cloned());
     }
     let name_it = title_command(&ctx.settings, &ctx.repo.hub_name);
-    terminal::spawn(
+    let (performed, pane) = terminal::spawn_held(
         terminal,
         &SpawnRequest {
             // The main checkout, never a worktree: a hub that cannot cut worktrees is not a
@@ -187,7 +187,38 @@ fn open_hub_tab(
             title_command: name_it.as_deref(),
         },
         dry_run,
-    )
+    )?;
+    let Some(pane) = pane else {
+        return Ok(performed);
+    };
+    // A hub that cannot start (#182) exits at once and its window goes with it, so the board
+    // would answer `started` for nothing; the window was kept to read what it printed.
+    match terminal::tmux_watch_start(terminal.tmux_socket(), &pane)? {
+        terminal::StartWatch::Alive => Ok(performed),
+        terminal::StartWatch::Exited { status, screen } => {
+            Err(exited_message(status, screen.as_deref(), &ctx.repo.main))
+        }
+        terminal::StartWatch::Gone => Err(format!(
+            "the hub's window closed at once, before what it printed could be read; run `adj hub` in {} to see why",
+            ctx.repo.main
+        )),
+    }
+}
+
+/// What the board says of a hub that exited at once. A screen with nothing on it would leave a
+/// sentence ending in a colon, so that case points at running it by hand instead, as does a
+/// screen that could not be read: those two are different things to tell a person.
+fn exited_message(status: Option<i32>, screen: Option<&str>, main: &str) -> String {
+    let status = status.map(|s| format!(" (status {s})")).unwrap_or_default();
+    match screen {
+        Some("") => format!(
+            "the hub exited at once{status} without printing anything; run `adj hub` in {main} to see why"
+        ),
+        Some(screen) => format!("the hub exited at once{status}: {screen}"),
+        None => format!(
+            "the hub exited at once{status}, but what it printed could not be read; run `adj hub` in {main} to see why"
+        ),
+    }
 }
 
 /// How `adj hub` decides between a new session and the one it had.
@@ -199,4 +230,26 @@ pub enum HubStart {
     Resume,
     /// `--new`: a fresh session whatever was saved.
     New,
+}
+
+#[cfg(test)]
+mod exited_message_tests {
+    use super::exited_message;
+
+    #[test]
+    fn a_silent_exit_does_not_end_in_a_colon() {
+        let said = exited_message(Some(1), Some(""), "/repo");
+        assert_eq!(
+            said,
+            "the hub exited at once (status 1) without printing anything; run `adj hub` in /repo to see why"
+        );
+        assert_eq!(
+            exited_message(None, Some("boom"), "/repo"),
+            "the hub exited at once: boom"
+        );
+        assert_eq!(
+            exited_message(Some(1), None, "/repo"),
+            "the hub exited at once (status 1), but what it printed could not be read; run `adj hub` in /repo to see why"
+        );
+    }
 }
