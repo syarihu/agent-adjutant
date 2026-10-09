@@ -12,11 +12,19 @@ const cut = re => {
   assert.ok(m, `not found: ${re}`);
   return m[0];
 };
-const ctx = vm.createContext({});
+// STATE_ORDER and stampSecs live in other files of the page; a stub is enough for the ordering the rows here need.
+const ctx = vm.createContext({ STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0 });
 vm.runInContext([
+  cut(/^const WORK_BOXES = [\s\S]*?^\];/m),
+  cut(/^const WORK_RUNNING = [^\n]*;/m),
+  cut(/^const workBoxOf = [^\n]*;/m),
+  cut(/^function workRowOrder[\s\S]*?^}/m),
+  cut(/^const workStateOrder = [^\n]*;/m),
+  cut(/^const WORKS_ON_PERSON = [^\n]*;/m),
   cut(/^const workOwnerName = [^\n]*;/m),
   cut(/^function workOwnerGroups[\s\S]*?^}/m),
   cut(/^function workBoxRepoGroups[\s\S]*?^}/m),
+  cut(/^function workTreeByState[\s\S]*?^}/m),
 ].join('\n'), ctx);
 const plain = v => JSON.parse(JSON.stringify(v));
 ctx.input = null;
@@ -117,4 +125,21 @@ test('box keys are per box and apart from the tree keys', () => {
   assert.ok(b[0].key.startsWith('brepo:other/'));
   assert.notStrictEqual(a[0].key, b[0].key);
   for (const g of [...a, ...b]) for (const p of ['repo:', 'owner:', 'org:']) assert.ok(!g.key.startsWith(p));
+});
+
+test('the state view puts each row in its box, in box order, and the boxes in repository headings', () => {
+  const r = (nwo, id, st, cls) => ({ key: id, nwo, st, cls, s: {} });
+  const rows = [r('b/x', 'r1', 'working'), r('a/y', 'o1', 'done'), r('a/z', 'n1', 'waiting', 'new'), r('a/y', 'r2', 'idle'), r('b/x', 'l1', 'waiting', 'later')];
+  ctx.rows = rows;
+  const tree = vm.runInContext('workTreeByState(rows)', ctx);
+  assert.deepStrictEqual(plain(tree.map(b => b.key)), ['box:new', 'box:later', 'box:running', 'box:other']);
+  const view = tree.map(b => b.items.map(g => [g.kind, g.label, g.items.map(i => `${i.place}:${i.row.key}`)]));
+  assert.deepStrictEqual(plain(view), [
+    [['brepo', 'a/z', ['new:n1']]],
+    [['brepo', 'b/x', ['later:l1']]],
+    [['brepo', 'a/y', ['box:r2']], ['brepo', 'b/x', ['box:r1']]],
+    [['brepo', 'a/y', ['box:o1']]],
+  ]);
+  ctx.rows = [r('a/z', 'n1', 'waiting', 'new')];
+  assert.deepStrictEqual(plain(vm.runInContext('workTreeByState(rows)', ctx).map(b => b.key)), ['box:new']);
 });
