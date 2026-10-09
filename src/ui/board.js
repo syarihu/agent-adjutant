@@ -345,7 +345,7 @@ async function act(action, id, choice) {
 /* The hub's entry above the agent columns, on a board other than 「すべて」: how its session is
    (as a row of the work list says it), and, when something that calls for it is waiting in its
    inbox, how much is unread and a button that wakes it. The button is drawn from `hubWake` (actions.js) as well as from the
-   state, as are the hub panel's and the one beside a hub's chip in 「いまの仕事」. */
+   state, as are the hub panel's and the one beside a hub's row in 「いまの仕事」. */
 let hubStripKey = null;
 function renderHubStrip() {
   const strip = document.getElementById('hub-strip');

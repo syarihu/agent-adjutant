@@ -59,8 +59,6 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-head.repo { position: sticky; top: 0; z-index: 2; }
 .wk-head.owner .wk-head-name { font-weight: 900; }
 .wk-fold { flex: none; display: inline-flex; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: 50%; }
-/* Where the fold button would be, on a heading with nothing to fold. */
-.wk-fold-gap { flex: none; width: 22px; }
 .wk-fold .material-symbols-outlined { font-size: 18px; transition: transform .15s; }
 .wk-fold[aria-expanded="false"] .material-symbols-outlined { transform: rotate(-90deg); }
 .wk-head-main {
@@ -77,7 +75,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-next input { margin: 0; cursor: pointer; }
 .wk-count { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
 .wk-body { padding: 3px 4px 4px; }
-/* A hub is a chip on the heading it runs, beside the heading's own button. */
+/* What the hub's inbox holds, on the heading of the group it heads: the warning tone, with its own text so contrast holds in dark mode. */
+.wk-head-inbox { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 11px; font-weight: 700; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+/* The hubs of a folded heading are chips on it, beside the heading's own button; opened, they are rows below. */
 .wk-hubs { flex: none; display: inline-flex; flex-wrap: wrap; gap: 4px; max-width: 55%; justify-content: flex-end; }
 .wk-hub {
   display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; cursor: pointer;
@@ -153,6 +153,14 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 /* The rows of 新着: the row, and its buttons beside it. */
 .wk-band-row { display: flex; align-items: flex-start; gap: 2px; min-width: 0; }
 .wk-band-row .wk-row { flex: 1; min-width: 0; width: auto; }
+/* A hub's row has its wake button where 新着 has its 既読, right-aligned so the two read alike. */
+.wk-hub-row { flex-wrap: wrap; row-gap: 0; }
+/* A zero basis, so the row never wraps its buttons below it: only the reason takes a line of its own. */
+.wk-hub-row .wk-row { flex: 1 1 0; }
+.wk-hub-row .wk-acts { align-items: flex-end; }
+/* The reason a wake typed nothing takes a line of its own under the row; empty, it takes no line (it stays in the markup so that its text is announced). */
+.wk-hub-row > .wk-hub-why { flex-basis: 100%; }
+.wk-hub-row > .wk-hub-why:empty { flex-basis: 0; }
 .wk-acts { flex: none; display: inline-flex; flex-direction: column; gap: 2px; padding-top: 4px; }
 .wk-act {
   display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; cursor: pointer;
@@ -176,7 +184,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-glyph.done { color: var(--md-sys-color-success); font-variation-settings: 'FILL' 1; }
 .wk-glyph.seen { color: var(--md-sys-color-success); opacity: .45; }
 .wk-glyph.failed { color: var(--md-sys-color-error); }
-.wk-glyph.stopped, .wk-glyph.idle, .wk-glyph.unknown { color: var(--md-sys-color-on-surface-variant); }
+.wk-glyph.stopped, .wk-glyph.idle, .wk-glyph.unknown, .wk-glyph.ended, .wk-glyph.none { color: var(--md-sys-color-on-surface-variant); }
 @keyframes wk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .wk-glyph.working, .wk-glyph.restarting { animation: none; } }
 

@@ -656,7 +656,8 @@ async function nudgeHub(base = BASE) {
 }
 
 /* The hub's wake button, wherever the page draws it: the board's hub entry (renderHubStrip), the 受信箱 card of the
-   hub's panel and the button beside a hub chip in 「いまの仕事」. It types the hub's wake line and leaves it no message.
+   hub's panel and the button beside a hub's row in 「いまの仕事」 (or its chip on a folded heading). It types the hub's
+   wake line and leaves it no message.
    `busy` (by the hub's slug, so a press on one board leaves another's button alone) keeps a second press from sending
    another while one is on its way; `why` is what the last press that typed nothing was told, by the hub's slug, kept
    until the next press or until nothing is left to read. */
