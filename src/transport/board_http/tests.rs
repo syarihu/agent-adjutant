@@ -31,6 +31,26 @@ fn the_page_pieces_join_into_one_document() {
 }
 
 #[test]
+fn old_addresses_are_read_through_nav_legacy_before_the_page_parses_its_own() {
+    // `/review`, `view=sessions`, `#gate/<id>` and `#session/<id>` land where `legacyNav` says: the address
+    // is parsed through it, and a gate it names is opened once the work document is in.
+    for piece in [
+        "function legacyNav",
+        "const legacy = legacyNav(loc, multiBoard);",
+        "pendingGate = legacy?.pendingGate || null;",
+        "function openPendingGate",
+        "if (pendingGate && view === 'work') openPendingGate();",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("function legacyNav") < at("function parseUrl"));
+    assert!(at("function parseUrl") < at("setInterval(refresh, 2000)"));
+    // The server still answers the old path with the page, so that the page can redirect it.
+    assert!(UI_HTML.contains("path === '/review'"));
+}
+
+#[test]
 fn the_page_shows_the_parent_and_adds_a_child_through_the_new_task_form() {
     for piece in [
         // The row, and the button that opens the form with the parent filled in.
