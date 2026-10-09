@@ -1,0 +1,40 @@
+/* 「拡大」: one card of the task panel in a large dialog (src/ui/card-dialog.js). */
+#card-dialog {
+  width: calc(100vw - 48px);
+  height: calc(100vh - 48px);
+  height: calc(100dvh - 48px);
+  max-width: none;
+  max-height: none;
+  background: var(--md-sys-color-surface-container-low);
+}
+/* display is set only while open, or the closed dialog would show. */
+#card-dialog[open] { display: flex; flex-direction: column; }
+.card-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 24px 12px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+.card-dialog-head h2 { margin: 0; font-size: 18px; font-weight: 800; color: var(--md-sys-color-on-surface); }
+.card-dialog-sub { font-size: 12px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.card-dialog-gone { margin: 0; padding: 8px 24px; font-size: 12.5px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
+/* Always rendered, so setting its text is announced; empty, it takes no room (display: none would not be announced). */
+.card-dialog-gone:empty { padding: 0; }
+.card-dialog-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.card-dialog-content { max-width: 1080px; margin: 0 auto; padding: 20px 28px 32px; display: flex; flex-direction: column; gap: 16px; }
+/* The markdown body of a card is a `.body`, which the generic dialog rule would turn into a padded,
+   scrolling flex column of its own. */
+#card-dialog .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }
+#card-dialog .body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+#card-dialog .diff { overflow-x: auto; }
+/* The panel clips the agent's last message to a few lines; the dialog is where it is read whole. */
+#card-dialog .tp-lastmsg > div { max-height: none; overflow: visible; }
+
+[data-expand] { position: relative; }
+/* Whatever heads a card (a heading, the wait box's head, a title row, a details) leaves room for the button. */
+[data-expand] > .expand-btn + * { padding-right: 32px; }
+.expand-btn { position: absolute; top: 8px; right: 8px; }
+.expand-btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+body.panel-pop #task-panel .expand-btn { display: none; }

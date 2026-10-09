@@ -157,9 +157,9 @@ function gateHeadHtml(g, all) {
 /* The three frames, for a gate read in the task panel. */
 function framesHtml(g) {
   let h = '';
-  if (g.facts?.length) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-  if (g.focus) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>確認してほしい点</span></h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  if (g.unsure) h += `<div class="panel"><h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
+  if (g.facts?.length) h += `<div class="panel"${expandAttrs('facts', g)}>${expandBtnHtml('事実')}<h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  if (g.focus) h += `<div class="panel"${expandAttrs('focus', g)}>${expandBtnHtml('確認してほしい点')}<h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>確認してほしい点</span></h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
+  if (g.unsure) h += `<div class="panel"${expandAttrs('unsure', g)}>${expandBtnHtml('迷っていること')}<h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
   return h;
 }
 
@@ -383,7 +383,8 @@ function overviewTab(task, all, pick, opts = {}) {
     ? `Issue <a href="${esc(issue)}" target="_blank" rel="noopener noreferrer">${esc(issue)}</a>`
     : task.issueUrl ? `Issue ${esc(task.issueUrl)}` : '依頼文';
   const fromPlan = plan && `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの`;
-  h += `<div class="panel"><h3>問題</h3>`;
+  const hasProblem = !!(plan?.problem || task.body);
+  h += `<div class="panel"${hasProblem ? expandAttrs('problem', plan?.problem ? plan : null) : ''}>${hasProblem ? expandBtnHtml('問題') : ''}<h3>問題</h3>`;
   if (plan?.problem) h += `<div class="body">${md(plan.problem)}</div><div class="source">出典: ${fromPlan}</div>`;
   else if (task.body) h += `<div class="body">${md(task.body)}</div><div class="source">出典: 渡したときの依頼文（計画に problem がまだ無い）</div>`;
   else h += `<div style="color:var(--muted)">まだ書かれていない${task.issueUrl ? ` — ${source}` : ''}</div>`;
@@ -393,13 +394,13 @@ function overviewTab(task, all, pick, opts = {}) {
   const snap = task.issueSnapshot;
   if (snap) {
     const snapLink = httpUrl(snap.url);
-    h += `<div class="panel"><h3>Issue の本文</h3><div><b>${esc(snap.title)}</b></div>` +
+    h += `<div class="panel"${snap.body ? expandAttrs('issue') : ''}>${snap.body ? expandBtnHtml('Issue の本文') : ''}<h3>Issue の本文</h3><div><b>${esc(snap.title)}</b></div>` +
       (snap.body ? `<div class="body">${md(snap.body)}</div>` : `<div style="color:var(--muted)">本文なし</div>`) +
       (snap.truncated ? `<div class="source">先頭のみ保存 — 続きは ${snapLink ? `<a href="${esc(snapLink)}" target="_blank" rel="noopener noreferrer">Issue</a>` : 'Issue'} で</div>` : '') +
       `<div class="source">出典: Issue #${esc(issueNumberOf(snap.url))} を ${esc(when(snap.fetchedAt))}（${esc(ago(snap.fetchedAt))}）に取得 ` +
       `<button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">再取得</button></div></div>`;
   }
-  h += `<div class="panel"><h3>ゴール</h3>`;
+  h += `<div class="panel"${plan?.goal ? expandAttrs('goal', plan) : ''}>${plan?.goal ? expandBtnHtml('ゴール') : ''}<h3>ゴール</h3>`;
   if (plan?.goal) h += `<div class="body">${md(plan.goal)}</div><div class="source">出典: ${fromPlan}</div>`;
   else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
   h += `</div>`;
@@ -411,7 +412,7 @@ function overviewTab(task, all, pick, opts = {}) {
       `<div class="source">キュー投入時の指示</div></div>`;
   }
 
-  h += `<div class="panel"><h3>計画</h3>`;
+  h += `<div class="panel"${plan ? expandAttrs('plan', plan) : ''}>${plan ? expandBtnHtml('計画') : ''}<h3>計画</h3>`;
   if (!plan) {
     h += `<div style="color:var(--muted)">計画はまだ出ていない</div></div>`;
   } else {
@@ -431,11 +432,11 @@ function overviewTab(task, all, pick, opts = {}) {
     }
     if (plan.focus) h += `<div class="body frame-focus" style="margin-top:10px">${md(plan.focus)}</div>`;
     h += `</div>`;
-    if (plan.facts?.length) h += `<div class="panel"><h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-    if (plan.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(plan.body)}</div></div>`;
+    if (plan.facts?.length) h += `<div class="panel"${expandAttrs('facts', plan)}>${expandBtnHtml('事実')}<h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+    if (plan.body) h += `<div class="panel"${expandAttrs('report', plan)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(plan.body)}</div></div>`;
     h += choicesHtml(plan, isWaiting(plan));
-    if (plan.unsure) h += `<div class="panel"><h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
-    if (plan.decided) h += `<div class="panel"><h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
+    if (plan.unsure) h += `<div class="panel"${expandAttrs('unsure', plan)}>${expandBtnHtml('迷っていること')}<h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
+    if (plan.decided) h += `<div class="panel"${expandAttrs('decided', plan)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
     h += actHtml(plan);
   }
 
@@ -487,7 +488,7 @@ function reviewTab(task, all, pick) {
   // send-back stays at the end, after what it would be sent back about.
   const waiting = isWaiting(g);
   let h = gateHeadHtml(g, all) + framesHtml(g) + (waiting ? actHtml(g) : '') + reviewPanels(g);
-  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  if (g.body) h += `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
   const files = filesOf(g.diff);
   if (files.length) {
     h += `<div class="panel"><h3>ファイル ${files.length}件</h3><div class="body"><table>` +
@@ -495,8 +496,8 @@ function reviewTab(task, all, pick) {
       files.map(f => `<tr><td><code>${esc(f.path)}</code></td><td style="color:var(--good)">+${f.add}</td><td style="color:var(--critical)">−${f.del}</td></tr>`).join('') +
       `</table></div></div>`;
   }
-  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
-  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  if (g.diff) h += `<div class="panel"${expandAttrs('diff', g)}>${expandBtnHtml('差分')}<h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
   else if (diffPending(g)) h += DIFF_LOADING;
   return h + (waiting ? '' : actHtml(g));
 }
@@ -512,9 +513,9 @@ function checkTab(task, all, pick) {
       <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
   }
   h += framesHtml(g) + checkPanels(g);
-  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
-  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
-  if (g.decided) h += `<div class="panel"><details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
+  if (g.body) h += `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  if (g.run) h += `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
+  if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   return h + actHtml(g);
 }
 
@@ -525,10 +526,10 @@ function gateDetailHtml(g, all) {
     `<span class="tag"><span class="dot" style="background:${esc(kindOf(g.kind)[1])}"></span>${esc(kindOf(g.kind)[0])}</span>` +
     `<span style="flex:1"></span><button type="button" class="iconbtn" data-unpick>閉じる</button></div></div>`;
   h += gateHeadHtml(g, all) + framesHtml(g) + choicesHtml(g, isWaiting(g)) + reviewPanels(g) + checkPanels(g);
-  if (g.body) h += `<div class="panel"><h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
-  if (g.run) h += `<div class="panel"><h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
-  if (g.decided) h += `<div class="panel"><h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>`;
-  if (g.diff) h += `<div class="panel"><h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  if (g.body) h += `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  if (g.run) h += `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
+  if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>`;
+  if (g.diff) h += `<div class="panel"${expandAttrs('diff', g)}>${expandBtnHtml('差分')}<h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
   else if (diffPending(g)) h += DIFF_LOADING;
   return h + actHtml(g);
 }

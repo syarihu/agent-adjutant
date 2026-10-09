@@ -195,7 +195,8 @@ function gateJudgeHtml(g, task) {
   let h = task ? `<div class="rv-refs" data-rv-refs>${ghRowsHtml(task)}</div>` : '';
 
   const why = g.problem || g.why || '';
-  h += `<div class="m3-card-attention-box rv-wait">
+  h += `<div class="m3-card-attention-box rv-wait"${expandAttrs('wait', g)}>
+    ${expandBtnHtml(`${label}・確認待ち`)}
     <div class="rv-wait-head">
       <span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">${record ? 'history' : 'pending_actions'}</span>
       <span>【${esc(label)}】${record ? '記録 — worker は止まらずに進んだ' : 'あなたの判定待ち'}</span>
@@ -210,14 +211,15 @@ function gateJudgeHtml(g, task) {
   if (!record) h += parkBannerHtml(task);
 
   if (g.decided) {
-    h += `<div class="panel"><details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
+    h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
   }
 
   const pickable = !record;
   if (g.kind === 'diff') {
     h += reviewPanels(g);
     if (g.diff) {
-      h += `<div class="panel">
+      h += `<div class="panel"${expandAttrs('diff', g)}>
+        ${expandBtnHtml('コード差分')}
         <h3><span class="material-symbols-outlined" style="font-size:18px;">difference</span><span>コード差分 (Diff)</span></h3>
         <div class="diff">${renderDiff(g.diff)}</div>
       </div>`;
@@ -238,32 +240,37 @@ function gateJudgeHtml(g, task) {
     }
     h += checkPanels(g);
     if (g.run) {
-      h += `<div class="panel">
+      h += `<div class="panel"${expandAttrs('run', g)}>
+        ${expandBtnHtml('動かし方')}
         <h3><span class="material-symbols-outlined" style="font-size:18px;">play_arrow</span><span>動かし方</span></h3>
         <div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div>
       </div>`;
     }
   } else {
     if (task?.body) {
-      h += `<div class="panel">
+      h += `<div class="panel"${expandAttrs('request', g)}>
+        ${expandBtnHtml('依頼内容 / 要件プロンプト')}
         <h3><span class="material-symbols-outlined" style="font-size:18px;">assignment</span><span>依頼内容 / 要件プロンプト</span></h3>
         <div class="body">${md(task.body)}</div>
       </div>`;
     }
     if (g.body && g.body !== task?.body) {
-      h += `<div class="panel">
+      h += `<div class="panel"${expandAttrs('report', g)}>
+        ${expandBtnHtml('Gate 報告')}
         <h3><span class="material-symbols-outlined" style="font-size:18px;">report</span><span>Gate 報告</span></h3>
         <div class="body">${md(g.body)}</div>
       </div>`;
     }
     if (g.facts?.length) {
-      h += `<div class="panel">
+      h += `<div class="panel"${expandAttrs('facts', g)}>
+        ${expandBtnHtml('事実')}
         <h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3>
         <ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
       </div>`;
     }
     if (g.unsure) {
-      h += `<div class="panel">
+      h += `<div class="panel"${expandAttrs('unsure', g)}>
+        ${expandBtnHtml('迷っていること')}
         <h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3>
         <div class="body">${md(g.unsure)}</div>
       </div>`;
@@ -277,18 +284,19 @@ function gateJudgeHtml(g, task) {
 }
 
 const deciding = new Set(); // gates with an answer in flight: a second click must not send it again
-/* What a button of `decideHtml` or a gate's choices does, for the gate it sits in. The task panel
+/* What a button of `decideHtml` or a gate's choices does, for the gate it sits in. True when the
+   answer went, so a dialog that showed it knows to close. The task panel
    calls this from its own delegated click handler instead of `bindDecide`. */
 async function decideAct(b) {
   const id = b.closest('[data-gate]').dataset.gate;
   const act = b.matches('.pick[data-choice]') ? 'choice' : b.dataset.act;
-  if (act === 'talk') return talk(id);
-  if (deciding.has(id)) return;
+  if (act === 'talk') { talk(id); return false; }
+  if (deciding.has(id)) return false;
   deciding.add(id);
   try {
-    if (act === 'choice') await answer('choice', b.dataset.choice, id);
-    else if (act === 'close') await closeGate(id);
-    else await answer(act, undefined, id);
+    if (act === 'choice') return await answer('choice', b.dataset.choice, id);
+    if (act === 'close') return await closeGate(id);
+    return await answer(act, undefined, id);
   } finally { deciding.delete(id); }
 }
 
@@ -306,7 +314,8 @@ function bindDecide(root) {
    answered, the one picked is marked instead. */
 function choicesHtml(g, pickable) {
   if (!g.choices?.length) return '';
-  return `<div class="panel"${pickable ? ` data-gate="${esc(gateRef(g))}"` : ''}>
+  return `<div class="panel"${expandAttrs('choices', g)}${pickable ? ` data-gate="${esc(gateRef(g))}"` : ''}>
+    ${expandBtnHtml('AI からの提案・選択肢')}
     <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
       <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>
       <span>AI からの提案・選択肢</span>
@@ -343,7 +352,8 @@ function reviewPanels(g) {
   let h = '';
   const rounds = g.reviewRounds || [];
   if (rounds.length) {
-    h += `<div class="panel">
+    h += `<div class="panel"${expandAttrs('rounds', g)}>
+      ${expandBtnHtml('セルフレビュー')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">rate_review</span><span>セルフレビュー ${rounds.length}ラウンド</span></h3>
       <div class="body"><table>
       <tr><th>R</th><th>エンジン</th><th>must</th><th>want</th><th>scope</th><th>誤検知</th></tr>` +
@@ -356,7 +366,8 @@ function reviewPanels(g) {
   const findings = g.findings || [];
   if (findings.length) {
     const groups = [...Object.keys(OUTCOME), ...new Set(findings.map(f => f.outcome).filter(o => !OUTCOME[o]))];
-    h += `<div class="panel">
+    h += `<div class="panel"${expandAttrs('findings', g)}>
+      ${expandBtnHtml('指摘')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">rule</span><span>指摘 ${findings.length}件</span></h3>
       <div class="body">` +
       groups.map(outcome => {
@@ -378,7 +389,8 @@ function checkPanels(g) {
   let h = '';
   const commands = g.commands || [];
   if (commands.length) {
-    h += `<div class="panel">
+    h += `<div class="panel"${expandAttrs('commands', g)}>
+      ${expandBtnHtml('Verify 実行結果')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">fact_check</span><span>Verify 実行結果</span></h3>` +
       commands.map(c => {
         const failed = c.result === 'fail';
@@ -395,7 +407,8 @@ function checkPanels(g) {
       }).join('') + `</div>`;
   }
   if ((g.manual || []).length) {
-    h += `<div class="panel">
+    h += `<div class="panel"${expandAttrs('manual', g)}>
+      ${expandBtnHtml('人が見る確認項目')}
       <h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>人が見る確認項目</span></h3>
       <ul class="checklist" style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;">${g.manual.map((m, i) =>
         `<li><label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" data-manual-gate="${esc(gateRef(g))}" data-manual-index="${i}"${manualChecked(gateRef(g)).has(i) ? ' checked' : ''} style="margin-top:3px;cursor:pointer;"><span>${esc(m)}</span></label></li>`).join('')}</ul></div>`;
@@ -419,7 +432,7 @@ document.addEventListener('change', e => {
 });
 
 /* The comment box of the panel a gate is judged in. */
-const commentBox = () => document.querySelector('#task-panel .gate-comment');
+const commentBox = () => document.querySelector('#card-dialog[open] .gate-comment') || document.querySelector('#task-panel .gate-comment');
 
 /* An answered gate leaves the list and the counts at once; the round that follows confirms it.
    In a merged state that round can be a while off. */
@@ -488,7 +501,7 @@ function talk(id) {
 
 async function closeGate(id) {
   const g = gateByRef(id);
-  if (!g) return;
+  if (!g) return false;
   const comment = commentBox()?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
   const key = gateKey(g);
@@ -501,5 +514,6 @@ async function closeGate(id) {
     dropGate(g);
     await refresh(true);
     refreshBoards();
-  } catch (e) { note(line, true, e.message); }
+    return true;
+  } catch (e) { note(line, true, e.message); return false; }
 }
