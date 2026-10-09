@@ -524,7 +524,9 @@ is in the middle column whichever tab of the panel is on.
 
 **いまの仕事 (the work under way).** Under 全体 in the sidebar, on the resident server only, 「いまの仕事」 is one view of
 the work under way in every repository, in three columns. The list on the left has two groupings: 「親 Issue」
-(the default: repository, then parent issue, then task, with the tasks that have no parent under 「親なし」) and
+(the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
+with the tasks that have no parent under 「親なし」; the owner heading is shown even when there is only one owner,
+owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
 「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
 not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
 hub as a row marked "hub". A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per

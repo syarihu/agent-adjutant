@@ -302,6 +302,23 @@ window.addEventListener('storage', e => {
 
 const workBoxOf = row => row.cls || (WORK_RUNNING.includes(row.st) ? 'running' : 'other');
 const workOwnerOf = nwo => (nwo || '').split('/')[0] || nwo;
+const workOwnerName = nwo => { const i = (nwo || '').indexOf('/'); return i > 0 ? nwo.slice(0, i) : ''; };
+
+/* The repository nodes under one owner node each, owners in name order. Owners are grouped without regard to case, as
+   repositories are matched elsewhere; a name with no slash goes under 「オーナーなし」, last. */
+function workOwnerGroups(repoNodes) {
+  const groups = new Map();
+  for (const repo of repoNodes) {
+    const name = workOwnerName(repo.nwo);
+    const key = `owner:${name.toLowerCase()}`;
+    if (!groups.has(key)) groups.set(key, { key, kind: 'owner', label: name || 'オーナーなし', rows: [], items: [] });
+    const group = groups.get(key);
+    group.rows.push(...repo.rows);
+    group.items.push(repo);
+  }
+  const rank = g => g.key === 'owner:' ? 1 : 0;
+  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
 
 /* A row's place among the others in its group: what waits on the person first, the longest waiting first. */
 function workRowOrder(a, b) {
@@ -314,11 +331,11 @@ function workRowOrder(a, b) {
 const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
-/* The list as a tree: repository → [hub] → parent issue → task, with the rows that belong to none under
-   「親なし」. A node is `{ key, kind, label…, rows }` where `rows` are all the rows below it, and `items`
-   what it holds in order: rows and nodes. */
+/* The list as a tree: owner → repository → [hub] → parent issue → task, with the rows that belong to none under
+   「親なし」. The owner heading is shown even when there is only one owner. A node is `{ key, kind, label…, rows }`
+   where `rows` are all the rows below it, and `items` what it holds in order: rows and nodes. */
 function workTreeByParent(rows, bands = []) {
-  const tree = [...bands];
+  const repoNodes = [];
   for (const repo of workRepos()) {
     const mine = rows.filter(r => r.repo === repo);
     if (!mine.length) continue;
@@ -341,9 +358,9 @@ function workTreeByParent(rows, bands = []) {
       loose.sort(workRowOrder);
       items.push({ key: `none:${repo.nwo}`, kind: 'none', rows: loose, items: loose.map(row => ({ row, place: 'tree' })) });
     }
-    tree.push({ key: `repo:${repo.nwo}`, kind: 'repo', nwo: repo.nwo, rows: mine, items });
+    repoNodes.push({ key: `repo:${repo.nwo}`, kind: 'repo', nwo: repo.nwo, rows: mine, items });
   }
-  return tree;
+  return [...bands, ...workOwnerGroups(repoNodes)];
 }
 
 /* The list as boxes of one state each, in order, and inside each box by organisation. A box with nothing in it is not drawn.

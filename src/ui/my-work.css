@@ -38,7 +38,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-resize:hover, .wk-resize:focus-visible, body.wk-dragging .wk-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
 .wk-empty { padding: 14px 8px; font-size: 12.5px; color: var(--md-sys-color-outline); }
 
-/* Headers: a repository, a parent issue, a box, an organisation. They fold. */
+/* Headers: an owner, a repository, a parent issue, a box, an organisation. They fold. */
 .wk-group { margin-top: 10px; }
 .wk-group .wk-group { margin-top: 6px; margin-left: 6px; }
 .wk-head {
@@ -47,6 +47,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
   border: 1px solid var(--md-sys-color-outline-variant);
 }
 .wk-head.repo { position: sticky; top: 0; z-index: 2; }
+.wk-head.owner .wk-head-name { font-weight: 900; }
 .wk-fold { flex: none; display: inline-flex; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: 50%; }
 .wk-fold .material-symbols-outlined { font-size: 18px; transition: transform .15s; }
 .wk-fold[aria-expanded="false"] .material-symbols-outlined { transform: rotate(-90deg); }
