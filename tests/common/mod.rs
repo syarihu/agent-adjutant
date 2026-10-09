@@ -577,7 +577,8 @@ impl Drop for Reaped {
 // ── what a server asked of the tools it runs ──
 
 /// `git`, `ps` and `tmux` wrappers that write down each call and then run the real tool, for a
-/// test that asserts on what the server did *not* ask. Put `path()` in the server's `PATH`.
+/// test that asserts on what the server did *not* ask. A `gh` that writes the call down and
+/// fails stands in for GitHub, so that no test reaches it. Put `path()` in the server's `PATH`.
 pub struct Spy {
     bin: PathBuf,
     log: PathBuf,
@@ -606,6 +607,11 @@ impl Spy {
                 ),
             );
         }
+        stub_bin(
+            &bin,
+            "gh",
+            &format!("#!/bin/sh\necho \"gh $*\" >> '{}'\nexit 1\n", log.display()),
+        );
         Spy { bin, log }
     }
 
@@ -618,10 +624,15 @@ impl Spy {
         let _ = std::fs::remove_file(&self.log);
     }
 
-    /// Waits until nothing has been asked for a moment, so that a server's own first round of
-    /// work (its poll looks at the repository when it starts) is over before a test `clear`s
-    /// the log and counts what one request asks.
+    /// Waits until the server's poll has made its first round and nothing has been asked for a
+    /// moment, so that the round is over before a test `clear`s the log and counts what one
+    /// request asks. The server says it is serving before its poll thread starts, so quiet
+    /// alone can be seen too early under load; the round ends with its `gh` lookup, and the
+    /// next one is a minute off. For a fixture whose poll reaches `gh` in its first round.
     pub fn settle(&self) {
+        eventually("the poll's first round to reach gh", || {
+            self.calls().iter().any(|c| c.starts_with("gh "))
+        });
         let mut last = (self.calls().len(), std::time::Instant::now());
         wait_until("the server's first calls to be over", || {
             let now = self.calls().len();

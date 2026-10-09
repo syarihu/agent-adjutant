@@ -494,8 +494,8 @@ fn opening_a_terminal_asks_about_its_own_session_and_no_other() {
         "another worktree was asked about: {calls:?}"
     );
     // The branch comes out of the worktree listing, not from a `git branch` of its own, and
-    // the listing is read once for the session. The one that locates the repository was made by
-    // the poll's first round, which is over by `settle`.
+    // the listing is read once for the session. The ones that locate the repository were made by
+    // the poll's first round, which ends in its `gh` lookup and is over by `settle`.
     assert_eq!(asked("branch --show-current"), 0, "{calls:?}");
     assert_eq!(asked("worktree list"), 1, "{calls:?}");
     let ps: Vec<&String> = calls.iter().filter(|c| c.starts_with("ps ")).collect();
