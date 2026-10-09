@@ -92,9 +92,12 @@ impl Board {
         let server = Arc::clone(&self.server);
         std::thread::spawn(move || {
             let waits = Arc::clone(&server.waits);
-            waits.run(&server.ctx.state.clone(), move || {
-                (vec![Arc::clone(&server)], true)
-            });
+            let slug = server.ctx.repo.slug.clone();
+            waits.run(
+                &server.ctx.state.clone(),
+                move || vec![slug.clone()],
+                move || (vec![Arc::clone(&server)], true),
+            );
         });
         for stream in self.listener.incoming() {
             match stream {

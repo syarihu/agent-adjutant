@@ -5,10 +5,11 @@ use std::net::TcpStream;
 
 use serde_json::json;
 
+use crate::infra::clock::now_secs;
 use crate::infra::http::{self, Request};
 
 use super::assets::{UI_HTML, vendor_asset};
-use super::auth::refuse;
+use super::auth::{page_rings, refuse};
 use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
     refresh_tasks, relay_findings, review_findings, start_parent_hub, update_task, wake_hub,
@@ -259,6 +260,11 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
     match route {
         Route::Page => http::html(out, UI_HTML),
         Route::State { sessions, lines } => {
+            // A board served alone is where the page rings from; under the resident that is
+            // `/api/boards`, and the page's polls of one board say nothing new.
+            if !server.resident && page_rings(req) {
+                server.waits.page_seen(now_secs());
+            }
             let document = state(server, sessions, lines);
             match serde_json::to_string(&document) {
                 Ok(body) => http::json(out, 200, &body),

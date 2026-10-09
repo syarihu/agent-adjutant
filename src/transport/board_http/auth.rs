@@ -5,6 +5,13 @@ use crate::infra::ws;
 
 // ── the security boundary ────────────────────────────────────────────
 
+/// Whether the page that sent `req` says it may show desktop notifications for waits and gates
+/// (`X-Adjutant-Notify: 1`). A request that says `0` or nothing (a script, an older page) is not
+/// such a page.
+pub(super) fn page_rings(req: &Request) -> bool {
+    req.header("x-adjutant-notify") == Some("1")
+}
+
 /// Why a request is being refused, or `None` to let it through.
 ///
 /// Pure, and separated from the routing for that reason: this is the whole of what stands

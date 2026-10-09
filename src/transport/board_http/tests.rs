@@ -4,7 +4,7 @@ use crate::board::view::Lines;
 use crate::infra::http::{self, Request};
 
 use super::assets::{UI_HTML, vendor_asset};
-use super::auth::{is_own_origin, refuse};
+use super::auth::{is_own_origin, page_rings, refuse};
 use super::resident::split_board_path;
 use super::routes::{HubAction, Route, SessionAction};
 
@@ -1183,12 +1183,25 @@ fn a_session_waiting_on_a_prompt_is_rung_for_and_opens_in_the_work_view() {
         "(state.waits || []).length",
         // A quiet wait is listed without a desktop notification.
         "w.quiet",
+        // The page says on every request whether it rings, so the server rings only when it does not.
+        "'X-Adjutant-Notify'",
+        "notifyPageRings(",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
     for gone in ["const waitRef =", "data-rv-open-wait", "const boardWaiting"] {
         assert!(!UI_HTML.contains(gone), "{gone}");
     }
+}
+
+#[test]
+fn a_request_says_whether_its_page_rings_notifications() {
+    let rings = |headers: &[(&str, &str)]| page_rings(&request("GET", "/api/boards", headers));
+    assert!(rings(&[("X-Adjutant-Notify", "1")]));
+    assert!(rings(&[("x-adjutant-notify", "1")]));
+    assert!(!rings(&[("x-adjutant-notify", "0")]));
+    assert!(!rings(&[]));
+    assert!(!rings(&[("X-Adjutant-Notify", "yes")]));
 }
 
 #[test]

@@ -62,7 +62,8 @@ prefs.railWidth = Math.min(560, Math.max(260, Number(prefs.railWidth) || 300));
 delete prefs.workListWidth;
 if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
-// Which of the page's desktop notifications ring (my-work-notify.js); the server's own notifier is not governed by this.
+// Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
+// rings waits and gates itself and the server's `notification` stays silent for them; see pageRings.
 prefs.notify = notifyPrefs(prefs.notify);
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
@@ -246,12 +247,16 @@ const titlePendingPill = task => task.titlePending
 const ideReady = () => state.ideConfigured !== false;
 const ideTitle = () => ideReady() ? 'IDEでworktreeを開く' : 'エディタが未設定です（押すと設定方法を表示します）';
 
+/* Whether this page shows desktop notifications for waits and gates. Sent with every request, so that the server rings its
+   own `notification` for them only when no page that does is open. */
+const pageRings = () => 'Notification' in window && notifyPageRings(Notification.permission, prefs.notify);
+
 /* `api`, against any board of this server: `base` is that board's root, as `BASE` is this
    page's own. The token is the same for every board on the machine. */
 async function boardApi(base, path, options = {}) {
   const res = await fetch(base + path, {
     ...options,
-    headers: { 'X-Adjutant-Token': TOKEN, 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `${res.status}`);
@@ -349,7 +354,7 @@ function flushNotifyPending(fetchedAt = null) {
 
 /* Ring a gate or a wait (`item`: {gate} or {wait}) the person is to be told of. `final` is the retry. */
 function ringWaiting(item, final) {
-  if (!(window.Notification && Notification.permission === 'granted' && prefs.notify.waiting)) return;
+  if (!pageRings()) return;
   const { gate: g, wait: w } = item;
   // A retry (an item that was queued) is for what is still open: answered or gone meanwhile, it is not rung.
   if ((final || item.at) && !(g ? seenGateIds?.has(item.ref) : seenWaitKeys?.has(item.ref))) return;
@@ -416,7 +421,8 @@ function openWait(w) {
 let seenWaitKeys = null;
 /* A session that has waited on a person for a few seconds, as the server announces it
    (`waits` of /api/state and /api/boards): once per wait, and not for the ones already there
-   when the page opened. The server rings the configured notifier itself; this is the page's. */
+   when the page opened. The page rings these while it may notify (pageRings); otherwise the server rings its configured
+   notifier, so one wait is never announced on both. */
 function checkNewWaits(waits) {
   const list = waits || [];
   const keyOf = w => `${w._slug || ''}/${w.agentSessionId}/${w.since}`;

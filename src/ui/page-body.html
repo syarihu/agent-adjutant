@@ -276,7 +276,7 @@
         <label><input type="checkbox" id="notify-waiting"> 確認待ち（確認依頼が届いたとき、入力や許可を待ち始めたとき）</label>
         <label class="notify-multi"><input type="checkbox" id="notify-done"> 完了（worker のターンが終わったとき）</label>
         <label class="notify-multi"><input type="checkbox" id="notify-failed"> 失敗（セッションが失敗したとき）</label>
-        <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。この設定はこのページの通知だけに効きます。サーバーが鳴らす通知（<code>notification</code>）は別で、ここでは変わりません</span>
+        <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。確認待ちがオンでブラウザが通知を許可しているあいだ、このページが確認待ちを通知し、サーバーの <code>notification</code> は鳴らしません。オフにしたとき（約90秒以内）や、このページを開いていないときは、サーバーの <code>notification</code> が鳴ります（確認依頼もこのとき鳴ります）</span>
       </fieldset>
     </div>
     <div class="foot">
