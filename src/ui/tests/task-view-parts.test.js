@@ -250,14 +250,15 @@ test('a task with nothing to judge leaves out what it lacks; a record is all the
   assert.ok(kv.includes('<dt>Issue</dt>') && kv.includes('<dt>PR</dt>') && kv.includes('<dt>置いている</dt>'));
 });
 
-test('a button of the panel finds its card by section and gate, then by gate, then by section; else the top', () => {
+test('a button of the panel finds its card by section and gate, then by gate, then (without a gate) by section; else the top', () => {
   const w = dgate('w-1', 'diff', '2026-10-01T00:00:00Z', { ...diffGate, id: 'w-1', waiting: true, options: ['approve'] });
   const gs = groupsOf([w]);
   const at = (section, gate) => call('cardDialogResolveTarget', gs, { section, gate });
   assert.strictEqual(at('facts', 'w-1'), 'gate:w-1:facts');
   assert.strictEqual(at('findings', 'w-1'), 'review:findings');
   assert.strictEqual(at('nothing', 'w-1'), 'gate:w-1:head', 'the first card of that gate');
-  assert.strictEqual(at('goal', 'other'), 'plan:goal', 'the section alone');
+  assert.strictEqual(at('goal', null), 'plan:goal', 'the section alone');
+  assert.strictEqual(at('findings', 'other'), null, 'never another gate\'s card of the same section');
   assert.strictEqual(at('nothing', 'other'), null);
   assert.strictEqual(at(null, null), null);
   assert.strictEqual(call('cardDialogResolveTarget', gs, null), null);

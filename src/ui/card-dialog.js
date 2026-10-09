@@ -416,7 +416,8 @@ function cardDialogResolveTarget(groups, target) {
   const cards = groups.flatMap(g => g.cards);
   const found = cards.find(c => c.expand && c.expand[0] === target.section && (c.expand[1] || null) === (target.gate || null))
     || (target.gate && cards.find(c => c.expand && c.expand[1] === target.gate))
-    || (target.section && cards.find(c => c.expand && c.expand[0] === target.section));
+    // A card of one gate never lands on another gate's card of the same kind.
+    || (!target.gate && target.section && cards.find(c => c.expand && c.expand[0] === target.section));
   return found ? found.key : null;
 }
 
