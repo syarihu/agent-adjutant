@@ -353,6 +353,26 @@ function workRowOrder(a, b) {
 const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
+/* The repositories 「いまの仕事」 lists: one with something under way (a running session, a running hub) or waiting on the
+   person (新着, 後で見る, a gate, a permission prompt), one that could not be read, and the one holding the selection.
+   An idle one is left out and comes back on its own; its board and the hub panel still list it. */
+function workListedRepos(repos, rows, turns, chipsByRepo, keep = null) {
+  const on = new Set();
+  for (const r of [...rows, ...turns]) if (r.cls || WORKS_ON_PERSON(r) || WORK_RUNNING.includes(r.st)) on.add(r.repo);
+  for (const repo of repos) {
+    if (repo.error || repo === keep || (chipsByRepo.get(repo) || []).some(c => c.s.present || c.waits > 0)) on.add(repo);
+  }
+  return on;
+}
+
+/* What 「いまの仕事」 draws of the document: the rows, turns, hub chips and repositories of the listed ones only. */
+function workListedView(repos, rows, turns, chipsByRepo, keep = null) {
+  const listed = workListedRepos(repos, rows, turns, chipsByRepo, keep);
+  const mine = new Map([...chipsByRepo].filter(([repo]) => listed.has(repo)));
+  return { rows: rows.filter(r => listed.has(r.repo)), turns: turns.filter(r => listed.has(r.repo)),
+    chipsByRepo: mine, chips: [...mine.values()].flat(), repos: repos.filter(r => listed.has(r)) };
+}
+
 /* The list as a tree: owner → repository → parent issue → task, with the rows that belong to none under 「親なし」.
    The owner heading is shown even when there is only one owner. A hub is not a row here: it is a chip on the heading of its
    repository, or of the parent it runs. A node is `{ key, kind, label…, rows }` where `rows` are all the task rows below
@@ -853,12 +873,13 @@ function drawWorkList() {
     }
     return;
   }
-  const { rows, turns, judged } = workListRows();
-  const chipsByRepo = new Map(workRepos().map(r => [r, workRepoHubChips(r, work.doc.now, judged)]));
-  const chips = [...chipsByRepo.values()].flat();
+  const { rows: allRows, turns: allTurns, judged } = workListRows();
+  const allChips = new Map(workRepos().map(r => [r, workRepoHubChips(r, work.doc.now, judged)]));
+  const sel = workSelected();
+  const { rows, turns, chipsByRepo, chips, repos } = workListedView(workRepos(), allRows, allTurns, allChips, sel?.repo || sel?.parent?.repo || null);
   const byState = prefs.workGroup === 'state';
   // The rows with no session row of their own are in the bands and the boxes only; the tree is the sessions'.
-  const tree = byState ? workTreeByState([...rows, ...turns], chips) : workTreeByParent(rows, workBands([...rows, ...turns]), chipsByRepo);
+  const tree = byState ? workTreeByState([...rows, ...turns], chips) : workTreeByParent(rows, workBands([...rows, ...turns]), chipsByRepo, repos);
   work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
   for (const b of wk('work-view').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));

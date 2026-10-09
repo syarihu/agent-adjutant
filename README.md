@@ -529,13 +529,16 @@ with the tasks that have no parent under 「親なし」; the owner heading is s
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
 「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by repository, headed by its
 full `owner/name`, in name order with case ignored; empty boxes are not drawn). Only work under way is listed: a
-worker session with a task or without one. A hub is not a row but a chip on the heading it runs: on its repository's
-heading, and, for a parent-task hub, on the heading of the parent it runs (one with no heading of its own goes on the
+worker session with a task or without one. A repository is left out while it is idle (its hub is not running, no
+session of it is running, and nothing of it waits on you); it comes back by itself when that changes, and its board and
+the hub panel's 「動いていない worktree」 still list everything. The same holds in 「状態」; the repository of the row
+you have open, and one that could not be read, stay listed. A hub is not a row but a chip on the heading it runs: on its
+repository's heading, and, for a parent-task hub, on the heading of the parent it runs (one with no heading of its own goes on the
 repository's, named by its key). The chip shows the hub icon, "hub", and what it is doing (作業中, 待機中, エラー, 状態不明
 or 動いていない), and, while something waits on you in that hub, a hand icon with the count; pressing it opens the hub
 (a stopped one offers 「hub を起動」). In 「状態」 the chip is on the repository's heading in 実行中 while the hub runs and in
-そのほか otherwise, and a repository that has only a hub still has a heading. A folded heading keeps its own chips and
-says how many things the hubs below it wait on you with. A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
+そのほか otherwise, and a repository that has only a hub still has a heading while that hub runs or something waits on
+you in it. A folded heading keeps its own chips and says how many things the hubs below it wait on you with. A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
 child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, each group is drawn as a card, a step stronger per nesting level, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,

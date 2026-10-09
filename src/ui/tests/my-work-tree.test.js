@@ -34,6 +34,8 @@ vm.runInContext([
   cut(/^function workPlaceHubChips[\s\S]*?^}/m),
   cut(/^const workChipsOnly = [^\n]*;/m),
   cut(/^function workHiddenHubWaits[\s\S]*?^}/m),
+  cut(/^function workListedRepos[\s\S]*?^}/m),
+  cut(/^function workListedView[\s\S]*?^}/m),
   cut(/^function workTreeByParent[\s\S]*?^}/m),
   cut(/^function workHeadHtml[\s\S]*?^}/m),
   cut(/^function workSummaryHtml[\s\S]*?^}/m),
@@ -387,4 +389,81 @@ test('placing: a chip with no key falls back to the parent whose hub has its slu
   const nodes = [parentNode('#2', 'b-p1')];
   assert.strictEqual(plain(run('workPlaceHubChips(chips, nodes)', { chips: [keyless], nodes })).length, 0);
   assert.deepStrictEqual(plain(nodes[0].hubs.map(c => c.id)), ['p1']);
+});
+
+// workListedRepos: an idle repository is left out of 「いまの仕事」.
+const lrA = { nwo: 'acme/a' }, lrB = { nwo: 'acme/b' }, lrC = { nwo: 'zed/c' };
+const lrow = (repo, st, cls = null, extra = {}) => ({ key: `${repo.nwo}#${st}${cls}`, id: `${repo.nwo}#${st}${cls}`, repo, nwo: repo.nwo, st, cls, s: {}, ...extra });
+const lchip = (repo, present, waits = 0, parent = false) => ({ ...chip(parent ? 'p1' : 'own', parent, '#2', parent ? 'b-p1' : 'b-own', waits), repo, nwo: repo.nwo, s: { present } });
+const listedOf = (repos, rows, turns, byRepo, keep) => plain(run('[...workListedRepos(repos, rows, turns, byRepo, keep)].map(r => r.nwo)', { repos, rows, turns, byRepo: new Map(byRepo), keep: keep ?? null }));
+
+test('listed repositories: one with only a stopped own hub is left out', () => {
+  assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [lchip(lrA, false)]]]), []);
+});
+
+test('listed repositories: rows that are done, stopped or failed with no class leave it out', () => {
+  const rows = ['done', 'stopped', 'failed'].map(st => lrow(lrA, st));
+  assert.deepStrictEqual(listedOf([lrA], rows, [], []), []);
+});
+
+test('listed repositories: a running hub keeps it, whatever its state word says', () => {
+  for (const st of ['idle', 'done', 'failed']) {
+    assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [{ ...lchip(lrA, true), st }]]]), ['acme/a']);
+  }
+});
+
+test('listed repositories: a stopped hub with something waiting on the person keeps it', () => {
+  assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [lchip(lrA, false, 1)]]]), ['acme/a']);
+});
+
+test('listed repositories: a session that is running keeps it', () => {
+  for (const st of ['working', 'idle', 'unknown', 'restarting']) assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, st)], [], []), ['acme/a'], st);
+});
+
+test('listed repositories: a done row in 後で見る keeps it, one with no class does not', () => {
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', 'later')], [], []), ['acme/a']);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done')], [], []), []);
+});
+
+test('listed repositories: a waiting or permission row keeps it even with no class', () => {
+  for (const st of ['waiting', 'permission']) assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, st)], [], []), ['acme/a'], st);
+});
+
+test('listed repositories: a row with no session, which is in the lists by its class, keeps it', () => {
+  const turn = lrow(lrA, 'waiting', 'new', { s: {}, turn: true });
+  assert.deepStrictEqual(listedOf([lrA], [], [turn], []), ['acme/a']);
+  assert.deepStrictEqual(listedOf([lrA], [], [lrow(lrA, 'done', null, { turn: true })], []), []);
+});
+
+test('listed repositories: one that could not be read stays, so its notice is not lost', () => {
+  assert.deepStrictEqual(listedOf([{ ...lrA, error: 'boom' }], [], [], []), ['acme/a']);
+});
+
+test('listed repositories: the one holding the selection stays, though it is idle', () => {
+  assert.deepStrictEqual(listedOf([lrA, lrB], [], [], [], lrB), ['acme/b']);
+});
+
+test('listed repositories: a running parent-task hub alone keeps its repository', () => {
+  assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [lchip(lrA, true, 0, true)]]]), ['acme/a']);
+});
+
+test('listed repositories: idle ones are left out of both groupings, and an owner with only idle ones has no node', () => {
+  const idle = lrow(lrB, 'done'), busy = lrow(lrA, 'working');
+  const byRepo = new Map([[lrA, [lchip(lrA, true)]], [lrB, [lchip(lrB, false)]], [lrC, [lchip(lrC, false)]]]);
+  const v = run('workListedView([a, b, c], rows, [], byRepo)', { a: lrA, b: lrB, c: lrC, rows: [busy, idle], byRepo });
+  assert.deepStrictEqual(plain(v.repos.map(r => r.nwo)), ['acme/a']);
+  const state = stateTree(v.rows, v.chips);
+  assert.deepStrictEqual(state.map(b => b.key), ['box:running']);
+  assert.ok(!JSON.stringify(state).includes('acme/b') && !JSON.stringify(state).includes('zed/c'));
+  assert.deepStrictEqual(stateTree(run('workListedView([a, b], rows, [], new Map())', { a: lrA, b: lrB, rows: [idle] }).rows, []), []);
+  const tree = plain(run('workTreeByParent(v.rows, [], v.chipsByRepo, v.repos)', { v }));
+  assert.deepStrictEqual(tree.map(o => o.key), ['owner:acme']);
+  assert.deepStrictEqual(tree[0].items.map(r => r.nwo), ['acme/a']);
+});
+
+test('listed repositories: the keep given to the view keeps an idle repository with its rows and chip', () => {
+  const idle = lrow(lrB, 'done');
+  const byRepo = new Map([[lrB, [lchip(lrB, false)]]]);
+  const v = run('workListedView([b], rows, [], byRepo, b)', { b: lrB, rows: [idle], byRepo });
+  assert.deepStrictEqual([v.rows.length, v.chips.length, v.repos.length], [1, 1, 1]);
 });
