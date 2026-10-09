@@ -281,6 +281,14 @@ function renderTaskPanel() {
   // The gate the open tab shows, read before the tabs are drawn so the record on screen does not
   // keep its 新着.
   const all = task ? gatesOf(task) : [];
+  if (task && wantedGate?.task === task.id) {
+    const wanted = all.find(x => x.id === wantedGate.gate);
+    if (wanted) {
+      panelPickOf(task.id)[tabOfPane(paneOfGate(wanted))] = wanted.id;
+      panelScrolledFor = null;
+      wantedGate = null;
+    }
+  }
   const pick = task ? panelPickOf(task.id) : {};
   // The work view's 離れていた間に, above the summary (my-work.js); a hub has none.
   renderWorkAway(!hub && (task || sess) ? { task, sess, all } : null);

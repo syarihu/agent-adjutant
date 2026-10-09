@@ -426,6 +426,8 @@ const workIsSelected = r => !!nav.task && !!nav.board && nav.board !== 'all' && 
 /* ── the document ── */
 
 let endState = null;
+/* The gate to show on the open task's tab, once its panel is drawn: `{ task, gate }` (selectWorkRow). */
+let wantedGate = null;
 /* A session that finishes or fails, as the document shows it: one desktop notification each, for the kinds the person
    chose (「通知」), and not for what was already there when the page opened. The keys are learned whether or not the
    browser lets the page ring. Waits are rung by checkNewGates/checkNewWaits (core.js). */
@@ -902,17 +904,28 @@ function openPendingGate() {
   const ref = pendingGate;
   if (!ref || !work.doc) return;
   pendingGate = null;
-  const { rows, turns, judged } = workListRows();
-  const entry = [...judged.values()].map(j => j.entry).find(e => e.items.some(i => i.kind === 'gate' && i.key === ref));
-  const row = entry && [...rows, ...turns].find(r => r.id === entry.id);
-  if (row) return selectWorkRow(row, { replace: true });
+  if (openGateRow(ref, { replace: true })) return;
   const slug = ref.slice(0, ref.indexOf('/'));
   go({ board: slug, view: 'work', task: WORK_GATE_REF + ref, pane: 'detail' }, { replace: true });
 }
 
-function selectWorkRow(r, { replace = false } = {}) {
+/* Select the row of the list whose entry holds the gate `key` (`<board>/<id>`), with that gate shown: false when no row does. */
+function openGateRow(key, { replace = false } = {}) {
+  if (!work.doc) return false;
+  const { rows, turns, judged } = workListRows();
+  const entry = [...judged.values()].map(j => j.entry).find(e => e.items.some(i => i.kind === 'gate' && i.key === key));
+  const row = entry && [...rows, ...turns].find(r => r.id === entry.id);
+  if (!row) return false;
+  const item = entry.items.find(i => i.kind === 'gate' && i.key === key);
+  selectWorkRow(row, { replace, gate: { id: key.slice(key.indexOf('/') + 1), kind: item.gate } });
+  return true;
+}
+
+function selectWorkRow(r, { replace = false, gate: wanted = null } = {}) {
+  // The gate a notification or a link is about is the one shown in its tab (renderTaskPanel picks it).
+  if (wanted && r.task) wantedGate = { task: r.task.id, gate: wanted.id };
   // A task opens on the tab its open gate is judged in, else on the summary.
-  const gate = r.s.waiting || (r.turn && r.live.find(i => i.kind === 'gate') ? { kind: r.live.find(i => i.kind === 'gate').gate } : null);
+  const gate = wanted || r.s.waiting || (r.turn && r.live.find(i => i.kind === 'gate') ? { kind: r.live.find(i => i.kind === 'gate').gate } : null);
   const pane = r.task && gate ? paneOfGate(gate) : 'detail';
   go({ board: r.board, view: 'work', task: r.ref, pane }, { replace: replace || workIsSelected(r) });
   // The panel may not draw (the board does not list the task), and what it would have drawn is what follows the address.

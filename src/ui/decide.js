@@ -26,10 +26,10 @@ const answeredGates = new Map();
    none to name. */
 const gateKey = g => gateRef(g._slug || !multiBoard || !nav.board || nav.board === 'all' ? g : { ...g, _slug: nav.board });
 
-/* Called when a gate was answered or closed, in whichever view. */
-function gateAnswered(g) {
+/* Called when a gate was answered or closed, in whichever view. `key` is `gateKey(g)` as it was when the answer was sent: the
+   person may have moved to another board while it was on its way. */
+function gateAnswered(g, key) {
   if (g.wait === false) return;
-  const key = gateKey(g);
   answeredGates.set(key, { at: Date.now() });
   // 「処理したら次へ」 in 「いまの仕事」.
   workAdvanceAfter(key);
@@ -447,6 +447,7 @@ async function answer(decision, choice, id, commentOverride = null) {
     return false;
   }
   const line = `adj gate answer --id ${g.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
+  const key = gateKey(g);
   try {
     const data = await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
@@ -460,7 +461,7 @@ async function answer(decision, choice, id, commentOverride = null) {
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
     // A record stays, with this answer appended, so it stays in view to show that it went.
     if (g.wait === false && box) box.value = '';
-    else gateAnswered(g);
+    else gateAnswered(g, key);
     dropGate(g);
     await refresh(true);
     refreshBoards();
@@ -490,12 +491,13 @@ async function closeGate(id) {
   if (!g) return;
   const comment = commentBox()?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
+  const key = gateKey(g);
   try {
     await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
-    gateAnswered(g);
+    gateAnswered(g, key);
     dropGate(g);
     await refresh(true);
     refreshBoards();
