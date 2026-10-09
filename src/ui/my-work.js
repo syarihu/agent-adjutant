@@ -426,7 +426,8 @@ const workIsSelected = r => !!nav.task && !!nav.board && nav.board !== 'all' && 
 /* ── the document ── */
 
 let endState = null;
-/* The gate to show on the open task's tab, once its panel is drawn: `{ task, gate }` (selectWorkRow). */
+/* The gate to show on the open task's tab, once its panel is drawn: `{ board, task, gate }` (selectWorkRow). Dropped when the
+   address moves off that board's task, and when the panel closes. */
 let wantedGate = null;
 /* A session that finishes or fails, as the document shows it: one desktop notification each, for the kinds the person
    chose (「通知」), and not for what was already there when the page opened. The keys are learned whether or not the
@@ -923,7 +924,7 @@ function openGateRow(key, { replace = false } = {}) {
 
 function selectWorkRow(r, { replace = false, gate: wanted = null } = {}) {
   // The gate a notification or a link is about is the one shown in its tab (renderTaskPanel picks it).
-  if (wanted && r.task) wantedGate = { task: r.task.id, gate: wanted.id };
+  wantedGate = wanted && r.task ? { board: r.board, task: r.task.id, gate: wanted.id } : null;
   // A task opens on the tab its open gate is judged in, else on the summary.
   const gate = wanted || r.s.waiting || (r.turn && r.live.find(i => i.kind === 'gate') ? { kind: r.live.find(i => i.kind === 'gate').gate } : null);
   const pane = r.task && gate ? paneOfGate(gate) : 'detail';

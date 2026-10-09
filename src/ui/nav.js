@@ -102,6 +102,8 @@ function leaveWork(prev) {
 }
 
 function go(patch = {}, { replace = false } = {}) {
+  // The person moves on: an old link's gate is no longer wanted.
+  pendingGate = null;
   if (boardJob && 'board' in patch && patch.board !== boardJob.slug) boardJob = null;
   const prev = { ...nav };
   Object.assign(nav, patch);
@@ -196,6 +198,7 @@ function runBoardJob() {
 }
 
 window.addEventListener('popstate', () => {
+  pendingGate = null;
   const next = parseUrl(location);
   boardJob = null;
   if (sameNav(next, nav)) return;

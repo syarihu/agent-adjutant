@@ -281,6 +281,7 @@ function renderTaskPanel() {
   // The gate the open tab shows, read before the tabs are drawn so the record on screen does not
   // keep its 新着.
   const all = task ? gatesOf(task) : [];
+  if (wantedGate && (nav.board !== wantedGate.board || nav.task !== wantedGate.task)) wantedGate = null;
   if (task && wantedGate?.task === task.id) {
     const wanted = all.find(x => x.id === wantedGate.gate);
     if (wanted) {
