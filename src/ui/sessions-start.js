@@ -454,6 +454,7 @@ function retryHubStart(row) {
 // The give-up and the hub's answer are times, not state changes: nothing else would redraw the
 // tree for them while the page sits still.
 let startingSig = '';
+let pendingSig = '';
 setInterval(() => {
   // A starting marker runs out with the clock: what it disabled is drawn again when the set
   // of hubs that count as starting changes, and not on every tick.
@@ -462,10 +463,18 @@ setInterval(() => {
   if (sig !== startingSig) {
     startingSig = sig;
     renderBoardRows();
-    redrawPending();
+    redrawHubPanel();
   }
-  // The give-up of a request that is waiting is a time too.
-  if (sessView.starts.length) redrawPending();
+  // The give-up of a request that is waiting is a time too. Settled here, whichever panel is open, so that a session that
+  // started is opened (settleStarts); a hub's panel is drawn again only when what its card says changed (a typed comment
+  // is held by the panel as for any redraw).
+  if (sessView.starts.length) {
+    const pend = JSON.stringify(sessionPendingRows().map(p => [p.key, p.kind, p.text, p.canStart, p.busy]));
+    if (pend !== pendingSig) {
+      pendingSig = pend;
+      redrawHubPanel();
+    }
+  }
   syncStartDialog();
   syncLinkDialog();
 }, 2000);

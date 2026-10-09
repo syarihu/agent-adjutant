@@ -1011,6 +1011,8 @@ function workAdvanceAfter(key) {
   const entry = id && work.entries.get(id);
   // Only a gate of the row on screen: another row's was not what the person was working through.
   if (!entry || !entry.items.some(i => i.kind === 'gate' && i.key === key)) return;
+  // Another gate still open on it: that is what the person goes on with, here.
+  if (entry.items.some(i => i.kind === 'gate' && i.key !== key && !answeredGates.has(i.key))) return;
   const fresh = [...workJudge()].filter(([, j]) => j.cls === 'new').map(([k]) => k);
   const next = workNextNew(work.newOrder, id, fresh);
   if (!next) return;

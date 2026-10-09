@@ -177,7 +177,8 @@ function applyPendingTask(final = false) {
     return;
   }
   pendingTask = null;
-  if (selectedTaskId !== id) showTaskPanel(id);
+  // A gate that landed on its task has selected it already, and still has to be drawn.
+  if (landed || selectedTaskId !== id) showTaskPanel(id);
 }
 
 /* Run `fn` on the board `slug`: now when it is the one shown, else after switching to it and
