@@ -531,7 +531,7 @@ owners are in name order with case ignored, and a repository with no owner goes 
 full `owner/name`, in name order with case ignored; empty boxes are not drawn). Only work under way is listed: a
 worker session with a task or without one, and each repository's
 hub as a row marked "hub". A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
-child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
+child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, each group is drawn as a card, a step stronger per nesting level, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
 what a permission prompt asks, the tool that is running, and a line such as "設計レビュー · あなたの判定待ち" while
