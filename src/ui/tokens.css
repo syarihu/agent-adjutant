@@ -83,6 +83,15 @@
   --critical: var(--md-sys-color-error);
   --accent: var(--md-sys-color-primary);
   --shadow: var(--md-elevation-1);
+
+  /* Group cards of いまの仕事: a step stronger per nesting level, stopping at the third. Opaque, so a sticky heading hides what scrolls under it. */
+  --wk-card-1: color-mix(in srgb, var(--md-sys-color-on-surface) 3%, var(--md-sys-color-surface-container-low));
+  --wk-card-2: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, var(--md-sys-color-surface-container-low));
+  --wk-card-3: color-mix(in srgb, var(--md-sys-color-on-surface) 9%, var(--md-sys-color-surface-container-low));
+  --wk-card-line-1: var(--md-sys-color-outline-variant);
+  --wk-card-line-2: color-mix(in srgb, var(--md-sys-color-outline) 25%, var(--md-sys-color-outline-variant));
+  --wk-card-line-3: color-mix(in srgb, var(--md-sys-color-outline) 50%, var(--md-sys-color-outline-variant));
+  --wk-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {

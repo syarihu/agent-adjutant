@@ -39,13 +39,23 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-empty { padding: 14px 8px; font-size: 12.5px; color: var(--md-sys-color-outline); }
 
 /* Headers: an owner, a repository, a parent issue, a box, a box's repository. They fold. */
-.wk-group { margin-top: 10px; }
-.wk-group .wk-group { margin-top: 6px; margin-left: 6px; }
+/* Each group is a card around its heading and rows, a step stronger per level and the same from the third on. */
+.wk-group {
+  --wk-card-bg: var(--wk-card-1); --wk-card-line: var(--wk-card-line-1);
+  margin-top: 10px; background: var(--wk-card-bg);
+  border: 1px solid var(--wk-card-line); border-radius: var(--md-shape-corner-md);
+}
+.wk-group .wk-group { --wk-card-bg: var(--wk-card-2); --wk-card-line: var(--wk-card-line-2); margin-top: 6px; }
+.wk-group .wk-group .wk-group { --wk-card-bg: var(--wk-card-3); --wk-card-line: var(--wk-card-line-3); }
+/* No overflow on a card: it would become the scroll container and the repository heading would stop sticking. */
 .wk-head {
   display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px;
-  border-radius: var(--md-shape-corner-sm); background: var(--md-sys-color-surface-container-high);
-  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--wk-card-bg); border-bottom: 1px solid var(--wk-card-line);
+  border-radius: calc(var(--md-shape-corner-md) - 1px) calc(var(--md-shape-corner-md) - 1px) 0 0;
 }
+/* A folded card is its heading alone. */
+.wk-head:last-child { border-bottom: 0; border-radius: calc(var(--md-shape-corner-md) - 1px); }
+/* Takes the card's own opaque colour, so the rows scrolling under a stuck heading do not show through. */
 .wk-head.repo { position: sticky; top: 0; z-index: 2; }
 .wk-head.owner .wk-head-name { font-weight: 900; }
 .wk-fold { flex: none; display: inline-flex; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: 50%; }
@@ -56,7 +66,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
   background: transparent; color: var(--md-sys-color-on-surface); font: inherit; padding: 2px 4px; border-radius: var(--md-shape-corner-xs);
 }
 button.wk-head-main { cursor: pointer; }
-button.wk-head-main:hover { background: var(--md-sys-color-surface-container-highest); }
+button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-head-main[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wk-head-name { min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; font-weight: 800; line-height: 1.35; }
 .wk-head-name .key { font-family: var(--font-mono); margin-right: 6px; color: var(--md-sys-color-primary); }
@@ -64,7 +74,7 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
 .wk-next { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); cursor: pointer; white-space: nowrap; }
 .wk-next input { margin: 0; cursor: pointer; }
 .wk-count { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
-.wk-body { padding-top: 3px; }
+.wk-body { padding: 3px 4px 4px; }
 /* What a folded header still says: how many rows are in each state. */
 .wk-sum { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
 .wk-sum span { display: inline-flex; align-items: center; gap: 2px; }
@@ -86,7 +96,7 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
   padding: 7px 8px; border: 0; border-radius: var(--md-shape-corner-sm); background: transparent;
   color: var(--md-sys-color-on-surface); cursor: pointer; font: inherit;
 }
-.wk-row:hover { background: var(--md-sys-color-surface-container-high); }
+.wk-row:hover { background: var(--wk-hover); }
 .wk-row[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wk-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
