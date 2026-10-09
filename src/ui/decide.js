@@ -292,7 +292,7 @@ function gateJudgeHtml(g, task) {
 
 const deciding = new Set(); // gates with an answer in flight: a second click must not send it again
 /* What a button of `decideHtml` or a gate's choices does, for the gate it sits in. True when the
-   answer went, so a dialog that showed it knows to close. The task panel
+   answer went, so a dialog that showed it knows what to do next. The task panel
    calls this from its own delegated click handler instead of `bindDecide`. */
 async function decideAct(b) {
   const id = b.closest('[data-gate]').dataset.gate;

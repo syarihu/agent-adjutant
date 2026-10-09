@@ -1255,6 +1255,8 @@ wk('wk-list').addEventListener('change', e => {
    by replacing the address, so that going back leaves the list and does not step through what was just answered. */
 function workAdvanceAfter(key) {
   if (!prefs.reviewNext || view !== 'work' || !work.doc) return;
+  // The task's 「拡大」 dialog goes on to the task's next gate itself, and stays open when there is none.
+  if (cardDialogTaskOpen()) return;
   const id = workSelectedId(workSelected());
   const entry = id && work.entries.get(id);
   // Only a gate of the row on screen: another row's was not what the person was working through.

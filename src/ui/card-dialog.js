@@ -1,21 +1,27 @@
 /* 「拡大」: a large dialog to read in. For a task it holds the whole task in one scroll, drawn from the data
-   with the panel's own card renderers (task-view.js, decide.js), under a left index of what is in it, and one
-   answer band for one waiting gate; answering closes the dialog. For what has no task (a hub, a session, a
-   gate of its own) it holds one card alone, copied from the panel's DOM, which it follows while it is open and
-   which brings its gate's answer controls along. */
+   with the panel's own card renderers (task-view.js, decide.js), under a left index of what is in it, and a right
+   column to answer the waiting gates in, one at a time; answering goes on to the next waiting gate. For what has
+   no task (a hub, a session, a gate of its own) it holds one card alone, copied from the panel's DOM, which it
+   follows while it is open and which brings its gate's answer controls along; answering closes the dialog. */
 
 const cardDialog = {
   subject: null, pane: null, section: null, gate: null, opener: null,
   sig: '', held: false, quiet: false, gone: false, pending: false, observer: null,
   expectControls: false, token: 0, pressing: false, answering: false, gateGone: false,
   // The whole task: `mode` is 'task' then, `target` the card to bring into view once it is drawn, `dock` the ref of
-  // the gate the answer band is for, `groups` what was drawn last, `active` the group the index marks.
-  mode: 'card', target: null, targetAt: 0, pinned: null, pinnedAt: 0, dock: null, groups: [], gateIds: {}, active: null, spy: false,
+  // the gate the answer column shows, `dockSig` what the column was drawn from, `groups` what was drawn last, `active`
+  // the group the index marks, `answered` the gates answered in this opening (ref -> a copy, until the history has
+  // the record), `answeredHere` their refs for good (the history's record must not make one look answered elsewhere), `noMore` that an answer left nothing waiting.
+  mode: 'card', target: null, targetAt: 0, pinned: null, pinnedAt: 0, dock: null, dockSig: '', groups: [], gateIds: {}, active: null, spy: false,
+  answered: new Map(), answeredHere: new Set(), noMore: false,
 };
 const CARD_DIALOG_GONE = 'パネルからこのカードがなくなりました（最後に表示した内容です）';
 const CARD_DIALOG_GATE_GONE = 'この gate への答えはパネルから消えました（最後に表示した内容です）';
 const CARD_DIALOG_TASK_GONE = 'パネルからこのタスクがなくなりました（最後に表示した内容です）';
+const CARD_DIALOG_NONE_LEFT = '判断待ちはもうありません';
+const cardDialogDrafts = new Map(); // gate ref -> a comment typed in the dialog, kept past a close: the panel has a box for one gate only
 const cardDialogEl = () => document.getElementById('card-dialog');
+const cardDialogDockEl = () => cardDialogEl().querySelector('.card-dialog-dock');
 
 /* What a card says about itself, drawn into the panel's markup by task-view.js and decide.js. */
 const expandAttrs = (section, g = null) =>
@@ -61,8 +67,8 @@ const cardDialogBox = () => cardDialogEl().querySelector('.gate-comment');
    nothing left that would answer. A comment typed stays in its box, which can no longer send it. */
 function cardDialogStrip(text) {
   // Whatever comes back is drawn again, not taken as already shown.
-  cardDialog.sig = '';
-  cardDialogContent().querySelectorAll('[data-gate]').forEach(cardDialogStripEl);
+  cardDialog.sig = ''; cardDialog.dockSig = '';
+  cardDialogEl().querySelectorAll('[data-gate]').forEach(cardDialogStripEl);
   cardDialogNotice(text);
 }
 function cardDialogStripEl(el) {
@@ -146,8 +152,8 @@ function openCardDialog(btn) {
   Object.assign(cardDialog, {
     mode: 'card', subject: selectedTaskId, pane: nav.pane, section: card.dataset.expand,
     gate: card.dataset.expandGate || null, opener: btn, sig: '', held: false, quiet: false, gone: false,
-    answering: false, gateGone: false, pressing: false, target: null, dock: null, groups: [],
-    token: cardDialog.token + 1,
+    answering: false, gateGone: false, pressing: false, target: null, dock: null, dockSig: '', groups: [],
+    answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
   });
   cardDialogShell('card', btn.dataset.expandLabel || '', tp('tp-head').querySelector('.tp-title')?.textContent || '');
   cardDialogSync(true, true);
@@ -168,7 +174,9 @@ function cardDialogShell(mode, title, sub) {
   dlg.querySelector('#card-dialog-sub').textContent = sub;
   dlg.querySelector('.card-dialog-gone').textContent = '';
   // Nothing of an earlier opening may be read back: what is kept across redraws is read from this DOM.
-  dlg.querySelector('.card-dialog-body').style.removeProperty('--cd-dock-h');
+  const dock = dlg.querySelector('.card-dialog-dock');
+  dock.replaceChildren();
+  dock.hidden = true;
   const content = dlg.querySelector('.card-dialog-content');
   content.replaceChildren();
   content.dataset.mode = mode;
@@ -199,23 +207,68 @@ tp('task-panel').addEventListener('click', e => {
   if (b) openCardDialog(b);
 });
 
-/* A button of the gate's controls: a sent answer closes the dialog, a failed one keeps it and what was typed. */
+/* A button of the gate's controls. In a task a sent answer goes on to the next waiting gate; for a card alone it
+   closes the dialog. A failed one keeps the dialog and what was typed. */
 async function cardDialogAnswer(b) {
   // A second click while the first answer is on its way: that one decides what happens, and `answering` is its own.
   if (cardDialog.answering) return;
   const token = cardDialog.token;
+  // What the answer was for, taken before the gate leaves the panel's data.
+  const ref = b.closest?.('[data-gate]')?.dataset.gate;
+  const act = b.matches?.('.pick[data-choice]') ? 'choice' : b.dataset?.act;
+  const g = cardDialog.mode === 'task' && ref ? gateByRef(ref) : null;
+  const comment = (ref && commentBox(ref)?.value.trim()) || '';
   let sent;
   cardDialog.answering = true;
   try { sent = await decideAct(b); } finally { if (token === cardDialog.token) cardDialog.answering = false; }
   // Only the opening the click was made in: another may have been opened while the answer was on its way.
   if (token !== cardDialog.token || !cardDialogEl().open) return;
-  if (sent) closeCardDialog();
-  else {
+  if (!sent) {
     // What a failed answer leaves: a redraw held back, a gate that has vanished. An identical redraw is skipped,
     // so the button that was pressed keeps its focus.
     cardDialog.held = false;
     cardDialogSync();
+  } else if (cardDialog.mode !== 'task') closeCardDialog();
+  else if (g && g.wait !== false) cardDialogAfterAnswer(ref, g, act, b.dataset?.choice, comment);
+  else cardDialogSync();
+}
+/* The answered gate is kept here until the history has its record, and the column goes on to the next waiting gate. */
+function cardDialogAfterAnswer(ref, g, act, choice, comment) {
+  cardDialog.answeredHere.add(ref);
+  cardDialogDrafts.delete(ref);
+  cardDialog.answered.set(ref, {
+    ...g, decision: act === 'close' ? 'closed' : act, choice: choice ?? g.choice, comment, answeredAt: secsStamp(Date.now() / 1000),
+  });
+  const token = cardDialog.token;
+  const task = taskById(cardDialog.subject);
+  const all = task ? cardDialogWithAnswered(gatesOf(task), cardDialog.answered) : [];
+  const waiting = cardDialogWaiting(all);
+  // The one after the answered gate in the order they are read, else the first from the top.
+  const next = all.slice(all.findIndex(g => gateRef(g) === ref) + 1).find(g => waiting.includes(g)) || waiting[0] || null;
+  // Before the sync, so that the sync does not take this answer, or its comment, for a gate answered elsewhere.
+  cardDialog.dock = next ? gateRef(next) : null;
+  cardDialog.noMore = !next;
+  cardDialog.held = false;
+  // Forced: a comment typed for another gate must not hold the redraw back while this dock is still on show.
+  cardDialogSync(true);
+  // The sync can close the dialog (the task left, the panel moved on): nothing is left to move in.
+  if (!cardDialogEl().open || cardDialog.token !== token) return;
+  if (next) {
+    cardDialogGoGate(gateRef(next));
+    // Keyboard on, so that the gates can be answered in a row.
+    [...cardDialogDockEl().querySelectorAll('[data-cd-dock-for]')].find(el => el.dataset.cdDockFor === gateRef(next))
+      ?.querySelector('.gate-comment')?.focus({ preventScroll: true });
   }
+  // The column is gone with the last gate, and so is the focus that was in it.
+  else cardDialogEl().querySelector('.card-dialog-body').focus({ preventScroll: true });
+}
+
+/* A button of a gate's controls. A pick answers the gate it is in: the column shows that gate first, so the comment
+   sent is the one shown for it; while another answer is on its way a pick does nothing at all. */
+function cardDialogGateButton(b) {
+  if (cardDialog.answering) return;
+  if (cardDialog.mode === 'task' && b.matches('.pick[data-choice]')) cardDialogSetDock(b.closest('[data-gate]').dataset.gate, true);
+  return cardDialogAnswer(b);
 }
 
 cardDialogEl().addEventListener('click', async e => {
@@ -225,6 +278,7 @@ cardDialogEl().addEventListener('click', async e => {
   // The index and the timeline move inside the dialog; nothing is sent.
   if ((b = hit('[data-cd-go-group]'))) return cardDialogGo(b.dataset.cdGoCard || null, b.dataset.cdGoGroup, false);
   if ((b = hit('[data-cd-goto]'))) return cardDialogGoGate(b.dataset.cdGoto);
+  if ((b = hit('[data-cd-dock]'))) return cardDialogSetDock(b.dataset.cdDock, true);
   // Leaving for the terminal: the dialog goes first, and focus is not given back to the panel.
   if ((b = hit('[data-gate] [data-act="talk"]'))) {
     cardDialog.quiet = true; closeCardDialog();
@@ -234,7 +288,7 @@ cardDialogEl().addEventListener('click', async e => {
     cardDialog.quiet = true; closeCardDialog();
     return void worktreeAct('focus', b.dataset.focus);
   }
-  if ((b = hit('[data-gate] [data-act], [data-gate] .pick[data-choice]'))) return cardDialogAnswer(b);
+  if ((b = hit('[data-gate] [data-act], [data-gate] .pick[data-choice]'))) return cardDialogGateButton(b);
   if (parkClick(e)) return;
   if ((b = hit('[data-ide]'))) worktreeAct('ide', b.dataset.ide);
 });
@@ -249,11 +303,13 @@ cardDialogEl().addEventListener('change', e => {
     }
   }
 });
+/* The buttons that act on a gate: its controls, and the column's own (the switch and 「この gate へ」). */
+const CARD_DIALOG_BUTTON = '[data-gate] button, .card-dialog-dock button';
 cardDialogEl().addEventListener('focusout', e => {
   if (!cardDialog.held || !e.target.matches('.gate-comment')) return;
   // A button of the gate's controls is about to be clicked, and the click resyncs or closes. Anywhere else
   // (the text, the next control) the held redraw is flushed now.
-  if (e.relatedTarget?.closest?.('[data-gate] button') && cardDialogEl().contains(e.relatedTarget)) return;
+  if (e.relatedTarget?.closest?.(CARD_DIALOG_BUTTON) && cardDialogEl().contains(e.relatedTarget)) return;
   // Some browsers give a clicked button no focus, so relatedTarget says nothing: a press in progress waits.
   if (cardDialog.pressing) return;
   setTimeout(() => {
@@ -261,7 +317,7 @@ cardDialogEl().addEventListener('focusout', e => {
     cardDialogSync();
   });
 });
-/* A press on a button of the gate's controls: the held redraw waits until the click has been handled, or the
+/* A press on one of those buttons: the held redraw waits until the click has been handled, or the
    press is cancelled, so the button is not replaced between mousedown and mouseup. */
 function cardDialogPressEnd() {
   if (!cardDialog.pressing) return;
@@ -272,7 +328,7 @@ function cardDialogPressEnd() {
 }
 cardDialogEl().addEventListener('pointerdown', e => {
   // A press that never ended (released outside, no click) is over once another begins.
-  cardDialog.pressing = !!e.target.closest?.('[data-gate] button');
+  cardDialog.pressing = !!e.target.closest?.(CARD_DIALOG_BUTTON);
 });
 // Released outside the dialog, or a right-click: no click will come to end the press.
 document.addEventListener('pointerup', e => { if (!cardDialogEl().contains(e.target)) cardDialogPressEnd(); }, true);
@@ -282,22 +338,25 @@ cardDialogEl().addEventListener('pointercancel', cardDialogPressEnd);
 cardDialogEl().addEventListener('close', () => {
   cardDialog.observer?.disconnect();
   // What was typed goes back to the box of the same gate in the panel, and to no other.
-  if (selectedTaskId === cardDialog.subject) {
-    cardDialogEl().querySelectorAll('[data-gate]').forEach(el => {
-      const typed = el.querySelector('.gate-comment')?.value;
-      const panelBox = cardDialogPanelComment(el.dataset.gate);
-      if (panelBox && typed != null) panelBox.value = typed;
-    });
-  }
+  cardDialogEl().querySelectorAll('[data-gate]').forEach(el => {
+    const typed = el.querySelector('.gate-comment')?.value;
+    const panelBox = selectedTaskId === cardDialog.subject ? cardDialogPanelComment(el.dataset.gate) : null;
+    if (panelBox && typed != null) panelBox.value = typed;
+    // A gate the panel has no box for keeps its draft here, for the next opening.
+    if (cardDialog.mode === 'task' && typed != null) typed ? cardDialogDrafts.set(el.dataset.gate, typed) : cardDialogDrafts.delete(el.dataset.gate);
+  });
   if (!cardDialog.quiet) cardDialogFocusTarget()?.focus();
   cardDialog.subject = null; cardDialog.opener = null; cardDialog.sig = ''; cardDialog.held = false;
   cardDialog.quiet = false; cardDialog.gone = false; cardDialog.expectControls = false; cardDialog.pressing = false; cardDialog.answering = false; cardDialog.gateGone = false;
   cardDialog.target = null; cardDialog.pinned = null; cardDialog.dock = null; cardDialog.groups = []; cardDialog.gateIds = {}; cardDialog.active = null;
+  cardDialog.dockSig = ''; cardDialog.answered = new Map(); cardDialog.answeredHere = new Set(); cardDialog.noMore = false;
   // What was drawn goes with the opening, and so does its notice.
   cardDialogContent().replaceChildren();
   cardDialogEl().querySelector('.card-dialog-index').replaceChildren();
+  const dock = cardDialogDockEl();
+  dock.replaceChildren();
+  dock.hidden = true;
   cardDialogEl().querySelector('.card-dialog-gone').textContent = '';
-  cardDialogEl().querySelector('.card-dialog-body').style.removeProperty('--cd-dock-h');
 });
 
 /* ---- The whole task ---- */
@@ -310,17 +369,17 @@ const cardDialogWaiting = all => all.filter(g => g.wait !== false && isWaiting(g
 
 /* What the dialog holds, as groups of cards, in the order they are read: what waits, the review, the diff, the
    plan, what was answered, 経過, 詳細. A group or card with nothing to say is left out, and so are the panel's 記録 list
-   and 工程. `dock` is the gate the answer band is for: the only one whose choices can be picked here.
-   `{ key, label, badge, cards: [{ key, label, badge, wide, html, expand: [section, gateRef] | null }] }`. */
-function cardDialogTaskGroups(task, all, dock = null) {
-  const dockRef = dock ? gateRef(dock) : null;
+   and 工程. The choices of every waiting gate can be picked here.
+   `{ key, label, badge, gate?, cards: [{ key, label, badge, wide, html, expand: [section, gateRef] | null }] }`; `gate` is
+   the ref of the gate a waiting group is for. */
+function cardDialogTaskGroups(task, all) {
   const card = (key, label, html, o = {}) => html ? { key, label, badge: o.badge || '', wide: !!o.wide, html, expand: o.expand || null } : null;
   const at = (section, g) => [section, g ? gateRef(g) : null];
   const decidedHtml = g => g.decided ? `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>` : '';
   const runHtml = g => g.run ? `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>` : '';
-  const group = (key, label, cards, badge = '') => {
+  const group = (key, label, cards, badge = '', gate = null) => {
     const kept = cards.filter(Boolean);
-    return kept.length ? { key, label, badge, cards: kept } : null;
+    return kept.length ? { key, label, badge, ...(gate ? { gate } : {}), cards: kept } : null;
   };
   // The review, the diff and the plan are the latest (or the waiting) gate of each kind, whatever chip the panel has
   // picked; the earlier rounds are in the answered gates.
@@ -344,7 +403,7 @@ function cardDialogTaskGroups(task, all, dock = null) {
       card(k('focus'), '確認してほしい点', focusCardHtml(g), { expand: at('focus', g) }),
       card(k('unsure'), '迷っていること', unsureCardHtml(g), { expand: at('unsure', g) }),
       card(k('report'), '報告', reportCardHtml(g), { expand: at('report', g) }),
-      card(k('choices'), '選択肢', choicesHtml(g, ref === dockRef), { wide: true, expand: at('choices', g) }),
+      card(k('choices'), '選択肢', choicesHtml(g, true), { wide: true, expand: at('choices', g) }),
     ];
     if (g.kind === 'verify') {
       cards.push(card(k('commands'), 'Verify 実行結果', commandsCardHtml(g), { expand: at('commands', g) }),
@@ -354,7 +413,7 @@ function cardDialogTaskGroups(task, all, dock = null) {
     // The review and the diff of another waiting gate of the kind: group 2 and 3 hold only one.
     if (g.kind === 'diff' && g !== gR) cards.push(...reviewCards(g, `gate:${ref}`), ...diffCards(g, `gate:${ref}`));
     if (g.kind !== 'plan') cards.push(card(k('decided'), '決定事項', decidedHtml(g), { expand: at('decided', g) }));
-    return group(`waiting:${ref}`, `【${kindOf(g.kind)[0]}】${g.title}`, cards, '判断待ち');
+    return group(`waiting:${ref}`, `【${kindOf(g.kind)[0]}】${g.title}`, cards, '判断待ち', ref);
   });
 
   // 2 and 3. what the review tab shows: a record of the review can be all there is
@@ -421,22 +480,75 @@ function cardDialogResolveTarget(groups, target) {
   return found ? found.key : null;
 }
 
-/* The gate the answer band is for: the opened card's gate if it waits, else the first that waits. */
+/* The gate the answer column starts on: the opened card's gate if it waits, else the first that waits. */
 function cardDialogDockGate(all, ref) {
   const waiting = cardDialogWaiting(all);
   return (ref && waiting.find(g => gateRef(g) === ref)) || waiting[0] || null;
 }
 
 /* The index and the content, as markup. Every label and key is escaped; a key is only ever an attribute value. */
-function cardDialogTaskHtml(groups, dockGate) {
+function cardDialogTaskHtml(groups) {
   const entry = (g, c) => `<li><button type="button" data-cd-go-group="${esc(g.key)}"${c ? ` data-cd-go-card="${esc(c.key)}"` : ''}>` +
     `<span>${esc((c || g).label)}</span>${(c || g).badge ? `<span class="cd-badge">${esc((c || g).badge)}</span>` : ''}</button>`;
   const index = `<ol>` + groups.map(g => entry(g) + `<ol>${g.cards.map(c => entry(g, c) + '</li>').join('')}</ol></li>`).join('') + `</ol>`;
   const content = groups.map(g => `<section class="cd-group" data-cd-group="${esc(g.key)}" aria-label="${esc(g.label)}" tabindex="-1">` +
     `<h3 class="cd-group-title"><span>${esc(g.label)}</span>${g.badge ? `<span class="cd-badge">${esc(g.badge)}</span>` : ''}</h3>` +
-    `<div class="cd-grid">${g.cards.map(c => `<div class="cd-card${c.wide ? ' cd-wide' : ''}" data-cd-card="${esc(c.key)}" tabindex="-1">${c.html}</div>`).join('')}</div></section>`).join('') +
-    (dockGate ? `<div class="cd-dock" role="group" aria-label="${esc(`【${kindOf(dockGate.kind)[0]}】${dockGate.title} に答える`)}"><p class="cd-dock-label">【${esc(kindOf(dockGate.kind)[0])}】${esc(dockGate.title)} に答える</p>${decideHtml(dockGate)}</div>` : '');
+    `<div class="cd-grid">${g.cards.map(c => `<div class="cd-card${c.wide ? ' cd-wide' : ''}" data-cd-card="${esc(c.key)}" tabindex="-1">${c.html}</div>`).join('')}</div></section>`).join('');
   return { index, content };
+}
+
+/* The answer column, as markup: a switch when more than one gate waits, and a dock for each waiting gate. Which one is
+   shown is set apart from the markup (`cardDialogShowDock`), so a switch redraws nothing. */
+function cardDialogDockHtml(waiting) {
+  const name = g => `【${kindOf(g.kind)[0]}】${g.title}`;
+  const pick = waiting.length > 1 ? `<div class="cd-dock-switch" role="group" aria-label="答える gate">` +
+    waiting.map(g => `<button type="button" data-cd-dock="${esc(gateRef(g))}" aria-pressed="false" title="${esc(name(g))}">${esc(name(g))}</button>`).join('') + `</div>` : '';
+  return pick + waiting.map(g => `<section class="cd-dock" data-cd-dock-for="${esc(gateRef(g))}" role="group" aria-label="${esc(`${name(g)} に答える`)}" hidden>` +
+    `<div class="cd-dock-head"><p class="cd-dock-label">${esc(name(g))} に答える</p><button type="button" class="btn-m3-text" data-cd-goto="${esc(gateRef(g))}">この gate へ</button></div>` +
+    `${decideHtml(g)}</section>`).join('');
+}
+
+/* Shows the dock of `cardDialog.dock` and no other, and marks it in the switch. A dock kept after its gate was
+   answered elsewhere has no `data-cd-dock-for` and stays as it is. */
+function cardDialogShowDock() {
+  const col = cardDialogDockEl();
+  col.querySelectorAll('[data-cd-dock-for]').forEach(el => { el.hidden = el.dataset.cdDockFor !== cardDialog.dock; });
+  col.querySelectorAll('[data-cd-dock]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cdDock === cardDialog.dock)));
+  col.hidden = !col.querySelector('.cd-dock');
+}
+/* Switches the column to the gate `ref`, if it has a dock for it. Each dock keeps its own comment box, so what was
+   typed for one gate stays when the column shows another. `explicit` is a click of the person's: focus that was in the
+   dock that goes away follows into the new one. Scrolling does not do that, or a textarea would take the keyboard. */
+function cardDialogSetDock(ref, explicit = false) {
+  const col = cardDialogDockEl();
+  const next = [...col.querySelectorAll('[data-cd-dock-for]')].find(el => el.dataset.cdDockFor === ref);
+  if (!next) return;
+  const was = document.activeElement?.closest?.('[data-cd-dock-for]');
+  cardDialog.dock = ref;
+  cardDialogShowDock();
+  // Focus in the dock that has just been hidden would be lost.
+  if (!was || !was.hidden) return;
+  if (explicit) next.querySelector('.gate-comment')?.focus({ preventScroll: true });
+  else cardDialogEl().querySelector('.card-dialog-body').focus({ preventScroll: true });
+}
+
+/* The answered gates of this opening, in place among the task's gates until the history has their records. */
+function cardDialogWithAnswered(all, answered) {
+  if (!answered.size) return all;
+  const out = [...all];
+  for (const [ref, copy] of [...answered]) {
+    const i = out.findIndex(g => gateRef(g) === ref);
+    if (i >= 0 && out[i].decision) answered.delete(ref);
+    else if (i < 0) out.push(copy);
+    else if (!isWaiting(out[i])) out[i] = copy;
+  }
+  return out.sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || '') || claimSeq(a) - claimSeq(b));
+}
+/* What the notice under the head says: the docks kept after their gate was answered elsewhere, or that nothing waits
+   any more after an answer. */
+function cardDialogNoticeText(kept, waiting) {
+  if (kept.length) return CARD_DIALOG_GATE_GONE;
+  return cardDialog.noMore && !waiting.length ? CARD_DIALOG_NONE_LEFT : '';
 }
 
 /* The content as nodes, cleaned as the single card is: what moves the panel somewhere else is gone (the timeline's
@@ -497,11 +609,13 @@ function cardDialogActiveGroup(tops, scrollTop, offset = 24) {
   tops.forEach((t, i) => { if (t <= scrollTop + offset) active = i; });
   return active;
 }
-/* The room the answer band takes at the bottom, so a focused element scrolls to above it. */
-function cardDialogDockSpace(body) {
-  const docks = [...cardDialogContent().querySelectorAll('.cd-dock')].filter(el => !el.querySelector('[data-gate-gone]'));
-  const h = docks.length ? Math.ceil(docks[docks.length - 1].getBoundingClientRect?.().height || 0) : 0;
-  body.style.setProperty('--cd-dock-h', `${h}px`);
+/* The column follows the reading when it comes to another waiting gate's group. A switch by hand holds while the
+   person stays in the group they are reading, and nothing moves under their hands while they type in the column (a box with text in it) or answer. */
+function cardDialogFollowDock(groupKey) {
+  const ref = cardDialog.groups.find(g => g.key === groupKey)?.gate;
+  // While the card the dialog opened at is still to be found, the first group seen is not where the person is reading.
+  if (!ref || ref === cardDialog.dock || cardDialog.answering || cardDialog.target || (document.activeElement?.matches?.('.card-dialog-dock .gate-comment') && document.activeElement.value)) return;
+  cardDialogSetDock(ref);
 }
 function cardDialogSpy() {
   if (cardDialog.mode !== 'task') return;
@@ -515,9 +629,9 @@ function cardDialogSpy() {
   const atEnd = body.scrollTop > 0 && body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
   const pinned = cardDialog.pinned && sections.find(el => el.dataset.cdGroup === cardDialog.pinned);
   const key = (pinned || sections[atEnd ? sections.length - 1 : cardDialogActiveGroup(tops, body.scrollTop)]).dataset.cdGroup;
-  cardDialogDockSpace(body);
   const changed = key !== cardDialog.active;
   cardDialog.active = key;
+  if (changed) cardDialogFollowDock(key);
   let current = null;
   dlg.querySelectorAll('.card-dialog-index [data-cd-go-group]').forEach(b => {
     if (b.hasAttribute('data-cd-go-card')) return;
@@ -542,6 +656,11 @@ cardDialogEl().querySelector('.card-dialog-body').addEventListener('scroll', e =
   requestAnimationFrame(() => { cardDialog.spy = false; cardDialogSpy(); });
 });
 
+/* The dialog of a task is open: what is shown here is not for the list behind it to move on from. */
+function cardDialogTaskOpen() {
+  return cardDialogEl().open && cardDialog.mode === 'task';
+}
+
 /* The target is brought into view once a card of it is drawn; while what it is in is still loading it waits. */
 const CARD_DIALOG_TARGET_MS = 10000;
 function cardDialogApplyTarget(task, all) {
@@ -565,8 +684,8 @@ function openCardDialogTask(task, btn) {
   Object.assign(cardDialog, {
     mode: 'task', subject: selectedTaskId, pane: nav.pane, section: target?.section || null, gate: target?.gate || null,
     opener: btn, sig: '', held: false, quiet: false, gone: false, answering: false, gateGone: false, pressing: false,
-    target, targetAt: Date.now(), pinned: null, dock: dock ? gateRef(dock) : null, groups: [], gateIds: {}, active: null,
-    token: cardDialog.token + 1,
+    target, targetAt: Date.now(), pinned: null, dock: dock ? gateRef(dock) : null, dockSig: '', groups: [], gateIds: {}, active: null,
+    answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
   });
   cardDialogShell('task', task.title, 'タスク全体');
   cardDialogSync(true, true);
@@ -585,6 +704,9 @@ function cardDialogFocusOf(dlg) {
   if (f.matches('[data-cd-go-group]')) return { kind: 'go', group: f.dataset.cdGoGroup, card: f.dataset.cdGoCard || null };
   if (f.matches('[data-cd-card]')) return { kind: 'card', key: f.dataset.cdCard };
   if (f.matches('[data-cd-group]')) return { kind: 'group', key: f.dataset.cdGroup };
+  // The column's own buttons, which sit outside the gate's controls.
+  if (f.matches('[data-cd-dock]')) return { kind: 'dock', ref: f.dataset.cdDock };
+  if (f.matches('.cd-dock-head [data-cd-goto]')) return { kind: 'dockgo', ref: f.dataset.cdGoto };
   const gate = f.closest('[data-gate]');
   if (!gate) {
     // Anything else focusable in a card: a checkbox, a link, a summary, a button.
@@ -601,6 +723,8 @@ function cardDialogFocusBack(dlg, d) {
     : d.kind === 'in' ? [...(all('[data-cd-card]').find(c => c.dataset.cdCard === d.key)?.querySelectorAll(CARD_DIALOG_FOCUSABLE) || [])][d.at]
     : d.kind === 'card' ? all('[data-cd-card]').find(c => c.dataset.cdCard === d.key)
     : d.kind === 'group' ? all('[data-cd-group]').find(c => c.dataset.cdGroup === d.key)
+    : d.kind === 'dock' ? all('[data-cd-dock]').find(b => b.dataset.cdDock === d.ref)
+    : d.kind === 'dockgo' ? all('.cd-dock-head [data-cd-goto]').find(b => b.dataset.cdGoto === d.ref)
     : all('[data-gate]').filter(g => g.dataset.gate === d.gate).flatMap(g => [...g.querySelectorAll(d.box ? '.gate-comment' : 'button')])
       .find(b => d.box || ((b.dataset.act || null) === d.act && (b.dataset.choice || null) === d.choice));
   el?.focus({ preventScroll: true });
@@ -633,31 +757,49 @@ function cardDialogTaskSync(force, initial) {
   // The board has not answered yet: what it lacks is not known to be missing.
   if (!task) return;
   const content = cardDialogContent();
+  const col = cardDialogDockEl();
   const title = dlg.querySelector('#card-dialog-title');
   if (title.textContent !== task.title) title.textContent = task.title;
-  const all = gatesOf(task);
+  const all = cardDialogWithAnswered(gatesOf(task), cardDialog.answered);
   const waiting = cardDialogWaiting(all);
+  const isWaitingRef = ref => waiting.some(g => gateRef(g) === ref);
 
-  // What was typed, for each gate that has a box here (the panel's, at the first fill).
+  // What was typed, for each gate that has a box here (the panel's, at the first fill). Every waiting gate has its own
+  // dock, shown or not.
   const typed = new Map();
-  if (dlg.open) content.querySelectorAll('[data-gate]').forEach(el => {
+  if (dlg.open) col.querySelectorAll('[data-gate]').forEach(el => {
     const box = el.querySelector('.gate-comment');
     if (box) typed.set(el.dataset.gate, box.value);
   });
-  else if (cardDialog.dock) typed.set(cardDialog.dock, cardDialogPanelComment(cardDialog.dock)?.value || '');
-
-  // The gate of the answer band is no longer waiting: with something typed, its band stays as it was, read-only.
-  if (cardDialog.dock && !waiting.some(g => gateRef(g) === cardDialog.dock) && dlg.open && typed.get(cardDialog.dock)) {
-    content.querySelectorAll('[data-gate]').forEach(el => {
-      if (el.dataset.gate !== cardDialog.dock) return;
-      cardDialogStripEl(el);
+  else {
+    // A draft of one of this task's gates that no longer waits is let go; another task's stays.
+    for (const g of all) if (!isWaitingRef(gateRef(g))) cardDialogDrafts.delete(gateRef(g));
+    // The panel's box says what it says, even when empty; the kept draft is for a gate the panel has no box for.
+    waiting.forEach(g => {
+      const box = cardDialogPanelComment(gateRef(g));
+      typed.set(gateRef(g), box ? box.value : cardDialogDrafts.get(gateRef(g)) || '');
     });
-    cardDialog.sig = '';
   }
+
+  // A gate answered elsewhere, with something typed for it: its dock stays as it was, read-only. One answered from
+  // here is not that, and its comment has been sent.
+  if (dlg.open) col.querySelectorAll('[data-cd-dock-for]').forEach(el => {
+    const ref = el.dataset.cdDockFor;
+    if (isWaitingRef(ref) || cardDialog.answeredHere.has(ref) || !typed.get(ref)) return;
+    cardDialogStripEl(el.querySelector('[data-gate]'));
+    el.removeAttribute('data-cd-dock-for');
+    el.classList.add('cd-dock-gone');
+    el.hidden = false;
+    cardDialog.dockSig = '';
+  });
+  const kept = dlg.open ? [...col.querySelectorAll('.cd-dock-gone')] : [];
+  const shown = cardDialog.dock;
   const dock = cardDialogDockGate(all, cardDialog.dock);
   cardDialog.dock = dock ? gateRef(dock) : null;
-  const kept = !dlg.open ? [] : [...content.querySelectorAll('.cd-dock')].filter(el => el.querySelector('[data-gate-gone]'));
-  cardDialogNotice(kept.length ? CARD_DIALOG_GATE_GONE : '');
+  // The dock fell back to the first waiting gate: it may not be the one of the group in view.
+  const fellBack = !!shown && !!dock && cardDialog.dock !== shown;
+  if (waiting.length) cardDialog.noMore = false;
+  cardDialogNotice(cardDialogNoticeText(kept, waiting));
 
   if (!force && dlg.open && document.activeElement?.matches('#card-dialog .gate-comment')) {
     cardDialog.held = true;
@@ -666,12 +808,19 @@ function cardDialogTaskSync(force, initial) {
   cardDialog.held = false;
   cardDialog.gone = false;
 
-  const groups = cardDialogTaskGroups(task, all, dock);
-  const html = cardDialogTaskHtml(groups, dock);
+  const groups = cardDialogTaskGroups(task, all);
+  const html = cardDialogTaskHtml(groups);
   const sig = `${html.index}\u0000${html.content}`;
+  const dockHtml = cardDialogDockHtml(waiting);
   cardDialog.groups = groups;
   cardDialog.gateIds = Object.fromEntries(all.map(g => [g.id, gateRef(g)]));
-  if (sig === cardDialog.sig && !force) return cardDialogApplyTarget(task, all);
+  const contentSame = sig === cardDialog.sig && !force;
+  const dockSame = dockHtml === cardDialog.dockSig && !force;
+  if (contentSame && dockSame) {
+    cardDialogShowDock();
+    if (fellBack) cardDialogFollowDock(cardDialog.active);
+    return cardDialogApplyTarget(task, all);
+  }
   cardDialog.sig = sig;
 
   const body = dlg.querySelector('.card-dialog-body');
@@ -684,15 +833,21 @@ function cardDialogTaskSync(force, initial) {
   const anchor = first && { key: first.dataset.cdCard, offset: first.getBoundingClientRect().top - top };
 
   const focus = cardDialogFocusOf(dlg);
-  dlg.querySelector('.card-dialog-index').innerHTML = html.index;
-  const nodes = cardDialogFill(html.content, groups, id => cardDialog.gateIds[id] || null);
-  const fresh = nodes.querySelector('.cd-dock');
-  kept.forEach(k => fresh ? fresh.before(k) : nodes.append(k));
-  content.replaceChildren(nodes);
-  content.querySelectorAll('[data-gate]').forEach(el => {
-    const box = el.querySelector('.gate-comment');
-    if (box && typed.get(el.dataset.gate)) box.value = typed.get(el.dataset.gate);
-  });
+  if (!contentSame) {
+    dlg.querySelector('.card-dialog-index').innerHTML = html.index;
+    content.replaceChildren(cardDialogFill(html.content, groups, id => cardDialog.gateIds[id] || null));
+  }
+  if (!dockSame) {
+    cardDialog.dockSig = dockHtml;
+    col.replaceChildren(...kept, cardDialogFill(dockHtml, groups, id => cardDialog.gateIds[id] || null));
+    col.querySelectorAll('[data-gate]').forEach(el => {
+      const box = el.querySelector('.gate-comment');
+      if (box && typed.get(el.dataset.gate)) box.value = typed.get(el.dataset.gate);
+    });
+  }
+  // The column's width is part of the content's, so it is settled before the scroll is put back.
+  cardDialogShowDock();
+  if (fellBack) cardDialogFollowDock(cardDialog.active);
   content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => {
     const was = opened.get(`${c.dataset.cdCard}#${i}`);
     if (was !== undefined) d.open = was;

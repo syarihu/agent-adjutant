@@ -67,7 +67,7 @@ load([
     'reviewTab', 'checkTab'].map(n => fn(tvSrc, n)),
   cut(decSrc, /^const OUTCOME = [^\n]*\n/m),
   ...['cardDialogWaiting'].map(n => cst(dlgSrc, n)),
-  ...['cardDialogTaskGroups', 'cardDialogResolveTarget', 'cardDialogDockGate', 'cardDialogTaskHtml', 'cardDialogActiveGroup']
+  ...['cardDialogTaskGroups', 'cardDialogResolveTarget', 'cardDialogDockGate', 'cardDialogTaskHtml', 'cardDialogDockHtml', 'cardDialogActiveGroup']
     .map(n => cut(dlgSrc, new RegExp(`^function ${n}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm'))),
   ...['gateWaitHeadHtml', 'gateJudgeHtml', 'reviewPanels', 'roundsCardHtml', 'findingsCardHtml',
     'checkPanels', 'commandsCardHtml', 'manualCardHtml'].map(n => fn(decSrc, n)),
@@ -182,10 +182,9 @@ test('gateJudgeHtml is the refs, the wait head and what follows, for a gate with
 
 /* The model of the dialog of a whole task. */
 const dgate = (id, kind, at, extra = {}) => ({ id, kind, title: `T ${id}`, openedAt: at, ...extra });
-const groupsOf = (all, dockRef = null, t = task) => {
+const groupsOf = (all, t = task) => {
   wait(all.filter(g => g.waiting));
-  const dock = call('cardDialogDockGate', all, dockRef);
-  return JSON.parse(JSON.stringify(call('cardDialogTaskGroups', t, all, dock)));
+  return JSON.parse(JSON.stringify(call('cardDialogTaskGroups', t, all)));
 };
 const keysOf = gs => gs.map(g => g.key);
 const cardOf = (gs, key) => gs.flatMap(g => g.cards).find(c => c.key === key);
@@ -214,17 +213,16 @@ test('the dialog reads in order: waiting gates oldest first, review, diff, plan,
   wait([]);
 });
 
-test('only the gate of the answer band can be picked from; the others show their choices', () => {
+test('the choices of every waiting gate can be picked, and a waiting group names its gate', () => {
   const a = dgate('a-1', 'question', '2026-10-01T00:00:00Z', { waiting: true, options: ['answer'], choices: [1], title: 'A' });
   const b = dgate('b-1', 'question', '2026-10-02T00:00:00Z', { waiting: true, options: ['answer'], choices: [1], title: 'B' });
   const all = [a, b];
-  wait(all);
-  for (const [dockRef, expected] of [['b-1', { a: false, b: true }], [null, { a: true, b: false }], ['gone', { a: true, b: false }]]) {
-    const gs = groupsOf(all, dockRef);
-    assert.ok(cardOf(gs, 'gate:a-1:choices').html.includes(`<choices a-1 ${expected.a}>`), String(dockRef));
-    assert.ok(cardOf(gs, 'gate:b-1:choices').html.includes(`<choices b-1 ${expected.b}>`), String(dockRef));
-  }
-  // The dock gate: the opened card's gate if it waits, else the first that waits, else none.
+  const gs = groupsOf(all);
+  assert.ok(cardOf(gs, 'gate:a-1:choices').html.includes('<choices a-1 true>'));
+  assert.ok(cardOf(gs, 'gate:b-1:choices').html.includes('<choices b-1 true>'));
+  assert.deepStrictEqual(gs.filter(g => g.gate).map(g => [g.key, g.gate]), [['waiting:a-1', 'a-1'], ['waiting:b-1', 'b-1']]);
+  assert.ok(gs.filter(g => !g.key.startsWith('waiting:')).every(g => !('gate' in g)));
+  // The gate the column starts on: the opened card's gate if it waits, else the first that waits, else none.
   assert.strictEqual(call('cardDialogDockGate', all, 'b-1').id, 'b-1');
   assert.strictEqual(call('cardDialogDockGate', all, 'p-1').id, 'a-1');
   assert.strictEqual(call('cardDialogDockGate', all, null).id, 'a-1');
@@ -276,20 +274,37 @@ test('the index marks the last group that has reached the top of the scroll', ()
   assert.strictEqual(act([], 10), -1);
 });
 
-test('the index and the content are escaped, and carry the answer band for one gate', () => {
+test('the index and the content are escaped, and carry no answer controls', () => {
   const w = dgate('w-<1>', 'question', '2026-10-01T00:00:00Z', { title: '"<img src=x>"', waiting: true, options: ['answer'] });
   wait([w]);
-  const gs = call('cardDialogTaskGroups', task, [w], w);
-  const h = call('cardDialogTaskHtml', gs, w);
+  const gs = call('cardDialogTaskGroups', task, [w]);
+  const h = call('cardDialogTaskHtml', gs);
   assert.ok(!h.index.includes('<img') && !h.content.includes('<img src=x>'));
   assert.ok(!/\sid=/.test(h.index));
   assert.ok(/<button type="button" data-cd-go-group="waiting:w-&lt;1&gt;">/.test(h.index));
   assert.ok(/<button type="button" data-cd-go-group="waiting:w-&lt;1&gt;" data-cd-go-card="gate:w-&lt;1&gt;:head">/.test(h.index));
-  assert.ok(h.content.includes('class="cd-dock" role="group" aria-label="【question】&quot;&lt;img src=x&gt;&quot; に答える"'));
-  assert.ok(h.content.includes('class="cd-dock"') && h.content.includes('に答える') && h.content.includes('<decide w-<1>>'));
   assert.ok(h.content.includes('data-cd-card="gate:w-&lt;1&gt;:head"'));
-  assert.ok(!call('cardDialogTaskHtml', gs, null).content.includes('cd-dock'));
+  assert.ok(!h.content.includes('cd-dock') && !h.content.includes('<decide'));
   wait([]);
+});
+
+test('the answer column escapes the gate, has a switch only when two or more wait, and shows no gate by itself', () => {
+  const w = dgate('w-<1>', 'question', '2026-10-01T00:00:00Z', { title: '"<img src=x>"', waiting: true });
+  const x = dgate('x-2', 'diff', '2026-10-02T00:00:00Z', { title: 'Other', waiting: true });
+  const one = call('cardDialogDockHtml', [w]);
+  assert.ok(!one.includes('<img'));
+  assert.ok(one.includes('class="cd-dock" data-cd-dock-for="w-&lt;1&gt;" role="group" aria-label="【question】&quot;&lt;img src=x&gt;&quot; に答える" hidden>'));
+  assert.ok(one.includes('<button type="button" class="btn-m3-text" data-cd-goto="w-&lt;1&gt;">この gate へ</button>'));
+  assert.ok(one.includes('<decide w-<1>>'));
+  assert.ok(!one.includes('cd-dock-switch') && !one.includes('data-cd-dock="'));
+  const two = call('cardDialogDockHtml', [w, x]);
+  assert.ok(two.includes('role="group" aria-label="答える gate"'));
+  assert.ok(two.includes('<button type="button" data-cd-dock="w-&lt;1&gt;" aria-pressed="false" title="【question】&quot;&lt;img src=x&gt;&quot;">'));
+  assert.ok(two.includes('data-cd-dock="x-2"'));
+  // Which dock shows is decided by cardDialogShowDock, not by the markup: the same for every gate.
+  assert.strictEqual(two.match(/ hidden>/g).length, 2);
+  assert.strictEqual(two.match(/aria-pressed="true"/g), null);
+  assert.strictEqual(call('cardDialogDockHtml', []), '');
 });
 
 test('the plan shown in the plan group keeps its 決定事項 there and not again in its answered card', () => {

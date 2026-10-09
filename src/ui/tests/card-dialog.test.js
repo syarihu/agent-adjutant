@@ -153,6 +153,7 @@ function syncWorld({ source, controls = [], subject = 's1', hidden = false, pane
   const dlg = {
     open: true, closed: false, close() { this.open = false; this.closed = true; },
     querySelector: sel => sel === '.card-dialog-gone' ? goneEl : sel === '.card-dialog-body' ? body : null,
+    querySelectorAll: sel => content.querySelectorAll(sel),
   };
   const c = vm.createContext({
     selectedTaskId: subject, nav: { pane }, tp: () => ({ hidden }),
@@ -298,6 +299,16 @@ test('controls that appear after the opening are stripped too when they vanish',
   assert.strictEqual(w.gates[0].attrs['data-gate'], undefined);
 });
 
+test('a press on the column\'s own buttons holds a redraw like one on a gate button', () => {
+  const sel = cut(dlgSrc, /^const CARD_DIALOG_BUTTON = '[^\n]*';/m);
+  const c = vm.createContext({});
+  vm.runInContext(sel, c);
+  const list = vm.runInContext('CARD_DIALOG_BUTTON', c);
+  assert.ok(list.includes('[data-gate] button') && list.includes('.card-dialog-dock button'));
+  assert.ok(!dlgSrc.includes("closest?.('[data-gate] button')"), 'both handlers use the one selector');
+  assert.strictEqual(dlgSrc.match(/CARD_DIALOG_BUTTON\)/g).length, 2);
+});
+
 test('a press on a gate button defers the flush of a held redraw until the click is handled', () => {
   const timers = [];
   const synced = [];
@@ -382,7 +393,16 @@ test('the dialog of a task fills the width: a grid of cards two to a row, an ind
   assert.match(rules('#card-dialog'), /width:\s*calc\(100vw - 48px\)/);
   assert.match(rules('#card-dialog'), /height:\s*calc\(100dvh - 48px\)/);
   assert.match(rules('#card-dialog[open]'), /display:\s*flex/);
-  assert.match(rules('.cd-dock'), /position:\s*sticky/);
+  // The answer column is a column of its own, 380px wide, that scrolls by itself; below 1160px it is a band under the content.
+  assert.match(rules('.card-dialog-dock'), /width:\s*380px/);
+  assert.match(rules('.card-dialog-dock'), /overflow:\s*auto/);
+  assert.match(rules('.card-dialog-main'), /grid-template-areas:\s*"index body dock"/);
+  const narrow = css.match(/@media \(max-width: 1160px\) \{([\s\S]*?\})\s*\}/);
+  assert.ok(narrow);
+  assert.match(narrow[1], /grid-template-areas:\s*"index body" "dock dock"/);
+  assert.match(narrow[1], /\.card-dialog-dock\s*\{[^}]*max-height:\s*40vh/);
+  assert.doesNotMatch(css, /--cd-dock-h/);
+  assert.doesNotMatch(rules('.cd-dock'), /position:\s*sticky/);
   assert.match(raw, /prefers-reduced-motion/);
 });
 
@@ -394,6 +414,7 @@ test('the head of a task has a button for the whole task, in the panel head and 
   assert.ok(!head.includes('task.id'));
   const markup = read('page-body.html');
   assert.match(markup, /<nav class="card-dialog-index" aria-label="目次"/);
+  assert.match(markup, /<aside class="card-dialog-dock" aria-label="判定" hidden><\/aside>/);
   // A group is named, and the clean-up of the drawn cards keeps aria-label (it strips only what points at ids).
   const src = read('card-dialog.js');
   assert.match(src, /class="cd-group" data-cd-group="[^"]*" aria-label="\$\{esc\(g\.label\)\}"/);
