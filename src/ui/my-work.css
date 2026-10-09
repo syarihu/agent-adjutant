@@ -38,7 +38,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-resize:hover, .wk-resize:focus-visible, body.wk-dragging .wk-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
 .wk-empty { padding: 14px 8px; font-size: 12.5px; color: var(--md-sys-color-outline); }
 
-/* Headers: an owner, a repository, a parent issue, a box, an organisation. They fold. */
+/* Headers: an owner, a repository, a parent issue, a box, a box's repository. They fold. */
 .wk-group { margin-top: 10px; }
 .wk-group .wk-group { margin-top: 6px; margin-left: 6px; }
 .wk-head {

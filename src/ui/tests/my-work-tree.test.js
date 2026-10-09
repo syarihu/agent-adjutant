@@ -1,5 +1,5 @@
-/* The owner level of 「いまの仕事」 (src/ui/my-work.js), run with `node --test`. my-work.js draws into the page as it
-   loads, so only the pure helpers are cut out of the source and evaluated here. */
+/* The owner level and the 状態 boxes' repository level of 「いまの仕事」 (src/ui/my-work.js), run with `node --test`.
+   my-work.js draws into the page as it loads, so only the pure helpers are cut out of the source and evaluated here. */
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -16,6 +16,7 @@ const ctx = vm.createContext({});
 vm.runInContext([
   cut(/^const workOwnerName = [^\n]*;/m),
   cut(/^function workOwnerGroups[\s\S]*?^}/m),
+  cut(/^function workBoxRepoGroups[\s\S]*?^}/m),
 ].join('\n'), ctx);
 const plain = v => JSON.parse(JSON.stringify(v));
 ctx.input = null;
@@ -66,4 +67,54 @@ test('a name with no slash goes last under オーナーなし', () => {
 
 test('owner keys do not clash with repo or org keys', () => {
   for (const o of groups([repo('acme/a'), repo('local')])) assert.ok(o.key.startsWith('owner:'));
+});
+
+const boxGroups = (box, rows, place = 'box') => { ctx.b = box; ctx.r = rows; ctx.p = place; return vm.runInContext('workBoxRepoGroups(b, r, p)', ctx); };
+const row = (nwo, id) => ({ key: `${nwo}#${id}`, nwo });
+
+test('a box has a heading per repository with the full owner/name, and no owner level', () => {
+  const out = boxGroups('running', [row('acme/a', 1), row('acme/b', 2)]);
+  assert.deepStrictEqual(plain(out.map(g => g.label)), ['acme/a', 'acme/b']);
+  for (const g of out) assert.strictEqual(g.kind, 'brepo');
+});
+
+test('box headings are in name order with case ignored', () => {
+  const out = boxGroups('running', [row('Zeta/x', 1), row('acme/y', 2), row('acme/B', 3)]);
+  assert.deepStrictEqual(plain(out.map(g => g.label)), ['acme/B', 'acme/y', 'Zeta/x']);
+});
+
+test('rows keep their order and the place given, as the same objects', () => {
+  const rows = [row('acme/a', 1), row('acme/b', 2), row('acme/a', 3)];
+  const out = boxGroups('new', rows, 'new');
+  assert.strictEqual(out[0].rows.length, 2);
+  assert.strictEqual(out[0].rows[0], rows[0]);
+  assert.strictEqual(out[0].rows[1], rows[2]);
+  assert.strictEqual(out[1].rows[0], rows[1]);
+  for (const g of out) g.items.forEach((it, i) => { assert.strictEqual(it.place, 'new'); assert.strictEqual(it.row, g.rows[i]); });
+});
+
+test('names differing only in case share one heading, labelled with the first spelling', () => {
+  const out = boxGroups('running', [row('Acme/A', 1), row('acme/a', 2)]);
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].label, 'Acme/A');
+  assert.strictEqual(out[0].rows.length, 2);
+});
+
+test('box headings follow the owner order of the tree, owner before name', () => {
+  const out = boxGroups('running', [row('a-b/y', 1), row('a/x', 2)]);
+  assert.deepStrictEqual(plain(out.map(g => g.label)), ['a/x', 'a-b/y']);
+});
+
+test('a name with no slash is its own heading, sorted with the others', () => {
+  const out = boxGroups('running', [row('local', 1), row('acme/a', 2), row('zeta/z', 3)]);
+  assert.deepStrictEqual(plain(out.map(g => g.label)), ['acme/a', 'local', 'zeta/z']);
+});
+
+test('box keys are per box and apart from the tree keys', () => {
+  const a = boxGroups('running', [row('acme/a', 1)]);
+  const b = boxGroups('other', [row('acme/a', 1)]);
+  assert.ok(a[0].key.startsWith('brepo:running/'));
+  assert.ok(b[0].key.startsWith('brepo:other/'));
+  assert.notStrictEqual(a[0].key, b[0].key);
+  for (const g of [...a, ...b]) for (const p of ['repo:', 'owner:', 'org:']) assert.ok(!g.key.startsWith(p));
 });
