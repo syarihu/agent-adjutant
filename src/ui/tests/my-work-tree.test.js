@@ -23,8 +23,11 @@ const ctx = vm.createContext({
   boards: [],
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
-  sessionState: s => s.waiting ? 'waiting' : s.state, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:',
+  sessionState: s => s.waiting ? 'waiting' : s.state, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:',
   workRepos: () => [], esc: x => String(x), workGlyphHtml: st => `<g ${st}>`,
+  // What a row's own markup reads from the page's other files.
+  sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, agentStateOf: () => 'working',
+  requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: () => 'who', WORK_SUBAGENTS_SHOWN: 4,
 });
 vm.runInContext([
   cutActions(/^const hubWake = [^\n]*;/m),
@@ -43,7 +46,18 @@ vm.runInContext([
   cut(/^const workHubWord = [^\n]*;/m),
   cut(/^function workRepoHubChips[\s\S]*?^}/m),
   cut(/^function workPlaceHubChips[\s\S]*?^}/m),
-  cut(/^const workChipsOnly = [^\n]*;/m),
+  cut(/^const workPercent = [^\n]*;/m),
+  cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
+  cut(/^function workRowHtml[\s\S]*?^}/m),
+  cut(/^function workItemHtml[\s\S]*?^}/m),
+  cut(/^function workRefocus[\s\S]*?^}/m),
+  cut(/^function workHubWakeButtonHtml[\s\S]*?^}/m),
+  cut(/^function workHubWhyHtml[\s\S]*?^}/m),
+  cut(/^const workNewest = [^\n]*;/m),
+  cut(/^function workBands[\s\S]*?^}/m),
+  cut(/^function workNewOrder[\s\S]*?^}/m),
+  cut(/^function workFoldButton[\s\S]*?^}/m),
+  cut(/^function workHubGroupName[\s\S]*?^}/m),
   cut(/^function workHiddenHubWaits[\s\S]*?^}/m),
   cut(/^function workListedRepos[\s\S]*?^}/m),
   cut(/^function workListedView[\s\S]*?^}/m),
@@ -252,7 +266,7 @@ const trow = (id, parent) => ({ key: id, id, repo: repoA, nwo: 'acme/a', st: 'id
 const treeOf = (rows, chipsByRepo, repos = [repoA]) => plain(run('workTreeByParent(rows, [], byRepo, repos)', { rows, byRepo: chipsByRepo, repos }));
 const reposOf = tree => tree.flatMap(o => o.items);
 
-test('the parent tree has no hub rows; the hub is a chip on its heading', () => {
+test('the parent tree: the own hub heads the group of the rows with no parent, first in the repository, and is not a task row', () => {
   const hub = { key: 'h', id: 'b-own/hub:own', repo: repoA, nwo: 'acme/a', st: 'idle', s: {}, isHub: true, task: null };
   const own = chip('own', false), p1 = chip('p1', true, '#2', 'b-p1');
   const tree = run('workTreeByParent(rows, [], byRepo, repos)', { rows: [hub, trow('t1', '#2'), trow('t2')], byRepo: new Map([[repoA, [own, p1]]]), repos: [repoA] });
@@ -260,34 +274,73 @@ test('the parent tree has no hub rows; the hub is a chip on its heading', () => 
   assert.strictEqual(repoNode.rows.length, 2);
   assert.ok(!repoNode.rows.includes(hub));
   assert.deepStrictEqual(plain(repoNode.hubs.map(c => c.id)), ['own']);
-  assert.strictEqual(repoNode.hub.id, 'own');
-  const [parent, none] = repoNode.items;
+  const [none, parent] = repoNode.items;
+  assert.deepStrictEqual([none.key, none.kind, none.hub.id], ['none:acme/a', 'hub', 'own']);
+  assert.deepStrictEqual(plain(none.items.map(i => i.row.key)), ['b-own/hub:own', 't2']);
+  assert.strictEqual(none.items[0].row, own);
+  assert.deepStrictEqual(plain(none.rows.map(r => r.key)), ['t2']);
   assert.deepStrictEqual(plain(parent.hubs.map(c => c.id)), ['p1']);
-  assert.deepStrictEqual(plain(parent.items.map(i => i.row.key)), ['t1']);
-  assert.deepStrictEqual(plain(none.items.map(i => i.row.key)), ['t2']);
+  assert.deepStrictEqual(plain(parent.items.map(i => i.row.key)), ['b-p1/hub:p1', 't1']);
+  assert.deepStrictEqual(plain(parent.rows.map(r => r.key)), ['t1']);
+  assert.strictEqual(parent.items[0].row, p1);
+});
+
+test('the parent tree: a hub row stays first even when a task sorts before it', () => {
+  const p1 = chip('p1', true, '#2', 'b-p1');
+  const early = { ...trow('a-first', '#2'), st: 'waiting' };
+  const late = trow('z-last', '#2');
+  const [parent] = reposOf(treeOf([late, early], new Map([[repoA, [p1]]])))[0].items;
+  assert.deepStrictEqual(parent.items.map(i => i.row.key), ['b-p1/hub:p1', 'a-first', 'z-last']);
+});
+
+test('the parent tree: a parent-task hub no parent group takes is a row after the own hub, named by its key', () => {
+  const own = chip('own', false), stray = chip('p9', true, '#9', 'b-p9');
+  const [none] = reposOf(treeOf([trow('t2')], new Map([[repoA, [stray, own]]])))[0].items;
+  assert.deepStrictEqual(none.items.map(i => [i.row.id, !!i.named]), [['own', false], ['p9', true], ['t2', false]]);
+  assert.deepStrictEqual(none.hubs.map(c => c.id), ['own']);
+});
+
+test('the parent tree: the hub group is first, above the parents, and only the hub, or only loose rows, is enough for it', () => {
+  const [none, parent] = reposOf(treeOf([trow('t1', '#2'), trow('t2')], new Map([[repoA, [chip('own', false)]]])))[0].items;
+  assert.deepStrictEqual([none.kind, parent.kind], ['hub', 'parent']);
+  const onlyHub = reposOf(treeOf([], new Map([[repoA, [chip('own', false)]]])))[0].items;
+  assert.deepStrictEqual(onlyHub.map(n => [n.kind, n.rows.length, n.items.length]), [['hub', 0, 1]]);
+  const onlyLoose = reposOf(treeOf([trow('t2')], new Map()))[0].items;
+  assert.deepStrictEqual(onlyLoose.map(n => [n.kind, n.hub, n.hubs.length, n.rows.length, n.items.length]), [['hub', null, 0, 1, 1]]);
+  // Only tasks with a parent: no group of rows with no parent, and no own hub, so none at all.
+  assert.deepStrictEqual(reposOf(treeOf([trow('t1', '#2')], new Map()))[0].items.map(n => n.kind), ['parent']);
+});
+
+test('the parent tree: the repository counts task rows only, and its chip is its own hub', () => {
+  const own = chip('own', false, 'own', 'b-own', 3);
+  const [repoNode] = reposOf(treeOf([trow('t1', '#2'), trow('t2')], new Map([[repoA, [own]]])));
+  assert.strictEqual(repoNode.rows.length, 2);
+  assert.deepStrictEqual(repoNode.hubs.map(c => c.id), ['own']);
 });
 
 test('the parent tree places a turn row (a task with nothing running) under its parent, or under none', () => {
   const turn = id => ({ ...trow(id, id === 't1' ? '#2' : undefined), turn: true, st: 'done' });
   const tree = treeOf([turn('t1'), turn('t2')], new Map());
-  const [parent, none] = reposOf(tree)[0].items;
+  const [none, parent] = reposOf(tree)[0].items;
   assert.deepStrictEqual(parent.items.map(i => i.row.key), ['t1']);
   assert.deepStrictEqual(none.items.map(i => i.row.key), ['t2']);
 });
 
-test('the parent tree: a repository with only a chip has a node, one with neither has none', () => {
+test('the parent tree: a repository with only a hub has a node, one with neither has none', () => {
   const only = treeOf([], new Map([[repoA, [chip('own', false)]]]));
   assert.strictEqual(reposOf(only).length, 1);
-  assert.deepStrictEqual(reposOf(only)[0].items, []);
   assert.strictEqual(reposOf(only)[0].hubs.length, 1);
   assert.deepStrictEqual(treeOf([], new Map()), []);
 });
 
-test('hidden waits: the hubs below a heading, not its own', () => {
+test('hidden waits: the hub rows below a heading, each once, and not the chip on the heading itself', () => {
+  const hubRowOf = (id, waits, key = id) => ({ row: { ...chip(id, true, key, `b-${id}`, waits), isHub: true } });
+  const shared = hubRowOf('p1', 2);
   const node = { hubs: [chip('x', false, 'x', 'b-x', 9)], items: [
-    { hubs: [chip('p1', true, '#2', 'b-p1', 2)], items: [{ row: {} }] },
-    { hubs: [], items: [{ hubs: [chip('p2', true, '#3', 'b-p2', 3)], items: [] }] },
-    { row: {} },
+    { hubs: [], items: [shared, { row: {} }] },
+    { hubs: [], items: [{ hubs: [], items: [hubRowOf('p2', 3)] }, shared] },
+    { row: { ...chip('x', false, 'x', 'b-x', 9), isHub: true } },
+    { row: { key: 't', waits: 7 } },
   ] };
   assert.strictEqual(run('workHiddenHubWaits(node)', { node }), 5);
   assert.strictEqual(run('workHiddenHubWaits(node)', { node: { hubs: [chip('x', false, 'x', 'b-x', 9)], items: [] } }), 0);
@@ -312,13 +365,24 @@ const srow = (nwo, id, st, cls, isHub) => ({ key: id, nwo, st, cls, isHub, s: {}
 const stateTree = (rows, chips) => plain(run('workTreeByState(rows, chips)', { rows, chips }));
 const schip = (nwo, id, present) => ({ ...chip(id, false), nwo, s: { present } });
 
-test('the state view: a hub row is dropped from 実行中 and そのほか but stays in 新着', () => {
-  const tree = stateTree([srow('a/y', 'h1', 'idle', null, true), srow('a/y', 'h2', 'waiting', 'new', true), srow('a/y', 't1', 'working')], []);
-  assert.deepStrictEqual(tree.map(b => b.key), ['box:new', 'box:running']);
-  assert.deepStrictEqual(tree.map(b => b.rows.map(r => r.key)), [['h2'], ['t1']]);
+test('the state view: a new hub is a row in 新着 only, with its 既読; the other hubs are in 実行中 and そのほか', () => {
+  const hubs = [{ ...schip('a/y', 'n', true), cls: 'new' }, schip('a/y', 'on', true), schip('a/y', 'off', false)];
+  const tree = stateTree([srow('a/y', 'h1', 'idle', null, true), srow('a/y', 'h2', 'waiting', 'new', true), srow('a/y', 't1', 'working')], hubs);
+  assert.deepStrictEqual(tree.map(b => b.key), ['box:new', 'box:running', 'box:other']);
+  // The session rows `workRows` made of the hubs are not here: a hub is its chip's object.
+  assert.deepStrictEqual(tree.map(b => b.rows.map(r => r.key)), [[], ['t1'], []]);
+  assert.deepStrictEqual(tree.map(b => b.items.map(g => g.items.map(i => `${i.place}:${i.row.key}`))), [[['new:b-n/hub:n']], [['box:b-on/hub:on', 'box:t1']], [['box:b-off/hub:off']]]);
 });
 
-test('the state view: a running hub is a chip on its repository heading in 実行中, a stopped one in そのほか', () => {
+test('the state view: a hub is the first row of its repository group, which has a heading even with no task row', () => {
+  const tree = stateTree([srow('a/y', 'r1', 'working'), srow('a/y', 'r0', 'working')], [schip('a/y', 'on', true), schip('b/z', 'on2', true)]);
+  assert.deepStrictEqual(tree.map(b => b.key), ['box:running']);
+  const [ay, bz] = tree[0].items;
+  assert.deepStrictEqual([ay.kind, ay.label, ay.items.map(i => i.row.key), ay.rows.map(r => r.key), ay.hubs.map(c => c.id)], ['brepo', 'a/y', ['b-on/hub:on', 'r0', 'r1'], ['r0', 'r1'], ['on']]);
+  assert.deepStrictEqual([bz.label, bz.rows, bz.items.length, bz.hubs.map(c => c.id)], ['b/z', [], 1, ['on2']]);
+});
+
+test('the state view: a hub that runs is in 実行中, a stopped one in そのほか', () => {
   const tree = stateTree([], [schip('a/y', 'on', true), schip('b/z', 'off', false)]);
   assert.deepStrictEqual(tree.map(b => b.key), ['box:running', 'box:other']);
   const [running, other] = tree.map(b => b.items);
@@ -326,10 +390,11 @@ test('the state view: a running hub is a chip on its repository heading in 実�
   assert.deepStrictEqual([other[0].label, other[0].hubs.map(c => c.id)], ['b/z', ['off']]);
 });
 
-test('box headings keep their order with chips, and a chip joins the heading of its rows', () => {
+test('box headings keep their order with hubs, and a hub is first in the group of its repository', () => {
   const out = plain(run('workBoxRepoGroups("running", rows, "box", chips)', { rows: [row('b/x', 1)], chips: [schip('a/y', 'on', true), schip('b/x', 'on2', true)] }));
   assert.deepStrictEqual(out.map(g => g.label), ['a/y', 'b/x']);
   assert.deepStrictEqual(out.map(g => [g.rows.length, g.hubs.length]), [[0, 1], [1, 1]]);
+  assert.deepStrictEqual(out[1].items.map(i => i.row.key), ['b-on2/hub:on2', 'b/x#1']);
 });
 
 test('the chip names the hub by its key only for a parent-task hub on a repository heading', () => {
@@ -366,17 +431,43 @@ test('placing: two parents sharing a hub slug each get the chip of their own key
   assert.strictEqual(rest.length, 0);
 });
 
-test('a heading with only chips has nothing to fold; a node with items or an empty note keeps its fold button', () => {
+test('a heading shows the chips of its hubs only while it is folded, and always has its fold button', () => {
   // The pieces the heading calls are stubbed for this test only, and put back after.
-  const had = ['workFoldButton', 'workHubChipsHtml', 'workSegments', 'nav'].map(k => [k, k in ctx, ctx[k]]);
-  const html = node => run('workHeadHtml(node, false)', { node, nav: {}, workSegments: () => [], workFoldButton: () => '<fold>', workHubChipsHtml: () => '<chips>' });
+  const had = ['workHubChipsHtml', 'workSegments', 'nav'].map(k => [k, k in ctx, ctx[k]]);
+  const html = (node, folded) => run('workHeadHtml(node, folded)', { node, folded, nav: {}, workSegments: () => [], workHubChipsHtml: () => '<chips>' });
   try {
-    const only = html({ kind: 'repo', nwo: 'a/b', key: 'repo:a/b', rows: [], items: [], hubs: [{}] });
-    assert.ok(only.includes('wk-fold-gap') && !only.includes('<fold>'));
-    assert.ok(html({ kind: 'repo', nwo: 'a/b', key: 'k', rows: [], items: [{}], hubs: [{}] }).includes('<fold>'));
-    assert.ok(html({ kind: 'band', label: 'x', key: 'band:new', rows: [], items: [], hubs: undefined, empty: 'e' }).includes('<fold>'));
+    for (const node of [{ kind: 'repo', nwo: 'a/b', key: 'repo:a/b', rows: [], items: [], hubs: [{}] }, { kind: 'brepo', label: 'a/b', key: 'k', rows: [], items: [{}], hubs: [{}] },
+      { kind: 'parent', key: 'p', parent: { key: '#2', repo: {} }, rows: [], items: [], hubs: [{}] }, { kind: 'hub', key: 'none:a/b', hub: null, rows: [], items: [], hubs: [{}] }]) {
+      assert.ok(html(node, true).includes('<chips>'), node.kind);
+      assert.ok(!html(node, false).includes('<chips>'), node.kind);
+      for (const folded of [true, false]) assert.ok(html(node, folded).includes('data-wk-fold'), node.kind);
+    }
+    assert.ok(!html({ kind: 'repo', nwo: 'a/b', key: 'repo:a/b', rows: [], items: [], hubs: [{}] }, false).includes('wk-fold-gap'));
   } finally {
     for (const [k, had_, v] of had) { if (had_) ctx[k] = v; else delete ctx[k]; }
+  }
+});
+
+test('the group of the rows with no parent is named for its hub and what it is doing, with the unseen count only when above 0', () => {
+  const head = node => run('workHeadHtml(node, false)', { node: { key: 'none:a/b', kind: 'hub', rows: [], items: [], hubs: [], ...node } });
+  const own = (word, unseen) => ({ ...chip('own', false), word, hub: { id: 'own', parent: false, key: 'own', slug: 'b-own', unseen } });
+  assert.ok(head({ hub: own('作業中', 0) }).includes('hub ・ 作業中') && !head({ hub: own('作業中', 0) }).includes('受信箱'));
+  const unseen = head({ hub: own('待機中', 3) });
+  assert.ok(unseen.includes('hub ・ 待機中') && unseen.includes('受信箱 未確認 3') && unseen.includes('role="img" aria-label="受信箱の未確認 3 件"'));
+  assert.ok(head({ hub: own('動いていない', 0) }).includes('hub ・ 動いていない'));
+  const none = head({ hub: null });
+  assert.ok(none.includes('>hub<') && !none.includes('親なし') && !none.includes('・'));
+});
+
+test('the group name escapes what it draws', () => {
+  const plainEsc = ctx.esc;
+  ctx.esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  try {
+    const hub = { ...chip('own', false), word: '<b>x</b>', hub: { id: 'own', parent: false, key: 'own', slug: 'b-own', unseen: 1 } };
+    const html = run('workHeadHtml(node, false)', { node: { key: 'none:a/b', kind: 'hub', rows: [], items: [], hubs: [hub], hub } });
+    assert.ok(html.includes('hub ・ &lt;b&gt;x&lt;/b&gt;') && !html.includes('<b>x</b>'));
+  } finally {
+    ctx.esc = plainEsc;
   }
 });
 
@@ -556,10 +647,135 @@ test('wake: a chip carries the base of its hub\'s board only when this server ha
   }
 });
 
-test('wake: a repository heading and a parent heading both show the button of their hub', () => {
+test('wake: a folded repository heading and a folded parent heading both show the button of their hub', () => {
   const repoNode = { key: 'repo:acme/w', kind: 'repo', nwo: 'acme/w', label: 'acme/w', rows: [], items: [], hubs: [wakeChip()] };
-  assert.ok(run('workHeadHtml(node, false)', { node: repoNode }).includes('data-wk-wake="b-own/hub:own"'));
+  assert.ok(run('workHeadHtml(node, true)', { node: repoNode }).includes('data-wk-wake="b-own/hub:own"'));
+  assert.ok(!run('workHeadHtml(node, false)', { node: repoNode }).includes('data-wk-wake'));
   // The parent heading takes the same chips through `workHubChipsHtml`.
   const p1 = wakeChip({ id: 'p1', parent: true, key: '#2', slug: 'b-p1' }, { key: 'b-p1/hub:p1', wakeBase: '/b/b-p1' });
   assert.ok(run('workHubChipsHtml([c], "t")', { c: p1 }).includes('data-wk-wake="b-p1/hub:p1"'));
+});
+
+/* ── a hub as a row (#610) ── */
+const hubItem = (hub = {}, extra = {}) => ({ ...wakeChip(hub), id: 'b-own/hub:own', isHub: true, turn: false, task: null, data: { now: 1 },
+  s: { present: true, agent: 'claude', agentSession: { model: 'opus', contextPercent: 42, lastMessage: 'did a thing\nmore', subagents: [{ type: 'x' }] } }, ...extra });
+const itemHtml = (r, place = 'tree', named = false) => run('workItemHtml(r, place, named)', { r, place, named });
+// The markup with every `<button ...>...</button>` taken out one level deep, to find what sits outside the row button.
+const outsideRow = html => html.replace(/<button type="button" class="wk-row[\s\S]*?<\/button>/, '');
+
+test('a hub row carries what a session row does, with the inbox counts in place of the branch', () => {
+  const html = itemHtml(hubItem({ unseen: 2, seen: 4 }, {}), 'tree');
+  const rowPart = html.match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0];
+  assert.ok(rowPart.includes('data-wk="b-own/hub:own"') && rowPart.includes('<g idle>'));
+  assert.ok(rowPart.includes('claude · opus') && rowPart.includes('42%') && rowPart.includes('サブエージェント 1'));
+  assert.ok(rowPart.includes('<said>did a thing\nmore</said>'));
+  assert.ok(rowPart.includes('受信箱 未確認 2') && rowPart.includes('確認済み 4'));
+  assert.ok(rowPart.includes('<span class="wk-tag">hub</span>'));
+  const withBranch = itemHtml(hubItem({}, { s: { present: true, branch: 'feat/x', agentSession: {} } }), 'tree');
+  assert.ok(!withBranch.includes('feat/x'));
+});
+
+test('a hub row has no inbox spans for empty counts, and names a parent-task hub by its key only when told to', () => {
+  const quiet = itemHtml(hubItem({ unseen: 0, seen: 0 }), 'tree');
+  assert.ok(!quiet.includes('受信箱') && !quiet.includes('確認済み'));
+  const parent = hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }, { key: 'b-p1/hub:p1', id: 'b-p1/hub:p1' });
+  assert.ok(itemHtml(parent, 'tree', true).includes('<span class="wk-tag">hub #9</span>'));
+  assert.ok(itemHtml(parent, 'tree', false).includes('<span class="wk-tag">hub</span>') && !itemHtml(parent, 'tree', false).includes('#9'));
+  assert.ok(!itemHtml(hubItem({ unseen: 0 }), 'tree', true).includes('undefined'));
+});
+
+test('a hub row has its wake button beside the row button, never inside it', () => {
+  const html = itemHtml(hubItem({ unseen: 2 }), 'tree');
+  assert.match(html, /^<div class="wk-band-row wk-hub-row" data-wk-cell="tree\/b-own\/hub:own"><button type="button" class="wk-row/);
+  assert.ok(!html.match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0].includes('data-wk-wake'));
+  const rest = outsideRow(html);
+  assert.ok(rest.includes('<span class="wk-acts">') && rest.includes('data-wk-wake="b-own/hub:own"') && !rest.includes('data-wk-read'));
+  // Nothing unseen: no wake button, and no empty actions either.
+  const quiet = itemHtml(hubItem({ unseen: 0 }), 'tree');
+  assert.ok(!quiet.includes('data-wk-wake') && !quiet.includes('wk-acts'));
+});
+
+test('a hub row in 新着 has 既読 as well as the wake button, both beside the row', () => {
+  const rest = outsideRow(itemHtml(hubItem({ unseen: 1 }), 'new'));
+  assert.ok(rest.includes('data-wk-read="b-own/hub:own"') && rest.includes('data-wk-wake="b-own/hub:own"'));
+  assert.ok(!outsideRow(itemHtml(hubItem({ unseen: 1 }), 'box')).includes('data-wk-read'));
+});
+
+test('a task row is as it was: a bare row button outside 新着, with 既読 inside it', () => {
+  const task = { key: 'b/t1', id: 'b/t1', st: 'working', s: { present: true }, data: { now: 1 }, task: { id: 't1' } };
+  assert.ok(itemHtml(task, 'tree').startsWith('<button type="button" class="wk-row'));
+  assert.ok(itemHtml(task, 'new').startsWith('<div class="wk-band-row" '));
+});
+
+test('a folded node counts the hubs below it once, and a stopped hub is not counted from its row twice', () => {
+  const hub = { ...hubItem(), waits: 2 };
+  const node = { hubs: [], items: [{ items: [{ row: hub, place: 'tree' }] }, { items: [{ row: hub, place: 'new' }] }] };
+  assert.strictEqual(run('workHiddenHubWaits(node)', { node }), 2);
+});
+
+test('a new hub is once in the 新着 band and once in its order, and is not counted in its heading', () => {
+  const hub = { ...chip('own', false), cls: 'new', isHub: true, live: [], st: 'waiting' };
+  const dup = { key: hub.key, id: hub.id, cls: 'new', isHub: true, st: 'waiting', s: {} };
+  const t1 = { key: 'b/t1', id: 'b/t1', cls: 'new', st: 'waiting', s: {}, live: [] };
+  const [band] = run('workBands(rows)', { rows: [t1, hub] });
+  assert.deepStrictEqual(plain(band.items.map(i => i.row.key)).sort(), ['b-own/hub:own', 'b/t1']);
+  assert.strictEqual(band.items.filter(i => i.row === hub).length, 1);
+  assert.deepStrictEqual(plain(band.rows.map(r => r.key)), ['b/t1']);
+  assert.ok(!band.items.some(i => i.row === dup));
+  assert.deepStrictEqual(plain(run('workNewOrder([band])', { band })).sort(), ['b/t1', 'own']);
+});
+
+test('a parent-task hub row in a 「状態」 box is tagged with its key', () => {
+  const tree = run('workTreeByState([], chips)', { chips: [{ ...schip('a/y', 'p1', true), hub: { id: 'p1', parent: true, key: '#9', slug: 'b-p1' } }] });
+  const [it] = tree[0].items[0].items;
+  assert.strictEqual(it.named, true);
+  assert.ok(run('workItemHtml(r, "box", n)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }), key: it.row.key }, n: it.named }).includes('hub #9'));
+});
+
+test('a hub row puts the wake reason on a line of its own, outside the buttons and the row', () => {
+  run('hubWake.why["b-own"] = "入力しませんでした: 長い理由"', {});
+  try {
+    const html = itemHtml(hubItem({ unseen: 2 }), 'tree');
+    const rest = outsideRow(html);
+    const acts = rest.match(/<span class="wk-acts">[\s\S]*?<\/button><\/span>/)[0];
+    assert.ok(acts.includes('data-wk-wake') && !acts.includes('hub-wake-why'));
+    assert.ok(rest.includes('<span class="hub-wake-why wk-hub-why" role="status">入力しませんでした: 長い理由</span></div>'));
+    assert.ok(!html.match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0].includes('hub-wake-why'));
+    // A folded heading's chip keeps the reason beside its button.
+    assert.ok(chipHtml(wakeChip()).includes('hub-wake-why'));
+  } finally {
+    run('delete hubWake.why["b-own"]', {});
+  }
+});
+
+test('a hub chip carries the entry and the away count of its judged entry, as a session row does', () => {
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [hubRow('own', 'done')], hubSessions: [] };
+  const entry = { id: 'b-own/hub:own' };
+  const [c] = chipsOf(repo, judgedOf({ 'b-own/hub:own': { entry, live: [], cls: null, away: 3 } }));
+  assert.deepStrictEqual([c.entry, c.away], [entry, 3]);
+  const [none] = chipsOf(repo);
+  assert.deepStrictEqual([none.entry, none.away], [null, 0]);
+  ctx.workAwayChip = r => r > 0 ? `+${r}` : '';
+  try {
+    assert.ok(itemHtml({ ...hubItem(), away: 3 }, 'tree').includes('<span>+3</span>'));
+  } finally { ctx.workAwayChip = () => ''; }
+});
+
+test('focus after a rebuild goes back to the copy in the same cell, else to the first', () => {
+  const log = [];
+  const el = (name, cell, held) => ({ dataset: { wkCell: cell }, matches: sel => sel === held, querySelector: sel => sel === held ? inner : null, focus: () => log.push(name) });
+  const inner = { focus: () => log.push('inner') };
+  const band = el('band', 'new/k', '[data-wk="k"]'), group = el('group', 'tree/k', '[data-wk="k"]');
+  const first = { focus: () => log.push('first') };
+  const root = { querySelectorAll: () => [band, group], querySelector: () => first };
+  const go = (held, cell) => { log.length = 0; run('workRefocus(root, held, cell)', { root, held, cell }); return log.slice(); };
+  assert.deepStrictEqual(go('[data-wk="k"]', 'tree/k'), ['group']);
+  assert.deepStrictEqual(go('[data-wk="k"]', 'new/k'), ['band']);
+  assert.deepStrictEqual(go('[data-wk-wake="k"]', 'tree/k'), ['first']);
+  assert.deepStrictEqual(go('[data-wk="k"]', 'gone'), ['first']);
+  assert.deepStrictEqual(go('[data-wk="k"]', null), ['first']);
+  assert.deepStrictEqual(go(null, 'tree/k'), []);
+  // A wake button inside the wrapper of the cell is found within it.
+  const wrap = { dataset: { wkCell: 'tree/k' }, matches: () => false, querySelector: () => inner };
+  assert.deepStrictEqual((log.length = 0, run('workRefocus(root, held, cell)', { root: { querySelectorAll: () => [band, wrap], querySelector: () => first }, held: '[data-wk-wake="k"]', cell: 'tree/k' }), log.slice()), ['inner']);
 });
