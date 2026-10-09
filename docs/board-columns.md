@@ -457,7 +457,7 @@ differ from one repository to the next, and a layout must not change what "it is
   ([#554](https://github.com/syarihu/agent-adjutant/issues/554)) use it.
 - #553's progress segments (merged / PR / working / not started) are a fixed derivation over
   `status`, `prTurn` and `step`, written once on the server next to the facts. Its state boxes (新着
-  / 後で見る / 実行中 / そのほか) add `yourTurn`, `parked` and `session` from the server and the
+  / 実行中 / そのほか) add `yourTurn`, `parked` and `session` from the server and the
   browser's seen marks from #554, which only the page has, so the page sorts cards into them. Both
   can show a card's column label from its own repository as text.
 - [#557](https://github.com/syarihu/agent-adjutant/issues/557)'s notifications read `session` and

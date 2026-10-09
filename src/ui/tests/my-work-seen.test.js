@@ -12,7 +12,7 @@ for (const file of ['util.js', 'my-work-seen.js']) {
 }
 // Objects made inside the context have another Object.prototype: compare them as data.
 const plain = x => JSON.parse(JSON.stringify(x));
-const { workEntries, workItems, workActedAt, workSeenClass, workClassOf, workLaterText, workLiveItems,
+const { workEntries, workItems, workActedAt, workSeenClass, workClassOf, workParkedText, workLiveItems,
   workParseMarks, workMarkMerge, workPruneMarks, workParkPatches, workNextNew } = ctx;
 
 const stamp = secs => {
@@ -32,27 +32,35 @@ const row = (s, t = null, board = SLUG) => ({ board, session: s, ...(t ? { task:
 const one = (repo, done) => workEntries(docOf(repo), done);
 const byId = (entries, id) => entries.find(e => e.id === id);
 
-test('a gate that opens is new, leaving moves it to later, and a newer gate makes it new again', () => {
+test('a gate that opens is new, leaving does not read it, reading does, and a newer gate makes it new again', () => {
   const gate = [{ kind: 'gate', gate: 'plan', since: T0 + 10 }];
   assert.equal(workSeenClass(gate, {}), 'new');
-  assert.equal(workSeenClass(gate, { left: T0 + 20 }), 'later');
+  // `left` alone leaves a gate new: opening a row and leaving it reads nothing.
+  assert.equal(workSeenClass(gate, { left: T0 + 20 }), 'new');
+  assert.equal(workSeenClass(gate, { read: T0 + 20 }), null);
   const two = [...gate, { kind: 'gate', gate: 'diff', since: T0 + 30 }];
-  assert.equal(workSeenClass(two, { left: T0 + 20 }), 'new');
+  assert.equal(workSeenClass(two, { read: T0 + 20 }), 'new');
+});
+
+test('a legacy ✓ (cleared) counts as read', () => {
+  const gate = [{ kind: 'gate', gate: 'plan', since: T0 + 10 }];
+  assert.equal(workSeenClass(gate, { cleared: T0 + 20 }), null);
+  assert.equal(workSeenClass(gate, { cleared: T0 + 5 }), 'new');
 });
 
 test('a phase moving on, or anything else that is not an item, leaves a read row where it is', () => {
   const entries = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10), phase: 'plan', agentSession: agent('done', T0 + 5) }), task('1'))] });
   const e = byId(entries, `${SLUG}/1`);
-  const marks = { [e.id]: { left: T0 + 20 } };
-  assert.equal(workClassOf(e, marks), 'later');
+  const marks = { [e.id]: { read: T0 + 20 } };
+  assert.equal(workClassOf(e, marks), null);
   const moved = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10), phase: 'implement', agentSession: agent('done', T0 + 5, { activity: 'Edit', contextPercent: 40 }) }), task('1'))] });
-  assert.equal(workClassOf(byId(moved, e.id), marks), 'later');
+  assert.equal(workClassOf(byId(moved, e.id), marks), null);
 });
 
 test('a permission wait whose status time moved is new again, and one that did not is not', () => {
   const at = t => byId(one({ rows: [row(session('w1', { agentSession: agent('waiting', t, { request: 'Bash: make' }) }), task('1'))] }), `${SLUG}/1`);
-  const marks = { [`${SLUG}/1`]: { left: T0 + 20 } };
-  assert.equal(workClassOf(at(T0 + 10), marks), 'later');
+  const marks = { [`${SLUG}/1`]: { read: T0 + 20 } };
+  assert.equal(workClassOf(at(T0 + 10), marks), null);
   assert.equal(workClassOf(at(T0 + 30), marks), 'new');
 });
 
@@ -63,15 +71,15 @@ test('a failed session is an item, and so is a worker whose turn ended with no g
   assert.deepEqual(plain(f.items), [{ kind: 'failed', since: T0 + 5 }]);
 });
 
-test('an answered gate or typing in the terminal counts as having looked, with no left mark', () => {
+test('an answered gate or typing in the terminal counts as having read, with no read mark', () => {
   const gate = [{ kind: 'gate', gate: 'plan', since: T0 + 10 }];
-  assert.equal(workSeenClass(gate, {}, T0 + 20), 'later');
+  assert.equal(workSeenClass(gate, {}, T0 + 20), null);
   const e = byId(one({ rows: [row(session('w1', { agentSession: agent('done', T0 + 10, { lastPromptAt: T0 + 15 }) }), task('1'))] }), `${SLUG}/1`);
   assert.equal(workActedAt(e), T0 + 15);
-  assert.equal(workClassOf(e, {}), 'later');
+  assert.equal(workClassOf(e, {}), null);
   const answered = byId(one({ rows: [row(session('w1', { agentSession: agent('done', T0 + 10) }), task('1', { gateAnsweredAt: stamp(T0 + 12) }))] }), `${SLUG}/1`);
   assert.equal(workActedAt(answered), T0 + 12);
-  assert.equal(workClassOf(answered, {}), 'later');
+  assert.equal(workClassOf(answered, {}), null);
   // The session that was not shown (a gone one) has nothing to type into.
   const gone = byId(one({ rows: [row(session('w1', { present: false, agentSession: agent('done', T0 + 10, { lastPromptAt: T0 + 15 }) }), task('1'))] }), `${SLUG}/1`);
   assert.equal(workActedAt(gone), -Infinity);
@@ -79,20 +87,31 @@ test('an answered gate or typing in the terminal counts as having looked, with n
 
 test('a row sent back is new until it is read again', () => {
   const gate = [{ kind: 'gate', gate: 'plan', since: T0 + 10 }];
-  assert.equal(workSeenClass(gate, { left: T0 + 20, back: T0 + 25 }), 'new');
-  assert.equal(workSeenClass(gate, { left: T0 + 30, back: T0 + 25 }), 'later');
+  assert.equal(workSeenClass(gate, { read: T0 + 20, back: T0 + 25 }), 'new');
+  assert.equal(workSeenClass(gate, { read: T0 + 30, back: T0 + 25 }), null);
+  // Leaving after a send back does not read it.
+  assert.equal(workSeenClass(gate, { read: T0 + 20, back: T0 + 25, left: T0 + 30 }), 'new');
 });
 
-test('clearing drops done, failed and PR items and not a gate or a permission wait', () => {
-  const items = [
-    { kind: 'done', since: T0 + 1 }, { kind: 'failed', since: T0 + 2 }, { kind: 'pr', turn: 'ci-failed', since: T0 + 3 }, { kind: 'pr', turn: 'merge', since: null },
-  ];
-  assert.equal(workSeenClass(items, { cleared: T0 + 5 }), null);
-  // Something new after the ✓ is not cleared by it.
-  assert.equal(workSeenClass([...items, { kind: 'failed', since: T0 + 9 }], { cleared: T0 + 5 }), 'new');
+test('reading drops done and failed items older than it, and keeps a gate, a permission wait and a PR', () => {
+  const finished = [{ kind: 'done', since: T0 + 1 }, { kind: 'failed', since: T0 + 2 }];
+  const pr = [{ kind: 'pr', turn: 'ci-failed', since: T0 + 3 }, { kind: 'pr', turn: 'merge', since: null }];
+  assert.equal(workSeenClass(finished, { read: T0 + 5 }), null);
+  assert.equal(workLiveItems(finished, { read: T0 + 5 }).length, 0);
+  // The legacy ✓ drops them alike.
+  assert.equal(workLiveItems(finished, { cleared: T0 + 5 }).length, 0);
+  // Something newer after the read is not dropped by it.
+  assert.equal(workSeenClass([...finished, { kind: 'failed', since: T0 + 9 }], { read: T0 + 5 }), 'new');
+  // A PR still waits on the person, so it stays live (it only stops being new).
+  assert.deepEqual(plain(workLiveItems(pr, { read: T0 + 5 })), plain(pr));
+  assert.equal(workSeenClass(pr, { read: T0 + 5 }), null);
   const kept = [{ kind: 'gate', gate: 'plan', since: T0 + 1 }, { kind: 'permission', since: T0 + 1 }];
-  assert.equal(workSeenClass(kept, { cleared: T0 + 5, left: T0 + 5 }), 'later');
-  assert.equal(workLiveItems([...items, ...kept], { cleared: T0 + 5 }).length, 2);
+  assert.equal(workLiveItems([...finished, ...pr, ...kept], { read: T0 + 5 }).length, 4);
+  // Acting on the row (typing into its session) drops them as reading does.
+  assert.equal(workLiveItems(finished, {}, T0 + 5).length, 0);
+  assert.equal(workLiveItems(finished, {}, T0 + 1).length, 1);
+  // Not read yet: everything is live.
+  assert.equal(workLiveItems([...finished, ...pr, ...kept], {}).length, 6);
 });
 
 test('with no item on it a row is in neither', () => {
@@ -112,11 +131,11 @@ test('a failed hub and a hub waiting for a person are items', () => {
 
 test('a PR that flaps is new again when its turn time is newer, and one with no time is new until opened once', () => {
   const at = prTurnAt => byId(one({ rows: [row(session('w1', { present: false }), task('1', { waitsOnPerson: true, prTurn: 'ci-failed', prTurnAt }))] }), `${SLUG}/1`);
-  const marks = { [`${SLUG}/1`]: { left: T0 + 50 } };
-  assert.equal(workClassOf(at(stamp(T0 + 10)), marks), 'later');
+  const marks = { [`${SLUG}/1`]: { read: T0 + 50 } };
+  assert.equal(workClassOf(at(stamp(T0 + 10)), marks), null);
   assert.equal(workClassOf(at(stamp(T0 + 60)), marks), 'new');
   assert.equal(workClassOf(at(undefined), {}), 'new');
-  assert.equal(workClassOf(at(undefined), marks), 'later');
+  assert.equal(workClassOf(at(undefined), marks), null);
   // A turn that is not the person's is no item.
   const checks = byId(one({ rows: [row(session('w1'), task('1', { waitsOnPerson: false, prTurn: 'checks' }))] }), `${SLUG}/1`);
   assert.equal(checks.items.length, 0);
@@ -169,22 +188,13 @@ test('of two sessions of one task the entry takes the live one', () => {
   assert.equal(entries[0].session.id, 'live');
 });
 
-test('the words of a later row name what is open, the most pressing first, and say how many more', () => {
-  assert.equal(workLaterText([{ kind: 'gate', gate: 'plan' }]), '既読 · 設計レビューが開いたまま');
-  assert.equal(workLaterText([{ kind: 'done' }, { kind: 'permission' }]), '既読 · 許可待ちのまま ほか 1 件');
-  assert.equal(workLaterText([{ kind: 'pr', turn: 'ci-failed' }]), '既読 · CI が落ちたまま');
-  assert.equal(workLaterText([{ kind: 'pr', turn: 'changes' }, { kind: 'failed' }, { kind: 'done' }]), '既読 · 失敗したまま ほか 2 件');
-  assert.equal(workLaterText([{ kind: 'done' }]), '既読 · 片付けていない');
-  assert.equal(workLaterText([]), '');
-});
-
 test('marks read from storage are only what is made of finite times', () => {
   assert.deepEqual(plain(workParseMarks('{{ not json')), {});
   assert.deepEqual(plain(workParseMarks('null')), {});
   assert.deepEqual(plain(workParseMarks('[1,2]')), {});
   assert.deepEqual(plain(workParseMarks('"x"')), {});
-  const got = workParseMarks(JSON.stringify({ a: { left: 5, back: 'x', cleared: null }, b: 7, c: { left: 1e999 }, d: [], __proto__x: { left: 1 } }));
-  assert.deepEqual(plain(got), { a: { left: 5 }, __proto__x: { left: 1 } });
+  const got = workParseMarks(JSON.stringify({ a: { left: 5, read: 6, back: 'x', cleared: null }, b: 7, c: { left: 1e999 }, d: [], __proto__x: { left: 1 } }));
+  assert.deepEqual(plain(got), { a: { left: 5, read: 6 }, __proto__x: { left: 1 } });
   const evil = workParseMarks('{"__proto__": {"left": 1}}');
   assert.deepEqual(plain(evil), {});
   assert.equal(({}).left, undefined);
@@ -200,9 +210,9 @@ test('a mark moves only later, so a write from another tab is never undone by an
 
 test('marks of rows no longer listed are kept for a week and then dropped', () => {
   const now = T0 + 100 * 86400;
-  const marks = { live: { left: 1 }, recent: { left: now - 86400 }, old: { left: now - 8 * 86400, back: now - 9 * 86400 }, 'old-but-newest-back': { left: 1, back: now - 86400 } };
+  const marks = { live: { left: 1 }, recent: { left: now - 86400 }, old: { left: now - 8 * 86400, back: now - 9 * 86400 }, 'old-but-newest-back': { left: 1, back: now - 86400 }, 'old-but-newest-read': { left: 1, read: now - 86400 } };
   const kept = workPruneMarks(marks, new Set(['live']), now);
-  assert.deepEqual(Object.keys(plain(kept)).sort(), ['live', 'old-but-newest-back', 'recent']);
+  assert.deepEqual(Object.keys(plain(kept)).sort(), ['live', 'old-but-newest-back', 'old-but-newest-read', 'recent']);
 });
 
 test('a gate no session waits on is on the hub of its board, else a row of its own', () => {
@@ -227,12 +237,12 @@ test('a gate no session waits on is on the hub of its board, else a row of its o
 const park = (since, extra = {}) => ({ reason: 'pdm', text: '', since: stamp(since), ...extra });
 const withMarks = (marks, patches) => patches.reduce((m, [id, p]) => workMarkMerge(m, id, p), marks);
 
-test('a parked task is later even with an unread gate and no marks, and never new', () => {
+test('a parked task is never new, even with an unread gate and no marks', () => {
   const entries = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 5) }))] });
   const e = byId(entries, `${SLUG}/1`);
-  assert.equal(workClassOf(e, {}), 'later');
-  // Not even for a mark that sent it back by hand, or a gate newer than the park.
-  assert.equal(workClassOf(e, { [e.id]: { back: T0 + 500 } }), 'later');
+  assert.equal(workClassOf(e, {}), null);
+  // Not even for a mark that sent it back, or a gate newer than the park.
+  assert.equal(workClassOf(e, { [e.id]: { back: T0 + 500 } }), null);
   assert.deepEqual(plain(e.items.map(i => i.kind)).sort(), ['gate', 'parked']);
 });
 
@@ -240,7 +250,9 @@ test('a parked task with nothing waiting and no session is an entry, and a finis
   const entries = one({ turns: [{ board: SLUG, task: task('1', { parked: park(T0 + 5) }), gates: [] }] });
   const e = byId(entries, `${SLUG}/1`);
   assert.deepEqual(plain(e.items), [{ kind: 'parked', reason: 'pdm', text: '', since: T0 + 5 }]);
-  assert.equal(workClassOf(e, {}), 'later');
+  assert.equal(workClassOf(e, {}), null);
+  // It is still live, so the row stays listed.
+  assert.equal(workLiveItems(e.items, {}).length, 1);
   const done = one({ turns: [{ board: SLUG, task: task('2', { status: 'done', parked: park(T0 + 5) }), gates: [] }] });
   assert.deepEqual(plain(byId(done, `${SLUG}/2`).items), []);
   assert.equal(workClassOf(byId(done, `${SLUG}/2`), {}), null);
@@ -249,21 +261,14 @@ test('a parked task with nothing waiting and no session is an entry, and a finis
   assert.deepEqual(plain(byId(blank, `${SLUG}/3`).items), []);
 });
 
-test('a parked row says why, with the text when there is one, and how many other things are open', () => {
-  assert.equal(workLaterText([{ kind: 'parked', reason: 'pdm', text: '', since: 1 }]), '置いている — PdM の確認待ち');
-  assert.equal(workLaterText([{ kind: 'parked', reason: 'other', text: '法務の返事', since: 1 }]), '置いている — その他（法務の返事）');
-  assert.equal(
-    workLaterText([{ kind: 'gate', gate: 'plan', since: 2 }, { kind: 'parked', reason: 'merge-timing', text: '', since: 1 }]),
-    '置いている — マージのタイミング待ち ほか 1 件');
-  // With the time, the age follows the park's words and comes before the count.
-  assert.equal(
-    workLaterText([{ kind: 'parked', reason: 'pdm', text: '', since: T0 }, { kind: 'gate', gate: 'plan', since: T0 + 1 }], T0 + 7200),
-    '置いている — PdM の確認待ち · 2時間前から ほか 1 件');
-  assert.equal(workLaterText([{ kind: 'parked', reason: 'pdm', text: '', since: T0 }], T0 + 10), '置いている — PdM の確認待ち · たった今から');
+test('a parked row says why, with the text when there is one, and how long ago', () => {
+  assert.equal(workParkedText({ kind: 'parked', reason: 'pdm', text: '', since: 1 }), '置いている — PdM の確認待ち');
+  assert.equal(workParkedText({ kind: 'parked', reason: 'other', text: '法務の返事', since: 1 }), '置いている — その他（法務の返事）');
+  // With the time, the age follows the park's words.
+  assert.equal(workParkedText({ kind: 'parked', reason: 'pdm', text: '', since: T0 }, T0 + 7200), '置いている — PdM の確認待ち · 2時間前から');
+  assert.equal(workParkedText({ kind: 'parked', reason: 'pdm', text: '', since: T0 }, T0 + 10), '置いている — PdM の確認待ち · たった今から');
   // A reason this page does not know is shown as it was written.
-  assert.equal(workLaterText([{ kind: 'parked', reason: 'legal', text: '', since: 1 }]), '置いている — legal');
-  // Not parked: the words are as they were.
-  assert.equal(workLaterText([{ kind: 'gate', gate: 'plan', since: 2 }]), '既読 · 設計レビューが開いたまま');
+  assert.equal(workParkedText({ kind: 'parked', reason: 'legal', text: '', since: 1 }), '置いている — legal');
 });
 
 test('a park is written once, and taking it off sends a row with something open back to new, once', () => {
@@ -283,20 +288,20 @@ test('a park is written once, and taking it off sends a row with something open 
   assert.equal(workClassOf(byId(off, e.id), marks), 'new');
   assert.deepEqual(plain(workParkPatches(off, marks, T0 + 210)), []);
 
-  // Looked at again after that, it is later; a second park is a new one.
-  marks = workMarkMerge(marks, e.id, { left: T0 + 300 });
-  assert.equal(workClassOf(byId(off, e.id), marks), 'later');
+  // Read after that, it is not new; a second park is a new one.
+  marks = workMarkMerge(marks, e.id, { read: T0 + 300 });
+  assert.equal(workClassOf(byId(off, e.id), marks), null);
   const again = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 400) }))] });
   assert.deepEqual(plain(workParkPatches(again, marks, T0 + 410)), [[e.id, { parked: T0 + 400 }]]);
 });
 
-test('a row parked while it is open leaves new on the next document, and a task with nothing left after the park leaves both', () => {
+test('a row parked while it is open leaves new on the next document, and a task with nothing left after the park is in neither', () => {
   const open = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1'))] });
   const e = byId(open, `${SLUG}/1`);
   assert.equal(workClassOf(e, {}), 'new');
   const parked = one({ rows: [row(session('w1', { waiting: waiting('g1', T0 + 10) }), task('1', { parked: park(T0 + 20) }))] });
-  assert.equal(workClassOf(byId(parked, e.id), {}), 'later');
-  // Nothing open once the park is off: no item, so neither section, whatever `back` says.
+  assert.equal(workClassOf(byId(parked, e.id), {}), null);
+  // Nothing open once the park is off: no item, so not new, whatever `back` says.
   const bare = one({ turns: [{ board: SLUG, task: task('2', { parked: park(T0 + 20) }), gates: [] }] });
   const id = byId(bare, `${SLUG}/2`).id;
   const marks = withMarks({}, workParkPatches(bare, {}, T0 + 30));

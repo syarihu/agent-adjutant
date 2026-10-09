@@ -146,16 +146,15 @@ test('box keys are per box and apart from the tree keys', () => {
 
 test('the state view puts each row in its box, in box order, and the boxes in repository headings', () => {
   const r = (nwo, id, st, cls) => ({ key: id, nwo, st, cls, s: {} });
-  const rows = [r('b/x', 'r1', 'working'), r('a/y', 'o1', 'done'), r('a/z', 'n1', 'waiting', 'new'), r('a/y', 'r2', 'idle'), r('b/x', 'l1', 'waiting', 'later')];
+  const rows = [r('b/x', 'r1', 'working'), r('a/y', 'o1', 'done'), r('a/z', 'n1', 'waiting', 'new'), r('a/y', 'r2', 'idle'), r('b/x', 'l1', 'waiting')];
   ctx.rows = rows;
   const tree = vm.runInContext('workTreeByState(rows)', ctx);
-  assert.deepStrictEqual(plain(tree.map(b => b.key)), ['box:new', 'box:later', 'box:running', 'box:other']);
+  assert.deepStrictEqual(plain(tree.map(b => b.key)), ['box:new', 'box:running', 'box:other']);
   const view = tree.map(b => b.items.map(g => [g.kind, g.label, g.items.map(i => `${i.place}:${i.row.key}`)]));
   assert.deepStrictEqual(plain(view), [
     [['brepo', 'a/z', ['new:n1']]],
-    [['brepo', 'b/x', ['later:l1']]],
     [['brepo', 'a/y', ['box:r2']], ['brepo', 'b/x', ['box:r1']]],
-    [['brepo', 'a/y', ['box:o1']]],
+    [['brepo', 'a/y', ['box:o1']], ['brepo', 'b/x', ['box:l1']]],
   ]);
   ctx.rows = [r('a/z', 'n1', 'waiting', 'new')];
   assert.deepStrictEqual(plain(vm.runInContext('workTreeByState(rows)', ctx).map(b => b.key)), ['box:new']);
@@ -201,9 +200,9 @@ test('chips: a hub with no session has none, and an ended parent-task hub only w
 test('chips: what waits comes from the judged entry of the hub; an answered gate is not waited on', () => {
   const waiting = hubRow('own', 'waiting', { waiting: { slug: 'b-own', id: 'g1' } });
   const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [waiting], hubSessions: [] };
-  const judged = judgedOf({ 'b-own/hub:own': { live: [{ kind: 'gate' }, { kind: 'gate' }], cls: 'later' } });
+  const judged = judgedOf({ 'b-own/hub:own': { live: [{ kind: 'gate' }, { kind: 'gate' }], cls: null } });
   const c = chipsOf(repo, judged)[0];
-  assert.deepStrictEqual([c.waits, c.cls], [2, 'later']);
+  assert.deepStrictEqual([c.waits, c.cls], [2, null]);
   const gates = ctx.answeredGates;
   try {
     ctx.answeredGates = new Map([['b-own/g1', true]]);
@@ -254,6 +253,14 @@ test('the parent tree has no hub rows; the hub is a chip on its heading', () => 
   assert.deepStrictEqual(plain(parent.hubs.map(c => c.id)), ['p1']);
   assert.deepStrictEqual(plain(parent.items.map(i => i.row.key)), ['t1']);
   assert.deepStrictEqual(plain(none.items.map(i => i.row.key)), ['t2']);
+});
+
+test('the parent tree places a turn row (a task with nothing running) under its parent, or under none', () => {
+  const turn = id => ({ ...trow(id, id === 't1' ? '#2' : undefined), turn: true, st: 'done' });
+  const tree = treeOf([turn('t1'), turn('t2')], new Map());
+  const [parent, none] = reposOf(tree)[0].items;
+  assert.deepStrictEqual(parent.items.map(i => i.row.key), ['t1']);
+  assert.deepStrictEqual(none.items.map(i => i.row.key), ['t2']);
 });
 
 test('the parent tree: a repository with only a chip has a node, one with neither has none', () => {
@@ -420,9 +427,14 @@ test('listed repositories: a session that is running keeps it', () => {
   for (const st of ['working', 'idle', 'unknown', 'restarting']) assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, st)], [], []), ['acme/a'], st);
 });
 
-test('listed repositories: a done row in 後で見る keeps it, one with no class does not', () => {
-  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', 'later')], [], []), ['acme/a']);
-  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done')], [], []), []);
+test('listed repositories: a read done row with nothing else lets it idle out; one with a PR or a park keeps it (#600)', () => {
+  const live = (...kinds) => ({ live: kinds.map(kind => ({ kind })) });
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', null, live())], [], []), []);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', null, live('done'))], [], []), []);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'failed', null, live('failed'))], [], []), []);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', null, live('pr'))], [], []), ['acme/a']);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', null, live('parked'))], [], []), ['acme/a']);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'done', 'new', live('done'))], [], []), ['acme/a']);
 });
 
 test('listed repositories: a waiting or permission row keeps it even with no class', () => {

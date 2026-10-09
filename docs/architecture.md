@@ -187,7 +187,7 @@ repository (the repository's own board, which lists its parent-task hubs' sessio
 else each parent-task board), joins each worker session to its task, and lists a session once
 however many carriers name it. It also lists what waits on the person with no row of its own (`turns`:
 the open gates of each carrier, and the tasks whose PR is the person's), which the page merges with the
-rows to tell what is new from what was looked at (`src/ui/my-work-seen.js`). The resident keeps the serialized document for 1500 ms
+rows to tell what is new from what was read (`src/ui/my-work-seen.js`). The resident keeps the serialized document for 1500 ms
 (`Resident::work_cache`), so several open pages polling every couple of seconds read the boards once
 between them. A board served on its own answers it with 404.
 

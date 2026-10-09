@@ -66,7 +66,7 @@ function parkButtonHtml(g) {
   if (!t || ['done', 'cancelled'].includes(t.status)) return '';
   return parkOf(t)
     ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, true)}><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">alarm_off</span><span>置くのをやめる</span></button>`
-    : `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の後で見るに置く"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">schedule</span><span>置く</span></button>`;
+    : `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の新着から外して置く"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">schedule</span><span>置く</span></button>`;
 }
 /* 「置いている — PdM の確認待ち（…） · 4分前から」 with the way to take it back, above a gate that stays open. */
 function parkBannerHtml(task) {

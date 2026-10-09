@@ -7,10 +7,10 @@
 
 const wk = id => document.getElementById(id);
 
-/* The boxes of 「状態」, in order. 新着 and 後で見る hold the rows `workSeenClass` (my-work-seen.js) puts in them. */
+/* The boxes of 「状態」, in order. 新着 holds the rows `workSeenClass` (my-work-seen.js) puts in it; a row not in it is in the
+   box its state says. */
 const WORK_BOXES = [
   { id: 'new', label: '新着' },
-  { id: 'later', label: '後で見る' },
   { id: 'running', label: '実行中' },
   { id: 'other', label: 'そのほか' },
 ];
@@ -53,8 +53,7 @@ const work = {
   cells: new Map(),   // each row's and header's own html, by key
   rowsByKey: new Map(),
   hubsByKey: new Map(), // the hub chips on the headings, by key (workRepoHubChips)
-  backed: null,       // the address of an open row that was sent back: not opened again until it moves
-  open: null,         // the row the person has open: { nwo, id, nav, at } (`at`: the server's time it was opened), the mark `left` is written when it is left
+  open: null,         // the row the person has open: { nwo, id, nav, at } (`at`: the server's time it was opened), the mark `left` is written when it is left (it feeds 離れていた間に only; leaving does not read the row)
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
   newOrder: [],       // the ids of the rows of 新着 in the order the list last drew them
 };
@@ -146,9 +145,9 @@ function workBetter(a, b) {
   return (a.agentSession?.updatedAt || a.phaseAt || 0) > (b.agentSession?.updatedAt || b.phaseAt || 0);
 }
 
-/* ── what is new and what was looked at ── */
+/* ── what is new and what was read ── */
 
-/* The marks of one repository, kept in this browser (`adj.seenWork.<nwo>`): row id to { left, back, cleared }, in seconds on
+/* The marks of one repository, kept in this browser (`adj.seenWork.<nwo>`): row id to { left, read, back, cleared, parked }, in seconds on
    the server's clock (my-work-seen.js says what each means). Read from storage every time, never cached, so that what another
    tab wrote is what is read; a value that is not marks reads as none. Also what the while-away timeline (#556) reads. */
 const WORK_SEEN_PREFIX = 'adj.seenWork.';
@@ -159,17 +158,18 @@ function workMarks(nwo) {
 /* The server's clock as of the document last drawn: a mark covers what that document showed and nothing that came after. */
 const workServerNow = () => work.doc?.now || Date.now() / 1000;
 
-/* Write `patches` ([id, { left | back | cleared }]) onto the marks of `nwo`. The marks are read again first and each time
+/* Write `patches` ([id, { left | read | back }]) onto the marks of `nwo`. The marks are read again first and each time
    only moves later, so another tab's write is not undone; the ones of rows long gone are dropped, unless the document is
    not a complete reading of the repository (a failed read is not absence). */
 function workWriteMarks(nwo, patches) {
   let marks = workMarks(nwo);
   for (const [id, patch] of patches) {
     // Read after a send back, and sent back after a read: each is later than the other's time, whatever the document's clock says.
+    // `left` is not coupled: it no longer decides what is new.
     const cur = marks[id] || {};
     const p = { ...patch };
-    if (p.left != null && cur.back != null) p.left = Math.max(p.left, cur.back);
-    if (p.back != null) p.back = Math.max(p.back, cur.left ?? -Infinity) + 0.001;
+    if (p.read != null && cur.back != null) p.read = Math.max(p.read, cur.back);
+    if (p.back != null) p.back = Math.max(p.back, cur.read ?? -Infinity, cur.cleared ?? -Infinity) + 0.001;
     marks = workMarkMerge(marks, id, p);
   }
   const repo = workRepos().find(r => r.nwo === nwo);
@@ -183,7 +183,7 @@ function workWriteMarks(nwo, patches) {
   renderWorkBadge();
 }
 
-/* The entries of the document and the class of each ('new', 'later' or none), with the marks they were judged by. */
+/* The entries of the document and the class of each ('new' or none), with the marks they were judged by. */
 function workJudge() {
   const entries = workEntries(work.doc, key => answeredGates.has(key));
   const marks = new Map();
@@ -191,8 +191,9 @@ function workJudge() {
   const out = new Map();
   for (const e of entries) {
     const mark = markOf(e.nwo)[e.id] || {};
-    out.set(e.id, { entry: e, cls: workSeenClass(e.items, mark, workActedAt(e)), live: workLiveItems(e.items, mark),
-      // The row open is read as of now: its mark still holds the last visit's `left`, which the panel reads.
+    // `live` drops a finished item the person has read, so that a repository with nothing else under way can idle out (#600).
+    out.set(e.id, { entry: e, cls: workSeenClass(e.items, mark, workActedAt(e)), live: workLiveItems(e.items, mark, workActedAt(e)),
+      // The row open has its away count read as of now: its mark still holds the last visit's `left`, which the panel reads.
       away: workAwayCount(e, mark, work.open?.id === e.id) });
   }
   return out;
@@ -218,7 +219,7 @@ function workTurnRow(e, judged, repo) {
 }
 
 /* The rows of the list as it is drawn: the session rows, each with its class, and the rows of what waits on the person with no
-   session row (the bands and 「状態」 show those too). */
+   session row (the band, 「状態」 and 「親 Issue」 show those too). A read or parked one stays while it has anything live. */
 function workListRows() {
   const judged = workJudge();
   const rows = workRows();
@@ -231,20 +232,19 @@ function workListRows() {
   const turns = [];
   for (const [id, j] of judged) {
     const repo = workRepos().find(x => x.nwo === j.entry.nwo);
-    if (j.cls && !listed.has(id) && repo) turns.push(workTurnRow(j.entry, j, repo));
+    if (j.live.length && !listed.has(id) && repo) turns.push(workTurnRow(j.entry, j, repo));
   }
   work.entries = new Map([...judged].map(([id, j]) => [id, j.entry]));
   return { rows, turns, judged };
 }
 
-/* 新着 and 後で見る as two lists, newest first: each row with what it is in. */
+/* 新着 as a list, newest first: each row with what it is in. */
 function workBands(rows) {
   const band = (id, label, empty) => {
     const mine = rows.filter(r => r.cls === id).sort((a, b) => workNewest(b) - workNewest(a) || (a.key < b.key ? -1 : 1));
     return { key: `band:${id}`, kind: 'band', band: id, label, empty, readAll: id === 'new', rows: mine, items: mine.map(row => ({ row, place: id })) };
   };
-  const later = band('later', '後で見る');
-  return [band('new', '新着', '新しく来たものはありません'), ...(later.rows.length ? [later] : [])];
+  return [band('new', '新着', '新しく来たものはありません')];
 }
 
 /* How many rows are new. */
@@ -260,7 +260,7 @@ function renderWorkBadge() {
   renderDocTitle();
 }
 
-/* The row the person leaves: it is read from now on. Called when the address moves off it, when the view does, and when the
+/* The row the person leaves: `left` is written for 離れていた間に; the row is not read by it. Called when the address moves off it, when the view does, and when the
    page goes. */
 function workLeave() {
   const open = work.open;
@@ -281,14 +281,12 @@ function workSelectedId(sel) {
 function workTrack() {
   const addr = nav.board && nav.board !== 'all' && nav.task && !isParentRef(nav.task) ? `${nav.board}/${nav.task}` : null;
   if (work.open && work.open.nav !== addr) workLeave();
-  // A row sent back stays new until the address has moved off it and come back: it is not opened again meanwhile.
-  if (work.backed !== addr) work.backed = null;
-  if (work.open || !addr || work.backed) return;
+  if (work.open || !addr) return;
   const sel = workSelected();
   const id = workSelectedId(sel);
   if (id && sel.repo) {
     work.open = { nwo: sel.repo.nwo, id, nav: addr, at: workServerNow() };
-    // The row just opened is read as of now: its count goes at once, not at the next poll.
+    // The row just opened has its own away count read as of now: it goes at once, not at the next poll.
     if (view === 'work') renderWorkList();
   }
 }
@@ -354,11 +352,14 @@ const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
 /* The repositories 「いまの仕事」 lists: one with something under way (a running session, a running hub) or waiting on the
-   person (新着, 後で見る, a gate, a permission prompt), one that could not be read, and the one holding the selection.
+   person (新着, a gate, a permission prompt, a parked task or a PR), one that could not be read, and the one holding the selection.
    An idle one is left out and comes back on its own; its board and the hub panel still list it. */
 function workListedRepos(repos, rows, turns, chipsByRepo, keep = null) {
   const on = new Set();
-  for (const r of [...rows, ...turns]) if (r.cls || WORKS_ON_PERSON(r) || WORK_RUNNING.includes(r.st)) on.add(r.repo);
+  // A done or failed row the person has read no longer keeps its repository listed (#600); a gate, a permission wait, a park or a
+  // PR still does, read or not.
+  const open = r => (r.live || []).some(i => i.kind !== 'done' && i.kind !== 'failed');
+  for (const r of [...rows, ...turns]) if (r.cls || WORKS_ON_PERSON(r) || WORK_RUNNING.includes(r.st) || open(r)) on.add(r.repo);
   for (const repo of repos) {
     if (repo.error || repo === keep || (chipsByRepo.get(repo) || []).some(c => c.s.present || c.waits > 0)) on.add(repo);
   }
@@ -373,7 +374,8 @@ function workListedView(repos, rows, turns, chipsByRepo, keep = null) {
     chipsByRepo: mine, chips: [...mine.values()].flat(), repos: repos.filter(r => listed.has(r)) };
 }
 
-/* The list as a tree: owner → repository → parent issue → task, with the rows that belong to none under 「親なし」.
+/* The list as a tree: owner → repository → parent issue → task, with the rows that belong to none under 「親なし」. A row is here
+   wherever its state puts it, new or not, as is a task with nothing running (a turn row).
    The owner heading is shown even when there is only one owner. A hub is not a row here: it is a chip on the heading of its
    repository, or of the parent it runs. A node is `{ key, kind, label…, rows }` where `rows` are all the task rows below
    it, `items` what it holds in order (rows and nodes) and `hubs` the chips on its heading. */
@@ -409,17 +411,17 @@ function workTreeByParent(rows, bands = [], chipsByRepo = new Map(), repos = wor
 }
 
 /* The list as boxes of one state each, in order, and inside each box by repository (`owner/name`, in name order, case
-   ignored). A box with nothing in it is not drawn. The rows of 新着 and 後で見る have their actions beside them, as in the bands.
+   ignored). A box with nothing in it is not drawn. The rows of 新着 have their action beside them, as in the band.
    A hub is a chip on its repository's heading, in 実行中 while it runs and in そのほか otherwise; its row is here only
-   while it waits on the person (新着, 後で見る). */
+   while it is new. */
 function workTreeByState(rows, chips = []) {
   const tree = [];
-  const listed = rows.filter(r => !r.isHub || r.cls);
+  const listed = rows.filter(r => !r.isHub || r.cls === 'new');
   for (const box of WORK_BOXES) {
     const mine = listed.filter(r => workBoxOf(r) === box.id);
     const hubs = chips.filter(c => box.id === (c.s.present ? 'running' : 'other'));
     if (!mine.length && !hubs.length) continue;
-    const place = box.id === 'new' || box.id === 'later' ? box.id : 'box';
+    const place = box.id === 'new' ? 'new' : 'box';
     const items = workBoxRepoGroups(box.id, mine.sort(workRowOrder), place, hubs);
     tree.push({ key: `box:${box.id}`, kind: 'box', label: box.label, readAll: box.id === 'new', rows: mine, items });
   }
@@ -660,9 +662,9 @@ function workRowHtml(r, cell = '', band = false) {
     diff,
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
   const asks = !s.waiting && agentStateOf(s) === 'permission' && a.request ? `<span class="wk-line ask">${esc(requestText(s))}</span>` : '';
-  // In 新着 and 後で見る a row says what the agent last said when it asks for nothing, and what is still open.
+  // In 新着 a row says what the agent last said when it asks for nothing. A parked row says so wherever it is listed.
   const said = band && !asks && !s.waiting && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
-  const later = band && r.cls === 'later' ? workLaterHtml(r) : '';
+  const parked = !s.waiting ? workParkedHtml(r) : '';
   const doing = st === 'working' && a.activity ? `<span class="wk-line">${esc(a.activity)}</span>` : '';
   const tree = st === 'working' && subs.length
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
@@ -673,7 +675,7 @@ function workRowHtml(r, cell = '', band = false) {
     ${workGlyphHtml(st)}<span class="wk-main">
       ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
       <span class="wk-title">${r.isHub ? '<span class="wk-tag">hub</span>' : ''}${esc(title)}</span>
-      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${said}${doing}${tree}${gate}${later}
+      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${said}${doing}${tree}${gate}${parked}
     </span></button>`;
 }
 
@@ -686,9 +688,10 @@ const workSaidHtml = message => {
   return line ? `<span class="wk-line msg">${esc(line)}</span>` : '';
 };
 
-/* What is still open on a row the person has already looked at. A parked row says since when. */
-function workLaterHtml(r) {
-  return `<span class="wk-line later">${esc(workLaterText(r.live || [], r.data?.now ?? null))}</span>`;
+/* The line of a parked row, with since when; nothing for a row that is not parked. */
+function workParkedHtml(r) {
+  const item = (r.live || []).find(i => i.kind === 'parked');
+  return item ? `<span class="wk-line parked">${esc(workParkedText(item, r.data?.now ?? null))}</span>` : '';
 }
 
 /* The words after a gate's kind on a row: whose turn it is, or that it is parked (the gate stays open and answerable). */
@@ -711,24 +714,20 @@ function workTurnRowHtml(r, cell = '', band = false) {
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell}>
     ${workGlyphHtml(st)}<span class="wk-main">
       <span class="wk-title">${r.isHub ? '<span class="wk-tag">hub</span>' : ''}${esc(title)}</span>
-      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${lines}${band && r.cls === 'later' ? workLaterHtml(r) : ''}
+      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${lines}${gate ? '' : workParkedHtml(r)}
     </span></button>`;
 }
 
-/* A row as the list draws it in `place`: 新着 and 後で見る rows (the bands, and those boxes of 「状態」) have their buttons beside
-   them, and the row itself stays one button, so selecting is the same everywhere. */
+/* A row as the list draws it in `place`: a row of 新着 (the band, and that box of 「状態」) has its 既読 button beside it, and the
+   row itself stays one button, so selecting is the same everywhere. */
 function workItemHtml(r, place) {
-  const band = place === 'new' || place === 'later';
+  const band = place === 'new';
   const cellKey = `${place}/${r.key}`;
   const cell = ` data-wk-cell="${esc(cellKey)}"`;
   if (!band) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
-  const clearable = (r.live || []).some(i => WORK_CLEARABLE.includes(i.kind));
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
-  // A parked row comes back by taking the park off, which the document then shows; there is no mark to send it back by.
-  const parked = !!parkOf(r.task);
-  const back = !parked ? act('data-wk-back', 'mark_email_unread', '新着に戻す') : workParkable(r) ? act('data-wk-unpark', 'alarm_off', '置くのをやめる') : '';
-  const acts = (place === 'later' ? back : '') + (clearable ? act('data-wk-clear', 'check', '片付けた') : '');
-  return `<div class="wk-band-row"${cell}>${r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', true)}${acts ? `<span class="wk-acts">${acts}</span>` : ''}</div>`;
+  const acts = act('data-wk-read', 'done', '既読にする');
+  return `<div class="wk-band-row"${cell}>${r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', true)}<span class="wk-acts">${acts}</span></div>`;
 }
 
 /* How many rows are in each state, for a header that is folded. */
@@ -817,9 +816,7 @@ function workShape(items, folded) {
 
 /* How to find again what has the keyboard focus in the list: a row, a fold button or a parent's header. */
 const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.dataset.wk)}"]`
-  : el?.dataset?.wkBack != null ? `[data-wk-back="${CSS.escape(el.dataset.wkBack)}"]`
-  : el?.dataset?.wkUnpark != null ? `[data-wk-unpark="${CSS.escape(el.dataset.wkUnpark)}"]`
-  : el?.dataset?.wkClear != null ? `[data-wk-clear="${CSS.escape(el.dataset.wkClear)}"]`
+  : el?.dataset?.wkRead != null ? `[data-wk-read="${CSS.escape(el.dataset.wkRead)}"]`
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
@@ -878,8 +875,8 @@ function drawWorkList() {
   const sel = workSelected();
   const { rows, turns, chipsByRepo, chips, repos } = workListedView(workRepos(), allRows, allTurns, allChips, sel?.repo || sel?.parent?.repo || null);
   const byState = prefs.workGroup === 'state';
-  // The rows with no session row of their own are in the bands and the boxes only; the tree is the sessions'.
-  const tree = byState ? workTreeByState([...rows, ...turns], chips) : workTreeByParent(rows, workBands([...rows, ...turns]), chipsByRepo, repos);
+  // The rows with no session row of their own (a task with nothing running) are in the band, the boxes and the tree alike.
+  const tree = byState ? workTreeByState([...rows, ...turns], chips) : workTreeByParent([...rows, ...turns], workBands([...rows, ...turns]), chipsByRepo, repos);
   work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
   for (const b of wk('work-view').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
@@ -1103,32 +1100,25 @@ function selectWorkParent(key) {
   go({ board: workParentBoard(p), view: 'work', task: PARENT_REF + p.key, pane: 'detail' }, { replace: nav.task === PARENT_REF + p.key });
 }
 
-/* "Mark all read": every row that is new has been looked at as of now. */
+/* "Mark all read": every row that is new is read as of now (and `left`, so that 離れていた間に starts there too). */
 function workReadAll() {
   const now = workServerNow();
   const byRepo = new Map();
   for (const j of workJudge().values()) {
     if (j.cls !== 'new') continue;
-    byRepo.set(j.entry.nwo, [...(byRepo.get(j.entry.nwo) || []), [j.entry.id, { left: now }]]);
+    byRepo.set(j.entry.nwo, [...(byRepo.get(j.entry.nwo) || []), [j.entry.id, { left: now, read: now }]]);
   }
   for (const [nwo, patches] of byRepo) workWriteMarks(nwo, patches);
 }
 
-/* The buttons beside a row: back to 新着, or cleared (✓). */
+/* The button beside a row: 既読にする (`left` too, as mark-all-read writes it, so 離れていた間に starts there). */
 function workMarkRow(id, patch) {
   const e = work.entries.get(id);
   if (!e) return;
-  if (patch.back != null) workKeepBack(id);
   workWriteMarks(e.nwo, [[id, patch]]);
 }
 
-/* Sent back while open: leaving it later must not read it again. */
-function workKeepBack(id) {
-  if (work.open?.id === id) { work.backed = work.open.nav; work.open = null; }
-}
-
-/* The parks and un-parks this document shows that the marks have not seen (`workParkPatches`), written once per repository. A
-   row whose park is taken off while it is open stays in 新着 after it is left, as one sent back by hand does. */
+/* The parks and un-parks this document shows that the marks have not seen (`workParkPatches`), written once per repository. */
 function workTrackParks() {
   const entries = workEntries(work.doc, key => answeredGates.has(key));
   const now = workServerNow();
@@ -1136,24 +1126,14 @@ function workTrackParks() {
     if (repo.error) continue;
     const mine = entries.filter(e => e.nwo === repo.nwo);
     const patches = workParkPatches(mine, workMarks(repo.nwo), now);
-    if (!patches.length) continue;
-    for (const [id, patch] of patches) if (patch.back != null) workKeepBack(id);
-    workWriteMarks(repo.nwo, patches);
+    if (patches.length) workWriteMarks(repo.nwo, patches);
   }
 }
-
-/* Whether a row's park can be taken off from here: the board the task is on is served, not only the carrier that lists it. */
-const workParkable = r => !!r.task && !!r.entry && workBoardOf(r.repo, r.entry.board) === r.entry.board;
 
 wk('work-view').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
-  if ((b = e.target.closest('[data-wk-back]'))) return workMarkRow(b.dataset.wkBack, { back: workServerNow() });
-  if ((b = e.target.closest('[data-wk-unpark]'))) {
-    const e = work.entries.get(b.dataset.wkUnpark);
-    return e?.task && setPark(e.task, `/b/${e.board}`, null);
-  }
-  if ((b = e.target.closest('[data-wk-clear]'))) return workMarkRow(b.dataset.wkClear, { cleared: workServerNow() });
+  if ((b = e.target.closest('[data-wk-read]'))) return workMarkRow(b.dataset.wkRead, { read: workServerNow(), left: workServerNow() });
   if ((b = e.target.closest('[data-wk-fold]'))) {
     const at = prefs.workFolded.indexOf(b.dataset.wkFold);
     if (at >= 0) prefs.workFolded.splice(at, 1); else prefs.workFolded.push(b.dataset.wkFold);

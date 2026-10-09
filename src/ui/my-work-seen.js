@@ -1,19 +1,22 @@
-/* ── いまの仕事: what is new and what was looked at ─────────────────────────────────────────────
+/* ── いまの仕事: what is new and what was read ──────────────────────────────────────────────────
    Pure: these read the work document and the read marks they are handed and return, touching neither the
    page nor local storage, so `src/ui/tests/my-work-seen.test.js` runs them under `node --test`. Loaded
-   after util.js (`stampSecs`, `kindOf`) and before my-work.js, which draws and keeps the marks.
+   after util.js (`stampSecs`) and before my-work.js, which draws and keeps the marks.
 
    A row holds items, one for each thing it waits on the person for, and each item has a `since`: when it
-   began, on the server's clock. A row is read when every item began at or before the later of the time the
-   person left it and the time they acted on it. 新着 is a row with an item they have not read; 後で見る a row
-   whose items they have all read and which still has one. Each time is a number of seconds, as a mark keeps it:
-     left     the person left the row after opening it, or pressed "mark all read"
-     back     the person sent it back to 新着 by hand
-     cleared  the person cleared it with ✓ (done, failed and PR items only; a gate or a permission wait
-              ends only when it is answered)
-     parked   the start of the newest park of the task this browser saw (#555). A parked task is always 後で見る
-              and never 新着; when the park is gone and this was seen, `workParkPatches` writes `back`, so a row
-              with something still open returns to 新着. Park and un-park both while no tab is open are not seen. */
+   began, on the server's clock. 新着 is a row with an item that began after the person last read it, which is
+   when they pressed 既読 on it (or "mark all read"), or acted on it (answered a gate, typed into its session).
+   Opening a row and leaving it reads nothing: a row stays new until its state changes or it is read by hand.
+   Each time is a number of seconds, as a mark keeps it:
+     left     the person left the row after opening it, or pressed "mark all read". Only 離れていた間に (#556)
+              reads it; it no longer decides what is new
+     read     the person pressed 既読 on the row, or "mark all read"
+     back     the person took the park off the task: the row is new again from then
+     cleared  the legacy ✓ of an earlier version, read as `read`
+     parked   the start of the newest park of the task this browser saw (#555). A parked task is never new and
+              is listed where its state puts it; when the park is gone and this was seen, `workParkPatches`
+              writes `back`, so a row with something still open returns to 新着. Park and un-park both while no
+              tab is open are not seen. */
 
 const WORK_HUB_REF = 'hub:';
 const WORK_SESS_REF = 'session:';
@@ -26,10 +29,6 @@ const WORK_PR_WORDS = {
   merge: 'マージ待ち',
   closed: '閉じられたまま',
 };
-/* Which kinds a ✓ clears: what the person only has to take notice of. */
-const WORK_CLEARABLE = ['done', 'failed', 'pr'];
-/* The order the words of a 後で見る row name what is open, most pressing first. */
-const WORK_ITEM_ORDER = ['parked', 'gate', 'permission', 'failed', 'pr', 'done'];
 /* How long a mark is kept for a row that is no longer listed. */
 const WORK_MARK_KEPT_SECS = 7 * 86400;
 
@@ -145,23 +144,29 @@ function workActedAt(e) {
   return Math.max(-Infinity, ...times.filter(x => Number.isFinite(x)));
 }
 
-/* The items the person has not cleared. A ✓ clears what began before it. */
-function workLiveItems(items, mark = {}) {
-  const cleared = Number.isFinite(mark.cleared) ? mark.cleared : null;
-  return items.filter(i => !(cleared != null && WORK_CLEARABLE.includes(i.kind) && (i.since == null || i.since <= cleared)));
+/* The time the person read the row, as a mark keeps it (-Infinity when never). `cleared` is the ✓ of an earlier version. */
+const workReadAt = (mark = {}) => Math.max(-Infinity, ...[mark.read, mark.cleared].filter(Number.isFinite));
+
+/* The items still on the person's list. A finished (done, failed) item that began before the row was read is not: it only
+   asked to be taken notice of, so that a repository with nothing else going on can drop out of the list (#600). A gate, a
+   permission wait, a park or a PR still waits on the person, read or not. */
+function workLiveItems(items, mark = {}, actedAt = -Infinity) {
+  // Acting on the row (answering, typing into its session) reads it as pressing 既読 does.
+  const read = Math.max(workReadAt(mark), Number.isFinite(actedAt) ? actedAt : -Infinity);
+  return items.filter(i => !((i.kind === 'done' || i.kind === 'failed') && Number.isFinite(read) && (i.since == null || i.since <= read)));
 }
 
-/* 'new', 'later' or null (the entry has nothing on it for the person). */
+/* 'new' or null: a row is new when something began after it was last read, or it was sent back (un-parked) since. */
 function workSeenClass(items, mark = {}, actedAt = -Infinity) {
-  const live = workLiveItems(items, mark);
+  const live = workLiveItems(items, mark, actedAt);
   if (!live.length) return null;
-  // Set aside on purpose: looked at by definition, whatever the marks say.
-  if (live.some(i => i.kind === 'parked')) return 'later';
-  const read = Math.max(Number.isFinite(mark.left) ? mark.left : -Infinity, actedAt);
+  // Set aside on purpose: never new, whatever the marks say.
+  if (live.some(i => i.kind === 'parked')) return null;
+  const read = Math.max(workReadAt(mark), Number.isFinite(actedAt) ? actedAt : -Infinity);
   if (Number.isFinite(mark.back) && mark.back > read) return 'new';
   // An item with no time (a PR record from before the time was kept) is new until the row has been read once.
-  const later = i => i.since == null ? read === -Infinity : i.since > read;
-  return live.some(later) ? 'new' : 'later';
+  const fresh = i => i.since == null ? read === -Infinity : i.since > read;
+  return live.some(fresh) ? 'new' : null;
 }
 
 /* The class of an entry among the marks of its repository (`id` to mark). */
@@ -169,22 +174,10 @@ function workClassOf(e, marks) {
   return workSeenClass(e.items, marks?.[e.id] || {}, workActedAt(e));
 }
 
-/* What is still open, in the words of a 後で見る row. `now` (the server's seconds), when given, puts how long a park has lasted after its words. */
-function workLaterText(items, now = null) {
-  const sorted = [...items].sort((a, b) => WORK_ITEM_ORDER.indexOf(a.kind) - WORK_ITEM_ORDER.indexOf(b.kind));
-  const first = sorted[0];
-  if (!first) return '';
-  const more = sorted.length > 1 ? ` ほか ${sorted.length - 1} 件` : '';
-  if (first.kind === 'parked') {
-    const age = now != null && Number.isFinite(first.since) ? ` · ${agoLabel(minutesSince(first.since, now))}から` : '';
-    return `置いている — ${parkText(first)}${age}${more}`;
-  }
-  const what = first.kind === 'gate' ? `${kindOf(first.gate)[0]}が開いたまま`
-    : first.kind === 'permission' ? '許可待ちのまま'
-      : first.kind === 'failed' ? '失敗したまま'
-        : first.kind === 'pr' ? WORK_PR_WORDS[first.turn] || 'PR が残ったまま'
-          : '片付けていない';
-  return `既読 · ${what}${more}`;
+/* The words of a parked row. `now` (the server's seconds), when given, puts how long the park has lasted after them. */
+function workParkedText(item, now = null) {
+  const age = now != null && Number.isFinite(item.since) ? ` · ${agoLabel(minutesSince(item.since, now))}から` : '';
+  return `置いている — ${parkText(item)}${age}`;
 }
 
 /* ── the marks ── */
@@ -216,7 +209,7 @@ function workParseMarks(text) {
   for (const [id, m] of Object.entries(raw)) {
     if (id === '__proto__' || !m || typeof m !== 'object' || Array.isArray(m)) continue;
     const mark = {};
-    for (const f of ['left', 'back', 'cleared', 'parked']) if (typeof m[f] === 'number' && Number.isFinite(m[f])) mark[f] = m[f];
+    for (const f of ['left', 'read', 'back', 'cleared', 'parked']) if (typeof m[f] === 'number' && Number.isFinite(m[f])) mark[f] = m[f];
     if (Object.keys(mark).length) out[id] = mark;
   }
   return out;
@@ -236,7 +229,7 @@ function workMarkMerge(marks, id, patch) {
 function workPruneMarks(marks, liveIds, now) {
   const out = {};
   for (const [id, m] of Object.entries(marks)) {
-    const newest = Math.max(-Infinity, ...['left', 'back', 'cleared', 'parked'].map(f => m[f]).filter(Number.isFinite));
+    const newest = Math.max(-Infinity, ...['left', 'read', 'back', 'cleared', 'parked'].map(f => m[f]).filter(Number.isFinite));
     if (liveIds.has(id) || newest >= now - WORK_MARK_KEPT_SECS) out[id] = m;
   }
   return out;

@@ -27,7 +27,7 @@ the ledger are the parts adjutant needs.
 | `proctor setup`, which prints a guide for the agent to merge by hand | Replaced by injection at launch and an `adj setup` that writes the hooks itself |
 | `proctor worktree ls`, worktree conventions, `proctor-worktree` skill | Stays in proctor (see [Worktree conventions and the hub procedure](#worktree-conventions-and-the-hub-procedure)) |
 | iTerm2 sidebar app, its reaper, approval watcher for Antigravity, notifications | Stays. The board is adjutant's view, and its sessions tab landed in [#506](https://github.com/syarihu/agent-adjutant/issues/506) |
-| Read marks | Comes over as the board's 新着 and 後で見る ([#554](https://github.com/syarihu/agent-adjutant/issues/554)). The marks live in the browser's local storage, not in the ledger or the CLI; what they are compared with comes from the ledger's `lastPromptAt` and the gates' answers (see [How adjutant uses it](#how-adjutant-uses-it)), so no CLI marks anything read |
+| Read marks | Comes over as the board's 新着 ([#554](https://github.com/syarihu/agent-adjutant/issues/554)). The marks live in the browser's local storage, not in the ledger or the CLI; what they are compared with comes from the ledger's `lastPromptAt` and the gates' answers (see [How adjutant uses it](#how-adjutant-uses-it)), so no CLI marks anything read |
 | `attach`, `rm`, avatars, logs | Stays |
 
 Two behaviours of proctor's receiver carry over as rules, because each one fixes something seen in
@@ -423,21 +423,22 @@ is listed so the ledger carries what it will need.
   `agent_sessions` on the existing 2-second poll of `/api/state`. No push channel is added. The 「いまの仕事」 view reads the
   same ledger fields through `GET /api/work` on the same 2-second clock: one document for every
   repository, built from one carrier board each, and still no push channel.
-- **新着 and 後で見る** (#554). The 「いまの仕事」 view sorts what waits on the person into rows not yet
-  looked at and rows looked at and not finished. A row is read as of the later of the time the person
-  left it in the page and the time they acted on it anywhere: the answer to a gate of its task
+- **新着** (#554, #604). The 「いまの仕事」 view marks what waits on the person as new until it is read. A row
+  is read as of the latest of `read` (the row's 既読 button or mark-all-read; `cleared`, the ✓ of an earlier
+  version, counts as `read`) and the time the person acted on it anywhere: the answer to a gate of its task
   (`gateAnsweredAt` on the record, written whichever route answered) or their last typed prompt
-  (`lastPromptAt`). What the row holds is compared with it: a gate's `openedAt`, the ledger's
+  (`lastPromptAt`). Leaving a row writes `left`, which only 離れていた間に reads; it no longer reads the row.
+  What the row holds is compared with the read time: a gate's `openedAt`, the ledger's
   `updatedAt` (which moves only when the status does, so a session that stays `waiting` is one item
   and a new wait is another), and the task's `prTurnAt` (when the PR's turn last changed, stamped
-  by the refresh that read it). Only these move a row back to 新着: a gate opens, the session starts
+  by the refresh that read it). Only these make a row new again: a gate opens, the session starts
   waiting on a permission prompt or a question, a worker's turn ends with no gate open, a session fails, or the
   PR turns into the person's (changes asked, CI failed, approved, closed). A phase, a tool, a
   sub-agent, a repeated prompt for the same wait or a PR turning to checks does not. A second permission prompt
   that arrives while the session is still `waiting` is not told apart: `updatedAt` does not move.
-  A parked task ([#555](https://github.com/syarihu/agent-adjutant/issues/555), `parked` on the record, read
-  through `Task::park`, which leaves out a blank reason and a finished task) is one more item that is always
-  in 後で見る and never in 新着, whatever the marks say. Taking the park off sends the row back to 新着 through
+  A row that is not new is still listed where its state puts it. A parked task ([#555](https://github.com/syarihu/agent-adjutant/issues/555), `parked` on the record, read
+  through `Task::park`, which leaves out a blank reason and a finished task) is one more item that is never
+  new, whatever the marks say, and has no box of its own. Taking the park off sends the row back to 新着 through
   `back`: the mark gains `parked`, the start of the newest park this browser saw, and a row whose park is gone
   while that is set (and `back` does not pass it) gets `back` once (`workParkPatches`). A park and an un-park
   that both happen while no tab of this browser is open are never seen.

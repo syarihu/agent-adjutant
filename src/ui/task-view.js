@@ -468,7 +468,7 @@ function overviewTab(task, all, pick, opts = {}) {
     const since = park && stampSecs(park.since) != null ? ` · ${esc(ago(park.since))}から` : '';
     rows.push(['置いている', park
       ? `${esc(parkText(park))}${since} <button type="button" class="iconbtn" ${parkAttrs(task, true)}>置くのをやめる</button>`
-      : `<span style="color:var(--muted)">置いていない</span> <button type="button" class="iconbtn" ${parkAttrs(task, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の後で見るに置く">置く</button>`]);
+      : `<span style="color:var(--muted)">置いていない</span> <button type="button" class="iconbtn" ${parkAttrs(task, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の新着から外して置く">置く</button>`]);
   }
   if (task.branch) rows.push(['ブランチ', `<span class="mono2">${esc(task.branch)}</span>`]);
   if (task.base) rows.push(['分岐元', `<span class="mono2">${esc(task.base)}</span>`]);

@@ -673,7 +673,6 @@ fn the_page_parks_a_task_from_one_dialog_and_wires_it_without_inline_handlers() 
         "aria-labelledby=\"park-title\"",
         "data-park-task=",
         "data-park-off",
-        "data-wk-unpark",
         "置くのをやめる",
         "function setPark",
         "function parkClick",
