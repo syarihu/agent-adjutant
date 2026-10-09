@@ -1112,6 +1112,9 @@ tp('tp-scrim').addEventListener('click', () => closeTaskPanel());
 
 /* The width is dragged from the edge that faces the page, saved when the pointer is let go;
    the arrow keys move it a step at a time. */
+// The side is read from body, not prefs.panelDock: the work view keeps the panel on the right
+// whichever side it is docked on, and the handle follows the class.
+const panelOnRight = () => document.body.classList.contains('panel-right');
 function setPanelWidth(raw) {
   const rail = tp('nav-rail').offsetWidth;
   prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
@@ -1128,7 +1131,7 @@ tp('tp-resize').addEventListener('keydown', e => {
   if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop() || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();
   // The panel grows away from its side: toward the right on the left, toward the left on the right.
-  const grow = (e.key === 'ArrowRight') === (prefs.panelDock !== 'right');
+  const grow = (e.key === 'ArrowRight') === !panelOnRight();
   setPanelWidth(tp('task-panel').offsetWidth + (grow ? 24 : -24));
   savePrefs();
 });
@@ -1140,7 +1143,7 @@ tp('tp-resize').addEventListener('pointerdown', e => {
   document.body.classList.add('tp-dragging');
   const move = ev => {
     const rail = tp('nav-rail').offsetWidth;
-    setPanelWidth(prefs.panelDock === 'right' ? innerWidth - ev.clientX : ev.clientX - rail);
+    setPanelWidth(panelOnRight() ? innerWidth - ev.clientX : ev.clientX - rail);
   };
   const end = () => {
     handle.removeEventListener('pointermove', move);
