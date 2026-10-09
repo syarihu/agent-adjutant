@@ -6,7 +6,8 @@ use super::*;
 /// returns it). `gated` holds the ids of tasks that already have an open `dispatch` gate.
 ///
 /// A held task at the head must not keep everything behind it from starting, so a task
-/// with `autoStart: false` is skipped until its gate is open, and a task with a note
+/// with `autoStart: false` — or one the hub has not read yet (`needsReading`), whatever its
+/// `autoStart` says — is skipped until its gate is open, and a task with a note
 /// starting with "Could not start:" is skipped until a person has looked at it.
 pub fn next(tasks: Vec<Task>, gated: &std::collections::HashSet<String>) -> Next {
     let mut picked = None;
@@ -22,7 +23,7 @@ pub fn next(tasks: Vec<Task>, gated: &std::collections::HashSet<String>) -> Next
         {
             continue;
         }
-        if !task.auto_start {
+        if !task.auto_start || task.needs_reading {
             if !gated.contains(&task.id) {
                 needs_dispatch_gate.push(task);
             }

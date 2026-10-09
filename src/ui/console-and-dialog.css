@@ -169,6 +169,4 @@ textarea:focus, input[type=text]:focus, select:focus {
   border-color: transparent;
 }
 textarea { resize: vertical; min-height: 84px; }
-details.more summary { color: var(--md-sys-color-primary); cursor: pointer; font-size: 13px; font-weight: 600; }
-details.more .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-top: 14px; }
 .hidden { display: none !important; }

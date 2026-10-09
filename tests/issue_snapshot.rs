@@ -452,3 +452,133 @@ fn a_record_that_cannot_be_read_back_is_refused_before_gh_and_before_an_id_is_cl
         .collect();
     assert!(left.is_empty(), "left behind: {left:?}");
 }
+
+/// What the board's form sends: the person's words and a marker, nothing the hub has yet to read.
+#[test]
+fn a_request_that_needs_reading_is_not_read_by_the_server_and_waits_for_the_hub() {
+    let fixture = Fixture::new(QUIET);
+    let (path, log) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+
+    let body = format!(r#"{{"body":"{ISSUE}/1","needsReading":true,"status":"queued"}}"#);
+    let (status, made) = post_task(&resident, &body);
+    assert_eq!(status, 200, "{made}");
+    let task = &made["task"];
+    assert_eq!(task["autoStart"], false, "{made}");
+    assert_eq!(task["needsReading"], true, "{made}");
+    assert_eq!(task["title"], format!("{ISSUE}/1"), "{made}");
+    assert!(task.get("issueSnapshot").is_none(), "{made}");
+    assert!(task.get("titlePending").is_none(), "{made}");
+    assert!(asked(&log).is_empty(), "gh was asked");
+    // Even a caller that says to start it unasked is held until the hub has read it.
+    let id = task["id"].as_str().unwrap();
+    let next = fixture.json(&["task", "next", "--json"]);
+    assert!(next["task"].is_null(), "{next}");
+    assert_eq!(next["needsDispatchGate"][0]["id"], id, "{next}");
+
+    let wrong = r#"{"body":"x","needsReading":"yes"}"#;
+    let (status, made) = post_task(&resident, wrong);
+    assert_eq!(status, 400, "{made}");
+}
+
+/// A request placed in the Backlog is handed over when it is queued later, from the board or
+/// the command line alike, and the hub still reads it first.
+#[test]
+fn a_backlog_request_that_needs_reading_says_so_when_it_is_queued_later() {
+    let fixture = Fixture::new(QUIET);
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--needs-reading",
+        "--body",
+        "WID-1 をやって",
+        "--json",
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+    assert!(
+        fixture.json(&["pending", "--json"])["messages"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    fixture.ok(&["task", "update", "--id", &id, "--status", "queued"]);
+    let listed = fixture.json(&["pending", "--json"]);
+    let name = listed["messages"][0]["name"].as_str().unwrap().to_string();
+    let request = fixture.ok(&["pending", "--read", &name]);
+    assert!(request.contains("## Read first    yes"), "{request}");
+    assert!(request.contains("WID-1 をやって"), "{request}");
+}
+
+#[test]
+fn the_hub_writes_its_reading_with_update_and_a_bad_value_leaves_the_record_alone() {
+    let fixture = Fixture::new(QUIET);
+    let added = fixture.json(&[
+        "task",
+        "add",
+        "--needs-reading",
+        "--body",
+        "fix the login crash",
+        "--json",
+    ]);
+    let id = added["task"]["id"].as_str().unwrap().to_string();
+
+    for bad in [
+        ["--worktree-name", "a b"],
+        ["--issue-url", "not a url"],
+        ["--base", "x'; rm"],
+        ["--kind", "tell-worker"],
+        ["--title", " "],
+    ] {
+        let out = fixture.cmd(&["task", "update", "--id", &id, bad[0], bad[1], "--read"]);
+        assert!(!out.status.success(), "{bad:?}");
+    }
+    assert_eq!(shown(&fixture, &id)["needsReading"], true);
+
+    fixture.ok(&[
+        "task",
+        "update",
+        "--id",
+        &id,
+        "--kind",
+        "file-and-start",
+        "--done-when",
+        "report-only",
+        "--stop-at",
+        "diff",
+        "--worktree-name",
+        "login-crash",
+        "--base",
+        "origin/release/1.2",
+        "--read",
+    ]);
+    let task = shown(&fixture, &id);
+    assert_eq!(task["kind"], "file-and-start", "{task}");
+    assert_eq!(task["doneWhen"], "report-only", "{task}");
+    assert_eq!(task["stopAt"], "diff", "{task}");
+    assert_eq!(task["worktreeName"], "login-crash", "{task}");
+    assert_eq!(task["base"], "origin/release/1.2", "{task}");
+    assert!(task.get("needsReading").is_none(), "{task}");
+}
+
+#[test]
+fn fetch_issue_takes_the_title_only_when_asked() {
+    let fixture = Fixture::new(QUIET);
+    let (path, _log) = stub_gh(&fixture);
+    let id = task_at(&fixture, &path, &format!("{ISSUE}/1"));
+    assert_eq!(shown(&fixture, &id)["title"], "t");
+
+    run_json(
+        &fixture,
+        &path,
+        &["task", "fetch-issue", "--id", &id, "--json"],
+    );
+    assert_eq!(shown(&fixture, &id)["title"], "t");
+
+    run_json(
+        &fixture,
+        &path,
+        &["task", "fetch-issue", "--id", &id, "--take-title", "--json"],
+    );
+    assert_eq!(shown(&fixture, &id)["title"], "T");
+}

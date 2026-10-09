@@ -240,7 +240,7 @@ heavy collection to a sub-agent.
    | `kind` | Written by | What the hub does |
    | --- | --- | --- |
    | `report` | a worker | Run "When a request arrives" from Step 0 |
-   | `request` | a person (the dashboard) | Run "When a request arrives" **from Step 2** (→ "A request from the dashboard") |
+   | `request` | a person (the dashboard) | Run "A request from the dashboard" (it says where to start) |
    | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
    | `file-issue` | a person (the dashboard, linking a running session to a new task) | "A linked task that needs an issue" |
    | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
@@ -1112,8 +1112,9 @@ when it finishes.
      "Could not start:" (not taken until a person has looked at the reason and fixed it), so one
      sitting at the head does not keep everything behind it from starting.
    - `needsDispatchGate` lists the `autoStart: false` tasks with no `dispatch` gate open. Open one
-     for each here (how to open is in "A request from the dashboard"). Each is started once that
-     answer arrives.
+     for each here (how to open is in "A request from the dashboard"; a record whose `needsReading` is
+     true is read first — "Reading a request"). Skip a task that already has an open dispatch gate:
+     `adj task next` leaves those out of the list. Each is started once that answer arrives.
 
    If `task` is `null`, do nothing more.
 2. Run that record as "A request from the dashboard" (including the `adj task show` check). **A
@@ -2076,12 +2077,113 @@ they asked for it to be started. Reply in one line with what was not done and ho
 
 ### A request from the dashboard (`kind: request`)
 
-What a person handed over from the `adj serve` form. **It goes through the same procedure as a
-worker's `report`; only the two ends differ.**
+What a person handed over from the board. **It goes through the same procedure as a worker's
+`report`; only the two ends differ.** There is **nobody to ask back** — the requester is a browser,
+not a session, and `adjutant_tell` has no address — so what needs the person is asked on the board.
 
-- **Skip Step 1 (read; ask back if something is missing).** The kind, Done when, Stop at, the
-  branching point, the parent task, the worktree name and whether to start without asking were asked
-  by the form before it was handed over. The body's `##` lines are those answers themselves.
+**Read the `## Read first` line.** When it says `yes`, the person wrote what they want done in their
+own words and chose nothing else: the lines from `## Kind` to `## Start` are the record's defaults,
+not answers. Run "Reading a request" first. Without it, the request was answered when it was made
+(handed over before the board's form changed, or added with its conditions): Step 1 is done; go to
+"Running a request".
+
+#### Reading a request
+
+**Nothing is started, filed or created before the gate below is answered.**
+
+1. Read `adj task show --id {task_id}`. If `status` is not `queued`, stop (as in "Running a
+   request"). **Also require `needsReading: true` and no open `dispatch` gate for the task** (`adj
+   gate list`): otherwise the request message is stale (redelivered, or already read) — ack it and go
+   on without reading again. The body is the request; a `## Handover note` belongs to it; a `## Parent task` that is
+   set came from the board's 子タスクを足す and is the parent.
+2. **What can be read is read, not guessed.** An issue URL, number or key (`WID-123`) in the text is
+   resolved through the configured task sources ("Task sources"): the issue to work on, or the parent
+   when the text names it as one ("under WID-200"; write it as a URL — "Write the parent task as a
+   URL"). A branch the text says to branch from is the base. **Test the name first**, before any command
+   exists: it must match `^[A-Za-z0-9._/-]+$` and not start with `-`. Only a name that matches is
+   normalised to `origin/{name}` and checked as "Base branch" says (`git fetch --prune origin`, then
+   `git rev-parse --verify`; one that does not exist is an open point, not a fallback to the default).
+   A name that does not match is an open point and no command is built from it: it cannot be written,
+   so the person answers it on the gate by naming another branch (or the default).
+   **The same goes for every other value that will sit inside quotes in step 4**, tested before any
+   command exists. A URL (issue or parent) must start with `https://` and contain none of whitespace,
+   control characters or `'` `"` `` ` `` `$` `\` `;` `&` `|` `<` `>` `(` `)` `{` `}` — the same
+   characters `adj` refuses. Prefer a URL you built from a key resolved through the task sources over
+   one pasted from the text. A worktree-name slug must be lowercase `[a-z0-9-]` and not start with `-`.
+   A value that fails is an open point, and no command is built with it.
+   What cannot be resolved is an open point: never build a URL or a name from it.
+3. **The rest is inferred from the text**, falling back to the defaults (Done when `pr`, Stop at
+   `plan`, the implementer `worker`, the base `baseBranch`): the kind (an existing issue → `start`;
+   a change with no issue → `file-and-start`, filed as a sub-issue of a `## Parent task` that is set;
+   something to look into → `investigate` with `report-only`, nothing filed), Done when, Stop at, the
+   implementer (`jules` only when the text asks for it), and for a task with no issue the worktree
+   name (a short lowercase slug, `login-crash`). Where the text could go either way, that is an open
+   point; take the likelier one as the assumption.
+4. **Write the reading to the record before asking** — the answer re-runs this route from the record,
+   and the brief is written from it. The record stays `needsReading` until the person has confirmed
+   the reading on the gate: `--read` is not written here (it is the answer's, below):
+
+   ```bash
+   adj task update --id {task_id} --kind {kind} --done-when {done when} --stop-at {stop at} --executor {worker|jules} [--issue-url '{issue url}'] [--base 'origin/{name}'] [--parent '{parent url}'] [--worktree-name '{name}']
+   adj task fetch-issue --id {task_id} --take-title   # a GitHub issue: its title becomes the task's
+   adj task update --id {task_id} --title - < '{main}/.claude/task-title-{task_id}.md' \
+     && rm '{main}/.claude/task-title-{task_id}.md'   # an issue of another source: write the title you read to the file first
+   ```
+
+   If the issue cannot be read, the title stays the person's first line and the gate says so in
+   `unsure`. If `adj task update` refuses a value (a bad worktree name fails the whole patch), that
+   value becomes an open point and the update is run again without it, so the gate opens with that
+   point named in `unsure`. A record that has not been confirmed is never started. **If you stop
+   between this step and the gate, the record is still unread and has no gate, so the next pass
+   (the slot refill lists it) reads it again — that is the recovery.** That pass is the slot refill
+   (only when `settings.maxWorkers` is set) or the person pressing 「次を流す」 on the board.
+
+   Only values you tested in step 2 go on these lines; `adj task update` refusing a URL, base or name
+   it could not quote safely is the second check, not the first. Nothing from the request's prose goes on a command line ("Keep task text off the shell").
+5. **Open a `dispatch` gate with the reading, while the record is still `needsReading`** (an open
+   gate is what keeps `adj task next` from listing it again). Write the JSON to `{main}/.claude/gate-{task_id}.json`
+   with a file-writing tool:
+
+   ```json
+   {
+     "kind": "dispatch",
+     "task": "{task_id}",
+     "title": "Confirm: {task_title}",
+     "focus": "Please check how the request was read before it starts.",
+     "facts": ["Issue: {issue url} {issue title}", "Base: {base}", "Parent task: {parent url}"],
+     "decided": "- Kind: {kind}\n- Done when: {done when}\n- Stop at: {stop at}\n- Implementer: {implementer}\n- File an issue: {yes|no}\n- Worktree name: {name}",
+     "unsure": "{what could not be decided, and what was assumed}",
+     "choices": [{"id": "{id}", "label": "{option}", "why": "{why}", "recommended": true}, {"id": "{id}", "label": "{option}", "why": "{why}"}]
+   }
+   ```
+
+   `facts` is what was read, `decided` what was inferred (say which fell back to a default). Only
+   when something is open, add `unsure` and `choices`: `choices` asks the open point that changes
+   the most; any other open point is written in `decided` as assumed and named in `unsure`, for the
+   person to correct with a comment. **Make each choice id encode the value it stands for**
+   (`base:origin/release-1.2`, `kind:investigate`), so the id alone is enough to write it back; when
+   you re-open the gate after a refused `--read`, put your proposed value in `choices`. Write `title`, `focus`, `facts`, `decided`, `unsure` and the
+   labels in the person's language; keep the `id`s, and keep `{task_title}` as it is.
+
+   ```bash
+   adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'
+   ```
+
+   If `server` is `up`, write `--note 'Waiting for confirmation to start (needs attention on the
+   board)'`, leave the record queued, ack, and move on; the answer arrives as `kind: gate` ("The answer
+   to a gate the hub opened"). If `down`, close the gate at once (`adj gate close --id {gate id}`), then
+   ask the same with `AskUserQuestion` only when a person is at this tab (on a go-ahead, `adj task
+   update --id {task_id} --read --auto-start true` — in one call, as in "The answer to a gate the
+   hub opened" — and go on to "Running a request"); otherwise write
+   "Waiting for confirmation to start" in `--note` and leave it queued.
+
+#### Running a request
+
+- **Step 1 is done:** the record holds the answers — read on the gate, or given when the request was made.
+  **For a record that went through "Reading a request", take the kind, parent, issue URL, base,
+  worktree name, executor, Done when and Stop at from `adj task show --id {task_id}`, not from the
+  request message's `##` lines**: after a gate answer or on the slot-refill route they may be gone or
+  stale (the parent below is the record's `parent`).
   If the `## Parent task` is a key, find its URL ("Write the parent task as a URL" in "When a person
   talks to you") and pass `adj task brief --parent '{url}'`: the brief refuses a key. **When the
   record's `parent` is a key, also put the URL on the record** with `adj task update --id {task_id}
@@ -2099,7 +2201,8 @@ worker's `report`; only the two ends differ.**
 - **If the request says the title is not read yet (`## Title`), run `adj task fetch-issue --id
   {task_id}` before `adj task brief`**: the issue could not be read when it was handed over, and
   the read puts the issue's title on the record, which the brief's Task line is written from.
-- **If `## Start` says "ask before starting", open a `dispatch` gate before starting the worker.** The
+- **If `## Start` says "ask before starting" and the request was not read under "Reading a request",
+  open a `dispatch` gate before starting the worker** (one that was read has had its gate). The
   one who asked is someone in front of the board, so ask on the board too:
 
   The content is JSON; write it to `{main}/.claude/gate-{task_id}.json` with a file-writing tool (the
@@ -2131,7 +2234,8 @@ worker's `report`; only the two ends differ.**
   If `down`, there is no board, so close the gate just opened with `adj gate close --id {gate id}` at
   once (left open, a confirmation nobody needs to answer lines up under needs attention when the
   board is started later). Then ask with `AskUserQuestion` only when a person is at this tab. When
-  the answer says to go ahead, run `adj task update --id {task_id} --auto-start true` before starting
+  the answer says to go ahead, run `adj task update --id {task_id} --auto-start true` (for a request
+  read under "Reading a request", `--read --auto-start true` in one call) before starting
   (the same reason as when it is `approve`d on the board — so it is not asked again if it ends up
   waiting for a slot). When nobody is there, write "Waiting for confirmation to start" in `--note`
   and leave it queued (do not ask right after starting — 5 of "On startup").
@@ -2256,12 +2360,27 @@ Jules" below; if they say `plan`, go to "The answer to a plan for Jules".** From
 it on the board meanwhile, or it was asked in the tab and already started). If `queued`, split by the
 decision:
 
-- **`approve`** — first run `adj task update --id {task_id} --auto-start true`, then run "A request
-  from the dashboard" from Step 2. It has been confirmed, so do not open the gate again.
+- **`approve`** — first run `adj task update --id {task_id} --read --auto-start true` (one call:
+  `--read` means the person confirmed the reading on this gate, and is refused unless the record can
+  start — what it needs is checked under the lock; for a request that was never unread it changes
+  nothing), then run "Running a request" in "A request from the dashboard". It has been confirmed, so
+  do not open the gate again. **If that update is refused, the record stays unread: do not start.**
+  Open the gate again, naming what is still missing (the refusal says which) as the open point in
+  `unsure`. The same goes for `choice` and for `changes` once its corrections are written.
   `--auto-start true` comes first so that, if `maxWorkers` turns it away into waiting for a slot, the
   same thing is not asked again when it is taken next.
+- **`choice`** — the person picked one of the gate's `choices` (`## Chosen`). The id is one you wrote
+  into this gate's `choices` and encodes the value (`base:origin/release-1.2`), so it is enough to
+  write it back as "Reading a request" step 4 does (the value still passes step 2's tests), then go on as with `approve`
+  (`--read --auto-start true` in one call).
 - **`changes`** — read the comment. If only the conditions for starting change, like the branching
-  point or the worktree name, apply them and start as with `approve`. If it reads as "do not start
+  point or the worktree name, apply them and start as with `approve`. Values taken from a
+  person's comment (base, worktree name, issue or parent URL) are tested as in "Reading a request"
+  step 2 before any command is built; a value that fails is an open point and the gate is opened
+  again. **A comment that changes the issue, the kind or the parent: write the corrected reading as
+  in steps 2–4 and open the gate again with it, instead of starting directly**; only a corrected
+  base, worktree name, Done when or Stop at may go straight to `--read --auto-start true`. If a
+  correction leaves something open, open the gate again too. If it reads as "do not start
   yet", write the comment in the note and put it back to `--status backlog`. The comment is text a
   person typed on the board, so write it to a file and read it with `--note -` (`adj task update --id
   {task_id} --status backlog --note - < '{main}/.claude/task-note-{task_id}.md' && rm
@@ -2690,7 +2809,8 @@ as standard input to an option that accepts `-`. Remove the file once read:
 | --- | --- | --- |
 | A task's body (title + summary) | `adj task add --body -` | `{worktree}/.claude/task-summary.md` |
 | A note (why it could not be started, a gate's comment) | `adj task update --note -` | `{main}/.claude/task-note-{task_id}.md` |
-| A dispatch gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
+| A dispatch gate's content (JSON; also the reading of a request) | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
+| A task's title read from a tracker | `adj task update --title -` | `{main}/.claude/task-title-{task_id}.md` |
 | A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
 | A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
 | Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |

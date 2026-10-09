@@ -37,6 +37,7 @@ impl Task {
             gate_answered_at: None,
             issue_snapshot: None,
             title_pending: false,
+            needs_reading: false,
             pr_status: None,
             pr_turn_at: None,
             parked: None,
@@ -1794,4 +1795,309 @@ fn a_refresh_that_moves_a_parked_task_to_done_clears_the_park() {
     assert_eq!(merged.parked, None);
     let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
     assert!(!text.contains("parked"), "{text}");
+}
+
+#[test]
+fn a_request_not_yet_read_says_so_first_and_keeps_every_other_line() {
+    let mut task = sample();
+    let plain = render_request(&task);
+    assert!(!plain.contains("## Read first"), "{plain}");
+    task.needs_reading = true;
+    let body = render_request(&task);
+    let marker = body
+        .lines()
+        .find(|l| l.starts_with("## Read first"))
+        .unwrap();
+    assert!(
+        body.contains(&format!("## task          {}\n{marker}\n", task.id)),
+        "{body}"
+    );
+    // The old lines stay under the marker, so a hub that does not know it still asks.
+    assert_eq!(body.replace(&format!("{marker}\n"), ""), plain);
+}
+
+#[test]
+fn a_task_the_hub_has_not_read_is_never_picked_even_when_it_may_start_unasked() {
+    let mut unread = sample();
+    unread.id = "1".to_string();
+    unread.status = Status::Queued;
+    unread.auto_start = true;
+    unread.needs_reading = true;
+    let mut ready = sample();
+    ready.id = "2".to_string();
+    ready.status = Status::Queued;
+
+    let mut gated = std::collections::HashSet::new();
+    let picked = next(vec![unread.clone(), ready.clone()], &gated);
+    assert_eq!(picked.task, Some(ready.clone()));
+    assert_eq!(picked.needs_dispatch_gate, vec![unread.clone()]);
+
+    gated.insert("1".to_string());
+    assert!(next(vec![unread], &gated).needs_dispatch_gate.is_empty());
+}
+
+#[test]
+fn a_patch_writes_what_the_hub_read_and_clears_the_marker() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.needs_reading = true;
+    task.title_pending = true;
+    save(&ctx, &task).unwrap();
+    let patch = TaskPatch {
+        kind: Some(Kind::FileAndStart),
+        done_when: Some(DoneWhen::Verify),
+        stop_at: Some(StopAt::All),
+        issue_url: Some(Some("https://github.com/acme/widget/issues/9".to_string())),
+        worktree_name: Some(Some("login-crash".to_string())),
+        title: Some("  Fix the login crash ".to_string()),
+        read: true,
+        ..TaskPatch::default()
+    };
+    let (updated, _) = update(&ctx, &task.id, &patch, false).unwrap();
+    assert_eq!(updated.kind, Kind::FileAndStart);
+    assert_eq!(updated.done_when, DoneWhen::Verify);
+    assert_eq!(updated.stop_at, StopAt::All);
+    assert_eq!(
+        updated.issue_url.as_deref(),
+        Some("https://github.com/acme/widget/issues/9")
+    );
+    assert_eq!(updated.worktree_name.as_deref(), Some("login-crash"));
+    assert_eq!(updated.title, "Fix the login crash");
+    assert!(!updated.title_pending);
+    assert!(!updated.needs_reading);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("needsReading"), "{text}");
+
+    let clear = TaskPatch {
+        issue_url: Some(None),
+        worktree_name: Some(None),
+        ..TaskPatch::default()
+    };
+    let (cleared, _) = update(&ctx, &task.id, &clear, false).unwrap();
+    assert_eq!(cleared.issue_url, None);
+    assert_eq!(cleared.worktree_name, None);
+}
+
+#[test]
+fn a_patch_with_a_value_the_hub_could_not_quote_is_refused_before_any_write() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.needs_reading = true;
+    save(&ctx, &task).unwrap();
+    let bad = [
+        TaskPatch {
+            worktree_name: Some(Some("a b".to_string())),
+            ..TaskPatch::default()
+        },
+        TaskPatch {
+            issue_url: Some(Some("https://x/'; id".to_string())),
+            ..TaskPatch::default()
+        },
+        TaskPatch {
+            base: Some(Some("main'; id".to_string())),
+            ..TaskPatch::default()
+        },
+        TaskPatch {
+            base: Some(Some("-flag".to_string())),
+            ..TaskPatch::default()
+        },
+        TaskPatch {
+            title: Some("  ".to_string()),
+            ..TaskPatch::default()
+        },
+    ];
+    for patch in bad {
+        let patch = TaskPatch {
+            read: true,
+            ..patch
+        };
+        assert!(update(&ctx, &task.id, &patch, false).is_err(), "{patch:?}");
+    }
+    assert_eq!(get(&ctx.state, &ctx.repo.slug, &task.id).unwrap(), task);
+}
+
+#[test]
+fn a_new_request_that_needs_reading_is_held_and_not_checked_for_a_kind() {
+    let (_sandbox, ctx) = hub();
+    // No issue, no worktree name, a kind that would want one: not the server's to demand.
+    let new = NewTask {
+        body: "https://github.com/acme/widget/issues/9".to_string(),
+        auto_start: true,
+        needs_reading: true,
+        status: Status::Queued,
+        ..NewTask::default()
+    };
+    let (task, handed) = create(&ctx, new, false).unwrap();
+    assert!(task.needs_reading);
+    assert!(!task.auto_start);
+    assert_eq!(task.title, "https://github.com/acme/widget/issues/9");
+    assert!(task.issue_snapshot.is_none());
+    assert!(handed.is_none());
+
+    // A base is the caller's to choose, as it always was.
+    let odd = NewTask {
+        base: Some("HEAD~1".to_string()),
+        ..NewTask::default()
+    };
+    assert!(check_typed(&odd).is_ok());
+    let json = NewTask::from_json(&json!({"body": "x", "needsReading": true})).unwrap();
+    assert!(json.needs_reading);
+    assert!(NewTask::from_json(&json!({"body": "x", "needsReading": "yes"})).is_err());
+}
+
+#[test]
+fn a_title_is_its_first_non_blank_line_cut_to_an_issue_titles_length() {
+    assert_eq!(
+        one_line_title("\n  \n Fix it \nmore").as_deref(),
+        Some("Fix it")
+    );
+    assert_eq!(one_line_title(" \n "), None);
+    let long = "x".repeat(ISSUE_TITLE_CAP + 50);
+    assert_eq!(
+        one_line_title(&long).unwrap().chars().count(),
+        ISSUE_TITLE_CAP
+    );
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let patch = TaskPatch {
+        title: Some("first\nsecond".to_string()),
+        ..TaskPatch::default()
+    };
+    assert_eq!(
+        update(&ctx, &task.id, &patch, false).unwrap().0.title,
+        "first"
+    );
+}
+
+#[test]
+fn a_read_record_has_to_be_startable_and_only_reading_clears_the_marker() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.kind = Kind::FileAndStart;
+    task.needs_reading = true;
+    task.auto_start = false;
+    save(&ctx, &task).unwrap();
+    // Nothing names the worktree: refused, and the record is as it was.
+    let read = TaskPatch {
+        read: true,
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &task.id, &read, false).is_err());
+    // Starting without asking is refused for an unread record, startable-looking or not.
+    let approve = TaskPatch {
+        auto_start: Some(true),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &task.id, &approve, false).is_err());
+    let looks_ready = TaskPatch {
+        issue_url: Some(Some("https://github.com/acme/widget/issues/9".to_string())),
+        auto_start: Some(true),
+        ..TaskPatch::default()
+    };
+    let why = update(&ctx, &task.id, &looks_ready, false).unwrap_err();
+    assert!(why.contains("has not read this request"), "{why}");
+    assert_eq!(get(&ctx.state, &ctx.repo.slug, &task.id).unwrap(), task);
+
+    let named = TaskPatch {
+        worktree_name: Some(Some("login-crash".to_string())),
+        ..TaskPatch::default()
+    };
+    let (still, _) = update(&ctx, &task.id, &named, false).unwrap();
+    assert!(
+        still.needs_reading,
+        "writing the reading is not confirming it"
+    );
+    // The answer is one call: the confirmation and the go-ahead together.
+    let (both, _) = update(
+        &ctx,
+        &task.id,
+        &TaskPatch {
+            read: true,
+            auto_start: Some(true),
+            ..TaskPatch::default()
+        },
+        false,
+    )
+    .unwrap();
+    assert!(both.auto_start && !both.needs_reading);
+
+    // A start needs its issue.
+    let mut start = sample();
+    start.id = "2".to_string();
+    start.kind = Kind::Start;
+    start.needs_reading = true;
+    save(&ctx, &start).unwrap();
+    let read = TaskPatch {
+        read: true,
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &start.id, &read, false).is_err());
+    // A task that was never unread is not held to any of it.
+    let mut plain = sample();
+    plain.id = "3".to_string();
+    plain.kind = Kind::Start;
+    save(&ctx, &plain).unwrap();
+    assert!(update(&ctx, &plain.id, &approve, false).is_ok());
+}
+
+#[test]
+fn a_base_is_held_to_the_branch_rule_only_when_the_hub_reads_the_record() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.kind = Kind::Investigate;
+    task.needs_reading = true;
+    task.worktree_name = Some("look-into-it".to_string());
+    save(&ctx, &task).unwrap();
+    // A plain update takes any value, as it always did.
+    let odd = TaskPatch {
+        base: Some(Some("x; id".to_string())),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &task.id, &odd, false).is_ok());
+    // The read refuses it and leaves the record unread.
+    let read = TaskPatch {
+        read: true,
+        ..TaskPatch::default()
+    };
+    let why = update(&ctx, &task.id, &read, false).unwrap_err();
+    assert!(why.contains("x; id"), "{why}");
+    assert!(
+        get(&ctx.state, &ctx.repo.slug, &task.id)
+            .unwrap()
+            .needs_reading
+    );
+    // Clearing the base lets it through.
+    let clear = TaskPatch {
+        base: Some(None),
+        ..TaskPatch::default()
+    };
+    update(&ctx, &task.id, &clear, false).unwrap();
+    assert!(
+        !update(&ctx, &task.id, &read, false)
+            .unwrap()
+            .0
+            .needs_reading
+    );
+}
+
+#[test]
+fn what_the_hub_reads_cannot_be_rewritten_once_the_task_has_started() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.status = Status::Dispatched;
+    save(&ctx, &task).unwrap();
+    let patch = TaskPatch {
+        title: Some("new".to_string()),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &task.id, &patch, false).is_err());
+    assert_eq!(get(&ctx.state, &ctx.repo.slug, &task.id).unwrap(), task);
+    for status in [Status::Backlog, Status::Queued] {
+        let mut open = sample();
+        open.id = format!("open-{}", status.as_str());
+        open.status = status;
+        save(&ctx, &open).unwrap();
+        assert!(update(&ctx, &open.id, &patch, false).is_ok());
+    }
 }

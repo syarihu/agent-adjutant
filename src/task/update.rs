@@ -31,6 +31,20 @@ pub fn update_checked(
     let lock = store::lock(ctx, id)?;
     let mut task = get(&ctx.state, &ctx.repo.slug, id)?;
     check(&task)?;
+    // What the hub reads out of a request is written before the work starts; on a started task
+    // these would only disagree with the worktree and brief it already has.
+    let rewrites = patch.kind.is_some()
+        || patch.done_when.is_some()
+        || patch.stop_at.is_some()
+        || patch.issue_url.is_some()
+        || patch.worktree_name.is_some()
+        || patch.title.is_some();
+    if rewrites && !matches!(task.status, Status::Backlog | Status::Queued) {
+        return Err(format!(
+            "kind, done-when, stop-at, issue-url, worktree-name and title can only be changed while a task is in the backlog or queued, not {}",
+            task.status.as_str()
+        ));
+    }
     let was = task.status;
 
     if let Some(status) = patch.status {
@@ -45,8 +59,26 @@ pub fn update_checked(
     if let Some(executor) = patch.executor {
         task.executor = executor;
     }
+    if let Some(kind) = patch.kind {
+        task.kind = kind;
+    }
+    if let Some(done_when) = patch.done_when {
+        task.done_when = done_when;
+    }
+    if let Some(stop_at) = patch.stop_at {
+        task.stop_at = stop_at;
+    }
+    // A title the hub read from the issue is the title for good: a pending one (made from
+    // the URL) has nothing left to wait for.
+    if let Some(title) = patch.title.as_deref().and_then(one_line_title) {
+        task.title = title;
+        task.title_pending = false;
+    }
     let pr_before = task.pr.clone();
+    let reading = std::mem::take(&mut task.needs_reading);
     for (value, field) in [
+        (&patch.issue_url, &mut task.issue_url),
+        (&patch.worktree_name, &mut task.worktree_name),
         (&patch.worktree, &mut task.worktree),
         (&patch.issue, &mut task.issue),
         (&patch.pr, &mut task.pr),
@@ -69,6 +101,26 @@ pub fn update_checked(
         // Likewise what the last refresh read: it described the old PR.
         task.pr_status = None;
         task.pr_turn_at = None;
+    }
+    // Only the hub's `--read` clears the marker, and what it read has to be startable. Starting
+    // without asking is refused outright until then — from the board's 着手 as much as the
+    // command line: the hub has yet to read the request and confirm it on a gate, and the hub's
+    // approval always comes after `--read`.
+    if reading && patch.auto_start == Some(true) && !patch.read {
+        return Err(
+            "the hub has not read this request yet; it will ask on the board before starting"
+                .to_string(),
+        );
+    }
+    task.needs_reading = reading && !patch.read;
+    if reading && patch.read {
+        check_startable(&task)?;
+        // The base was written by the hub from free text, in an update that did not carry
+        // `--read` (any value is accepted there, as it always was), so it is held to the branch
+        // rule here, on what is stored.
+        if let Some(base) = task.base.as_deref().filter(|b| !b.is_empty()) {
+            create::check_base(base)?;
+        }
     }
     // A park is a person's call about a task still in play: a finished one is refused, and one
     // that becomes finished here loses it (as a merged PR's does in `refresh`).

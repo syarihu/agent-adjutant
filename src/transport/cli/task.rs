@@ -27,7 +27,7 @@ fn snapshot_if_started(ctx: &Context, task: Task, changed: bool) -> Task {
     if !changed || task::needs_snapshot(&task).is_none() {
         return task;
     }
-    match fetch_issue(ctx, &task.id) {
+    match fetch_issue(ctx, &task.id, false) {
         Ok(read) => read,
         Err(why) => {
             eprintln!("could not read the issue: {why}");
@@ -60,6 +60,7 @@ pub fn add(args: &TaskAddArgs) -> Result<(), String> {
         parent: args.parent.clone(),
         worktree_name: args.worktree_name.clone(),
         auto_start: !args.ask_first,
+        needs_reading: args.needs_reading,
         status: if args.queue || args.waiting_in.is_some() {
             Status::Queued
         } else {
@@ -99,7 +100,21 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
     // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
     // comment typed on the board — and does not belong inside quotes on a command line.
+    // `--title -` shares stdin with the others: whichever read second would get nothing. The
+    // note and instruction together were accepted before, so they stay so.
+    if args.title.as_deref() == Some("-")
+        && [&args.note, &args.instruction]
+            .iter()
+            .any(|v| v.as_deref() == Some("-"))
+    {
+        return Err("--title - cannot be combined with --note - or --instruction -".into());
+    }
     let note = args.note.as_deref().map(super::dash_is_stdin).transpose()?;
+    let title = args
+        .title
+        .as_deref()
+        .map(super::dash_is_stdin)
+        .transpose()?;
     let instruction = args
         .instruction
         .as_deref()
@@ -122,6 +137,19 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
                 task::Executor::parse(s).ok_or(format!("no such executor: {s} (worker or jules)"))
             })
             .transpose()?,
+        kind: word(args.kind.as_deref())
+            .map(task::Kind::parse)
+            .transpose()?,
+        done_when: word(args.done_when.as_deref())
+            .map(task::DoneWhen::parse)
+            .transpose()?,
+        stop_at: word(args.stop_at.as_deref())
+            .map(task::StopAt::parse)
+            .transpose()?,
+        issue_url: text(args.issue_url.as_deref()),
+        worktree_name: text(args.worktree_name.as_deref()),
+        title,
+        read: args.read,
         worktree: text(args.worktree.as_deref()),
         issue: text(args.issue.as_deref()),
         pr: text(args.pr.as_deref()),
@@ -133,6 +161,10 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
         instruction: text(instruction.as_deref()),
         parked: None,
     };
+    // A request is never the kind that only tells an existing worktree something.
+    if patch.kind == Some(task::Kind::TellWorker) {
+        return Err("a task's kind here is start, file-and-start or investigate".to_string());
+    }
     // Read without the lock and `.ok()`: a failed or raced read can only cost one extra fetch
     // attempt, since `needs_snapshot` still guards it.
     let before = task::get(&ctx.state, &ctx.repo.slug, &args.id).ok();
@@ -283,7 +315,7 @@ pub fn show(args: &TaskShowArgs) -> Result<(), String> {
 /// `adj task fetch-issue`: read the issue again, whatever the record holds.
 pub fn fetch_issue_cmd(args: &TaskFetchIssueArgs) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
-    let task = fetch_issue(&ctx, &args.id)?;
+    let task = fetch_issue(&ctx, &args.id, args.take_title)?;
     if args.json {
         println!("{}", json!({ "task": task }));
         return Ok(());

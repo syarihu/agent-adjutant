@@ -104,7 +104,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief\|park\|unpark` | the records that board is a view of (`park --id … --reason pdm\|design\|review\|merge-timing\|other [--text …]`: set a task aside on purpose, because you wait on someone else's answer or on the right time to merge (`--reason other` needs a `--text`; `--text -` reads stdin; a finished task is refused); `unpark --id …`: take it back; `brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one)) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief\|park\|unpark` | the records that board is a view of (`park --id … --reason pdm\|design\|review\|merge-timing\|other [--text …]`: set a task aside on purpose, because you wait on someone else's answer or on the right time to merge (`--reason other` needs a `--text`; `--text -` reads stdin; a finished task is refused); `unpark --id …`: take it back; `brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one); `update` also takes `--kind`, `--done-when`, `--stop-at`, `--issue-url` and `--worktree-name` (the last two: `''` clears), `--title` (`-` reads stdin; it cannot be blank) and `--read` (the person confirmed the hub's reading on the gate: clears `needsReading`, refused unless the record can start), which are what the hub writes when it reads a request (below); `add --needs-reading`: the body is all the person said, the hub reads it and asks on a gate before anything starts (what the board's form sends); `fetch-issue --take-title`: make the issue's title the task's, not only when the task has none yet)) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -615,8 +615,8 @@ for the rest, which opens the tab the gate is judged in), the phases, the 概要
 problem, the goal, the instructions, the plan with its decision panel, the worktree and branch with
 「IDE」), the details (among them the 親タスク row: the parent with whether it came from GitHub's
 sub-issues or the record, how many of its children are merged, the place in a stack, a note when the
-record names another parent, and 「子タスクを足す」, which opens the new-task form to file and start a
-child of that parent) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
+record names another parent, and 「子タスクを足す」, which opens the new-task form with that parent shown
+(the request is sent with it, and the hub files the issue as its child)) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
 with the decision panel in place; a dot marks the tab of the open gate. A card carries the same
 two numbers in its header, each opening on GitHub, and
 the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
@@ -803,8 +803,26 @@ never polls a tracker: an issue edited afterwards is read again only when someon
 「再取得」 on the task or runs `adjutant task fetch-issue --id <id>`. A `gh` that cannot read
 the issue leaves the record as it was and prints why; other trackers' URLs are left alone.
 
-A request from the board's form that has a GitHub issue URL and no content of its own needs no
-text: the server reads the issue when it creates the record (the same read as `task fetch-issue`),
+The board's new-task form is one text box: what the person wants done, in their own words. It
+sends that text, the button's status and `needsReading: true` (and, from 「子タスクを足す」, the
+parent it was opened for). The record exists at once, with the first line of the text as its title,
+and the server holds it: `autoStart` is forced off, `adjutant task next` never picks it and lists
+it among the tasks that need a `dispatch` gate, and the server does not read the issue. The request
+the hub receives starts with `## Read first   yes`, and the lines after it are the record's
+defaults, not answers. The hub reads the text: an issue URL, number or key, a branch to cut from
+and a parent issue are resolved, not guessed, and the issue's title becomes the task's
+(`task fetch-issue --take-title`, or `task update --title -` for another tracker); the kind, Done
+when, Stop at, the implementer and the worktree name are inferred with the repository's defaults.
+It writes that reading to the record (it leaves the marker alone) and always opens a
+`dispatch` gate with what it read, what it inferred and what is still open, and nothing starts, is
+filed or is created until the person answers it: approve, pick the one open point offered, or
+correct it with a comment. The answer is written with `task update … --read --auto-start true`, which
+clears the marker and is refused unless the record can start (then the hub opens the gate again with what is missing). A request without `## Read first` (handed over before the form changed,
+by `task add`, or by a caller that sends the old fields to `/api/tasks`) takes the old path
+unchanged.
+
+A caller that sends `issueUrl` and no content of its own (`task add`, `POST /api/tasks`) still needs
+no text: the server reads the issue when it creates the record (the same read as `task fetch-issue`),
 and the card shows its title from the start. Text the person typed wins over the issue's. If the
 issue cannot be read, the record is kept anyway under the title `owner/repo#N` with
 `titlePending: true` (shown as 「タイトル未取得」), and the first successful read — at start, or
@@ -1204,8 +1222,8 @@ until the record has been opened. Which records have been opened is kept in the 
 localStorage: it is one reader's state, not the task's. The task panel lists each record with a
 short summary and a button that opens it in its tab of the panel, where it can be sent back
 with a comment — that answer goes to the worktree's outbox. A gate that stopped the worker
-says which rule stopped it, on the card and in the panel. The new-task
-form takes the stop point.
+says which rule stopped it, on the card and in the panel. The stop point is read from
+the request and confirmed on the gate (`adj task add --stop-at` still sets it).
 
 The task panel's tabs are where everything a task's gates left can be read at any time, whether
 they stopped the worker or not. タスクサマリ has the problem and the goal with where each came from,
@@ -1272,8 +1290,8 @@ this — none is ever started for it — and a session that failed is. The answe
 badge a little stale rather than the board slow. The first time a session is seen with a pull
 request, the board writes it onto the task, moves the card to review, and sends the hub a
 `jules-pr` message naming the task and the PR. That happens once: Jules finishes again after
-every round of comments it answers, and the record already has its PR by then. The new-task
-form's 実装 field picks who implements.
+every round of comments it answers, and the record already has its PR by then. Who implements is read from
+the request and confirmed on the gate (`adj task add --executor` still sets it).
 
 The procedures carry it from there. For a Jules task, `adj-hub` has its planning subagent
 write a design for Jules — every file, what changes in it, what must not be touched, the

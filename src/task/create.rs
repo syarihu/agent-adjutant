@@ -41,9 +41,27 @@ pub fn check_worktree_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Refuse the two values a person types on the board that the hub later puts on a command
+/// A branch to cut from, as the hub puts it on a command line in quotes: ref characters only,
+/// and one git agrees names a branch. For `adj task update --base`, which the hub fills from
+/// free text.
+pub(super) fn check_base(base: &str) -> Result<(), String> {
+    let charset = base
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'));
+    let branchable = charset
+        && !base.starts_with('-')
+        && crate::infra::git::git(&["check-ref-format", "--branch", base], None)
+            .is_ok_and(|out| out.status.success());
+    if !branchable {
+        return Err(format!("not a base branch git can name: {base}"));
+    }
+    Ok(())
+}
+
+/// Refuse the values a person types on the board that the hub later puts on a command
 /// line: the worktree name becomes a path and a branch, and the issue and parent task URLs are
-/// quoted as they are.
+/// quoted as they are. The base is not checked here: callers have always been free to send one,
+/// and only the hub's `adj task update --base` is held to `check_base`.
 /// Checked here, where they come in, rather than in every command the procedures write — an
 /// apostrophe in either would close the quote around it and run the rest as shell.
 pub(super) fn check_typed(new: &NewTask) -> Result<(), String> {
@@ -117,7 +135,9 @@ pub fn create(
     // A request that names an issue and says nothing else is a request to hand that issue
     // over: read it now so the card has its title from the start. What the person typed wins.
     // Only for a task that starts an issue: any other kind with no content has nothing to go on.
-    let starts = new.kind == Kind::Start;
+    // Not for a request the hub has yet to read: it reads the issue itself, and the title of
+    // such a card is the person's first line until it does.
+    let starts = new.kind == Kind::Start && !new.needs_reading;
     let url = new
         .issue_url
         .as_deref()
@@ -160,7 +180,9 @@ pub fn create(
         base: new.base,
         parent: new.parent,
         worktree_name: new.worktree_name,
-        auto_start: new.auto_start,
+        // A request not yet read is held whatever the caller said: the gate the hub opens
+        // after reading it is the person's chance to correct it.
+        auto_start: new.auto_start && !new.needs_reading,
         order: next_order(ctx),
         status: new.status,
         worktree: new.worktree.as_deref().map(resolved_worktree),
@@ -178,6 +200,7 @@ pub fn create(
         // issue URL because the issue could not be read.
         issue_snapshot: snapshot,
         title_pending: pending,
+        needs_reading: new.needs_reading,
         pr_status: None,
         pr_turn_at: None,
         parked: None,
