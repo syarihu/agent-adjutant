@@ -11,6 +11,9 @@
 # A `mod x;` or `use` line takes the attributes and comments above it along, so moving
 # `#[cfg(unix)] mod x;`, or adding the attribute where it lands, must pass, while changing an
 # attribute on a moved function must not.
+#
+# A string, char or raw-string literal and a comment are each one token: a brace or quote in
+# one must not cut an item short, and a changed word, comma or brace inside one must still show.
 set -euo pipefail
 export LC_ALL=C
 unset CARGO_TARGET_DIR GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -309,5 +312,179 @@ verify "a helper moved into tests/common/mod.rs is a move" 0 "same items in 2 fi
 git checkout -q -B case main
 write_test_head 3
 verify "a helper changed on its way into tests/common/mod.rs is not a move" 1 "not a move: the items above" main
+
+# A brace or quote in a string, char or raw-string literal or in a comment is not code.
+new_crate "$tmp/literals"
+
+# write_literals_base: the functions and the tests of the base, in lib.rs.
+write_literals_base() {
+  cat >src/lib.rs <<'RS'
+pub fn first<'a>(s: &'a str) -> char {
+    // don't "quote {
+    /* outer " { /* inner " { */ still " { */
+    if s.is_empty() { '{' } else { '"' }
+}
+
+pub fn second() -> u8 {
+    2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literals() {
+        assert_eq!(first("{ not json"), '"');
+        let _ = (r"\", "\\", r#"{"#, b'{', '\u{7b}', '\x1b', '…');
+        let _ = (b"{\"", c"{", '\'', '\\');
+        let text = "line { one
+            line two";
+        assert!(!text.is_empty());
+    }
+
+    #[test]
+    fn the_next_one() {
+        assert_eq!(second(), 2);
+    }
+}
+RS
+}
+# write_literals_head <string in the first test> <char> <raw string> <word in the comment>
+write_literals_head() {
+  cat >src/lib.rs <<RS
+pub fn first<'a>(s: &'a str) -> char {
+    // don't "quote {
+    /* outer " { /* inner " { */ still " { */
+    if s.is_empty() { '{' } else { '"' }
+}
+
+pub fn second() -> u8 {
+    2
+}
+
+#[cfg(test)]
+mod tests;
+RS
+  cat >src/tests.rs <<RS
+use super::*;
+
+#[test]
+fn literals() {
+    assert_eq!(first($1), '"');
+    let _ = (r"\\", "\\\\", $3, b'{', '\\u{7b}', '\\x1b', '…');
+    let _ = (b"{\"", c"{", '\'', '\\\\');
+    let text = "line { one
+line two";
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn the_next_one() {
+    assert_eq!(second(), 2);
+}
+RS
+  if [ -n "$2" ]; then sed -i.bak "s/b'{'/$2/" src/tests.rs; rm src/tests.rs.bak; fi
+  if [ -n "$4" ]; then sed -i.bak "s/still/$4/" src/lib.rs; rm src/lib.rs.bak; fi
+}
+write_literals_base
+commit base
+
+literal_case() {
+  git checkout -q -B case main
+  write_literals_head "$@"
+}
+literal_case '"{ not json"' "" 'r#"{"#' ""
+verify "braces and quotes in literals and comments do not cut items" 0 "move-only ok" main
+literal_case '"{ not json }"' "" 'r#"{"#' ""
+verify "a changed string with a brace is not a move" 1 "not a move: the items above" main
+literal_case '"{ not json"' "b'}'" 'r#"{"#' ""
+verify "a changed byte char is not a move" 1 "not a move: the items above" main
+literal_case '"{ not json"' "" 'r#"}"#' ""
+verify "a changed raw string is not a move" 1 "not a move: the items above" main
+literal_case '"{ not json"' "" 'r#"{"#' "changed"
+verify "a changed word in a block comment is not a move" 1 "not a move: the items above" main
+# literal_edit <name> <sed script on the moved tests.rs>
+literal_edit() {
+  literal_case '"{ not json"' "" 'r#"{"#' ""
+  sed -i.bak "$2" src/tests.rs
+  rm src/tests.rs.bak
+  verify "$1" 1 "not a move: the items above" main
+}
+literal_edit "a changed byte string is not a move" 's/b"{/b"}/'
+literal_edit "a changed c string is not a move" 's/c"{"/c"}"/'
+literal_edit "a changed escaped apostrophe char is not a move" "s/'\\\\''/'\"'/"
+literal_edit "a changed escaped backslash char is not a move" "s|'\\\\\\\\'|'/'|"
+
+# The case of the issue: a lone `{` in a string, the next test moved to another file.
+new_crate "$tmp/issue"
+cat >src/lib.rs <<'RS'
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bad_json() {
+        assert!("{ not json".starts_with('{'));
+    }
+
+    #[test]
+    fn other() {
+        assert_eq!(1 + 1, 2);
+    }
+}
+RS
+commit base
+git checkout -q -B case main
+cat >src/lib.rs <<'RS'
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bad_json() {
+        assert!("{ not json".starts_with('{'));
+    }
+}
+
+#[cfg(test)]
+mod more;
+RS
+cat >src/more.rs <<'RS'
+#[test]
+fn other() {
+    assert_eq!(1 + 1, 2);
+}
+RS
+verify "a { in a string does not swallow the items after it" 0 "move-only ok" main
+
+# Plain comments and strings: spaces at the end of a `//` comment, a comma in a string.
+new_crate "$tmp/plain"
+cat >src/lib.rs <<'RS'
+// note   
+pub fn a() -> &'static str {
+    "a, b"
+}
+
+pub fn b() -> char {
+    '{'
+}
+
+pub fn c() -> &'static str {
+    "ab"
+}
+RS
+commit base
+plain_case() {
+  git checkout -q -B case main
+  sed -i.bak "$1" src/lib.rs
+  rm src/lib.rs.bak
+}
+plain_case 's/note   /note/'
+verify "trailing spaces in a // comment are not a change" 0 "move-only ok" main
+plain_case 's/"a, b"/"a b"/'
+verify "a comma dropped from a string is not a move" 1 "not a move: the items above" main
+plain_case "s/'{'/'}'/"
+verify "a changed char is not a move" 1 "not a move: the items above" main
+plain_case 's/"ab"/"a b"/'
+verify "a space added in a string is not a move" 1 "not a move: the items above" main
+plain_case 's/"a, b"/"a,  b"/'
+verify "a wider space run in a string is not a change" 0 "move-only ok" main
 
 exit "$failed"

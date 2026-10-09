@@ -233,12 +233,11 @@ anything else the usual review finds.
   substring is still a defect under item 1; this is only about how new IDs are made.
 - **Touch target sizes** (#76, #78, #217).
 - **Limits of the shell parsers in `scripts/`** that are already written down in the script, such as
-  `check-move-only.sh` not following nested block comments or token trees inside macros (#278, #316).
+  `check-move-only.sh` not following block comments in its line-by-line stage or token trees inside
+  macros (#278, #316).
 - **Adding tests only for coverage** (#226, #275, #332). A regression test for the behaviour a change
   fixes is still worth asking for, as a want.
 - **The known exceptions to rule 3 in `docs/architecture.md`** (from that page, not the bots): the
   board's session clean-up (`board/session/clean_up.rs`) and `kernel::worktree_state` naming
   `.claude/adjutant-*` and `task-brief.md` in a worktree, and
   `#[cfg(test)] pub(crate) use store::...` for other modules' test fixtures.
-- **A failing `move-only` job that the PR explains as #340**, a brace inside a string or char
-  literal in a moved item. Check that the item it reports does hold such a literal.

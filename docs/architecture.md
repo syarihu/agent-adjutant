@@ -156,8 +156,7 @@ fixtures.
    hand on the branch first. It compares the committed HEAD with the merge base (where the branch
    left the base) token by token and the test counts of both, and refuses uncommitted changes under
    `src/` or `tests/`. `make check` runs only its self-test, `scripts/test-check-move-only.sh`. The
-   CI job is not a required check: while #340 is open, a brace inside a string or char literal can
-   fail a correct move. When it does, say so in the PR and name the item the job reports.
+   CI job is not a required check.
    A PR without the label is not checked.
 10. Records shared across versions. `adj server restart` leaves running hubs and workers on the old
     binary, so old and new binaries share the state dir. Paths, key names, lock names, the
