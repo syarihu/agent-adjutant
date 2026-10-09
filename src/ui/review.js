@@ -1,17 +1,5 @@
 // ── the review view ───────────────────────────────────────────────────
 
-let focused = null;
-
-/* How the review queue names a gate: its board and id, since gates of several boards share it.
-   On a board of its own there is no board to name. */
-const gateRef = g => g._slug ? `${g._slug}/${g.id}` : g.id;
-/* The open gate or record a ref names; a plain id from an old link takes the first of that id. */
-function gateByRef(ref) {
-  const gates = state.gates || [];
-  return gates.find(g => gateRef(g) === ref) || recordByRef(ref)
-    || (ref && !String(ref).includes('/') ? gates.find(g => g.id === ref) : undefined);
-}
-
 /* A session waiting on a permission prompt or a question, listed beside the gates: it cannot be
    answered here, so its button opens that session's terminal. Named by board, row id and moment,
    since the wait is that pair. */
@@ -23,18 +11,9 @@ const waitByRef = ref => reviewWaits().find(w => waitRef(w) === ref);
 const waitLabel = w => permissionLabel({ agentSession: { request: w.request } });
 const terminalIcon = '<span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">terminal</span>';
 
-const renderDiff = d => esc(d).split('\n').map(l => {
-  const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
-            : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : '';
-  return `<div class="${cls}">${l || ' '}</div>`;
-}).join('');
 
 /* ── the queue ── */
 
-/* What was answered in this page, kept until it is reloaded: ref → { gate, decision, at }. It
-   stays in the list, dimmed, under 処理済み, so a slip of the hand can be seen; it is not in the
-   counts or on the 人 board, which go by what the boards still list. */
-const reviewDone = new Map();
 /* The unanswered refs in the order the list was last drawn: what 前へ, 次へ and the move after
    an answer go through. */
 let reviewOrder = [];
@@ -547,9 +526,5 @@ document.getElementById('review').addEventListener('change', e => {
   savePrefs();
 });
 
-/* The task a gate belongs to; with several boards, the one on the gate's own. */
-function taskOfGate(g) {
-  return (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
-}
 
 registerView('review', { render: () => redrawReview(), reset: () => disposeTermSlot(reviewTerm) });
