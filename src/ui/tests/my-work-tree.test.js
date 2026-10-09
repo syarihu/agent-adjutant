@@ -202,10 +202,14 @@ test('chips: what waits comes from the judged entry of the hub; an answered gate
   const judged = judgedOf({ 'b-own/hub:own': { live: [{ kind: 'gate' }, { kind: 'gate' }], cls: 'later' } });
   const c = chipsOf(repo, judged)[0];
   assert.deepStrictEqual([c.waits, c.cls], [2, 'later']);
-  ctx.answeredGates = new Map([['b-own/g1', true]]);
-  // The judged entry is the page's own reading of the same answered gates; the row itself is no longer waiting.
-  assert.strictEqual(plain(run('workRepoHubChips(repo, 1, new Map())', { repo }))[0].s.waiting, null);
-  ctx.answeredGates = new Map();
+  const gates = ctx.answeredGates;
+  try {
+    ctx.answeredGates = new Map([['b-own/g1', true]]);
+    // The judged entry is the page's own reading of the same answered gates; the row itself is no longer waiting.
+    assert.strictEqual(plain(run('workRepoHubChips(repo, 1, new Map())', { repo }))[0].s.waiting, null);
+  } finally {
+    ctx.answeredGates = gates;
+  }
 });
 
 const chip = (id, parent, key = id, slug = `b-${id}`, waits = 0) => ({ id, key: `${slug}/hub:${id}`, nwo: 'acme/w', hub: { id, parent, key: parent ? key : id, slug }, s: { present: true }, st: 'idle', waits, word: '待機中' });
@@ -343,13 +347,16 @@ test('placing: two parents sharing a hub slug each get the chip of their own key
 
 test('a heading with only chips has nothing to fold; a node with items or an empty note keeps its fold button', () => {
   // The pieces the heading calls are stubbed for this test only, and put back after.
-  const real = { f: ctx.workFoldButton, h: ctx.workHubChipsHtml };
+  const had = ['workFoldButton', 'workHubChipsHtml', 'workSegments', 'nav'].map(k => [k, k in ctx, ctx[k]]);
   const html = node => run('workHeadHtml(node, false)', { node, nav: {}, workSegments: () => [], workFoldButton: () => '<fold>', workHubChipsHtml: () => '<chips>' });
-  const only = html({ kind: 'repo', nwo: 'a/b', key: 'repo:a/b', rows: [], items: [], hubs: [{}] });
-  assert.ok(only.includes('wk-fold-gap') && !only.includes('<fold>'));
-  assert.ok(html({ kind: 'repo', nwo: 'a/b', key: 'k', rows: [], items: [{}], hubs: [{}] }).includes('<fold>'));
-  assert.ok(html({ kind: 'band', label: 'x', key: 'band:new', rows: [], items: [], hubs: undefined, empty: 'e' }).includes('<fold>'));
-  Object.assign(ctx, { workFoldButton: real.f, workHubChipsHtml: real.h });
+  try {
+    const only = html({ kind: 'repo', nwo: 'a/b', key: 'repo:a/b', rows: [], items: [], hubs: [{}] });
+    assert.ok(only.includes('wk-fold-gap') && !only.includes('<fold>'));
+    assert.ok(html({ kind: 'repo', nwo: 'a/b', key: 'k', rows: [], items: [{}], hubs: [{}] }).includes('<fold>'));
+    assert.ok(html({ kind: 'band', label: 'x', key: 'band:new', rows: [], items: [], hubs: undefined, empty: 'e' }).includes('<fold>'));
+  } finally {
+    for (const [k, had_, v] of had) { if (had_) ctx[k] = v; else delete ctx[k]; }
+  }
 });
 
 test('the folded hub-waits item is an image with its own label', () => {
@@ -365,4 +372,19 @@ test('a hub that is not running reads as not running even with a gate open, and 
   assert.deepStrictEqual([c.st, c.word, c.waits], ['stopped', '動いていない', 1]);
   const html = run('workHubChipsHtml([c], "acme/a", false)', { c });
   assert.ok(html.includes('wk-hub off') && html.includes('hub を起動') && html.includes('front_hand'));
+});
+
+test('placing: a keyed chip no parent matches goes to the repository heading, even when a parent shares its slug', () => {
+  const lone = chip('p9', true, '#9', 'b-shared');
+  const nodes = [parentNode('#2', 'b-shared')];
+  const rest = plain(run('workPlaceHubChips(chips, nodes)', { chips: [lone], nodes }));
+  assert.deepStrictEqual(rest.map(c => c.id), ['p9']);
+  assert.strictEqual(nodes[0].hubs.length, 0);
+});
+
+test('placing: a chip with no key falls back to the parent whose hub has its slug', () => {
+  const keyless = { ...chip('p1', true, '#2', 'b-p1'), hub: { id: 'p1', parent: true, key: null, slug: 'b-p1' } };
+  const nodes = [parentNode('#2', 'b-p1')];
+  assert.strictEqual(plain(run('workPlaceHubChips(chips, nodes)', { chips: [keyless], nodes })).length, 0);
+  assert.deepStrictEqual(plain(nodes[0].hubs.map(c => c.id)), ['p1']);
 });

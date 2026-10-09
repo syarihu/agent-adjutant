@@ -468,14 +468,15 @@ function workPlaceHubChips(chips, parentNodes) {
   const pool = [...chips];
   const give = (node, chip) => { pool.splice(pool.indexOf(chip), 1); node.hubs = [chip]; };
   const real = parentNodes.filter(n => !n.parent.missing);
-  // By the parent's own key first, so two parents run by one hub slug each get the chip that belongs to them.
+  // By the parent's own key first, so two parents run by one hub slug each get the chip that belongs to them; then a chip with no key by slug.
   for (const node of real) {
     const chip = pool.find(c => c.hub.parent && c.hub.slug === node.parent.hub && c.hub.key === node.parent.key);
     if (chip) give(node, chip);
   }
   for (const node of real) {
     if (node.hubs.length) continue;
-    const chip = pool.find(c => c.hub.parent && c.hub.slug === node.parent.hub);
+    // Only a chip with no key of its own: a keyed one that no parent matched goes on the repository's heading.
+    const chip = pool.find(c => c.hub.parent && !c.hub.key && c.hub.slug === node.parent.hub);
     if (chip) give(node, chip);
   }
   return pool;
