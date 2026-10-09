@@ -76,8 +76,9 @@ function workEntries(doc, isGateDone = () => false) {
     const orphans = [];
     for (const t of repo.turns || []) {
       for (const g of t.gates || []) {
-        const id = g.task || t.task?.id;
-        // A gate that names no task is the waiting of the session it was opened from, below.
+        const id = t.task?.id;
+        // A gate whose task the board does not list (the turn has none, whatever `gate.task` names) is the waiting of the
+        // session it was opened from, or its own row, below: a row keyed by a task nobody can open could not be judged.
         if (!id) { orphans.push(g); continue; }
         const e = entry(t.board, id);
         if (!e.task && t.task) e.task = t.task;

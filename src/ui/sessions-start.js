@@ -468,7 +468,8 @@ setInterval(() => {
   // The give-up of a request that is waiting is a time too. Settled here, whichever panel is open, so that a session that
   // started is opened (settleStarts); a hub's panel is drawn again only when what its card says changed (a typed comment
   // is held by the panel as for any redraw).
-  if (sessView.starts.length) {
+  if (!sessView.starts.length) pendingSig = '';
+  else {
     const pend = JSON.stringify(sessionPendingRows().map(p => [p.key, p.kind, p.text, p.canStart, p.busy]));
     if (pend !== pendingSig) {
       pendingSig = pend;

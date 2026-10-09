@@ -343,3 +343,15 @@ test('the row just dealt with is left out, new still or not, and one that is not
   assert.equal(workNextNew(order, 'z', ['b', 'c']), 'b');
   assert.equal(workNextNew(order, 'z', []), null);
 });
+
+test('a gate whose task the board does not list gets no row keyed by that task, but its own', () => {
+  const g = { id: 'g9', kind: 'plan', slug: SLUG, openedAt: stamp(T0 + 10), task: 'gone-1' };
+  const entries = one({ turns: [{ board: SLUG, gates: [g] }] });
+  assert.equal(entries.some(e => e.id === `${SLUG}/gone-1`), false);
+  const e = entries.find(x => x.ref === 'gate:' + SLUG + '/g9');
+  assert.ok(e, 'the gate is a row of its own');
+  assert.equal(e.items[0].key, `${SLUG}/g9`);
+  // A turn that has its task is still keyed by it.
+  const listed = one({ turns: [{ board: SLUG, task: task('1'), gates: [{ ...g, task: '1' }] }] });
+  assert.ok(listed.some(x => x.id === `${SLUG}/1`));
+});

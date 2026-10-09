@@ -633,8 +633,10 @@ function openGateInWork(g) {
   const slug = g._slug;
   if (!multiBoard || !slug) return goToGate(g.id, slug || null);
   const hubId = boards.find(b => b.slug === slug)?.hubId;
-  const ref = g.task || (g.answeredByHub && hubId ? HUB_REF + hubId : `${WORK_GATE_REF}${slug}/${g.id}`);
-  go({ board: slug, view: 'work', task: ref, pane: g.task ? paneOfGate(g) : 'detail' });
+  // A task is the ref only when the work document lists it: else the gate's own.
+  const listed = !!g.task && workRepos().some(r => [...(r.rows || []), ...(r.turns || [])].some(x => x.board === slug && x.task?.id === g.task));
+  const ref = (listed ? g.task : null) || (g.answeredByHub && hubId ? HUB_REF + hubId : `${WORK_GATE_REF}${slug}/${g.id}`);
+  go({ board: slug, view: 'work', task: ref, pane: listed ? paneOfGate(g) : 'detail' });
 }
 
 /* Where a waiting gate is read and answered: its task's panel, in the tab of its kind, when the
