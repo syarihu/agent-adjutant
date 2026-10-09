@@ -66,6 +66,8 @@ function withDiff(record, task, base = baseOf(task), data = state) {
   return kept?.diff != null ? { ...record, diff: kept.diff } : record;
 }
 const diffPending = g => !!g.diffSize && g.diff == null;
+/* What the timeline says until the answered gates have been read. */
+const HISTORY_LOADING = `<div class="source">回答済みのものを読み込んでいる…</div>`;
 const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読み込み中…</div></div>`;
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
@@ -632,7 +634,7 @@ function timelineHtml(task, all, data = state, base = baseOf(task)) {
       `${mins != null ? `（${minutesLabel(mins)}前から）` : ''}</div></div></li>`;
   }
   h += `</ol>`;
-  if (!histories[historyKey(task, base)]?.loaded) h += `<div class="source">回答済みのものを読み込んでいる…</div>`;
+  if (!histories[historyKey(task, base)]?.loaded) h += HISTORY_LOADING;
   return h;
 }
 

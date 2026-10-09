@@ -9,6 +9,8 @@ const vm = require('node:vm');
 const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 const dlgSrc = read('card-dialog.js');
 const decSrc = read('decide.js');
+const utilSrc = read('util.js');
+const viewSrc = read('task-view.js');
 const cut = (src, re) => {
   const m = src.match(re);
   assert.ok(m, `not found: ${re}`);
@@ -97,28 +99,30 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
     replaceChildren() { this.draws++; },
   };
   const goneEl = { textContent: '' };
+  const updateEl = { innerHTML: '' };
   const body = { scrollTop: 0, focused: 0, getBoundingClientRect: () => ({ top: 0 }), focus() { this.focused++; } };
   const index = { innerHTML: '', hidden: true, replaceChildren() { this.innerHTML = ''; } };
   const titleEl = { textContent: 'T' }, subEl = { textContent: '' };
   const dlg = {
     open: true, closed: false, close() { this.open = false; this.closed = true; }, handlers: {},
     addEventListener(type, f) { this.handlers[type] = f; }, querySelectorAll: sel => col.querySelectorAll(sel),
-    querySelector: sel => sel === '.card-dialog-gone' ? goneEl : sel === '.card-dialog-body' ? body : sel === '.card-dialog-index' ? index
+    querySelector: sel => sel === '.card-dialog-gone' ? goneEl : sel === '.card-dialog-update' ? updateEl : sel === '.card-dialog-body' ? body : sel === '.card-dialog-index' ? index
       : sel === '.card-dialog-content' ? content : sel === '.card-dialog-dock' ? col
       : sel === '#card-dialog-title' ? titleEl : sel === '#card-dialog-sub' ? subEl : null,
   };
   const world = { waiting, subject: 't1', exists: true, hidden: false, nowKnown: true, html: 'v1', groups: [], dockMark: '', title: 'T',
-    sent: [], goGate: [], closed: 0 };
+    sent: [], goGate: [], closed: 0, shown: [], marks: 0, recorded: [] };
   const c = vm.createContext({
     selectedTaskId: 't1', tp: () => ({ hidden: world.hidden }), state: { get now() { return world.nowKnown ? 1 : null; } },
     document: { activeElement: focused ? { matches: () => true } : null },
     taskById: () => world.exists ? { id: 't1', title: world.title } : undefined, cardDialogFocusTarget: () => null, Date,
-    gatesOf: () => world.waiting.map(r => ({ id: r, openedAt: r })), gateRef: g => g.id, isWaiting: g => world.waiting.includes(g.id), claimSeq: () => 1,
+    gatesOf: () => [...world.waiting.map(r => ({ id: r, openedAt: r })), ...world.recorded.map(r => ({ id: r, openedAt: r, decision: 'approve' }))], gateRef: g => g.id, isWaiting: g => world.waiting.includes(g.id), claimSeq: () => 1,
     cardDialogEl: () => dlg, cardDialogContent: () => content, cardDialogPanelComment: () => null,
     cardDialogTaskGroups: () => world.groups, cardDialogTaskHtml: () => ({ index: 'i', content: world.html }),
     cardDialogDockHtml: ws => `DOCK${ws.map(g => g.id).join(',')}${world.dockMark}`,
     cardDialogFill: html => ({ docks: html.startsWith('DOCK') ? world.waiting.map(r => dockEl(r)) : [] }),
-    cardDialogApplyTarget() {}, cardDialogSpy() {}, cardDialogCardEl: () => null,
+    cardDialogApplyTarget() {}, cardDialogSpy() {}, cardDialogCardEl: () => null, esc: x => x, clearTimeout() {}, setTimeout() { return 1; },
+    cardDialogShowUpdate: ch => { world.shown.push(ch); }, cardDialogMarkUpdated: () => { world.marks++; },
     decideAct: async b => { world.sent.push(b.dataset.act); world.waiting = world.waiting.filter(r => r !== b.ref); return true; },
     gateByRef: ref => ({ id: ref, openedAt: ref }), commentBox: ref => col.docks.find(d => d.ref === ref)?.gate.ta || null,
     closeCardDialog: () => { world.closed++; }, secsStamp: secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, ''), cardDialogGoGate: ref => { world.goGate.push(ref); },
@@ -126,6 +130,11 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
   vm.runInContext([
     cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};\nconst CARD_DIALOG_GONE = [^\n]*;\nconst CARD_DIALOG_GATE_GONE = [^\n]*;\nconst CARD_DIALOG_TASK_GONE = [^\n]*;\nconst CARD_DIALOG_NONE_LEFT = [^\n]*;\nconst cardDialogDrafts = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogDockEl = [^\n]*;/m),
+    cut(dlgSrc, /^const cardDialogUpdateEl = [^\n]*;/m),
+    cut(utilSrc, /^const REL_TIME_RE = [^\n]*;/m), cut(utilSrc, /^const timeFree = [^\n]*;/m),
+    cut(viewSrc, /^const HISTORY_LOADING = [^\n]*;/m), cut(viewSrc, /^const DIFF_LOADING = [^\n]*;/m),
+    cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m),
+    ...['cardDialogChanged', 'cardDialogHideUpdate', 'cardDialogResetUpdates'].map(n => fnSrc(dlgSrc, n)),
     ...['cardDialogStrip', 'cardDialogStripEl', 'cardDialogNotice', 'cardDialogNoticeText', 'cardDialogTaskSync', 'cardDialogDockGate',
       'cardDialogFocusOf', 'cardDialogFocusBack', 'cardDialogShowDock', 'cardDialogSetDock', 'cardDialogWithAnswered',
       'cardDialogAnswer', 'cardDialogAfterAnswer', 'cardDialogSync', 'cardDialogGateButton', 'cardDialogFollowDock'].map(n => fnSrc(dlgSrc, n)),
@@ -142,7 +151,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
     c.b = { ref, closest: () => ({ dataset: { gate: ref } }), matches: sel => !!choice && sel === '.pick[data-choice]', dataset: { act, choice } };
     return vm.runInContext('cardDialogAnswer(b)', c);
   };
-  return { c, dlg, goneEl, content, col, body, world, titleEl, index, sync, dockOf, click, state: () => vm.runInContext('cardDialog', c) };
+  return { c, dlg, goneEl, updateEl, content, col, body, world, titleEl, index, sync, dockOf, click, state: () => vm.runInContext('cardDialog', c) };
 }
 
 test('a redraw carries what was typed for each gate, in the dock shown and in the ones that are not', () => {
@@ -528,9 +537,13 @@ test('what a closed dialog drew does not come back in the next opening', () => {
   w.sync();
   assert.strictEqual(w.col.docks.length, 2, 'the stripped dock is kept while open');
   assert.notStrictEqual(w.goneEl.textContent, '');
-  vm.runInContext(`cardDialog.answered.set('Z', {}); cardDialog.noMore = true`, w.c);
+  vm.runInContext(`cardDialog.answered.set('Z', {}); cardDialog.noMore = true; cardDialog.cardSigs.set('k', 'x'); cardDialog.updated.add('k');
+    cardDialog.updatedDocks.add('B'); cardDialog.waitingRefs = ['B']; cardDialog.updateText = 'T'; cardDialog.seenTimers.set('k', 9)`, w.c);
+  w.updateEl.innerHTML = '<span>T</span>';
   w.dlg.close();
   w.dlg.handlers.close();
+  assert.strictEqual(vm.runInContext(`JSON.stringify([cardDialog.cardSigs.size, cardDialog.updated.size, cardDialog.updatedDocks.size, cardDialog.seenTimers.size, cardDialog.waitingRefs.length, cardDialog.updateText])`, w.c), '[0,0,0,0,0,""]');
+  assert.strictEqual(w.updateEl.innerHTML, '');
   assert.strictEqual(w.col.docks.length, 0);
   assert.strictEqual(w.col.hidden, true);
   assert.strictEqual(w.goneEl.textContent, '');
@@ -610,7 +623,7 @@ test('the index keeps the group that was clicked until the person scrolls', () =
   const c = vm.createContext({
     cardDialogEl: () => ({ querySelector: () => body, querySelectorAll: () => ['a', 'b', 'c'].map(button) }),
     cardDialogContent: () => ({ querySelectorAll: () => ['a', 'b', 'c'].map(section) }),
-    cardDialogFollowDock: k => followed.push(k),
+    cardDialogFollowDock: k => followed.push(k), cardDialogSeeUpdated() {},
   });
   vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), ...['cardDialogActiveGroup', 'cardDialogSpy'].map(n => fnSrc(dlgSrc, n)),
     cut(dlgSrc, /^const cardDialogUserMoved = [^\n]*/m), "cardDialog.mode = 'task';"].join('\n'), c);
@@ -725,4 +738,430 @@ test('timeline links become jumps inside the dialog, or plain text when the gate
   assert.strictEqual(withCard.replaced, undefined);
   assert.strictEqual(without.replaced.text, 'Gone');
   assert.strictEqual(without.attrs['data-cd-goto'], undefined);
+});
+
+/* ---- What changed while it is open (#630) ---- */
+
+test('timeFree makes every relative time the code prints alike, and leaves counts alone', () => {
+  const c = vm.createContext({});
+  vm.runInContext([cut(utilSrc, /^const minutesLabel = [^\n]*;/m), cut(utilSrc, /^const agoLabel = [^\n]*;/m),
+    cut(utilSrc, /^const REL_TIME_RE = [^\n]*;/m), cut(utilSrc, /^const timeFree = [^\n]*;/m)].join('\n'), c);
+  const same = vm.runInContext(`(() => {
+    const forms = [m => agoLabel(m), m => agoLabel(m) + 'から', m => minutesLabel(m) + '前から', m => minutesLabel(m) + '待ち', m => '（' + agoLabel(m) + '）に記録'];
+    // Each form reads one way whatever the minutes: 「たった今から」 and 「1分前から」 too.
+    return JSON.stringify(forms.map(f => { const out = new Set(); for (let m = 0; m <= 3000; m++) out.add(timeFree(f(m))); return [...out]; }));
+  })()`, c);
+  assert.strictEqual(same, '[["·"],["·から"],["·から"],["·"],["（·）に記録"]]');
+  assert.strictEqual(vm.runInContext(`timeFree('PR #57 · 5 files · 3 commits <b>12 日</b>')`, c), 'PR #57 · 5 files · 3 commits <b>12 日</b>');
+  assert.strictEqual(vm.runInContext(`timeFree(agoLabel(5)) === timeFree(agoLabel(90))`, c), true);
+});
+
+/* cardDialogChanged and cardDialogUpdateText, from the groups alone. */
+function changeWorld() {
+  const c = vm.createContext({});
+  vm.runInContext([cut(utilSrc, /^const REL_TIME_RE = [^\n]*;/m), cut(utilSrc, /^const timeFree = [^\n]*;/m),
+    cut(viewSrc, /^const HISTORY_LOADING = [^\n]*;/m), cut(viewSrc, /^const DIFF_LOADING = [^\n]*;/m),
+    cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m), fnSrc(dlgSrc, 'cardDialogChanged'), fnSrc(dlgSrc, 'cardDialogUpdateText')].join('\n'), c);
+  const card = (key, html, o = {}) => ({ key, label: o.label || key, html, ...(o.gate ? { gate: o.gate } : {}) });
+  const group = (key, cards, o = {}) => ({ key, label: o.label || key, cards, ...(o.gate ? { gate: o.gate } : {}) });
+  const changed = (prev, groups, answeredHere = []) => {
+    c.prev = prev; c.groups = groups; c.here = new Set(answeredHere);
+    // Arrays made in the context are not the test's own: through JSON they compare.
+    return JSON.parse(vm.runInContext('JSON.stringify((r => ({ ...r, groups: [...r.groups] }))(cardDialogChanged(prev ? cardDialogCardSigs(prev) : new Map(), groups, { answeredHere: here })))', c));
+  };
+  return { c, card, group, changed, text: (ch, groups, most) => { c.ch = ch; c.gs = groups; return vm.runInContext(`cardDialogUpdateText(ch, gs${most ? ', ' + most : ''})`, c); } };
+}
+
+test('a change is a card that is new or says something else, not time passing', () => {
+  const w = changeWorld();
+  const { card, group } = w;
+  const before = [group('history', [card('history:timeline', '<p>3分前 たった今</p>', { label: '経過' })]), group('details', [card('details:kv', '<p>a</p>')])];
+  const at = (a, b) => [group('history', [card('history:timeline', `<p>${a} ${b}</p>`, { label: '経過' })]), group('details', [card('details:kv', '<p>a</p>')])];
+  // The first fill is not a change.
+  assert.deepStrictEqual(w.changed(null, before).cards, []);
+  // Only the minutes counting up.
+  assert.deepStrictEqual(w.changed(at('3分前', 'たった今'), at('4分前', '1分前')).cards, []);
+  assert.deepStrictEqual(w.changed(at('たった今', '1分未満前から'), at('1分前', '2日前から')).cards, []);
+  // Another content marks its card and its group, in the order they are read.
+  const edited = [group('history', [card('history:timeline', '<p>a new line</p>', { label: '経過' })]), group('details', [card('details:kv', '<p>b</p>'), card('details:lastmsg', 'hi')])];
+  const ch = w.changed(before, edited);
+  assert.deepStrictEqual(ch.cards, ['history:timeline', 'details:kv', 'details:lastmsg']);
+  assert.deepStrictEqual(ch.groups, ['history', 'details']);
+  assert.strictEqual(ch.firstKey, 'history:timeline');
+  assert.deepStrictEqual(w.changed(before, before).cards, []);
+});
+
+test('a waiting gate that opens is marked with its whole group; a loading note giving way is not a change', () => {
+  const w = changeWorld();
+  const { card, group } = w;
+  const wait = ref => group(`waiting:${ref}`, [card(`gate:${ref}:head`, 'h', { gate: ref, label: '止まっている理由' }), card(`gate:${ref}:facts`, 'f', { gate: ref })], { gate: ref, label: `【計画】${ref}` });
+  const base = [group('history', [card('history:timeline', 'x')])];
+  const ch = w.changed([wait('A'), ...base], [wait('A'), wait('B'), ...base]);
+  assert.deepStrictEqual(ch.cards, ['gate:B:head', 'gate:B:facts']);
+  assert.deepStrictEqual(ch.groups, ['waiting:B']);
+  assert.deepStrictEqual(ch.newGates, [{ ref: 'B', key: 'waiting:B', label: '【計画】B' }]);
+  // A diff or the history that has been read is not an update; another card changing next to it is.
+  const loading = [group('diff', [card('review:diff', vm.runInContext('DIFF_LOADING', w.c))]), group('history', [card('history:timeline', 'x' + vm.runInContext('HISTORY_LOADING', w.c))])];
+  const loaded = [group('diff', [card('review:diff', '<div>+ line</div>')]), group('history', [card('history:timeline', 'x <li>2件</li>')])];
+  assert.deepStrictEqual(w.changed(loading, loaded).cards, []);
+  // The answered gates the history brought in are not new either.
+  const withAnswered = [group('answered', [card('gate:Z', 'old answer', { gate: 'Z' })]), ...loaded];
+  assert.deepStrictEqual(w.changed(loading, withAnswered).cards, []);
+  // While it is still loading, the rest is judged as always.
+  assert.deepStrictEqual(w.changed(loading, [...loading, group('details', [card('details:kv', 'k')])]).cards, ['details:kv']);
+});
+
+test('a gate answered here is not marked; one answered elsewhere is marked by its new answered card', () => {
+  const w = changeWorld();
+  const { card, group } = w;
+  const waiting = group('waiting:A', [card('gate:A:head', 'h', { gate: 'A' })], { gate: 'A', label: '【計画】A' });
+  const answered = group('answered', [card('gate:A', 'done', { gate: 'A', label: '【計画】A' })]);
+  assert.deepStrictEqual(w.changed([waiting], [answered], ['A']).cards, []);
+  const ch = w.changed([waiting], [answered]);
+  assert.deepStrictEqual(ch.cards, ['gate:A']);
+  assert.deepStrictEqual(ch.groups, ['answered']);
+  assert.deepStrictEqual(ch.newGates, []);
+  assert.deepStrictEqual(ch.answered, ['gate:A']);
+  // Its words are 「回答済みになりました」, not 「更新」; a changed answered card that was already there is only updated.
+  assert.strictEqual(w.text(ch, [answered]), '【計画】A が回答済みになりました');
+  assert.deepStrictEqual(w.changed([answered], [group('answered', [card('gate:A', 'done again', { gate: 'A', label: '【計画】A' })])]).answered, []);
+});
+
+test('going into a loading state, or ticking a manual check, is not a change', () => {
+  const w = changeWorld();
+  const { card, group } = w;
+  const hist = html => [group('history', [card('history:timeline', html)])];
+  const diff = html => [group('diff', [card('review:diff', html)])];
+  const loading = name => vm.runInContext(name, w.c);
+  assert.deepStrictEqual(w.changed(hist('<li>x</li>'), hist('<li>x</li>' + loading('HISTORY_LOADING'))).cards, []);
+  assert.deepStrictEqual(w.changed(diff('<div>+ a</div>'), diff(loading('DIFF_LOADING'))).cards, []);
+  // And out of it again, after having been in it.
+  assert.deepStrictEqual(w.changed(diff(loading('DIFF_LOADING')), diff('<div>+ b</div>')).cards, []);
+  // The word in a report is text, not the checkbox's attribute.
+  assert.deepStrictEqual(w.changed(hist('<p>the box is checked here</p>'), hist('<p>the box is here</p>')).cards, ['history:timeline']);
+  assert.deepStrictEqual(w.changed(hist('<p>ok</p>'), hist('<p>ok checked </p>')).cards, ['history:timeline']);
+  const manual = checked => [group('g', [card('gate:A:manual', `<input type="checkbox" data-manual-index="0"${checked ? ' checked' : ''} style="x"><span>a</span>`)])];
+  assert.deepStrictEqual(w.changed(manual(false), manual(true)).cards, []);
+});
+
+test('the notice names the cards by label, once each, three at most, and a gate that joined first', () => {
+  const w = changeWorld();
+  const { card, group } = w;
+  const groups = [
+    group('waiting:B', [card('gate:B:head', 'h', { label: '止まっている理由' })], { gate: 'B', label: '【計画】B の計画' }),
+    group('history', [card('history:timeline', '', { label: '経過' })]),
+    group('details', [card('details:lastmsg', '', { label: '最後のメッセージ' }), card('details:kv', '', { label: '詳細' }), card('x', '', { label: '経過' }), card('y', '', { label: '差分' })]),
+  ];
+  const ch = keys => ({ cards: keys, newGates: [] });
+  assert.strictEqual(w.text(ch(['history:timeline', 'details:lastmsg']), groups), '経過・最後のメッセージが更新されました');
+  assert.strictEqual(w.text(ch(['history:timeline', 'x']), groups), '経過が更新されました');
+  assert.strictEqual(w.text(ch(['history:timeline', 'details:lastmsg', 'details:kv', 'y']), groups), '経過・最後のメッセージ・詳細ほか1件が更新されました');
+  const fresh = { cards: ['gate:B:head', 'details:kv'], newGates: [{ ref: 'B', key: 'waiting:B', label: '【計画】B の計画' }] };
+  assert.strictEqual(w.text(fresh, groups), '判断待ちに【計画】B の計画 が加わりました。詳細が更新されました');
+  assert.strictEqual(w.text({ cards: ['gate:B:head'], newGates: fresh.newGates }, groups), '判断待ちに【計画】B の計画 が加わりました');
+});
+
+test('while a comment is typed nothing is compared; once the focus has left, what piled up is marked together', () => {
+  const w = taskWorld();
+  const card = (key, html, label = key) => ({ key, label, html });
+  const draw = (...cards) => { w.world.groups = [{ key: 'g', label: 'g', cards }]; w.world.html = cards.map(c => c.html).join(); };
+  draw(card('a', 'one 1分前'), card('b', 'two'));
+  w.sync();
+  assert.deepStrictEqual([...w.state().cardSigs.keys()], ['a', 'b']);
+  assert.strictEqual(w.world.shown.length, 0);
+  w.c.document.activeElement = { matches: () => true };
+  draw(card('a', 'ONE 2分前'), card('b', 'two'));
+  w.sync();
+  draw(card('a', 'ONE 3分前'), card('b', 'TWO'), card('c', 'three'));
+  w.sync();
+  assert.strictEqual(w.state().held, true);
+  assert.strictEqual(w.state().cardSigs.get('a'), 'one ·', 'what was last drawn is the base');
+  assert.strictEqual(w.state().updated.size, 0);
+  assert.strictEqual(w.world.shown.length, 0);
+  w.c.document.activeElement = null;
+  w.sync();
+  assert.deepStrictEqual([...w.state().updated], ['a', 'b', 'c']);
+  assert.strictEqual(w.world.shown.length, 1);
+  assert.strictEqual(w.world.shown[0].firstKey, 'a');
+  assert.strictEqual(w.state().cardSigs.get('a'), 'ONE ·');
+  // Time passing alone neither marks nor shows a notice, and a card that is gone is no longer marked.
+  draw(card('a', 'ONE 5分前'), card('b', 'TWO'));
+  w.sync();
+  draw(card('a', 'ONE 6分前'), card('b', 'TWO'));
+  w.sync();
+  assert.strictEqual(w.world.shown.length, 1);
+  assert.deepStrictEqual([...w.state().updated], ['a', 'b']);
+});
+
+test('a gate that opens marks its switch; the first fill and the forced redraw of an answer mark nothing', async () => {
+  const w = taskWorld({ waiting: ['A'] });
+  const wait = ref => ({ key: `waiting:${ref}`, label: ref, gate: ref, cards: [{ key: `gate:${ref}:head`, label: 'h', html: ref, gate: ref }] });
+  w.world.groups = [wait('A')]; w.world.html = 'A';
+  w.sync(true);
+  assert.strictEqual(w.world.shown.length, 0);
+  w.world.waiting = ['A', 'B']; w.world.groups = [wait('A'), wait('B')]; w.world.html = 'AB';
+  w.sync();
+  assert.deepStrictEqual([...w.state().updated], ['gate:B:head']);
+  assert.deepStrictEqual([...w.state().updatedDocks], ['B']);
+  assert.strictEqual(w.world.shown.length, 1);
+  // The dock shown is seen: switching to it takes its mark off.
+  vm.runInContext(`cardDialogSetDock('B', true)`, w.c);
+  assert.deepStrictEqual([...w.state().updatedDocks], []);
+  // An answer given here: the gate's own cards going and coming are not marked.
+  await w.click('A', 'approve');
+  assert.strictEqual(w.world.shown.length, 1);
+});
+
+test('the last waiting gate answered elsewhere says nothing waits any more', () => {
+  const w = taskWorld({ waiting: ['A'] });
+  w.world.waiting = [];
+  w.sync();
+  assert.strictEqual(w.state().noMore, true);
+  assert.strictEqual(w.goneEl.textContent, '判断待ちはもうありません');
+  assert.strictEqual(w.col.hidden, true);
+  // A gate that opens afterwards takes it back; so does a dialog that never had a waiting gate.
+  w.world.waiting = ['C'];
+  w.sync();
+  assert.strictEqual(w.state().noMore, false);
+  assert.strictEqual(w.goneEl.textContent, '');
+  const none = taskWorld({ waiting: [] });
+  none.sync();
+  assert.strictEqual(none.state().noMore, false);
+});
+
+/* The notice, and the timers of the marks, against fake clocks. */
+function noticeWorld() {
+  const timers = new Map();
+  let id = 0;
+  const btn = { dataset: {} }, span = { textContent: '' };
+  // The words and the button are made once, while the notice has anything in it.
+  const updateEl = { innerHTML: '', hover: false, within: false, matches: () => updateEl.hover, contains: () => updateEl.within, handlers: {},
+    addEventListener(t, f) { this.handlers[t] = f; }, querySelector: sel => !updateEl.innerHTML ? null : sel === 'span' ? span : btn };
+  const gone = new Set(), went = [];
+  const c = vm.createContext({
+    document: { activeElement: null, hidden: false, addEventListener() {} }, esc: x => String(x),
+    cardDialogEl: () => ({ open: true, querySelector: sel => sel === '.card-dialog-update' ? updateEl : body }),
+    cardDialogCardEl: k => gone.has(k) ? null : cards[k] || { key: k },
+    cardDialogGo: (...a) => { went.push(a); return true; }, cardDialogMarkUpdated() { c.marks = (c.marks || 0) + 1; },
+    setTimeout: (f, ms) => { timers.set(++id, { f, ms }); return id; }, clearTimeout: i => timers.delete(i),
+  });
+  const cards = {}, body = { clientHeight: 600, getBoundingClientRect: () => ({ top: 0, bottom: 600 }) };
+  vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), cut(dlgSrc, /^const CARD_DIALOG_UPDATE_MS = [^\n]*;/m), cut(dlgSrc, /^const CARD_DIALOG_SEEN_MS = [^\n]*;/m),
+    cut(dlgSrc, /^const cardDialogUpdateEl = [^\n]*;/m), cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m),
+    ...['cardDialogUpdateText', 'cardDialogShowUpdate', 'cardDialogMergeChanges', 'cardDialogUpdateTimer', 'cardDialogHideUpdate', 'cardDialogSeeNotice', 'cardDialogResetUpdates', 'cardDialogSeeUpdated'].map(n => fnSrc(dlgSrc, n)),
+    cut(dlgSrc, /^cardDialogUpdateEl\(\)\.addEventListener\('pointerenter'[\s\S]*?\nfor \(const type of \['pointerleave'[\s\S]*?\n\}\n/m),
+    "cardDialog.mode = 'task'; cardDialog.token = 3; cardDialog.groups = [{ key: 'g', cards: [{ key: 'a', label: '経過' }, { key: 'b', label: '詳細' }] }];"].join('\n'), c);
+  return { c, timers, updateEl, btn, span, went, gone, cards, body, run: code => vm.runInContext(code, c), json: code => JSON.parse(vm.runInContext(`JSON.stringify(${code})`, c)), fire: n => { const t = timers.get(n); timers.delete(n); t.f(); } };
+}
+
+test('the notice names what changed with a button to it, goes after a few seconds, and a second batch starts the time again', () => {
+  const w = noticeWorld();
+  w.c.ch = { cards: ['a'], firstKey: 'a', newGates: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  assert.match(w.updateEl.innerHTML, /<button type="button" data-cd-see="">見る<\/button>/);
+  assert.strictEqual(w.span.textContent, '経過が更新されました');
+  assert.strictEqual(w.btn.dataset.cdSee, 'a');
+  assert.deepStrictEqual([...w.timers].map(([i, t]) => [i, t.ms]), [[1, 6000]]);
+  // The same words again are not written again, but the button follows the first card.
+  w.updateEl.innerHTML = 'kept';
+  w.c.ch = { cards: ['a'], firstKey: 'a', newGates: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  assert.strictEqual(w.btn.dataset.cdSee, 'a');
+  assert.strictEqual(w.updateEl.innerHTML, 'kept');
+  w.c.ch = { cards: ['b'], firstKey: 'b', newGates: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  // The second batch is added to what the notice names; 「見る」 stays with the first card.
+  assert.strictEqual(w.span.textContent, '経過・詳細が更新されました');
+  assert.strictEqual(w.btn.dataset.cdSee, 'a');
+  assert.strictEqual(w.updateEl.innerHTML, 'kept', 'the button is not made again, so focus on it stays');
+  assert.deepStrictEqual([...w.timers.keys()], [3], 'one timer, started again');
+  // Pointer or focus in it holds it; leaving starts it again.
+  w.updateEl.hover = true;
+  w.fire(3);
+  assert.strictEqual(w.span.textContent, '経過・詳細が更新されました');
+  w.updateEl.handlers.pointerleave();
+  assert.strictEqual(w.timers.size, 1);
+  w.updateEl.hover = false;
+  w.fire([...w.timers.keys()][0]);
+  assert.strictEqual(w.updateEl.innerHTML, '');
+  assert.strictEqual(w.run('cardDialog.updateText'), '');
+  // Once it has gone, the next batch starts it afresh.
+  w.c.ch = { cards: ['b'], firstKey: 'b', newGates: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  assert.strictEqual(w.span.textContent, '詳細が更新されました');
+  assert.strictEqual(w.btn.dataset.cdSee, 'b');
+});
+
+test('「見る」 empties the notice and goes to the first card, or to one still marked when that card is gone; a close clears it all', () => {
+  const w = noticeWorld();
+  w.c.ch = { cards: ['a', 'b'], firstKey: 'a', newGates: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  w.run("cardDialog.updated = new Set(['b', 'a'])");
+  w.run("cardDialogSeeNotice('a')");
+  assert.strictEqual(w.updateEl.innerHTML, '');
+  assert.strictEqual(w.timers.size, 0);
+  assert.deepStrictEqual(w.went, [['a', null, true]]);
+  w.gone.add('a');
+  w.run("cardDialogSeeNotice('a')");
+  assert.deepStrictEqual(w.went[1], ['b', null, true]);
+  // A close: the notice, its timer and the timers of the cards seen.
+  w.run('cardDialogShowUpdate(ch)');
+  w.run("cardDialog.seenTimers.set('b', setTimeout(() => {}, 1200))");
+  w.run('cardDialogResetUpdates()');
+  assert.strictEqual(w.timers.size, 0);
+  assert.strictEqual(w.updateEl.innerHTML, '');
+  assert.deepStrictEqual(w.json('[cardDialog.updated.size, cardDialog.seenTimers.size]'), [0, 0]);
+});
+
+test('a marked card is let go a moment after it has been seen: enough of it in view, not the edges, not while hidden', () => {
+  const w = noticeWorld();
+  const rect = (top, bottom) => ({ getBoundingClientRect: () => ({ top, bottom, height: bottom - top }) });
+  Object.assign(w.cards, { a: rect(100, 300), edge: rect(500, 700), tall: rect(400, 2400), out: rect(900, 1000) });
+  w.run("cardDialog.updated = new Set(['a', 'edge', 'tall', 'out'])");
+  w.run('cardDialogSeeUpdated()');
+  // Only `a` is in view: `edge` shows 40px of the 120 between the margins, `tall` only its top.
+  assert.deepStrictEqual([...w.timers.values()].map(t => t.ms), [1200]);
+  assert.deepStrictEqual(w.json('[...cardDialog.seenTimers.keys()]'), ['a']);
+  // Seen again before the moment is over: not started twice.
+  w.run('cardDialogSeeUpdated()');
+  assert.strictEqual(w.timers.size, 1);
+  w.fire([...w.timers.keys()][0]);
+  assert.deepStrictEqual(w.json('[...cardDialog.updated]'), ['edge', 'tall', 'out']);
+  assert.strictEqual(w.c.marks, 1);
+  // Scrolled so that the rest is in view.
+  Object.assign(w.cards, { edge: rect(100, 300), tall: rect(-1500, 540) });
+  w.run('cardDialogSeeUpdated()');
+  assert.deepStrictEqual(w.json('[...cardDialog.seenTimers.keys()]'), ['edge', 'tall']);
+  // A short card wholly in the body is seen, in the margins too: at the top after a jump, and the first and last card at the ends.
+  const m = noticeWorld();
+  Object.assign(m.cards, { top: rect(0, 200), first: rect(24, 120), last: rect(400, 568) });
+  m.run("cardDialog.updated = new Set(['top', 'first', 'last'])");
+  m.run('cardDialogSeeUpdated()');
+  assert.deepStrictEqual(m.json('[...cardDialog.seenTimers.keys()]'), ['top', 'first', 'last']);
+  // Wholly in is not enough for one that is partly out.
+  Object.assign(m.cards, { cut: rect(-30, 100) });
+  m.run("cardDialog.updated.add('cut')");
+  m.run('cardDialogSeeUpdated()');
+  assert.strictEqual(m.run("cardDialog.seenTimers.has('cut')"), false);
+  // A hidden page sees nothing; a timer of an earlier opening does nothing.
+  const h = noticeWorld();
+  h.cards.a = rect(100, 300);
+  h.run("cardDialog.updated = new Set(['a']); document.hidden = true");
+  h.run('cardDialogSeeUpdated()');
+  assert.strictEqual(h.timers.size, 0);
+  h.run('document.hidden = false; cardDialogSeeUpdated(); cardDialog.token = 4');
+  h.fire([...h.timers.keys()][0]);
+  assert.deepStrictEqual(h.json('[...cardDialog.updated]'), ['a']);
+});
+
+test('the marks are badges added to and taken from the index, the switch and the cards, without drawing them again', () => {
+  const mk = (data, hasCard = false) => {
+    const b = { dataset: data, kids: [], hasAttribute: a => a === 'data-cd-go-card' && hasCard,
+      querySelector(sel) { return sel === '.cd-upd' ? this.kids.find(k => k.className?.includes('cd-upd')) || null : null; },
+      append(x) { this.kids.push(x); x.parent = this; }, prepend(x) { this.kids.unshift(x); x.parent = this; } };
+    return b;
+  };
+  const idx = [mk({ cdGoGroup: 'g' }), mk({ cdGoGroup: 'g', cdGoCard: 'a' }, true), mk({ cdGoGroup: 'g', cdGoCard: 'b' }, true), mk({ cdGoGroup: 'h' })];
+  const sw = [mk({ cdDock: 'A' }), mk({ cdDock: 'B' })];
+  const el = key => ({ dataset: { cdCard: key }, on: false, classList: { toggle(c, on) { el.last = [key, c, on]; } } });
+  const cardEls = ['a', 'b'].map(k => { const e = { ...mk({ cdCard: k }), on: null, classList: { toggle(c, on) { e.on = on; } } }; return e; });
+  const c = vm.createContext({
+    document: { createElement: () => ({ className: '', textContent: '', remove() { this.parent.kids.splice(this.parent.kids.indexOf(this), 1); } }) },
+    cardDialogEl: () => ({ querySelectorAll: sel => sel.includes('index') ? idx : [] }),
+    cardDialogContent: () => ({ querySelectorAll: () => cardEls }),
+    cardDialogDockEl: () => ({ querySelectorAll: () => sw }),
+  });
+  vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), fnSrc(dlgSrc, 'cardDialogMarkUpdated'), fnSrc(dlgSrc, 'cardDialogBadge'),
+    "cardDialog.groups = [{ key: 'g', cards: [{ key: 'a' }, { key: 'b' }] }, { key: 'h', cards: [{ key: 'c' }] }]; cardDialog.updated = new Set(['a']); cardDialog.updatedDocks = new Set(['B']);"].join('\n'), c);
+  const marked = () => [...idx, ...sw].map(b => b.kids.length);
+  vm.runInContext('cardDialogMarkUpdated()', c);
+  assert.deepStrictEqual(marked(), [1, 1, 0, 0, 0, 1]);
+  assert.strictEqual(sw[1].kids[0].textContent, '更新');
+  assert.deepStrictEqual(cardEls.map(e => e.on), [true, false]);
+  assert.deepStrictEqual(cardEls.map(e => e.kids.length), [1, 0], 'the card has the word too, not only the outline');
+  vm.runInContext('cardDialogMarkUpdated()', c);
+  assert.deepStrictEqual(marked(), [1, 1, 0, 0, 0, 1], 'not added twice');
+  assert.deepStrictEqual(cardEls.map(e => e.kids.length), [1, 0]);
+  vm.runInContext('cardDialog.updated.delete("a"); cardDialog.updatedDocks.clear(); cardDialogMarkUpdated()', c);
+  assert.deepStrictEqual(marked(), [0, 0, 0, 0, 0, 0]);
+  assert.deepStrictEqual(cardEls.map(e => e.kids.length), [0, 0]);
+});
+
+test('what the person\'s own answer changes is not marked, nor is the record that replaces the answered copy', async () => {
+  const w = taskWorld({ waiting: ['A', 'B'] });
+  const draw = html => { w.world.groups = [{ key: 'history', label: '経過', cards: [{ key: 'history:timeline', label: '経過', html }] }]; w.world.html = html; };
+  draw('<li>opened</li>');
+  w.sync();
+  // The answer is drawn into the timeline by the sync that follows it.
+  draw('<li>opened</li><li>approved</li>');
+  await w.click('A', 'approve');
+  assert.strictEqual(w.state().updated.size, 0);
+  assert.strictEqual(w.world.shown.length, 0);
+  assert.strictEqual(w.state().cardSigs.get('history:timeline'), '<li>opened</li><li>approved</li>', 'taken over as the new base');
+  assert.strictEqual(w.state().rebase, false);
+  // The server's record takes the place of the copy: what that changes is not news either.
+  w.world.recorded = ['A'];
+  draw('<li>opened</li><li>approved by the record</li>');
+  w.sync();
+  assert.strictEqual(w.state().answered.size, 0);
+  assert.strictEqual(w.state().updated.size, 0);
+  assert.strictEqual(w.world.shown.length, 0);
+  // Anything after that is news again.
+  draw('<li>opened</li><li>approved by the record</li><li>a worker line</li>');
+  w.sync();
+  assert.deepStrictEqual([...w.state().updated], ['history:timeline']);
+  assert.strictEqual(w.world.shown.length, 1);
+});
+
+test('the notice keeps what it names, in reading order, three names and the rest counted', () => {
+  const w = noticeWorld();
+  w.run("cardDialog.groups = [{ key: 'g', cards: ['a', 'b', 'c', 'd', 'e'].map(k => ({ key: k, label: k.toUpperCase() })) }]");
+  const show = (...cards) => { w.c.ch = { cards, firstKey: cards[0], newGates: [] }; w.run('cardDialogShowUpdate(ch)'); };
+  show('c');
+  show('a', 'c');
+  assert.strictEqual(w.span.textContent, 'A・Cが更新されました');
+  assert.strictEqual(w.btn.dataset.cdSee, 'a');
+  show('e', 'b');
+  show('d');
+  assert.strictEqual(w.span.textContent, 'A・B・Cほか2件が更新されました');
+  assert.strictEqual(w.btn.dataset.cdSee, 'a');
+});
+
+test('an answer\'s record arriving while a comment is typed is still not news once the redraw is let through', async () => {
+  const w = taskWorld({ waiting: ['A', 'B'] });
+  const draw = html => { w.world.groups = [{ key: 'history', label: '経過', cards: [{ key: 'history:timeline', label: '経過', html }] }]; w.world.html = html; };
+  draw('<li>opened</li>');
+  w.sync();
+  draw('<li>opened</li><li>approved</li>');
+  await w.click('A', 'approve');
+  assert.strictEqual(w.state().answered.size, 1);
+  // Focus lands in B's box and the record of A arrives: the sync is held, and has to remember what it saw.
+  w.c.document.activeElement = { matches: () => true };
+  w.world.recorded = ['A'];
+  draw('<li>opened</li><li>approved by the record</li>');
+  w.sync();
+  assert.strictEqual(w.state().held, true);
+  assert.strictEqual(w.state().rebase, true);
+  w.c.document.activeElement = null;
+  w.sync();
+  assert.strictEqual(w.state().held, false);
+  assert.strictEqual(w.state().rebase, false);
+  assert.strictEqual(w.state().updated.size, 0);
+  assert.strictEqual(w.world.shown.length, 0);
+});
+
+test('a card that changes again after it was seen is not let go by the old timer', () => {
+  const w = taskWorld();
+  const cleared = [];
+  w.c.clearTimeout = id => cleared.push(id);
+  const draw = html => { w.world.groups = [{ key: 'g', label: 'g', cards: [{ key: 'a', label: 'a', html }, { key: 'b', label: 'b', html: 'same' }] }]; w.world.html = html; };
+  draw('one');
+  w.sync();
+  vm.runInContext(`cardDialog.updated.add('a'); cardDialog.updated.add('b'); cardDialog.seenTimers.set('a', 41); cardDialog.seenTimers.set('b', 42)`, w.c);
+  draw('two');
+  w.sync();
+  // Only the card that changed starts over.
+  assert.deepStrictEqual(cleared, [41]);
+  assert.strictEqual(vm.runInContext(`JSON.stringify([...cardDialog.seenTimers.keys()])`, w.c), '["b"]');
+  assert.strictEqual(vm.runInContext(`cardDialog.updated.has('a')`, w.c), true);
 });

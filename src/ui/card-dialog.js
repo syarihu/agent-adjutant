@@ -12,8 +12,13 @@ const cardDialog = {
   // the gate the answer column shows, `dockSig` what the column was drawn from, `groups` what was drawn last, `active`
   // the group the index marks, `answered` the gates answered in this opening (ref -> a copy, until the history has
   // the record), `answeredHere` their refs for good (the history's record must not make one look answered elsewhere), `noMore` that an answer left nothing waiting.
+  // What changed while it is open (#630): `cardSigs` the time-free markup of each card as last drawn, `updated` the cards
+  // marked 「更新」 until they have been seen, `updatedDocks` the gates whose switch is marked the same way, `seenTimers`
+  // the cards seen and about to be let go, `updateTimer`, `updateText` and `updateChanges` the notice under the head, `waitingRefs` the gates
+  // that waited at the last sync, `rebase` that the next content sync only takes over what it draws, marking nothing.
   mode: 'card', target: null, targetAt: 0, pinned: null, pinnedAt: 0, dock: null, dockSig: '', groups: [], gateIds: {}, active: null, spy: false,
   answered: new Map(), answeredHere: new Set(), noMore: false,
+  cardSigs: new Map(), updated: new Set(), updatedDocks: new Set(), seenTimers: new Map(), updateTimer: 0, updateText: '', updateChanges: null, waitingRefs: [], rebase: false,
 };
 const CARD_DIALOG_GONE = 'パネルからこのカードがなくなりました（最後に表示した内容です）';
 const CARD_DIALOG_GATE_GONE = 'この gate への答えはパネルから消えました（最後に表示した内容です）';
@@ -173,6 +178,7 @@ function cardDialogShell(mode, title, sub) {
   dlg.querySelector('#card-dialog-title').textContent = title;
   dlg.querySelector('#card-dialog-sub').textContent = sub;
   dlg.querySelector('.card-dialog-gone').textContent = '';
+  cardDialogResetUpdates();
   // Nothing of an earlier opening may be read back: what is kept across redraws is read from this DOM.
   const dock = dlg.querySelector('.card-dialog-dock');
   dock.replaceChildren();
@@ -236,6 +242,8 @@ async function cardDialogAnswer(b) {
 function cardDialogAfterAnswer(ref, g, act, choice, comment) {
   cardDialog.answeredHere.add(ref);
   cardDialogDrafts.delete(ref);
+  // What the answer itself changes (the history, the plan, the details) is not news to the person who gave it.
+  cardDialog.rebase = true;
   cardDialog.answered.set(ref, {
     ...g, decision: act === 'close' ? 'closed' : act, choice: choice ?? g.choice, comment, answeredAt: secsStamp(Date.now() / 1000),
   });
@@ -279,6 +287,7 @@ cardDialogEl().addEventListener('click', async e => {
   if ((b = hit('[data-cd-go-group]'))) return cardDialogGo(b.dataset.cdGoCard || null, b.dataset.cdGoGroup, false);
   if ((b = hit('[data-cd-goto]'))) return cardDialogGoGate(b.dataset.cdGoto);
   if ((b = hit('[data-cd-dock]'))) return cardDialogSetDock(b.dataset.cdDock, true);
+  if ((b = hit('[data-cd-see]'))) return cardDialogSeeNotice(b.dataset.cdSee);
   // Leaving for the terminal: the dialog goes first, and focus is not given back to the panel.
   if ((b = hit('[data-gate] [data-act="talk"]'))) {
     cardDialog.quiet = true; closeCardDialog();
@@ -357,6 +366,7 @@ cardDialogEl().addEventListener('close', () => {
   dock.replaceChildren();
   dock.hidden = true;
   cardDialogEl().querySelector('.card-dialog-gone').textContent = '';
+  cardDialogResetUpdates();
 });
 
 /* ---- The whole task ---- */
@@ -370,10 +380,10 @@ const cardDialogWaiting = all => all.filter(g => g.wait !== false && isWaiting(g
 /* What the dialog holds, as groups of cards, in the order they are read: what waits, the review, the diff, the
    plan, what was answered, 経過, 詳細. A group or card with nothing to say is left out, and so are the panel's 記録 list
    and 工程. The choices of every waiting gate can be picked here.
-   `{ key, label, badge, gate?, cards: [{ key, label, badge, wide, html, expand: [section, gateRef] | null }] }`; `gate` is
-   the ref of the gate a waiting group is for. */
+   `{ key, label, badge, gate?, cards: [{ key, label, badge, wide, html, expand: [section, gateRef] | null, gate? }] }`;
+   `gate` is the ref of the gate a waiting group is for, and of the gate a card of it, or an answered gate's card, is about. */
 function cardDialogTaskGroups(task, all) {
-  const card = (key, label, html, o = {}) => html ? { key, label, badge: o.badge || '', wide: !!o.wide, html, expand: o.expand || null } : null;
+  const card = (key, label, html, o = {}) => html ? { key, label, badge: o.badge || '', wide: !!o.wide, html, expand: o.expand || null, ...(o.gate ? { gate: o.gate } : {}) } : null;
   const at = (section, g) => [section, g ? gateRef(g) : null];
   const decidedHtml = g => g.decided ? `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>` : '';
   const runHtml = g => g.run ? `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>` : '';
@@ -413,7 +423,7 @@ function cardDialogTaskGroups(task, all) {
     // The review and the diff of another waiting gate of the kind: group 2 and 3 hold only one.
     if (g.kind === 'diff' && g !== gR) cards.push(...reviewCards(g, `gate:${ref}`), ...diffCards(g, `gate:${ref}`));
     if (g.kind !== 'plan') cards.push(card(k('decided'), '決定事項', decidedHtml(g), { expand: at('decided', g) }));
-    return group(`waiting:${ref}`, `【${kindOf(g.kind)[0]}】${g.title}`, cards, '判断待ち', ref);
+    return group(`waiting:${ref}`, `【${kindOf(g.kind)[0]}】${g.title}`, cards.map(c => c && { ...c, gate: ref }), '判断待ち', ref);
   });
 
   // 2 and 3. what the review tab shows: a record of the review can be all there is
@@ -447,7 +457,7 @@ function cardDialogTaskGroups(task, all) {
       (g.kind === 'verify' ? checkPanels(g) + runHtml(g) : g.kind === 'diff' && g !== gR ? reviewPanels(g) : '') +
       // The plan shown in the plan group has its 決定事項 there.
       (g === plan ? '' : decidedHtml(g));
-    return card(`gate:${gateRef(g)}`, `【${kindOf(g.kind)[0]}】${g.title}`, html, { badge: DECISION[g.decision] || '回答済み', expand: [null, gateRef(g)] });
+    return card(`gate:${gateRef(g)}`, `【${kindOf(g.kind)[0]}】${g.title}`, html, { badge: DECISION[g.decision] || '回答済み', expand: [null, gateRef(g)], gate: gateRef(g) });
   });
 
   // 7. the agent's last words, and the rest of what is known of the task
@@ -515,6 +525,8 @@ function cardDialogShowDock() {
   col.querySelectorAll('[data-cd-dock-for]').forEach(el => { el.hidden = el.dataset.cdDockFor !== cardDialog.dock; });
   col.querySelectorAll('[data-cd-dock]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cdDock === cardDialog.dock)));
   col.hidden = !col.querySelector('.cd-dock');
+  // A gate that joined while it was out of sight is seen now.
+  if (cardDialog.updatedDocks.delete(cardDialog.dock)) cardDialogMarkUpdated();
 }
 /* Switches the column to the gate `ref`, if it has a dock for it. Each dock keeps its own comment box, so what was
    typed for one gate stays when the column shows another. `explicit` is a click of the person's: focus that was in the
@@ -639,6 +651,7 @@ function cardDialogSpy() {
     else b.removeAttribute('aria-current');
   });
   if (changed && current) current.scrollIntoView({ block: 'nearest' });
+  cardDialogSeeUpdated();
 }
 // A scroll by hand ends the wait for a target; the dialog's own scrolling does not come through these.
 const cardDialogUserMoved = () => { cardDialog.target = null; cardDialog.pinned = null; };
@@ -730,6 +743,187 @@ function cardDialogFocusBack(dlg, d) {
   el?.focus({ preventScroll: true });
 }
 
+/* ---- What changed while the dialog is open (#630) ---- */
+
+const CARD_DIALOG_UPDATE_MS = 6000;
+const CARD_DIALOG_SEEN_MS = 1200;
+
+const cardDialogUpdateEl = () => cardDialogEl().querySelector('.card-dialog-update');
+
+/* The markup of each card with its relative times made alike: 「5分前」 becoming 「6分前」 is not a change. */
+// A tick on a manual check is the person's own, and is in the markup once it is made.
+const cardDialogSigOf = html => timeFree(html).replace(/<input\b[^>]*>/g, tag => tag.replace(/ checked(?=[ >])/g, ''));
+const cardDialogCardSigs = groups => new Map(groups.flatMap(g => g.cards.map(c => [c.key, cardDialogSigOf(c.html)])));
+
+/* What changed from the last drawing (`prevSigs`, from `cardDialogCardSigs`) to `groups`, in the order it is read:
+   `{ cards: [key], groups: Set of keys, firstKey, newGates: [{ ref, key, label }] }`. A card is marked when it is new or
+   its content differs. Not marked: anything in the first fill, what is loading or finished loading (a loading note, or what
+   the history brings in once it has been read), and the cards of a gate answered here. What else the person's own answer
+   changes is left to the caller, which does not ask (`cardDialog.rebase`). `answered` holds the new cards of answered gates. */
+function cardDialogChanged(prevSigs, groups, { answeredHere } = {}) {
+  const here = answeredHere || new Set();
+  const out = { cards: [], groups: new Set(), firstKey: null, newGates: [], answered: [] };
+  if (!prevSigs.size) return out;
+  const loading = html => html != null && (html.includes(DIFF_LOADING) || html.includes(HISTORY_LOADING));
+  // The answered gates, the review and the plan come from the history: they all appear once it has been read.
+  const historyRead = loading(prevSigs.get('history:timeline')) && !loading(groups.flatMap(g => g.cards).find(c => c.key === 'history:timeline')?.html);
+  const mark = (g, c) => { out.cards.push(c.key); out.groups.add(g.key); };
+  for (const g of groups) {
+    // A waiting gate that has no card in the last drawing has just opened.
+    if (g.gate && !here.has(g.gate) && g.cards.every(c => !prevSigs.has(c.key))) {
+      out.newGates.push({ ref: g.gate, key: g.key, label: g.label });
+      g.cards.forEach(c => mark(g, c));
+      continue;
+    }
+    if (historyRead && !g.gate && g.key !== 'details') continue;
+    const loadedHere = g.cards.some(c => loading(prevSigs.get(c.key)));
+    for (const c of g.cards) {
+      if (c.gate && here.has(c.gate)) continue;
+      const was = prevSigs.get(c.key);
+      if (loading(was) || loading(c.html) || (was === undefined && loadedHere)) continue;
+      if (was === undefined || was !== cardDialogSigOf(c.html)) {
+        // A gate's own card, new, is the gate answered somewhere else.
+        if (was === undefined && c.gate && c.key === `gate:${c.gate}`) out.answered.push(c.key);
+        mark(g, c);
+      }
+    }
+  }
+  out.firstKey = out.cards[0] ?? null;
+  return out;
+}
+
+/* What the notice says: the gates that joined the waiting ones, the gates answered elsewhere, then the cards that
+   changed (as many as three by name), by label, once each. */
+function cardDialogUpdateText(changes, groups, most = 3) {
+  const fresh = new Set(changes.newGates.map(g => g.key));
+  const own = new Set(groups.filter(g => fresh.has(g.key)).flatMap(g => g.cards.map(c => c.key)));
+  const labelOf = new Map(groups.flatMap(g => g.cards.map(c => [c.key, c.label])));
+  const done = new Set(changes.answered || []);
+  const labels = [...new Set(changes.cards.filter(k => !own.has(k) && !done.has(k)).map(k => labelOf.get(k)).filter(Boolean))];
+  const parts = [];
+  if (changes.newGates.length) parts.push(`判断待ちに${changes.newGates.map(g => g.label).join('・')} が加わりました`);
+  if (done.size) parts.push(`${[...done].map(k => labelOf.get(k)).filter(Boolean).join('・')} が回答済みになりました`);
+  if (labels.length) parts.push(`${labels.slice(0, most).join('・')}${labels.length > most ? `ほか${labels.length - most}件` : ''}が更新されました`);
+  return parts.join('。');
+}
+
+/* The marks (the 「更新」 badge on the index and the dock's switch, an outline on the card) are set on what is drawn,
+   after every drawing and every clearing, and never put in the markup the redraw is compared on. Only the badges are
+   added or taken away: the index is not drawn again for it. */
+function cardDialogMarkUpdated() {
+  const dlg = cardDialogEl();
+  const up = cardDialog.updated;
+  const inGroup = new Set(cardDialog.groups.filter(g => g.cards.some(c => up.has(c.key))).map(g => g.key));
+  cardDialogContent().querySelectorAll('[data-cd-card]').forEach(el => {
+    el.classList.toggle('cd-updated', up.has(el.dataset.cdCard));
+    // The outline alone is a cue of colour; the word is the card's own.
+    cardDialogBadge(el, up.has(el.dataset.cdCard), true);
+  });
+  dlg.querySelectorAll('.card-dialog-index [data-cd-go-group]').forEach(b =>
+    cardDialogBadge(b, b.hasAttribute('data-cd-go-card') ? up.has(b.dataset.cdGoCard) : inGroup.has(b.dataset.cdGoGroup), false));
+  cardDialogDockEl().querySelectorAll('[data-cd-dock]').forEach(b => cardDialogBadge(b, cardDialog.updatedDocks.has(b.dataset.cdDock), true));
+}
+/* `first`: ahead of the text, where a long name that is cut short does not hide it. */
+function cardDialogBadge(btn, on, first) {
+  const has = btn.querySelector('.cd-upd');
+  if (on === !!has) return;
+  if (has) return has.remove();
+  const b = document.createElement('span');
+  b.className = 'cd-badge cd-upd';
+  b.textContent = '更新';
+  if (first) btn.prepend(b); else btn.append(b);
+}
+
+/* A card is seen when it is wholly in the body, or enough of it is apart from the edges where it is only coming in. Once seen its
+   mark goes after a moment, so that it is seen to go. */
+function cardDialogSeeUpdated() {
+  if (cardDialog.mode !== 'task' || !cardDialog.updated.size || document.hidden || !cardDialogEl().open) return;
+  const body = cardDialogEl().querySelector('.card-dialog-body');
+  const view = body.getBoundingClientRect();
+  const edge = Math.min(60, body.clientHeight / 4);
+  const token = cardDialog.token;
+  for (const key of cardDialog.updated) {
+    if (cardDialog.seenTimers.has(key)) continue;
+    const el = cardDialogCardEl(key);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    const shown = Math.min(r.bottom, view.bottom - edge) - Math.max(r.top, view.top + edge);
+    // A card wholly in the body is seen wherever it is: a jump puts it at the very top, and the last (or first) card
+    // cannot be scrolled out of the margins. Otherwise a card taller than half the body is seen when half the body of it is.
+    const whole = r.top >= view.top && r.bottom <= view.bottom;
+    if (!whole && shown < Math.min(r.height, body.clientHeight / 2)) continue;
+    cardDialog.seenTimers.set(key, setTimeout(() => {
+      if (token !== cardDialog.token) return;
+      cardDialog.seenTimers.delete(key);
+      cardDialog.updated.delete(key);
+      cardDialogMarkUpdated();
+    }, CARD_DIALOG_SEEN_MS));
+  }
+}
+document.addEventListener('visibilitychange', () => { if (cardDialogEl().open) cardDialogSeeUpdated(); });
+
+/* The notice under the head. It names what changed and goes after a few seconds, which wait while the pointer or
+   focus is in it. */
+function cardDialogShowUpdate(changes) {
+  // What the notice still says stays in it: a second change adds its names, and 「見る」 goes to the first of all.
+  const shown = cardDialog.updateText ? cardDialog.updateChanges : null;
+  if (shown) changes = cardDialogMergeChanges(shown, changes, cardDialog.groups);
+  cardDialog.updateChanges = changes;
+  const text = cardDialogUpdateText(changes, cardDialog.groups);
+  if (!text) return;
+  const el = cardDialogUpdateEl();
+  // The button stays where it is when the words change, so focus on it is not lost; the words are rewritten only when
+  // they differ, as it is a live region.
+  if (!el.querySelector('[data-cd-see]')) el.innerHTML = `<span></span><button type="button" data-cd-see="">見る</button>`;
+  if (text !== cardDialog.updateText) {
+    cardDialog.updateText = text;
+    el.querySelector('span').textContent = text;
+  }
+  el.querySelector('[data-cd-see]').dataset.cdSee = changes.firstKey;
+  cardDialogUpdateTimer();
+}
+/* `a` then `b`, each card once, in the order they are read in `groups`; a card that is gone is let go. */
+function cardDialogMergeChanges(a, b, groups) {
+  const order = groups.flatMap(g => g.cards.map(c => c.key));
+  const cards = [...new Set([...a.cards, ...b.cards])].filter(k => order.includes(k)).sort((x, y) => order.indexOf(x) - order.indexOf(y));
+  const gates = [...a.newGates, ...b.newGates.filter(n => !a.newGates.some(m => m.ref === n.ref))].filter(n => groups.some(g => g.key === n.key));
+  const answered = [...new Set([...(a.answered || []), ...(b.answered || [])])].filter(k => cards.includes(k));
+  return { cards, firstKey: cards[0] ?? null, newGates: gates, answered };
+}
+function cardDialogUpdateTimer() {
+  clearTimeout(cardDialog.updateTimer);
+  const token = cardDialog.token;
+  cardDialog.updateTimer = setTimeout(() => {
+    const el = cardDialogUpdateEl();
+    if (token === cardDialog.token && !el.matches(':hover') && !el.contains(document.activeElement)) cardDialogHideUpdate();
+  }, CARD_DIALOG_UPDATE_MS);
+}
+function cardDialogHideUpdate() {
+  clearTimeout(cardDialog.updateTimer);
+  cardDialog.updateTimer = 0;
+  cardDialog.updateText = '';
+  cardDialog.updateChanges = null;
+  cardDialogUpdateEl().innerHTML = '';
+}
+// Pointer or focus in the notice holds it; leaving starts the time again.
+cardDialogUpdateEl().addEventListener('pointerenter', () => clearTimeout(cardDialog.updateTimer));
+cardDialogUpdateEl().addEventListener('focusin', () => clearTimeout(cardDialog.updateTimer));
+for (const type of ['pointerleave', 'focusout']) {
+  cardDialogUpdateEl().addEventListener(type, () => { if (cardDialog.updateText) cardDialogUpdateTimer(); });
+}
+/* 「見る」: the card that was named first, or the first still marked when it has gone. */
+function cardDialogSeeNotice(key) {
+  cardDialogHideUpdate();
+  const at = cardDialogCardEl(key) ? key : [...cardDialog.updated].find(k => cardDialogCardEl(k));
+  if (at) cardDialogGo(at, null, true);
+}
+/* Nothing marked, no notice, no timer: a new opening, and a closed one. */
+function cardDialogResetUpdates() {
+  cardDialogHideUpdate();
+  cardDialog.seenTimers.forEach(t => clearTimeout(t));
+  Object.assign(cardDialog, { cardSigs: new Map(), updated: new Set(), updatedDocks: new Set(), seenTimers: new Map(), waitingRefs: [], rebase: false });
+}
+
 /* The panel drew again: the dialog of a task follows. */
 function cardDialogFollow() {
   if (cardDialog.mode !== 'task' || !cardDialogEl().open) return;
@@ -760,7 +954,11 @@ function cardDialogTaskSync(force, initial) {
   const col = cardDialogDockEl();
   const title = dlg.querySelector('#card-dialog-title');
   if (title.textContent !== task.title) title.textContent = task.title;
+  // The history's record taking the place of an answered gate's copy changes what is drawn, with nothing new in it.
+  const copies = cardDialog.answered.size;
   const all = cardDialogWithAnswered(gatesOf(task), cardDialog.answered);
+  // Kept on the dialog, not here: a sync held while typing must not lose it.
+  if (cardDialog.answered.size !== copies) cardDialog.rebase = true;
   const waiting = cardDialogWaiting(all);
   const isWaitingRef = ref => waiting.some(g => gateRef(g) === ref);
 
@@ -798,7 +996,10 @@ function cardDialogTaskSync(force, initial) {
   cardDialog.dock = dock ? gateRef(dock) : null;
   // The dock fell back to the first waiting gate: it may not be the one of the group in view.
   const fellBack = !!shown && !!dock && cardDialog.dock !== shown;
+  // The last waiting gate was answered somewhere else: the same words as after answering it here.
+  if (cardDialog.waitingRefs.length && !waiting.length) cardDialog.noMore = true;
   if (waiting.length) cardDialog.noMore = false;
+  cardDialog.waitingRefs = waiting.map(gateRef);
   cardDialogNotice(cardDialogNoticeText(kept, waiting));
 
   if (!force && dlg.open && document.activeElement?.matches('#card-dialog .gate-comment')) {
@@ -807,6 +1008,8 @@ function cardDialogTaskSync(force, initial) {
   }
   cardDialog.held = false;
   cardDialog.gone = false;
+  const rebase = cardDialog.rebase;
+  cardDialog.rebase = false;
 
   const groups = cardDialogTaskGroups(task, all);
   const html = cardDialogTaskHtml(groups);
@@ -822,6 +1025,24 @@ function cardDialogTaskSync(force, initial) {
     return cardDialogApplyTarget(task, all);
   }
   cardDialog.sig = sig;
+  // Against what was last drawn, so a redraw held while typing is marked once, with what came after it. The first
+  // fill, and what the person's own answer brought, are not changes.
+  let changes = null;
+  if (!contentSame) {
+    if (!initial && !rebase) changes = cardDialogChanged(cardDialog.cardSigs, groups, { answeredHere: cardDialog.answeredHere });
+    cardDialog.cardSigs = cardDialogCardSigs(groups);
+    const keys = new Set(cardDialog.cardSigs.keys());
+    cardDialog.updated = new Set([...cardDialog.updated].filter(k => keys.has(k)));
+    if (changes) {
+      changes.cards.forEach(k => {
+        cardDialog.updated.add(k);
+        // A card seen a moment ago that has changed again is not seen yet: its old timer must not take the new mark.
+        clearTimeout(cardDialog.seenTimers.get(k));
+        cardDialog.seenTimers.delete(k);
+      });
+      changes.newGates.forEach(g => cardDialog.updatedDocks.add(g.ref));
+    }
+  }
 
   const body = dlg.querySelector('.card-dialog-body');
   // What the person has open, and where they are reading, survive the redraw.
@@ -857,5 +1078,10 @@ function cardDialogTaskSync(force, initial) {
   if (same) body.scrollTop += same.getBoundingClientRect().top - body.getBoundingClientRect().top - anchor.offset;
   cardDialogFocusBack(dlg, focus);
   if (cardDialog.pinned) cardDialog.pinnedAt = body.scrollTop;
-  if (dlg.open) { cardDialogApplyTarget(task, all); cardDialogSpy(); }
+  cardDialogMarkUpdated();
+  if (dlg.open) {
+    if (changes?.cards.length) cardDialogShowUpdate(changes);
+    cardDialogApplyTarget(task, all);
+    cardDialogSpy();
+  }
 }

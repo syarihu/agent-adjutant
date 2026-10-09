@@ -14,6 +14,12 @@ const baseName = path => (path || '').split('/').filter(Boolean).pop() || '';
 const minutesLabel = mins => mins < 1 ? '1分未満' : mins < 60 ? `${mins}分` : mins < 1440 ? `${Math.floor(mins / 60)}時間` : `${Math.floor(mins / 1440)}日`;
 /* Minutes since something → 「たった今」「4分前」「2時間前」「3日前」. Floors, like minutesLabel. */
 const agoLabel = mins => mins < 1 ? 'たった今' : `${minutesLabel(mins)}前`;
+/* What minutesLabel and agoLabel print in a sentence ("たった今", "5分前", "2時間前から", "3日待ち"). The 前 or 待ち is
+   taken with the number, so "たった今から" and "1分前から" come out alike, and a count such as "5 files" or "PR #57"
+   is not taken for a time. */
+const REL_TIME_RE = /たった今|(?:1分未満|\d+(?:分|時間|日))(?:前|待ち)/g;
+/* The markup with its relative times made alike, to tell a change of content from time passing. */
+const timeFree = html => String(html).replace(REL_TIME_RE, '·');
 /* Whole minutes from `secs` to `nowSecs`, never below 0. The caller passes its own clock. */
 const minutesSince = (secs, nowSecs) => Math.max(0, Math.floor((nowSecs - secs) / 60));
 

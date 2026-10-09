@@ -1446,6 +1446,7 @@ fn the_card_dialog_is_in_the_page_after_what_it_calls() {
     // Called when the dialog is opened, not when the page loads, so it may come after.
     assert!(UI_HTML.contains("function lastMessageHtml"));
     assert!(UI_HTML.contains("class=\"card-dialog-index\""));
+    assert!(UI_HTML.contains("class=\"card-dialog-update\""));
     assert!(UI_HTML.contains("function cardDialogTaskGroups"));
     // The head's button is the panel head's own, and carries no task id.
     let head = UI_HTML.split("function panelHeadHtml").nth(1).unwrap();
