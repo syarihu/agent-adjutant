@@ -741,6 +741,8 @@ function openIdleWorktree(id) {
   openTaskPanel(SESS_REF + id, 'detail');
 }
 
+/* No maxWorkers means no cap: say so rather than print 「/ null」. */
+const workerSlotsText = w => w.max == null ? `${w.busy || 0} 稼働（上限なし）` : `${w.busy || 0} / ${w.max} 稼働`;
 function hubDetailHtml(h, s) {
   const other = hubOther(h);
   const row = hubRowOf(h);
@@ -762,7 +764,7 @@ function hubDetailHtml(h, s) {
   const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
   const queued = other ? row?.queued : line.length;
   const counts = [];
-  if (!other && state.workerSlots) counts.push(kv('worker', `${state.workerSlots.busy} / ${state.workerSlots.max} 稼働`));
+  if (!other && state.workerSlots) counts.push(kv('worker', workerSlotsText(state.workerSlots)));
   else if (other && row) counts.push(kv('作業中', `${row.working || 0} 件`));
   if (!other) counts.push(kv('あなたの確認待ち', `${waitingIn()} 件`));
   else if (row) counts.push(kv('あなたの確認待ち', `${row.waiting || 0} 件`));
