@@ -321,7 +321,7 @@ async function requestNotifyPermission() {
    board served alone has no document), and the notification then says what it always said. */
 function notifyEntryOf(match) {
   if (!multiBoard || !work.doc) return null;
-  return workEntries(work.doc, key => reviewDone.has(key)).find(match) || null;
+  return workEntries(work.doc, key => answeredGates.has(key)).find(match) || null;
 }
 
 /* Open the task a notification is about in 「いまの仕事」. */
@@ -473,7 +473,7 @@ async function fetchBoards() {
     // A list that was on its way when a gate was answered still has it: ids are claimed fresh,
     // so a ref answered in this page is never a new gate.
     for (const b of boards) {
-      const gone = (b.gates || []).filter(g => reviewDone.has(`${b.slug}/${g.id}`));
+      const gone = (b.gates || []).filter(g => answeredGates.has(`${b.slug}/${g.id}`));
       if (!gone.length) continue;
       b.gates = b.gates.filter(g => !gone.includes(g));
       b.waiting = Math.max(0, (b.waiting || 0) - gone.length);
@@ -603,7 +603,7 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
     repo: '',
     resident: true,
     tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
-    gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !reviewDone.has(gateRef(g))),
+    gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !answeredGates.has(gateRef(g))),
     waits: parts.flatMap(p => tag(p.data.waits, p.slug)),
     parents: parts.flatMap(p => tag(p.data.parents, p.slug)),
     workers,
@@ -713,7 +713,7 @@ async function refresh(force = false) {
     const was = new Set((state.hubs || []).filter(h => h.state?.present).map(h => h.id));
     for (const h of next.hubs || []) if (h.state?.present && !was.has(h.id)) clearHubStarting(h);
     // Same for a state that was on its way (see fetchBoards).
-    if ((next.gates || []).some(g => reviewDone.has(gateRef(g)))) next.gates = next.gates.filter(g => !reviewDone.has(gateRef(g)));
+    if ((next.gates || []).some(g => answeredGates.has(gateKey(g)))) next.gates = next.gates.filter(g => !answeredGates.has(gateKey(g)));
     state = next;
     if (window.__from) return;
     render();

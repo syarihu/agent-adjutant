@@ -115,7 +115,7 @@ function workRows(doc = work.doc) {
     const data = { now: doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] };
     for (const r of repo.rows || []) {
       let s = r.session;
-      if (s.waiting && reviewDone.has(`${s.waiting.slug}/${s.waiting.id}`)) s = { ...s, waiting: null };
+      if (s.waiting && answeredGates.has(`${s.waiting.slug}/${s.waiting.id}`)) s = { ...s, waiting: null };
       const st = sessionState(s, data);
       if (!WORK_LISTED.includes(st)) continue;
       const isHub = s.kind === 'hub';
@@ -182,7 +182,7 @@ function workWriteMarks(nwo, patches) {
 
 /* The entries of the document and the class of each ('new', 'later' or none), with the marks they were judged by. */
 function workJudge() {
-  const entries = workEntries(work.doc, key => reviewDone.has(key));
+  const entries = workEntries(work.doc, key => answeredGates.has(key));
   const marks = new Map();
   const markOf = nwo => marks.get(nwo) || marks.set(nwo, workMarks(nwo)).get(nwo);
   const out = new Map();
@@ -427,7 +427,7 @@ let endState = null;
 function checkNewEnds(fetchedAt) {
   // The gates and waits that were rung for before the document knew their task (core.js).
   flushNotifyPending(fetchedAt);
-  const result = notifyEndEvents(workEntries(work.doc, key => reviewDone.has(key)), endState,
+  const result = notifyEndEvents(workEntries(work.doc, key => answeredGates.has(key)), endState,
     { prefs: prefs.notify, openId: work.open?.id, visible: document.visibilityState === 'visible',
       okRepos: (work.doc.repos || []).filter(r => !r.error).map(r => r.nwo) });
   endState = result;
@@ -911,7 +911,7 @@ function workKeepBack(id) {
 /* The parks and un-parks this document shows that the marks have not seen (`workParkPatches`), written once per repository. A
    row whose park is taken off while it is open stays in 新着 after it is left, as one sent back by hand does. */
 function workTrackParks() {
-  const entries = workEntries(work.doc, key => reviewDone.has(key));
+  const entries = workEntries(work.doc, key => answeredGates.has(key));
   const now = workServerNow();
   for (const repo of workRepos()) {
     if (repo.error) continue;
@@ -1080,7 +1080,7 @@ function renderWorkPanelOnly(parent) {
   setPanelPart('links', tp('tp-links'), '');
   setPanelPart('gate', tp('tp-gate'), '');
   setPanelPart('rest', tp('tp-rest'), parent ? parentOverviewHtml(parent)
-    : '<div class="m3-filled-card"><div class="tp-muted">この仕事は、いまの一覧にありません</div></div>');
+    : `<div class="m3-filled-card"><div class="tp-muted">${isGateRef(selectedTaskId) ? 'この確認待ちは、もう片付いています' : 'この仕事は、いまの一覧にありません'}</div></div>`);
   if (parent) renderParentAway(parent);
   renderHandForm(null);
   tp('tp-form').hidden = true;

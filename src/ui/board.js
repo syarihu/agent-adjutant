@@ -615,20 +615,21 @@ function renderColumns(force = false) {
   });
 }
 
-/* A gate is named by its board and id in the review queue, which reads several boards: two of
-   them can open a gate of one kind in the same second. `slug` is the board it is on; from a
-   board's own page that is the board shown. */
+/* Open the panel of a gate, where the person is: a gate is named by its board and id, since two boards
+   can open a gate of one kind in the same second. `slug` is the board it is on; from a board's own page
+   that is the board shown, and a board served alone has none to name. In the work view the address
+   names it; elsewhere the board is shown first, and the panel opens over it. The panel is the task's
+   when the gate has its task on the board (`landGateRef`), else the gate's own. */
 function goToGate(gateId, slug = null) {
   const on = slug || (multiBoard && nav.board && nav.board !== 'all' ? nav.board : null);
-  const ref = on ? `${on}/${gateId}` : gateId;
-  focused = ref;
-  go({ view: 'review', item: ref }, { replace: view === 'review' });
-  renderReview();
+  const ref = WORK_GATE_REF + (on ? `${on}/${gateId}` : gateId);
+  if (view === 'work') return go({ board: on || nav.board, view: 'work', task: ref, pane: 'detail' }, { replace: nav.task === ref });
+  onBoard(on, () => openTaskPanel(ref));
 }
 
 /* Where a waiting gate is read and answered: its task's panel, in the tab of its kind, when the
-   task is on the board. A gate with no task — the hub's, or one whose task is gone — has no
-   such panel and opens in the review view. */
+   task is on the board. A gate with no task — the hub's, or one whose task is gone — is judged
+   in a panel of its own (`goToGate`). */
 function judgeGate(gateId) {
   const g = (state.gates || []).find(x => x.id === gateId);
   const owner = g?.task && (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));

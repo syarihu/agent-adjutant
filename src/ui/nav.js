@@ -185,12 +185,15 @@ function drawScreen(boardChanged) {
 /* `final` is a state the board really answered with: a task it does not list is not coming. */
 function applyPendingTask(final = false) {
   if (!pendingTask || (view !== 'board' && view !== 'sessions' && view !== 'work')) return;
+  // A gate whose task is on this board is opened as that task, on the tab the gate is judged in.
+  const landed = isGateRef(pendingTask) ? landGateRef(pendingTask) : null;
+  if (landed) { pendingTask = landed.id; setNav({ task: landed.id, pane: landed.pane }); }
   // A session that has been linked to a task (or is a hub) is opened as that: the address follows.
   const id = panelRefOf(pendingTask);
   if (id !== pendingTask) { pendingTask = id; setNav({ task: id }); }
   // A parent is in the work document, not in this board's state. In the work view, a board that has
   // no such task answers for it: the panel says so (renderTaskPanel) instead of closing.
-  const there = isParentRef(id) ? !!parentOfRef(id) : isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : (state.tasks || []).some(t => t.id === id);
+  const there = isParentRef(id) ? !!parentOfRef(id) : isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : isGateRef(id) ? !!gateOfPanelRef(id) : (state.tasks || []).some(t => t.id === id);
   if (!there) {
     // A parent is in the work document, which may not have come yet: the pending task waits for it (refreshWork).
     if (final && !isParentRef(id)) {

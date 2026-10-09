@@ -34,12 +34,12 @@ function setReviewPart(part, el, html) {
 
 /* The item on screen: what was answered here keeps the copy it had, the rest is read from the
    state, a record included. */
-const reviewCurrent = () => reviewDone.get(focused)?.gate || gateByRef(focused) || waitByRef(focused);
+const reviewCurrent = () => answeredGates.get(focused)?.gate || gateByRef(focused) || waitByRef(focused);
 
 /* The waiting gates and waiting sessions by board, in the sidebar's order, the longest-waiting
    first. A gate answered here is out even if a poll that was already on its way still lists it. */
 function reviewGroups() {
-  const open = [...(state.gates || []).filter(g => !reviewDone.has(gateRef(g))), ...reviewWaits()];
+  const open = [...(state.gates || []).filter(g => !answeredGates.has(gateRef(g))), ...reviewWaits()];
   const since = x => x._wait ? x.since : stampSecs(x.openedAt) ?? 0;
   const slugs = multiBoard ? orderedBoards(readBoards()).map(b => b.slug) : [''];
   for (const g of open) if (!slugs.includes(g._slug || '')) slugs.push(g._slug || '');
@@ -81,7 +81,7 @@ function reviewRowHtml(g, cur, done) {
 
 function renderReviewList(groups, cur) {
   const list = document.querySelector('#review .review-inbox-list');
-  const done = [...reviewDone.entries()].sort((a, b) => a[1].at - b[1].at);
+  const done = [...answeredGates.entries()].sort((a, b) => a[1].at - b[1].at);
   let html = '';
   for (const grp of groups) {
     html += `<div class="rv-group-head"><span class="rv-group-name">${esc(grp.title)}</span>`
@@ -109,19 +109,15 @@ function renderReviewList(groups, cur) {
 /* The ref after `ref` that is still waiting: the next in the list, else the first that is left
    so that none is skipped. */
 function nextUnansweredAfter(ref) {
-  const live = r => !reviewDone.has(r) && ((state.gates || []).some(g => gateRef(g) === r) || !!waitByRef(r));
+  const live = r => !answeredGates.has(r) && ((state.gates || []).some(g => gateRef(g) === r) || !!waitByRef(r));
   const at = reviewOrder.indexOf(ref);
   return reviewOrder.slice(at + 1).find(live) || reviewOrder.find(r => r !== ref && live(r)) || null;
 }
 
-/* Called when a gate was answered. The next item is shown by replacing the address: going back
-   from here should leave the queue, not step through what was just answered. */
-function reviewAnswered(g, decision) {
-  // Only what is answered here: on a board's own page a gate has no board in its ref, and a bare
-  // id could hide another board's gate of the same id from the queue.
-  if (g.wait === false || view !== 'review') return;
+/* Called when a gate was answered in this view. The next item is shown by replacing the
+   address: going back from here should leave the queue, not step through what was just answered. */
+function reviewAnswered(g) {
   const ref = gateRef(g);
-  reviewDone.set(ref, { gate: { ...g }, decision, at: Date.now() });
   if (focused !== ref || !prefs.reviewNext) return;
   focused = nextUnansweredAfter(ref);
   reviewPane = 'judge';
@@ -140,10 +136,19 @@ function reviewStep(dir) {
   reviewSelect(at < 0 ? (dir > 0 ? reviewOrder[0] : null) : reviewOrder[at + dir]);
 }
 
+/* 「ターミナルで話す」: where the terminal can open the item it is this view's own tab; elsewhere
+   the outside tab is brought forward (`talk`). */
+function reviewTalkHere() {
+  const g = reviewCurrent();
+  if (!g || !reviewTermUsable(g)) return false;
+  setReviewPane('term');
+  return true;
+}
+
 /* ── the item on screen ── */
 
 function reviewHeadHtml(g, ref) {
-  const done = reviewDone.get(ref);
+  const done = answeredGates.get(ref);
   const [label] = g._wait ? [waitLabel(g)] : kindOf(g.kind);
   const b = boards.find(x => x.slug === g._slug);
   const at = reviewOrder.indexOf(ref);
@@ -199,37 +204,6 @@ function reviewTabsHtml(g) {
     + tab('term', 'ターミナル', usable ? '' : `<span class="tp-tab-hint">${esc(hint)}</span>`, !usable && hint);
 }
 
-/* Issue and PR of the task, a row each; a gate with no task has neither. */
-function reviewRefsHtml(g, task) {
-  return task ? `<div class="rv-refs" data-rv-refs>${ghRowsHtml(task)}</div>` : '';
-}
-
-/* What it takes to answer: the buttons the gate's options name, a comment box, 話す. */
-function reviewDockHtml(g) {
-  const btn = (act, cls, icon, text, style = '') =>
-    `<button type="button" class="${cls}" data-act="${act}"${style ? ` style="${style}"` : ''}><span class="material-symbols-outlined" style="font-size:16px;">${icon}</span><span>${text}</span></button>`;
-  const BUTTON = {
-    approve: () => btn('approve', 'btn-m3-primary approve', 'check', decisionLabel('approve', g.kind),
-      'background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)'),
-    changes: () => btn('changes', 'btn-m3-tonal changes', 'replay', decisionLabel('changes', g.kind)),
-    reject: () => btn('reject', 'btn-m3-text reject', 'cancel', decisionLabel('reject', g.kind), 'color:var(--md-sys-color-error)'),
-    ack: () => btn('ack', 'btn-m3-primary approve', 'check', decisionLabel('ack', g.kind)),
-    answer: () => btn('answer', 'btn-m3-primary approve', 'send', decisionLabel('answer', g.kind)),
-    ask: () => btn('ask', 'btn-m3-tonal changes', 'help', decisionLabel('ask', g.kind)),
-  };
-  return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
-    ${roundsHintHtml(g)}
-    <textarea class="gate-comment" placeholder="修正指示や質問があれば入力してください（承認の場合は空欄でも可）..."></textarea>
-    <div class="decide">
-      ${(g.options || []).map(o => (BUTTON[o] || (() => ''))()).join('')}
-      <button type="button" class="m3-icon-button talk" style="padding:8px 14px" data-rv-talk><span class="material-symbols-outlined" style="font-size:16px;">terminal</span><span>ターミナルで話す</span></button>
-      ${g.worktree && g.kind !== 'verify' ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" title="${ideTitle()}" data-ide="${esc(g.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;">code</span><span>IDEで開く</span></button>` : ''}
-      ${parkButtonHtml(g)}
-      <button type="button" class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします"><span class="material-symbols-outlined" style="font-size:16px;">done_all</span><span>解決済みとして閉じる</span></button>
-    </div>
-  </div>`;
-}
-
 /* The 判断 tab: one column, from what waits to the buttons that answer it. */
 /* A session waiting on a prompt or a question: what it waits on, and the way to its terminal. */
 function reviewWaitJudgeHtml(w) {
@@ -248,105 +222,16 @@ function reviewWaitJudgeHtml(w) {
 
 function reviewJudgeHtml(g, task, done) {
   if (g._wait) return reviewWaitJudgeHtml(g);
-  const record = g.wait === false;
-  const [label] = kindOf(g.kind);
-  let h = reviewRefsHtml(g, task);
-
-  const why = g.problem || g.why || '';
-  h += `<div class="m3-card-attention-box rv-wait">
-    <div class="rv-wait-head">
-      <span class="material-symbols-outlined" style="font-size:18px;">${record ? 'history' : 'pending_actions'}</span>
-      <span>【${esc(label)}】${record ? '記録 — worker は止まらずに進んだ' : 'あなたの判定待ち'}</span>
-      <span class="rv-wait-when">${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'}</span>
-    </div>
-    <div class="rv-wait-title">${esc(g.title)}</div>
-    ${why ? `<div class="rv-wait-why">${esc(why)}</div>` : ''}
-    ${stopWhy(g).length ? `<div><strong>止めた理由:</strong><ul>${stopWhy(g).map(w =>
-      `<li${stopBad(g) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
-    ${g.focus ? `<div class="rv-wait-focus"><strong>確認してほしい点:</strong> ${md(g.focus)}</div>` : ''}
-  </div>`;
-  if (!record) h += parkBannerHtml(task);
-
-  if (g.decided) {
-    h += `<div class="panel"><details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
-  }
-
-  const pickable = !record && !done;
-  if (g.kind === 'diff') {
-    h += reviewPanels(g);
-    if (g.diff) {
-      h += `<div class="panel">
-        <h3><span class="material-symbols-outlined" style="font-size:18px;">difference</span><span>コード差分 (Diff)</span></h3>
-        <div class="diff">${renderDiff(g.diff)}</div>
-      </div>`;
-    } else if (diffPending(g)) {
-      h += `<div class="empty-state">差分を読み込み中…</div>`;
-    } else if (!g.findings?.length && !g.reviewRounds?.length) {
-      h += `<div class="empty-state">この Gate に記録されたコード差分はありません。</div>`;
-    }
-  } else if (g.kind === 'verify') {
-    if (pickable) {
-      h += `<div class="work">
-        <button class="big" title="${ideTitle()}" data-ide="${esc(g.worktree)}">
-          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:text-bottom;margin-right:4px;">code</span>
-          <span>IDE で開く</span>
-        </button>
-        <span class="mono2">${esc(g.worktree)}</span>
-        <span style="color:var(--md-sys-color-on-surface-variant);font-size:12px;">— 確認後、下のパネルで判定してください</span></div>`;
-    }
-    h += checkPanels(g);
-    if (g.run) {
-      h += `<div class="panel">
-        <h3><span class="material-symbols-outlined" style="font-size:18px;">play_arrow</span><span>動かし方</span></h3>
-        <div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div>
-      </div>`;
-    }
-  } else {
-    if (task?.body) {
-      h += `<div class="panel">
-        <h3><span class="material-symbols-outlined" style="font-size:18px;">assignment</span><span>依頼内容 / 要件プロンプト</span></h3>
-        <div class="body">${md(task.body)}</div>
-      </div>`;
-    }
-    if (g.body && g.body !== task?.body) {
-      h += `<div class="panel">
-        <h3><span class="material-symbols-outlined" style="font-size:18px;">report</span><span>Gate 報告</span></h3>
-        <div class="body">${md(g.body)}</div>
-      </div>`;
-    }
-    if (g.facts?.length) {
-      h += `<div class="panel">
-        <h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3>
-        <ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
-      </div>`;
-    }
-    if (g.unsure) {
-      h += `<div class="panel">
-        <h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3>
-        <div class="body">${md(g.unsure)}</div>
-      </div>`;
-    }
-    h += choicesHtml(g, pickable);
-  }
-
-  if (task) {
-    h += `<div><button type="button" class="btn-m3-text" data-rv-history><span>経過をすべて見る</span><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">arrow_forward</span></button></div>`;
-  }
-  if (done) {
-    h += `<div class="decision-dock panel rv-done-note"><span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">task_alt</span><span>処理済み: ${esc(DECISION[done.decision === 'close' ? 'closed' : done.decision] || done.decision)}</span></div>`;
-  } else {
-    // A record is sent back from the same form the task panel has.
-    h += record ? decideHtml(g) : reviewDockHtml(g);
-  }
-  return h;
+  const history = task ? `<div><button type="button" class="btn-m3-text" data-rv-history><span>経過をすべて見る</span><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">arrow_forward</span></button></div>` : '';
+  return gateJudgeHtml(g, task, done, history);
 }
 
 /* #rv-judge is the only part drawn with its comment box inside: a redraw that comes while it is
    being typed in is held (redrawReview), as it cuts an IME composition short. */
 function renderReviewJudge(g, ref) {
   const el = rv('rv-judge');
-  const done = reviewDone.get(ref);
-  const task = taskOfGate(g) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree && (!g._slug || t._slug === g._slug));
+  const done = answeredGates.get(ref);
+  const task = taskForGate(g);
   const html = reviewJudgeHtml(g, task, done);
   const sameItem = judgeFor === ref;
   // Not drawn under the terminal: a hidden box has no scroll to keep. It is drawn when shown.
@@ -446,8 +331,8 @@ function renderReview({ holdJudge = false } = {}) {
     reviewSig.judge = '';
     rv('rv-judge').innerHTML = `<div class="empty-state rv-empty">
       <span class="material-symbols-outlined" style="font-size:48px;opacity:.5;display:block;margin-bottom:12px;" aria-hidden="true">done_all</span>
-      <div style="font-size:15px;font-weight:700;color:var(--md-sys-color-on-surface);">${reviewDone.size ? 'すべて処理しました' : '対応待ちはありません'}</div>
-      <div style="font-size:13px;margin-top:6px;">${reviewDone.size ? `処理済み ${reviewDone.size} 件` : ''}</div></div>`;
+      <div style="font-size:15px;font-weight:700;color:var(--md-sys-color-on-surface);">${answeredGates.size ? 'すべて処理しました' : '対応待ちはありません'}</div>
+      <div style="font-size:13px;margin-top:6px;">${answeredGates.size ? `処理済み ${answeredGates.size} 件` : ''}</div></div>`;
     renderReviewTerm();
     if (view === 'review' && nav.item) setNav({ item: null });
     return;
@@ -502,12 +387,6 @@ document.getElementById('review').addEventListener('click', e => {
   if ((b = e.target.closest('[data-rv-step]')) && !b.disabled) return reviewStep(+b.dataset.rvStep);
   if ((b = e.target.closest('[data-rv-pane]')) && !b.disabled) return setReviewPane(b.dataset.rvPane);
   if (e.target.closest('[data-tp-reconnect]')) { reviewTerm.reconnect = true; return renderReviewTerm(); }
-  if (e.target.closest('[data-rv-talk]')) {
-    const g = reviewCurrent();
-    // Where the terminal can open it is this tab; elsewhere, the outside tab is brought forward.
-    if (g && reviewTermUsable(g)) setReviewPane('term'); else talk(focused);
-    return;
-  }
   if (parkClick(e)) return;
   if (e.target.closest('[data-rv-open-wait]')) {
     const w = reviewCurrent();
