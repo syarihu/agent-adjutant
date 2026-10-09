@@ -527,7 +527,7 @@ the work under way in every repository, in three columns. The list on the left h
 (the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
 with the tasks that have no parent under 「親なし」; the owner heading is shown even when there is only one owner,
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
-「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by repository, headed by its
+「状態」 (the boxes 新着, 実行中, そのほか in that order, and inside each box by repository, headed by its
 full `owner/name`, in name order with case ignored; empty boxes are not drawn). Only work under way is listed: a
 worker session with a task or without one. A repository is left out while it is idle (its hub is not running, no
 session of it is running, and nothing of it waits on you); it comes back by itself when that changes, and its board and
@@ -562,23 +562,26 @@ openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt`
 gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
 when you last typed into it.
 
-**新着 and 後で見る.** 新着 holds what waits on you and that you have not looked at since it began: a gate that
+**新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
 session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
 for a task with nothing running, which then has a row of its own. Each row shows what it asks, or else what the agent
-last said. 後で見る holds what you opened and left without finishing, and every parked task (see "Parking a task" below), and each row says what is still open
-(「既読 · 設計レビューが開いたまま」). In 「親 Issue」 the two are bands above the tree (a task session's row stays in the
-tree too; a hub that waits on you has its row in the band, and its chip stays on the heading), and in 「状態」 they are the first two boxes. A row counts as looked at once you leave it (the address
-moves to another row or another view, or the page closes) or act on it, wherever you do: answering its gate on the
-board, through the hub or the CLI, or typing in its session's terminal, even outside the board (the ledger's
-`lastPromptAt`; the sentences adjutant types to wake a session are not counted, but a `wake` / `workerWake` /
-`hubWake` of your own that types other text is, since it cannot be told from you). Opening a task in the board's own
-panel does not count, nor does switching browser tabs. It goes back to 新着 only when something changes what you
-have to do: a gate opens, a permission prompt or question arrives, a worker finishes a turn with no gate open, a
-session fails, the PR turns to yours again, or you take a park off (置くのをやめる, `adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to checks does
-not. Three buttons: `done_all` in the 新着 header marks every new row read, `mark_email_unread` on a 後で見る row
-sends it back to 新着, and `check` clears a finished, failed or PR item (a gate or a permission wait leaves only when it
-is answered). The sidebar badge on 「いまの仕事」 counts the new rows, and is refreshed every 10 seconds while another
+last said. A row stays in 新着 until what it waits on you for ends (the gate is answered, the permission prompt is gone,
+the worker is given a new prompt, the PR's turn moves on) or something newer replaces it, or until you mark it read with
+its `done` button 「既読にする」 or with `done_all` in the 新着 header. Acting on it counts too, wherever you do it:
+answering its gate on the board, through the hub or the CLI, or typing in its session's terminal, even outside the
+board (the ledger's `lastPromptAt`; the sentences adjutant types to wake a session are not counted, but a `wake` /
+`workerWake` / `hubWake` of your own that types other text is, since it cannot be told from you). Opening a row and
+leaving it does not mark it read, nor does opening a task in the board's own panel or switching browser tabs. Marking a
+finished (done or failed) row read takes that finished item off the list: a task with nothing else running or waiting
+leaves the list, and its repository drops out when nothing else is under way there (#600). Everything else out of 新着
+stays listed where its state puts it, in the 「状態」 boxes and in the 「親 Issue」 tree. In 「親 Issue」 新着 is a band above the tree (a task session's row stays in the tree too; a hub
+that waits on you has its row in the band, and its chip stays on the heading), and in 「状態」 it is the first box. A row is
+new again only when something changes what you have to do: a gate opens, a permission prompt or question arrives, a
+worker finishes a turn with no gate open, a session fails, the PR turns to yours again, or you take a park off (置くのをやめる,
+`adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to
+checks does not. Two buttons: `done` on a new row marks it read, and `done_all` in the 新着 header marks every new row
+read. The sidebar badge on 「いまの仕事」 counts the new rows, and is refreshed every 10 seconds while another
 view is open; it is the only count in the sidebar, and on the resident server it is the number in front of the page's
 title (a board served alone puts what waits on you there). The checkbox 「処理したら次へ」 in the 新着 header (on by
 default, kept in the browser) opens the next new row, in the order the list shows them, once you answer or close a gate on
@@ -591,12 +594,10 @@ the row that is open (the first one left when none follows, and none when none i
 time to merge, or something else you say in words) can be parked with a reason: `adj task park --id … --reason
 pdm|design|review|merge-timing|other [--text …]`, or 置く in the task panel's タスクサマリ and next to a gate's
 answers (in the task panel and in a gate's own panel), which opens one dialog for the reason and a text (required for その他).
-A parked task is always in 後で見る, whatever the read marks say, even when nothing else waits on it (a draft PR with no
-worker), and is never in 新着, so the sidebar badge does not count it. The row says 「置いている — PdM の確認待ち」 with
-the text and since when. A parked task's gates stay open and are answered as usual; the gate box and a gate's own panel
+A parked task is never in 新着, so the sidebar badge does not count it, but it stays listed where its state puts it: a
+parked task with nothing else waiting (a draft PR with no worker, say) is in そのほか and under its parent. The row says 「置いている — PdM の確認待ち」 with the text and since when. A parked task's gates stay open and are answered as usual; the gate box and a gate's own panel
 show a 「置いている — …」 line with 置くのをやめる, and its 「いまの仕事」 gate line says it is parked.
-置くのをやめる (or `adj task unpark`) sends the row back to 新着 when it still has something open, and takes it out of
-both sections when nothing is left. A task that is done or cancelled is never parked: parking one is refused, and
+置くのをやめる (or `adj task unpark`) sends the row back to 新着 when it still has something open. A task that is done or cancelled is never parked: parking one is refused, and
 moving a task to done (a merged PR included) clears its park. A GitHub review request does not park anything. The
 page makes the same change with `POST /api/tasks/<id>` and `{"parked": {"reason": "pdm", "text": "…"}}` (`{"parked":
 null}` takes it back), and the hub runs the CLI verbs when you ask it to. The record keeps `parked`

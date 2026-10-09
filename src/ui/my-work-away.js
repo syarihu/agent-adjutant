@@ -3,13 +3,13 @@
    row, and return data, touching neither the page nor local storage, so `src/ui/tests/my-work-away.test.js`
    runs them under `node --test`. Loaded after my-work-seen.js (`workActedAt`) and before my-work.js, which draws.
 
-   "Away" starts at the later of the time the person left the row (`mark.left`) and the time they last acted on it,
-   the same `read` that makes a row new or looked at. What counts is what the work document itself shows, so the
+   "Away" starts at the later of the time the person left the row (`mark.left`) and the time they last acted on it
+   (reading a row writes `left` too, so 既読 also starts a new away span). What counts is what the work document itself shows, so the
    count on a row and the timeline in the panel cannot disagree: phase moves, gates opened, a permission wait, a
    turn that ended or failed, and the PR's turn changing. Not events: records, answers (they are the person's own
    acts, and are the last action), sub-agents and other fine-grained activity. */
 
-/* What a PR's turn says in 新着 (my-work-seen.js has the words of 後で見る). */
+/* What a PR's turn says in 新着 (my-work-seen.js has the words of a parked row). */
 const WORK_PR_NOW = {
   changes: '修正の依頼が来ています',
   'ci-failed': 'CI が落ちています',

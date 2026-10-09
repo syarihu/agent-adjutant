@@ -91,7 +91,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-hub.working { color: var(--md-sys-color-primary); border-color: color-mix(in srgb, var(--md-sys-color-primary) 45%, transparent); }
 .wk-hub.off { color: var(--md-sys-color-outline); }
 .wk-hub-word { font-weight: 600; }
-/* Waiting on the person: the warning tone while it is new, a quiet one once it was looked at. */
+/* Waiting on the person: the warning tone while it is new, a quiet one once it was read. */
 .wk-hub-wait { display: inline-flex; align-items: center; gap: 1px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); color: var(--md-sys-color-on-surface-variant); }
 .wk-hub-wait.new { border-color: transparent; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .wk-hub-wait .material-symbols-outlined { font-size: 13px; }
@@ -133,11 +133,11 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-line { font-size: 11px; font-family: var(--font-mono); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .wk-line.ask { color: var(--md-sys-color-warning); }
 .wk-line.tree { color: var(--md-sys-color-tertiary); }
-/* What the agent last said, on one line; and what is still open on a row that was looked at. */
+/* What the agent last said, on one line; and the line of a parked row. */
 .wk-line.msg { font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
-.wk-line.later { font-family: inherit; font-weight: 700; color: var(--md-sys-color-outline); }
-.wk-row[aria-current="true"] .wk-line.later { color: inherit; }
-/* The rows of 新着 and 後で見る: the row, and its buttons beside it. */
+.wk-line.parked { font-family: inherit; font-weight: 700; color: var(--md-sys-color-outline); }
+.wk-row[aria-current="true"] .wk-line.parked { color: inherit; }
+/* The rows of 新着: the row, and its buttons beside it. */
 .wk-band-row { display: flex; align-items: flex-start; gap: 2px; min-width: 0; }
 .wk-band-row .wk-row { flex: 1; min-width: 0; width: auto; }
 .wk-acts { flex: none; display: inline-flex; flex-direction: column; gap: 2px; padding-top: 4px; }
