@@ -52,6 +52,7 @@ const work = {
   structure: '',      // what the list was last built from (renderWorkList)
   cells: new Map(),   // each row's and header's own html, by key
   rowsByKey: new Map(),
+  hubsByKey: new Map(), // the hub chips on the headings, by key (workRepoHubChips)
   backed: null,       // the address of an open row that was sent back: not opened again until it moves
   open: null,         // the row the person has open: { nwo, id, nav, at } (`at`: the server's time it was opened), the mark `left` is written when it is left
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
@@ -321,17 +322,21 @@ function workOwnerGroups(repoNodes) {
 
 /* The rows of one 「状態」 box under a heading per repository, `owner/name` in name order with case ignored: by owner as
    the tree orders its owners, then by name. The rows come in sorted and keep that order. The key is apart from the
-   tree's (`repo:`, `owner:`), so a fold is kept per box. */
-function workBoxRepoGroups(boxId, rows, place) {
+   tree's (`repo:`, `owner:`), so a fold is kept per box. A hub is a chip on its repository's heading, which is drawn
+   even when no row of the box is under it. */
+function workBoxRepoGroups(boxId, rows, place, chips = []) {
   const groups = new Map();
-  for (const row of rows) {
-    const nwo = row.nwo || '';
+  const group = nwo => {
     const key = `brepo:${boxId}/${nwo.toLowerCase()}`;
-    if (!groups.has(key)) groups.set(key, { key, kind: 'brepo', label: nwo, rows: [], items: [] });
-    const g = groups.get(key);
+    if (!groups.has(key)) groups.set(key, { key, kind: 'brepo', label: nwo, rows: [], items: [], hubs: [] });
+    return groups.get(key);
+  };
+  for (const row of rows) {
+    const g = group(row.nwo || '');
     g.rows.push(row);
     g.items.push({ row, place });
   }
+  for (const chip of chips) group(chip.nwo || '').hubs.push(chip);
   const order = g => { const nwo = g.label.toLowerCase(), i = nwo.indexOf('/'); return i > 0 ? [nwo.slice(0, i), nwo.slice(i + 1)] : [nwo, '']; };
   const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
   return [...groups.values()].sort((a, b) => { const [ao, an] = order(a), [bo, bn] = order(b); return cmp(ao, bo) || cmp(an, bn); });
@@ -348,47 +353,54 @@ function workRowOrder(a, b) {
 const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
-/* The list as a tree: owner → repository → [hub] → parent issue → task, with the rows that belong to none under
-   「親なし」. The owner heading is shown even when there is only one owner. A node is `{ key, kind, label…, rows }`
-   where `rows` are all the rows below it, and `items` what it holds in order: rows and nodes. */
-function workTreeByParent(rows, bands = []) {
+/* The list as a tree: owner → repository → parent issue → task, with the rows that belong to none under 「親なし」.
+   The owner heading is shown even when there is only one owner. A hub is not a row here: it is a chip on the heading of its
+   repository, or of the parent it runs. A node is `{ key, kind, label…, rows }` where `rows` are all the task rows below
+   it, `items` what it holds in order (rows and nodes) and `hubs` the chips on its heading. */
+function workTreeByParent(rows, bands = [], chipsByRepo = new Map(), repos = workRepos()) {
   const repoNodes = [];
-  for (const repo of workRepos()) {
-    const mine = rows.filter(r => r.repo === repo);
-    if (!mine.length) continue;
+  for (const repo of repos) {
+    const mine = rows.filter(r => r.repo === repo && !r.isHub);
+    const chips = chipsByRepo.get(repo) || [];
+    if (!mine.length && !chips.length) continue;
     const items = [];
-    const hubs = mine.filter(r => r.isHub).sort(workRowOrder);
-    items.push(...hubs.map(row => ({ row, place: 'tree' })));
     const byParent = new Map();
     const loose = [];
-    for (const r of mine.filter(x => !x.isHub)) {
+    for (const r of mine) {
       const key = r.task?.parent;
       if (key) byParent.set(key, [...(byParent.get(key) || []), r]);
       else loose.push(r);
     }
+    const parentNodes = [];
     for (const [key, list] of byParent) {
       const found = (repo.parents || []).find(p => p.key === key);
       const parent = found || { missing: true, key, url: key, children: [], total: list.length, merged: 0, stacked: false, hub: repo.carrier };
-      items.push({ key: `parent:${repo.nwo}/${key}`, kind: 'parent', parent: { ...parent, repo }, rows: list.sort(workRowOrder), items: list.sort(workRowOrder).map(row => ({ row, place: 'tree' })) });
+      parentNodes.push({ key: `parent:${repo.nwo}/${key}`, kind: 'parent', parent: { ...parent, repo }, rows: list.sort(workRowOrder), items: list.sort(workRowOrder).map(row => ({ row, place: 'tree' })), hubs: [] });
     }
+    const rest = workPlaceHubChips(chips, parentNodes);
+    items.push(...parentNodes);
     if (loose.length) {
       loose.sort(workRowOrder);
       items.push({ key: `none:${repo.nwo}`, kind: 'none', rows: loose, items: loose.map(row => ({ row, place: 'tree' })) });
     }
-    repoNodes.push({ key: `repo:${repo.nwo}`, kind: 'repo', nwo: repo.nwo, rows: mine, items });
+    repoNodes.push({ key: `repo:${repo.nwo}`, kind: 'repo', nwo: repo.nwo, rows: mine, items, hubs: rest, hub: chips.find(c => !c.hub.parent) || null });
   }
   return [...bands, ...workOwnerGroups(repoNodes)];
 }
 
 /* The list as boxes of one state each, in order, and inside each box by repository (`owner/name`, in name order, case
-   ignored). A box with nothing in it is not drawn. The rows of 新着 and 後で見る have their actions beside them, as in the bands. */
-function workTreeByState(rows) {
+   ignored). A box with nothing in it is not drawn. The rows of 新着 and 後で見る have their actions beside them, as in the bands.
+   A hub is a chip on its repository's heading, in 実行中 while it runs and in そのほか otherwise; its row is here only
+   while it waits on the person (新着, 後で見る). */
+function workTreeByState(rows, chips = []) {
   const tree = [];
+  const listed = rows.filter(r => !r.isHub || r.cls);
   for (const box of WORK_BOXES) {
-    const mine = rows.filter(r => workBoxOf(r) === box.id);
-    if (!mine.length) continue;
+    const mine = listed.filter(r => workBoxOf(r) === box.id);
+    const hubs = chips.filter(c => box.id === (c.s.present ? 'running' : 'other'));
+    if (!mine.length && !hubs.length) continue;
     const place = box.id === 'new' || box.id === 'later' ? box.id : 'box';
-    const items = workBoxRepoGroups(box.id, mine.sort(workRowOrder), place);
+    const items = workBoxRepoGroups(box.id, mine.sort(workRowOrder), place, hubs);
     tree.push({ key: `box:${box.id}`, kind: 'box', label: box.label, readAll: box.id === 'new', rows: mine, items });
   }
   return tree;
@@ -413,6 +425,72 @@ function workParentSession(p) {
   if (!repo) return null;
   return (repo.hubSessions || []).find(h => h.board === p.hub)?.session
     || (repo.rows || []).find(r => r.board === p.hub && r.session.kind === 'hub')?.session || null;
+}
+
+/* What a hub is doing, in words. A failed or unknown hub never reads as waiting: those are the states the person has to look at. */
+const WORK_HUB_WORD = { working: '作業中', restarting: '作業中', done: '待機中', idle: '待機中', waiting: '待機中', permission: '待機中',
+  failed: 'エラー', unknown: '状態不明', stopped: '動いていない', ended: '動いていない', none: '動いていない' };
+const workHubWord = st => WORK_HUB_WORD[st] || '状態不明';
+
+/* The hubs of a repository as the chips on its headings: its own first, then the parent-task hubs by key. A chip has the
+   shape of a row, so pressing it selects the hub as pressing its row did, and says how many things wait on the person
+   on it. A hub with no session in the document has no chip; an ended parent-task hub has none unless it waits. */
+function workRepoHubChips(repo, now, judged) {
+  const data = { now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] };
+  const found = [...(repo.rows || []).filter(r => r.session.kind === 'hub').map(r => ({ r, parent: false })),
+    ...(repo.hubSessions || []).map(r => ({ r, parent: true }))];
+  const chips = [];
+  for (const { r, parent } of found) {
+    // `repo.hubs` says which hub it is; a session it does not list (the server falls back to the session's own key) still has a chip.
+    const h = (repo.hubs || []).find(x => x.id === r.session.id) || { id: r.session.id, parent: parent || !!r.session.key, key: r.session.key ?? null, slug: r.board };
+    let s = r.session;
+    if (s.waiting && answeredGates.has(`${s.waiting.slug}/${s.waiting.id}`)) s = { ...s, waiting: null };
+    // A hub that is not running reads as waiting while a gate is open on it (the server sets `waiting`): the chip says what it is.
+    const state = sessionState(s, data);
+    const st = !s.present && (state === 'waiting' || state === 'permission') ? restingState(s, data) : state;
+    const ref = HUB_REF + s.id;
+    const id = `${r.board}/${ref}`;
+    const j = judged.get(id);
+    const live = j?.live || [];
+    if (h.parent && st === 'ended' && !live.length) continue;
+    const board = workBoardOf(repo, r.board);
+    chips.push({ id, key: `${board}/${ref}`, board, ref, repo, nwo: repo.nwo, hub: h, s, st, data, task: null, isHub: true, turn: false,
+      live, cls: j?.cls || null, waits: live.length, word: workHubWord(st) });
+  }
+  const own = c => c.hub.parent ? 1 : 0;
+  const key = c => c.hub.key ?? '';
+  return chips.sort((a, b) => own(a) - own(b) || (a.hub.parent && (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0)));
+}
+
+/* The chips given to the parent headings that a parent-task hub runs, one chip to a parent (the one of that parent's own key
+   when there is one); a chip no heading takes is returned, to go on the repository's. */
+function workPlaceHubChips(chips, parentNodes) {
+  const pool = [...chips];
+  const give = (node, chip) => { pool.splice(pool.indexOf(chip), 1); node.hubs = [chip]; };
+  const real = parentNodes.filter(n => !n.parent.missing);
+  // By the parent's own key first, so two parents run by one hub slug each get the chip that belongs to them; then a chip with no key by slug.
+  for (const node of real) {
+    const chip = pool.find(c => c.hub.parent && c.hub.slug === node.parent.hub && c.hub.key === node.parent.key);
+    if (chip) give(node, chip);
+  }
+  for (const node of real) {
+    if (node.hubs.length) continue;
+    // Only a chip with no key of its own: a keyed one that no parent matched goes on the repository's heading.
+    const chip = pool.find(c => c.hub.parent && !c.hub.key && c.hub.slug === node.parent.hub);
+    if (chip) give(node, chip);
+  }
+  return pool;
+}
+
+/* How many things the hubs on the headings below this node wait on the person with: what a folded heading says of them,
+   as it hides their chips. */
+function workHiddenHubWaits(node) {
+  let n = 0;
+  for (const it of node.items || []) {
+    if (it.row) continue;
+    n += (it.hubs || []).reduce((sum, c) => sum + c.waits, 0) + workHiddenHubWaits(it);
+  }
+  return n;
 }
 
 /* What the address selects: the row (or parent) and the session whose terminal is in the middle. */
@@ -634,11 +712,29 @@ function workItemHtml(r, place) {
 }
 
 /* How many rows are in each state, for a header that is folded. */
-function workSummaryHtml(rows) {
+function workSummaryHtml(rows, hubWaits = 0) {
   const counts = new Map();
   for (const r of rows) counts.set(r.st, (counts.get(r.st) || 0) + 1);
+  const hubLabel = esc(`hub があなたを待っています ${hubWaits} 件`);
+  const hub = hubWaits > 0 ? `<span role="img" aria-label="${hubLabel}" title="${hubLabel}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><span class="material-symbols-outlined wk-glyph waiting" aria-hidden="true">front_hand</span>${hubWaits}</span>` : '';
   return `<span class="wk-sum">${[...counts].sort((a, b) => workStateOrder(a[0]) - workStateOrder(b[0]))
-    .map(([st, n]) => `<span>${workGlyphHtml(st)}${n}</span>`).join('')}</span>`;
+    .map(([st, n]) => `<span>${workGlyphHtml(st)}${n}</span>`).join('')}${hub}</span>`;
+}
+
+/* The hubs on a heading, each a button of its own beside the heading's main button (never inside it). It says the hub, what it
+   is doing, and, when it waits on the person, how many things; pressing it opens the hub (a stopped one offers 「hub を起動」
+   there). A hub of a parent task is named by its key where the heading is not that parent's. */
+function workHubChipsHtml(chips, where, named) {
+  if (!chips?.length) return '';
+  return `<span class="wk-hubs">${chips.map(c => {
+    const off = ['stopped', 'ended', 'none'].includes(c.st);
+    // Only a hub that is not there is started from its panel; an ended parent-task hub is closed there.
+    const startable = c.st === 'stopped' || c.st === 'none';
+    const name = named && c.hub.parent && c.hub.key ? `hub ${c.hub.key}` : 'hub';
+    const tip = `${where ? `${where} の ` : ''}${name}: ${c.word}${c.waits ? `。あなたを待っているもの ${c.waits} 件` : ''}`;
+    const wait = c.waits ? `<span class="wk-hub-wait${c.cls === 'new' ? ' new' : ''}" role="img" aria-label="${esc(`あなたを待っているもの ${c.waits} 件`)}" title="${esc(`あなたを待っているもの ${c.waits} 件`)}"><span class="material-symbols-outlined" aria-hidden="true">front_hand</span>${c.waits}</span>` : '';
+    return `<button type="button" class="wk-hub${c.st === 'working' || c.st === 'restarting' ? ' working' : off ? ' off' : ''}" data-wk-hub="${esc(c.key)}" aria-label="${esc(`${tip}。開く`)}" title="${esc(`${tip}${startable ? '。開くと hub を起動できます' : ''}`)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><span>${esc(name)}</span><span class="wk-hub-word">${esc(c.word)}</span>${wait}</button>`;
+  }).join('')}</span>`;
 }
 
 function workFoldButton(key, folded, name) {
@@ -646,9 +742,15 @@ function workFoldButton(key, folded, name) {
   return `<button type="button" class="wk-fold" data-wk-fold="${esc(key)}" aria-expanded="${!folded}" aria-label="${esc(`${name}を${verb}`)}" title="${esc(`${name}を${verb}`)}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>`;
 }
 
+/* A repository heading that holds a hub chip and nothing else: there is nothing to fold. */
+const workChipsOnly = node => !node.items.length && !node.empty && !!node.hubs?.length;
+
 /* A node's header. A folded one says how many rows are in each state. */
 function workHeadHtml(node, folded) {
-  const sum = folded ? workSummaryHtml(node.rows) : '';
+  const sum = folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : '';
+  const fold = (key, name) => workChipsOnly(node) ? '<span class="wk-fold-gap"></span>' : workFoldButton(key, folded, name);
+  // A count of task rows: a heading with none says nothing (a hub alone is a chip), except the band, which says it is empty.
+  const count = node.rows.length || node.kind === 'band' ? `<span class="wk-count">${node.rows.length}</span>` : '';
   if (node.kind === 'parent') {
     const p = node.parent;
     const segs = workSegments(p);
@@ -658,16 +760,16 @@ function workHeadHtml(node, folded) {
     const current = nav.task === PARENT_REF + p.key;
     // A parent the document does not list has nothing to open: its header is plain text.
     const [open, close, attrs] = p.missing ? ['span', 'span', ''] : ['button', 'button', ` type="button" data-wk-parent="${esc(p.key)}"${current ? ' aria-current="true"' : ''}`];
-    return `${workFoldButton(node.key, folded, name)}<${open} class="wk-head-main"${attrs} title="${esc(`${name}\nこの親 Issue を動かしている hub のターミナルを開く`)}">
+    return `${fold(node.key, name)}<${open} class="wk-head-main"${attrs} title="${esc(`${name}\nこの親 Issue を動かしている hub のターミナルを開く`)}">
       <span class="wk-head-name">${p.number ? `<span class="key">#${p.number}</span>` : `<span class="key">${esc(p.key)}</span>`}${esc(p.title || '')}</span>
       <span class="wk-head-sub"><span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>
-      <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}><span class="wk-count">${node.rows.length}</span>`;
+      <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}>${workHubChipsHtml(node.hubs, name)}${count}`;
   }
   const name = node.kind === 'repo' ? node.nwo : node.kind === 'none' ? '親なし' : node.label;
   // 「処理したら次へ」: after a gate is answered or closed, the next row of 新着 opens (the same setting for every header that has it).
   const readAll = node.readAll && node.rows.length
     ? `<label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label><button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>` : '';
-  return `${workFoldButton(node.key, folded, name)}<span class="wk-head-main"><span class="wk-head-name">${esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span><span class="wk-count">${node.rows.length}</span>${readAll}`;
+  return `${fold(node.key, name)}<span class="wk-head-main"><span class="wk-head-name">${esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span>${workHubChipsHtml(node.hubs, name, node.kind === 'repo' || node.kind === 'brepo')}${count}${readAll}`;
 }
 
 /* The tree as markup, and the pieces of it that are redrawn alone: `cells` maps a row's or header's key to its own html. */
@@ -683,14 +785,14 @@ function workTreeHtml(items, cells, rowsByKey, folded) {
     const isFolded = folded.has(it.key);
     cells.set(`head:${it.key}`, workHeadHtml(it, isFolded));
     return `<section class="wk-group" data-wk-g="${esc(it.key)}"><div class="wk-head ${it.kind}" data-wk-head="${esc(it.key)}">${cells.get(`head:${it.key}`)}</div>`
-      + (isFolded ? '' : `<div class="wk-body">${it.items.length ? workTreeHtml(it.items, cells, rowsByKey, folded) : it.empty ? `<div class="wk-empty">${esc(it.empty)}</div>` : ''}</div>`) + '</section>';
+      + (isFolded || workChipsOnly(it) ? '' : `<div class="wk-body">${it.items.length ? workTreeHtml(it.items, cells, rowsByKey, folded) : it.empty ? `<div class="wk-empty">${esc(it.empty)}</div>` : ''}</div>`) + '</section>';
   }).join('');
 }
 
 /* The nodes with their keys and what they hold, which is what decides a rebuild: a row or a header that only changed
    its words is replaced alone. */
 function workShape(items, folded) {
-  return items.map(it => it.row ? `${it.place}:${it.row.key}` : [it.key, folded.has(it.key), it.kind === 'parent' ? 1 : 0, folded.has(it.key) ? [] : workShape(it.items, folded)]);
+  return items.map(it => it.row ? `${it.place}:${it.row.key}` : [it.key, folded.has(it.key), it.kind === 'parent' ? 1 : 0, (it.hubs || []).map(c => c.key), folded.has(it.key) ? [] : workShape(it.items, folded)]);
 }
 
 /* How to find again what has the keyboard focus in the list: a row, a fold button or a parent's header. */
@@ -701,6 +803,7 @@ const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.d
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
+  : el?.dataset?.wkHub != null ? `[data-wk-hub="${CSS.escape(el.dataset.wkHub)}"]`
     : el?.dataset?.wkParent != null ? `[data-wk-parent="${CSS.escape(el.dataset.wkParent)}"]` : null;
 
 /* A row replaced by the one its html makes, keeping its selection and the keyboard focus. */
@@ -750,10 +853,12 @@ function drawWorkList() {
     }
     return;
   }
-  const { rows, turns } = workListRows();
+  const { rows, turns, judged } = workListRows();
+  const chipsByRepo = new Map(workRepos().map(r => [r, workRepoHubChips(r, work.doc.now, judged)]));
+  const chips = [...chipsByRepo.values()].flat();
   const byState = prefs.workGroup === 'state';
   // The rows with no session row of their own are in the bands and the boxes only; the tree is the sessions'.
-  const tree = byState ? workTreeByState([...rows, ...turns]) : workTreeByParent(rows, workBands([...rows, ...turns]));
+  const tree = byState ? workTreeByState([...rows, ...turns], chips) : workTreeByParent(rows, workBands([...rows, ...turns]), chipsByRepo);
   work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
   for (const b of wk('work-view').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
@@ -767,6 +872,7 @@ function drawWorkList() {
   ];
   const html = notes.map(n => `<div class="wk-notice" role="alert">${esc(n)}</div>`).join('') + workTreeHtml(tree, cells, rowsByKey, folded);
   work.rowsByKey = rowsByKey;
+  work.hubsByKey = new Map(chips.map(c => [c.key, c]));
   const structure = JSON.stringify([prefs.workGroup, workShape(tree, folded), notes]);
   if (structure === work.structure) {
     // Only what changed in its own words is drawn again, so a poll does not take the scroll or the focus.
@@ -788,7 +894,7 @@ function drawWorkList() {
   const top = scroll.scrollTop;
   const at = document.activeElement;
   const held = root.contains(at) ? workHeldSel(at) : null;
-  root.innerHTML = rows.length || turns.length || notes.length ? html : '<div class="wk-empty">いま動いている仕事はありません</div>';
+  root.innerHTML = rows.length || turns.length || notes.length || chips.length ? html : '<div class="wk-empty">いま動いている仕事はありません</div>';
   scroll.scrollTop = top;
   if (held) root.querySelector(held)?.focus({ preventScroll: true });
 }
@@ -801,6 +907,10 @@ function markWorkSelection() {
   for (const el of root.querySelectorAll('.wk-row[data-wk]')) {
     const r = work.rowsByKey.get(el.dataset.wk);
     if (r && workIsSelected(r)) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
+  }
+  for (const el of root.querySelectorAll('[data-wk-hub]')) {
+    const c = work.hubsByKey.get(el.dataset.wkHub);
+    if (c && workIsSelected(c)) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
   }
   for (const el of root.querySelectorAll('[data-wk-parent]')) {
     if (el.dataset.wkParent === parent) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
@@ -1028,6 +1138,10 @@ wk('work-view').addEventListener('click', e => {
     if (at >= 0) prefs.workFolded.splice(at, 1); else prefs.workFolded.push(b.dataset.wkFold);
     savePrefs();
     return renderWorkList();
+  }
+  if ((b = e.target.closest('[data-wk-hub]'))) {
+    const c = work.hubsByKey.get(b.dataset.wkHub);
+    return c && selectWorkRow(c);
   }
   if ((b = e.target.closest('[data-wk-parent]'))) return selectWorkParent(b.dataset.wkParent);
   if ((b = e.target.closest('.wk-row[data-wk]'))) {

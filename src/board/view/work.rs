@@ -44,8 +44,9 @@ pub struct WorkRepo {
     pub carrier: String,
     pub hubs: Vec<RepoHub>,
     pub parents: Vec<ParentGroup>,
-    /// Every worker session and the repository's own hub, each with its task. A parent-task
-    /// hub is not a row (it is reached from its parent) and is in `hub_sessions`.
+    /// Every worker session and the repository's own hub, each with its task. The page draws the
+    /// own hub as a chip on the repository's heading (a row only in 新着); a parent-task hub is in
+    /// `hub_sessions` and reached from its chip.
     pub rows: Vec<WorkRow>,
     /// The sessions of the parent-task hubs, which a parent's terminal is.
     pub hub_sessions: Vec<WorkHubSession>,
