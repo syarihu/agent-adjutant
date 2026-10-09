@@ -1,21 +1,23 @@
-/* ── Where the page is: one board, every board, or the review queue ──────────────────────
+/* ── Where the page is: one board, every board, or the work under way ────────────────────────
    Navigation state lives in the address, so back/forward and a pasted link land on the same
    screen without a reload; what is only a preference (layout, folded repositories) does not.
      /b/<slug>/?view=human&task=<id>&pane=term             one board; pane is detail (the default),
                                                            term, review, check or history
      /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
-     /b/<slug>/?view=sessions&task=session:<id>&pane=term  its sessions, one with no task in the panel
+     /b/<slug>/?task=session:<id>                          one board, a session with no task in the panel
+     /b/<slug>/?task=gate:<slug>/<id>                      one board, a gate in the panel (`gate:<id>` on a board
+                                                           served alone)
      /                                                     すべて, every board
-     /review?item=<id>                                     要対応, every board
      /?view=work                                           いまの仕事, every board; nothing selected
      /b/<slug>/?view=work&task=<ref>&pane=detail           いまの仕事 with a row selected: the board of
                                                            the row's task, hub or parent (<ref> may also
                                                            be parent:<key>)
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
-   address carries `?token=`: the server refuses a GET without it. */
+   address carries `?token=`: the server refuses a GET without it. The addresses of the セッション
+   tab and of 要対応, which are gone, are sent on by nav-legacy.js. */
 /* The task panel's tabs, as `pane=` names them; anything else is 詳細 (タスクサマリ). */
 const PANES = ['detail', 'term', 'review', 'check', 'history'];
-const nav = { board: null, view: 'agent', task: null, pane: 'detail', item: null };
+const nav = { board: null, view: 'agent', task: null, pane: 'detail' };
 let boards = [];                 // /api/boards: the sidebar's rows
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
@@ -25,8 +27,6 @@ let pendingGate = null;          // `<board>/<gate>` of an old link, opened once
 let boardJob = null;             // { slug, fn }: run once that board has loaded
 const boardStates = {};          // 「すべて」: each board's last state, by slug
 const baseOf = x => x?._base || BASE;
-/* The board a review item is on: the part of its ref before the `/`. */
-const slugOfRef = ref => { const i = String(ref || '').indexOf('/'); return i > 0 ? ref.slice(0, i) : null; };
 /* 「すべて」 is the merged board. The work view has no board of its own while nothing is selected, and
    reads its own document instead (my-work.js): it is not 「すべて」, whatever `nav.board` says. */
 const scopeAll = () => multiBoard && nav.board === 'all' && nav.view !== 'work';
@@ -37,7 +37,7 @@ const DEFAULT_MULTI_VIEW = 'agent';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
-  const out = { board: null, view: 'agent', task: q.get('task'), pane: PANES.includes(q.get('pane')) ? q.get('pane') : 'detail', item: q.get('item') };
+  const out = { board: null, view: 'agent', task: q.get('task'), pane: PANES.includes(q.get('pane')) ? q.get('pane') : 'detail' };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   // `/` on a server with several boards opens the view its constant names; a board's own address, the one before.
@@ -49,19 +49,18 @@ function parseUrl(loc = location) {
   if (v === 'work' && multiBoard) out.view = 'work';
   // The addresses of the セッション tab and of 要対応, which are gone, land where nav-legacy.js says.
   const legacy = legacyNav(loc, multiBoard);
-  if (legacy) Object.assign(out, legacy.nav, { item: null });
+  if (legacy) Object.assign(out, legacy.nav);
   // The task panel opens on a board of its own; 「すべて」 switches to the card's board first.
   if (out.board === 'all') out.task = null;
   return out;
 }
 
 function urlOf(n = nav) {
-  const path = n.view === 'review' ? '/review' : n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
+  const path = n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
-  if (n.view === 'human' || n.view === 'sessions' || n.view === 'work') url += `&view=${n.view}`;
-  if (n.task && n.view !== 'review') url += `&task=${encodeURIComponent(n.task)}`;
-  if (n.task && n.view !== 'review' && n.pane !== 'detail') url += `&pane=${n.pane}`;
-  if (n.item && n.view === 'review') url += `&item=${encodeURIComponent(n.item)}`;
+  if (n.view === 'human' || n.view === 'work') url += `&view=${n.view}`;
+  if (n.task) url += `&task=${encodeURIComponent(n.task)}`;
+  if (n.task && n.pane !== 'detail') url += `&pane=${n.pane}`;
   return url;
 }
 
@@ -71,7 +70,7 @@ function setNav(patch) {
   history.replaceState(null, '', urlOf());
 }
 
-const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.item === b.item && a.pane === b.pane;
+const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.pane === b.pane;
 
 /* Everything that pointed into the board being left. */
 function switchBoard() {
@@ -83,8 +82,7 @@ function switchBoard() {
   // Each view forgets what it kept for the board being left.
   resetViews();
   boardJob = null;
-  // 「すべて」 shows what it last read while the new round is on its way; the review queue
-  // keeps the gate it was asked for until that round is in (see renderReview).
+  // 「すべて」 shows what it last read while the new round is on its way.
   allRound = false;
   state = scopeAll() && Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
 }
@@ -107,32 +105,27 @@ function go(patch = {}, { replace = false } = {}) {
   if (boardJob && 'board' in patch && patch.board !== boardJob.slug) boardJob = null;
   const prev = { ...nav };
   Object.assign(nav, patch);
-  if (nav.board !== prev.board) {
-    if (!('task' in patch)) nav.task = null;
-    if (!('item' in patch)) nav.item = null;
-  }
-  if (nav.view !== 'review') nav.item = null;
-  // A session with no task is shown over the セッション tab's list: it does not follow a move off it.
-  if (nav.view !== 'sessions' && nav.view !== 'work' && !('task' in patch) && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
-  if (nav.view === 'review' && multiBoard) nav.board = 'all';
+  if (nav.board !== prev.board && !('task' in patch)) nav.task = null;
+  // A session with no task is shown over 「いまの仕事」: it does not follow a move off it.
+  if (nav.view !== 'work' && !('task' in patch) && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
   const boardChanged = nav.board !== prev.board;
   if (boardChanged) switchBoard(); else leaveWork(prev);
   const url = urlOf();
   if (replace || url === location.pathname + location.search) history.replaceState(null, '', url);
   else history.pushState(null, '', url);
   applyNav(boardChanged, onlyPanelMoved(prev));
-  askSessionsOfAll(prev.view, boardChanged);
+  askWorkOnMove(prev.view, boardChanged);
 }
 
 /* Only the task panel's card or tab changed: the screen under it is as it was, and drawing it
    again would only rebuild the list under it. */
 const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.view
-  && nav.item === prev.item && (nav.view === 'sessions' || nav.view === 'work' ? view === nav.view : nav.view !== 'review' && view === 'board');
+  && (nav.view === 'work' ? view === 'work' : view === 'board');
 
-/* A move to or from the セッション tab or the work view changes what the next poll asks for (the
-   sessions of 「すべて」, the last lines of a board's, the work document), so it is made now. */
-function askSessionsOfAll(prevView, boardChanged) {
-  if (!boardChanged && ((nav.view === 'sessions') !== (prevView === 'sessions') || (nav.view === 'work') !== (prevView === 'work'))) refresh(true);
+/* A move to or from the work view changes what the next poll asks for (the work document, the last
+   lines of a board's), so it is made now. */
+function askWorkOnMove(prevView, boardChanged) {
+  if (!boardChanged && (nav.view === 'work') !== (prevView === 'work')) refresh(true);
 }
 
 /* Draw the screen the address names. */
@@ -141,43 +134,31 @@ function applyNav(boardChanged, panelOnly = false) {
   if (!panelOnly) drawScreen(boardChanged);
   // The address names the card that is open: back to one with none closes the panel, back to
   // the card that is open shows its tab, and another card is opened below.
-  if (view === 'board' || view === 'sessions' || view === 'work') {
+  if (view === 'board' || view === 'work') {
     if (!nav.task) { if (selectedTaskId) hideTaskPanelState(); }
     else if (selectedTaskId === nav.task) renderTaskPanel();
   }
-  pendingTask = nav.view === 'review' ? null : wantTask;
+  pendingTask = wantTask;
   if (boardChanged) render();
   if (boardChanged) refresh(true);
   else applyPendingTask();
 }
 
 function drawScreen(boardChanged) {
-  if (nav.view !== 'sessions') sessView.pending = false;
   navApplying = true;
   try {
-    if (nav.view === 'review') {
-      if (nav.item) focused = nav.item;
-      setView('review');
-    } else if (nav.view === 'work') {
+    if (nav.view === 'work') {
       setView('work');
-    } else if (nav.view === 'sessions') {
-      if (state.boardTerminal === undefined) {
-        // The first poll of this board has not said whether it has terminals.
-        sessView.pending = true;
-        if (view !== 'board') setView('board');
-      } else if (!state.boardTerminal?.available) giveUpSessions();
-      else openSessionsView();
     } else {
       prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
       if (view !== 'board') setView('board'); else applyLayout();
     }
   } finally { navApplying = false; }
-  if (nav.view === 'review') renderReview();
 }
 
 /* `final` is a state the board really answered with: a task it does not list is not coming. */
 function applyPendingTask(final = false) {
-  if (!pendingTask || (view !== 'board' && view !== 'sessions' && view !== 'work')) return;
+  if (!pendingTask || (view !== 'board' && view !== 'work')) return;
   // A gate whose task is on this board is opened as that task, on the tab the gate is judged in.
   const landed = isGateRef(pendingTask) ? landGateRef(pendingTask) : null;
   if (landed) { pendingTask = landed.id; setNav({ task: landed.id, pane: landed.pane }); }
@@ -202,7 +183,7 @@ function applyPendingTask(final = false) {
 /* Run `fn` on the board `slug`: now when it is the one shown, else after switching to it and
    after its first state is in, since what `fn` opens is read from that state. */
 function onBoard(slug, fn) {
-  if (!slug || !multiBoard || (nav.board === slug && nav.view !== 'review')) return fn();
+  if (!slug || !multiBoard || nav.board === slug) return fn();
   go({ board: slug, view: nav.view === 'human' ? 'human' : 'agent' });
   boardJob = { slug, fn };
 }
@@ -222,5 +203,5 @@ window.addEventListener('popstate', () => {
   Object.assign(nav, next);
   if (boardChanged) switchBoard(); else leaveWork(prev);
   applyNav(boardChanged, onlyPanelMoved(prev));
-  askSessionsOfAll(prev.view, boardChanged);
+  askWorkOnMove(prev.view, boardChanged);
 });

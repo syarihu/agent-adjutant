@@ -84,7 +84,7 @@ document.getElementById('close-dialog').addEventListener('close', e => {
   if (e.target.returnValue === 'close' && worktree && running) worktreeAct('close', worktree, true);
 });
 
-/* How the Sessions view names a hub. */
+/* How a hub is named in its panel and where a hub is chosen. */
 function hubLabel(h) {
   if (!h.parent) return 'リポジトリの hub';
   return h.key ? `親タスク ${h.key} の hub` : '親タスクの hub（キー不明）';
@@ -108,10 +108,10 @@ function pageHub() {
   return (state.hubs || []).find(h => h.name === state.hubName) || null;
 }
 /* The tab's title. The board's name comes first so a narrow tab still shows it, and a parent-task
-   hub's title is the one the session tree shows (`hubTitle`), so the two never disagree. */
+   hub's title is the one the hub's panel shows (`hubTitle`), so the two never disagree. */
 function boardTitle() {
   if (view === 'work') return 'いまの仕事 — adj';
-  if (scopeAll()) return nav.view === 'review' ? '要対応 — adj' : 'すべて — adj';
+  if (scopeAll()) return 'すべて — adj';
   const entry = selectedBoard();
   if (entry) {
     const repo = entry.nwo.split('/').pop();
@@ -153,14 +153,9 @@ function boardState(b) {
   };
 }
 
-/* What waits on the person on a board: what the server counts, and the sessions waiting on a
-   permission prompt or a question, which it does not. Not stored in `b.waiting`: that is
-   lowered locally as gates are answered. */
-const boardWaiting = b => (b.waiting || 0) + (b.waits || []).length;
-
-function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiting }) {
+function boardRowHtml(b, { child, working, chevron, folded }) {
   const st = boardState(b);
-  const current = nav.board === b.slug && nav.view !== 'review' && nav.view !== 'work';
+  const current = nav.board === b.slug && nav.view !== 'work';
   const sub = st.stopped ? st.text : (b.hub ? '親タスク hub' : `${(b.nwo || '').split('/')[0]} · リポジトリ hub`);
   const start = st.stopped
     ? `<button type="button" class="start-btn" data-start-slug="${esc(b.slug)}" title="hub を起動します" ${rowStartingNow(b) ? 'disabled' : ''}>起動</button>` : '';
@@ -169,15 +164,15 @@ function boardRowHtml(b, { child, waiting, working, chevron, folded, own = waiti
   const toggle = chevron
     ? `<button type="button" class="repo-toggle" data-fold="${esc(b.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : '';
   return `<div class="board-row ${child ? 'child' : 'repo'}${st.stopped ? ' stopped' : ' live'}" role="link" tabindex="0" data-board="${esc(b.slug)}"${current ? ' aria-current="page"' : ''} title="${esc(boardName(b))}">
-    <span class="avatar" aria-hidden="true">${esc(initialsOf(b))}<span class="mini-badge">${own || ''}</span></span>
+    <span class="avatar" aria-hidden="true">${esc(initialsOf(b))}</span>
     <span class="hub-dot ${st.tone}" title="${esc(st.stopped ? '停止中' : '稼働中')}"></span>
     <span class="txt"><span class="name">${esc(boardName(b))}</span><span class="sub">${esc(sub)}</span></span>
-    <span class="counts"><span class="rail-badge${waiting ? '' : ' zero'}" title="あなたの確認待ち">${waiting}</span><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span>
+    <span class="counts"><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span>
     ${start}${term}${toggle}</div>`;
 }
 
 /* Boards as the sidebar lists them: repositories by name, each with its own board and then its
-   parent-task hubs by name. The review queue groups its items the same way. */
+   parent-task hubs by name. */
 function repoGroups(list) {
   const repos = [];
   for (const b of list) {
@@ -204,13 +199,12 @@ function renderBoardRows() {
   const shown = boards.filter(b => !b.finished || nav.board === b.slug);
   const repos = repoGroups(shown);
   const live = boards.filter(b => !b.finished);
-  const total = live.reduce((n, b) => n + boardWaiting(b), 0);
   const working = live.reduce((n, b) => n + (b.working || 0), 0);
-  const allCurrent = scopeAll() && nav.view !== 'review';
+  const allCurrent = scopeAll() && nav.view !== 'work';
   let html = `<div class="board-row all" role="link" tabindex="0" data-board="all"${allCurrent ? ' aria-current="page"' : ''} title="すべてのボード">
-    <span class="avatar" aria-hidden="true"><span class="material-symbols-outlined" style="font-size:18px;">dashboard</span><span class="mini-badge">${total || ''}</span></span>
+    <span class="avatar" aria-hidden="true"><span class="material-symbols-outlined" style="font-size:18px;">dashboard</span></span>
     <span class="txt"><span class="name">すべて</span><span class="sub">${repos.length} リポジトリ</span></span>
-    <span class="counts"><span class="rail-badge${total ? '' : ' zero'}" title="あなたの確認待ち">${total}</span><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span></div>`;
+    <span class="counts"><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span></div>`;
   for (const r of repos) {
     const folded = prefs.boardsFolded.includes(r.nwo);
     const own = r.repo;
@@ -218,9 +212,8 @@ function renderBoardRows() {
     let rows = '';
     if (own) {
       const hidden = folded && withChildren;
-      const waiting = boardWaiting(own) + (hidden ? r.children.reduce((n, c) => n + boardWaiting(c), 0) : 0);
       const busy = (own.working || 0) + (hidden ? r.children.reduce((n, c) => n + (c.working || 0), 0) : 0);
-      rows += boardRowHtml(own, { child: false, waiting, working: busy, chevron: withChildren, folded, own: boardWaiting(own) });
+      rows += boardRowHtml(own, { child: false, working: busy, chevron: withChildren, folded });
     } else {
       // Parent-task hubs whose repository has no board of its own: a header with no page.
       rows += `<div class="board-row repo unlinked" title="${esc(r.nwo)}">
@@ -229,7 +222,7 @@ function renderBoardRows() {
         <button type="button" class="repo-toggle" data-fold="${esc(r.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button></div>`;
     }
     for (const c of r.children) {
-      rows += boardRowHtml(c, { child: true, waiting: boardWaiting(c), working: c.working || 0 });
+      rows += boardRowHtml(c, { child: true, working: c.working || 0 });
     }
     html += `<div class="repo-group${folded && withChildren ? ' collapsed' : ''}">${rows}</div>`;
   }
@@ -277,20 +270,19 @@ document.getElementById('board-rows').addEventListener('keydown', e => {
   openBoard(row.dataset.board);
 });
 
-/* A row of the sidebar: that board, in the view that is open. The review queue is not a view of
+/* A row of the sidebar: that board, in the view that is open. 「いまの仕事」 is not a view of
    a board, so it opens the board's cards. */
 function openBoard(slug) {
-  const keep = nav.view === 'review' || nav.view === 'work' ? 'agent' : nav.view;
-  go({ board: slug, view: keep, task: null, item: null });
+  go({ board: slug, view: nav.view === 'work' ? 'agent' : nav.view, task: null });
 }
 
 /* A board's hub in the task panel, on its terminal: in place when this page's state lists the
    hub, else on the board it belongs to, where the address opens it after the first poll. */
 function openHubPanelOf(b) {
   const ref = HUB_REF + b.hubId;
-  const listed = !scopeAll() && nav.view !== 'review' && nav.view !== 'work' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
+  const listed = !scopeAll() && nav.view !== 'work' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
   if (listed) return openTaskPanel(ref, 'term');
-  go({ board: b.slug, view: nav.view === 'review' || nav.view === 'work' ? 'agent' : nav.view, task: ref, pane: 'term' });
+  go({ board: b.slug, view: nav.view === 'work' ? 'agent' : nav.view, task: ref, pane: 'term' });
 }
 
 /* The hub of the board on screen, which the title's 「hub」 button opens. */
@@ -306,22 +298,25 @@ function openOwnHub() { openTaskPanel(HUB_REF + ownHubId(), 'term'); }
 function markHubButtons() {
   const btn = document.getElementById('btn-hub');
   if (btn) btn.classList.toggle('on', !!selectedTaskId && selectedTaskId === HUB_REF + ownHubId());
-  for (const el of document.querySelectorAll('#sess-groups .sess-head-btn[data-hub-ref]')) {
-    el.classList.toggle('on', !!selectedTaskId && el.dataset.hubRef === selectedTaskId);
-  }
+}
+
+/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, on
+   a board served alone what waits on the person on it. */
+function renderDocTitle() {
+  const sum = multiBoard ? workNewCount() : waitingIn() + (state.waits || []).length;
+  document.title = (sum ? `(${sum}) ` : '') + boardTitle();
 }
 
 /* The name and state the top bar gives the screen. Only a board's own screen has its name in
    the title; the other views keep the title `setView` gave them and add the path to it. */
 function renderTitle() {
-  // The hub's own buttons have no board to act on in 「すべて」 and the review queue.
+  // The hub's own buttons have no board to act on in 「すべて」 and 「いまの仕事」.
   const resync = document.getElementById('btn-resync');
   if (resync) resync.hidden = scopeAll() || view === 'work';
   const hubBtn = document.getElementById('btn-hub');
-  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'review' || view === 'work';
+  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'work';
   markHubButtons();
-  const sum = multiBoard ? boards.filter(b => !b.finished).reduce((n, b) => n + boardWaiting(b), 0) : waitingIn() + (state.waits || []).length;
-  document.title = (sum ? `(${sum}) ` : '') + boardTitle();
+  renderDocTitle();
   const crumbs = document.getElementById('crumbs');
   const title = document.getElementById('page-title');
   const subtitle = document.getElementById('page-subtitle');
@@ -329,9 +324,7 @@ function renderTitle() {
   const entry = selectedBoard();
   const sep = '<span class="sep">›</span>';
   let trail;
-  if (view === 'review') {
-    trail = ['全体', '要対応'];
-  } else if (view === 'work') {
+  if (view === 'work') {
     trail = ['全体', 'いまの仕事'];
   } else if (scopeAll()) {
     trail = ['すべてのボード'];
@@ -343,8 +336,7 @@ function renderTitle() {
     trail = owner ? [owner, repoName()] : [];
   }
   crumbs.innerHTML = trail.map(esc).join(sep);
-  // The セッション tab is a view of the board, under the board's own title.
-  const ofBoard = view === 'board' || view === 'sessions';
+  const ofBoard = view === 'board';
   if (subtitle) subtitle.hidden = ofBoard;
   if (!ofBoard || !title) return;
   if (scopeAll()) { title.textContent = 'すべて'; return; }

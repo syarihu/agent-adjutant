@@ -546,13 +546,9 @@
 .tp-head-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .tp-jump { padding: 4px 8px; font-size: 12px; }
 .tp-head-btns .tool-btn.on { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.tp-tabs { display: flex; gap: 4px; padding: 0 12px; background: var(--md-sys-color-surface-container); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-.tp-tab { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 13px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
-.tp-tab.on { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
-.tp-tab:disabled { opacity: .55; cursor: not-allowed; }
 .tp-tab-hint { font-size: 10.5px; font-weight: 600; }
 /* The panel's tabs are segmented tabs, narrower so five fit the panel; the rest
-   scroll sideways rather than wrap. The .tp-tab rules above are still the review view's. */
+   scroll sideways rather than wrap. */
 #tp-tabs.m3-segmented-tabs { margin: 8px 12px; max-width: calc(100% - 24px); flex-shrink: 0; overflow-x: auto; scrollbar-width: none; }
 #tp-tabs .m3-seg-tab { padding: 6px 12px; white-space: nowrap; flex-shrink: 0; }
 #tp-tabs .m3-seg-tab:disabled { opacity: .55; cursor: not-allowed; }

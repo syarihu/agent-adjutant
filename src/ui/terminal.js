@@ -1,6 +1,6 @@
 /* A tmux session's terminal, inside any container. The component only assumes the container
-   has a size of its own: it fills it and follows it. The task panel and the review view mount
-   it; a page of its own for a session can mount the same. xterm.js is served by the
+   has a size of its own: it fills it and follows it. The task panel and the work view's middle
+   mount it; a page of its own for a session can mount the same. xterm.js is served by the
    resident server and loaded on first use. */
 let xtermLoading = null;
 function loadXterm(base = BASE) {

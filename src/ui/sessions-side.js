@@ -17,7 +17,6 @@ function loadSideBoard(slug, base, force = false) {
     if (sessView.boards[slug] !== entry) return;
     Object.assign(entry, { loading: false, error: e.message === '404' || e.message === 'no such board' ? 'この hub のボードが見つかりません' : e.message });
   }).then(() => {
-    renderSessionsView();
     renderTaskPanel();
   });
 }
@@ -143,7 +142,7 @@ function sessDetailHtml(s, pane) {
       ? `タスクにすると親タスク ${hubShortName(b.hub)} の子として、その hub のボードに作られます`
       : 'タスクにするとリポジトリのボードに作られます') +
     `<div class="sess-side-actions">${sideBtn('link-new', 'タスクにする…', off)}${sideBtn('link-existing', '既存のタスクに紐づける…', off)}</div>`;
-  // What the Sessions view's menu held: the worktree's own actions (the bar's are over the terminal).
+  // The worktree's own actions (the bar's are over the terminal).
   const busy = sessBusy.size > 0;
   const acts = sessionButtons(s).menu.map(m => actionButtonHtml(m, { busy })).join('');
   return `<div class="sess-detail">

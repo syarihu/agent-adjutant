@@ -54,10 +54,7 @@ function historyOf(task, base = baseOf(task), data = state) {
 /* Redraws what shows a task's history: the task panel open on it. The panel
    keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
-  if ((view === 'board' || view === 'sessions') && selectedTaskId === id) renderTaskPanel();
-  // A record's diff arrives with the history, and nothing else redraws a quiet board.
-  // Only the record on screen, and held while a comment is being typed there.
-  if (view === 'review' && recordByRef(focused)?.task === id) redrawReview();
+  if ((view === 'board' || view === 'work') && selectedTaskId === id) renderTaskPanel();
 }
 
 /* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the
@@ -306,8 +303,7 @@ function ghHeadLinksHtml(task) {
   }
   return h;
 }
-/* The Issue and the PR as rows for the top of the task panel's タスクサマリ and the review view's
-   判断: number and title, and for the PR its state, checks and review. Empty for a task with
+/* The Issue and the PR as rows for the top of the task panel's タスクサマリ and of a gate's 判断: number and title, and for the PR its state, checks and review. Empty for a task with
    neither a PR to show nor an Issue. */
 function ghRowsHtml(task) {
   if (!task) return '';

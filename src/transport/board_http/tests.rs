@@ -67,8 +67,7 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         "function renderDrawer",
         "let panelPop",
         "sidesheet-header",
-        // The card's button for the terminal tab outside the board. The review view keeps
-        // its own, which have a `style=` between the class and the title.
+        // The card's button for the terminal tab outside the board.
         "class=\"m3-icon-button\" title=\"ターミナルのworkerタブを前面表示\"",
     ] {
         assert!(!UI_HTML.contains(gone), "{gone}");
@@ -118,13 +117,12 @@ fn the_task_panel_has_the_tabs_and_the_full_view_is_gone() {
 }
 
 #[test]
-fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
+fn a_session_opens_in_the_panel_and_the_sessions_tab_is_gone() {
     for piece in [
-        "id=\"sessions-view\"",
-        "id=\"tab-sessions\"",
         "SESS_REF = 'session:'",
         "function boardOfSession",
         "mountSessionTerminal(",
+        "function openSessionRef",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
@@ -132,6 +130,17 @@ fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
         "term-overlay",
         "openTerminalOverlay",
         "closeTerminalOverlay",
+        // The tab and everything that drew its list.
+        "id=\"sessions-view\"",
+        "id=\"tab-sessions\"",
+        "id=\"sess-groups\"",
+        "data-tab=\"sessions\"",
+        "function sessionTree",
+        "function sessionGroups",
+        "function renderSessionsView",
+        "function patchSessionList",
+        "function showSessions",
+        "sessionsFolded:",
     ] {
         assert!(!UI_HTML.contains(gone), "{gone}");
     }
@@ -188,7 +197,7 @@ fn the_hub_terminal_bar_leads_with_the_reset() {
 }
 
 #[test]
-fn the_sessions_view_keeps_its_session_actions_and_dialogs() {
+fn the_session_actions_and_dialogs_stay() {
     for piece in [
         "id=\"sess-notice\"",
         "id=\"cleanup-dialog\"",
@@ -202,23 +211,22 @@ fn the_sessions_view_keeps_its_session_actions_and_dialogs() {
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
+    // The notice is in the flow above whichever view is on, not inside one of them.
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("id=\"sess-notice\"") < at("<main>"));
 }
 
 #[test]
-fn the_sessions_tab_patches_its_list() {
+fn a_session_is_named_by_its_title_and_not_by_the_tabs() {
     for piece in [
-        "function patchSessionList",
-        "data-gid=",
         "function sessionTitle",
         "function hubTitle",
-        "sessionLabel(s, false, g.data), sessionTip(s, st, g.data)",
+        "function sessionTip",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
     // The tab's title is for the tooltip: it does not stand in for the task's.
     assert!(!UI_HTML.contains("if (s.title) return s.title"));
-    // A row's own words are what a redraw follows, not the selected session's task.
-    assert!(!UI_HTML.contains("JSON.stringify([s.task, s.phase"));
 }
 
 #[test]
@@ -687,6 +695,18 @@ fn the_sidebar_lists_boards_and_has_no_hub_footer() {
     for piece in ["id=\"hub-rows\"", "自律 hub", "function renderHubRows"] {
         assert!(!UI_HTML.contains(piece), "{piece}");
     }
+    // The sidebar keeps one count, the number of 新着: no 要対応 entry, no gate count, and no
+    // 「あなたの確認待ち」 badge on a board's row.
+    for gone in [
+        "id=\"nav-review\"",
+        "id=\"gate-count\"",
+        "function renderGateCount",
+        "mini-badge",
+        "id=\"sessions-waiting\"",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+    assert!(UI_HTML.contains("id=\"work-new-count\""));
 }
 
 const TOKEN: &str = "s3cret";
@@ -1089,11 +1109,8 @@ fn the_views_register_themselves() {
         "renderColumns",
         "renderBoardRows",
         "renderTitle",
-        "renderSessionsTab",
-        "openPendingSession",
-        "renderSessionsView",
+        "renderWorkView",
         "renderTaskPanel",
-        "redrawReview",
         "hideTaskPanelState",
         "disposeTermSlot",
         "sessView",
@@ -1113,7 +1130,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 12);
+    assert_eq!(names.len(), 8);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1131,34 +1148,32 @@ fn the_views_register_themselves() {
 }
 
 #[test]
-fn a_session_waiting_on_a_prompt_is_listed_in_the_queue_the_person_checks() {
+fn a_session_waiting_on_a_prompt_is_rung_for_and_opens_in_the_work_view() {
     assert!(
         !UI_HTML.contains("要対応レビュー"),
-        "the queue is named 要対応 everywhere"
+        "the queue is gone, and so is its name"
     );
     for piece in [
         // The merged state of every board carries the waits.
         "waits: parts.flatMap(p => tag(p.data.waits, p.slug))",
-        // The queue lists them, and its button opens the session's terminal.
-        "const waitRef = w =>",
-        "const itemRef = x =>",
-        "data-rv-open-wait",
-        "openWait(w)",
-        "permissionLabel({ agentSession: { request: w.request } })",
-        // The badges count them beside the gates.
-        "(b.waits || []).length",
+        // The notification's click opens the session in 「いまの仕事」, on its board.
+        "function openWait(w)",
+        "task: SESS_REF + w.session",
+        "permissionLabel(asked)",
+        // A board served alone counts them in its tab title, beside what waits on the person.
         "(state.waits || []).length",
-        "const boardWaiting = b =>",
         // A quiet wait is listed without a desktop notification.
         "w.quiet",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
-    assert!(UI_HTML.matches("boardWaiting(").count() >= 5);
+    for gone in ["const waitRef =", "data-rv-open-wait", "const boardWaiting"] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
 }
 
 #[test]
-fn the_page_has_the_work_view_beside_the_review_queue() {
+fn the_page_has_the_work_view_and_no_review_queue() {
     for piece in [
         // The sidebar entry, the three-column view and the middle terminal's host.
         "id=\"nav-work\"",
@@ -1184,6 +1199,31 @@ fn the_page_has_the_work_view_beside_the_review_queue() {
     assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
     // The panel has no terminal tab in this view.
     assert!(UI_HTML.contains("const term = view === 'work' ? ''"));
+    // What 要対応 did is done in the panel: a gate with no task card is judged in a panel of its own,
+    // an old link lands in the list, and 「処理したら次へ」 is a box in the 新着 header.
+    for piece in [
+        "function gateJudgeHtml",
+        "function gateDockHtml",
+        "function legacyNav",
+        "function workNextNew",
+        "data-wk-advance",
+    ] {
+        assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+    for gone in [
+        "id=\"review\"",
+        "id=\"nav-review\"",
+        "id=\"rv-judge\"",
+        "function renderReview",
+        "function goToQueue",
+        "reviewTerm",
+        "go({ view: 'review'",
+        "setView('review')",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+    // The address `/review` still opens the page, which sends it on.
+    assert!(UI_HTML.contains("path === '/review'"));
 }
 
 #[test]
@@ -1304,7 +1344,7 @@ fn the_panel_head_links_the_task_issue_and_pr() {
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     assert!(!bar.contains("ghHeadLinksHtml") && !bar.contains("ghBarLinksHtml"));
-    assert!(UI_HTML.contains("termBarHtml(s, reviewTerm, false)"));
+    assert!(UI_HTML.contains("termBarHtml(own, workTerm, true)"));
     assert!(!UI_HTML.contains("ghBarLinksHtml"));
     assert!(!UI_HTML.contains("tp-bar-link"));
 }

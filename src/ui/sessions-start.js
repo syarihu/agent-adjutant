@@ -263,7 +263,7 @@ async function submitStart(e) {
       body: JSON.stringify({ instruction, hub, worktreeName, agent: sessEl('start-agent').value }),
     });
     // A request that got here is in the hub's inbox, whether or not the hub could be started:
-    // the dialog is done, and the row in the tree carries what is left to do.
+    // the dialog is done, and the card in the hub's panel carries what is left to do.
     sessView.starts.push({
       hubId: data.hub || hub, name: data.worktreeName || worktreeName, message: data.message || null,
       at: Date.now(), before, sel, hubStartError: data.hubStartError || null, goneAt: null,
@@ -398,10 +398,9 @@ function pendingRowHtml(p) {
     (buttons.length ? `<span class="sess-pend-btns">${buttons.join('')}</span>` : '') + '</div>';
 }
 
-/* The card a hub's panel (and, until it goes, the セッション list) has for the sessions asked of one hub: drawn again. */
+/* The card a hub's panel has for the sessions asked of one hub: drawn again. */
 function redrawPending() {
   renderTaskPanel();
-  renderSessionsView();
 }
 
 /* A button of a request that is waiting: start its hub, or let it go. */
@@ -417,10 +416,7 @@ function pendClick(b) {
   }
   return retryHubStart(row);
 }
-sessEl('sess-groups').addEventListener('click', e => {
-  const b = e.target.closest('[data-pend-act]');
-  if (b) pendClick(b);
-});
+
 
 /* Starts the hub of a request that is waiting in a stopped one's inbox. A failure stays on the
    row, since the request is still queued and the row is where it is waiting. */

@@ -56,7 +56,7 @@ const work = {
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
   newOrder: [],       // the ids of the rows of 新着 in the order the list last drew them
 };
-/* The middle terminal: a third slot beside the panel's and the review view's. It connects through the
+/* The middle terminal: a second slot beside the panel's. It connects through the
    board that was selected, since `state` is that board's. */
 const workTerm = { host: () => wk('wk-term-host'), redraw: () => renderWorkTerm(), base: () => BASE,
   taskId: null, sessionId: null, term: null, ended: null, reconnect: false, board: null,
@@ -245,13 +245,17 @@ function workBands(rows) {
   return [band('new', '新着', '新しく来たものはありません'), ...(later.rows.length ? [later] : [])];
 }
 
-/* The sidebar's count: how many rows are new, whichever view is on. */
+/* How many rows are new. */
+const workNewCount = () => work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
+
+/* The sidebar's count: how many rows are new, whichever view is on. It is the tab's too. */
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
-  const n = work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
+  const n = workNewCount();
   el.textContent = n;
   el.classList.toggle('zero', !n);
+  renderDocTitle();
 }
 
 /* The row the person leaves: it is read from now on. Called when the address moves off it, when the view does, and when the

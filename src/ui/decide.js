@@ -1,8 +1,7 @@
-/* Shared by the views that judge a gate: the gate on screen, how a gate is named, and the answered set. */
+/* Judging a gate, wherever it is judged (the task panel, a hub's or a session's, a gate's own): how a gate is named, what was
+   answered in this page, and the screens and buttons that answer one. */
 
-let focused = null;
-
-/* How the review queue names a gate: its board and id, since gates of several boards share it.
+/* How a gate is named: its board and id, since gates of several boards share it.
    On a board of its own there is no board to name. */
 const gateRef = g => g._slug ? `${g._slug}/${g.id}` : g.id;
 /* The open gate or record a ref names; a plain id from an old link takes the first of that id. */
@@ -18,7 +17,7 @@ const renderDiff = d => esc(d).split('\n').map(l => {
   return `<div class="${cls}">${l || ' '}</div>`;
 }).join('');
 
-/* What was answered in this page, kept until it is reloaded: key → { at, gate, decision }. Not in
+/* What was answered in this page, kept until it is reloaded: key → { at }. Not in
    the counts or on the 人 board, which go by what the boards still list, so an answer that a poll
    already on its way does not know yet does not bring the gate back. */
 const answeredGates = new Map();
@@ -28,12 +27,10 @@ const answeredGates = new Map();
 const gateKey = g => gateRef(g._slug || !multiBoard || !nav.board || nav.board === 'all' ? g : { ...g, _slug: nav.board });
 
 /* Called when a gate was answered or closed, in whichever view. */
-function gateAnswered(g, decision) {
+function gateAnswered(g) {
   if (g.wait === false) return;
   const key = gateKey(g);
-  answeredGates.set(key, { at: Date.now(), gate: { ...g }, decision });
-  if (view === 'review') reviewAnswered(g);
-  else if (focused === gateRef(g)) focused = null;
+  answeredGates.set(key, { at: Date.now() });
   // 「処理したら次へ」 in 「いまの仕事」.
   workAdvanceAfter(key);
 }
@@ -44,7 +41,7 @@ function taskOfGate(g) {
 }
 
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
-   the `data-gate` around it, so the same panel works in the review view and the task panel. */
+   the `data-gate` around it, so the same panel works wherever a gate is judged. */
 const BUTTONS = {
   approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${decisionLabel('approve', g.kind)}</span></button>`,
   changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${decisionLabel('changes', g.kind)}</span></button>`,
@@ -163,9 +160,8 @@ function taskForGate(g) {
   return taskOfGate(g) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree && (!g._slug || t._slug === g._slug));
 }
 
-/* What it takes to answer: the buttons the gate's options name, a comment box, 話す. `talk` is the
-   attribute that makes the 話す button do something; without it the button asks `decideAct`. */
-function gateDockHtml(g, talk = 'data-act="talk"') {
+/* What it takes to answer: the buttons the gate's options name, a comment box, 話す. */
+function gateDockHtml(g) {
   const btn = (act, cls, icon, text, style = '') =>
     `<button type="button" class="${cls}" data-act="${act}"${style ? ` style="${style}"` : ''}><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">${icon}</span><span>${text}</span></button>`;
   const BUTTON = {
@@ -182,7 +178,7 @@ function gateDockHtml(g, talk = 'data-act="talk"') {
     <textarea class="gate-comment" aria-label="コメント" placeholder="修正指示や質問があれば入力してください（承認の場合は空欄でも可）..."></textarea>
     <div class="decide">
       ${(g.options || []).map(o => (BUTTON[o] || (() => ''))()).join('')}
-      <button type="button" class="m3-icon-button talk" style="padding:8px 14px" ${talk}><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">terminal</span><span>ターミナルで話す</span></button>
+      <button type="button" class="m3-icon-button talk" style="padding:8px 14px" data-act="talk"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">terminal</span><span>ターミナルで話す</span></button>
       ${g.worktree && g.kind !== 'verify' ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" title="${ideTitle()}" data-ide="${esc(g.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">code</span><span>IDEで開く</span></button>` : ''}
       ${parkButtonHtml(g)}
       <button type="button" class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">done_all</span><span>解決済みとして閉じる</span></button>
@@ -191,10 +187,8 @@ function gateDockHtml(g, talk = 'data-act="talk"') {
 }
 
 /* The body of judging a gate, from what waits to the buttons that answer it: one column. `task` is
-   the gate's task when there is one (its Issue and PR, its request). `done` is the answer it was
-   given in this page, which replaces the buttons; `beforeDock` is markup for the view that wants
-   something of its own above them. */
-function gateJudgeHtml(g, task, done = null, beforeDock = '') {
+   the gate's task when there is one (its Issue and PR, its request). */
+function gateJudgeHtml(g, task) {
   const record = g.wait === false;
   const [label] = kindOf(g.kind);
   // Issue and PR of the task, a row each; a gate with no task has neither.
@@ -219,7 +213,7 @@ function gateJudgeHtml(g, task, done = null, beforeDock = '') {
     h += `<div class="panel"><details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
   }
 
-  const pickable = !record && !done;
+  const pickable = !record;
   if (g.kind === 'diff') {
     h += reviewPanels(g);
     if (g.diff) {
@@ -277,13 +271,8 @@ function gateJudgeHtml(g, task, done = null, beforeDock = '') {
     h += choicesHtml(g, pickable);
   }
 
-  h += beforeDock;
-  if (done) {
-    h += `<div class="decision-dock panel rv-done-note"><span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">task_alt</span><span>処理済み: ${esc(DECISION[done.decision === 'close' ? 'closed' : done.decision] || done.decision)}</span></div>`;
-  } else {
-    // A record is sent back from the same form the task panel has.
-    h += record ? decideHtml(g) : gateDockHtml(g);
-  }
+  // A record is sent back from the same form the task panel has.
+  h += record ? decideHtml(g) : gateDockHtml(g);
   return h;
 }
 
@@ -429,9 +418,8 @@ document.addEventListener('change', e => {
   if (box.checked) ticked.add(i); else ticked.delete(i);
 });
 
-/* The comment box of the view on screen. The review view and the task panel can
-   each hold one at once, the hidden ones included, so it is looked up inside the one being shown. */
-const commentBox = () => document.querySelector(view === 'review' ? '#review .gate-comment' : '#task-panel .gate-comment');
+/* The comment box of the panel a gate is judged in. */
+const commentBox = () => document.querySelector('#task-panel .gate-comment');
 
 /* An answered gate leaves the list and the counts at once; the round that follows confirms it.
    In a merged state that round can be a while off. */
@@ -447,7 +435,7 @@ function dropGate(g) {
   if (listed || row) render();
 }
 
-async function answer(decision, choice, id = focused, commentOverride = null) {
+async function answer(decision, choice, id, commentOverride = null) {
   const g = gateByRef(id);
   if (!g) return false;
   const box = commentBox();
@@ -472,7 +460,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
     // A record stays, with this answer appended, so it stays in view to show that it went.
     if (g.wait === false && box) box.value = '';
-    else gateAnswered(g, decision);
+    else gateAnswered(g);
     dropGate(g);
     await refresh(true);
     refreshBoards();
@@ -485,12 +473,10 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
 
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
    the ball is still with the human until they come back and close it. */
-function talk(id = focused) {
+function talk(id) {
   // The work view has the worker's terminal in the middle, already open: the focus goes to it, and
   // the panel's tab stays.
   if (view === 'work') return focusWorkTerm();
-  // The review view opens its own terminal tab where it can.
-  if (view === 'review' && reviewTalkHere()) return;
   const g = gateByRef(id);
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
@@ -499,7 +485,7 @@ function talk(id = focused) {
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
-async function closeGate(id = focused) {
+async function closeGate(id) {
   const g = gateByRef(id);
   if (!g) return;
   const comment = commentBox()?.value.trim();
@@ -509,7 +495,7 @@ async function closeGate(id = focused) {
       method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
-    gateAnswered(g, 'close');
+    gateAnswered(g);
     dropGate(g);
     await refresh(true);
     refreshBoards();

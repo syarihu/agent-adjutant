@@ -7,6 +7,8 @@ body { --rail-w: var(--rail-w-set, 240px); }
 body.rail-icons .rail-resize { display: none; }
 body.wk-dragging { user-select: none; cursor: col-resize; }
 .single-board #nav-work { display: none; }
+/* A board served alone has no 「いまの仕事」, so the label over it has nothing left to name. */
+.single-board .rail-global { display: none; }
 /* Completions and failures come from the work document, which a board served alone has none of. */
 .single-board .notify-multi { display: none; }
 .notify-kinds label { display: block; margin: 4px 0; }

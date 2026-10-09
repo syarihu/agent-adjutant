@@ -80,7 +80,7 @@ function openTaskPanel(id, pane = 'detail') {
   go({ task: id, pane }, { replace: id === nav.task });
 }
 
-/* A link from outside the panel (a gate or record on a card, the review queue, a notification):
+/* A link from outside the panel (a gate or record on a card, a notification):
    the panel on `tab` of the task, with `gateId` shown in it. There is more to read than the
    sidebar fits, so it opens as the dialog; the saved placement is not changed, and the next
    card or the close puts it back (panelPop). */
@@ -101,8 +101,7 @@ function openTask(id, tab = 'overview', gateId = null) {
   // The work view keeps the panel in its right column: nothing there is a dialog.
   dialogFor = view === 'work' ? null : id;
   markSelectedCards();
-  go({ ...(view === 'review' ? { view: prefs.tab === 'agent' ? 'agent' : 'human' } : {}), task: id, pane: paneOfTab(tab) },
-    { replace: id === nav.task });
+  go({ task: id, pane: paneOfTab(tab) }, { replace: id === nav.task });
   requestAnimationFrame(() => {
     const at = document.activeElement;
     if (selectedTaskId === id && (at === from || at === document.body))
@@ -137,7 +136,7 @@ function hideTaskPanelState() {
   disposePanelTerminal();
   markSelectedCards();
   renderTaskPanel();
-  // What opened the dialog may be gone (the review queue left behind for the board): then the
+  // What opened the dialog may be gone (the board it was opened from left behind): then the
   // task's card, if it is on screen and the only one with that id (ids repeat across boards).
   if (back) {
     const shown = el => el?.isConnected && el.getClientRects().length > 0;
@@ -147,7 +146,7 @@ function hideTaskPanelState() {
   }
 }
 
-/* A screen with no panel (the review queue): the address follows it. */
+/* A panel whose subject is gone: the address follows it. */
 function dismissTaskPanel() {
   hideTaskPanelState();
   if (nav.task) setNav({ task: null, pane: 'detail' });
@@ -251,7 +250,7 @@ function renderTaskPanel() {
   if (gone && view !== 'work') return dismissTaskPanel();
   // Until the board has answered once, what it lacks is not known to be missing.
   if (gone && state.now == null) return;
-  const shown = (!!(task || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'sessions' || view === 'work');
+  const shown = (!!(task || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work');
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop());
@@ -261,12 +260,9 @@ function renderTaskPanel() {
   cls.toggle('panel-pop', shown && panelPop());
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
   applyRailMode();
-  // The list marks the session the panel is open on.
-  if (view === 'sessions') applySessionSelection();
   markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
   if (!task && !hub && !sess && !parent && !gateOf && !gone) return renderHandForm(null);
-  // On a screen with no panel (the review queue) the panel waits, with its terminal, for the board to come back.
   if (!shown) return;
   if (gateOf) {
     renderWorkAway(null);
@@ -839,7 +835,7 @@ function disposePanelTerminal() { disposeTermSlot(panelTerm); }
 
 /* A slot is one terminal's place: where it mounts (`host`), what to draw again when it ends
    (`redraw`) and which board's path it connects through (`base`). The task panel has one and the
-   review view another, and both keep the socket across a redraw the same way. */
+   work view's middle another, and both keep the socket across a redraw the same way. */
 function syncTermSlot(slot, subject, s, pane) {
   // Another task's (or hub's) socket is not carried over; a fresh one is asked for after
   // 再開 or 再接続. A session that was linked to a task keeps its own: only the subject's name
@@ -1013,7 +1009,7 @@ function sessPanelClick(e, s) {
       return renderTaskPanel();
     }
     if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
-    if (act === 'goto-board' && s.task) return go({ board: b.dataset.board, view: 'sessions', task: s.task, pane: 'term' });
+    if (act === 'goto-board' && s.task) return go({ board: b.dataset.board, view: 'work', task: s.task, pane: 'detail' });
     return;
   }
   if (hit('[data-tp-sess-gate]') && s.waiting) return goToGate(s.waiting.id, s.waiting.slug);

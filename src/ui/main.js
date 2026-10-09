@@ -15,46 +15,28 @@ document.addEventListener('keydown', e => {
     }
     // Escape in a text field must not close what it is in and drop what was typed.
     if (e.target.matches('textarea,input,select')) return;
-    if ((view === 'board' || view === 'sessions' || view === 'work') && selectedTaskId) {
+    if ((view === 'board' || view === 'work') && selectedTaskId) {
       closeTaskPanel();
       return;
     }
   }
-  // The review view has no single-key shortcuts. A bare `c` closed the gate on screen, so a
+  // Judging a gate has no single-key shortcuts. A bare `c` closed the gate on screen, so a
   // Cmd+C to copy from it closed it too; answering stays a click on a button.
 });
 
 function setView(v) {
-  // The review queue reads every board: on a server with several, it is a page of its own.
-  if (v === 'review' && multiBoard && !navApplying && !scopeAll()) return go({ view: 'review' });
   const prev = view;
   view = v;
   const boardView = document.getElementById('board-view');
-  const reviewView = document.getElementById('review');
-  const sessionsView = document.getElementById('sessions-view');
   const workView = document.getElementById('work-view');
 
   if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
-  if (reviewView) {
-    reviewView.classList.toggle('on', v === 'review');
-    reviewView.style.display = v === 'review' ? 'grid' : 'none';
-  }
-
-  if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
   if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
   document.body.classList.toggle('view-work', v === 'work');
   // The middle terminal is not kept behind another view, and the row that was open is left.
   if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
-  if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
-  // The review view's terminal is not kept behind another view.
-  if (prev === 'review' && v !== 'review') disposeTermSlot(reviewTerm);
 
   // Navigation rail active states
-  const navReview = document.getElementById('nav-review');
-  if (navReview) {
-    if (v === 'review') navReview.setAttribute('aria-current', 'page');
-    else navReview.removeAttribute('aria-current');
-  }
   const navWork = document.getElementById('nav-work');
   if (navWork) {
     if (v === 'work') navWork.setAttribute('aria-current', 'page');
@@ -64,10 +46,10 @@ function setView(v) {
 
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
-    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : v === 'work' ? 'work' : null;
-    if (want && nav.view !== want) {
+    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : 'work';
+    if (nav.view !== want) {
       nav.view = want;
-      if (want !== 'sessions' && want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
+      if (want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
       history.replaceState(null, '', urlOf());
     }
   }
@@ -76,11 +58,8 @@ function setView(v) {
   const pageTitle = document.getElementById('page-title');
   const pageSub = document.getElementById('page-subtitle');
   if (pageTitle && pageSub) {
-    if (v === 'board' || v === 'sessions') {
+    if (v === 'board') {
       renderTitle();
-    } else if (v === 'review') {
-      pageTitle.textContent = '要対応';
-      pageSub.textContent = '全ボードのあなたの対応待ち。左で選んで、右で答える';
     } else if (v === 'work') {
       pageTitle.textContent = 'いまの仕事';
       pageSub.textContent = '全リポジトリの動いている仕事。左で選び、中央で話し、右で判定する';
@@ -92,18 +71,11 @@ function setView(v) {
   const filterChips = document.querySelector('.filter-chip-group');
   if (filterChips) filterChips.style.display = (v === 'board') ? 'flex' : 'none';
 
-  if (v === 'sessions') {
-    renderSessionsTab();
-    renderSessionsView();
-    renderTaskPanel();
-  } else if (v === 'work') {
+  if (v === 'work') {
     renderWorkView();
     renderTaskPanel();
-  } else if (v !== 'board') {
-    dismissTaskPanel();
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-    if (!(state.gates || []).some(g => gateRef(g) === focused)) focused = null;
     render();
   }
 }
