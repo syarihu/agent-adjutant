@@ -21,6 +21,7 @@ let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: mor
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
 let navApplying = false;
 let pendingTask = null;          // opened once the board's first state is in
+let pendingGate = null;          // `<board>/<gate>` of an old link, opened once the work document is in (my-work.js)
 let boardJob = null;             // { slug, fn }: run once that board has loaded
 const boardStates = {};          // 「すべて」: each board's last state, by slug
 const baseOf = x => x?._base || BASE;
@@ -38,25 +39,17 @@ function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
   const out = { board: null, view: 'agent', task: q.get('task'), pane: PANES.includes(q.get('pane')) ? q.get('pane') : 'detail', item: q.get('item') };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
-  if (loc.pathname === '/review') {
-    out.board = multiBoard ? 'all' : null;
-    out.view = 'review';
-    return out;
-  }
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   // `/` on a server with several boards opens the view its constant names; a board's own address, the one before.
   if (multiBoard && out.board === 'all') out.view = DEFAULT_MULTI_VIEW;
   const v = q.get('view');
   // `view=agent`, from before エージェント became the default, lands here by falling through.
-  if (v === 'human' || v === 'sessions') out.view = v;
+  if (v === 'human') out.view = v;
   // The work view reads every board of a resident server: a board served alone has none.
   if (v === 'work' && multiBoard) out.view = 'work';
-  // `session=<id>`, from before a session opened in the panel: it is `task=session:<id>` now.
-  const oldSession = q.get('session');
-  if (out.view === 'sessions' && out.board !== 'all' && oldSession && !out.task) {
-    out.task = SESS_REF + oldSession;
-    out.pane = 'term';
-  }
+  // The addresses of the セッション tab and of 要対応, which are gone, land where nav-legacy.js says.
+  const legacy = legacyNav(loc, multiBoard);
+  if (legacy) Object.assign(out, legacy.nav, { item: null });
   // The task panel opens on a board of its own; 「すべて」 switches to the card's board first.
   if (out.board === 'all') out.task = null;
   return out;

@@ -458,6 +458,7 @@ async function refreshWork(force = false) {
     workTrackParks();
     // The sidebar counts what is new on every view; the list is drawn on its own.
     renderWorkBadge();
+    if (pendingGate && view === 'work') openPendingGate();
     if (view !== 'work') return;
     const json = JSON.stringify(workSig(doc));
     const minute = Math.floor((doc.now || 0) / 60);
@@ -869,11 +870,25 @@ function renderWorkView() {
 
 /* ── choosing ── */
 
-function selectWorkRow(r) {
+/* An old link to a gate (`/review?item=<board>/<id>`, `#gate/<id>`), once the document says where the gate is: the row it is
+   on, else the panel of the gate itself. */
+function openPendingGate() {
+  const ref = pendingGate;
+  if (!ref || !work.doc) return;
+  pendingGate = null;
+  const { rows, turns, judged } = workListRows();
+  const entry = [...judged.values()].map(j => j.entry).find(e => e.items.some(i => i.kind === 'gate' && i.key === ref));
+  const row = entry && [...rows, ...turns].find(r => r.id === entry.id);
+  if (row) return selectWorkRow(row, { replace: true });
+  const slug = ref.slice(0, ref.indexOf('/'));
+  go({ board: slug, view: 'work', task: WORK_GATE_REF + ref, pane: 'detail' }, { replace: true });
+}
+
+function selectWorkRow(r, { replace = false } = {}) {
   // A task opens on the tab its open gate is judged in, else on the summary.
   const gate = r.s.waiting || (r.turn && r.live.find(i => i.kind === 'gate') ? { kind: r.live.find(i => i.kind === 'gate').gate } : null);
   const pane = r.task && gate ? paneOfGate(gate) : 'detail';
-  go({ board: r.board, view: 'work', task: r.ref, pane }, { replace: workIsSelected(r) });
+  go({ board: r.board, view: 'work', task: r.ref, pane }, { replace: replace || workIsSelected(r) });
   // The panel may not draw (the board does not list the task), and what it would have drawn is what follows the address.
   workTrack();
 }

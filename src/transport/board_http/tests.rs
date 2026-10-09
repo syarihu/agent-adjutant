@@ -246,7 +246,7 @@ fn a_session_with_no_task_opens_in_the_task_panel() {
         "タスクのないセッション",
         "data-side-act=\"${act}\"",
         "sideBtn('link-new'",
-        "const task = SESS_REF + s.id",
+        "owned ? owned.id : SESS_REF + s.id",
         "function boardApi",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");

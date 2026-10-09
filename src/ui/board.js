@@ -627,6 +627,16 @@ function goToGate(gateId, slug = null) {
   onBoard(on, () => openTaskPanel(ref));
 }
 
+/* Where a notification about a gate lands: 「いまの仕事」 on its task, on the hub when the hub answers it, else on the gate
+   itself. A board served alone has no such list: the panel of the gate opens on its board. */
+function openGateInWork(g) {
+  const slug = g._slug;
+  if (!multiBoard || !slug) return goToGate(g.id, slug || null);
+  const hubId = boards.find(b => b.slug === slug)?.hubId;
+  const ref = g.task || (g.answeredByHub && hubId ? HUB_REF + hubId : `${WORK_GATE_REF}${slug}/${g.id}`);
+  go({ board: slug, view: 'work', task: ref, pane: g.task ? paneOfGate(g) : 'detail' });
+}
+
 /* Where a waiting gate is read and answered: its task's panel, in the tab of its kind, when the
    task is on the board. A gate with no task — the hub's, or one whose task is gone — is judged
    in a panel of its own (`goToGate`). */

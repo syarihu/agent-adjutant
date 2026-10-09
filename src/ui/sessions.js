@@ -354,27 +354,16 @@ function panelRefOf(id) {
   return t ? t.id : id;
 }
 
-/* A row of the list. In 「すべて」 the session is another board's: that board is shown first. */
+/* A session, in the panel: on a resident server in 「いまの仕事」, on the board its hub belongs to, on its task when it has one and
+   as the hub or as itself otherwise; a board served alone has no list of work, and the panel opens over its board. In 「すべて」
+   a session is another board's, told apart by the board it was read from. */
 function openSessionRef(ref) {
   const s = (state.sessions || []).find(x => sessionRef(x) === ref);
   if (!s) return;
-  // A worker of a task on the board is talked to in the task panel, over the list.
   const owned = taskOfSession(s);
-  if (owned) {
-    return go({ ...(scopeAll() ? { board: s._slug } : {}), view: 'sessions', task: owned.id, pane: 'term' },
-      { replace: !scopeAll() && owned.id === nav.task });
-  }
-  // The hub's board, when this page knows it: where a worker's task is, whichever board this is.
-  const hub = scopeAll() ? (state.hubs || []).find(h => h._slug === s._slug && h.id === hubOfSession(s)) : boardOfSession(s).hub;
-  const known = hub?.slug && boards.some(b => b.slug === hub.slug) ? hub.slug : null;
-  // A worker whose task is on the board of another hub: that board shows it as a task.
-  if (!scopeAll() && s.kind === 'worker' && s.task && known && !boardOfSession(s).own) {
-    return go({ board: known, view: 'sessions', task: s.task, pane: 'term' });
-  }
-  // A session with no task opens in the panel as itself, until it is linked to one.
-  const task = SESS_REF + s.id;
-  if (scopeAll()) return go({ board: known || s._slug, view: 'sessions', task, pane: 'term' });
-  go({ view: 'sessions', task, pane: hasSession(s) ? 'term' : 'detail' }, { replace: task === nav.task });
+  const subject = s.kind === 'hub' ? HUB_REF + s.id : owned ? owned.id : SESS_REF + s.id;
+  if (!multiBoard) return openTaskPanel(subject, hasSession(s) ? 'term' : 'detail');
+  go({ board: s._slug || boardOfSession(s).slug || nav.board, view: 'work', task: subject, pane: 'detail' }, { replace: subject === nav.task });
 }
 
 /* A worker's task title when the server did not give one. The task of another board is not in

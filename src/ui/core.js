@@ -381,7 +381,7 @@ function ringWaiting(item, final) {
     });
     n.onclick = () => {
       window.focus();
-      onBoard(g._slug, () => judgeGate(g.id));
+      openGateInWork(g);
     };
     return;
   }
@@ -412,9 +412,11 @@ function checkNewGates(gates) {
   flushNotifyPending();
 }
 
-/* Open the terminal of the session a wait is about: the notification's click, and 要対応's button. */
+/* Open the session a wait is about, in 「いまの仕事」 on its board: the notification's click. A board served alone has no list
+   of work: the session opens in the panel. */
 function openWait(w) {
-  onBoard(w._slug, () => openSessionRef(scopeAll() && w._slug ? `${w._slug}/${w.session}` : w.session));
+  if (multiBoard && w._slug) return go({ board: w._slug, view: 'work', task: SESS_REF + w.session, pane: 'detail' });
+  openSessionRef(w.session);
 }
 
 let seenWaitKeys = null;
