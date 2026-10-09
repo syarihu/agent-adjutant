@@ -495,7 +495,7 @@ function workRepoHubChips(repo, now, judged) {
     // The wake goes to the hub's own board, so only a hub whose board this server has can be woken from here.
     const wakeBase = boards.some(b => b.slug === h.slug) ? `/b/${h.slug}` : null;
     chips.push({ id, key: `${board}/${ref}`, board, ref, repo, nwo: repo.nwo, hub: h, s, st, data, task: null, isHub: true, turn: false,
-      live, cls: j?.cls || null, waits: live.length, word: workHubWord(st), wakeBase });
+      entry: j?.entry || null, away: j?.away || 0, live, cls: j?.cls || null, waits: live.length, word: workHubWord(st), wakeBase });
   }
   const own = c => c.hub.parent ? 1 : 0;
   const key = c => c.hub.key ?? '';
@@ -893,6 +893,15 @@ const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.d
   : el?.dataset?.wkHub != null ? `[data-wk-hub="${CSS.escape(el.dataset.wkHub)}"]`
     : el?.dataset?.wkParent != null ? `[data-wk-parent="${CSS.escape(el.dataset.wkParent)}"]` : null;
 
+/* Focus back on what `held` finds after a rebuild. A row can be drawn twice (the band and its group), so the copy that was in
+   the same cell as before is tried first, and only then the first one in the list. */
+function workRefocus(root, held, cell) {
+  if (!held) return;
+  const within = cell ? [...root.querySelectorAll('[data-wk-cell]')].find(el => el.dataset.wkCell === cell) : null;
+  const el = (within && (within.matches(held) ? within : within.querySelector(held))) || root.querySelector(held);
+  el?.focus({ preventScroll: true });
+}
+
 /* A row replaced by the one its html makes, keeping its selection and the keyboard focus. */
 function workSwap(old, html) {
   const held = old.contains(document.activeElement) ? workHeldSel(document.activeElement) : null;
@@ -984,9 +993,10 @@ function drawWorkList() {
   const top = scroll.scrollTop;
   const at = document.activeElement;
   const held = root.contains(at) ? workHeldSel(at) : null;
+  const heldCell = held ? at.closest?.('[data-wk-cell]')?.dataset.wkCell : null;
   root.innerHTML = rows.length || turns.length || notes.length || chips.length ? html : '<div class="wk-empty">いま動いている仕事はありません</div>';
   scroll.scrollTop = top;
-  if (held) root.querySelector(held)?.focus({ preventScroll: true });
+  workRefocus(root, held, heldCell);
 }
 
 /* What the person's selection is marked on. */

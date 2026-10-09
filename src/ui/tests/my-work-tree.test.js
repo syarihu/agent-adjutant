@@ -50,6 +50,7 @@ vm.runInContext([
   cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
   cut(/^function workRowHtml[\s\S]*?^}/m),
   cut(/^function workItemHtml[\s\S]*?^}/m),
+  cut(/^function workRefocus[\s\S]*?^}/m),
   cut(/^function workHubWakeButtonHtml[\s\S]*?^}/m),
   cut(/^function workHubWhyHtml[\s\S]*?^}/m),
   cut(/^const workNewest = [^\n]*;/m),
@@ -745,4 +746,36 @@ test('a hub row puts the wake reason on a line of its own, outside the buttons a
   } finally {
     run('delete hubWake.why["b-own"]', {});
   }
+});
+
+test('a hub chip carries the entry and the away count of its judged entry, as a session row does', () => {
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [hubRow('own', 'done')], hubSessions: [] };
+  const entry = { id: 'b-own/hub:own' };
+  const [c] = chipsOf(repo, judgedOf({ 'b-own/hub:own': { entry, live: [], cls: null, away: 3 } }));
+  assert.deepStrictEqual([c.entry, c.away], [entry, 3]);
+  const [none] = chipsOf(repo);
+  assert.deepStrictEqual([none.entry, none.away], [null, 0]);
+  ctx.workAwayChip = r => r > 0 ? `+${r}` : '';
+  try {
+    assert.ok(itemHtml({ ...hubItem(), away: 3 }, 'tree').includes('<span>+3</span>'));
+  } finally { ctx.workAwayChip = () => ''; }
+});
+
+test('focus after a rebuild goes back to the copy in the same cell, else to the first', () => {
+  const log = [];
+  const el = (name, cell, held) => ({ dataset: { wkCell: cell }, matches: sel => sel === held, querySelector: sel => sel === held ? inner : null, focus: () => log.push(name) });
+  const inner = { focus: () => log.push('inner') };
+  const band = el('band', 'new/k', '[data-wk="k"]'), group = el('group', 'tree/k', '[data-wk="k"]');
+  const first = { focus: () => log.push('first') };
+  const root = { querySelectorAll: () => [band, group], querySelector: () => first };
+  const go = (held, cell) => { log.length = 0; run('workRefocus(root, held, cell)', { root, held, cell }); return log.slice(); };
+  assert.deepStrictEqual(go('[data-wk="k"]', 'tree/k'), ['group']);
+  assert.deepStrictEqual(go('[data-wk="k"]', 'new/k'), ['band']);
+  assert.deepStrictEqual(go('[data-wk-wake="k"]', 'tree/k'), ['first']);
+  assert.deepStrictEqual(go('[data-wk="k"]', 'gone'), ['first']);
+  assert.deepStrictEqual(go('[data-wk="k"]', null), ['first']);
+  assert.deepStrictEqual(go(null, 'tree/k'), []);
+  // A wake button inside the wrapper of the cell is found within it.
+  const wrap = { dataset: { wkCell: 'tree/k' }, matches: () => false, querySelector: () => inner };
+  assert.deepStrictEqual((log.length = 0, run('workRefocus(root, held, cell)', { root: { querySelectorAll: () => [band, wrap], querySelector: () => first }, held: '[data-wk-wake="k"]', cell: 'tree/k' }), log.slice()), ['inner']);
 });

@@ -111,3 +111,23 @@ test('focus after a wake goes back only to the woken hub\'s button', async () =>
   // Focus that was not on this hub's button is not restored anywhere.
   assert.deepStrictEqual(await wake(strip('b'), 'a'), []);
 });
+
+test('focus after a wake prefers the copy of the button in its own cell of the work list', async () => {
+  const focused = [];
+  const mk = name => ({ disabled: false, focus: () => focused.push(name) });
+  const scope = { dataset: { wkCell: 'tree/k' }, querySelectorAll: () => [mk('own cell')] };
+  const other = { dataset: { wkCell: 'new/k' }, querySelectorAll: () => [mk('band')] };
+  const had = ctx.document.querySelectorAll;
+  ctx.document.querySelectorAll = sel => sel === '[data-wk-cell]' ? [other, scope] : [mk('first')];
+  try {
+    const button = { dataset: { wkWake: 'k/hub:a', wakeSlug: 'a' }, closest: () => ({ dataset: { wkCell: 'tree/k' } }) };
+    ctx.document.activeElement = button;
+    ctx.document.body = {};
+    const p = vm.runInContext('wakeHub({ slug: "a", unseen: 1, state: { present: true } }, "/b/a")', ctx);
+    ctx.document.activeElement = ctx.document.body;
+    await p;
+    assert.deepStrictEqual(focused, ['own cell']);
+  } finally {
+    ctx.document.querySelectorAll = had;
+  }
+});

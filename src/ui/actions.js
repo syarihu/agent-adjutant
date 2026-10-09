@@ -701,6 +701,8 @@ async function wakeHub(h = pageHub(), base = BASE) {
     : at.dataset.action === 'wake-hub' ? `#hub-strip [data-action="wake-hub"]${mine}`
     : at.dataset.tpHub === 'wake' ? `[data-tp-hub="wake"]${mine}`
     : at.dataset.wkWake != null ? `[data-wk-wake="${CSS.escape(at.dataset.wkWake)}"]${mine}` : null;
+  // The work list can draw a hub twice (the band and its group): the copy in the same cell is the one to come back to.
+  const cell = at?.closest?.('[data-wk-cell]')?.dataset.wkCell;
   hubWake.busy[slug] = true;
   delete hubWake.why[slug];
   redrawHubWake();
@@ -722,7 +724,9 @@ async function wakeHub(h = pageHub(), base = BASE) {
     // while the button is disabled, and the other places lose it to the page.
     const now = document.activeElement;
     if (refocus && (now === document.body || now?.dataset?.action === 'hub-strip-open')) {
-      [...document.querySelectorAll(refocus)].find(b => !b.disabled)?.focus();
+      const usable = b => !b.disabled;
+      const scope = cell ? [...document.querySelectorAll('[data-wk-cell]')].find(el => el.dataset.wkCell === cell) : null;
+      (scope && [...scope.querySelectorAll(refocus)].find(usable) || [...document.querySelectorAll(refocus)].find(usable))?.focus();
     }
   }
   // The board moved on while this was on its way: its answer is not this one's to refresh.
