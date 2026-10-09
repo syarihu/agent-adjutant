@@ -337,6 +337,7 @@ mod tests {
     fn literals() {
         assert_eq!(first("{ not json"), '"');
         let _ = (r"\", "\\", r#"{"#, b'{', '\u{7b}', '\x1b', '…');
+        let _ = (b"{\"", c"{", '\'', '\\');
         let text = "line { one
             line two";
         assert!(!text.is_empty());
@@ -372,6 +373,7 @@ use super::*;
 fn literals() {
     assert_eq!(first($1), '"');
     let _ = (r"\\", "\\\\", $3, b'{', '\\u{7b}', '\\x1b', '…');
+    let _ = (b"{\"", c"{", '\'', '\\\\');
     let text = "line { one
 line two";
     assert!(!text.is_empty());
@@ -402,6 +404,17 @@ literal_case '"{ not json"' "" 'r#"}"#' ""
 verify "a changed raw string is not a move" 1 "not a move: the items above" main
 literal_case '"{ not json"' "" 'r#"{"#' "changed"
 verify "a changed word in a block comment is not a move" 1 "not a move: the items above" main
+# literal_edit <name> <sed script on the moved tests.rs>
+literal_edit() {
+  literal_case '"{ not json"' "" 'r#"{"#' ""
+  sed -i.bak "$2" src/tests.rs
+  rm src/tests.rs.bak
+  verify "$1" 1 "not a move: the items above" main
+}
+literal_edit "a changed byte string is not a move" 's/b"{/b"}/'
+literal_edit "a changed c string is not a move" 's/c"{"/c"}"/'
+literal_edit "a changed escaped apostrophe char is not a move" "s/'\\\\''/'\"'/"
+literal_edit "a changed escaped backslash char is not a move" "s|'\\\\\\\\'|'/'|"
 
 # The case of the issue: a lone `{` in a string, the next test moved to another file.
 new_crate "$tmp/issue"
