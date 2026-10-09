@@ -782,7 +782,7 @@ function hubDetailHtml(h, s) {
   const wakeOff = hubWakeBlocked(h, hubPanelWakeBase(h));
   const wakeWhy = hubWakeWhy(h);
   const wake = (h.unseen || 0) + (h.seen || 0) > 0
-    ? `<div class="tp-hub-wake"><button type="button" class="btn-m3-tonal" data-tp-hub="wake"${wakeOff ? ' disabled' : ''} title="${esc(wakeOff || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button><span class="hub-wake-why" role="status">${esc(wakeWhy)}</span></div>` : '';
+    ? `<div class="tp-hub-wake"><button type="button" class="btn-m3-tonal" data-tp-hub="wake" data-wake-slug="${esc(h.slug)}"${wakeOff ? ' disabled' : ''} title="${esc(wakeOff || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button><span class="hub-wake-why" role="status">${esc(wakeWhy)}</span></div>` : '';
   const listed = h.inbox || [];
   const inbox = [...listed.filter(unread).reverse(), ...listed.filter(m => !unread(m))].slice(0, HUB_LIST_MAX);
   html += `<div class="m3-filled-card">${secTitle('受信箱')}${inbox.length

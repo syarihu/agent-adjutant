@@ -750,7 +750,7 @@ function workHubWakeHtml(c) {
   if (!unseen) return '';
   const off = hubWakeBlocked(c.hub, c.wakeBase);
   const label = `hub を起こす（受信箱の未確認 ${unseen} 件）`;
-  return `<button type="button" class="wk-hub-wake" data-wk-wake="${esc(c.key)}"${off ? ' disabled' : ''} aria-label="${esc(label)}" title="${esc(off || label)}"><span class="material-symbols-outlined" aria-hidden="true">notifications_active</span>${unseen}</button><span class="hub-wake-why wk-hub-why" role="status">${esc(why)}</span>`;
+  return `<button type="button" class="wk-hub-wake" data-wk-wake="${esc(c.key)}" data-wake-slug="${esc(c.hub.slug)}"${off ? ' disabled' : ''} aria-label="${esc(label)}" title="${esc(off || label)}"><span class="material-symbols-outlined" aria-hidden="true">notifications_active</span>${unseen}</button><span class="hub-wake-why wk-hub-why" role="status">${esc(why)}</span>`;
 }
 
 /* The hubs on a heading, each a button of its own beside the heading's main button (never inside it). It says the hub, what it

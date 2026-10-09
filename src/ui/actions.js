@@ -694,9 +694,12 @@ async function wakeHub(h = pageHub(), base = BASE) {
   const line = 'hub を起こす（POST /api/hub/wake）';
   // Focus on the button goes to the next control while it is disabled, and back when it is not.
   const at = document.activeElement;
-  const refocus = at?.dataset?.action === 'wake-hub' ? '#hub-strip [data-action="wake-hub"]'
-    : at?.dataset?.tpHub === 'wake' ? '[data-tp-hub="wake"]'
-    : at?.dataset?.wkWake != null ? `[data-wk-wake="${CSS.escape(at.dataset.wkWake)}"]` : null;
+  // The hub's slug is on every wake button, so a hub opened while the request is on its way never takes the focus.
+  const mine = `[data-wake-slug="${CSS.escape(slug)}"]`;
+  const refocus = at?.dataset?.wakeSlug !== slug ? null
+    : at.dataset.action === 'wake-hub' ? `#hub-strip [data-action="wake-hub"]${mine}`
+    : at.dataset.tpHub === 'wake' ? `[data-tp-hub="wake"]${mine}`
+    : at.dataset.wkWake != null ? `[data-wk-wake="${CSS.escape(at.dataset.wkWake)}"]${mine}` : null;
   hubWake.busy[slug] = true;
   delete hubWake.why[slug];
   redrawHubWake();

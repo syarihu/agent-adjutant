@@ -398,7 +398,7 @@ function renderHubStrip() {
     const blocked = hubWakeBlocked(h, BASE);
     inbox = `<span class="hub-strip-counts">受信箱 未確認 ${unseen} · 確認済み・未処理 ${seen}${esc(age)}</span>
       <button type="button" class="btn-m3-text hub-strip-subjects" data-action="hub-strip-open">件名を見る</button>
-      <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub"${blocked ? ' disabled' : ''} title="${esc(blocked || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
+      <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub" data-wake-slug="${esc(h.slug)}"${blocked ? ' disabled' : ''} title="${esc(blocked || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
   }
   say(inbox ? wakeWhy : '');
   put(main, inbox);

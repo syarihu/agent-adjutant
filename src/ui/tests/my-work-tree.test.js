@@ -502,7 +502,7 @@ test('wake: no button when nothing is unseen or the count is missing', () => {
 
 test('wake: an enabled button is the chip\'s sibling with the count, never inside the chip', () => {
   const html = chipHtml(wakeChip());
-  assert.match(html, /<button type="button" class="wk-hub-wake" data-wk-wake="b-own\/hub:own" aria-label="hub を起こす（受信箱の未確認 2 件）"/);
+  assert.match(html, /<button type="button" class="wk-hub-wake" data-wk-wake="b-own\/hub:own" data-wake-slug="b-own" aria-label="hub を起こす（受信箱の未確認 2 件）"/);
   assert.ok(!/<button type="button" class="wk-hub-wake"[^>]* disabled/.test(html));
   const chipPart = html.slice(html.indexOf('<button type="button" class="wk-hub"'), html.indexOf('</button>') + 9);
   assert.ok(!chipPart.includes('data-wk-wake') && !chipPart.includes('notifications_active'));

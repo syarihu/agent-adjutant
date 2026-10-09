@@ -19,9 +19,10 @@ const cutPanel = re => {
   return m[0];
 };
 const posts = [];
+const looked = [];
 const ctx = vm.createContext({
   BASE: '/b/own', multiBoard: true, boards: [{ slug: 'own' }, { slug: 'other' }], navEpoch: 0, note() {}, refresh: async () => {},
-  redrawHubWake() {}, pageHub: () => ({ id: 'own', slug: 'own' }), document: { activeElement: null, body: {}, querySelectorAll: () => [] },
+  redrawHubWake() {}, pageHub: () => ({ id: 'own', slug: 'own' }), document: { activeElement: null, body: {}, querySelectorAll: sel => { looked.push(sel); return []; } },
   CSS: { escape: x => x }, boardApi: async (base, p, o) => { posts.push([base, p, o.method]); return { woken: true }; },
   esc: x => String(x),
 });
@@ -57,6 +58,7 @@ test('the reasons come in the order of the board: nothing unseen, no board here,
   assert.strictEqual(blocked(hub(), '/b/a'), '起こしています');
   // A press on one board leaves another's button alone.
   assert.strictEqual(blocked(hub({ slug: 'b' }), '/b/b'), '');
+  vm.runInContext('delete hubWake.busy.a', ctx);
 });
 
 test('wakeHub posts to the base it is given, and does nothing while blocked', async () => {
@@ -86,7 +88,26 @@ test('the hub panel draws the wake button in its 受信箱 card, enabled for an 
   const html = h => { ctx.h = h; return vm.runInContext('hubDetailHtml(h, { present: true })', ctx); };
   const hub = (extra = {}) => ({ id: 'own', slug: 'own', unseen: 1, seen: 0, inbox: [], inboxCount: 1, state: { present: true }, ...extra });
   const on = html(hub());
-  assert.match(on, /data-tp-hub="wake"(?! disabled)[^>]*title="hub の端末/);
-  assert.match(html(hub({ unseen: 0, seen: 1 })), /data-tp-hub="wake" disabled title="未確認のメッセージはありません"/);
+  assert.match(on, /data-tp-hub="wake" data-wake-slug="own"(?! disabled)[^>]*title="hub の端末/);
+  assert.match(html(hub({ unseen: 0, seen: 1 })), /data-tp-hub="wake" data-wake-slug="own" disabled title="未確認のメッセージはありません"/);
   assert.ok(!html(hub({ unseen: 0, seen: 0 })).includes('data-tp-hub="wake"'));
+});
+
+test('focus after a wake goes back only to the woken hub\'s button', async () => {
+  const wake = async (button, slug) => {
+    looked.length = 0;
+    ctx.document.activeElement = button;
+    // Focus has fallen to the page by the time the request answers.
+    ctx.document.body = {};
+    const p = vm.runInContext(`wakeHub({ slug: "${slug}", unseen: 1, state: { present: true } }, "/b/${slug}")`, ctx);
+    ctx.document.activeElement = ctx.document.body;
+    await p;
+    return looked.slice();
+  };
+  const strip = slug => ({ dataset: { action: 'wake-hub', wakeSlug: slug } });
+  assert.deepStrictEqual(await wake(strip('a'), 'a'), ['#hub-strip [data-action="wake-hub"][data-wake-slug="a"]']);
+  assert.deepStrictEqual(await wake({ dataset: { tpHub: 'wake', wakeSlug: 'a' } }, 'a'), ['[data-tp-hub="wake"][data-wake-slug="a"]']);
+  assert.deepStrictEqual(await wake({ dataset: { wkWake: 'k/hub:a', wakeSlug: 'a' } }, 'a'), ['[data-wk-wake="k/hub:a"][data-wake-slug="a"]']);
+  // Focus that was not on this hub's button is not restored anywhere.
+  assert.deepStrictEqual(await wake(strip('b'), 'a'), []);
 });
