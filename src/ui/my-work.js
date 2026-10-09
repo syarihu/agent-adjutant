@@ -791,7 +791,11 @@ function setWorkTermPart(name, el, html) {
   el.innerHTML = html;
 }
 
-function workTermHeadHtml(sel) {
+function workTermHeadHtml(sel, free = null) {
+  if (!sel && free) {
+    const label = sessionLabel(free);
+    return `<div class="wk-term-title">${esc(label.text)}</div><div class="wk-term-sub">${esc([free.branch, free.worktree && baseName(free.worktree)].filter(Boolean).join(' · '))}</div>`;
+  }
   if (!sel) return '';
   if (sel.parent) {
     const p = sel.parent;
@@ -809,10 +813,12 @@ function workTermHeadHtml(sel) {
 function renderWorkTerm() {
   if (view !== 'work') return;
   const sel = workSelected();
+  // A worktree with no process (the hub's 「動いていない worktree」) is no row of the list, but the board lists it.
+  const free = !sel && isSessRef(nav.task) ? sessOfRef(nav.task) : null;
   const ds = sel?.session || null;
-  const own = ds ? (state.sessions || []).find(x => x.id === ds.id) || null : null;
+  const own = ds ? (state.sessions || []).find(x => x.id === ds.id) || null : free;
   const s = own || ds;
-  setWorkTermPart('head', wk('wk-term-head'), workTermHeadHtml(sel));
+  setWorkTermPart('head', wk('wk-term-head'), workTermHeadHtml(sel, free));
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
@@ -824,6 +830,7 @@ function renderWorkTerm() {
   const text = workTerm.term ? ''
     : !nav.task || nav.board === 'all' ? '<div class="tp-muted">左の一覧から選ぶと、ここにそのセッションのターミナルが開きます</div>'
       : !work.doc ? '<div class="tp-muted">読み込み中…</div>'
+      : free ? termPlaceholderHtml(free)
       : !sel ? '<div class="tp-muted">選んだ仕事は、いまの一覧にありません</div>'
         : !ds ? `<div class="tp-muted">${sel.parent ? 'この親 Issue を動かしている hub のセッションが見つかりません' : 'この仕事にはセッションがありません'}</div>`
           : !loaded ? '<div class="tp-muted">接続しています…</div>'
@@ -836,7 +843,7 @@ function renderWorkTerm() {
 wk('wk-term-bar').addEventListener('click', e => {
   const b = e.target.closest('[data-sess-act], [data-tp-reconnect]');
   if (!b || b.disabled) return;
-  const id = workSelected()?.session?.id;
+  const id = workSelected()?.session?.id || (isSessRef(nav.task) ? sessIdOfRef(nav.task) : null);
   const s = id ? (state.sessions || []).find(x => x.id === id) : null;
   if (!s) return;
   if (b.dataset.tpReconnect != null) {

@@ -119,7 +119,7 @@ async function worktreeAct(action, worktree, confirmed = false, slug = null) {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
-    if (view === 'sessions') showSessNotice(`${line}: ${e.message}`, true);
+    showSessNotice(`${line}: ${e.message}`, true);
   }
 }
 

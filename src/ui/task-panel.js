@@ -693,6 +693,43 @@ function hubPanelTabsHtml(h, s, pane) {
 const HUB_LIST_MAX = 5;
 const hubListMore = n => n > 0 ? `<div class="tp-muted">ほか ${n} 件</div>` : '';
 
+/* The worker sessions of the board shown that have no process: a worktree with no session, or one whose session ended. The
+   repository hub's lists the whole board, grouped by the hub each belongs to; a parent-task hub's, its own. */
+function idleWorktreesOf(h) {
+  const repoHub = repoHubId();
+  const groups = new Map();
+  for (const s of state.sessions || []) {
+    if (s.kind !== 'worker') continue;
+    const st = sessionState(s);
+    if (st !== 'none' && st !== 'ended') continue;
+    const owner = hubOfSession(s) || repoHub;
+    if (h.parent && owner !== h.id) continue;
+    groups.set(owner, [...(groups.get(owner) || []), s]);
+  }
+  return [...groups].map(([id, list]) => {
+    const hub = (state.hubs || []).find(x => x.id === id);
+    return { id, label: hub ? hubShortName(hub) : id, repo: !hub?.parent, list: list.sort((a, b) => sessionKey(a) < sessionKey(b) ? -1 : sessionKey(a) > sessionKey(b) ? 1 : 0) };
+  }).sort((a, b) => (b.repo - a.repo) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+}
+
+/* 「動いていない worktree（N）」: each one opens as a session of its own, where it can be resumed, opened in the IDE or cleaned up. */
+function idleWorktreesHtml(h) {
+  // Another board's hub has the sessions of its own board, which this page does not read.
+  if (hubOther(h) && !h.parent) return '';
+  const groups = idleWorktreesOf(h);
+  const n = groups.reduce((sum, g) => sum + g.list.length, 0);
+  if (!n) return '';
+  const many = groups.length > 1;
+  const items = g => `<ul class="sess-side-list">${g.list.map(s => `<li><button type="button" class="linkish" data-tp-worktree="${esc(s.id)}">${esc(sessionKey(s))}</button><span class="who">${esc(s.branch || STATE_LABEL[sessionState(s)])}</span></li>`).join('')}</ul>`;
+  return `<div class="m3-filled-card"><details class="tp-idle"><summary>動いていない worktree（${n}）</summary>${groups.map(g => (many ? `<div class="tp-muted">${esc(g.label)}</div>` : '') + items(g)).join('')}</details></div>`;
+}
+
+/* A worktree of that card, opened as a session: in 「いまの仕事」 where the person is in it. */
+function openIdleWorktree(id) {
+  if (view === 'work') return go({ board: nav.board, view: 'work', task: SESS_REF + id, pane: 'detail' });
+  openTaskPanel(SESS_REF + id, 'detail');
+}
+
 function hubDetailHtml(h, s) {
   const other = hubOther(h);
   const row = hubRowOf(h);
@@ -705,6 +742,10 @@ function hubDetailHtml(h, s) {
       <div class="tp-gate-actions"><button type="button" class="btn-m3-primary" data-tp-hub="start"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'tmux の新しいウィンドウで adj hub を実行します')}"><span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span><span>hub を起動</span></button></div>
     </div>`;
   }
+
+  // The sessions asked of this hub that it has not started yet.
+  const pend = sessionPendingRows().filter(p => p.hubId === h.id);
+  if (pend.length) html += `<div class="m3-filled-card">${secTitle('起動を依頼中')}${pend.map(pendingRowHtml).join('')}</div>`;
 
   // The page's own board is read from its state; another board's from its row in the list.
   const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -742,12 +783,25 @@ function hubDetailHtml(h, s) {
     const why = restartWhy(s);
     return `<button type="button" class="btn-m3-tonal" data-tp-hub="restart"${why ? ' disabled' : ''} title="${esc(why || '今の会話のまま、止めて起動し直します（adj hub --resume）')}"><span class="material-symbols-outlined" style="font-size:16px;">autorenew</span><span>セッションを再起動…</span></button>`;
   })() : '';
+  html += idleWorktreesHtml(h);
+
+  // Starting a session with no task, or a parent task's hub, asks this page's board: not another one's, nor one this server
+  // does not serve.
+  const away = multiBoard && boards.length > 0 && !!h.slug && !hubRowOf(h) ? 'この hub のボードはこのサーバーにありません' : '';
+  const startOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.sessionStart?.agent ? '起動するエージェントが分かりません' : '');
+  const parentOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.hubStart?.available ? NO_START : '');
+  const addBtn = (act, icon, label, off, title) =>
+    `<button type="button" class="btn-m3-tonal" data-tp-hub="${act}"${off ? ' disabled' : ''} title="${esc(off || title)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
   html += `<div class="m3-filled-card">${secTitle('操作')}
     <div class="tp-gate-actions">
       <button type="button" class="btn-m3-tonal" data-tp-hub="next" title="adj send --kind next (着手を促す)"><span class="material-symbols-outlined" style="font-size:16px;">bolt</span><span>着手を促す</span></button>
       <button type="button" class="btn-m3-tonal" data-tp-hub="sync" title="再同期 (adj refresh)"><span class="material-symbols-outlined" style="font-size:16px;">refresh</span><span>再同期</span></button>
       ${own}
       ${restartBtn}
+    </div>
+    <div class="tp-gate-actions">
+      ${addBtn('add-session', 'terminal', 'タスクなしのセッションを始める…', startOff, 'この hub にタスクなしのセッションを頼みます')}
+      ${h.parent ? '' : addBtn('add-parent-hub', 'account_tree', '親タスクの hub を起動…', parentOff, '親タスクのキーを入れて、その hub を tmux の新しいウィンドウで起動します')}
     </div>
     <button type="button" class="btn-m3-text tp-reset" data-tp-hub="reset"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）')}">hub をリセット…</button>
   </div>`;
@@ -992,9 +1046,13 @@ function hubPanelClick(e, h) {
       case 'close': return openHubStopDialog(h.id, 'close');
       case 'reset': return openHubStopDialog(h.id, 'reset');
       case 'restart': return openHubStopDialog(h.id, 'restart');
+      case 'add-session': return openStartDialog();
+      case 'add-parent-hub': return openHubKeyDialog();
     }
     return;
   }
+  if ((b = hit('[data-pend-act]'))) return pendClick(b);
+  if ((b = hit('[data-tp-worktree]'))) return openIdleWorktree(b.dataset.tpWorktree);
   if ((b = hit('[data-tp-task]'))) return openTaskPanel(b.dataset.tpTask);
   if (hit('[data-tp-board]')) {
     // The hub's board, with the hub still in the panel on the tab it was on; a dialog would cover

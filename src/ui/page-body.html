@@ -107,6 +107,10 @@
     </div>
   </header>
 
+  <!-- A notice about what was just done (a session started, a hub restarted), in the flow above whichever view is
+       on, so it is seen whether or not the panel is open. -->
+  <div class="sess-notice" id="sess-notice" hidden></div>
+
   <main>
     <div id="board-view" role="tabpanel">
       <div id="boards">
@@ -186,17 +190,11 @@
       </section>
     </div>
     <div id="sessions-view" role="tabpanel">
-      <!-- Above the list, so a notice is seen whether or not the panel is open. -->
-      <div class="sess-notice" id="sess-notice" hidden></div>
       <section class="sess-list" aria-label="セッションの一覧">
         <div class="pane-head sess-list-head">
           <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
           <span class="pane-title">セッション</span>
           <span class="pane-sub" id="sess-scope"></span>
-          <div class="sess-add-wrap">
-            <button type="button" class="tool-btn" id="sess-add" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-add-menu" title="hub やセッションを追加" aria-label="hub やセッションを追加"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
-            <div class="sess-menu" id="sess-add-menu" role="menu" aria-labelledby="sess-add" hidden></div>
-          </div>
         </div>
         <div class="sess-list-scroll">
           <div id="sess-groups"></div>

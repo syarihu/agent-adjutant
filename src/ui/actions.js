@@ -449,7 +449,6 @@ async function hubReset(id) {
     }
     return data;
   };
-  const inSessions = view === 'sessions';
   const body = async () => {
     // From here until the answer the hub counts as starting: the request spans the stop and
     // the window opening, and a poll in between sees a stopped hub whose start button would
@@ -458,21 +457,21 @@ async function hubReset(id) {
     hubResetting.add(id);
     renderBoardRows();
     redrawHubPanel();
-    if (inSessions) showSessNotice('hub をリセットしています…');
+    showSessNotice('hub をリセットしています…');
     try {
       const data = await run();
       const text = data.reset === false
         ? (data.wasRunning ? 'hub を止めましたが、別の起動が先に hub を立ち上げたため新しい会話にはなっていません' : 'hub はすでに動いているため、リセットしませんでした')
         : data.alreadyRunning ? 'hub はすでに動いています' : '新しい会話で hub を起動しました';
       note(line, false, text);
-      if (inSessions) showSessNotice(text);
+      showSessNotice(text);
       if (selectedTaskId === HUB_REF + id) panelTerm.reconnect = true;
       // Inside the try and before the id is released: the redraw that follows must see the
       // state after the reset, not the one the old hub left.
       await refresh();
     } catch (e) {
       note(`${line} → ${e.message}`, true);
-      if (inSessions) showSessNotice(`hub をリセットできませんでした: ${e.message}`, true);
+      showSessNotice(`hub をリセットできませんでした: ${e.message}`, true);
       // The hub may have been stopped before the start failed.
       await refresh();
     } finally {
@@ -480,11 +479,9 @@ async function hubReset(id) {
       // `refresh` draws nothing when the state is unchanged, so the buttons are redrawn here.
       renderBoardRows();
       redrawHubPanel();
-      if (inSessions) renderSessionsView();
     }
   };
-  if (inSessions) return sessAct(`hub-reset-${id}`, 'hub をリセット', body);
-  return body();
+  return sessAct(`hub-reset-${id}`, 'hub をリセット', body);
 }
 
 /* Stop the hub and start it again on the same conversation, as `adj hub --resume` does. Like
@@ -495,14 +492,13 @@ async function hubRestart(id) {
   if (!h) return;
   if (hubTurnover(h)) return note(`${hubTurnover(h)}。終わってから操作してください`, true);
   const line = `adj hub --tab --resume${h.key ? ` --hub=${h.key}` : ''}`;
-  const inSessions = view === 'sessions';
   const body = async () => {
     // Set here and dropped only on failure: on success it stays until the new hub shows (see
     // `restartPending`), because the answer comes when its window opens, not when it is up.
     hubRestarting.set(id, { pid: h.state?.pid ?? null, at: Date.now() });
     renderBoardRows();
     redrawHubPanel();
-    if (inSessions) showSessNotice('hub を再起動しています…');
+    showSessNotice('hub を再起動しています…');
     try {
       const data = await api(`/api/hubs/${encodeURIComponent(id)}/restart`, { method: 'POST', body: '{}' });
       if (data.restarted === false) hubRestarting.delete(id);
@@ -511,23 +507,21 @@ async function hubRestart(id) {
         ? (data.wasRunning ? 'hub を止めましたが、別の起動が先に hub を立ち上げたため再起動にはなっていません' : 'hub はすでに動いているため、再起動しませんでした')
         : '同じ会話で hub を再起動しました';
       note(line, false, text);
-      if (inSessions) showSessNotice(text);
+      showSessNotice(text);
       if (panelTerm.sessionId === id) panelTerm.reconnect = true;
       await refresh();
     } catch (e) {
       hubRestarting.delete(id);
       note(`${line} → ${e.message}`, true);
-      if (inSessions) showSessNotice(`セッションを再起動できませんでした: ${e.message}`, true);
+      showSessNotice(`セッションを再起動できませんでした: ${e.message}`, true);
       // The hub may have been stopped before the start failed.
       await refresh();
     } finally {
       renderBoardRows();
       redrawHubPanel();
-      if (inSessions) renderSessionsView();
     }
   };
-  if (inSessions) return sessAct(`hub-restart-${id}`, 'セッションを再起動', body);
-  return body();
+  return sessAct(`hub-restart-${id}`, 'セッションを再起動', body);
 }
 
 async function hubStop(id) {
@@ -543,7 +537,7 @@ async function hubStop(id) {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
-    if (view === 'sessions') showSessNotice(`hub を止められませんでした: ${e.message}`, true);
+    showSessNotice(`hub を止められませんでした: ${e.message}`, true);
   }
 }
 
@@ -562,7 +556,7 @@ async function hubClose(id) {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
-    if (view === 'sessions') showSessNotice(`hub を閉じられませんでした: ${e.message}`, true);
+    showSessNotice(`hub を閉じられませんでした: ${e.message}`, true);
   }
 }
 

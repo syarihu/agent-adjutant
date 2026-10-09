@@ -485,8 +485,6 @@ const groupHtml = (g, opened) =>
 function renderSessionList() {
   const groups = sessionGroups({ pending: true });
   sessEl('sess-scope').textContent = sessionScopeText();
-  sessEl('sess-add').disabled = scopeAll();
-  sessEl('sess-add').title = scopeAll() ? '追加するボードを選んでください（「すべて」からは追加できません）' : 'hub やセッションを追加';
   // 「すべて」 has its hubs before it has their sessions: drawn now, every hub would read as empty.
   if (scopeAll() && !state.sessionsRead) {
     // A round that asked and got no answer is not one still on its way; the next round retries.

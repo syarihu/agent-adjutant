@@ -270,11 +270,13 @@ fn a_session_with_no_task_opens_in_the_task_panel() {
 }
 
 #[test]
-fn the_sessions_view_can_start_and_link_sessions() {
+fn the_hub_panel_can_start_and_link_sessions() {
     for piece in [
-        "id=\"sess-add\"",
-        "aria-haspopup=\"menu\"",
-        "id=\"sess-add-menu\"",
+        "data-tp-hub=\"${act}\"",
+        "addBtn('add-session'",
+        "addBtn('add-parent-hub'",
+        "case 'add-session': return openStartDialog();",
+        "case 'add-parent-hub': return openHubKeyDialog();",
         "id=\"hubkey-dialog\"",
         "id=\"start-dialog\"",
         "id=\"link-dialog\"",
@@ -282,10 +284,20 @@ fn the_sessions_view_can_start_and_link_sessions() {
         "function worktreeNameProblem",
         "function sessionPendingRows",
         "function openLinkDialog",
+        "起動を依頼中",
+        "function idleWorktreesHtml",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
-    // The script that draws the tree calls into the one that knows the pending rows, which
+    // The + menu of the セッション tab is gone with it.
+    for gone in [
+        "id=\"sess-add\"",
+        "id=\"sess-add-menu\"",
+        "function renderAddMenu",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+    // The script that draws the panel calls into the one that knows the pending rows, which
     // is defined after it and before `main.js` starts polling.
     let at = |piece: &str| UI_HTML.find(piece).unwrap();
     assert!(at("function sessDetailHtml") < at("function sessionPendingRows"));
