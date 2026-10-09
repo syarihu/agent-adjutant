@@ -58,6 +58,8 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
 .wk-head-name { min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; font-weight: 800; line-height: 1.35; }
 .wk-head-name .key { font-family: var(--font-mono); margin-right: 6px; color: var(--md-sys-color-primary); }
 .wk-head-sub { font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; }
+.wk-next { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); cursor: pointer; white-space: nowrap; }
+.wk-next input { margin: 0; cursor: pointer; }
 .wk-count { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
 .wk-body { padding-top: 3px; }
 /* What a folded header still says: how many rows are in each state. */

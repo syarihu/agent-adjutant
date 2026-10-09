@@ -34,6 +34,8 @@ function gateAnswered(g, decision) {
   answeredGates.set(key, { at: Date.now(), gate: { ...g }, decision });
   if (view === 'review') reviewAnswered(g);
   else if (focused === gateRef(g)) focused = null;
+  // 「処理したら次へ」 in 「いまの仕事」.
+  workAdvanceAfter(key);
 }
 
 /* The task a gate belongs to; with several boards, the one on the gate's own. */

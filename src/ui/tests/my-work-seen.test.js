@@ -13,7 +13,7 @@ for (const file of ['util.js', 'my-work-seen.js']) {
 // Objects made inside the context have another Object.prototype: compare them as data.
 const plain = x => JSON.parse(JSON.stringify(x));
 const { workEntries, workItems, workActedAt, workSeenClass, workClassOf, workLaterText, workLiveItems,
-  workParseMarks, workMarkMerge, workPruneMarks, workParkPatches } = ctx;
+  workParseMarks, workMarkMerge, workPruneMarks, workParkPatches, workNextNew } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -311,4 +311,35 @@ test('the parked mark is kept by parse and counted by prune', () => {
   const kept = workPruneMarks({ a: { parked: T0 } }, new Set(), T0 + 86400);
   assert.deepEqual(plain(kept), { a: { parked: T0 } });
   assert.deepEqual(plain(workPruneMarks({ a: { parked: T0 } }, new Set(), T0 + 30 * 86400)), {});
+});
+
+test('after a row is dealt with, the next one of 新着 is the one that follows it in the order drawn', () => {
+  const order = ['a', 'b', 'c', 'd'];
+  assert.equal(workNextNew(order, 'a', ['b', 'c', 'd']), 'b');
+  // One that is no longer new is skipped, wherever it is.
+  assert.equal(workNextNew(order, 'a', ['c', 'd']), 'c');
+  assert.equal(workNextNew(order, 'b', new Set(['a', 'd'])), 'd');
+});
+
+test('with none following, the first one left opens', () => {
+  const order = ['a', 'b', 'c'];
+  assert.equal(workNextNew(order, 'c', ['a', 'b']), 'a');
+  assert.equal(workNextNew(order, 'c', ['b']), 'b');
+  assert.equal(workNextNew(order, 'b', ['a']), 'a');
+});
+
+test('with none left, nothing opens', () => {
+  assert.equal(workNextNew(['a', 'b'], 'a', []), null);
+  assert.equal(workNextNew(['a'], 'a', ['a']), null);
+  assert.equal(workNextNew([], 'a', ['a']), null);
+});
+
+test('the row just dealt with is left out, new still or not, and one that is not in the list starts from the first', () => {
+  const order = ['a', 'b', 'c'];
+  // Still new (it has a second gate): not chosen again.
+  assert.equal(workNextNew(order, 'b', ['a', 'b', 'c']), 'c');
+  assert.equal(workNextNew(order, 'c', ['c', 'a']), 'a');
+  // The row is gone from the list altogether.
+  assert.equal(workNextNew(order, 'z', ['b', 'c']), 'b');
+  assert.equal(workNextNew(order, 'z', []), null);
 });

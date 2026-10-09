@@ -54,6 +54,7 @@ const work = {
   backed: null,       // the address of an open row that was sent back: not opened again until it moves
   open: null,         // the row the person has open: { nwo, id, nav, at } (`at`: the server's time it was opened), the mark `left` is written when it is left
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
+  newOrder: [],       // the ids of the rows of 新着 in the order the list last drew them
 };
 /* The middle terminal: a third slot beside the panel's and the review view's. It connects through the
    board that was selected, since `state` is that board's. */
@@ -623,8 +624,9 @@ function workHeadHtml(node, folded) {
       <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}><span class="wk-count">${node.rows.length}</span>`;
   }
   const name = node.kind === 'repo' ? node.nwo : node.kind === 'none' ? '親なし' : node.label;
+  // 「処理したら次へ」: after a gate is answered or closed, the next row of 新着 opens (the same setting for every header that has it).
   const readAll = node.readAll && node.rows.length
-    ? `<button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>` : '';
+    ? `<label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label><button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>` : '';
   return `${workFoldButton(node.key, folded, name)}<span class="wk-head-main"><span class="wk-head-name">${esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span><span class="wk-count">${node.rows.length}</span>${readAll}`;
 }
 
@@ -657,6 +659,7 @@ const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.d
   : el?.dataset?.wkUnpark != null ? `[data-wk-unpark="${CSS.escape(el.dataset.wkUnpark)}"]`
   : el?.dataset?.wkClear != null ? `[data-wk-clear="${CSS.escape(el.dataset.wkClear)}"]`
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
+  : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
     : el?.dataset?.wkParent != null ? `[data-wk-parent="${CSS.escape(el.dataset.wkParent)}"]` : null;
 
@@ -678,10 +681,21 @@ function workSwapHead(head, html) {
   if (held) head.querySelector(held)?.focus({ preventScroll: true });
 }
 
+/* The rows of 新着 in the order the tree draws them: a band's, or a box's of 「状態」. */
+function workNewOrder(items) {
+  const out = [];
+  for (const it of items) {
+    if (it.row) { if (it.place === 'new') out.push(it.row.id); } else out.push(...workNewOrder(it.items));
+  }
+  return out;
+}
+
 function renderWorkList() {
   drawWorkList();
   // Whatever redrew the list (a fold, the other grouping) must not lose the mark.
   markWorkSelection();
+  // The box is set apart from the markup, so a toggle does not redraw the header.
+  for (const box of wk('wk-groups')?.querySelectorAll('[data-wk-advance]') || []) box.checked = !!prefs.reviewNext;
 }
 
 function drawWorkList() {
@@ -700,6 +714,7 @@ function drawWorkList() {
   const byState = prefs.workGroup === 'state';
   // The rows with no session row of their own are in the bands and the boxes only; the tree is the sessions'.
   const tree = byState ? workTreeByState([...rows, ...turns]) : workTreeByParent(rows, workBands([...rows, ...turns]));
+  work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
   for (const b of wk('work-view').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
   const cells = new Map();
@@ -975,6 +990,30 @@ wk('work-view').addEventListener('click', e => {
     renderWorkList();
   }
 });
+
+wk('work-view').addEventListener('change', e => {
+  if (!e.target.matches('[data-wk-advance]')) return;
+  prefs.reviewNext = e.target.checked;
+  savePrefs();
+  // The other headers that have the box follow.
+  renderWorkList();
+});
+
+/* A gate on the selected row was answered or closed (`gateAnswered`, decide.js): with 「処理したら次へ」 on, the next row of 新着 opens,
+   by replacing the address, so that going back leaves the list and does not step through what was just answered. */
+function workAdvanceAfter(key) {
+  if (!prefs.reviewNext || view !== 'work' || !work.doc) return;
+  const id = workSelectedId(workSelected());
+  const entry = id && work.entries.get(id);
+  // Only a gate of the row on screen: another row's was not what the person was working through.
+  if (!entry || !entry.items.some(i => i.kind === 'gate' && i.key === key)) return;
+  const fresh = [...workJudge()].filter(([, j]) => j.cls === 'new').map(([k]) => k);
+  const next = workNextNew(work.newOrder, id, fresh);
+  if (!next) return;
+  const { rows, turns } = workListRows();
+  const row = [...rows, ...turns].find(r => r.id === next);
+  if (row) selectWorkRow(row, { replace: true });
+}
 
 /* ── 離れていた間に (#556) ── */
 

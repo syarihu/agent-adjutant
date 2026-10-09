@@ -108,6 +108,16 @@ function workEntries(doc, isGateDone = () => false) {
   return out;
 }
 
+/* The row to open after the person has dealt with `currentId`, when 「処理したら次へ」 is on: the next of `order` (the ids of 新着
+   in the order the list draws them) that is still new (`newIds`), else the first that is left, else null (none is left: stay).
+   The row just dealt with is never the answer, whether or not it is still new. */
+function workNextNew(order, currentId, newIds) {
+  const fresh = new Set(newIds);
+  const live = id => id !== currentId && fresh.has(id);
+  const at = order.indexOf(currentId);
+  return (at < 0 ? undefined : order.slice(at + 1).find(live)) ?? order.find(live) ?? null;
+}
+
 /* What an entry waits on the person for, with when each began. The ledger's times are the status's own
    (`updatedAt` moves only when the status changes), so a session that goes on waiting is one item. A
    parent-task hub that finishes a turn is not one: it is a hub, and has nothing to clear. */
