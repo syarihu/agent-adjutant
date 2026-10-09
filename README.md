@@ -410,13 +410,19 @@ sending anything.
 `notification` also rings when a worker or a hub has been waiting on a permission prompt or a
 question for a few seconds and nobody has its terminal open on the board: the message says which
 session waits and on what (`worker-x is waiting: Bash: make`, or `worker-x is asking: <question>`
-for a question), once per wait. The board page, if it is open with notifications allowed, shows its
-own desktop notification for the same wait, and clicking it opens the task in 「いまの仕事」 (on the
-resident server's page; a board served alone has no such list, and there it opens the session's
-terminal).
+for a question), once per wait. A gate that opens rings it too (`worker-x opened a plan gate: <title>`),
+once per gate; gates already open when the server starts do not. Each of these is announced on one
+channel only. While a board page is open with notifications allowed and 確認待ち on (it polled within
+the last 90 seconds), the page shows its own desktop notification and `notification` stays silent;
+clicking it opens the task in 「いまの仕事」 (on the resident server's page; a board served alone has no
+such list, and there it opens the session's terminal). With no such page open, `notification` rings.
+A wait the page was left to is looked at again if the page closes or sleeps while the session still
+waits, and rings `notification` then, so a late reminder is possible but silence is not.
+`send` and `tell` are not affected: they ring `notification` as before.
 Which of waiting, done and failed the page notifies for is set in the page's notification dialog (the
-bell button; waiting and failed are on by default) and is kept in the browser; it does not change
-`notification`, which the server rings by itself.
+bell button; waiting and failed are on by default) and is kept in the browser; turning waiting off
+hands waits and gates back to `notification` within about 90 seconds. While a notifying page is open,
+waits it keeps quiet (a parked task, the row open in a visible tab) do not ring `notification` either.
 
 `wake` splits along the line the rest of the config does not: **how** to poke a session is a
 property of the terminal, and **what to say** once poked is a property of the agent. So
@@ -940,6 +946,8 @@ the gate directories.
   lists each as a 新着 item of its session's row and rings its desktop notification from it, once per
   `(agentSessionId, since)`, unless `quiet` (not announced: its terminal was open, or it
   was already waiting when the server started). `session` is what the notification opens, in 「いまの仕事」, when it is clicked.
+  The server rings `notification` for a wait only while no page that may notify is open: every page
+  request carries `X-Adjutant-Notify: 1` or `0`, and a `1` within 90 seconds counts as open.
 - `parentIssue` (on a task, in `tasks` and `hubTasks`; left out when there is none): the issue the
   task is a child of, `{key, url, number?, title?, source, hub, recordKey?}`. `hub` is the slug of the
   hub that owns the task, the same name `parents[].children[].hub` gives it, and `recordKey` is the

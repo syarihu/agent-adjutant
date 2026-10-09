@@ -4,11 +4,12 @@ use serde_json::json;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
+use crate::infra::clock::now_secs;
 use crate::infra::http::{self, Request};
 use crate::infra::ws;
 
 use super::assets::UI_HTML;
-use super::auth::refuse;
+use super::auth::{page_rings, refuse};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
 use crate::board::view::{boards, work};
@@ -91,18 +92,24 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         return http::html(out, UI_HTML);
     }
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/api/boards") => http::json(
-            out,
-            200,
-            &serde_json::to_string(&{
-                let mut boards = boards(&resident.root, resident.port, &resident.token);
-                for board in &mut boards {
-                    board.waits = resident.waits.notices(&board.slug);
-                }
-                boards
-            })
-            .unwrap_or_default(),
-        ),
+        ("GET", "/api/boards") => {
+            // The request the page rings from: it says whether it may. A page that may not is not noted.
+            if page_rings(req) {
+                resident.waits.page_seen(now_secs());
+            }
+            http::json(
+                out,
+                200,
+                &serde_json::to_string(&{
+                    let mut boards = boards(&resident.root, resident.port, &resident.token);
+                    for board in &mut boards {
+                        board.waits = resident.waits.notices(&board.slug);
+                    }
+                    boards
+                })
+                .unwrap_or_default(),
+            )
+        }
         ("GET", "/api/work") => match work_json(resident) {
             Some(json) => http::json(out, 200, &json),
             None => http::json(

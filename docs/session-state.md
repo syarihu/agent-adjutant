@@ -461,7 +461,15 @@ is listed so the ledger carries what it will need.
   would let a row that dropped out of one ledger read be rung again. A wait with no matching
   session is looked for again next round when any board or session list of that round was
   incomplete, for up to a minute. Each board still records the notice for its own page, which
-  notifies on its own. The open-terminal check is per process: a terminal open on one board does
+  notifies on its own, but one channel rings per wait: every page request carries
+  `X-Adjutant-Notify` (`1` when the browser allows notifications and 確認待ち is on, else `0`), and
+  the process notes it on `/api/boards` (the resident) or `/api/state` (a board served alone). A
+  `1` within the last 90 seconds (a hidden tab polls about once a minute) makes the page the
+  channel: a new wait is listed but neither claimed nor rung, and is looked at again each round
+  once the page lapses, when the configured command rings it if the row still waits. A `0` or a request without the header changes nothing, so turning 確認待ち off hands waits and gates back to the configured command within about 90 seconds, and a browser that cannot ring never makes the server ring beside one that can. Gates are rung the same way (`wait_watch/gates.rs`, markers under
+  `<state>/gate-notified/`), for those that open after the watch started and are still open when
+  no page is fresh. Freshness is per process, so a board served alone beside the resident can
+  still win a marker and ring while the resident's page rings too. The open-terminal check is per process: a terminal open on one board does
   not stop another process that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
   {request}"`, or `"{name} is asking: {question}"` for an AskUserQuestion), and `/api/state` and
   `/api/boards` carry every wait as `waits`. On the resident server the page lists each as a 新着 item of its session's row in

@@ -1,25 +1,32 @@
-//! Telling the person that a session is waiting on them, when nobody is looking at it.
+//! Telling the person that a session is waiting on them, or that a gate opened, when nobody is
+//! looking at it.
 //!
 //! A permission prompt or a question stops a worker or a hub until somebody answers in its
 //! terminal, and the board shows it only to whoever has the board open. This watches the agent
 //! session ledger on the board's own clock: a row that has said `waiting` for a few seconds is
-//! announced once, through the configured `notification` and through the page's own desktop
-//! notification, unless that session's terminal is open on the board. `/api/state` and
-//! `/api/boards` carry every such wait as `waits`, which the page lists in 「いまの仕事」 on a resident server and
-//! marks on the session's card on a board served alone. A wait that was
-//! not announced (it was already up when the watch started, or its terminal was open) is listed
-//! all the same, marked `quiet`. A session held by a gate has the gate's own notice, so its wait
-//! is not listed while the gate is open; it is looked at again every `HELD_RECHECK_SECS`, and
-//! listed once the gate is gone and the row still waits.
+//! announced once, unless that session's terminal is open on the board. One channel rings per
+//! event: the page's own desktop notification while a page that may notify is open (see
+//! `page_seen`), the configured `notification` otherwise. A wait is not claimed while the page
+//! is fresh; if the page lapses and the session still waits, the configured command rings it
+//! then, a late reminder rather than silence. A gate that opens is rung the same way
+//! (`gates.rs`). `/api/state` and `/api/boards` carry every such wait as `waits`, which the page
+//! lists in 「いまの仕事」 on a resident server and marks on the session's card on a board served
+//! alone. A wait that was not announced (it was already up when the watch started, or its
+//! terminal was open) is listed all the same, marked `quiet`. A session held by a gate has the
+//! gate's own notice, so its wait is not listed while the gate is open; it is looked at again
+//! every `HELD_RECHECK_SECS`, and listed once the gate is gone and the row still waits.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::board::view::{board_sessions, socket_key};
 use crate::board::{Server, Session, WaitNotice, settings_now, target_of};
 use crate::infra::{clock::now_secs, notify, shell};
+
+mod gates;
 
 /// The pace of the sweep, as `sweep_gates`.
 const EVERY: Duration = Duration::from_secs(2);
@@ -45,6 +52,20 @@ struct State {
     held: HashMap<Key, i64>,
     /// The listed waits that go on, by the slug of the board that listed them.
     notices: HashMap<String, Vec<(Key, WaitNotice)>>,
+    /// The waits listed but left to the page's own notification while it is fresh: neither
+    /// claimed nor rung, and not looked for again until the page lapses.
+    page_held: HashSet<Key>,
+    /// What the gate sweep has looked at.
+    gates: gates::GateState,
+}
+
+/// How long after its last poll a page that may notify still counts as open. A hidden tab is
+/// throttled to about one poll a minute, so this has to outlast that.
+pub const PAGE_FRESH_SECS: i64 = 90;
+
+/// Whether a page seen at `at` is still open at `now`; `0` is never seen.
+fn fresh(at: i64, now: i64) -> bool {
+    at > 0 && now - at <= PAGE_FRESH_SECS
 }
 
 /// What is known of the waits, shared by every board of the process.
@@ -53,6 +74,8 @@ pub struct WaitWatch {
     state: Mutex<State>,
     /// How many board terminals are open on each window, by `target_key`.
     open: Mutex<HashMap<String, usize>>,
+    /// When a page that may notify was last seen, or `0`.
+    page_at: AtomicI64,
 }
 
 /// Counts one open board terminal on a window, until it is dropped.
@@ -91,12 +114,14 @@ struct Picked {
 /// gate open for hours does not have the boards listed every round.
 const HELD_RECHECK_SECS: i64 = 10;
 
-/// The waits that have lasted `after` seconds and were not looked at yet. A held one is looked at
-/// again once `HELD_RECHECK_SECS` have passed since it was last seen held.
+/// The waits that have lasted `after` seconds and were not looked at yet, none of `skip` (the ones
+/// left to a fresh page). A held one is looked at again once `HELD_RECHECK_SECS` have passed
+/// since it was last seen held.
 fn due(
     waiting: &[Key],
     handled: &HashSet<Key>,
     held: &HashMap<Key, i64>,
+    skip: &HashSet<Key>,
     now: i64,
     after: i64,
 ) -> Vec<Key> {
@@ -104,6 +129,7 @@ fn due(
         .iter()
         .filter(|key| {
             !handled.contains(*key)
+                && !skip.contains(*key)
                 && now - key.1 >= after
                 && held
                     .get(*key)
@@ -201,14 +227,49 @@ fn settled(
         .collect()
 }
 
-/// What to do with a wait a session was found for: whether to ring it, and whether it is listed
-/// as `quiet`. A wait that was up when the watch started is listed and never rings, and takes no
+/// Who rings a wait.
+#[derive(Debug, PartialEq, Eq)]
+enum Ring {
+    /// Nobody: quiet, or another process has the claim.
+    No,
+    /// The configured notification, now.
+    Now,
+    /// The page, while it is fresh: left unclaimed, so that the configured notification takes
+    /// it if the page lapses first.
+    Later,
+}
+
+/// What to do with a wait a session was found for: who rings it, and whether it is listed as
+/// `quiet`. A wait that was up when the watch started is listed and never rings, and takes no
 /// claim, so that the process that did see it begin keeps the marker. One whose terminal is open
-/// was seen by the person, but still holds the claim so no other process rings it. `claim` is
-/// asked at most once.
-fn route(seeded: bool, open: bool, claim: impl FnOnce() -> bool) -> (bool, bool) {
-    let mine = !seeded && claim();
-    (mine && !open, seeded || open)
+/// was seen by the person, but still holds the claim so no other process rings it. While a page
+/// that may notify is open (`page`) the wait is left to it and takes no claim. `claim` is asked
+/// at most once.
+fn route(seeded: bool, open: bool, page: bool, claim: impl FnOnce() -> bool) -> (Ring, bool) {
+    if seeded {
+        return (Ring::No, true);
+    }
+    if open {
+        claim();
+        return (Ring::No, true);
+    }
+    if page {
+        return (Ring::Later, false);
+    }
+    if claim() {
+        (Ring::Now, false)
+    } else {
+        (Ring::No, false)
+    }
+}
+
+/// Put `notice` in `list`, in place of the one already there for `key`: a wait left to the page
+/// is picked again once the page lapses.
+fn list_notice(list: &mut Vec<(Key, WaitNotice)>, key: Key, notice: WaitNotice) {
+    match list.iter_mut().find(|(k, _)| *k == key) {
+        Some(entry) => entry.1 = notice,
+        None => list.push((key, notice)),
+    }
 }
 
 /// What the configured notification says.
@@ -224,13 +285,9 @@ fn message(name: &str, request: Option<&str>) -> String {
     }
 }
 
-/// Where the claim on one wait is kept. Several processes can watch one ledger (a board per
-/// hub when no resident server runs, or one started by hand beside it), and what each has
-/// handled is its own, so the claim is a file they all see.
-fn marker_path(root: &Path, key: &Key) -> std::path::PathBuf {
-    let safe: String = key
-        .0
-        .chars()
+/// A name made of characters that are safe in a file name.
+fn safe_name(raw: &str) -> String {
+    raw.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                 c
@@ -238,18 +295,25 @@ fn marker_path(root: &Path, key: &Key) -> std::path::PathBuf {
                 '_'
             }
         })
-        .collect();
-    root.join("wait-notified").join(format!("{safe}-{}", key.1))
+        .collect()
+}
+
+/// Where the claim on one wait is kept. Several processes can watch one ledger (a board per
+/// hub when no resident server runs, or one started by hand beside it), and what each has
+/// handled is its own, so the claim is a file they all see.
+fn marker_path(root: &Path, key: &Key) -> std::path::PathBuf {
+    root.join("wait-notified")
+        .join(format!("{}-{}", safe_name(&key.0), key.1))
 }
 
 /// How long a marker is kept. The sweep is the only thing that removes one: a wait is the pair
 /// of row id and `updatedAt`, so a marker is never claimed by a later wait.
 const MARKER_KEPT: Duration = Duration::from_secs(86_400);
 
-/// Remove the markers older than `kept`, by their modification time. Errors are ignored: a marker
-/// that stays is a few bytes.
-fn prune_old_markers(root: &Path, kept: Duration) {
-    let Ok(entries) = std::fs::read_dir(root.join("wait-notified")) else {
+/// Remove the markers in `dir` older than `kept`, by their modification time. Errors are ignored:
+/// a marker that stays is a few bytes.
+fn prune_old_markers(dir: &Path, kept: Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
@@ -265,21 +329,30 @@ fn prune_old_markers(root: &Path, kept: Duration) {
     }
 }
 
-/// Take the claim on a wait: true for the one process that makes the marker, false for any
+/// Take the claim on `path`: true for the one process that makes the marker, false for any
 /// that finds it. A marker that cannot be made for another reason is taken as claimed, since
 /// a notification twice is better than none.
-fn claim(root: &Path, key: &Key) -> bool {
-    let path = marker_path(root, key);
+fn claim(path: &Path) -> bool {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&path)
+        .open(path)
     {
         Ok(_) => true,
         Err(e) => e.kind() != std::io::ErrorKind::AlreadyExists,
+    }
+}
+
+/// Run each command on a thread of its own, and do not look at the result: a notifier that
+/// fails or hangs must not stop the watch or the board showing the wait.
+fn spawn_all(commands: Vec<String>) {
+    for command in commands {
+        std::thread::spawn(move || {
+            let _ = shell::run_shell(&command);
+        });
     }
 }
 
@@ -310,15 +383,37 @@ impl WaitWatch {
         open.contains_key(key)
     }
 
-    /// Watch for as long as the process lives. `root` is the ledger's state directory and
-    /// `boards` is asked each round, so a board opened since is watched too. It answers with the
-    /// boards and whether it has them all: one it could not open is not the same as none.
-    pub fn run(&self, root: &Path, boards: impl Fn() -> (Vec<Arc<Server>>, bool)) {
+    /// Note a poll of a page of this process that may show desktop notifications for waits and
+    /// gates. A page that may not is not noted and does not clear what another page noted: two
+    /// browsers can differ, and one that cannot ring must not make the server ring beside the
+    /// one that can. The configured notification takes over once the last such poll is older
+    /// than `PAGE_FRESH_SECS`.
+    pub fn page_seen(&self, now: i64) {
+        self.page_at.fetch_max(now, Ordering::Relaxed);
+    }
+
+    /// Whether a page that may notify is open: it polled within `PAGE_FRESH_SECS`.
+    fn page_fresh(&self, now: i64) -> bool {
+        fresh(self.page_at.load(Ordering::Relaxed), now)
+    }
+
+    /// Watch for as long as the process lives. `root` is the ledger's state directory, `slugs`
+    /// names the hubs whose gates are watched, and `boards` is asked each round, so a board
+    /// opened since is watched too. It answers with the boards and whether it has them all: one
+    /// it could not open is not the same as none.
+    pub fn run(
+        &self,
+        root: &Path,
+        slugs: impl Fn() -> Vec<String>,
+        boards: impl Fn() -> (Vec<Arc<Server>>, bool),
+    ) {
         loop {
             // A round that panics is a failed round, not the end of the watch, as in
             // `sweep_gates`.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.round(root, &boards, now_secs());
+                let now = now_secs();
+                spawn_all(self.gate_round(root, &slugs(), &boards, now));
+                self.round(root, &boards, now);
             }));
             std::thread::sleep(EVERY);
         }
@@ -329,28 +424,39 @@ impl WaitWatch {
         let Ok(waiting) = crate::registry::waiting_agent_sessions(root) else {
             return;
         };
+        let page = self.page_fresh(now);
         let (due, quiet) = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let still: HashSet<&Key> = waiting.iter().collect();
             state.handled.retain(|key| still.contains(key));
             state.quiet.retain(|key| still.contains(key));
             state.held.retain(|key, _| still.contains(key));
+            state.page_held.retain(|key| still.contains(key));
             for notices in state.notices.values_mut() {
                 notices.retain(|(key, _)| still.contains(key));
             }
             if !state.seeded {
-                prune_old_markers(root, MARKER_KEPT);
+                prune_old_markers(&root.join("wait-notified"), MARKER_KEPT);
+                prune_old_markers(&root.join("gate-notified"), MARKER_KEPT);
                 // Waits that began before this did not wait for it: announcing them now would
                 // ring for every prompt that is up when the board starts. They are still
                 // looked up below, to be listed.
                 state.seeded = true;
                 state.quiet.extend(waiting.iter().cloned());
             }
+            // The waits left to the page are not looked for again while it stays fresh, so that
+            // they do not have the boards listed every round.
+            let skip = if page {
+                state.page_held.clone()
+            } else {
+                HashSet::new()
+            };
             (
                 due(
                     &waiting,
                     &state.handled,
                     &state.held,
+                    &skip,
                     now,
                     NOTIFY_AFTER_SECS,
                 ),
@@ -364,6 +470,7 @@ impl WaitWatch {
         // sessions asks git and `ps`.
         let mut matched: HashSet<Key> = HashSet::new();
         let mut held: HashSet<Key> = HashSet::new();
+        let mut later: HashSet<Key> = HashSet::new();
         let mut announced: Vec<(String, Picked)> = Vec::new();
         let mut rings: Vec<String> = Vec::new();
         let (servers, mut complete) = boards();
@@ -394,22 +501,29 @@ impl WaitWatch {
                     .target
                     .as_deref()
                     .is_some_and(|key| self.is_open(key));
-                let (ring, is_quiet) = route(quiet.contains(&picked.key), open, || {
-                    claim(root, &picked.key)
+                let (ring, is_quiet) = route(quiet.contains(&picked.key), open, page, || {
+                    claim(&marker_path(root, &picked.key))
                 });
                 let mut picked = picked;
                 picked.notice.quiet = is_quiet;
                 // The page's notice is this board's own, whoever wins the claim: a browser
-                // served by any process still gets its desktop notification.
-                if ring
-                    && let Some(command) = notify::repo_command(
-                        &settings.notification,
-                        &repo.nwo,
-                        &repo.repo,
-                        &message(&picked.notice.name, picked.notice.request.as_deref()),
-                    )
-                {
-                    rings.push(command);
+                // served by any process still gets its desktop notification, and it is the
+                // only one that rings for a wait left to it.
+                match ring {
+                    Ring::Now => {
+                        if let Some(command) = notify::repo_command(
+                            &settings.notification,
+                            &repo.nwo,
+                            &repo.repo,
+                            &message(&picked.notice.name, picked.notice.request.as_deref()),
+                        ) {
+                            rings.push(command);
+                        }
+                    }
+                    Ring::Later => {
+                        later.insert(picked.key.clone());
+                    }
+                    Ring::No => {}
                 }
                 announced.push((repo.slug.clone(), picked));
             }
@@ -418,31 +532,32 @@ impl WaitWatch {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             // The waits that were found, and, after a complete sweep, the rest of the due ones:
             // one that belongs to no session this process lists is not looked for again. After
-            // an incomplete one they are tried again next round.
+            // an incomplete one they are tried again next round. A wait left to the page is not
+            // done with: it is looked at again once the page lapses.
+            let unsettled: HashSet<Key> = held.union(&later).cloned().collect();
             state
                 .handled
-                .extend(settled(&due, &matched, &held, complete, now));
+                .extend(settled(&due, &matched, &unsettled, complete, now));
             for key in &matched {
                 state.held.remove(key);
+                if !later.contains(key) {
+                    state.page_held.remove(key);
+                }
             }
+            state.page_held.extend(later);
             for key in held.difference(&matched) {
                 state.held.insert(key.clone(), now);
             }
             for (slug, picked) in announced {
-                state
-                    .notices
-                    .entry(slug)
-                    .or_default()
-                    .push((picked.key, picked.notice));
+                list_notice(
+                    state.notices.entry(slug).or_default(),
+                    picked.key,
+                    picked.notice,
+                );
             }
         }
-        // Outside the lock, each on a thread of its own, and the result is not looked at: a
-        // notifier that fails or hangs must not stop the watch or the board showing the wait.
-        for command in rings {
-            std::thread::spawn(move || {
-                let _ = shell::run_shell(&command);
-            });
-        }
+        // Outside the lock.
+        spawn_all(rings);
     }
 }
 
@@ -515,20 +630,27 @@ mod tests {
         let waiting = vec![key("a", 100), key("b", 98), key("c", 90)];
         let handled: HashSet<Key> = [key("c", 90)].into();
         assert_eq!(
-            due(&waiting, &handled, &HashMap::new(), 102, 5),
+            due(&waiting, &handled, &HashMap::new(), &HashSet::new(), 102, 5),
             Vec::<Key>::new()
         );
         assert_eq!(
-            due(&waiting, &handled, &HashMap::new(), 103, 5),
+            due(&waiting, &handled, &HashMap::new(), &HashSet::new(), 103, 5),
             vec![key("b", 98)]
         );
         assert_eq!(
-            due(&waiting, &handled, &HashMap::new(), 105, 5),
+            due(&waiting, &handled, &HashMap::new(), &HashSet::new(), 105, 5),
             vec![key("a", 100), key("b", 98)]
         );
         // The same row waiting again is a new wait.
         assert_eq!(
-            due(&[key("c", 120)], &handled, &HashMap::new(), 125, 5),
+            due(
+                &[key("c", 120)],
+                &handled,
+                &HashMap::new(),
+                &HashSet::new(),
+                125,
+                5
+            ),
             vec![key("c", 120)]
         );
     }
@@ -639,29 +761,104 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_is_listed_quietly_when_it_was_there_first_or_its_terminal_is_open() {
+    fn a_wait_is_rung_by_one_channel_and_listed_quietly_when_it_was_there_first_or_seen() {
         let mut asked = 0;
         // Normal: claimed, rung, announced.
         assert_eq!(
-            route(false, false, || {
+            route(false, false, false, || {
                 asked += 1;
                 true
             }),
-            (true, false)
+            (Ring::Now, false)
         );
         // Another process holds the claim: listed, not rung, not quiet.
-        assert_eq!(route(false, false, || false), (false, false));
+        assert_eq!(route(false, false, false, || false), (Ring::No, false));
         // The person is at the terminal: claimed so nobody else rings, listed quiet.
-        assert_eq!(route(false, true, || true), (false, true));
+        assert_eq!(route(false, true, false, || true), (Ring::No, true));
         // Up before the watch started: listed quiet, and the claim is never asked.
         assert_eq!(
-            route(true, false, || {
+            route(true, false, false, || {
                 asked += 1;
                 true
             }),
-            (false, true)
+            (Ring::No, true)
         );
         assert_eq!(asked, 1);
+        // A page that may notify is open: left to it, no claim taken.
+        assert_eq!(
+            route(false, false, true, || panic!("claimed")),
+            (Ring::Later, false)
+        );
+        // The terminal open beats the page, and still holds the claim.
+        let mut claimed = false;
+        assert_eq!(
+            route(false, true, true, || {
+                claimed = true;
+                true
+            }),
+            (Ring::No, true)
+        );
+        assert!(claimed);
+        // Up before the watch started beats the page.
+        assert_eq!(
+            route(true, false, true, || panic!("claimed")),
+            (Ring::No, true)
+        );
+    }
+
+    #[test]
+    fn a_page_is_open_for_ninety_seconds_after_it_was_seen() {
+        assert!(!fresh(0, 100));
+        assert!(fresh(100, 190));
+        assert!(!fresh(100, 191));
+        let watch = WaitWatch::default();
+        assert!(!watch.page_fresh(100));
+        watch.page_seen(100);
+        assert!(watch.page_fresh(150));
+        // An older poll that lands late does not move it back.
+        watch.page_seen(90);
+        assert!(watch.page_fresh(190));
+        assert!(!watch.page_fresh(191));
+    }
+
+    #[test]
+    fn a_wait_left_to_the_page_is_not_due_until_the_page_lapses() {
+        let wait = key("row", 100);
+        let waiting = [wait.clone()];
+        let skip: HashSet<Key> = [wait.clone()].into();
+        let (handled, held) = (HashSet::new(), HashMap::new());
+        assert!(due(&waiting, &handled, &held, &skip, 200, 5).is_empty());
+        assert_eq!(
+            due(&waiting, &handled, &held, &HashSet::new(), 200, 5),
+            vec![wait]
+        );
+    }
+
+    #[test]
+    fn a_wait_left_to_the_page_is_not_settled_even_after_a_complete_listing() {
+        let due = [key("a", 1), key("b", 2)];
+        let matched: HashSet<Key> = [key("a", 1), key("b", 2)].into();
+        let later: HashSet<Key> = [key("b", 2)].into();
+        assert_eq!(settled(&due, &matched, &later, true, 10), vec![key("a", 1)]);
+    }
+
+    #[test]
+    fn a_wait_listed_again_replaces_its_notice() {
+        let notice = |quiet| WaitNotice {
+            agent_session_id: "row".to_string(),
+            since: 100,
+            session: "s".to_string(),
+            kind: "worker".to_string(),
+            name: "n".to_string(),
+            request: None,
+            quiet,
+        };
+        let mut list = Vec::new();
+        list_notice(&mut list, key("row", 100), notice(false));
+        list_notice(&mut list, key("row", 100), notice(true));
+        list_notice(&mut list, key("row", 101), notice(false));
+        assert_eq!(list.len(), 2);
+        assert!(list[0].1.quiet);
     }
 
     #[test]
@@ -699,6 +896,7 @@ mod tests {
                 std::slice::from_ref(&wait),
                 &none,
                 &seen,
+                &none,
                 110 + HELD_RECHECK_SECS - 1,
                 5
             )
@@ -709,6 +907,7 @@ mod tests {
                 std::slice::from_ref(&wait),
                 &none,
                 &seen,
+                &none,
                 110 + HELD_RECHECK_SECS,
                 5
             ),
@@ -723,10 +922,10 @@ mod tests {
     fn a_wait_is_claimed_by_one_process_only() {
         let dir = tempfile::tempdir().unwrap();
         let wait = key("row/../x", 100);
-        assert!(claim(dir.path(), &wait));
-        assert!(!claim(dir.path(), &wait));
+        assert!(claim(&marker_path(dir.path(), &wait)));
+        assert!(!claim(&marker_path(dir.path(), &wait)));
         // Another moment of the same row is another wait.
-        assert!(claim(dir.path(), &key("row/../x", 101)));
+        assert!(claim(&marker_path(dir.path(), &key("row/../x", 101))));
         assert!(marker_path(dir.path(), &wait).starts_with(dir.path().join("wait-notified")));
     }
 
@@ -734,18 +933,24 @@ mod tests {
     fn markers_older_than_a_day_go_and_newer_ones_stay() {
         let dir = tempfile::tempdir().unwrap();
         let (old, new) = (key("old", 1), key("new", 2));
-        assert!(claim(dir.path(), &old) && claim(dir.path(), &new));
+        assert!(claim(&marker_path(dir.path(), &old)) && claim(&marker_path(dir.path(), &new)));
         let file = std::fs::File::options()
             .write(true)
             .open(marker_path(dir.path(), &old))
             .unwrap();
         file.set_modified(std::time::SystemTime::now() - Duration::from_secs(2 * 86_400))
             .unwrap();
-        prune_old_markers(dir.path(), MARKER_KEPT);
+        prune_old_markers(&dir.path().join("wait-notified"), MARKER_KEPT);
         assert!(!marker_path(dir.path(), &old).exists());
         assert!(marker_path(dir.path(), &new).exists());
         // No directory is nothing to do.
         prune_old_markers(&dir.path().join("none"), MARKER_KEPT);
+        // Any directory is the one pruned, as the gates' markers are.
+        let gates = dir.path().join("gate-notified");
+        std::fs::create_dir_all(&gates).unwrap();
+        std::fs::write(gates.join("a-b"), "").unwrap();
+        prune_old_markers(&gates, MARKER_KEPT);
+        assert!(gates.join("a-b").exists());
     }
 
     #[test]

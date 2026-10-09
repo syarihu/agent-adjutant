@@ -10,7 +10,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js', 'my-work-no
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage } = ctx;
+const { notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const DEFAULTS = { waiting: true, done: false, failed: true };
@@ -20,6 +20,14 @@ const done = since => ({ kind: 'done', since });
 const failed = since => ({ kind: 'failed', since });
 const run = (entries, state, o = {}) => notifyEndEvents(entries, state, { prefs: ALL, openId: null, visible: true, okRepos: ['acme/widget'], ...o });
 const kinds = r => plain(r.events.map(e => `${e.entry.id}:${e.kind}`));
+
+test('the page rings waits and gates only with permission and the waiting toggle on', () => {
+  assert.strictEqual(notifyPageRings('granted', { waiting: true }), true);
+  assert.strictEqual(notifyPageRings('denied', { waiting: true }), false);
+  assert.strictEqual(notifyPageRings('default', { waiting: true }), false);
+  assert.strictEqual(notifyPageRings('granted', { waiting: false }), false);
+  assert.strictEqual(notifyPageRings('granted', undefined), false);
+});
 
 test('the settings default to waiting and failed, and garbage is the default', () => {
   assert.deepStrictEqual(plain(notifyPrefs(undefined)), DEFAULTS);

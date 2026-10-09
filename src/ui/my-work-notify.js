@@ -18,6 +18,12 @@ function notifyPrefs(raw) {
   return out;
 }
 
+/* Whether this page rings desktop notifications for waits and gates at all: the browser allows them and the person
+   left 確認待ち on. The server is told on every request, and rings its own `notification` instead once no page has said true for about 90 seconds. */
+function notifyPageRings(permission, prefs) {
+  return permission === 'granted' && !!prefs?.waiting;
+}
+
 /* Whether nothing rings for the entry: a task set aside on purpose, or the row the person is looking at. Open in a
    hidden tab it is not looked at, so it rings. */
 function notifyQuiet(entry, openId, visible) {

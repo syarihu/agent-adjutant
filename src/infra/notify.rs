@@ -1,9 +1,10 @@
 //! Telling the human something happened.
 //!
-//! Three moments need it: a worker finishing and wanting hands-on verification, a report
+//! Four moments need it: a worker finishing and wanting hands-on verification, a report
 //! arriving for a hub nobody is watching, and a session that has waited a few seconds on a
-//! permission prompt or a question with nobody at its terminal (`board::jobs::wait_watch`). All
-//! are "come back to this tab", and all are useless if the channel is one the person does not
+//! permission prompt or a question with nobody at its terminal, or a gate that opens
+//! (`board::jobs::wait_watch`, which leaves both to the board page while a page that may notify
+//! is open). All are "come back to this tab", and all are useless if the channel is one the person does not
 //! look at — hence a template rather than a hardcoded notifier.
 
 use crate::infra::shell::on_path;
