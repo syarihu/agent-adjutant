@@ -655,26 +655,56 @@ async function nudgeHub(base = BASE) {
   }
 }
 
-/* The hub entry's wake button (renderHubStrip). It types the hub's wake line and leaves it no
-   message. `busy` (by the hub's slug, so a press on one board leaves another's button alone) keeps a second press from sending another while one is on its way; `why` is
-   what the last press that typed nothing was told, by the hub's slug, kept until the next press
-   or until nothing is left to read. */
+/* The hub's wake button, wherever the page draws it: the board's hub entry (renderHubStrip), the 受信箱 card of the
+   hub's panel and the button beside a hub chip in 「いまの仕事」. It types the hub's wake line and leaves it no message.
+   `busy` (by the hub's slug, so a press on one board leaves another's button alone) keeps a second press from sending
+   another while one is on its way; `why` is what the last press that typed nothing was told, by the hub's slug, kept
+   until the next press or until nothing is left to read. */
 const hubWake = { busy: {}, why: {} };
+const HUB_WAKE_TITLE = 'hub の端末に確認の合図を入力します（メッセージは追加しません）';
 
-async function wakeHub() {
-  const h = pageHub();
+/* Why the hub cannot be woken from here, or '' when it can. `base` is where the hub's own board answers: null when this
+   server does not have it, as the wake goes to that board ('' is a board served on its own). */
+function hubWakeBlocked(h, base) {
+  if (!((h.unseen || 0) > 0)) return '未確認のメッセージはありません';
+  if (base == null) return 'この hub のボードはこのサーバーにありません';
+  if (!h.state?.present) return 'hub が止まっています';
+  if (hubWake.busy[h.slug]) return '起こしています';
+  return '';
+}
+
+/* What the last press that typed nothing was told; gone once nothing is left unread. */
+function hubWakeWhy(h) {
+  if (!h.unseen) delete hubWake.why[h.slug];
+  return hubWake.why[h.slug] || '';
+}
+
+/* Every place a hub is drawn, for a change `hubWake` made that no poll brings. */
+function redrawHubWake() {
+  renderHubStrip();
+  redrawHubPanel();
+  if (view === 'work') renderWorkList();
+}
+
+async function wakeHub(h = pageHub(), base = BASE) {
   // The button's disabled state is the rule; this repeats it for a click that reaches here anyway.
-  if (!h || hubWake.busy[h.slug] || !((h.unseen || 0) > 0 && h.state?.present)) return;
+  if (!h || hubWakeBlocked(h, base)) return;
   const slug = h.slug;
   const epoch = navEpoch;
   const line = 'hub を起こす（POST /api/hub/wake）';
   // Focus on the button goes to the next control while it is disabled, and back when it is not.
-  const refocus = document.activeElement?.dataset?.action === 'wake-hub';
+  const at = document.activeElement;
+  // The hub's slug is on every wake button, so a hub opened while the request is on its way never takes the focus.
+  const mine = `[data-wake-slug="${CSS.escape(slug)}"]`;
+  const refocus = at?.dataset?.wakeSlug !== slug ? null
+    : at.dataset.action === 'wake-hub' ? `#hub-strip [data-action="wake-hub"]${mine}`
+    : at.dataset.tpHub === 'wake' ? `[data-tp-hub="wake"]${mine}`
+    : at.dataset.wkWake != null ? `[data-wk-wake="${CSS.escape(at.dataset.wkWake)}"]${mine}` : null;
   hubWake.busy[slug] = true;
   delete hubWake.why[slug];
-  renderHubStrip();
+  redrawHubWake();
   try {
-    const data = await boardApi(BASE, '/api/hub/wake', { method: 'POST' });
+    const data = await boardApi(base, '/api/hub/wake', { method: 'POST' });
     if (data.woken) note(line, false, 'hub の端末に入力しました');
     else {
       // A refused wake is an answer, and the page says why next to the button.
@@ -686,10 +716,12 @@ async function wakeHub() {
     note(`${line} → ${e.message}`, true);
   } finally {
     delete hubWake.busy[slug];
-    renderHubStrip();
-    // Only where the strip put it: a person who has moved on is left where they are.
-    if (refocus && document.activeElement?.dataset?.action === 'hub-strip-open') {
-      [...document.querySelectorAll('#hub-strip button')].find(b => b.dataset.action === 'wake-hub' && !b.disabled)?.focus();
+    redrawHubWake();
+    // Only where the button was: a person who has moved on is left where they are. The strip moves focus to its next control
+    // while the button is disabled, and the other places lose it to the page.
+    const now = document.activeElement;
+    if (refocus && (now === document.body || now?.dataset?.action === 'hub-strip-open')) {
+      [...document.querySelectorAll(refocus)].find(b => !b.disabled)?.focus();
     }
   }
   // The board moved on while this was on its way: its answer is not this one's to refresh.

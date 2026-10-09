@@ -812,6 +812,9 @@
 .hub-wake-why { min-width: 0; font-size: 11px; color: var(--md-sys-color-error); overflow-wrap: anywhere; }
 /* Empty, the live region takes no room: it is kept in the page so that its text is announced. */
 .hub-wake-why:empty { margin: 0; padding: 0; }
+/* The wake button at the end of the hub panel's 受信箱 card, and the reason it did not wake. */
+.tp-hub-wake { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; }
+.tp-hub-wake button:disabled { opacity: .5; cursor: default; }
 
 .flash { animation: flash 1.6s ease; }
 @keyframes flash {
