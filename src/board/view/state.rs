@@ -334,9 +334,12 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     for h in &mut hubs {
         h.title = server.hub_titles.look(&server.ctx, h, &slugs);
     }
-    server
-        .hub_titles
-        .keep_only(&slugs.iter().cloned().collect());
+    // A failed listing leaves out the hubs found only through linked worktrees, not gone.
+    if listed_ok {
+        server
+            .hub_titles
+            .keep_only(&slugs.iter().cloned().collect());
+    }
     // The repository's own hub is one of `hubs`; asked separately only if it is not there.
     let hub = hubs
         .iter()
