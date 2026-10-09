@@ -1199,7 +1199,6 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "data-action=\"work\"",
         "id=\"work-view\"",
         "id=\"wk-term-host\"",
-        "id=\"wk-list-resize\"",
         // The page's own notification settings, and the end-of-turn notifications read from the document.
         "id=\"notify-dialog\"",
         "function notifyEndEvents",
@@ -1216,6 +1215,29 @@ fn the_page_has_the_work_view_and_no_review_queue() {
     }
     // A board served alone has no list of boards to read the work from.
     assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
+    // One sidebar with a switch at its top: the boards, and the list of the work under way beside the
+    // terminal's column, not inside it.
+    for piece in [
+        "id=\"side-tab-boards\"",
+        "data-action=\"boards\"",
+        "role=\"tablist\"",
+        "aria-controls=\"wk-list\"",
+        ".single-board .side-tabs { display: none; }",
+    ] {
+        assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+    let at = |piece: &str| {
+        UI_HTML
+            .find(piece)
+            .unwrap_or_else(|| panic!("the page lacks {piece}"))
+    };
+    assert!(
+        at("id=\"nav-rail\"") < at("id=\"wk-groups\"")
+            && at("id=\"wk-groups\"") < at("id=\"task-panel\"")
+    );
+    assert!(!UI_HTML.contains("rail-global"));
+    // One width for both tabs: the sidebar's handle is the only one.
+    assert!(!UI_HTML.contains("wk-list-resize"));
     // The panel has no terminal tab in this view.
     assert!(UI_HTML.contains("const term = view === 'work' ? ''"));
     // What 要対応 did is done in the panel: a gate with no task card is judged in a panel of its own,

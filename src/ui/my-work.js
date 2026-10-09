@@ -960,7 +960,7 @@ function drawWorkList() {
   const tree = byState ? workTreeByState(listed, chips) : workTreeByParent(listed, workBands([...listed, ...chips]), chipsByRepo, repos);
   work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
-  for (const b of wk('work-view').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
+  for (const b of wk('wk-list').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
   const cells = new Map();
   const rowsByKey = new Map();
   // A poll that failed after one that worked, and a repository none of whose boards could be read: said above
@@ -1212,7 +1212,7 @@ function workTrackParks() {
   }
 }
 
-wk('work-view').addEventListener('click', e => {
+wk('wk-list').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
   if ((b = e.target.closest('[data-wk-read]'))) return workMarkRow(b.dataset.wkRead, { read: workServerNow(), left: workServerNow() });
@@ -1243,7 +1243,7 @@ wk('work-view').addEventListener('click', e => {
   }
 });
 
-wk('work-view').addEventListener('change', e => {
+wk('wk-list').addEventListener('change', e => {
   if (!e.target.matches('[data-wk-advance]')) return;
   prefs.reviewNext = e.target.checked;
   savePrefs();
@@ -1452,13 +1452,8 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at }) {
   });
 }
 
-bindWidthHandle(wk('wk-list-resize'), {
-  read: () => prefs.workListWidth, min: 260, max: () => 640, reset: 380,
-  at: x => x - wk('work-view').getBoundingClientRect().left,
-  apply: w => { prefs.workListWidth = w; document.body.style.setProperty('--wk-list-w', `${w}px`); },
-});
 bindWidthHandle(wk('rail-resize'), {
-  read: () => prefs.railWidth, min: 180, max: () => 400, reset: 240,
+  read: () => prefs.railWidth, min: 260, max: () => 560, reset: 300,
   at: x => x,
   apply: w => { prefs.railWidth = w; document.body.style.setProperty('--rail-w-set', `${w}px`); },
 });

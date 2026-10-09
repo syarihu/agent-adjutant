@@ -44,7 +44,7 @@ const PREF_KEY = 'adj-board-split';
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row.
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  railWidth:240, workListWidth:380, workGroup:'parent', workFolded:[] },
+  railWidth:300, workGroup:'parent', workFolded:[] },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -57,8 +57,9 @@ prefs.panelDialog = prefs.panelDialog === true;
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // What is in the browser's storage is not trusted: a width outside its range is the default, a fold
 // list is a list of strings.
-if (!(prefs.railWidth >= 180 && prefs.railWidth <= 400)) prefs.railWidth = 240;
-if (!(prefs.workListWidth >= 260 && prefs.workListWidth <= 640)) prefs.workListWidth = 380;
+// One width for both of the sidebar's tabs; a width saved before the range moved up is clamped, not reset.
+prefs.railWidth = Math.min(560, Math.max(260, Number(prefs.railWidth) || 300));
+delete prefs.workListWidth;
 if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 // Which of the page's desktop notifications ring (my-work-notify.js); the server's own notifier is not governed by this.
@@ -70,7 +71,6 @@ function applyLayout() {
   if (!boards) return;
   // The widths of the sidebar and of the work view's list; the panel's own is set by renderTaskPanel.
   document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
-  document.body.style.setProperty('--wk-list-w', `${prefs.workListWidth}px`);
   boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
   document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
   document.body.classList.toggle('layout-split', prefs.layout === 'split');
