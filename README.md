@@ -510,7 +510,7 @@ server, everything is as described above.
 
 **A session's terminal in the board.** On the resident server's boards, a session's tmux window is the middle column of
 「いまの仕事」 (below) and the ターミナル tab of a task's or a hub's panel (see "The task panel" below). Each of a
-board's hubs is a row there, marked "hub", and a hub's panel lists its sessions' worktrees that have no process:
+board's hubs is a chip on its heading there (below), and a hub's panel lists its sessions' worktrees that have no process:
 the card 「動いていない worktree（N）」 is folded, holds the worktrees with no session and the sessions that ended
 (the repository hub's card lists the whole board, grouped by the hub each belongs to), and each one opens as a session
 of its own, with 再開, 「IDE で開く」, 「パスをコピー」 and 「片付ける…」. A terminal is offered only for a session
@@ -529,8 +529,13 @@ with the tasks that have no parent under 「親なし」; the owner heading is s
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
 「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by repository, headed by its
 full `owner/name`, in name order with case ignored; empty boxes are not drawn). Only work under way is listed: a
-worker session with a task or without one, and each repository's
-hub as a row marked "hub". A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
+worker session with a task or without one. A hub is not a row but a chip on the heading it runs: on its repository's
+heading, and, for a parent-task hub, on the heading of the parent it runs (one with no heading of its own goes on the
+repository's, named by its key). The chip shows the hub icon, "hub", and what it is doing (作業中, 待機中, エラー, 状態不明
+or 動いていない), and, while something waits on you in that hub, a hand icon with the count; pressing it opens the hub
+(a stopped one offers 「hub を起動」). In 「状態」 the chip is on the repository's heading in 実行中 while the hub runs and in
+そのほか otherwise, and a repository that has only a hub still has a heading. A folded heading keeps its own chips and
+says how many things the hubs below it wait on you with. A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
 child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, each group is drawn as a card, a step stronger per nesting level, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
@@ -559,8 +564,8 @@ opened, a session waiting on a permission prompt or a question, a worker whose t
 session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
 for a task with nothing running, which then has a row of its own. Each row shows what it asks, or else what the agent
 last said. 後で見る holds what you opened and left without finishing, and every parked task (see "Parking a task" below), and each row says what is still open
-(「既読 · 設計レビューが開いたまま」). In 「親 Issue」 the two are bands above the tree (a session's row stays in the
-tree too), and in 「状態」 they are the first two boxes. A row counts as looked at once you leave it (the address
+(「既読 · 設計レビューが開いたまま」). In 「親 Issue」 the two are bands above the tree (a task session's row stays in the
+tree too; a hub that waits on you has its row in the band, and its chip stays on the heading), and in 「状態」 they are the first two boxes. A row counts as looked at once you leave it (the address
 moves to another row or another view, or the page closes) or act on it, wherever you do: answering its gate on the
 board, through the hub or the CLI, or typing in its session's terminal, even outside the board (the ledger's
 `lastPromptAt`; the sentences adjutant types to wake a session are not counted, but a `wake` / `workerWake` /
@@ -651,7 +656,7 @@ terminal, not in a panel, which is the middle column of that row. It leaves 新�
 **A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
 the right of the board's title (for the board being viewed), a terminal icon that appears when you
 hover a board's row in the sidebar (not in the icon rail, which has the title button instead), and
-the hub's row in 「いまの仕事」, where the terminal is the middle column. On a board it opens on ターミナル, the hub's own
+the hub's chip in 「いまの仕事」, where the terminal is the middle column. On a board it opens on ターミナル, the hub's own
 session. 詳細 shows the hub's state, the workers at work, what waits on you, the queue and the
 inbox (the newest few of each, with 「ほか N 件」; a queued task opens its own panel), and holds the
 hub's actions: 着手を促す (start the next queued task if a worker slot is free; it has left the title bar and lives here),
@@ -1105,7 +1110,7 @@ shows the rest as they are. It is shown on the board as configured, so keep secr
 
 ### Starting and linking sessions
 
-A hub's panel (open it from the hub's row in 「いまの仕事」 or the 「hub」 button) has two buttons under 操作, both off
+A hub's panel (open it from the hub's chip in 「いまの仕事」 or the 「hub」 button) has two buttons under 操作, both off
 unless the page is served by the resident server, and off for a hub whose board that server does not serve: 「タスクなしの
 セッションを始める…」 (off too while `state.sessionStart.agent` is empty) and, on the repository's hub only, 「親タスクの hub を
 起動…」, which asks for a parent task's key and starts that hub by key. Starting a stopped repository hub is

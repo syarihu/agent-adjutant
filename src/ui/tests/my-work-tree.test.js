@@ -13,7 +13,12 @@ const cut = re => {
   return m[0];
 };
 // STATE_ORDER and stampSecs live in other files of the page; a stub is enough for the ordering the rows here need.
-const ctx = vm.createContext({ STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0 });
+const ctx = vm.createContext({
+  STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
+  // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
+  sessionState: s => s.waiting ? 'waiting' : s.state, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:',
+  workRepos: () => [], esc: x => String(x), workGlyphHtml: st => `<g ${st}>`,
+});
 vm.runInContext([
   cut(/^const WORK_BOXES = [\s\S]*?^\];/m),
   cut(/^const WORK_RUNNING = [^\n]*;/m),
@@ -23,6 +28,16 @@ vm.runInContext([
   cut(/^const WORKS_ON_PERSON = [^\n]*;/m),
   cut(/^const workOwnerName = [^\n]*;/m),
   cut(/^function workOwnerGroups[\s\S]*?^}/m),
+  cut(/^const WORK_HUB_WORD = [\s\S]*?\};/m),
+  cut(/^const workHubWord = [^\n]*;/m),
+  cut(/^function workRepoHubChips[\s\S]*?^}/m),
+  cut(/^function workPlaceHubChips[\s\S]*?^}/m),
+  cut(/^const workChipsOnly = [^\n]*;/m),
+  cut(/^function workHiddenHubWaits[\s\S]*?^}/m),
+  cut(/^function workTreeByParent[\s\S]*?^}/m),
+  cut(/^function workHeadHtml[\s\S]*?^}/m),
+  cut(/^function workSummaryHtml[\s\S]*?^}/m),
+  cut(/^function workHubChipsHtml[\s\S]*?^}/m),
   cut(/^function workBoxRepoGroups[\s\S]*?^}/m),
   cut(/^function workTreeByState[\s\S]*?^}/m),
 ].join('\n'), ctx);
@@ -142,4 +157,212 @@ test('the state view puts each row in its box, in box order, and the boxes in re
   ]);
   ctx.rows = [r('a/z', 'n1', 'waiting', 'new')];
   assert.deepStrictEqual(plain(vm.runInContext('workTreeByState(rows)', ctx).map(b => b.key)), ['box:new']);
+});
+
+/* ── hubs as chips on the headings (#599) ── */
+const run = (code, vars) => { Object.assign(ctx, vars); return vm.runInContext(code, ctx); };
+const hubRow = (id, state, extra = {}) => ({ board: `b-${id}`, session: { id, kind: 'hub', state, present: state !== 'stopped', ...extra }, task: null });
+const hubInfo = (id, parent, key = id) => ({ id, parent, key, slug: `b-${id}` });
+const judgedOf = obj => new Map(Object.entries(obj));
+const chipsOf = (repo, judged = new Map()) => plain(run('workRepoHubChips(repo, 1, judged)', { repo, judged }));
+
+test('the state words: failure and unknown never read as waiting, and a stopped hub is not running', () => {
+  const w = st => run('workHubWord(st)', { st });
+  assert.strictEqual(w('working'), '作業中');
+  assert.strictEqual(w('restarting'), '作業中');
+  for (const st of ['done', 'idle', 'waiting', 'permission']) assert.strictEqual(w(st), '待機中');
+  assert.strictEqual(w('failed'), 'エラー');
+  assert.strictEqual(w('unknown'), '状態不明');
+  assert.strictEqual(w('something-new'), '状態不明');
+  for (const st of ['stopped', 'ended', 'none']) assert.strictEqual(w(st), '動いていない');
+});
+
+test('chips: the repository own hub first, then parent-task hubs by key; a stopped hub still has one', () => {
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('p2', true, '#9'), hubInfo('own', false), hubInfo('p1', true, '#2')],
+    rows: [hubRow('own', 'stopped')], hubSessions: [{ board: 'b-p2', session: hubRow('p2', 'working').session }, { board: 'b-p1', session: hubRow('p1', 'idle').session }] };
+  const chips = chipsOf(repo);
+  assert.deepStrictEqual(chips.map(c => c.hub.id), ['own', 'p1', 'p2']);
+  assert.strictEqual(chips[0].word, '動いていない');
+  assert.strictEqual(chips[0].key, 'b-own/hub:own');
+  assert.strictEqual(chips[0].isHub, true);
+});
+
+test('chips: a hub with no session has none, and an ended parent-task hub only while it waits', () => {
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false), hubInfo('p1', true), hubInfo('p2', true)], rows: [hubRow('own', 'done')],
+    hubSessions: [{ board: 'b-p1', session: hubRow('p1', 'ended').session }, { board: 'b-p2', session: hubRow('p2', 'ended').session }] };
+  assert.deepStrictEqual(chipsOf(repo).map(c => c.hub.id), ['own']);
+  const waits = judgedOf({ 'b-p2/hub:p2': { live: [{ kind: 'gate' }], cls: 'new' } });
+  assert.deepStrictEqual(chipsOf(repo, waits).map(c => [c.hub.id, c.waits, c.cls]), [['own', 0, null], ['p2', 1, 'new']]);
+  assert.strictEqual(chipsOf({ nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [], hubSessions: [] }).length, 0);
+});
+
+test('chips: what waits comes from the judged entry of the hub; an answered gate is not waited on', () => {
+  const waiting = hubRow('own', 'waiting', { waiting: { slug: 'b-own', id: 'g1' } });
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [waiting], hubSessions: [] };
+  const judged = judgedOf({ 'b-own/hub:own': { live: [{ kind: 'gate' }, { kind: 'gate' }], cls: 'later' } });
+  const c = chipsOf(repo, judged)[0];
+  assert.deepStrictEqual([c.waits, c.cls], [2, 'later']);
+  ctx.answeredGates = new Map([['b-own/g1', true]]);
+  // The judged entry is the page's own reading of the same answered gates; the row itself is no longer waiting.
+  assert.strictEqual(plain(run('workRepoHubChips(repo, 1, new Map())', { repo }))[0].s.waiting, null);
+  ctx.answeredGates = new Map();
+});
+
+const chip = (id, parent, key = id, slug = `b-${id}`, waits = 0) => ({ id, key: `${slug}/hub:${id}`, nwo: 'acme/w', hub: { id, parent, key: parent ? key : id, slug }, s: { present: true }, st: 'idle', waits, word: '待機中' });
+const parentNode = (key, hub, extra = {}) => ({ key: `parent:${key}`, kind: 'parent', parent: { key, hub, ...extra }, rows: [], items: [], hubs: [] });
+
+test('placing: a parent-task hub goes to the parent it runs; the repo own hub and a missing parent get none', () => {
+  const own = chip('own', false), p1 = chip('p1', true, '#2', 'b-p1');
+  const nodes = [parentNode('#2', 'b-p1'), parentNode('#3', 'b-own'), parentNode('#4', 'b-p1', { missing: true })];
+  const rest = plain(run('workPlaceHubChips(chips, nodes)', { chips: [own, p1], nodes }));
+  assert.deepStrictEqual(plain(nodes.map(n => n.hubs.map(c => c.id))), [['p1'], [], []]);
+  assert.deepStrictEqual(rest.map(c => c.id), ['own']);
+});
+
+test('placing: a hub no parent heading takes is left over; one chip is never placed twice', () => {
+  const p1 = chip('p1', true, '#2', 'b-p1');
+  let nodes = [parentNode('#7', 'b-other')];
+  assert.deepStrictEqual(plain(run('workPlaceHubChips(chips, nodes)', { chips: [p1], nodes })).map(c => c.id), ['p1']);
+  nodes = [parentNode('#2', 'b-p1'), parentNode('#5', 'b-p1')];
+  const rest = plain(run('workPlaceHubChips(chips, nodes)', { chips: [p1], nodes }));
+  assert.strictEqual(nodes.flatMap(n => n.hubs).length, 1);
+  assert.strictEqual(nodes[0].hubs.length, 1);
+  assert.strictEqual(rest.length, 0);
+});
+
+const repoA = { nwo: 'acme/a', carrier: 'b-own', parents: [{ key: '#2', hub: 'b-p1', number: 2 }] };
+const trow = (id, parent) => ({ key: id, id, repo: repoA, nwo: 'acme/a', st: 'idle', s: {}, task: { id, parent } });
+const treeOf = (rows, chipsByRepo, repos = [repoA]) => plain(run('workTreeByParent(rows, [], byRepo, repos)', { rows, byRepo: chipsByRepo, repos }));
+const reposOf = tree => tree.flatMap(o => o.items);
+
+test('the parent tree has no hub rows; the hub is a chip on its heading', () => {
+  const hub = { key: 'h', id: 'b-own/hub:own', repo: repoA, nwo: 'acme/a', st: 'idle', s: {}, isHub: true, task: null };
+  const own = chip('own', false), p1 = chip('p1', true, '#2', 'b-p1');
+  const tree = run('workTreeByParent(rows, [], byRepo, repos)', { rows: [hub, trow('t1', '#2'), trow('t2')], byRepo: new Map([[repoA, [own, p1]]]), repos: [repoA] });
+  const [repoNode] = tree[0].items;
+  assert.strictEqual(repoNode.rows.length, 2);
+  assert.ok(!repoNode.rows.includes(hub));
+  assert.deepStrictEqual(plain(repoNode.hubs.map(c => c.id)), ['own']);
+  assert.strictEqual(repoNode.hub.id, 'own');
+  const [parent, none] = repoNode.items;
+  assert.deepStrictEqual(plain(parent.hubs.map(c => c.id)), ['p1']);
+  assert.deepStrictEqual(plain(parent.items.map(i => i.row.key)), ['t1']);
+  assert.deepStrictEqual(plain(none.items.map(i => i.row.key)), ['t2']);
+});
+
+test('the parent tree: a repository with only a chip has a node, one with neither has none', () => {
+  const only = treeOf([], new Map([[repoA, [chip('own', false)]]]));
+  assert.strictEqual(reposOf(only).length, 1);
+  assert.deepStrictEqual(reposOf(only)[0].items, []);
+  assert.strictEqual(reposOf(only)[0].hubs.length, 1);
+  assert.deepStrictEqual(treeOf([], new Map()), []);
+});
+
+test('hidden waits: the hubs below a heading, not its own', () => {
+  const node = { hubs: [chip('x', false, 'x', 'b-x', 9)], items: [
+    { hubs: [chip('p1', true, '#2', 'b-p1', 2)], items: [{ row: {} }] },
+    { hubs: [], items: [{ hubs: [chip('p2', true, '#3', 'b-p2', 3)], items: [] }] },
+    { row: {} },
+  ] };
+  assert.strictEqual(run('workHiddenHubWaits(node)', { node }), 5);
+  assert.strictEqual(run('workHiddenHubWaits(node)', { node: { hubs: [chip('x', false, 'x', 'b-x', 9)], items: [] } }), 0);
+});
+
+test('the folded summary says the hub waits only when some do', () => {
+  assert.ok(!run('workSummaryHtml([], 0)', {}).includes('account_tree'));
+  const html = run('workSummaryHtml([], 3)', {});
+  assert.ok(html.includes('account_tree') && html.includes('hub があなたを待っています 3 件'));
+});
+
+test('the chip is its own button with the state word, and the waiting badge only when something waits', () => {
+  const quiet = run('workHubChipsHtml([c], "acme/a", true)', { c: chip('own', false) });
+  assert.match(quiet, /<button type="button" class="wk-hub" data-wk-hub="b-own\/hub:own"/);
+  assert.ok(quiet.includes('待機中') && !quiet.includes('front_hand'));
+  const busy = run('workHubChipsHtml([c], "acme/a", true)', { c: { ...chip('p1', true, '#2', 'b-p1', 2), st: 'stopped', word: '動いていない', cls: 'new' } });
+  assert.ok(busy.includes('hub #2') && busy.includes('front_hand') && busy.includes('wk-hub-wait new') && busy.includes('hub を起動'));
+  assert.strictEqual(run('workHubChipsHtml([], "x")', {}), '');
+});
+
+const srow = (nwo, id, st, cls, isHub) => ({ key: id, nwo, st, cls, isHub, s: {} });
+const stateTree = (rows, chips) => plain(run('workTreeByState(rows, chips)', { rows, chips }));
+const schip = (nwo, id, present) => ({ ...chip(id, false), nwo, s: { present } });
+
+test('the state view: a hub row is dropped from 実行中 and そのほか but stays in 新着', () => {
+  const tree = stateTree([srow('a/y', 'h1', 'idle', null, true), srow('a/y', 'h2', 'waiting', 'new', true), srow('a/y', 't1', 'working')], []);
+  assert.deepStrictEqual(tree.map(b => b.key), ['box:new', 'box:running']);
+  assert.deepStrictEqual(tree.map(b => b.rows.map(r => r.key)), [['h2'], ['t1']]);
+});
+
+test('the state view: a running hub is a chip on its repository heading in 実行中, a stopped one in そのほか', () => {
+  const tree = stateTree([], [schip('a/y', 'on', true), schip('b/z', 'off', false)]);
+  assert.deepStrictEqual(tree.map(b => b.key), ['box:running', 'box:other']);
+  const [running, other] = tree.map(b => b.items);
+  assert.deepStrictEqual([running[0].kind, running[0].label, running[0].rows, running[0].hubs.map(c => c.id)], ['brepo', 'a/y', [], ['on']]);
+  assert.deepStrictEqual([other[0].label, other[0].hubs.map(c => c.id)], ['b/z', ['off']]);
+});
+
+test('box headings keep their order with chips, and a chip joins the heading of its rows', () => {
+  const out = plain(run('workBoxRepoGroups("running", rows, "box", chips)', { rows: [row('b/x', 1)], chips: [schip('a/y', 'on', true), schip('b/x', 'on2', true)] }));
+  assert.deepStrictEqual(out.map(g => g.label), ['a/y', 'b/x']);
+  assert.deepStrictEqual(out.map(g => [g.rows.length, g.hubs.length]), [[0, 1], [1, 1]]);
+});
+
+test('the chip names the hub by its key only for a parent-task hub on a repository heading', () => {
+  const html = (c, named) => run('workHubChipsHtml([c], "acme/a", named)', { c, named });
+  const own = html({ ...chip('own', false), hub: { id: 'own', parent: false, key: null, slug: 'b-own' } }, true);
+  assert.ok(!own.includes('undefined') && !own.includes('null'));
+  assert.ok(own.includes('<span>hub</span>'));
+  const onRepo = html(chip('p1', true, '#2', 'b-p1'), true);
+  assert.ok(onRepo.includes('<span>hub #2</span>'));
+  const onParent = html(chip('p1', true, '#2', 'b-p1'), false);
+  assert.ok(onParent.includes('<span>hub</span>') && !onParent.includes('hub #2'));
+  const noKey = html({ ...chip('p1', true, '#2', 'b-p1'), hub: { id: 'p1', parent: true, key: null, slug: 'b-p1' } }, true);
+  assert.ok(noKey.includes('<span>hub</span>') && !noKey.includes('null'));
+});
+
+test('the start hint is only on a stopped hub, not an ended one', () => {
+  const hint = st => run('workHubChipsHtml([c], "x", false)', { c: { ...chip('own', false), st } }).includes('hub を起動');
+  assert.ok(hint('stopped') && hint('none'));
+  assert.ok(!hint('ended') && !hint('working'));
+});
+
+test('chips: a hub session the hubs list does not name still gets a chip, as the server falls back to the session', () => {
+  const stray = hubRow('x', 'idle', { key: '#8' });
+  const repo = { nwo: 'acme/w', hubs: [], rows: [hubRow('own', 'idle')], hubSessions: [{ board: 'b-x', session: stray.session }] };
+  const chips = chipsOf(repo);
+  assert.deepStrictEqual(chips.map(c => [c.hub.id, c.hub.parent, c.hub.key, c.hub.slug]), [['own', false, null, 'b-own'], ['x', true, '#8', 'b-x']]);
+});
+
+test('placing: two parents sharing a hub slug each get the chip of their own key', () => {
+  const second = chip('p2', true, '#5', 'b-shared');
+  const nodes = [parentNode('#2', 'b-shared'), parentNode('#5', 'b-shared')];
+  const rest = plain(run('workPlaceHubChips(chips, nodes)', { chips: [second], nodes }));
+  assert.deepStrictEqual(plain(nodes.map(n => n.hubs.map(c => c.id))), [[], ['p2']]);
+  assert.strictEqual(rest.length, 0);
+});
+
+test('a heading with only chips has nothing to fold; a node with items or an empty note keeps its fold button', () => {
+  // The pieces the heading calls are stubbed for this test only, and put back after.
+  const real = { f: ctx.workFoldButton, h: ctx.workHubChipsHtml };
+  const html = node => run('workHeadHtml(node, false)', { node, nav: {}, workSegments: () => [], workFoldButton: () => '<fold>', workHubChipsHtml: () => '<chips>' });
+  const only = html({ kind: 'repo', nwo: 'a/b', key: 'repo:a/b', rows: [], items: [], hubs: [{}] });
+  assert.ok(only.includes('wk-fold-gap') && !only.includes('<fold>'));
+  assert.ok(html({ kind: 'repo', nwo: 'a/b', key: 'k', rows: [], items: [{}], hubs: [{}] }).includes('<fold>'));
+  assert.ok(html({ kind: 'band', label: 'x', key: 'band:new', rows: [], items: [], hubs: undefined, empty: 'e' }).includes('<fold>'));
+  Object.assign(ctx, { workFoldButton: real.f, workHubChipsHtml: real.h });
+});
+
+test('the folded hub-waits item is an image with its own label', () => {
+  const html = run('workSummaryHtml([], 2)', {});
+  assert.ok(html.includes('role="img" aria-label="hub があなたを待っています 2 件"'));
+});
+
+test('a hub that is not running reads as not running even with a gate open, and keeps its waiting badge', () => {
+  const stopped = hubRow('own', 'idle', { present: false, waiting: { slug: 'b-own', id: 'g9' } });
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [stopped], hubSessions: [] };
+  const judged = judgedOf({ 'b-own/hub:own': { live: [{ kind: 'gate' }], cls: 'new' } });
+  const [c] = run('workRepoHubChips(repo, 1, judged)', { repo, judged });
+  assert.deepStrictEqual([c.st, c.word, c.waits], ['stopped', '動いていない', 1]);
+  const html = run('workHubChipsHtml([c], "acme/a", false)', { c });
+  assert.ok(html.includes('wk-hub off') && html.includes('hub を起動') && html.includes('front_hand'));
 });

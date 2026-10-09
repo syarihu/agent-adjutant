@@ -59,6 +59,8 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-head.repo { position: sticky; top: 0; z-index: 2; }
 .wk-head.owner .wk-head-name { font-weight: 900; }
 .wk-fold { flex: none; display: inline-flex; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: 50%; }
+/* Where the fold button would be, on a heading with nothing to fold. */
+.wk-fold-gap { flex: none; width: 22px; }
 .wk-fold .material-symbols-outlined { font-size: 18px; transition: transform .15s; }
 .wk-fold[aria-expanded="false"] .material-symbols-outlined { transform: rotate(-90deg); }
 .wk-head-main {
@@ -75,10 +77,29 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-next input { margin: 0; cursor: pointer; }
 .wk-count { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
 .wk-body { padding: 3px 4px 4px; }
+/* A hub is a chip on the heading it runs, beside the heading's own button. */
+.wk-hubs { flex: none; display: inline-flex; flex-wrap: wrap; gap: 4px; max-width: 55%; justify-content: flex-end; }
+.wk-hub {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface); font: inherit; font-size: 11px; font-weight: 700; line-height: 1.5;
+}
+.wk-hub .material-symbols-outlined { font-size: 14px; }
+.wk-hub:hover { background: var(--wk-hover); }
+.wk-hub:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.wk-hub[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.wk-hub.working { color: var(--md-sys-color-primary); border-color: color-mix(in srgb, var(--md-sys-color-primary) 45%, transparent); }
+.wk-hub.off { color: var(--md-sys-color-outline); }
+.wk-hub-word { font-weight: 600; }
+/* Waiting on the person: the warning tone while it is new, a quiet one once it was looked at. */
+.wk-hub-wait { display: inline-flex; align-items: center; gap: 1px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); color: var(--md-sys-color-on-surface-variant); }
+.wk-hub-wait.new { border-color: transparent; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.wk-hub-wait .material-symbols-outlined { font-size: 13px; }
 /* What a folded header still says: how many rows are in each state. */
 .wk-sum { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
 .wk-sum span { display: inline-flex; align-items: center; gap: 2px; }
 .wk-sum .wk-glyph { font-size: 15px; }
+.wk-sum .material-symbols-outlined { font-size: 15px; }
 
 /* The progress bar of a parent: a segment per child. */
 .wk-bar { display: flex; gap: 2px; height: 6px; min-width: 60px; flex: 1; max-width: 220px; }
