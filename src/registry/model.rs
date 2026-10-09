@@ -409,6 +409,10 @@ pub struct SavedSession {
     pub title: Option<String>,
     pub task: Option<String>,
     pub saved_at: Option<String>,
+    /// Every key other than the seven above, as written. Kept so the rewrites in
+    /// `relink_worker` and a resume under another hub leave what a newer version wrote
+    /// (architecture rule 10).
+    pub other: Map<String, Value>,
 }
 
 /// Where a board for a hub is being served from.

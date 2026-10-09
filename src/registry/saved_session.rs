@@ -2,6 +2,7 @@
 
 use super::store::{hub_alive_path, hub_session_path, read_session, worker_session_path};
 use super::*;
+use serde_json::Map;
 
 /// A fresh session id: a random (version 4) UUID, which is the shape Claude Code's
 /// `--session-id` insists on and every other agent can take as an opaque string.
@@ -82,23 +83,52 @@ pub fn save_worker_session(
     task: Option<&str>,
     session_id: &str,
 ) -> Result<PathBuf, String> {
+    write_worker_session(worktree, Map::new(), session_id, title, hub, task)
+}
+
+/// Save `saved` again with a new title, hub and task, keeping the keys it carries that this
+/// version does not know. For a session that already exists: a fresh one starts from nothing
+/// and uses `save_worker_session`.
+pub fn rewrite_worker_session(
+    worktree: &Path,
+    saved: &SavedSession,
+    title: &str,
+    hub: Option<&str>,
+    task: Option<&str>,
+) -> Result<PathBuf, String> {
+    write_worker_session(
+        worktree,
+        saved.other.clone(),
+        &saved.session_id,
+        title,
+        hub,
+        task,
+    )
+}
+
+/// `fields` is what a newer version wrote that this one does not read, put back under the
+/// keys written here.
+fn write_worker_session(
+    worktree: &Path,
+    mut fields: Map<String, Value>,
+    session_id: &str,
+    title: &str,
+    hub: Option<&str>,
+    task: Option<&str>,
+) -> Result<PathBuf, String> {
     let path = worker_session_path(worktree);
-    let mut record = json!({
-        "sessionId": session_id,
-        "title": title,
-        "savedAt": utc_stamp(now_secs()),
-    });
-    if let Some(hub) = said(hub)
-        && let Some(fields) = record.as_object_mut()
-    {
-        fields.insert("hub".to_string(), json!(hub));
-    }
-    if let Some(task) = said(task)
-        && let Some(fields) = record.as_object_mut()
-    {
-        fields.insert("task".to_string(), json!(task));
-    }
-    write_json(&path, &record)?;
+    fields.insert("sessionId".to_string(), json!(session_id));
+    fields.insert("title".to_string(), json!(title));
+    fields.insert("savedAt".to_string(), json!(utc_stamp(now_secs())));
+    match said(hub) {
+        Some(hub) => fields.insert("hub".to_string(), json!(hub)),
+        None => fields.remove("hub"),
+    };
+    match said(task) {
+        Some(task) => fields.insert("task".to_string(), json!(task)),
+        None => fields.remove("task"),
+    };
+    write_json(&path, &Value::Object(fields))?;
     Ok(path)
 }
 
