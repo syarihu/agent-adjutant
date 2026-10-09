@@ -111,7 +111,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
       : sel === '#card-dialog-title' ? titleEl : sel === '#card-dialog-sub' ? subEl : null,
   };
   const world = { waiting, subject: 't1', exists: true, hidden: false, nowKnown: true, html: 'v1', groups: [], dockMark: '', title: 'T',
-    sent: [], goGate: [], closed: 0, shown: [], marks: 0, recorded: [] };
+    sent: [], goGate: [], closed: 0, shown: [], marks: 0, recorded: [], pruned: 0 };
   const c = vm.createContext({
     selectedTaskId: 't1', tp: () => ({ hidden: world.hidden }), state: { get now() { return world.nowKnown ? 1 : null; } },
     document: { activeElement: focused ? { matches: () => true } : null },
@@ -122,7 +122,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
     cardDialogDockHtml: ws => `DOCK${ws.map(g => g.id).join(',')}${world.dockMark}`,
     cardDialogFill: html => ({ docks: html.startsWith('DOCK') ? world.waiting.map(r => dockEl(r)) : [] }),
     cardDialogApplyTarget() {}, cardDialogSpy() {}, cardDialogCardEl: () => null, esc: x => x, clearTimeout() {}, setTimeout() { return 1; },
-    cardDialogShowUpdate: ch => { world.shown.push(ch); }, cardDialogMarkUpdated: () => { world.marks++; },
+    cardDialogShowUpdate: ch => { world.shown.push(ch); }, cardDialogPruneUpdate: () => { world.pruned++; }, cardDialogMarkUpdated: () => { world.marks++; },
     decideAct: async b => { world.sent.push(b.dataset.act); world.waiting = world.waiting.filter(r => r !== b.ref); return true; },
     gateByRef: ref => ({ id: ref, openedAt: ref }), commentBox: ref => col.docks.find(d => d.ref === ref)?.gate.ta || null,
     closeCardDialog: () => { world.closed++; }, secsStamp: secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, ''), cardDialogGoGate: ref => { world.goGate.push(ref); },
@@ -948,7 +948,7 @@ function noticeWorld() {
   const cards = {}, body = { clientHeight: 600, getBoundingClientRect: () => ({ top: 0, bottom: 600 }) };
   vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), cut(dlgSrc, /^const CARD_DIALOG_UPDATE_MS = [^\n]*;/m), cut(dlgSrc, /^const CARD_DIALOG_SEEN_MS = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogUpdateEl = [^\n]*;/m), cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m),
-    ...['cardDialogUpdateText', 'cardDialogShowUpdate', 'cardDialogMergeChanges', 'cardDialogUpdateTimer', 'cardDialogHideUpdate', 'cardDialogSeeNotice', 'cardDialogResetUpdates', 'cardDialogSeeUpdated'].map(n => fnSrc(dlgSrc, n)),
+    ...['cardDialogUpdateText', 'cardDialogShowUpdate', 'cardDialogWriteUpdate', 'cardDialogPruneUpdate', 'cardDialogMergeChanges', 'cardDialogUpdateTimer', 'cardDialogHideUpdate', 'cardDialogSeeNotice', 'cardDialogResetUpdates', 'cardDialogSeeUpdated'].map(n => fnSrc(dlgSrc, n)),
     cut(dlgSrc, /^cardDialogUpdateEl\(\)\.addEventListener\('pointerenter'[\s\S]*?\nfor \(const type of \['pointerleave'[\s\S]*?\n\}\n/m),
     "cardDialog.mode = 'task'; cardDialog.token = 3; cardDialog.groups = [{ key: 'g', cards: [{ key: 'a', label: '経過' }, { key: 'b', label: '詳細' }] }];"].join('\n'), c);
   return { c, timers, updateEl, btn, span, went, gone, cards, body, run: code => vm.runInContext(code, c), json: code => JSON.parse(vm.runInContext(`JSON.stringify(${code})`, c)), fire: n => { const t = timers.get(n); timers.delete(n); t.f(); } };
@@ -1164,4 +1164,48 @@ test('a card that changes again after it was seen is not let go by the old timer
   assert.deepStrictEqual(cleared, [41]);
   assert.strictEqual(vm.runInContext(`JSON.stringify([...cardDialog.seenTimers.keys()])`, w.c), '["b"]');
   assert.strictEqual(vm.runInContext(`cardDialog.updated.has('a')`, w.c), true);
+});
+
+test('a redraw that takes away what the notice names prunes it, or hides it, and does not start its time again', () => {
+  const w = noticeWorld();
+  const gate = { key: 'waiting:B', label: '【計画】B', gate: 'B', cards: [{ key: 'gate:B:head', label: '止まっている理由' }] };
+  const hist = { key: 'history', cards: [{ key: 'history:timeline', label: '経過' }] };
+  w.run(`cardDialog.groups = ${JSON.stringify([gate, hist])}`);
+  w.c.ch = { cards: ['gate:B:head', 'history:timeline'], firstKey: 'gate:B:head', newGates: [{ ref: 'B', key: 'waiting:B', label: '【計画】B' }], answered: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  assert.strictEqual(w.span.textContent, '判断待ちに【計画】B が加わりました。経過が更新されました');
+  const timer = [...w.timers.keys()];
+  // The gate is answered here: its group goes and nothing new comes; what is left is said, and 「見る」 follows it.
+  w.run(`cardDialog.groups = ${JSON.stringify([hist])}; cardDialogPruneUpdate()`);
+  assert.strictEqual(w.span.textContent, '経過が更新されました');
+  assert.strictEqual(w.btn.dataset.cdSee, 'history:timeline');
+  assert.deepStrictEqual([...w.timers.keys()], timer, 'the time is not started again');
+  // Nothing left: gone, with its timer.
+  w.run('cardDialog.groups = []; cardDialogPruneUpdate()');
+  assert.strictEqual(w.updateEl.innerHTML, '');
+  assert.strictEqual(w.run('cardDialog.updateChanges'), null);
+  assert.strictEqual(w.timers.size, 0);
+  // A batch of names that are all gone says nothing: no empty notice is left behind.
+  w.c.ch = { cards: ['x'], firstKey: 'x', newGates: [] };
+  w.run('cardDialogShowUpdate(ch)');
+  assert.strictEqual(w.updateEl.innerHTML, '');
+  assert.strictEqual(w.run('cardDialog.updateChanges'), null);
+});
+
+test('a sync that brings no change asks a notice that is up to prune itself', () => {
+  const w = taskWorld({ waiting: ['A', 'B'] });
+  const draw = html => { w.world.groups = [{ key: 'history', label: '経過', cards: [{ key: 'history:timeline', label: '経過', html }] }]; w.world.html = html; };
+  draw('<li>opened</li>');
+  w.sync();
+  draw('<li>opened</li><li>more</li>');
+  const before = w.world.pruned;
+  w.sync();
+  assert.strictEqual(w.world.shown.length, 1);
+  assert.strictEqual(w.world.pruned, before, 'a sync with news says it instead');
+  // The person's own answer: rebased, nothing marked, and the notice is looked at all the same.
+  vm.runInContext(`cardDialog.rebase = true`, w.c);
+  draw('<li>opened</li><li>more</li><li>approved</li>');
+  w.sync();
+  assert.strictEqual(w.world.shown.length, 1);
+  assert.strictEqual(w.world.pruned, before + 1);
 });

@@ -868,9 +868,17 @@ function cardDialogShowUpdate(changes) {
   // What the notice still says stays in it: a second change adds its names, and 「見る」 goes to the first of all.
   const shown = cardDialog.updateText ? cardDialog.updateChanges : null;
   if (shown) changes = cardDialogMergeChanges(shown, changes, cardDialog.groups);
-  cardDialog.updateChanges = changes;
+  if (cardDialogWriteUpdate(changes)) cardDialogUpdateTimer();
+}
+/* What the notice names, written into it; false (and the notice gone) when there is nothing left to name, so that
+   `updateChanges` and the DOM never disagree. */
+function cardDialogWriteUpdate(changes) {
   const text = cardDialogUpdateText(changes, cardDialog.groups);
-  if (!text) return;
+  if (!text) {
+    cardDialogHideUpdate();
+    return false;
+  }
+  cardDialog.updateChanges = changes;
   const el = cardDialogUpdateEl();
   // The button stays where it is when the words change, so focus on it is not lost; the words are rewritten only when
   // they differ, as it is a live region.
@@ -880,7 +888,13 @@ function cardDialogShowUpdate(changes) {
     el.querySelector('span').textContent = text;
   }
   el.querySelector('[data-cd-see]').dataset.cdSee = changes.firstKey;
-  cardDialogUpdateTimer();
+  return true;
+}
+/* A redraw took away what the notice names (a gate answered, a card gone) and brought nothing new: it says what is
+   left, or goes. Its time is not started again, as nothing new was said. */
+function cardDialogPruneUpdate() {
+  if (!cardDialog.updateText || !cardDialog.updateChanges) return;
+  cardDialogWriteUpdate(cardDialogMergeChanges(cardDialog.updateChanges, { cards: [], newGates: [], answered: [] }, cardDialog.groups));
 }
 /* `a` then `b`, each card once, in the order they are read in `groups`; a card that is gone is let go. */
 function cardDialogMergeChanges(a, b, groups) {
@@ -1081,6 +1095,7 @@ function cardDialogTaskSync(force, initial) {
   cardDialogMarkUpdated();
   if (dlg.open) {
     if (changes?.cards.length) cardDialogShowUpdate(changes);
+    else cardDialogPruneUpdate();
     cardDialogApplyTarget(task, all);
     cardDialogSpy();
   }

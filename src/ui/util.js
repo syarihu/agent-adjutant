@@ -17,6 +17,8 @@ const agoLabel = mins => mins < 1 ? 'たった今' : `${minutesLabel(mins)}前`;
 /* What minutesLabel and agoLabel print in a sentence ("たった今", "5分前", "2時間前から", "3日待ち"). The 前 or 待ち is
    taken with the number, so "たった今から" and "1分前から" come out alike, and a count such as "5 files" or "PR #57"
    is not taken for a time. */
+// Accepted trade-off: text of the task that reads like a time is taken for time passing, so an edit that changes only such a
+// phrase is not marked (the card is still redrawn).
 const REL_TIME_RE = /たった今|(?:1分未満|\d+(?:分|時間|日))(?:前|待ち)/g;
 /* The markup with its relative times made alike, to tell a change of content from time passing. */
 const timeFree = html => String(html).replace(REL_TIME_RE, '·');
