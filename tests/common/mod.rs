@@ -520,6 +520,41 @@ impl IsolatedTmux {
         })
     }
 
+    /// `new`, but the server was started in a directory that is gone by the time anything is
+    /// opened, as a hub's tmux server is after its worktree is removed (#182).
+    pub fn with_gone_cwd(name: &str) -> Option<Self> {
+        let out = Command::new("tmux").arg("-V").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(sweep_dead);
+        let socket = unique(name);
+        let cwd = tempfile::tempdir().unwrap();
+        let gone = cwd.path().join("sub");
+        std::fs::create_dir(&gone).unwrap();
+        let started = Command::new("tmux")
+            .hermetic()
+            .current_dir(&gone)
+            .args(["-L", &socket, "-f", "/dev/null", "start-server"])
+            .args([";", "set", "-s", "exit-empty", "off"])
+            .args([";", "set", "-g", "default-shell", "/bin/sh"])
+            .args([";", "set", "-g", "default-command", "exec cat"])
+            .output()
+            .unwrap();
+        assert!(
+            started.status.success(),
+            "tmux start-server: {}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        std::fs::remove_dir(&gone).unwrap();
+        Some(IsolatedTmux {
+            socket,
+            session: "adjutant-test".to_string(),
+            _cwd: cwd,
+        })
+    }
+
     pub fn tmux_cmd(&self, args: &[&str]) -> std::process::Output {
         Command::new("tmux")
             .hermetic()

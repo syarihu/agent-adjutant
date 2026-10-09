@@ -827,19 +827,320 @@ fn tmux_pane_parsing_and_matching() {
 
 #[test]
 fn tmux_spawn_script_generates_session_and_window() {
-    let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help");
+    let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help", false);
     assert!(script.starts_with("tmux has-session -t '=adjutant' "));
-    assert!(script.contains("new-session -d -s adjutant -n main"));
+    assert!(script.contains(
+        "( cd \"${HOME:-/}\" 2>/dev/null || cd /; tmux new-session -d -s adjutant -n main -c \"$PWD\" )"
+    ));
     assert!(script.contains("new-window -d -t '=adjutant:' -c /tmp -n task-1 'claude --help'"));
+    assert!(!script.contains("-P"), "{script}");
+    assert!(!script.contains("remain-on-exit"), "{script}");
 
-    let socket_script = tmux_spawn_script(Some("custom-sock"), "sess", "/dir", "title", "echo hi");
+    let socket_script = tmux_spawn_script(
+        Some("custom-sock"),
+        "sess",
+        "/dir",
+        "title",
+        "echo hi",
+        false,
+    );
     assert!(socket_script.starts_with("tmux -L custom-sock has-session"));
     assert!(socket_script.contains("tmux -L custom-sock new-session"));
     assert!(socket_script.contains("tmux -L custom-sock new-window"));
 
-    let path_socket_script =
-        tmux_spawn_script(Some("/path/to/sock"), "sess", "/dir", "title", "echo hi");
+    let path_socket_script = tmux_spawn_script(
+        Some("/path/to/sock"),
+        "sess",
+        "/dir",
+        "title",
+        "echo hi",
+        false,
+    );
     assert!(path_socket_script.starts_with("tmux -S /path/to/sock has-session"));
+}
+
+#[test]
+fn a_held_tmux_spawn_keeps_the_window_and_prints_its_pane() {
+    let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help", true);
+    // The window opens on a placeholder, so `remain-on-exit` is on before the command starts.
+    let open = script
+        .find("P=$(tmux new-window -d -t '=adjutant:' -c /tmp -n task-1 -P -F '#{pane_id}' 'sleep 60') || exit 1")
+        .unwrap_or_else(|| panic!("{script}"));
+    let keep = script
+        .find("set-option -p -t \"$P\" remain-on-exit on")
+        .unwrap_or_else(|| panic!("{script}"));
+    let run = script
+        .find("respawn-pane -k -t \"$P\" -c /tmp 'claude --help' || { tmux kill-pane -t \"$P\"; exit 1; }")
+        .unwrap_or_else(|| panic!("{script}"));
+    assert!(open < keep && keep < run, "{script}");
+    assert!(script.ends_with("echo \"$P\""), "{script}");
+}
+
+/// A command that dies in a few milliseconds with something to say, as `adj hub` does in a
+/// directory it cannot read (#182), must leave a pane to read rather than nothing.
+#[test]
+fn a_held_command_that_dies_at_once_leaves_its_screen_to_read() {
+    if !Command::new("tmux")
+        .arg("-V")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        eprintln!("tmux not available, skipping test");
+        return;
+    }
+    // Named the way the integration tests' servers are, so a later run sweeps one this leaves.
+    let socket = format!("adj-test-held-{}-0", std::process::id());
+    struct Server(String);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = Command::new("tmux")
+                .args(["-L", &self.0, "kill-server"])
+                .env_remove("TMUX")
+                .output();
+        }
+    }
+    let _server = Server(socket.clone());
+    let started = Command::new("tmux")
+        .env_remove("TMUX")
+        .args(["-L", &socket, "-f", "/dev/null", "start-server"])
+        .args([";", "set", "-s", "exit-empty", "off"])
+        .args([";", "set", "-g", "default-shell", "/bin/sh"])
+        // As the integration tests' server does: a pane that runs `cat` leaves no login shell
+        // behind if the server goes while it is being spawned.
+        .args([";", "set", "-g", "default-command", "exec cat"])
+        .output()
+        .unwrap();
+    assert!(started.status.success());
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_string_lossy().to_string();
+    let script = tmux_spawn_script(
+        Some(&socket),
+        "held",
+        &cwd,
+        "t",
+        "sh -c 'echo boom; exit 1'",
+        true,
+    );
+    let pane = run_shell(&script).unwrap();
+    assert!(pane.starts_with('%'), "{pane}");
+    assert_eq!(
+        tmux_watch_start(Some(&socket), &pane),
+        Ok(StartWatch::Exited {
+            status: Some(1),
+            screen: Some("boom".to_string()),
+        })
+    );
+}
+
+fn tmux_terminal() -> TerminalSettings {
+    TerminalSettings {
+        preset: Some("tmux".into()),
+        ..Default::default()
+    }
+}
+
+/// A window the server opens in a directory that no longer exists gets an unreadable cwd even
+/// with `-c`, so the command has to go there itself (#182).
+#[test]
+fn a_tmux_spawn_runs_its_command_in_the_directory() {
+    let dir = std::env::temp_dir();
+    let cwd = dir.to_string_lossy();
+    let done = spawn(
+        &tmux_terminal(),
+        &SpawnRequest {
+            cwd: &cwd,
+            title: "t",
+            command: "adj hub",
+            title_command: None,
+        },
+        true,
+    )
+    .unwrap();
+    assert!(
+        done.script
+            .contains(&format!("'cd {} && adj hub'", sh_quote(&cwd))),
+        "{}",
+        done.script
+    );
+}
+
+#[test]
+fn a_long_tmux_command_is_staged_with_its_cd_inside() {
+    let long = format!("cd /work && claude {}", "y".repeat(MAX_INLINE_COMMAND));
+    let staged = stage_command(&long).unwrap();
+    let path = staged
+        .strip_prefix("sh ")
+        .unwrap()
+        .trim_matches('\'')
+        .to_string();
+    let body = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(body.contains("cd /work && claude "), "{body}");
+}
+
+#[test]
+fn a_screen_that_cannot_be_read_is_not_an_empty_one() {
+    let (got, _) = {
+        let calls: Scripted = Default::default();
+        let answers = std::cell::RefCell::new(
+            vec![
+                Ok("%7\t1\t1\n".to_string()),
+                Err("capture failed".to_string()),
+            ]
+            .into_iter(),
+        );
+        let got = tmux_watch_start_with(
+            |cmd| {
+                calls.borrow_mut().push(cmd.to_string());
+                answers.borrow_mut().next().unwrap_or(Ok(String::new()))
+            },
+            |_| {},
+            None,
+            "%7",
+            3,
+            Duration::from_millis(1),
+        );
+        (got, calls.into_inner())
+    };
+    assert_eq!(
+        got,
+        Ok(StartWatch::Exited {
+            status: Some(1),
+            screen: None
+        })
+    );
+}
+
+#[test]
+fn a_relative_cwd_is_made_absolute_before_it_is_quoted() {
+    let here = std::env::current_dir().unwrap();
+    let done = spawn(
+        &tmux_terminal(),
+        &SpawnRequest {
+            cwd: "src",
+            title: "t",
+            command: "adj hub",
+            title_command: None,
+        },
+        true,
+    )
+    .unwrap();
+    let abs = here.join("src").to_string_lossy().to_string();
+    assert!(
+        done.script.contains(&format!("-c {}", sh_quote(&abs))),
+        "{}",
+        done.script
+    );
+    assert!(
+        done.script
+            .contains(&format!("cd {} && adj hub", sh_quote(&abs))),
+        "{}",
+        done.script
+    );
+}
+
+#[test]
+fn a_dry_run_of_a_held_spawn_shows_the_script_the_real_run_uses() {
+    let (done, pane) = spawn_held(
+        &tmux_terminal(),
+        &SpawnRequest {
+            cwd: "src",
+            title: "t",
+            command: "adj hub",
+            title_command: None,
+        },
+        true,
+    )
+    .unwrap();
+    assert!(done.script.contains("remain-on-exit on"), "{}", done.script);
+    assert_eq!(pane, None);
+}
+
+type Scripted = std::cell::RefCell<Vec<String>>;
+
+fn watch(
+    answers: Vec<Result<String, String>>,
+    polls: u32,
+) -> (Result<StartWatch, String>, Vec<String>) {
+    let calls: Scripted = Default::default();
+    let answers = std::cell::RefCell::new(answers.into_iter());
+    let result = tmux_watch_start_with(
+        |cmd| {
+            calls.borrow_mut().push(cmd.to_string());
+            answers.borrow_mut().next().unwrap_or(Ok(String::new()))
+        },
+        |_| {},
+        None,
+        "%7",
+        polls,
+        Duration::from_millis(1),
+    );
+    (result, calls.into_inner())
+}
+
+#[test]
+fn a_pane_that_stays_up_is_alive_and_gets_its_window_back() {
+    let alive = || Ok("%7\t0\t\n".to_string());
+    let (got, calls) = watch(vec![alive(), alive(), alive()], 3);
+    assert_eq!(got, Ok(StartWatch::Alive));
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert!(
+        calls[3].ends_with("set-option -p -t %7 -u remain-on-exit"),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_pane_that_exited_reports_what_it_printed_and_is_closed() {
+    let screen = "adjutant: run this inside a git repository\n\nPane is dead (status 1, Thu Oct  9 12:00:00 2026)\n";
+    let (got, calls) = watch(
+        vec![
+            Ok("%7\t1\t1\n".into()),
+            Ok(screen.into()),
+            Ok(String::new()),
+        ],
+        3,
+    );
+    assert_eq!(
+        got,
+        Ok(StartWatch::Exited {
+            status: Some(1),
+            screen: Some("adjutant: run this inside a git repository".to_string()),
+        })
+    );
+    assert!(
+        calls[1].contains("capture-pane -p -J -t %7 -S -40"),
+        "{calls:?}"
+    );
+    assert!(calls[2].ends_with("kill-pane -t %7"), "{calls:?}");
+}
+
+#[test]
+fn a_pane_that_is_gone_is_gone_not_alive() {
+    // tmux sometimes answers an empty line, status 0, for a pane that no longer exists.
+    assert_eq!(watch(vec![Ok(String::new())], 3).0, Ok(StartWatch::Gone));
+    assert_eq!(
+        watch(vec![Ok("%8\t0\t\n".into())], 3).0,
+        Ok(StartWatch::Gone)
+    );
+    assert_eq!(
+        watch(vec![Err("can't find pane: %7".into())], 3).0,
+        Ok(StartWatch::Gone)
+    );
+}
+
+#[test]
+fn a_tmux_that_cannot_be_asked_is_an_error_not_a_pane_that_is_fine() {
+    let (got, calls) = watch(vec![Err("error connecting to /tmp/x".into())], 3);
+    assert_eq!(got, Err("error connecting to /tmp/x".to_string()));
+    // The window is not left held for a caller that has stopped looking.
+    assert!(
+        calls
+            .last()
+            .unwrap()
+            .ends_with("set-option -p -t %7 -u remain-on-exit"),
+        "{calls:?}"
+    );
 }
 
 #[test]

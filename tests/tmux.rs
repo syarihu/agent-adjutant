@@ -296,6 +296,34 @@ fn tmux_spawn_after_a_window_named_like_the_session() {
     assert!(names.lines().any(|n| n == "after-the-hub"), "{names}");
 }
 
+/// The server keeps the directory it was started in, and a window it opens from a removed one
+/// has an unreadable cwd even with `-c` (#182); the command has to `cd` there itself.
+#[test]
+fn tmux_spawn_runs_in_its_directory_when_the_server_cwd_is_gone() {
+    let Some(tmux) = IsolatedTmux::with_gone_cwd("spawn-gone-cwd") else {
+        eprintln!("tmux not available, skipping test");
+        return;
+    };
+    let fixture = Fixture::new(&tmux_config(&tmux.socket, &tmux.session));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    let script = format!("pwd -P > {}; sleep 5", out.display());
+    let cwd = dir.path().to_string_lossy().to_string();
+    fixture.ok(&[
+        "tmux", "spawn", "--cwd", &cwd, "--title", "t", "--", "sh", "-c", &script,
+    ]);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !out.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let seen = std::fs::read_to_string(&out).unwrap_or_default();
+    assert_eq!(
+        seen.trim(),
+        dir.path().canonicalize().unwrap().to_string_lossy()
+    );
+}
+
 // ── waking an agent whose screen is read first ───────────────────────
 
 const WAKE_LINE: &str = "wake me up now please";

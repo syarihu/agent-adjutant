@@ -445,7 +445,7 @@ agent profile.
 ### Running Workers in tmux
 
 When `"terminal": { "preset": "tmux" }` is configured, adjutant acts as a first-class tmux backend:
-- **Detached window spawning**: Workers start in detached windows (`tmux new-window -d -t <session> -c <cwd> -n <title> <command>`) so current focus is not stolen. If the session does not exist, an initial session is created.
+- **Detached window spawning**: Workers start in detached windows (`tmux new-window -d -t <session> -c <cwd> -n <title> <command>`) so current focus is not stolen. The command first `cd`s into its directory itself, because the tmux server's own directory may have been removed. If the session does not exist, an initial session is created, starting from `$HOME`.
 - **Process-to-pane mapping**: adjutant automatically maps worker `{pid}` and `{tty}` to tmux panes by inspecting pane PIDs, TTYs, and process hierarchy. No wrapper scripts required.
 - **Waking**: The built-in wake reads the pane first (`tmux capture-pane`) and types only when the agent (Claude Code for the built-in runner or a `claude` one, agy for an `agy` one) sits at an empty input prompt. Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, the line is checked to have landed at the prompt, and Enter follows after a short delay. A question, permission prompt or menu on screen, text someone is midway through typing, and a screen that is not recognised are left alone: nothing is typed, the reply of `send` / `tell` says why (`wakeNote`), and the person is notified as for any wake that did not happen. A turn in progress is waited for, up to five seconds. With a `wake` template, on iTerm2, or for any other custom runner, the line is typed without looking at the screen. When the session has a row in `adj agent-sessions`, a wake is held while the row is `running` (for at most 10 minutes since its last event) or `waiting`, whatever the terminal, for up to five seconds before giving up; tmux still reads the screen before typing. The line typed has to be all that is in the input box before Enter is pressed.
 - **Focus & Close**: `adj focus` selects the window and pane (`tmux select-window`, `tmux select-pane`). `adj close` disposes of the worker's window (`tmux kill-window`).
@@ -1100,7 +1100,10 @@ request for a worktree the board has removed, it removes nothing.
 parent-task key, as `adjutant hub --hub KEY` does, before anything points at it (the
 `/api/hubs/<id>/start` route needs a hub the board already lists). The answer is `{started,
 description, hub: {id, slug}}`, or `{alreadyRunning, pid, hub}`. The hub appears in `hubs[]`
-once its `adjutant hub` has written its record.
+once its `adjutant hub` has written its record. With `terminal.preset: "tmux"` and no
+`terminal.spawn` of your own, every route that starts a hub (`start`, `reset`, `restart` too)
+watches the new window for about 3 s and answers 400 with what the hub printed if it exits in that
+time.
 
 `POST /api/hubs/<id>/reset` (resident server only) stops the hub if it runs and starts it again as
 `adj hub --tab --new [--hub KEY]` does, so the new hub opens a new conversation. Everything start

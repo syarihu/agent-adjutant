@@ -226,12 +226,15 @@ pub fn find_tmux_pane(
     Ok(find_matching_pane(&panes, pid, tty).cloned())
 }
 
+/// `hold` keeps the new window open when its command exits and prints the new pane's id, for a
+/// caller that wants to read what the command left behind (see `tmux_watch_start`).
 pub fn tmux_spawn_script(
     socket: Option<&str>,
     session: &str,
     cwd: &str,
     title: &str,
     command: &str,
+    hold: bool,
 ) -> String {
     let prefix = tmux_cmd_prefix(socket);
     let session_q = sh_quote(session);
@@ -244,8 +247,23 @@ pub fn tmux_spawn_script(
     let cwd_q = sh_quote(cwd);
     let title_q = sh_quote(title);
     let cmd_q = sh_quote(command);
+    // A session made here starts from $HOME: the server keeps the directory it was started in
+    // for good, and a window cannot be opened anywhere useful from one that has been removed.
+    let ensure = format!(
+        "{prefix} has-session -t {exact_q} 2>/dev/null || ( cd \"${{HOME:-/}}\" 2>/dev/null || cd /; {prefix} new-session -d -s {session_q} -n main -c \"$PWD\" )"
+    );
+    if !hold {
+        return format!(
+            "{ensure}; {prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} {cmd_q}"
+        );
+    }
+    // The window is opened on a placeholder and the real command is put in after
+    // `remain-on-exit` is on: set after the real command had started, a hub that dies in a few
+    // milliseconds (#182) would be gone before the option landed and leave nothing to read. By
+    // pane id because `\; set-option` in the same call lands on the session's current pane, not
+    // the new one. A failure of either step is the caller's, with no placeholder left behind.
     format!(
-        "{prefix} has-session -t {exact_q} 2>/dev/null || {prefix} new-session -d -s {session_q} -n main; {prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} {cmd_q}"
+        "{ensure}; P=$({prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} -P -F '#{{pane_id}}' 'sleep 60') || exit 1; {prefix} set-option -p -t \"$P\" remain-on-exit on 2>/dev/null; {prefix} respawn-pane -k -t \"$P\" -c {cwd_q} {cmd_q} || {{ {prefix} kill-pane -t \"$P\"; exit 1; }}; echo \"$P\""
     )
 }
 
@@ -311,4 +329,103 @@ pub fn tmux_set_title_script(socket: Option<&str>, title: &str) -> String {
     let prefix = tmux_cmd_prefix(socket);
     let title_q = sh_quote(title);
     format!("{prefix} rename-window {title_q}")
+}
+
+// ── watching a window that was just opened ───────────────────────────
+
+/// What became of a pane opened by `tmux_spawn_script` with `hold`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartWatch {
+    /// Still running when the watch ended.
+    Alive,
+    /// The command ended; what it printed last, so the caller can say why.
+    Exited {
+        status: Option<i32>,
+        /// What it printed last; `None` when the screen could not be read, which is not the same
+        /// as having printed nothing.
+        screen: Option<String>,
+    },
+    /// The pane is gone, closed before it could be read.
+    Gone,
+}
+
+/// How long a freshly started command is watched: a hub that cannot start dies within a
+/// moment, and a window that is still up after this long is taken to be running.
+const WATCH_POLLS: u32 = 12;
+const WATCH_EVERY: Duration = Duration::from_millis(250);
+/// How much of a dead pane's screen is reported.
+const WATCH_SCREEN_LINES: usize = 10;
+
+pub fn tmux_watch_start(socket: Option<&str>, pane: &str) -> Result<StartWatch, String> {
+    tmux_watch_start_with(
+        run_shell,
+        std::thread::sleep,
+        socket,
+        pane,
+        WATCH_POLLS,
+        WATCH_EVERY,
+    )
+}
+
+/// The same, with the runner and the pause handed in so a test need not wait.
+pub fn tmux_watch_start_with(
+    run: impl Fn(&str) -> Result<String, String>,
+    pause: impl Fn(Duration),
+    socket: Option<&str>,
+    pane: &str,
+    polls: u32,
+    every: Duration,
+) -> Result<StartWatch, String> {
+    let prefix = tmux_cmd_prefix(socket);
+    let pane_q = sh_quote(pane);
+    let ask = format!(
+        "{prefix} display-message -p -t {pane_q} '#{{pane_id}}\t#{{pane_dead}}\t#{{pane_dead_status}}'"
+    );
+    let unhold = format!("{prefix} set-option -p -t {pane_q} -u remain-on-exit");
+    for nth in 0..polls {
+        if nth > 0 {
+            pause(every);
+        }
+        let answer = match run(&ask) {
+            Ok(answer) => answer,
+            Err(e) => {
+                let lower = e.to_ascii_lowercase();
+                if lower.contains("can't find pane") || lower.contains("no such pane") {
+                    return Ok(StartWatch::Gone);
+                }
+                // Not read as the pane being fine: a tmux that cannot be asked is not an answer.
+                // The window is let go of as it would be if it were running, whatever happens next.
+                let _ = run(&unhold);
+                return Err(e);
+            }
+        };
+        let mut fields = answer.trim_end().split('\t');
+        // tmux answers an empty line, status 0, for some panes that are gone.
+        if fields.next() != Some(pane) {
+            return Ok(StartWatch::Gone);
+        }
+        if fields.next() == Some("1") {
+            let status = fields.next().and_then(|s| s.trim().parse().ok());
+            let screen = run(&format!("{prefix} capture-pane -p -J -t {pane_q} -S -40"))
+                .map(|out| last_lines(&out))
+                .ok();
+            // The window was kept for this look and has nothing more to show.
+            let _ = run(&format!("{prefix} kill-pane -t {pane_q}"));
+            return Ok(StartWatch::Exited { status, screen });
+        }
+    }
+    // Still running: give back the window's normal way of closing with its command.
+    let _ = run(&format!(
+        "{prefix} set-option -p -t {pane_q} -u remain-on-exit"
+    ));
+    Ok(StartWatch::Alive)
+}
+
+fn last_lines(screen: &str) -> String {
+    let lines: Vec<&str> = screen
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty() && !l.starts_with("Pane is dead"))
+        .collect();
+    lines[lines.len().saturating_sub(WATCH_SCREEN_LINES)..].join("\n")
 }
