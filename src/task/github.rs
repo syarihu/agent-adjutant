@@ -22,8 +22,38 @@ pub fn issue_ref(url: &str) -> Option<String> {
     Some(format!("{owner}/{repo}#{number}"))
 }
 
+/// The name the board joins a task to its parent by: `owner/repo#N` with the owner and
+/// repository in lower case (GitHub compares them so) for an issue URL on github.com, whatever
+/// follows the number; any other value is its trimmed text, which is all that can be compared.
+pub fn parent_key(parent: &str) -> String {
+    let parent = parent.trim();
+    match issue_parts(parent) {
+        Some((owner, repo, number)) if is_github_url(parent) => {
+            format!(
+                "{}/{}#{number}",
+                owner.to_ascii_lowercase(),
+                repo.to_ascii_lowercase()
+            )
+        }
+        _ => parent.to_string(),
+    }
+}
+
+/// Whether `url` is on github.com, as far as the text of it says.
+fn is_github_url(url: &str) -> bool {
+    url.strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .is_some_and(|host| host.eq_ignore_ascii_case("github.com"))
+}
+
+/// The number of an issue URL `fetchable_issue` accepts.
+pub fn issue_number(url: &str) -> Option<u64> {
+    issue_parts(url.trim())?.2.parse().ok()
+}
+
 /// The owner, repository and number of an issue URL `fetchable_issue` accepts.
-fn issue_parts(url: &str) -> Option<(&str, &str, &str)> {
+pub(super) fn issue_parts(url: &str) -> Option<(&str, &str, &str)> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
@@ -110,7 +140,7 @@ fn is_number(text: &str) -> Option<u64> {
         .flatten()
 }
 
-fn pr_ref_of(host: &str, owner: &str, repo: &str, number: &str) -> Option<PrRef> {
+pub(super) fn pr_ref_of(host: &str, owner: &str, repo: &str, number: &str) -> Option<PrRef> {
     let host_ok = !host.is_empty()
         && !host.starts_with('-')
         && host
@@ -221,7 +251,7 @@ pub(super) fn graphql_query(n: usize) -> String {
         })
         .collect();
     format!(
-        "query({}){{{}}} fragment F on PullRequest {{ state isDraft title reviewDecision \
+        "query({}){{{}}} fragment F on PullRequest {{ state isDraft title headRefName reviewDecision \
          reviewRequests{{totalCount}} latestOpinionatedReviews(first:20){{nodes{{state}}}} \
          commits(last:1){{nodes{{commit{{statusCheckRollup{{state \
          contexts(first:1){{checkRunCountsByState{{state count}} \
@@ -319,7 +349,7 @@ fn read_chunk(host: &str, refs: &[&PrRef], deadline: Instant) -> (Vec<Answer>, O
 /// names no alias. Those pass, and the round counts as a failed read. A typed error that names
 /// an alias (`NOT_FOUND`, `FORBIDDEN`, `INSUFFICIENT_SCOPES`, ...) is that card's own business:
 /// it will not go away by asking again, so it must not hold up the others.
-fn unread_error(answer: &Value) -> Option<String> {
+pub(super) fn unread_error(answer: &Value) -> Option<String> {
     answer
         .get("errors")?
         .as_array()?
@@ -342,7 +372,7 @@ fn unread_error(answer: &Value) -> Option<String> {
 }
 
 /// The message of the first error in a GraphQL answer.
-fn first_error(stdout: &str) -> Option<String> {
+pub(super) fn first_error(stdout: &str) -> Option<String> {
     serde_json::from_str::<Value>(stdout)
         .ok()?
         .pointer("/errors/0/message")?
@@ -459,6 +489,7 @@ fn parse_pr(pr: &Value) -> Answer {
             title,
             review: review.to_string(),
             ci,
+            head: word(pr, "headRefName").filter(|h| !h.is_empty()),
         }),
     )
 }

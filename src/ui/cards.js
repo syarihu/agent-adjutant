@@ -510,7 +510,7 @@ function sessionCard(w) {
   </div>`;
 
   el.innerHTML = h;
-  // Without a terminal the Sessions view is not available and would bounce back.
+  // Without a terminal there is no session to open.
   const opens = !!s && boardTerminalReady(s);
   // 「すべて」 carries no sessions: the board's own page does, with the buttons.
   const lands = !s && !!w._slug;

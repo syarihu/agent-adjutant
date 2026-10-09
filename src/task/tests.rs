@@ -38,6 +38,8 @@ impl Task {
             issue_snapshot: None,
             title_pending: false,
             pr_status: None,
+            pr_turn_at: None,
+            parked: None,
             created_at: stamp.to_string(),
             updated_at: stamp.to_string(),
             extra: serde_json::Map::new(),
@@ -732,6 +734,7 @@ fn pr(state: &str, review: &str, fail: u32, pending: u32) -> PrStatus {
             fail,
             pending,
         },
+        head: None,
     }
 }
 
@@ -1043,6 +1046,98 @@ fn a_text_field_of_a_patch_is_left_alone_absent_cleared_by_null_or_empty_and_set
     for bad in [json!(42), json!(true), json!(["a"]), json!({"a": 1})] {
         assert!(pr(json!({ "pr": bad })).is_err(), "{bad} was taken");
     }
+}
+
+#[test]
+fn the_parent_of_a_patch_is_set_by_a_url_or_key_and_cleared_by_null_or_empty() {
+    let parent = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.parent);
+    assert_eq!(parent(json!({})).unwrap(), None);
+    assert_eq!(parent(json!({ "parent": null })).unwrap(), Some(None));
+    assert_eq!(parent(json!({ "parent": "" })).unwrap(), Some(None));
+    assert_eq!(
+        parent(json!({ "parent": "https://github.com/acme/widget/issues/549" })).unwrap(),
+        Some(Some(
+            "https://github.com/acme/widget/issues/549".to_string()
+        ))
+    );
+    assert_eq!(
+        parent(json!({ "parent": "ABC-123" })).unwrap(),
+        Some(Some("ABC-123".to_string()))
+    );
+    assert_eq!(
+        parent(json!({ "parent": 549 })).unwrap_err(),
+        "parent has to be a string or null, not 549"
+    );
+}
+
+#[test]
+fn a_parent_new_task_would_refuse_is_refused_by_a_patch_before_any_write() {
+    for bad in [
+        "ABC-123 && id",
+        "not a url",
+        "https://x.test/a'b",
+        "javascript:1",
+    ] {
+        assert!(
+            check_parent(bad).is_err(),
+            "{bad} passed check_parent, which this test assumes it does not"
+        );
+        let err = TaskPatch::from_json(&json!({ "parent": bad })).unwrap_err();
+        assert!(err.contains(bad), "{err}");
+    }
+    // The same check guards a patch built by hand, which is what the command line does.
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let patch = TaskPatch {
+        parent: Some(Some("a; b".to_string())),
+        status: Some(Status::Done),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &task.id, &patch, false).is_err());
+    let after = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(after, task, "a refused update wrote something");
+}
+
+#[test]
+fn an_update_sets_and_clears_the_parent_and_keeps_what_it_does_not_know() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    let mut raw = serde_json::to_value(&task).unwrap();
+    raw["futureField"] = json!({"n": 1});
+    std::fs::create_dir_all(dir(&ctx.state, &ctx.repo.slug)).unwrap();
+    std::fs::write(record_path(&ctx, &task.id), raw.to_string()).unwrap();
+
+    let url = "https://github.com/acme/widget/issues/549".to_string();
+    let set = TaskPatch {
+        parent: Some(Some(url.clone())),
+        ..TaskPatch::default()
+    };
+    let (updated, _) = update(&ctx, &task.id, &set, false).unwrap();
+    assert_eq!(updated.parent.as_deref(), Some(url.as_str()));
+    assert_eq!(updated.extra["futureField"], json!({"n": 1}));
+    let stored = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(stored.parent.as_deref(), Some(url.as_str()));
+
+    // A patch that does not name it leaves it.
+    let other = TaskPatch {
+        note: Some(Some("n".to_string())),
+        ..TaskPatch::default()
+    };
+    assert_eq!(
+        update(&ctx, &task.id, &other, false).unwrap().0.parent,
+        Some(url)
+    );
+
+    let clear = TaskPatch {
+        parent: Some(None),
+        ..TaskPatch::default()
+    };
+    let (cleared, _) = update(&ctx, &task.id, &clear, false).unwrap();
+    assert_eq!(cleared.parent, None);
+    assert_eq!(cleared.extra["futureField"], json!({"n": 1}));
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("\"parent\""), "{text}");
 }
 
 #[test]
@@ -1379,4 +1474,324 @@ fn edit_returns_a_failed_save_beside_the_value() {
     let error = edited.saved.unwrap_err();
     assert!(error.starts_with("cannot write "), "{error}");
     assert!(error.contains(&task.id), "{error}");
+}
+
+fn open_pr_task(ctx: &crate::registry::Context) -> Task {
+    let mut task = sample();
+    task.pr = Some("https://github.com/acme/widget/pull/7".to_string());
+    task.status = Status::Pr;
+    save(ctx, &task).unwrap();
+    task
+}
+
+fn refreshed(ctx: &crate::registry::Context, id: &str, status: PrStatus) -> Task {
+    let task = get(&ctx.state, &ctx.repo.slug, id).unwrap();
+    let state = if status.state == "merged" {
+        PrState::Merged
+    } else {
+        PrState::Open
+    };
+    let mut checked = apply(ctx, vec![task], vec![(state, Some(status))]);
+    checked.remove(0).task
+}
+
+#[test]
+fn a_refresh_stamps_the_time_a_prs_turn_changed_and_only_then() {
+    let (_sandbox, ctx) = hub();
+    let id = open_pr_task(&ctx).id;
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &id).unwrap().pr_turn_at,
+        None
+    );
+
+    // The first read is a turn the record had none of.
+    let first = refreshed(&ctx, &id, pr("open", "none", 0, 1));
+    let at = first.pr_turn_at.clone().expect("the first turn is stamped");
+
+    // Same turn (checks), different facts: nothing is stamped.
+    let mut quiet = refreshed(&ctx, &id, pr("open", "none", 0, 2));
+    assert_eq!(quiet.pr_turn_at.as_deref(), Some(at.as_str()));
+    assert_eq!(quiet.pr_status.as_ref().unwrap().ci.pending, 2);
+
+    // A different turn moves the stamp, whatever it is stamped with.
+    quiet.pr_turn_at = Some("20200101T000000Z".to_string());
+    store::save(&ctx, &quiet).unwrap();
+    let failed = refreshed(&ctx, &id, pr("open", "none", 1, 0));
+    assert_ne!(failed.pr_turn_at.as_deref(), Some("20200101T000000Z"));
+    assert!(failed.pr_turn_at.is_some());
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &id).unwrap().pr_turn_at,
+        failed.pr_turn_at
+    );
+}
+
+#[test]
+fn a_record_whose_turn_was_read_before_the_stamp_existed_gets_none_until_the_turn_changes() {
+    let (_sandbox, ctx) = hub();
+    let mut task = open_pr_task(&ctx);
+    task.pr_status = Some(pr("open", "none", 1, 0));
+    save(&ctx, &task).unwrap();
+    // The same turn again: the summary may differ, the turn does not.
+    let same = refreshed(&ctx, &task.id, pr("open", "none", 2, 0));
+    assert_eq!(same.pr_turn_at, None);
+    let moved = refreshed(&ctx, &task.id, pr("open", "changes", 0, 0));
+    assert!(moved.pr_turn_at.is_some());
+}
+
+#[test]
+fn a_merge_stamps_its_turn_and_another_pr_clears_the_stamp_with_the_summary() {
+    let (_sandbox, ctx) = hub();
+    let task = open_pr_task(&ctx);
+    refreshed(&ctx, &task.id, pr("open", "approved", 0, 0));
+    let merged = refreshed(&ctx, &task.id, pr("merged", "approved", 0, 0));
+    assert_eq!(merged.status, Status::Done);
+    assert!(merged.pr_turn_at.is_some());
+
+    let other = open_pr_task(&ctx);
+    refreshed(&ctx, &other.id, pr("open", "none", 1, 0));
+    let patch = TaskPatch {
+        pr: Some(Some("https://github.com/acme/widget/pull/8".to_string())),
+        ..TaskPatch::default()
+    };
+    let (updated, _) = update(&ctx, &other.id, &patch, false).unwrap();
+    assert_eq!((updated.pr_status, updated.pr_turn_at), (None, None));
+}
+
+fn park_patch(reason: &str, text: Option<&str>) -> TaskPatch {
+    TaskPatch {
+        parked: Some(Some(ParkRequest {
+            reason: reason.to_string(),
+            text: text.map(str::to_string),
+        })),
+        ..TaskPatch::default()
+    }
+}
+
+fn unpark_patch() -> TaskPatch {
+    TaskPatch {
+        parked: Some(None),
+        ..TaskPatch::default()
+    }
+}
+
+#[test]
+fn a_park_in_a_patch_is_set_by_an_object_cleared_by_null_and_left_alone_when_absent() {
+    let parked = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.parked);
+    assert_eq!(parked(json!({})).unwrap(), None);
+    assert_eq!(parked(json!({ "parked": null })).unwrap(), Some(None));
+    // The client's `since` is not read; the text is trimmed and blank is none.
+    assert_eq!(
+        parked(json!({ "parked": { "reason": " pdm ", "text": " 資料待ち ", "since": "20200101T000000Z" } }))
+            .unwrap(),
+        Some(Some(ParkRequest {
+            reason: "pdm".to_string(),
+            text: Some("資料待ち".to_string()),
+        }))
+    );
+    assert_eq!(
+        parked(json!({ "parked": { "reason": "review", "text": "  " } })).unwrap(),
+        Some(Some(ParkRequest {
+            reason: "review".to_string(),
+            text: None,
+        }))
+    );
+}
+
+#[test]
+fn a_park_that_cannot_be_written_is_refused_before_any_record_is_touched() {
+    let parked = |input: serde_json::Value| TaskPatch::from_json(&input).map(|p| p.parked);
+    for bad in [
+        json!({ "parked": {} }),
+        json!({ "parked": { "reason": "" } }),
+        json!({ "parked": { "reason": "nope" } }),
+        json!({ "parked": { "reason": "other" } }),
+        json!({ "parked": { "reason": "other", "text": " " } }),
+        json!({ "parked": "pdm" }),
+        json!({ "parked": 1 }),
+        json!({ "parked": ["pdm"] }),
+    ] {
+        assert!(parked(bad.clone()).is_err(), "{bad} was taken");
+    }
+    assert!(
+        parked(json!({ "parked": { "reason": "nope" } }))
+            .unwrap_err()
+            .contains("pdm, design, review, merge-timing, other")
+    );
+    assert!(parked(json!({ "parked": { "reason": "other", "text": "法務" } })).is_ok());
+
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let before = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(update(&ctx, &task.id, &park_patch("other", None), false).is_err());
+    assert!(update(&ctx, &task.id, &park_patch("nope", None), false).is_err());
+    assert_eq!(
+        std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn parking_stamps_since_once_keeps_it_for_the_same_reason_and_text_and_unparking_removes_the_key() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+
+    let (first, _) = update(&ctx, &task.id, &park_patch("pdm", Some("資料待ち")), false).unwrap();
+    let park = first.parked.clone().expect("parked");
+    assert_eq!(
+        (park.reason.as_str(), park.text.as_deref()),
+        ("pdm", Some("資料待ち"))
+    );
+    assert!(stamp_ok(&park.since), "{}", park.since);
+    // A direct caller's untrimmed words are stored trimmed, and blank text is none.
+    let (trimmed, _) = update(&ctx, &task.id, &park_patch(" pdm ", Some("  ")), false).unwrap();
+    let t = trimmed.parked.unwrap();
+    assert_eq!((t.reason.as_str(), t.text), ("pdm", None));
+    update(&ctx, &task.id, &park_patch("pdm", Some("資料待ち")), false).unwrap();
+
+    // A retry of the same park keeps when it began, even if a second has passed.
+    let mut aged = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    aged.parked.as_mut().unwrap().since = "20200101T000000Z".to_string();
+    save(&ctx, &aged).unwrap();
+    let (same, _) = update(&ctx, &task.id, &park_patch("pdm", Some("資料待ち")), false).unwrap();
+    assert_eq!(same.parked.unwrap().since, "20200101T000000Z");
+    // Another reason or text is a new park.
+    let (other, _) = update(&ctx, &task.id, &park_patch("design", None), false).unwrap();
+    assert_ne!(other.parked.as_ref().unwrap().since, "20200101T000000Z");
+    assert_eq!(other.parked.unwrap().text, None);
+
+    let (gone, _) = update(&ctx, &task.id, &unpark_patch(), false).unwrap();
+    assert_eq!(gone.parked, None);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("parked"), "{text}");
+    // A patch that says nothing about it leaves a park alone.
+    update(&ctx, &task.id, &park_patch("review", None), false).unwrap();
+    let (kept, _) = update(
+        &ctx,
+        &task.id,
+        &TaskPatch {
+            note: Some(Some("n".to_string())),
+            ..TaskPatch::default()
+        },
+        false,
+    )
+    .unwrap();
+    assert_eq!(kept.parked.unwrap().reason, "review");
+}
+
+/// `YYYYMMDDTHHMMSSZ`.
+fn stamp_ok(s: &str) -> bool {
+    s.len() == 16 && s.ends_with('Z') && s.as_bytes()[8] == b'T'
+}
+
+#[test]
+fn a_key_this_binary_does_not_know_in_a_park_or_beside_it_survives_a_park_and_an_unpark() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    let mut raw = serde_json::to_value(&task).unwrap();
+    raw["futureField"] = json!(1);
+    raw["parked"] =
+        json!({ "reason": "pdm", "since": "20260101T000000Z", "futureKey": { "n": 2 } });
+    std::fs::create_dir_all(dir(&ctx.state, &ctx.repo.slug)).unwrap();
+    std::fs::write(record_path(&ctx, &task.id), raw.to_string()).unwrap();
+
+    // A save that keeps the park keeps what is inside it.
+    update(
+        &ctx,
+        &task.id,
+        &TaskPatch {
+            note: Some(Some("n".to_string())),
+            ..TaskPatch::default()
+        },
+        false,
+    )
+    .unwrap();
+    let back: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap())
+            .unwrap();
+    assert_eq!(back["parked"]["futureKey"], json!({ "n": 2 }));
+    assert_eq!(back["futureField"], json!(1));
+
+    update(&ctx, &task.id, &unpark_patch(), false).unwrap();
+    let back: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap())
+            .unwrap();
+    assert!(back.get("parked").is_none(), "{back}");
+    assert_eq!(back["futureField"], json!(1));
+}
+
+#[test]
+fn a_finished_task_is_never_parked_and_writing_done_or_cancelled_clears_the_park() {
+    let (_sandbox, ctx) = hub();
+    for finished in [Status::Done, Status::Cancelled] {
+        let mut task = sample();
+        task.id = format!("{}-{}", task.id, finished.as_str());
+        save(&ctx, &task).unwrap();
+        update(&ctx, &task.id, &park_patch("pdm", None), false).unwrap();
+        let (done, _) = update(
+            &ctx,
+            &task.id,
+            &TaskPatch {
+                status: Some(finished),
+                ..TaskPatch::default()
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(done.parked, None);
+        assert!(
+            !std::fs::read_to_string(record_path(&ctx, &task.id))
+                .unwrap()
+                .contains("parked")
+        );
+        let refused = update(&ctx, &task.id, &park_patch("pdm", None), false).unwrap_err();
+        assert!(
+            refused.contains("finished task cannot be parked"),
+            "{refused}"
+        );
+        // Parking and finishing in one patch is refused too.
+        let mut both = park_patch("pdm", None);
+        both.status = Some(finished);
+        assert!(update(&ctx, &task.id, &both, false).is_err());
+    }
+}
+
+#[test]
+fn a_blank_park_on_disk_and_a_park_on_a_finished_task_read_as_none() {
+    let mut task = sample();
+    assert!(task.park().is_none());
+    task.parked = Some(Park {
+        reason: "  ".to_string(),
+        text: None,
+        since: String::new(),
+        extra: serde_json::Map::new(),
+    });
+    assert!(task.park().is_none());
+    task.parked.as_mut().unwrap().reason = "pdm".to_string();
+    assert_eq!(task.park().map(|p| p.reason.as_str()), Some("pdm"));
+    task.status = Status::Done;
+    assert!(task.park().is_none());
+
+    // `null` on disk is none, and a park with no `since` still loads.
+    let raw = |parked: serde_json::Value| {
+        let mut v = serde_json::to_value(sample()).unwrap();
+        v["parked"] = parked;
+        serde_json::from_value::<Task>(v).unwrap()
+    };
+    assert!(raw(json!(null)).park().is_none());
+    assert!(raw(json!({ "reason": "" })).park().is_none());
+    assert_eq!(raw(json!({ "reason": "pdm" })).park().unwrap().since, "");
+}
+
+#[test]
+fn a_refresh_that_moves_a_parked_task_to_done_clears_the_park() {
+    let (_sandbox, ctx) = hub();
+    let task = open_pr_task(&ctx);
+    update(&ctx, &task.id, &park_patch("merge-timing", None), false).unwrap();
+    let merged = refreshed(&ctx, &task.id, pr("merged", "approved", 0, 0));
+    assert_eq!(merged.status, Status::Done);
+    assert_eq!(merged.parked, None);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("parked"), "{text}");
 }

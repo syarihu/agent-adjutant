@@ -32,7 +32,11 @@ pub struct AgentEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HookEvent {
     SessionStart,
-    UserPromptSubmit,
+    /// A prompt was submitted. `typed` is whether a person wrote it: the text adjutant types
+    /// into a terminal to wake a session arrives as a prompt too, and is not the person.
+    UserPromptSubmit {
+        typed: bool,
+    },
     PostToolUse,
     PostToolUseFailure,
     PermissionRequest,
@@ -40,8 +44,13 @@ pub enum HookEvent {
         kind: Option<String>,
         message: Option<String>,
     },
-    Stop,
-    StopFailure,
+    /// The end of a turn, with what the agent said last when the payload carried it.
+    Stop {
+        message: Option<String>,
+    },
+    StopFailure {
+        message: Option<String>,
+    },
     SessionEnd,
     SubagentStart,
     SubagentStop,
@@ -128,7 +137,7 @@ pub fn record_agent_event_with(
         }
         drop(guard);
         return match event.hook {
-            HookEvent::SessionStart | HookEvent::Stop => sweep(root, table, event.at, id),
+            HookEvent::SessionStart | HookEvent::Stop { .. } => sweep(root, table, event.at, id),
             _ => Ok(()),
         };
     }

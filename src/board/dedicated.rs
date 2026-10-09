@@ -70,6 +70,7 @@ impl Board {
                 jules: Arc::default(),
                 hub_titles: Arc::default(),
                 last_lines: Arc::default(),
+                diffs: Arc::default(),
                 tmux: None,
                 terminals: Arc::default(),
                 pr_poll: None,

@@ -11,7 +11,9 @@ const ISSUE: &str = "https://github.com/acme/widget/issues";
 ///
 /// 1 answers with the title in `gh-title` (so a test can change what it says between calls),
 /// 2 with a body of 40 KB, and anything else fails the way `gh` does for an issue it cannot
-/// find. Once `gh-fail` exists, everything does.
+/// find. Once `gh-fail` exists, everything does. The resident server's poll asks GitHub for the
+/// parent of each task's issue through `gh api graphql`: that is answered (no parent) and written
+/// to `gh-graphql`, not to the log of the issues asked about.
 fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
     let asked = fixture.repo.join("gh-asked");
@@ -23,6 +25,11 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
         "gh",
         &format!(
             "#!/bin/sh\n\
+             if [ \"$1 $2\" = \"api graphql\" ]; then\n\
+             echo graphql >> {graphql}\n\
+             echo '{{\"data\":{{\"i0\":{{\"issue\":{{\"parent\":null}}}}}}}}'\n\
+             exit 0\n\
+             fi\n\
              for a; do u=$a; done\n\
              echo \"$u\" >> {asked}\n\
              [ -e {fail} ] && {{ echo 'Could not resolve to an issue' >&2; exit 1; }}\n\
@@ -34,6 +41,7 @@ fn stub_gh(fixture: &Fixture) -> (String, PathBuf) {
             asked = shell_quoted(&asked.to_string_lossy()),
             title = shell_quoted(&title.to_string_lossy()),
             fail = shell_quoted(&fail.to_string_lossy()),
+            graphql = shell_quoted(&fixture.repo.join("gh-graphql").to_string_lossy()),
         ),
     );
     let path = path_with(&stubs);

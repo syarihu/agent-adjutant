@@ -192,6 +192,14 @@ fn board() -> (Fixture, Resident) {
         if let Some(worktree) = worktree {
             task["worktree"] = json!(worktree);
         }
+        // Two children of one parent, the second cut from the first's branch. Neither names an
+        // issue, so no query goes to GitHub for them: the record's `parent` is all there is.
+        if id != "WID-3" {
+            task["parent"] = json!("WID-957");
+        }
+        if id == "WID-2" {
+            task["base"] = json!("origin/wid-1");
+        }
         write(
             &state.join("tasks").join(SLUG).join(format!("{id}.json")),
             task,
@@ -202,7 +210,7 @@ fn board() -> (Fixture, Resident) {
     write(
         &state.join("tasks").join(FEATURE_SLUG).join("WID-9.json"),
         json!({"id": "WID-9", "kind": "start", "title": "Task WID-9", "doneWhen": "pr",
-               "autoStart": true, "order": 0, "status": "dispatched",
+               "parent": "https://github.com/acme/widget/issues/957", "autoStart": true, "order": 0, "status": "dispatched",
                "createdAt": "20260922T035200Z", "updatedAt": "20260922T035200Z"}),
     );
 
@@ -265,6 +273,43 @@ fn read(fixture: &Fixture, resident: &Resident, path: &str, query: &str) -> Valu
     assert_eq!(status, 200, "{body}");
     let mut value: Value = serde_json::from_str(&body).unwrap();
     normalize(&mut value, &run(fixture, resident), true);
+    // What the server reads in the background after the poll asked (a worktree's diff, the PR
+    // of a branch) is there or not by timing, so it is left out of what is pinned.
+    let unsettled = |session: &mut Value| {
+        if let Some(session) = session.as_object_mut() {
+            for key in [
+                "uncommitted",
+                "uncommittedError",
+                "branchPr",
+                "branchPrError",
+            ] {
+                session.remove(key);
+            }
+        }
+    };
+    if let Some(sessions) = value.get_mut("sessions").and_then(Value::as_array_mut) {
+        sessions.iter_mut().for_each(unsettled);
+    }
+    // The work list carries the same sessions, a row each.
+    for repo in value
+        .get_mut("repos")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        for list in ["rows", "hubSessions"] {
+            for row in repo
+                .get_mut(list)
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(session) = row.get_mut("session") {
+                    unsettled(session);
+                }
+            }
+        }
+    }
     value
 }
 
@@ -511,6 +556,8 @@ fn expected_tasks() -> Value {
         "id": "WID-1",
         "kind": "start",
         "order": 0,
+        "parent": "WID-957",
+        "parentIssue": expected_parent_issue(SLUG),
         "prTurn": null,
         "records": [
           {
@@ -536,11 +583,14 @@ fn expected_tasks() -> Value {
       {
         "approvedPlan": null,
         "autoStart": true,
+        "base": "origin/wid-1",
         "createdAt": "20260922T035100Z",
         "doneWhen": "pr",
         "id": "WID-2",
         "kind": "start",
         "order": 1,
+        "parent": "WID-957",
+        "parentIssue": expected_parent_issue(SLUG),
         "prTurn": null,
         "records": [],
         "status": "queued",
@@ -565,6 +615,281 @@ fn expected_tasks() -> Value {
     ])
 }
 
+/// What the three tasks that name issue 957 as their parent show: the record's word, as a key and
+/// as a URL, joined as one parent.
+fn expected_parent_issue(hub: &str) -> Value {
+    json!({
+      "hub": hub,
+      "key": "acme/widget#957",
+      "number": 957,
+      "recordKey": "acme/widget#957",
+      "source": "record",
+      "url": "https://github.com/acme/widget/issues/957"
+    })
+}
+
+/// The parent those tasks share, with its children from both hubs: the second cut from the
+/// first's branch, which is the one its worktree is on.
+fn expected_parents() -> Value {
+    json!([
+      {
+        "children": [
+          {
+            "branch": "wid-1",
+            "hub": SLUG,
+            "id": "WID-1",
+            "title": "Task WID-1",
+            "merged": false,
+            "progress": "working"
+          },
+          {
+            "base": "wid-1",
+            "hub": SLUG,
+            "id": "WID-2",
+            "title": "Task WID-2",
+            "merged": false,
+            "on": "WID-1",
+            "onHub": SLUG,
+            "progress": "not-started"
+          },
+          {
+            "hub": FEATURE_SLUG,
+            "id": "WID-9",
+            "title": "Task WID-9",
+            "merged": false,
+            "progress": "working"
+          }
+        ],
+        "hub": FEATURE_SLUG,
+        "key": "acme/widget#957",
+        "merged": 0,
+        "number": 957,
+        "stacked": true,
+        "total": 3,
+        "url": "https://github.com/acme/widget/issues/957"
+      }
+    ])
+}
+
+fn expected_work() -> Value {
+    let mut work = json!({
+      "now": "<now>",
+      "rateLimits": {
+        "accounts": []
+      },
+      "repos": [
+        {
+          "carrier": SLUG,
+          "hubs": expected_hubs(),
+          "nwo": "acme/widget",
+          "parents": expected_parents()
+        }
+      ]
+    });
+    work["repos"][0]["hubSessions"] = expected_work_hub_sessions();
+    work["repos"][0]["rows"] = expected_work_rows();
+    work["repos"][0]["turns"] = expected_work_turns();
+    work
+}
+
+fn expected_work_turns() -> Value {
+    json!([
+      {
+        "board": SLUG,
+        "gates": [
+          {
+            "id": "g-wait",
+            "kind": "question",
+            "openedAt": "20260922T044500Z",
+            "slug": SLUG,
+            "task": "WID-1",
+            "title": "Which way?"
+          }
+        ],
+        "task": {
+          "id": "WID-1",
+          "parent": "acme/widget#957",
+          "status": "dispatched",
+          "title": "Task WID-1",
+          "waitsOnPerson": false
+        }
+      }
+    ])
+}
+
+fn expected_work_hub_sessions() -> Value {
+    json!([
+      {
+        "board": FEATURE_SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "main",
+          "id": "hub-wid-957",
+          "key": "wid-957",
+          "kind": "hub",
+          "pid": GONE,
+          "present": false,
+          "stale": true,
+          "startedAt": "20260922T030000Z",
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "adjutant-acme-widget-wid-957-5283c95d4f4cc314",
+          "worktree": "<tmp>/widget"
+        }
+      }
+    ])
+}
+
+fn expected_work_rows() -> Value {
+    json!([
+      {
+        "board": SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "main",
+          "conversation": "sid-hub",
+          "id": "hub",
+          "kind": "hub",
+          "present": false,
+          "stale": false,
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "adjutant-acme-widget-898449509108182c",
+          "worktree": "<tmp>/widget"
+        }
+      },
+      {
+        "board": FEATURE_SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "scratch",
+          "conversation": "sid-scratch",
+          "hub": "hub-wid-957",
+          "id": "worker-scratch",
+          "kind": "worker",
+          "pid": GONE,
+          "present": false,
+          "stale": true,
+          "startedAt": "20260922T041000Z",
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "scratch",
+          "worktree": "<tmp>/scratch"
+        }
+      },
+      {
+        "board": SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "wid-1",
+          "conversation": "sid-wid-1",
+          "hub": "hub",
+          "id": "worker-wid-1",
+          "kind": "worker",
+          "phase": "review",
+          "phaseAt": 1790051400,
+          "phases": [
+            [
+              "plan",
+              1790049660
+            ],
+            [
+              "implement",
+              1790050200
+            ],
+            [
+              "review",
+              1790051400
+            ]
+          ],
+          "pid": "<pid>",
+          "present": true,
+          "stale": false,
+          "startedAt": "20260922T040000Z",
+          "task": "WID-1",
+          "taskTitle": "Task WID-1",
+          "terminal": {
+            "backend": "tmux",
+            "pane": "%7",
+            "session": "work",
+            "socket": "<tmp>/tmux-none",
+            "window": "@3"
+          },
+          "title": "WID-1 Fix widget",
+          "waiting": {
+            "choices": [
+              {
+                "id": "a",
+                "label": "A"
+              },
+              {
+                "id": "b",
+                "label": "B"
+              }
+            ],
+            "count": 1,
+            "focus": "How the click is handled",
+            "hub": "hub",
+            "id": "g-wait",
+            "kind": "question",
+            "openedAt": "20260922T044500Z",
+            "options": [
+              "answer"
+            ],
+            "slug": SLUG,
+            "title": "Which way?"
+          },
+          "worktree": "<tmp>/wid-1"
+        },
+        "task": {
+          "id": "WID-1",
+          "parent": "acme/widget#957",
+          "status": "dispatched",
+          "title": "Task WID-1",
+          "waitsOnPerson": false
+        }
+      },
+      {
+        "board": SLUG,
+        "session": {
+          "agent": "claude",
+          "branch": "main",
+          "conversation": "sid-main",
+          "hub": "hub",
+          "id": "worker-main",
+          "kind": "worker",
+          "present": false,
+          "stale": false,
+          "task": "WID-2",
+          "taskTitle": "Task WID-2",
+          "terminal": {
+            "backend": "tmux",
+            "session": "adjutant-test",
+            "socket": "board-state-none"
+          },
+          "title": "Main checkout worker",
+          "worktree": "<tmp>/widget"
+        },
+        "task": {
+          "id": "WID-2",
+          "parent": "acme/widget#957",
+          "status": "queued",
+          "title": "Task WID-2",
+          "waitsOnPerson": false
+        }
+      }
+    ])
+}
+
 fn expected_hub_tasks() -> Value {
     json!([
       {
@@ -579,6 +904,8 @@ fn expected_hub_tasks() -> Value {
           "key": FEATURE,
           "slug": FEATURE_SLUG
         },
+        "parent": "https://github.com/acme/widget/issues/957",
+        "parentIssue": expected_parent_issue(FEATURE_SLUG),
         "prTurn": null,
         "records": [],
         "approvedPlan": null,
@@ -696,6 +1023,9 @@ fn expected_state(sessions: Value) -> Value {
         "active": true,
         "error": null
       },
+      "rateLimits": {
+        "accounts": []
+      },
       "repo": "acme/widget",
       "resident": true,
       "sessionOpen": {
@@ -719,6 +1049,7 @@ fn expected_state(sessions: Value) -> Value {
     state["sessions"] = sessions;
     state["tasks"] = expected_tasks();
     state["hubTasks"] = expected_hub_tasks();
+    state["parents"] = expected_parents();
     state["workers"] = expected_workers();
     state["gates"] = expected_gates();
     state["pending"] = expected_pending();
@@ -864,6 +1195,13 @@ fn a_live_tasks_history_is_pinned_whole() {
 }
 
 #[test]
+fn the_work_list_is_pinned_whole() {
+    let (fixture, resident) = board();
+    let work = read(&fixture, &resident, "/api/work", "");
+    assert_same(&work, &expected_work());
+}
+
+#[test]
 fn the_board_list_is_pinned_whole() {
     let (fixture, resident) = board();
     let boards = read(&fixture, &resident, "/api/boards", "");
@@ -883,4 +1221,141 @@ fn server_status_lists_the_boards_as_the_board_list_does() {
     );
     let boards = read(&fixture, &resident, "/api/boards", "");
     assert_same(&status["boards"], &boards);
+}
+
+fn parent_of(fixture: &Fixture, resident: &Resident, id: &str) -> Value {
+    let state = read(fixture, resident, &state_path(), "sessions=0");
+    state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap()["parentIssue"]
+        .clone()
+}
+
+#[test]
+fn a_tasks_parent_is_set_cleared_and_checked_through_the_board() {
+    let (fixture, resident) = board();
+    let url = format!("/b/{SLUG}/api/tasks/WID-3");
+    assert_eq!(parent_of(&fixture, &resident, "WID-3"), Value::Null);
+
+    let (status, body) = resident.post(
+        &url,
+        &json!({"parent": "https://github.com/acme/widget/issues/12"}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let set: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        set["task"]["parent"],
+        "https://github.com/acme/widget/issues/12"
+    );
+    assert_eq!(
+        parent_of(&fixture, &resident, "WID-3")["key"],
+        "acme/widget#12"
+    );
+
+    // A value that cannot be quoted on a command line is refused, and nothing is written.
+    let (status, body) = resident.post(&url, &json!({"parent": "x; rm -rf /"}).to_string());
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        parent_of(&fixture, &resident, "WID-3")["key"],
+        "acme/widget#12"
+    );
+
+    let (status, body) = resident.post(&url, &json!({"parent": ""}).to_string());
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parent_of(&fixture, &resident, "WID-3"), Value::Null);
+    let state = read(&fixture, &resident, &state_path(), "sessions=0");
+    // The parent the other tasks share is still listed, and this one no longer is in it.
+    let listed: Vec<&str> = state["parents"][0]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, ["WID-1", "WID-2", "WID-9"]);
+}
+
+fn task_json(fixture: &Fixture, resident: &Resident, id: &str) -> Value {
+    let state = read(fixture, resident, &state_path(), "sessions=0");
+    state["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+fn parked_turn_of(fixture: &Fixture, resident: &Resident, id: &str) -> Option<Value> {
+    // The resident keeps the work document for 1500 ms.
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    let work = read(fixture, resident, "/api/work", "");
+    work["repos"][0]["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["task"]["id"] == id && t["task"].get("parked").is_some())
+        .cloned()
+}
+
+#[test]
+fn a_task_is_parked_and_unparked_through_the_board_and_a_bad_park_writes_nothing() {
+    let (fixture, resident) = board();
+    let url = format!("/b/{SLUG}/api/tasks/WID-2");
+    assert!(
+        task_json(&fixture, &resident, "WID-2")
+            .get("parked")
+            .is_none()
+    );
+    assert!(parked_turn_of(&fixture, &resident, "WID-2").is_none());
+
+    let (status, body) = resident.post(
+        &url,
+        &json!({"parked": {"reason": "pdm", "text": "資料待ち"}}).to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let parked = task_json(&fixture, &resident, "WID-2")["parked"].clone();
+    assert_eq!(parked["reason"], "pdm");
+    assert_eq!(parked["text"], "資料待ち");
+    assert!(
+        parked["since"].as_str().is_some_and(|s| s.ends_with('Z')),
+        "{parked}"
+    );
+    // The work list carries it, as a turn of its own.
+    let turn = parked_turn_of(&fixture, &resident, "WID-2").expect("a parked task is a turn");
+    assert_eq!(turn["task"]["parked"]["reason"], "pdm");
+
+    // A reason that is not one, and `other` with no text, are refused and the park stays.
+    for bad in [
+        json!({"parked": {"reason": "nope"}}),
+        json!({"parked": {"reason": "other"}}),
+        json!({"parked": "pdm"}),
+    ] {
+        let (status, body) = resident.post(&url, &bad.to_string());
+        assert_eq!(status, 400, "{bad}: {body}");
+    }
+    assert_eq!(task_json(&fixture, &resident, "WID-2")["parked"], parked);
+
+    let (status, body) = resident.post(&url, &json!({"parked": null}).to_string());
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        task_json(&fixture, &resident, "WID-2")
+            .get("parked")
+            .is_none()
+    );
+    assert!(parked_turn_of(&fixture, &resident, "WID-2").is_none());
+
+    // A finished task (WID-3) cannot be parked.
+    let (status, body) = resident.post(
+        &format!("/b/{SLUG}/api/tasks/WID-3"),
+        &json!({"parked": {"reason": "pdm"}}).to_string(),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        task_json(&fixture, &resident, "WID-3")
+            .get("parked")
+            .is_none()
+    );
 }

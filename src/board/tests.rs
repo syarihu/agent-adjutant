@@ -282,6 +282,8 @@ fn a_task(id: &str, status: task::Status) -> task::Task {
         issue_snapshot: None,
         title_pending: false,
         pr_status: None,
+        pr_turn_at: None,
+        parked: None,
         created_at: "20260922T000000Z".to_string(),
         updated_at: "20260922T000000Z".to_string(),
         extra: serde_json::Map::new(),
@@ -361,6 +363,7 @@ fn read_pr(state: &str, review: &str, fail: u32, pending: u32) -> task::Task {
             fail,
             pending,
         },
+        head: None,
     });
     t
 }
@@ -974,6 +977,7 @@ fn reading_the_state_leaves_a_resumable_gate_open() {
         jules: Arc::default(),
         hub_titles: Arc::default(),
         last_lines: Arc::default(),
+        diffs: Arc::default(),
         tmux: None,
         terminals: Arc::default(),
         pr_poll: None,
@@ -1099,6 +1103,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         jules: Arc::default(),
         hub_titles: Arc::default(),
         last_lines: Arc::default(),
+        diffs: Arc::default(),
         tmux: None,
         terminals: Arc::default(),
         pr_poll: None,
@@ -1133,7 +1138,15 @@ fn one_session_is_the_entry_the_whole_list_holds() {
     for session in &listed {
         let id = session["id"].as_str().unwrap();
         let one = board_session(&server, &settings, id).unwrap();
-        assert_eq!(&serde_json::to_value(&one).unwrap(), session, "{id}");
+        // The diff of a worktree is read in the background after the list asked for it, so
+        // the one session may already have it and the list not.
+        let mut one = serde_json::to_value(&one).unwrap();
+        let mut listed_one = session.clone();
+        for value in [&mut one, &mut listed_one] {
+            value.as_object_mut().unwrap().remove("uncommitted");
+            value.as_object_mut().unwrap().remove("uncommittedError");
+        }
+        assert_eq!(one, listed_one, "{id}");
     }
     let waiting = |id: &str| listed.iter().find(|s| s["id"] == id).unwrap()["waiting"].clone();
     assert_eq!(waiting("worker-bar")["id"], "g1", "{listed:?}");
@@ -1218,6 +1231,10 @@ fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Sess
         attached: None,
         waiting: None,
         agent_session: None,
+        uncommitted: None,
+        uncommitted_error: None,
+        branch_pr: None,
+        branch_pr_error: None,
     }
 }
 

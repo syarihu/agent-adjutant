@@ -50,40 +50,40 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         page.contains("boardApi(BASE, path"),
         "the page does not use BASE"
     );
-    // The views are tabs under the board's title; the sidebar no longer lists them.
+    // The two boards are tabs under the board's title; the sidebar no longer lists them.
     for piece in [
         "id=\"view-tabs-row\"",
-        "data-tab=\"sessions\"",
         "1つずつ",
         "id=\"task-panel\"",
         "id=\"btn-hub\"",
         "data-hub-term",
         "hubterm-btn",
-        // The review view is one queue: its list, the frame around the terminal's host, and the
-        // switch for moving on after an answer.
-        "id=\"rv-judge\"",
-        "id=\"rv-term-host\"",
-        "rv-group-head",
+        // Judging a gate with no task card, and the Issue and PR rows at the top of its 判断 and of a
+        // task's 詳細, and the PR chip in a card's header.
+        "function gateJudgeHtml",
         "data-rv-refs",
-        // The Issue and PR rows at the top of 詳細 and 判断, and the PR chip in a card's header.
         "id=\"tp-links\"",
         "gh-row",
         "gh-pr",
         "PR はまだありません",
-        "data-rv-next",
+        // 「処理したら次へ」 is a box in the 新着 header of 「いまの仕事」.
+        "data-wk-advance",
         "処理したら次へ",
     ] {
         assert!(page.contains(piece), "{piece}");
     }
+    // The セッション tab and 要対応 are gone: the tabs run エージェント, 人.
     assert!(!page.contains("id=\"nav-sessions\""));
-    // The tabs run エージェント, 人, セッション.
+    assert!(!page.contains("data-tab=\"sessions\""));
+    assert!(!page.contains("id=\"review\""));
     let tab = |name: &str| page.find(&format!("data-tab=\"{name}\"")).expect(name);
     assert!(
-        tab("agent") < tab("human") && tab("human") < tab("sessions"),
-        "the view tabs are not ordered agent, human, sessions"
+        tab("agent") < tab("human"),
+        "the view tabs are not ordered agent, human"
     );
-    // 要対応 opens the queue, not the first gate's task.
-    assert!(page.contains("id=\"nav-review\" title=\"要対応\" data-action=\"queue\""));
+    // 要対応 is not in the sidebar: the sidebar has 「いまの仕事」 and the boards.
+    assert!(!page.contains("id=\"nav-review\""));
+    assert!(page.contains("id=\"nav-work\""));
     // 着手を促す is the hub panel's, not the title bar's.
     assert!(!page.contains("id=\"btn-nudge\""));
 

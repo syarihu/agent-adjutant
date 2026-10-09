@@ -31,6 +31,7 @@ mod server;
 mod tests;
 mod token;
 mod url;
+mod worktree_diffs;
 
 pub use daemon::*;
 pub use dedicated::*;
@@ -40,3 +41,4 @@ pub use resident::*;
 pub use server::*;
 pub use token::*;
 pub use url::*;
+pub use worktree_diffs::*;

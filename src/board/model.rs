@@ -97,6 +97,32 @@ pub struct Session {
     /// Only for a session that runs; `error` alone when the ledger could not be read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<SessionAgentState>,
+    /// The files and lines the worktree holds that no commit has, as last read in the
+    /// background. Only for a worker, and only once it has been read: a count of none is
+    /// `files: 0`, not a missing key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncommitted: Option<crate::kernel::worktree_state::Uncommitted>,
+    /// Why the last read of `uncommitted` failed; the counts of an earlier read stay beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncommitted_error: Option<String>,
+    /// The pull request of the session's branch, for a session that has no task (a task's own
+    /// is on its card). Only where the resident server polls, and as old as its last round.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_pr: Option<SessionPr>,
+    /// Why the last lookup of `branchPr` failed (GitHub could not be asked, or the repository
+    /// could not be read); the pull request of an earlier lookup stays beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_pr_error: Option<String>,
+}
+
+/// The pull request a branch has, as a session row shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPr {
+    pub number: u64,
+    pub url: String,
+    /// `open`, `draft`, `merged` or `closed`, as a card's PR status says it.
+    pub state: String,
 }
 
 /// What the agent's hooks last said about a session: its row in the agent session ledger, as
@@ -126,18 +152,49 @@ pub struct SessionAgentState {
     /// What the agent asks permission for, first line, cut short.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
-    /// How many sub-agents are running.
+    /// The model the status line last showed, as its display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How much of the context window is in use, a whole number of percent from 0 to 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_percent: Option<u8>,
+    /// What the agent said at the end of its last turn, line breaks kept, cut long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    /// When it said it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<i64>,
+    /// When the person last typed into the session, not counting the wake lines adjutant types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_prompt_at: Option<i64>,
+    /// The sub-agents that are running, oldest first.
     #[serde(default)]
-    pub subagents: usize,
+    pub subagents: Vec<SessionSubagent>,
     /// Set instead of the rest when the ledger could not be read: not the same as no row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
+/// A sub-agent of a session that is running, as the ledger row has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSubagent {
+    pub id: String,
+    /// What the agent calls it (`Explore`, `general-purpose`).
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// When it started, epoch seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    /// The tool it is running, first line, cut short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+}
+
 /// A session that has waited on a permission prompt or a question long enough to be listed, for
-/// as long as it still waits. The page lists it in 要対応, rings its own desktop notification
-/// from it unless `quiet`, once per `(agentSessionId, since)`, and opens `session` when that is
-/// clicked.
+/// as long as it still waits. The page lists it as a 新着 item of that session's row in 「いまの仕事」,
+/// rings its own desktop notification from it unless `quiet`, once per `(agentSessionId, since)`,
+/// and opens `session` there when that is clicked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WaitNotice {
@@ -154,7 +211,7 @@ pub struct WaitNotice {
     /// What it asks, as the ledger has it. Left out when the agent said nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
-    /// Listed for 要対応 but not announced: the person was at its terminal, or it was already
+    /// Listed but not announced: the person was at its terminal, or it was already
     /// waiting when the watch started. The page does not ring a desktop notification for it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quiet: bool,
@@ -327,6 +384,10 @@ mod tests {
             attached: None,
             waiting: None,
             agent_session: None,
+            uncommitted: None,
+            uncommitted_error: None,
+            branch_pr: None,
+            branch_pr_error: None,
         };
         let bare = serde_json::to_value(&session).unwrap();
         for key in [
@@ -336,6 +397,10 @@ mod tests {
             "attached",
             "waiting",
             "agentSession",
+            "uncommitted",
+            "uncommittedError",
+            "branchPr",
+            "branchPrError",
         ] {
             assert!(bare.get(key).is_none(), "{key} should be left out");
         }
@@ -366,8 +431,39 @@ mod tests {
             last_event_at: Some(8),
             activity: None,
             request: Some("Bash: ls".to_string()),
-            subagents: 2,
+            model: Some("Opus 5".to_string()),
+            context_percent: Some(43),
+            last_message: Some("Done.\nAll green.".to_string()),
+            last_message_at: Some(9),
+            last_prompt_at: Some(10),
+            subagents: vec![
+                SessionSubagent {
+                    id: "a1".to_string(),
+                    kind: Some("Explore".to_string()),
+                    started_at: Some(5),
+                    activity: Some("Grep: x".to_string()),
+                },
+                SessionSubagent {
+                    id: "a2".to_string(),
+                    kind: None,
+                    started_at: None,
+                    activity: None,
+                },
+            ],
             error: None,
+        });
+        session.uncommitted = Some(crate::kernel::worktree_state::Uncommitted {
+            files: 2,
+            untracked: 1,
+            insertions: 10,
+            deletions: 3,
+            binary: 1,
+        });
+        session.uncommitted_error = Some("git could not read HEAD".to_string());
+        session.branch_pr = Some(SessionPr {
+            number: 12,
+            url: "https://github.com/o/r/pull/12".to_string(),
+            state: "draft".to_string(),
         });
         let full = serde_json::to_value(&session).unwrap();
         assert_eq!(full["agentSession"]["sessionId"], "agent-1");
@@ -375,7 +471,23 @@ mod tests {
         assert_eq!(full["agentSession"]["updatedAt"], 7);
         assert_eq!(full["agentSession"]["lastEventAt"], 8);
         assert_eq!(full["agentSession"]["request"], "Bash: ls");
-        assert_eq!(full["agentSession"]["subagents"], 2);
+        assert_eq!(full["agentSession"]["model"], "Opus 5");
+        assert_eq!(full["agentSession"]["contextPercent"], 43);
+        assert_eq!(
+            full["agentSession"]["subagents"],
+            serde_json::json!([
+                {"id": "a1", "type": "Explore", "startedAt": 5, "activity": "Grep: x"},
+                {"id": "a2"}
+            ])
+        );
+        assert_eq!(full["uncommitted"]["files"], 2);
+        assert_eq!(full["uncommitted"]["binary"], 1);
+        assert_eq!(full["uncommittedError"], "git could not read HEAD");
+        assert_eq!(full["branchPr"]["number"], 12);
+        assert_eq!(full["branchPr"]["state"], "draft");
+        session.branch_pr_error = Some("API rate limit exceeded".to_string());
+        let errored = serde_json::to_value(&session).unwrap();
+        assert_eq!(errored["branchPrError"], "API rate limit exceeded");
         assert!(full["agentSession"].get("pending").is_none());
         assert!(full["agentSession"].get("error").is_none());
         assert_eq!(

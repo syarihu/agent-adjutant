@@ -1,6 +1,6 @@
-/* Starting hubs and sessions from the セッション view, and giving a session with no task a task:
-   the + menu, the dialogs it and the panel's 詳細 open, and the rows the tree shows for a
-   session that has been asked for and not started yet. */
+/* Starting hubs and sessions from a hub's panel, and giving a session with no task a task: the dialogs they
+   and the panel of a session open, and the card a hub's panel shows for a session that has been asked for and
+   not started yet. */
 
 const repoHubId = () => (state.hubs || []).find(h => !h.parent)?.id || 'hub';
 const NO_START = 'ボードからの起動は terminal.preset が "tmux" のときだけ使えます';
@@ -71,11 +71,11 @@ function showDlgError(id, text) {
 const dialogOpening = { hubkey: 0, start: 0, link: 0 };
 const HUB_STARTING_MS = 15000;
 
-/* ── The + menu ── */
+/* ── Hubs being started ── */
 let repoHubStartedAt = null;
 
 /* Whether `h` was started a moment ago and has not written its record yet: it is coming up,
-   not stopped. Read from the same markers a start from the + menu sets, and true for a hub
+   not stopped. Read from the same markers a start from the board sets, and true for a hub
    whose reset is in flight (`hubResetting`: ids). */
 const hubResetting = new Set();
 /* A restart is over when the page has seen a process other than the one it stopped, or when
@@ -114,74 +114,11 @@ function clearHubStarting(h) {
   for (const p of sessView.starts) if (p.hubId === h.id) p.hubStartedAt = null;
 }
 
-function closeAddMenu() {
-  sessEl('sess-add-menu').hidden = true;
-  sessEl('sess-add').setAttribute('aria-expanded', 'false');
-}
-
-function renderAddMenu() {
-  const repo = (state.hubs || []).find(h => !h.parent);
-  const canStart = !!state.hubStart?.available;
-  // A second press right after the first would open a second window.
-  const starting = !!repo && hubStartingNow(repo) || repoHubStartedAt != null && Date.now() - repoHubStartedAt < HUB_STARTING_MS;
-  const items = [
-    {
-      act: 'add-repo-hub', icon: 'play_arrow', label: 'リポジトリの hub を起動',
-      disabled: !repo || !!repo.state?.present || !canStart || starting,
-      title: repo?.state?.present ? 'リポジトリの hub はすでに動いています' : !canStart ? NO_START
-        : starting ? 'hub を起動しています' : 'tmux の新しいウィンドウで adj hub を実行します',
-    },
-    {
-      act: 'add-parent-hub', icon: 'account_tree', label: '親タスクの hub を起動…',
-      disabled: !canStart || !state.resident,
-      title: !canStart ? NO_START : !state.resident ? 'resident サーバーのボードからだけ使えます' : '',
-    },
-    { act: 'add-session', icon: 'terminal', label: 'タスクなしのセッションを始める…', title: '' },
-  ];
-  sessEl('sess-add-menu').innerHTML = items.map(b => actionButtonHtml(b, { menu: true })).join('');
-}
-
-sessEl('sess-add').addEventListener('click', () => {
-  const menu = sessEl('sess-add-menu');
-  if (menu.hidden) renderAddMenu();
-  menu.hidden = !menu.hidden;
-  sessEl('sess-add').setAttribute('aria-expanded', String(!menu.hidden));
-});
-document.addEventListener('click', e => { if (!e.target.closest('.sess-add-wrap')) closeAddMenu(); });
-document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || sessEl('sess-add-menu').hidden) return;
-  closeAddMenu();
-  sessEl('sess-add').focus();
-});
-sessEl('sess-add-menu').addEventListener('click', e => {
-  const b = e.target.closest('[data-sess-act]');
-  if (!b || b.disabled) return;
-  closeAddMenu();
-  if (b.dataset.sessAct === 'add-repo-hub') return startRepoHub();
-  if (b.dataset.sessAct === 'add-parent-hub') return openHubKeyDialog();
-  if (b.dataset.sessAct === 'add-session') return openStartDialog();
-});
-
 /* A hub that was just started has no session to show yet: open it in the panel, and connect to
    it once the window exists. */
 function showStartedHub(id) {
   openTaskPanel(HUB_REF + id, 'term');
   panelTerm.reconnect = true;
-}
-
-function startRepoHub() {
-  const repo = (state.hubs || []).find(h => !h.parent);
-  if (!repo) return;
-  if (hubStartingNow(repo)) return showSessNotice('hub を起動しています');
-  return sessAct('add-hub', 'リポジトリの hub を起動', async () => {
-    const data = await api(`/api/hubs/${enc(repo.id)}/start`, { method: 'POST', body: '{}' });
-    const text = data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました';
-    note('adj hub --tab', false, text);
-    showSessNotice(text);
-    if (!data.alreadyRunning) repoHubStartedAt = Date.now();
-    await refresh(true);
-    showStartedHub(repo.id);
-  });
 }
 
 /* ── A parent task's hub, by key ── */
@@ -326,7 +263,7 @@ async function submitStart(e) {
       body: JSON.stringify({ instruction, hub, worktreeName, agent: sessEl('start-agent').value }),
     });
     // A request that got here is in the hub's inbox, whether or not the hub could be started:
-    // the dialog is done, and the row in the tree carries what is left to do.
+    // the dialog is done, and the card in the hub's panel carries what is left to do.
     sessView.starts.push({
       hubId: data.hub || hub, name: data.worktreeName || worktreeName, message: data.message || null,
       at: Date.now(), before, sel, hubStartError: data.hubStartError || null, goneAt: null,
@@ -337,7 +274,7 @@ async function submitStart(e) {
     if (data.hubStartError) showSessNotice(`依頼は受信箱に届きましたが、hub を起動できませんでした: ${data.hubStartError}`, true);
     else showSessNotice(`${data.worktreeName} の起動を hub に依頼しました`);
     await refresh(true);
-    renderSessionsView();
+    redrawPending();
   } catch (err) {
     note(`${line} → ${err.message}`, true);
     if (opening === dialogOpening.start) showDlgError('start-error', err.message);
@@ -348,7 +285,7 @@ async function submitStart(e) {
 }
 sessEl('start-form').addEventListener('submit', submitStart);
 
-/* ── The rows of sessions asked for and not started yet ── */
+/* ── The sessions asked for and not started yet ── */
 const PEND_GIVE_UP_MS = 15000;
 const PEND_SLOW_MS = 10 * 60 * 1000;
 const escRegex = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -371,7 +308,7 @@ function startedSession(p, claimed) {
     && !p.before.includes(s.id) && !claimed.has(s.id) && workerNames(s).some(n => re.test(n)));
 }
 
-/* Called as the tree is drawn, so that what it shows is decided by one read of the state: a
+/* Called as the hub's panel is drawn, so that what it shows is decided by one read of the state: a
    request that has become a session leaves the list, and one the hub took from its inbox
    without starting anything begins its count to giving up. */
 function settleStarts() {
@@ -385,8 +322,8 @@ function settleStarts() {
       claimed.add(found.id);
       // Its request may still be in the inbox for a moment: hidden, so it is not drawn twice.
       sessView.dismissed.push(`${p.hubId}/${p.message || p.name}`);
-      // Only when the person has not moved on to another session since asking.
-      if (p.sel === selectedTaskId) setTimeout(() => { if (view === 'sessions' && selectedTaskId === p.sel) openTaskPanel(SESS_REF + found.id, 'term'); }, 0);
+      // Only when the person has not moved on to another panel since asking.
+      if (p.sel === selectedTaskId) setTimeout(() => { if (selectedTaskId === p.sel) openStartedSession(found.id); }, 0);
       continue;
     }
     if (startInInbox(p)) p.goneAt = null;
@@ -394,6 +331,12 @@ function settleStarts() {
     kept.push(p);
   }
   sessView.starts = kept;
+}
+
+/* The session a request became: in 「いまの仕事」 where the person is in it, else in the panel over the board. */
+function openStartedSession(id) {
+  if (view === 'work') return go({ board: nav.board, view: 'work', task: SESS_REF + id, pane: 'detail' });
+  openTaskPanel(SESS_REF + id, 'term');
 }
 
 function pendingRow(h, name, key, p, at, now) {
@@ -446,7 +389,7 @@ function pendingRowHtml(p) {
     `<button type="button" class="btn-m3-text" data-pend-act="${act}" data-pend="${esc(p.key)}"${attrs}>${esc(label)}</button>`;
   const buttons = [];
   if (p.kind === 'stopped') buttons.push(btn('start-hub', 'hub を起動', p.canStart && !p.busy ? '' : ` disabled title="${esc(p.startWhy)}"`));
-  if (p.kind === 'failed') buttons.push(btn('select-hub', 'hub を選ぶ'), btn('dismiss', '閉じる'));
+  if (p.kind === 'failed') buttons.push(btn('dismiss', '閉じる'));
   if (p.kind === 'slow') buttons.push(btn('dismiss', '閉じる'));
   const cls = p.kind === 'waiting' ? '' : p.kind;
   return `<div class="sess-row pending ${cls}" data-pend-row role="${p.alert ? 'alert' : 'status'}" title="${esc(`${p.name}\n${p.text}`)}">
@@ -455,20 +398,25 @@ function pendingRowHtml(p) {
     (buttons.length ? `<span class="sess-pend-btns">${buttons.join('')}</span>` : '') + '</div>';
 }
 
-sessEl('sess-groups').addEventListener('click', e => {
-  const b = e.target.closest('[data-pend-act]');
-  if (!b || b.disabled) return;
+/* The card a hub's panel has for the sessions asked of one hub: drawn again. */
+function redrawPending() {
+  renderTaskPanel();
+}
+
+/* A button of a request that is waiting: start its hub, or let it go. */
+function pendClick(b) {
+  if (b.disabled) return;
   const key = b.dataset.pend;
   const row = sessionPendingRows().find(r => r.key === key);
   if (!row) return;
-  if (b.dataset.pendAct === 'select-hub') return openTaskPanel(HUB_REF + row.hubId, 'term');
   if (b.dataset.pendAct === 'dismiss') {
     sessView.dismissed.push(key);
     sessView.starts = sessView.starts.filter(p => `${p.hubId}/${p.message || p.name}` !== key);
-    return renderSessionsView();
+    return redrawPending();
   }
   return retryHubStart(row);
-});
+}
+
 
 /* Starts the hub of a request that is waiting in a stopped one's inbox. A failure stays on the
    row, since the request is still queued and the row is where it is waiting. */
@@ -485,7 +433,7 @@ function retryHubStart(row) {
     return p;
   };
   const run = sessAct(`pend-${row.key}`, `hub を起動 (${hubShortName(h)})`, async () => {
-    renderSessionsView();
+    redrawPending();
     try {
       const data = await api(`/api/hubs/${enc(h.id)}/start`, { method: 'POST', body: '{}' });
       tracked().hubStartError = null;
@@ -500,12 +448,13 @@ function retryHubStart(row) {
     }
   });
   // Drawn once more when the press is over: the row's buttons were dimmed while it ran.
-  return Promise.resolve(run).then(() => renderSessionsView());
+  return Promise.resolve(run).then(() => redrawPending());
 }
 
 // The give-up and the hub's answer are times, not state changes: nothing else would redraw the
 // tree for them while the page sits still.
 let startingSig = '';
+let pendingSig = '';
 setInterval(() => {
   // A starting marker runs out with the clock: what it disabled is drawn again when the set
   // of hubs that count as starting changes, and not on every tick.
@@ -514,10 +463,19 @@ setInterval(() => {
   if (sig !== startingSig) {
     startingSig = sig;
     renderBoardRows();
-    if (view === 'sessions') renderSessionsView();
+    redrawHubPanel();
   }
-  if (view !== 'sessions') return;
-  if (sessView.starts.length) renderSessionList();
+  // The give-up of a request that is waiting is a time too. Settled here, whichever panel is open, so that a session that
+  // started is opened (settleStarts); a hub's panel is drawn again only when what its card says changed (a typed comment
+  // is held by the panel as for any redraw).
+  if (!sessView.starts.length) pendingSig = '';
+  else {
+    const pend = JSON.stringify(sessionPendingRows().map(p => [p.key, p.kind, p.text, p.canStart, p.busy]));
+    if (pend !== pendingSig) {
+      pendingSig = pend;
+      redrawHubPanel();
+    }
+  }
   syncStartDialog();
   syncLinkDialog();
 }, 2000);

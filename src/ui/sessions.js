@@ -1,14 +1,13 @@
-/* The セッション tab of a board: its hubs, each with its sessions, in a list. A session opens in
-   the task panel, as a task does (task-panel.js). The first half is pure (it reads `state` and
-   returns); the second draws the list. What can be done to a session is in session-actions.js. */
+/* What the page knows of a session: its state, the words that name it, the board it belongs to. A session opens in
+   the task panel, as a task does (task-panel.js), in 「いまの仕事」 or over a board. Mostly pure (it reads `state` and
+   returns). What can be done to a session is in session-actions.js. */
 
-/* A worker whose tmux window has been quiet this long reads as idle (seconds; window_activity
-   is the only clock there is, so this is a guess at what "quiet" means). */
+/* A `running` row whose tmux window has been quiet this long reads as idle (seconds; window_activity
+   is the only clock there is, so this is a guess at what "quiet" means). Only a row that says
+   running is read this way: with no row the window's activity says nothing, since a resize redraws it. */
 const IDLE_AFTER_SECS = 60;
 /* The phases at which a worker that is gone has finished rather than stopped (see stuckOf). */
 const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
-/* A person is asked: by a gate (`waiting`), or by the agent's own permission prompt (`permission`). */
-const WAITS_ON_PERSON = ['waiting', 'permission'];
 /* What a `permission` session is called where it is drawn from its own session. The ledger's
    `waiting` also covers other dialogs the agent asks, so it is 許可待ち only with a request to
    say what is asked; the tables below hold the neutral word, for where there is no session. */
@@ -28,26 +27,27 @@ const requestText = s => {
   const question = request.slice(QUESTION_PREFIX.length).trim();
   return question ? `質問しています: ${question}` : '質問しています';
 };
-const STATE_ORDER = { waiting: 0, permission: 1, stopped: 2, restarting: 2, failed: 2, idle: 3, done: 3, working: 4, ended: 5, none: 6 };
+const STATE_ORDER = { waiting: 0, permission: 1, stopped: 2, restarting: 2, failed: 2, idle: 3, done: 3, unknown: 3, working: 4, ended: 5, none: 6 };
 const STATE_LABEL = {
-  waiting: '確認待ち', permission: '入力待ち', done: '待機中', failed: 'エラー（API）', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
+  waiting: '確認待ち', permission: '入力待ち', done: '待機中', failed: 'エラー（API）', stopped: '停止', idle: '待機中（出力なし）', unknown: '状態不明', working: '作業中', ended: '終了', none: 'セッションなし',
   pending: '起動を依頼中…', restarting: '再起動しています…',
 };
 const STATE_ICON = {
-  waiting: 'help', permission: 'front_hand', done: 'hourglass_empty', failed: 'error', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
+  waiting: 'help', permission: 'front_hand', done: 'hourglass_empty', failed: 'error', stopped: 'error', idle: 'hourglass_empty', unknown: 'visibility_off', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
 };
 const STATE_PILL = {
-  waiting: 'pill-warn', permission: 'pill-warn', done: 'pill-neutral', failed: 'pill-err', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
+  waiting: 'pill-warn', permission: 'pill-warn', done: 'pill-neutral', failed: 'pill-err', stopped: 'pill-err', idle: 'pill-neutral', unknown: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
 };
 /* A row's state in the few words it has room for. A quiet window is running too: it only has
-   the neutral pill (STATE_PILL), so it is not taken for one that is writing. */
-const ROW_LABEL = { waiting: '入力待ち', permission: '入力待ち', done: '待機', failed: 'エラー', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了', restarting: '再起動' };
+   the neutral pill (STATE_PILL), so it is not taken for one that is writing. A session whose
+   state is not known is not called running at all. */
+const ROW_LABEL = { waiting: '入力待ち', permission: '入力待ち', done: '待機', failed: 'エラー', stopped: '停止', idle: '稼働', unknown: '不明', working: '稼働', ended: '終了', restarting: '再起動' };
 
 const hubOfSession = s => s.kind === 'hub' ? s.id : s.hub;
 
 /* The one place that decides which board a session belongs to. A worker's `hub` names a
    `hubs[]` entry, and that entry's slug is its board: `/b/<slug>` on the resident server.
-   Its API is read from there (`sessionApi`). The terminal socket is not: it stays on this
+   Its base is the one a request about it goes to. The terminal socket is not: it stays on this
    page's board, which lists every linked worktree's session, while a parent-task hub's slug
    may be missing from the resident server's address book. */
 function boardOfSession(s) {
@@ -57,9 +57,6 @@ function boardOfSession(s) {
   return { hubId, hub, slug: hub?.slug || null, base, own: base === BASE };
 }
 
-/* `api`, but against the board the session belongs to. */
-const sessionApi = (s, path, options) => boardApi(boardOfSession(s).base, path, options);
-
 /* The functions below read `data`, a state: the page's own, or one repository's part of 「すべて」,
    where a hub's id is only its repository's. */
 function sessionActivity(s, data = state) {
@@ -67,21 +64,36 @@ function sessionActivity(s, data = state) {
     ? 'idle' : 'working';
 }
 
+/* The agent ledger's statuses this page knows, as its states (my-work-away.js keeps the same words). */
+const AGENT_STATES = { running: 'working', waiting: 'permission', idle: 'done', done: 'done', failed: 'failed' };
+
 /* What the agent's hooks say, as a state of this page, or null when there is no row, the ledger
    could not be read, or the status is one this page does not know. */
 function agentStateOf(s) {
   const a = s.agentSession;
   if (!s.present || !a || a.error) return null;
-  const states = { running: 'working', waiting: 'permission', idle: 'done', done: 'done', failed: 'failed' };
-  return Object.hasOwn(states, a.status) ? states[a.status] : null;
+  return Object.hasOwn(AGENT_STATES, a.status) ? AGENT_STATES[a.status] : null;
 }
 
 /* The state of a session that runs: the ledger's, except `running`, which defers to the pane. No
    hook fires when a turn is interrupted with Esc, so a row can stay `running` long after the agent
-   stopped; the pane going quiet is what tells (on tmux). */
+   stopped; the pane going quiet is what tells (on tmux). With no usable row it is `unknown`, not
+   a guess from the pane: opening a terminal resizes it, and the redraw counts as activity. */
 function ledgerState(s, data) {
   const st = agentStateOf(s);
-  return st && st !== 'working' ? st : sessionActivity(s, data);
+  if (!st) return 'unknown';
+  return st === 'working' ? sessionActivity(s, data) : st;
+}
+
+/* Why a running session's state is not known, as plain text, or empty when it is. Three causes,
+   told apart: no row (the agent's hooks never reached the ledger), a ledger that could not be
+   read, and a status word this page does not know. */
+function unknownWhy(s) {
+  if (!s?.present || agentStateOf(s)) return '';
+  const a = s.agentSession;
+  if (!a) return 'エージェントのフックから何も届いていないため、作業中か入力待ちか分かりません。adjutant が起動した Claude Code は「セッションを再起動」で、それ以外は `adjutant setup claude` / `adjutant setup codex` のあとに起動し直すとフックが届きます。';
+  if (a.error) return 'エージェントの状態を読めません';
+  return `エージェントの報告: ${a.status}`;
 }
 
 /* What the agent's hooks say beyond its state, as plain text (escaped where it is drawn), or
@@ -89,17 +101,18 @@ function ledgerState(s, data) {
 function agentText(s, data = state) {
   const a = s.agentSession;
   if (!s.present || !a) return '';
-  if (a.error) return 'エージェントの状態を読めません';
+  if (a.error) return unknownWhy(s);
   const parts = [];
   if (agentStateOf(s) === 'permission' && a.request) parts.push(requestText(s));
   // What the row says it is: a `running` the pane has gone quiet on is not doing the tool.
   else if (a.activity && ledgerState(s, data) === 'working') parts.push(a.activity);
-  if (a.subagents > 0) parts.push(`サブエージェント ${a.subagents}`);
+  const subs = a.subagents?.length || 0;
+  if (subs > 0) parts.push(`サブエージェント ${subs}`);
   if (a.pending) parts.push('ターンは終わり、サブエージェントの終了待ち');
   return parts.join(' · ');
 }
 
-/* waiting / permission / stopped / idle / done / failed / working / ended, or none for a worktree that has no session. The
+/* waiting / permission / stopped / idle / done / failed / working / unknown / ended, or none for a worktree that has no session. The
    record says a worker is gone but not why, so a worker that is gone at a phase where its work
    is done reads as ended, as its card does. */
 function sessionState(s, data = state) {
@@ -161,136 +174,8 @@ function lastOutputText(s, data = state) {
    was read from, since a worker's id is only its repository's. */
 const sessionRef = s => s._slug ? `${s._slug}/${s.id}` : s.id;
 
-/* The groups: each hub with its workers, sorted by state within a hub. Hubs stay in the order
-   the server gives (the repository's first) — sorting them by state would move them under the
-   pointer. Workers whose hub is not listed go in a group of their own at the end, and a
-   worktree with no session sits with the hub it belongs to. */
-function sessionTree(data = state, pendingHubs = new Set()) {
-  const sessions = data.sessions || [];
-  const groups = [];
-  const byId = new Map();
-  const group = (id, hub) => {
-    let g = byId.get(id);
-    if (!g) {
-      g = { id, hub, hubSession: null, rows: [], orphans: [], unknown: !hub };
-      byId.set(id, g);
-      groups.push(g);
-    }
-    return g;
-  };
-  for (const h of data.hubs || []) group(h.id, h);
-  const listed = groups.length;
-  for (const s of sessions) {
-    if (s.kind === 'hub') { group(s.id, null).hubSession = s; continue; }
-    const st = sessionState(s, data);
-    const g = group(hubOfSession(s) || 'hub', null);
-    if (st === 'none') g.orphans.push(s); else g.rows.push({ s, state: st });
-  }
-  // Unlisted groups after the listed ones, by id.
-  const tail = groups.splice(listed).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  groups.push(...tail);
-  for (const g of groups) {
-    if (g.hub && !g.hubSession) g.hubSession = sessions.find(s => s.kind === 'hub' && s.id === g.id) || null;
-    // A hub with no session of its own is only as alive as its record says.
-    g.own = g.hubSession || { kind: 'hub', id: g.id, present: !!g.hub?.state?.present };
-    g.state = sessionState(g.own, data);
-    g.rest = restingState(g.own, data);
-    g.short = g.hub ? hubShortName(g.hub) : g.id === 'hub' ? 'リポジトリ' : g.id.replace(/^hub-/, '');
-    g.title = g.hub ? hubTitle(g.hub, data) : g.id === 'hub' ? repoName(data) : null;
-    g.text = g.title || g.short;
-    // The repository's own hub says only the name; a parent task's key goes beside its title.
-    g.tag = g.title && g.hub?.parent && g.hub.key ? g.hub.key : '';
-    g.label = g.hub ? hubLabel(g.hub)
-      : g.id === 'hub' ? 'リポジトリの hub' : `親タスク ${g.short} の hub（一覧にありません）`;
-    g.child = g.hub ? !!g.hub.parent : g.id !== 'hub';
-    g.rows.sort((a, b) =>
-      STATE_ORDER[a.state] - STATE_ORDER[b.state]
-      || (a.state === 'waiting' ? (stampSecs(a.s.waiting.openedAt) || 0) - (stampSecs(b.s.waiting.openedAt) || 0) : 0)
-      || (a.state === 'permission' ? (a.s.agentSession?.updatedAt || 0) - (b.s.agentSession?.updatedAt || 0) : 0)
-      || (a.s.id < b.s.id ? -1 : a.s.id > b.s.id ? 1 : 0));
-    g.orphans.sort((a, b) => sessionKey(a, data) < sessionKey(b, data) ? -1 : sessionKey(a, data) > sessionKey(b, data) ? 1 : 0);
-    // What the header counts: workers listed, and the sessions (a hub's own too) that wait.
-    g.count = g.rows.length;
-    g.waiting = g.rows.filter(r => WAITS_ON_PERSON.includes(r.state)).length + (g.own.waiting || g.state === 'permission' ? 1 : 0);
-    g.data = data;
-  }
-  // A parent task's hub that is over, with nothing left to show, is not worth a header.
-  return groups.filter(g => !(g.hub?.parent && g.rest === 'ended'
-    && !g.rows.length && !g.orphans.length && !pendingHubs.has(g.id)));
-}
-
-/* The groups the tab lists, in the order it shows them: a repository's board lists its hub and
-   its parent tasks' hubs; a parent task's board only its own; 「すべて」 every repository's, in
-   the sidebar's order. `pending` adds the rows for sessions asked for and not started yet. */
-function sessionGroups({ pending = false } = {}) {
-  const pend = pending && !scopeAll() ? sessionPendingRows() : [];
-  const pendByHub = new Map();
-  for (const p of pend) pendByHub.set(p.hubId, [...(pendByHub.get(p.hubId) || []), p]);
-  const asked = new Set(pendByHub.keys());
-  let groups = [];
-  if (scopeAll()) {
-    // A repository with boards of parent tasks only has several carriers, each listing its own
-    // hub: they are one repository's part, each hub and session once.
-    const repos = new Map();
-    for (const c of state.carriers || []) repos.set(c.nwo, [...(repos.get(c.nwo) || []), c.slug]);
-    const once = list => list.filter((x, i) => list.findIndex(y => y.id === x.id) === i);
-    for (const [nwo, slugs] of repos) {
-      const part = {
-        repo: nwo,
-        now: state.now,
-        hubs: once((state.hubs || []).filter(h => slugs.includes(h._slug))),
-        sessions: once((state.sessions || []).filter(x => slugs.includes(x._slug))),
-      };
-      for (const g of sessionTree(part)) groups.push({ ...g, slug: slugs[0], gid: `${slugs[0]}/${g.id}`, pending: [] });
-    }
-  } else {
-    const own = pageHub();
-    groups = sessionTree(state, asked)
-      .filter(g => !own?.parent || g.id === own.id)
-      .map(g => ({ ...g, slug: null, gid: g.id, pending: pendByHub.get(g.id) || [] }));
-  }
-  return groups;
-}
-
-/* What the tab says it lists. */
-function sessionScopeText() {
-  const own = pageHub();
-  const what = scopeAll() ? 'すべての hub' : own?.parent ? 'この親タスクの hub だけ' : 'このリポジトリの hub と、配下の親タスク hub';
-  return `${what}。hub ごとにまとめ、押すとターミナルが開きます`;
-}
-
-/* ── The tab ── */
-function renderSessionsTab() {
-  const tab = document.getElementById('tab-sessions');
-  if (!tab) return;
-  const available = !!state.boardTerminal?.available;
-  tab.hidden = !available;
-  if (!available) return;
-  // 「すべて」 reads sessions only while this tab is shown: until a round has brought them, the
-  // counts are not known, and a 0 would be wrong.
-  const unknown = scopeAll() && !state.sessionsRead;
-  if (unknown) {
-    document.getElementById('sessions-waiting').classList.add('zero');
-    document.getElementById('sessions-count').classList.add('zero');
-    return;
-  }
-  // The sum of what the groups' headers say; sessions asked for and not started yet are not any.
-  let waiting = 0;
-  let count = 0;
-  for (const g of sessionGroups()) { waiting += g.waiting; count += g.count; }
-  const badge = document.getElementById('sessions-waiting');
-  badge.textContent = waiting;
-  badge.classList.toggle('zero', !waiting);
-  const total = document.getElementById('sessions-count');
-  total.textContent = count;
-  total.classList.toggle('zero', !count);
-}
-
-/* ── The view ── */
+/* ── What the page keeps of sessions ── */
 const sessView = {
-  pending: false,    // the address names this tab; opened once the first poll says whether a terminal exists
-  listStructure: '', // what the list was last built from (renderSessionList)
-  listRows: new Map(), // each row's own signature, by `row:<ref>` and `head:<group id>`
   starts: [],        // sessions this page asked a hub for and has not seen start (sessions-start.js)
   dismissed: [],     // pending rows closed on this page, by key
   boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles
@@ -306,71 +191,29 @@ function keepScreen(rec) {
   if (lines.length) sessView.screens[rec.sessionId] = { lines, at: state.now };
 }
 
-function leaveSessionsView() {
-  if (/^#sessions?(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-}
-
-/* Draw the tab; what is open in the panel is the address's `task=`. */
-function openSessionsView() {
-  if (!state.boardTerminal?.available) return;
-  if (view !== 'sessions') setView('sessions');
-}
-
-/* An address that arrived before the first poll had said whether this board has terminals. */
-function openPendingSession() {
-  // No terminal key yet means no poll has succeeded; the next one comes back here.
-  if (!sessView.pending) return;
-  if (nav.view !== 'sessions') { sessView.pending = false; return; }
-  if (state.boardTerminal === undefined) return;
-  sessView.pending = false;
-  if (state.boardTerminal?.available) {
-    openSessionsView();
-    // The poll that told us had no `lines=1`: ask again now that this tab is on screen.
-    if (view === 'sessions') refresh(true);
-  } else giveUpSessions();
-}
-
-/* Where there are no terminals the tab is not there: the address and the screen go back to the
-   board that was last shown. */
-function giveUpSessions() {
-  nav.view = prefs.tab === 'agent' ? 'agent' : 'human';
-  if (isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
-  history.replaceState(null, '', urlOf());
-  if (view !== 'board') setView('board'); else applyLayout();
-  if (isSessRef(selectedTaskId)) hideTaskPanelState();
-}
-
 /* What the task panel opens `session:<id>` as: a hub is the hub's, a worker whose task is on the
    board is that task (`taskOfSession`), and any other session stays itself. Other refs are returned as they are. */
 function panelRefOf(id) {
   const s = sessOfRef(id);
   if (!s) return id;
   if (s.kind === 'hub') return HUB_REF + s.id;
+  // The work view opens a worker on this board when the board of its task is not served: a bare task
+  // id here would be the repository's own task of that id.
+  if (view === 'work' && s.task && boardOfSession(s).slug && boardOfSession(s).slug !== nav.board) return id;
   const t = taskOfSession(s);
   return t ? t.id : id;
 }
 
-/* A row of the list. In 「すべて」 the session is another board's: that board is shown first. */
+/* A session, in the panel: on a resident server in 「いまの仕事」, on the board its hub belongs to, on its task when it has one and
+   as the hub or as itself otherwise; a board served alone has no list of work, and the panel opens over its board. In 「すべて」
+   a session is another board's, told apart by the board it was read from. */
 function openSessionRef(ref) {
   const s = (state.sessions || []).find(x => sessionRef(x) === ref);
   if (!s) return;
-  // A worker of a task on the board is talked to in the task panel, over the list.
   const owned = taskOfSession(s);
-  if (owned) {
-    return go({ ...(scopeAll() ? { board: s._slug } : {}), view: 'sessions', task: owned.id, pane: 'term' },
-      { replace: !scopeAll() && owned.id === nav.task });
-  }
-  // The hub's board, when this page knows it: where a worker's task is, whichever board this is.
-  const hub = scopeAll() ? (state.hubs || []).find(h => h._slug === s._slug && h.id === hubOfSession(s)) : boardOfSession(s).hub;
-  const known = hub?.slug && boards.some(b => b.slug === hub.slug) ? hub.slug : null;
-  // A worker whose task is on the board of another hub: that board shows it as a task.
-  if (!scopeAll() && s.kind === 'worker' && s.task && known && !boardOfSession(s).own) {
-    return go({ board: known, view: 'sessions', task: s.task, pane: 'term' });
-  }
-  // A session with no task opens in the panel as itself, until it is linked to one.
-  const task = SESS_REF + s.id;
-  if (scopeAll()) return go({ board: known || s._slug, view: 'sessions', task, pane: 'term' });
-  go({ view: 'sessions', task, pane: hasSession(s) ? 'term' : 'detail' }, { replace: task === nav.task });
+  const subject = s.kind === 'hub' ? HUB_REF + s.id : owned ? owned.id : SESS_REF + s.id;
+  if (!multiBoard) return openTaskPanel(subject, hasSession(s) ? 'term' : 'detail');
+  go({ board: s._slug || boardOfSession(s).slug || nav.board, view: 'work', task: subject, pane: 'detail' }, { replace: subject === nav.task });
 }
 
 /* A worker's task title when the server did not give one. The task of another board is not in
@@ -399,7 +242,8 @@ function sessionTip(s, st, data = state) {
   const sub = st ? [STATE_LABEL[st], s.present ? lastOutputText(s, data) : null].filter(Boolean).join(' · ') : '';
   // The ledger's own word, as it was written: only here and in the panel, and never as a class.
   const said = s.present && s.agentSession?.status ? `エージェントの報告: ${s.agentSession.status}` : '';
-  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub, agentText(s, data), said].filter(Boolean).join('\n');
+  const noRow = s.present && !s.agentSession ? unknownWhy(s) : '';
+  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub, agentText(s, data), said, noRow].filter(Boolean).join('\n');
 }
 
 /* What a row says under its title: what it asks permission for, else the last line the session
@@ -408,7 +252,7 @@ function sessionTip(s, st, data = state) {
 function sessionLastText(s, data) {
   const asks = !s.waiting && agentStateOf(s) === 'permission' && s.agentSession.request;
   const when = s.present ? lastOutputText(s, data) : null;
-  const n = s.present ? s.agentSession?.subagents : 0;
+  const n = s.present ? s.agentSession?.subagents?.length || 0 : 0;
   const counted = n > 0 ? `サブエージェント ${n}` : '';
   // `agentText` has the count in it already; the others do not.
   const add = text => counted ? `${text}${text ? ' · ' : ''}${counted}` : text;
@@ -417,230 +261,9 @@ function sessionLastText(s, data) {
   return agentText(s, data) || add(when ? `最後の出力: ${when}` : '');
 }
 
-/* A worker's row, or a worktree's with no session (state `none`). */
-function sessionRowHtml(s, st, g) {
-  const data = g.data;
-  const label = sessionLabel(s, false, data);
-  const phase = st === 'working' && s.phase ? agentLabel(AGENT_COL_OF_PHASE[s.phase]) || s.phase : '';
-  const pill = st === 'none' ? ''
-    : `<span class="m3-pill sess-row-pill ${STATE_PILL[st]}">${esc((st === 'permission' ? permissionLabel(s) : ROW_LABEL[st]) + (phase ? ` · ${phase}` : ''))}</span>`;
-  const last = st === 'none' ? s.branch || '' : sessionLastText(s, data);
-  return `<button type="button" class="sess-row ${st}" data-sref="${esc(sessionRef(s))}" title="${esc(sessionTip(s, st, data))}">
-    ${pill}<span class="sess-row-main"><span class="sess-row-title">${esc(label.text)}</span><span class="sess-row-last">${esc(last)}</span></span>
-    <span class="sess-row-tag">${esc(label.tag)}</span><span class="sess-row-open">開く</span></button>`;
-}
-
-/* How a hub is, in the words the header has room for. */
-function groupPill(g) {
-  if (g.state === 'waiting') return ['hub が入力待ち', 'pill-warn'];
-  if (g.state === 'permission') return [`hub が${permissionLabel(g.own)}`, 'pill-warn'];
-  if (g.state === 'working') return ['稼働中', 'pill-good'];
-  if (g.state === 'idle' || g.state === 'done') return ['稼働中', 'pill-neutral'];
-  if (g.state === 'failed') return ['エラー（API）', 'pill-err'];
-  if (g.state === 'ended') return ['終了', 'pill-neutral'];
-  const since = g.hub && multiBoard ? sinceLabel(boards.find(b => b.slug === g.hub.slug)?.hubLastAlive) : '';
-  return [`停止中${since ? ` · ${since}` : ''}`, 'pill-err'];
-}
-
-/* The board a hub is on, for what the tab does to it from 「すべて」. */
-const hubBoardOf = g => (g.hub?.slug && boards.find(b => b.slug === g.hub.slug)) || boards.find(b => b.slug === g.slug) || null;
-
-/* The header's button: the hub's terminal, or the start of a hub that is stopped, with what keeps
-   it from working as its tooltip. */
-function groupButton(g) {
-  if (g.rest === 'ended' || !g.hub) return null;
-  if (g.rest === 'stopped') {
-    const row = scopeAll() ? hubBoardOf(g) : null;
-    const starting = scopeAll() ? !!row && rowStartingNow(row) : hubStartingNow(g.hub);
-    const why = hubStartWhy(g.hub) || (starting ? 'hub を起動しています' : '');
-    return { act: 'hub-start', icon: 'play_arrow', label: 'hub を起動', why, title: why || 'tmux の新しいウィンドウで adj hub を実行します' };
-  }
-  // A hub outside tmux has no terminal to open, but its panel still shows what it handles.
-  const ready = !!g.hubSession && boardTerminalReady(g.hubSession);
-  return { act: 'hub-open', icon: 'terminal', label: 'hub', why: '', title: ready ? 'hub のターミナルを開く' : 'hub を開く（tmux の外で動いているため、端末は開けません）' };
-}
-
-/* A hub's header: stuck to the top of the list while its sessions scroll under it. */
-function groupHeadHtml(g) {
-  const [pillText, pillCls] = groupPill(g);
-  const btn = groupButton(g);
-  const tip = [g.title, g.label].filter(Boolean).join('\n');
-  const count = `<span class="sess-head-n">${g.count} セッション</span>${g.waiting ? `<span class="sess-head-sep"> · </span><b>入力待ち ${g.waiting}</b>` : ''}`;
-  return `<header class="sess-head${g.waiting ? ' wait' : ''}${g.rest === 'stopped' || g.rest === 'ended' ? ' off' : ''}" title="${esc(tip)}">
-    <span class="material-symbols-outlined sess-head-ico" aria-hidden="true">${g.child ? 'account_tree' : 'folder'}</span>
-    <span class="sess-head-name">${g.tag ? `<span class="key">${esc(g.tag)}</span>` : ''}${esc(g.text)}</span>
-    <span class="m3-pill ${pillCls}">${esc(pillText)}</span>
-    <span class="sess-head-count">${count}</span>
-    ${btn ? `<button type="button" class="btn-m3-tonal sess-head-btn" data-hub-act="${btn.act}"${btn.act === 'hub-open' ? ` data-hub-ref="${esc(HUB_REF + g.id)}"` : ''}${btn.why ? ' disabled' : ''} title="${esc(btn.title)}"><span class="material-symbols-outlined" aria-hidden="true">${btn.icon}</span><span class="lbl">${esc(btn.label)}</span></button>` : ''}
-  </header>`;
-}
-
-function groupBodyHtml(g, opened) {
-  const orphans = g.orphans.length
-    ? `<details class="sess-orphans" data-orphans="${esc(g.gid)}"${opened ? ' open' : ''}><summary><span class="material-symbols-outlined" aria-hidden="true">folder_off</span><span>セッションのない worktree（${g.orphans.length}）</span></summary>${g.orphans.map(s => sessionRowHtml(s, 'none', g)).join('')}</details>` : '';
-  const empty = g.rows.length || g.pending.length ? ''
-    : `<div class="sess-empty">${g.rest === 'stopped' ? 'hub が止まっているので worker は動いていません' : g.rest === 'ended' ? 'この hub は役目を終えています' : '動いている worker はいません'}</div>`;
-  return g.pending.map(pendingRowHtml).join('') + g.rows.map(r => sessionRowHtml(r.s, r.state, g)).join('') + empty + orphans;
-}
-
-const groupHtml = (g, opened) =>
-  `<section class="sess-group${g.child ? ' child' : ''}" data-gid="${esc(g.gid)}">${groupHeadHtml(g)}<div class="sess-body">${groupBodyHtml(g, opened)}</div></section>`;
-
-/* The list. It is rebuilt only when what it is made of changes (a hub or a session comes or
-   goes); otherwise only the rows whose own words changed are redrawn, so a poll that moves one
-   line does not take the scroll position or the keyboard focus from the rest. */
-function renderSessionList() {
-  const groups = sessionGroups({ pending: true });
-  sessEl('sess-scope').textContent = sessionScopeText();
-  sessEl('sess-add').disabled = scopeAll();
-  sessEl('sess-add').title = scopeAll() ? '追加するボードを選んでください（「すべて」からは追加できません）' : 'hub やセッションを追加';
-  // 「すべて」 has its hubs before it has their sessions: drawn now, every hub would read as empty.
-  if (scopeAll() && !state.sessionsRead) {
-    // A round that asked and got no answer is not one still on its way; the next round retries.
-    const token = state.sessionsAsked ? 'failed' : 'loading';
-    if (sessView.listStructure !== token) {
-      sessView.listStructure = token;
-      sessView.listRows = new Map();
-      sessEl('sess-groups').innerHTML = `<div class="sess-empty">${state.sessionsAsked ? 'セッションを読めませんでした' : '読み込み中…'}</div>`;
-    }
-    return;
-  }
-  const open = new Set(prefs.sessionsFolded || []);
-  const opened = g => open.has(`orphans:${g.gid}`);
-  // What each row draws, one signature per row, so that a row is redrawn only when its own
-  // words change and not whenever any other row's do.
-  const rowSig = (s, st, g) => JSON.stringify([sessionRef(s), st, sessionLabel(s, false, g.data), sessionTip(s, st, g.data), sessionLastText(s, g.data), s.phase || '',
-    // What the state, the text and the tip are made of; the times that move with every event are not.
-    [s.agentSession?.status, s.agentSession?.pending, s.agentSession?.subagents, s.agentSession?.error]]);
-  const rows = new Map();
-  for (const g of groups) {
-    rows.set(`head:${g.gid}`, groupHeadHtml(g));
-    for (const r of g.rows) rows.set(`row:${sessionRef(r.s)}`, rowSig(r.s, r.state, g));
-    for (const s of g.orphans) rows.set(`row:${sessionRef(s)}`, rowSig(s, 'none', g));
-  }
-  // What the list is made of: a change here is rebuilt. The order of a group's rows is left
-  // out, since moving the rows it already has is enough for that.
-  const structure = JSON.stringify([
-    groups.map(g => [g.gid, g.child, g.rest, g.rows.map(r => sessionRef(r.s)).sort(), g.orphans.map(sessionRef), opened(g),
-      // Part of the signature: without it a row that appears or changes its words while nothing
-      // else does would stay hidden behind the redraw skip.
-      g.pending.map(p => [p.key, p.hubId, p.name, p.kind, p.text, p.canStart, p.busy])]),
-  ]);
-  const root = sessEl('sess-groups');
-  if (structure === sessView.listStructure) {
-    patchSessionList(root, groups, rows);
-    return;
-  }
-  sessView.listStructure = structure;
-  sessView.listRows = rows;
-  const scroll = document.querySelector('.sess-list-scroll');
-  const top = scroll.scrollTop;
-  const focused = document.activeElement?.closest?.('#sess-groups') ? document.activeElement : null;
-  // What had the focus, found again in the new list: a row, a header's button or a fold.
-  const gidOf = el => el?.closest('.sess-group')?.dataset.gid;
-  const held = !focused ? null : focused.dataset.sref != null ? { ref: focused.dataset.sref }
-    : focused.dataset.hubAct ? { gid: gidOf(focused), act: focused.dataset.hubAct }
-      : focused.dataset.pendAct ? { pend: focused.dataset.pend, pendAct: focused.dataset.pendAct }
-        : focused.matches('.sess-orphans > summary') ? { gid: gidOf(focused), fold: true } : null;
-  root.innerHTML = groups.map(g => groupHtml(g, opened(g))).join('') || '<div class="sess-empty">表示できる hub がありません</div>';
-  scroll.scrollTop = top;
-  if (held) {
-    const group = held.gid != null ? [...root.querySelectorAll('.sess-group')].find(el => el.dataset.gid === held.gid) : null;
-    const again = held.pend ? [...root.querySelectorAll('[data-pend-act]')].find(b => b.dataset.pend === held.pend && b.dataset.pendAct === held.pendAct)
-      : held.ref != null ? [...root.querySelectorAll('.sess-row[data-sref]')].find(row => row.dataset.sref === held.ref)
-      : held.act ? group?.querySelector(`[data-hub-act="${held.act}"]`) : group?.querySelector('.sess-orphans > summary');
-    again?.focus({ preventScroll: true });
-  }
-}
-
-/* `old` replaced by the node `html` makes, keeping what a redraw must not take from a row:
-   the selection and the keyboard focus. */
+/* The element `html` makes. */
 const htmlNode = html => {
   const t = document.createElement('template');
   t.innerHTML = html.trim();
   return t.content.firstElementChild;
 };
-function swapSessionRow(old, html) {
-  const node = htmlNode(html);
-  const focused = document.activeElement === old;
-  if (old.hasAttribute('aria-current')) node.setAttribute('aria-current', 'true');
-  old.replaceWith(node);
-  if (focused) node.focus({ preventScroll: true });
-  return node;
-}
-
-/* The list as it stands, brought up to `groups` without rebuilding it: only the rows whose own
-   signature changed are redrawn, and the rows of a group that came in another order are
-   moved. What is on screen keeps its scroll position, its focus and its selection. */
-function patchSessionList(root, groups, rows) {
-  const before = sessView.listRows;
-  const changed = key => before.get(key) !== rows.get(key);
-  // Moving a node blurs it, so the focused row is found again afterwards.
-  const focused = document.activeElement;
-  const focusedRef = focused?.closest?.('#sess-groups') ? focused.dataset?.sref : null;
-  groups.forEach((g, i) => {
-    const el = root.children[i];
-    if (changed(`head:${g.gid}`)) {
-      const head = el.querySelector(':scope > .sess-head');
-      const node = htmlNode(groupHeadHtml(g));
-      const had = head.contains(document.activeElement) ? document.activeElement.dataset.hubAct : null;
-      head.replaceWith(node);
-      if (had) node.querySelector(`[data-hub-act="${had}"]`)?.focus({ preventScroll: true });
-    }
-    const box = el.querySelector(':scope > .sess-body');
-    const byRef = new Map();
-    for (const row of box.querySelectorAll('.sess-row[data-sref]')) byRef.set(row.dataset.sref, row);
-    let next = box.querySelector(':scope > .sess-row[data-sref]');
-    for (const r of g.rows) {
-      const old = byRef.get(sessionRef(r.s));
-      let node = old;
-      if (changed(`row:${sessionRef(r.s)}`)) {
-        node = swapSessionRow(old, sessionRowHtml(r.s, r.state, g));
-        if (old === next) next = node;
-      }
-      if (node === next) next = next.nextElementSibling;
-      else box.insertBefore(node, next);
-    }
-    // Worktrees with no session keep their order: a change of it is a change of structure.
-    for (const s of g.orphans) {
-      if (changed(`row:${sessionRef(s)}`)) swapSessionRow(byRef.get(sessionRef(s)), sessionRowHtml(s, 'none', g));
-    }
-  });
-  sessView.listRows = rows;
-  if (focusedRef != null && document.activeElement !== focused) {
-    const again = focused.isConnected ? focused
-      : [...root.querySelectorAll('.sess-row[data-sref]')].find(row => row.dataset.sref === focusedRef);
-    again?.focus({ preventScroll: true });
-  }
-}
-
-function applySessionSelection() {
-  // The row of the session the task panel is open on is the one in use: a task's worker, or
-  // the session itself while it has no task.
-  const task = selectedTaskId && !isHubRef(selectedTaskId) && !isSessRef(selectedTaskId) && !scopeAll() ? taskById(selectedTaskId) : null;
-  const inPanel = isSessRef(selectedTaskId) && !scopeAll() ? sessIdOfRef(selectedTaskId) : task ? sessionOfTask(task)?.id : null;
-  markHubButtons();
-  for (const row of document.querySelectorAll('#sess-groups .sess-row[data-sref]')) {
-    if (inPanel && row.dataset.sref === inPanel) row.setAttribute('aria-current', 'true');
-    else row.removeAttribute('aria-current');
-  }
-}
-
-function renderSessionsView() {
-  if (view !== 'sessions') return;
-  // A round of 「すべて」 that has no lead board yet says nothing either way: the tab stays.
-  if (!state.boardTerminal?.available) {
-    if (state.boardTerminal) giveUpSessions();
-    return;
-  }
-  renderSessionList();
-  applySessionSelection();
-}
-
-registerView('sessions-tab', { render: () => renderSessionsTab() });
-registerView('pending-session', {
-  render: () => openPendingSession(),
-  // Before the task panel's reset: the panel's terminal going away redraws the tab.
-  reset: () => { sessView.pending = null; },
-});
-registerView('sessions-view', { render: () => renderSessionsView() });

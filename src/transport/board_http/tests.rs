@@ -31,6 +31,44 @@ fn the_page_pieces_join_into_one_document() {
 }
 
 #[test]
+fn old_addresses_are_read_through_nav_legacy_before_the_page_parses_its_own() {
+    // `/review`, `view=sessions`, `#gate/<id>` and `#session/<id>` land where `legacyNav` says: the address
+    // is parsed through it, and a gate it names is opened once the work document is in.
+    for piece in [
+        "function legacyNav",
+        "const legacy = legacyNav(loc, multiBoard);",
+        "pendingGate = legacy?.pendingGate || null;",
+        "function openPendingGate",
+        "if (pendingGate && view === 'work') openPendingGate();",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("function legacyNav") < at("function parseUrl"));
+    assert!(at("function parseUrl") < at("setInterval(refresh, 2000)"));
+    // The server still answers the old path with the page, so that the page can redirect it.
+    assert!(UI_HTML.contains("path === '/review'"));
+}
+
+#[test]
+fn the_page_shows_the_parent_and_adds_a_child_through_the_new_task_form() {
+    for piece in [
+        // The row, and the button that opens the form with the parent filled in.
+        "function parentRowHtml",
+        "data-add-child=",
+        "function openChildForm",
+        "子タスクを足す",
+        "記録と違う",
+        // The page merging several boards keeps their parents.
+        "parents: parts.flatMap(p => tag(p.data.parents, p.slug))",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The button carries its parent in an attribute and is wired by a listener, not inline.
+    assert!(!UI_HTML.contains("onclick=\"openChildForm"));
+}
+
+#[test]
 fn the_page_has_one_task_panel_and_no_drawer() {
     for piece in [
         "id=\"task-panel\"",
@@ -49,8 +87,7 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         "function renderDrawer",
         "let panelPop",
         "sidesheet-header",
-        // The card's button for the terminal tab outside the board. The review view keeps
-        // its own, which have a `style=` between the class and the title.
+        // The card's button for the terminal tab outside the board.
         "class=\"m3-icon-button\" title=\"ターミナルのworkerタブを前面表示\"",
     ] {
         assert!(!UI_HTML.contains(gone), "{gone}");
@@ -100,13 +137,12 @@ fn the_task_panel_has_the_tabs_and_the_full_view_is_gone() {
 }
 
 #[test]
-fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
+fn a_session_opens_in_the_panel_and_the_sessions_tab_is_gone() {
     for piece in [
-        "id=\"sessions-view\"",
-        "id=\"tab-sessions\"",
         "SESS_REF = 'session:'",
         "function boardOfSession",
         "mountSessionTerminal(",
+        "function openSessionRef",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
@@ -114,6 +150,17 @@ fn the_page_lists_sessions_in_a_view_and_has_no_overlay() {
         "term-overlay",
         "openTerminalOverlay",
         "closeTerminalOverlay",
+        // The tab and everything that drew its list.
+        "id=\"sessions-view\"",
+        "id=\"tab-sessions\"",
+        "id=\"sess-groups\"",
+        "data-tab=\"sessions\"",
+        "function sessionTree",
+        "function sessionGroups",
+        "function renderSessionsView",
+        "function patchSessionList",
+        "function showSessions",
+        "sessionsFolded:",
     ] {
         assert!(!UI_HTML.contains(gone), "{gone}");
     }
@@ -170,7 +217,7 @@ fn the_hub_terminal_bar_leads_with_the_reset() {
 }
 
 #[test]
-fn the_sessions_view_keeps_its_session_actions_and_dialogs() {
+fn the_session_actions_and_dialogs_stay() {
     for piece in [
         "id=\"sess-notice\"",
         "id=\"cleanup-dialog\"",
@@ -184,23 +231,22 @@ fn the_sessions_view_keeps_its_session_actions_and_dialogs() {
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
+    // The notice is in the flow above whichever view is on, not inside one of them.
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("id=\"sess-notice\"") < at("<main>"));
 }
 
 #[test]
-fn the_sessions_tab_patches_its_list() {
+fn a_session_is_named_by_its_title_and_not_by_the_tabs() {
     for piece in [
-        "function patchSessionList",
-        "data-gid=",
         "function sessionTitle",
         "function hubTitle",
-        "sessionLabel(s, false, g.data), sessionTip(s, st, g.data)",
+        "function sessionTip",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
     // The tab's title is for the tooltip: it does not stand in for the task's.
     assert!(!UI_HTML.contains("if (s.title) return s.title"));
-    // A row's own words are what a redraw follows, not the selected session's task.
-    assert!(!UI_HTML.contains("JSON.stringify([s.task, s.phase"));
 }
 
 #[test]
@@ -228,7 +274,7 @@ fn a_session_with_no_task_opens_in_the_task_panel() {
         "タスクのないセッション",
         "data-side-act=\"${act}\"",
         "sideBtn('link-new'",
-        "const task = SESS_REF + s.id",
+        "owned ? owned.id : SESS_REF + s.id",
         "function boardApi",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
@@ -252,11 +298,13 @@ fn a_session_with_no_task_opens_in_the_task_panel() {
 }
 
 #[test]
-fn the_sessions_view_can_start_and_link_sessions() {
+fn the_hub_panel_can_start_and_link_sessions() {
     for piece in [
-        "id=\"sess-add\"",
-        "aria-haspopup=\"menu\"",
-        "id=\"sess-add-menu\"",
+        "data-tp-hub=\"${act}\"",
+        "addBtn('add-session'",
+        "addBtn('add-parent-hub'",
+        "case 'add-session': return openStartDialog();",
+        "case 'add-parent-hub': return openHubKeyDialog();",
         "id=\"hubkey-dialog\"",
         "id=\"start-dialog\"",
         "id=\"link-dialog\"",
@@ -264,10 +312,20 @@ fn the_sessions_view_can_start_and_link_sessions() {
         "function worktreeNameProblem",
         "function sessionPendingRows",
         "function openLinkDialog",
+        "起動を依頼中",
+        "function idleWorktreesHtml",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
-    // The script that draws the tree calls into the one that knows the pending rows, which
+    // The + menu of the セッション tab is gone with it.
+    for gone in [
+        "id=\"sess-add\"",
+        "id=\"sess-add-menu\"",
+        "function renderAddMenu",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+    // The script that draws the panel calls into the one that knows the pending rows, which
     // is defined after it and before `main.js` starts polling.
     let at = |piece: &str| UI_HTML.find(piece).unwrap();
     assert!(at("function sessDetailHtml") < at("function sessionPendingRows"));
@@ -466,7 +524,7 @@ fn serde_name(v: impl serde::Serialize) -> String {
 
 #[test]
 fn the_page_has_a_word_for_every_value_the_server_sends() {
-    use crate::board::view::HumanCol;
+    use crate::board::view::{HumanCol, Progress};
     use crate::gate::Kind;
     use crate::task::PrTurn;
 
@@ -531,6 +589,21 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
         | HumanCol::Question => {}
     };
 
+    let progress = [
+        Progress::Merged,
+        Progress::Done,
+        Progress::Pr,
+        Progress::Working,
+        Progress::NotStarted,
+    ];
+    let _ = |p: Progress| match p {
+        Progress::Merged
+        | Progress::Done
+        | Progress::Pr
+        | Progress::Working
+        | Progress::NotStarted => {}
+    };
+
     let kinds_table = page_table("const KINDS = {", "};");
     let phase_label = page_table("const PHASE_LABEL = {", "};");
     let phase_col = page_table("const AGENT_COL_OF_PHASE = {", "};");
@@ -538,6 +611,7 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
     let human_columns = page_table("const HUMAN_COLUMNS = [", "];");
     let turn_why = page_table("const PR_TURN_WHY = {", "};");
     let turn_pill = page_table("const PR_TURN = {", "};");
+    let work_progress = page_table("const WORK_PROGRESS = {", "};");
 
     for kind in kinds {
         let name = serde_name(kind);
@@ -569,6 +643,13 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
             );
         }
     }
+    for step in progress {
+        let name = serde_name(step);
+        assert!(
+            has_key(work_progress, &name),
+            "WORK_PROGRESS has no progress {name}"
+        );
+    }
     for column in columns {
         let name = serde_name(column);
         assert!(
@@ -576,6 +657,30 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
             "HUMAN_COLUMNS has no column {name}"
         );
     }
+    let park_labels = page_table("const PARK_REASON_LABEL = {", "};");
+    for reason in crate::task::PARK_REASONS {
+        assert!(
+            has_key(park_labels, reason),
+            "PARK_REASON_LABEL has no park reason {reason}"
+        );
+    }
+}
+
+#[test]
+fn the_page_parks_a_task_from_one_dialog_and_wires_it_without_inline_handlers() {
+    for piece in [
+        "id=\"park-dialog\"",
+        "aria-labelledby=\"park-title\"",
+        "data-park-task=",
+        "data-park-off",
+        "data-wk-unpark",
+        "置くのをやめる",
+        "function setPark",
+        "function parkClick",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    assert!(!UI_HTML.contains("onclick=\"openParkDialog"));
 }
 
 #[test]
@@ -610,6 +715,18 @@ fn the_sidebar_lists_boards_and_has_no_hub_footer() {
     for piece in ["id=\"hub-rows\"", "自律 hub", "function renderHubRows"] {
         assert!(!UI_HTML.contains(piece), "{piece}");
     }
+    // The sidebar keeps one count, the number of 新着: no 要対応 entry, no gate count, and no
+    // 「あなたの確認待ち」 badge on a board's row.
+    for gone in [
+        "id=\"nav-review\"",
+        "id=\"gate-count\"",
+        "function renderGateCount",
+        "mini-badge",
+        "id=\"sessions-waiting\"",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+    assert!(UI_HTML.contains("id=\"work-new-count\""));
 }
 
 const TOKEN: &str = "s3cret";
@@ -1012,11 +1129,8 @@ fn the_views_register_themselves() {
         "renderColumns",
         "renderBoardRows",
         "renderTitle",
-        "renderSessionsTab",
-        "openPendingSession",
-        "renderSessionsView",
+        "renderWorkView",
         "renderTaskPanel",
-        "redrawReview",
         "hideTaskPanelState",
         "disposeTermSlot",
         "sessView",
@@ -1036,7 +1150,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 11);
+    assert_eq!(names.len(), 8);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1054,30 +1168,82 @@ fn the_views_register_themselves() {
 }
 
 #[test]
-fn a_session_waiting_on_a_prompt_is_listed_in_the_queue_the_person_checks() {
+fn a_session_waiting_on_a_prompt_is_rung_for_and_opens_in_the_work_view() {
     assert!(
         !UI_HTML.contains("要対応レビュー"),
-        "the queue is named 要対応 everywhere"
+        "the queue is gone, and so is its name"
     );
     for piece in [
         // The merged state of every board carries the waits.
         "waits: parts.flatMap(p => tag(p.data.waits, p.slug))",
-        // The queue lists them, and its button opens the session's terminal.
-        "const waitRef = w =>",
-        "const itemRef = x =>",
-        "data-rv-open-wait",
-        "openWait(w)",
-        "permissionLabel({ agentSession: { request: w.request } })",
-        // The badges count them beside the gates.
-        "(b.waits || []).length",
+        // The notification's click opens the session in 「いまの仕事」, on its board.
+        "function openWait(w)",
+        "task: SESS_REF + w.session",
+        "permissionLabel(asked)",
+        // A board served alone counts them in its tab title, beside what waits on the person.
         "(state.waits || []).length",
-        "const boardWaiting = b =>",
         // A quiet wait is listed without a desktop notification.
         "w.quiet",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
-    assert!(UI_HTML.matches("boardWaiting(").count() >= 5);
+    for gone in ["const waitRef =", "data-rv-open-wait", "const boardWaiting"] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+}
+
+#[test]
+fn the_page_has_the_work_view_and_no_review_queue() {
+    for piece in [
+        // The sidebar entry, the three-column view and the middle terminal's host.
+        "id=\"nav-work\"",
+        "data-action=\"work\"",
+        "id=\"work-view\"",
+        "id=\"wk-term-host\"",
+        "id=\"wk-list-resize\"",
+        // The page's own notification settings, and the end-of-turn notifications read from the document.
+        "id=\"notify-dialog\"",
+        "function notifyEndEvents",
+        "id=\"rail-resize\"",
+        // The list is the resident's own document, not a merge made in the page.
+        "boardApi('', '/api/work')",
+        "view=work",
+        "const DEFAULT_MULTI_VIEW = 'agent'",
+        "const PARENT_REF = 'parent:'",
+        // 「ターミナルで話す」 goes to the middle terminal in this view.
+        "if (view === 'work') return focusWorkTerm();",
+    ] {
+        assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+    // A board served alone has no list of boards to read the work from.
+    assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
+    // The panel has no terminal tab in this view.
+    assert!(UI_HTML.contains("const term = view === 'work' ? ''"));
+    // What 要対応 did is done in the panel: a gate with no task card is judged in a panel of its own,
+    // an old link lands in the list, and 「処理したら次へ」 is a box in the 新着 header.
+    for piece in [
+        "function gateJudgeHtml",
+        "function gateDockHtml",
+        "function legacyNav",
+        "function workNextNew",
+        "data-wk-advance",
+    ] {
+        assert!(UI_HTML.contains(piece), "the page lacks {piece}");
+    }
+    for gone in [
+        "id=\"review\"",
+        "id=\"nav-review\"",
+        "id=\"rv-judge\"",
+        "function renderReview",
+        "function goToQueue",
+        "reviewTerm",
+        "go({ view: 'review'",
+        "setView('review')",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
+    // The address `/review` still opens the page, which sends it on.
+    assert!(UI_HTML.contains("path === '/review'"));
 }
 
 #[test]
@@ -1198,7 +1364,7 @@ fn the_panel_head_links_the_task_issue_and_pr() {
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     assert!(!bar.contains("ghHeadLinksHtml") && !bar.contains("ghBarLinksHtml"));
-    assert!(UI_HTML.contains("termBarHtml(s, reviewTerm, false)"));
+    assert!(UI_HTML.contains("termBarHtml(own, workTerm, true)"));
     assert!(!UI_HTML.contains("ghBarLinksHtml"));
     assert!(!UI_HTML.contains("tp-bar-link"));
 }

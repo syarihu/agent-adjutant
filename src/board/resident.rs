@@ -24,6 +24,9 @@ pub struct Resident {
     pub pr_poll: Arc<crate::board::jobs::PrPoll>,
     /// What waits on a person and which terminals are open, over all boards.
     pub waits: Arc<crate::board::jobs::WaitWatch>,
+    /// The serialized `/api/work` document and when it was built, reused for 1500 ms so that
+    /// several open pages polling every couple of seconds read the boards once between them.
+    pub work_cache: Mutex<Option<(std::time::Instant, String)>>,
 }
 
 impl Resident {
@@ -65,6 +68,7 @@ impl Resident {
                 jules: Arc::default(),
                 hub_titles: Arc::default(),
                 last_lines: Arc::default(),
+                diffs: Arc::default(),
                 tmux: self.tmux,
                 terminals: Arc::clone(&self.terminals),
                 pr_poll: Some(Arc::clone(&self.pr_poll)),

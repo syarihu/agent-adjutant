@@ -1,5 +1,47 @@
+/* Judging a gate, wherever it is judged (the task panel, a hub's or a session's, a gate's own): how a gate is named, what was
+   answered in this page, and the screens and buttons that answer one. */
+
+/* How a gate is named: its board and id, since gates of several boards share it.
+   On a board of its own there is no board to name. */
+const gateRef = g => g._slug ? `${g._slug}/${g.id}` : g.id;
+/* The open gate or record a ref names; a plain id from an old link takes the first of that id. */
+function gateByRef(ref) {
+  const gates = state.gates || [];
+  return gates.find(g => gateRef(g) === ref) || recordByRef(ref)
+    || (ref && !String(ref).includes('/') ? gates.find(g => g.id === ref) : undefined);
+}
+
+const renderDiff = d => esc(d).split('\n').map(l => {
+  const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
+            : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : '';
+  return `<div class="${cls}">${l || ' '}</div>`;
+}).join('');
+
+/* What was answered in this page, kept until it is reloaded: key → { at }. Not in
+   the counts or on the 人 board, which go by what the boards still list, so an answer that a poll
+   already on its way does not know yet does not bring the gate back. */
+const answeredGates = new Map();
+/* The key a gate is kept under: its board and id, as `gateRef` names it. A state that is one
+   board's own tags no board on its gates, so the board shown is theirs; a board served alone has
+   none to name. */
+const gateKey = g => gateRef(g._slug || !multiBoard || !nav.board || nav.board === 'all' ? g : { ...g, _slug: nav.board });
+
+/* Called when a gate was answered or closed, in whichever view. `key` is `gateKey(g)` as it was when the answer was sent: the
+   person may have moved to another board while it was on its way. */
+function gateAnswered(g, key) {
+  if (g.wait === false) return;
+  answeredGates.set(key, { at: Date.now() });
+  // 「処理したら次へ」 in 「いまの仕事」.
+  workAdvanceAfter(key);
+}
+
+/* The task a gate belongs to; with several boards, the one on the gate's own. */
+function taskOfGate(g) {
+  return (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
+}
+
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
-   the `data-gate` around it, so the same panel works in the review view and the task panel. */
+   the `data-gate` around it, so the same panel works wherever a gate is judged. */
 const BUTTONS = {
   approve: g => `<button class="btn-m3-primary approve" data-act="approve" style="background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${decisionLabel('approve', g.kind)}</span></button>`,
   changes: g => `<button class="btn-m3-tonal changes" data-act="changes"><span class="material-symbols-outlined" style="font-size:16px;">replay</span><span>${decisionLabel('changes', g.kind)}</span></button>`,
@@ -14,6 +56,25 @@ const roundsHintHtml = g => (g.rounds || 0) >= 2 ? `<div class="hint-bar" style=
   <span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">warning</span>
   <span>ここまで ${g.rounds} 往復しています。<b>ターミナルで直接やり取りしたほうが円滑</b>です（1往復ごとに outbox と wake を経由します）</span>
 </div>` : '';
+
+/* The attributes that say which task a park button is for (`parkClick`, actions.js). */
+const parkAttrs = (t, off) => `data-park-task="${esc(t.id)}" data-park-board="${esc(t._slug || '')}"${off ? ' data-park-off' : ''}`;
+/* The button next to a gate's answers that parks the task the gate names, or takes the park back: not drawn for a gate whose task
+   this page does not have, nor for a finished task. The gate stays open and is answered as usual. */
+function parkButtonHtml(g) {
+  const t = taskOfGate(g);
+  if (!t || ['done', 'cancelled'].includes(t.status)) return '';
+  return parkOf(t)
+    ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, true)}><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">alarm_off</span><span>置くのをやめる</span></button>`
+    : `<button type="button" class="m3-icon-button" style="padding:8px 14px" ${parkAttrs(t, false)} title="誰かの返事やタイミングを待つので、「いまの仕事」の後で見るに置く"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">schedule</span><span>置く</span></button>`;
+}
+/* 「置いている — PdM の確認待ち（…） · 4分前から」 with the way to take it back, above a gate that stays open. */
+function parkBannerHtml(task) {
+  const p = parkOf(task);
+  if (!p) return '';
+  const since = stampSecs(p.since) != null ? ` · ${esc(ago(p.since))}から` : '';
+  return `<div class="park-banner" role="status"><span class="material-symbols-outlined" aria-hidden="true">schedule</span><span class="park-banner-text">置いている — ${esc(parkText(p))}${since}</span><button type="button" class="btn-m3-text" ${parkAttrs(task, true)}>置くのをやめる</button></div>`;
+}
 
 /* The part of a gate a person acts on: the send-back form for a record, the decision for a
    gate that waits. */
@@ -71,6 +132,7 @@ function decideHtml(g) {
           <span>IDEで開く</span>
         </button>
       ` : ''}
+      ${parkButtonHtml(g)}
       <button class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">
         <span class="material-symbols-outlined" style="font-size:16px;">done_all</span>
         <span>解決済みとして閉じる</span>
@@ -86,6 +148,132 @@ function decideHtml(g) {
       </span>
     </div>
   </div>`;
+}
+
+/* ── Judging a gate with no task card ────────────────────────────────────────────────────────
+   A gate of a task is judged in that task's panel. One with no task on the board (the hub's own
+   dispatch, issue or question gate, or a gate whose task is gone) is judged with these, in the
+   panel of the gate, the hub or the session that waits on it. */
+
+/* The gate's task, found by the id it names, else by the worktree it was opened in. */
+function taskForGate(g) {
+  return taskOfGate(g) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree && (!g._slug || t._slug === g._slug));
+}
+
+/* What it takes to answer: the buttons the gate's options name, a comment box, 話す. */
+function gateDockHtml(g) {
+  const btn = (act, cls, icon, text, style = '') =>
+    `<button type="button" class="${cls}" data-act="${act}"${style ? ` style="${style}"` : ''}><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">${icon}</span><span>${text}</span></button>`;
+  const BUTTON = {
+    approve: () => btn('approve', 'btn-m3-primary approve', 'check', decisionLabel('approve', g.kind),
+      'background:var(--md-sys-color-success);color:var(--md-sys-color-on-success)'),
+    changes: () => btn('changes', 'btn-m3-tonal changes', 'replay', decisionLabel('changes', g.kind)),
+    reject: () => btn('reject', 'btn-m3-text reject', 'cancel', decisionLabel('reject', g.kind), 'color:var(--md-sys-color-error)'),
+    ack: () => btn('ack', 'btn-m3-primary approve', 'check', decisionLabel('ack', g.kind)),
+    answer: () => btn('answer', 'btn-m3-primary approve', 'send', decisionLabel('answer', g.kind)),
+    ask: () => btn('ask', 'btn-m3-tonal changes', 'help', decisionLabel('ask', g.kind)),
+  };
+  return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
+    ${roundsHintHtml(g)}
+    <textarea class="gate-comment" aria-label="コメント" placeholder="修正指示や質問があれば入力してください（承認の場合は空欄でも可）..."></textarea>
+    <div class="decide">
+      ${(g.options || []).map(o => (BUTTON[o] || (() => ''))()).join('')}
+      <button type="button" class="m3-icon-button talk" style="padding:8px 14px" data-act="talk"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">terminal</span><span>ターミナルで話す</span></button>
+      ${g.worktree && g.kind !== 'verify' ? `<button type="button" class="m3-icon-button" style="padding:8px 14px" title="${ideTitle()}" data-ide="${esc(g.worktree)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">code</span><span>IDEで開く</span></button>` : ''}
+      ${parkButtonHtml(g)}
+      <button type="button" class="btn-m3-text close" style="margin-left:auto;color:var(--md-sys-color-outline)" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">done_all</span><span>解決済みとして閉じる</span></button>
+    </div>
+  </div>`;
+}
+
+/* The body of judging a gate, from what waits to the buttons that answer it: one column. `task` is
+   the gate's task when there is one (its Issue and PR, its request). */
+function gateJudgeHtml(g, task) {
+  const record = g.wait === false;
+  const [label] = kindOf(g.kind);
+  // Issue and PR of the task, a row each; a gate with no task has neither.
+  let h = task ? `<div class="rv-refs" data-rv-refs>${ghRowsHtml(task)}</div>` : '';
+
+  const why = g.problem || g.why || '';
+  h += `<div class="m3-card-attention-box rv-wait">
+    <div class="rv-wait-head">
+      <span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">${record ? 'history' : 'pending_actions'}</span>
+      <span>【${esc(label)}】${record ? '記録 — worker は止まらずに進んだ' : 'あなたの判定待ち'}</span>
+      <span class="rv-wait-when">${ago(g.openedAt)}${record ? 'に記録' : 'から待ち'}</span>
+    </div>
+    <div class="rv-wait-title">${esc(g.title)}</div>
+    ${why ? `<div class="rv-wait-why">${esc(why)}</div>` : ''}
+    ${stopWhy(g).length ? `<div><strong>止めた理由:</strong><ul>${stopWhy(g).map(w =>
+      `<li${stopBad(g) ? ' style="color:var(--md-sys-color-error)"' : ''}>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+    ${g.focus ? `<div class="rv-wait-focus"><strong>確認してほしい点:</strong> ${md(g.focus)}</div>` : ''}
+  </div>`;
+  if (!record) h += parkBannerHtml(task);
+
+  if (g.decided) {
+    h += `<div class="panel"><details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
+  }
+
+  const pickable = !record;
+  if (g.kind === 'diff') {
+    h += reviewPanels(g);
+    if (g.diff) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">difference</span><span>コード差分 (Diff)</span></h3>
+        <div class="diff">${renderDiff(g.diff)}</div>
+      </div>`;
+    } else if (diffPending(g)) {
+      h += `<div class="empty-state">差分を読み込み中…</div>`;
+    } else if (!g.findings?.length && !g.reviewRounds?.length) {
+      h += `<div class="empty-state">この Gate に記録されたコード差分はありません。</div>`;
+    }
+  } else if (g.kind === 'verify') {
+    if (pickable) {
+      h += `<div class="work">
+        <button type="button" class="big" title="${ideTitle()}" data-ide="${esc(g.worktree)}">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:text-bottom;margin-right:4px;" aria-hidden="true">code</span>
+          <span>IDE で開く</span>
+        </button>
+        <span class="mono2">${esc(g.worktree)}</span>
+        <span style="color:var(--md-sys-color-on-surface-variant);font-size:12px;">— 確認後、下のパネルで判定してください</span></div>`;
+    }
+    h += checkPanels(g);
+    if (g.run) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">play_arrow</span><span>動かし方</span></h3>
+        <div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div>
+      </div>`;
+    }
+  } else {
+    if (task?.body) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">assignment</span><span>依頼内容 / 要件プロンプト</span></h3>
+        <div class="body">${md(task.body)}</div>
+      </div>`;
+    }
+    if (g.body && g.body !== task?.body) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">report</span><span>Gate 報告</span></h3>
+        <div class="body">${md(g.body)}</div>
+      </div>`;
+    }
+    if (g.facts?.length) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3>
+        <ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+      </div>`;
+    }
+    if (g.unsure) {
+      h += `<div class="panel">
+        <h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3>
+        <div class="body">${md(g.unsure)}</div>
+      </div>`;
+    }
+    h += choicesHtml(g, pickable);
+  }
+
+  // A record is sent back from the same form the task panel has.
+  h += record ? decideHtml(g) : gateDockHtml(g);
+  return h;
 }
 
 const deciding = new Set(); // gates with an answer in flight: a second click must not send it again
@@ -230,9 +418,8 @@ document.addEventListener('change', e => {
   if (box.checked) ticked.add(i); else ticked.delete(i);
 });
 
-/* The comment box of the view on screen. The review view and the task panel can
-   each hold one at once, the hidden ones included, so it is looked up inside the one being shown. */
-const commentBox = () => document.querySelector(view === 'review' ? '#review .gate-comment' : '#task-panel .gate-comment');
+/* The comment box of the panel a gate is judged in. */
+const commentBox = () => document.querySelector('#task-panel .gate-comment');
 
 /* An answered gate leaves the list and the counts at once; the round that follows confirms it.
    In a merged state that round can be a while off. */
@@ -248,7 +435,7 @@ function dropGate(g) {
   if (listed || row) render();
 }
 
-async function answer(decision, choice, id = focused, commentOverride = null) {
+async function answer(decision, choice, id, commentOverride = null) {
   const g = gateByRef(id);
   if (!g) return false;
   const box = commentBox();
@@ -260,6 +447,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
     return false;
   }
   const line = `adj gate answer --id ${g.id} --decision ${decision}` + (choice ? ` --choice ${choice}` : '');
+  const key = gateKey(g);
   try {
     const data = await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision, choice, comment }),
@@ -273,10 +461,7 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
                                                                : ' → worker は停止中のため、回答は outbox で保持されます'));
     // A record stays, with this answer appended, so it stays in view to show that it went.
     if (g.wait === false && box) box.value = '';
-    else {
-      reviewAnswered(g, decision);
-      if (view !== 'review' && focused === gateRef(g)) focused = null;
-    }
+    else gateAnswered(g, key);
     dropGate(g);
     await refresh(true);
     refreshBoards();
@@ -289,7 +474,10 @@ async function answer(decision, choice, id = focused, commentOverride = null) {
 
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
    the ball is still with the human until they come back and close it. */
-function talk(id = focused) {
+function talk(id) {
+  // The work view has the worker's terminal in the middle, already open: the focus goes to it, and
+  // the panel's tab stays.
+  if (view === 'work') return focusWorkTerm();
   const g = gateByRef(id);
   if (!g) return;
   // A gate the hub opened sits in the main checkout, where there is no worker: its tab is the
@@ -298,18 +486,18 @@ function talk(id = focused) {
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
-async function closeGate(id = focused) {
+async function closeGate(id) {
   const g = gateByRef(id);
   if (!g) return;
   const comment = commentBox()?.value.trim();
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
+  const key = gateKey(g);
   try {
     await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
       method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
-    reviewAnswered(g, 'close');
-    if (view !== 'review' && focused === gateRef(g)) focused = null;
+    gateAnswered(g, key);
     dropGate(g);
     await refresh(true);
     refreshBoards();

@@ -2,7 +2,7 @@
 const sessBusy = new Set(); // in-flight requests: a second press is ignored and buttons dim
 const enc = encodeURIComponent;
 
-/* One row in the flow of the page, above the list: never laid over the panel's terminal. */
+/* One row in the flow of the page, above whichever view is on: never laid over the panel's terminal. */
 function showSessNotice(text, isError = false) {
   const el = sessEl('sess-notice');
   el.hidden = !text;
@@ -112,8 +112,8 @@ function sessionButtons(s) {
   return { bar, menu };
 }
 
-const actionButtonHtml = (b, { menu = false, busy = false } = {}) =>
-  `<button type="button"${menu ? ' role="menuitem"' : ` class="btn-m3-tonal sess-act"`} data-sess-act="${b.act}"${b.title ? ` title="${esc(b.title)}"` : ''}${b.disabled || busy ? ' disabled' : ''}>` +
+const actionButtonHtml = (b, { busy = false } = {}) =>
+  `<button type="button" class="btn-m3-tonal sess-act" data-sess-act="${b.act}"${b.title ? ` title="${esc(b.title)}"` : ''}${b.disabled || busy ? ' disabled' : ''}>` +
   `<span class="material-symbols-outlined" aria-hidden="true">${b.icon}</span><span>${esc(b.label)}</span></button>`;
 
 function runSessionAction(act, s) {
@@ -176,7 +176,9 @@ function restartWarnings(s) {
   if (s.waiting) {
     out.push(`確認待ち（${kindOf(s.waiting.kind)[0]}${s.waiting.title ? `: ${s.waiting.title}` : ''}）があります。gate は残り再起動後も答えられますが、待っている途中の処理は中断されます。`);
   }
-  if (s.present && sessionActivity(s) === 'working') {
+  if (s.present && restingState(s) === 'unknown') {
+    out.push(`状態が分からないため、作業の途中かもしれません${s.phase ? `（フェーズ: ${s.phase}）` : ''}。実行中のコマンドや書きかけの返答は中断されます。`);
+  } else if (s.present && sessionActivity(s) === 'working') {
     out.push(`直近 1 分以内に出力があり、作業の途中かもしれません${s.phase ? `（フェーズ: ${s.phase}）` : ''}。実行中のコマンドや書きかけの返答は中断されます。`);
   }
   return out;
@@ -221,7 +223,6 @@ async function sessRestart(s) {
     const current = (state.sessions || []).find(x => x.id === s.id && x.kind === s.kind) || s;
     const was = { pid: current.pid ?? null };
     sessRestarting.set(mark, { ...was, at: Date.now() });
-    renderSessionsView();
     renderTaskPanel();
     showSessNotice('セッションを再起動しています…');
     try {
@@ -238,7 +239,6 @@ async function sessRestart(s) {
       // The window may have been closed before the start failed.
       await refresh();
     } finally {
-      renderSessionsView();
       renderTaskPanel();
     }
   });
@@ -356,43 +356,4 @@ sessEl('cleanup-confirm').addEventListener('keydown', e => {
 });
 sessEl('cleanup-dialog').addEventListener('close', () => { cleanupTarget = null; });
 
-/* Start the hub of a group: from the board it is on, which for 「すべて」 is not this page's. */
-function startGroupHub(g) {
-  if (!scopeAll()) return hubStart(g.id);
-  const row = hubBoardOf(g);
-  const slug = row?.slug || g.slug;
-  return hubStartAt(`/b/${slug}`, g.hub.id, g.hub.key, row).then(() => refresh(true));
-}
-
-/* A hub's terminal is the task panel's, over the list; 「すべて」 shows the hub's board first. */
-function openGroupHub(g) {
-  const ref = HUB_REF + g.id;
-  if (!scopeAll()) return openTaskPanel(ref, 'term');
-  go({ board: hubBoardOf(g)?.slug || g.slug, view: 'sessions', task: ref, pane: 'term' });
-}
-
-sessEl('sess-groups').addEventListener('click', e => {
-  const act = e.target.closest('[data-hub-act]');
-  if (act) {
-    if (act.disabled) return;
-    const g = sessionGroups().find(x => x.gid === act.closest('.sess-group')?.dataset.gid);
-    if (!g) return;
-    if (act.dataset.hubAct === 'hub-start') return startGroupHub(g);
-    return openGroupHub(g);
-  }
-  const row = e.target.closest('[data-sref]');
-  if (row) openSessionRef(row.dataset.sref);
-});
-// `toggle` does not bubble, and the list is rebuilt: heard on the way down.
-sessEl('sess-groups').addEventListener('toggle', e => {
-  const gid = e.target.dataset?.orphans;
-  if (gid == null) return;
-  const key = `orphans:${gid}`;
-  const set = new Set(prefs.sessionsFolded);
-  // Drawing the list sets `open` too, which lands here with nothing to change.
-  if (set.has(key) === e.target.open) return;
-  if (e.target.open) set.add(key); else set.delete(key);
-  prefs.sessionsFolded = [...set];
-  savePrefs();
-}, true);
 sessEl('sess-notice').addEventListener('click', e => { if (e.target.closest('[data-sess-dismiss]')) showSessNotice(''); });

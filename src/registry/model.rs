@@ -337,6 +337,10 @@ pub const PHASES: [&str; 8] = [
     "report",
 ];
 
+/// What is kept of the agent's last message of a turn (`lastMessage`): a paragraph or two, line
+/// breaks and all. The hook cuts it on write and the board cuts it again for rows of other binaries.
+pub const LAST_MESSAGE_CHARS: usize = 1000;
+
 /// How long a worker that was dispatched but has not registered yet still holds its slot.
 ///
 /// Registration happens inside the new tab, seconds after `adj work` returns. A hub that
@@ -439,7 +443,8 @@ pub(crate) struct Address {
 ///
 /// Every field but the key is optional and keys this version does not know stay in `other`
 /// (rule 10 in `docs/architecture.md`). `model`, `contextPercent` and `rateLimits` come from the
-/// status line (`adj hook claude --status-line`), never from a hook. A known key of the wrong
+/// status line (`adj hook claude --status-line`), never from a hook; `lastMessage` is the
+/// opposite, from the `Stop` and `StopFailure` hooks. A known key of the wrong
 /// type fails the load, and the row is then moved aside like any unreadable one.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -490,6 +495,17 @@ pub struct AgentSession {
     pub context_percent: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limits: Option<RateLimits>,
+    /// What the agent said at the end of its last turn that said anything, kept until the next
+    /// one replaces it. Line breaks are kept; the receiver caps its length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    /// When `last_message` was received.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<i64>,
+    /// When the person last typed into the session: the last `UserPromptSubmit` whose prompt was
+    /// not one of adjutant's own wake lines. Keeps its value through everything else the row does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_prompt_at: Option<i64>,
     #[serde(flatten)]
     pub other: Map<String, Value>,
 }
@@ -528,6 +544,9 @@ pub struct Subagent {
     pub started_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<i64>,
+    /// The tool it last ran, as the parent's `activity` words one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
     #[serde(flatten)]
     pub other: Map<String, Value>,
 }
@@ -685,7 +704,7 @@ pub(super) fn can_create(event: &AgentEvent) -> bool {
     }
     match &event.hook {
         HookEvent::SessionStart
-        | HookEvent::UserPromptSubmit
+        | HookEvent::UserPromptSubmit { .. }
         | HookEvent::PostToolUse
         | HookEvent::PostToolUseFailure
         | HookEvent::PermissionRequest => true,
@@ -693,8 +712,8 @@ pub(super) fn can_create(event: &AgentEvent) -> bool {
         HookEvent::Notification { kind, .. } => {
             matches!(notified(kind.as_deref()), Notified::Waiting)
         }
-        HookEvent::Stop
-        | HookEvent::StopFailure
+        HookEvent::Stop { .. }
+        | HookEvent::StopFailure { .. }
         | HookEvent::SessionEnd
         | HookEvent::SubagentStop
         | HookEvent::StatusLine { .. }
@@ -764,6 +783,24 @@ fn apply_pending(row: &mut AgentSession) {
     }
 }
 
+/// What a turn's last message was, when it had one. Kept even while `done` is held for
+/// sub-agents: it is said, whatever the status shows. A turn without one leaves the last, and
+/// the same words again within the heartbeat leave their time, so that a repeated `Stop` is not
+/// a write of its own.
+fn remember_message(row: &mut AgentSession, message: Option<&str>, now: i64) {
+    let Some(message) = message else {
+        return;
+    };
+    let repeated = row.last_message.as_deref() == Some(message)
+        && row
+            .last_message_at
+            .is_some_and(|at| now - at < HEARTBEAT_SECS);
+    if !repeated {
+        row.last_message = Some(message.to_string());
+        row.last_message_at = Some(now);
+    }
+}
+
 /// What `Stop` and `StopFailure` say, held while sub-agents are still running.
 fn finish(row: &mut AgentSession, status: AgentStatus) {
     if row.subagents.is_empty() {
@@ -811,6 +848,7 @@ fn see_subagent(row: &mut AgentSession, id: &str, kind: Option<&str>, now: i64) 
             kind: kind.map(str::to_string),
             started_at: Some(now),
             last_seen_at: Some(now),
+            activity: None,
             other: Map::new(),
         }),
     }
@@ -879,7 +917,7 @@ pub(super) fn apply(row: Option<AgentSession>, event: &AgentEvent, lookups: &Loo
                         | HookEvent::PermissionRequest
                 ) {
                     see_subagent(&mut cur, id, event.agent_type.as_deref(), now);
-                    apply_from_subagent(&mut cur, event);
+                    apply_from_subagent(&mut cur, id, event);
                 }
             }
             _ => apply_from_session(&mut cur, event, now),
@@ -910,17 +948,26 @@ pub(super) fn apply(row: Option<AgentSession>, event: &AgentEvent, lookups: &Loo
 
 /// An event from a sub-agent (already noted by `see_subagent`): it leaves the parent's status
 /// alone, except that the person is asked in the parent's terminal either way.
-fn apply_from_subagent(row: &mut AgentSession, event: &AgentEvent) {
+fn apply_from_subagent(row: &mut AgentSession, id: &str, event: &AgentEvent) {
     match &event.hook {
         HookEvent::PermissionRequest => {
             set_status(row, AgentStatus::Waiting);
             row.request = event.summary.clone();
         }
-        HookEvent::PostToolUse | HookEvent::PostToolUseFailure => match row.status {
-            // The prompt was answered, or the sub-agent would not be running tools.
-            Some(AgentStatus::Waiting) | None => set_status(row, AgentStatus::Running),
-            _ => {}
-        },
+        HookEvent::PostToolUse | HookEvent::PostToolUseFailure => {
+            match row.status {
+                // The prompt was answered, or the sub-agent would not be running tools.
+                Some(AgentStatus::Waiting) | None => set_status(row, AgentStatus::Running),
+                _ => {}
+            }
+            // Its own tool, not the parent's: `activity` of the row stays the parent's.
+            if let Some(summary) = &event.summary
+                && let Some(sub) = row.subagents.iter_mut().find(|sub| sub.id == id)
+                && sub.activity.as_ref() != Some(summary)
+            {
+                sub.activity = Some(summary.clone());
+            }
+        }
         _ => {}
     }
 }
@@ -954,9 +1001,12 @@ fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
             None => set_status(row, AgentStatus::Idle),
             Some(_) => row.request = None,
         },
-        HookEvent::UserPromptSubmit => {
+        HookEvent::UserPromptSubmit { typed } => {
             row.pending_status = None;
             set_status(row, AgentStatus::Running);
+            if *typed {
+                row.last_prompt_at = Some(now);
+            }
         }
         HookEvent::PostToolUse | HookEvent::PostToolUseFailure => {
             // A new turn: what was held from the last one is not for this one.
@@ -985,8 +1035,14 @@ fn apply_from_session(row: &mut AgentSession, event: &AgentEvent, now: i64) {
             }
             Notified::Nothing => {}
         },
-        HookEvent::Stop => finish(row, AgentStatus::Done),
-        HookEvent::StopFailure => finish(row, AgentStatus::Failed),
+        HookEvent::Stop { message } => {
+            remember_message(row, message.as_deref(), now);
+            finish(row, AgentStatus::Done);
+        }
+        HookEvent::StopFailure { message } => {
+            remember_message(row, message.as_deref(), now);
+            finish(row, AgentStatus::Failed);
+        }
         HookEvent::SubagentStart => {
             if let Some(id) = &event.agent_id
                 && !row.finished_subagents.contains_key(id)

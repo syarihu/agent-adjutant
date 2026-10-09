@@ -129,6 +129,8 @@ pub fn apply(
             let moved = now.pr == task.pr && now.status == task.status;
             if moved {
                 now.status = Status::Done;
+                now.parked = None;
+                note_turn(&mut now, summary.as_ref());
                 now.pr_status = summary.clone().or(now.pr_status);
                 now.updated_at = store::stamp();
                 store::save(ctx, &now)?;
@@ -164,6 +166,7 @@ fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus) -> Task {
         if now.pr != task.pr || now.pr_status.as_ref() == Some(&summary) {
             return Ok(None);
         }
+        note_turn(&mut now, Some(&summary));
         now.pr_status = Some(summary);
         store::save(ctx, &now)?;
         Ok(Some(now))
@@ -175,5 +178,16 @@ fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus) -> Task {
             eprintln!("could not keep the PR summary of {}: {why}", task.id);
             task
         }
+    }
+}
+
+/// Stamp `pr_turn_at` when `next` stands for a different turn than the record's summary does.
+/// Called before the summary is replaced, under the record's lock.
+fn note_turn(task: &mut Task, next: Option<&PrStatus>) {
+    let Some(next) = next else {
+        return;
+    };
+    if pr_turn(next) != task.pr_status.as_ref().and_then(pr_turn) {
+        task.pr_turn_at = Some(store::stamp());
     }
 }

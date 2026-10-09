@@ -16,9 +16,6 @@ let selectedTaskId = null;   // what the panel is open on: a task id, a hub as H
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
 const panelTerm = { host: () => document.getElementById('tp-term-host'), redraw: () => renderTaskPanel(), base: () => BASE,
   taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
-// The review view's: one terminal for the item on screen, kept across 判断 and ターミナル.
-const reviewTerm = { host: () => document.getElementById('rv-term-host'), redraw: () => renderReviewTerm(),
-  base: () => baseOf(reviewCurrent()), taskId: null, sessionId: null, term: null, ended: null, reconnect: false };
 
 /* A hub opens in the task panel as `hub:<id>`, where a task opens as its id: in `selectedTaskId`
    and in the address's `task=`. A session with no task opens the same way, as `session:<id>`, until
@@ -34,27 +31,46 @@ const SESS_REF = 'session:';
 const isSessRef = id => typeof id === 'string' && id.startsWith(SESS_REF);
 const sessIdOfRef = id => id.slice(SESS_REF.length);
 const sessOfRef = (id, data = state) => isSessRef(id) ? (data.sessions || []).find(s => s.id === sessIdOfRef(id)) || null : null;
+/* A parent issue opens in the work view as `parent:<key>`: its overview in the panel, the terminal
+   of the hub that runs it in the middle. The key is the one `parents[].key` carries. */
+const PARENT_REF = 'parent:';
+const isParentRef = id => typeof id === 'string' && id.startsWith(PARENT_REF);
+const parentKeyOfRef = id => id.slice(PARENT_REF.length);
+const parentOfRef = id => isParentRef(id) ? workParentOf(parentKeyOfRef(id)) : null;
 
 const PREF_KEY = 'adj-board-split';
-// sessionsFolded holds `orphans:<group>` for each hub whose worktrees without a session are open;
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
-// reviewNext is whether answering in the review view moves on to the next item.
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', sessionsFolded:[], boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true },
+// reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row.
+const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
+  railWidth:240, workListWidth:380, workGroup:'parent', workFolded:[] },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
 delete prefs.panelSide;
+// The セッション tab, whose folded groups this was, is gone.
+delete prefs.sessionsFolded;
 if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
+// What is in the browser's storage is not trusted: a width outside its range is the default, a fold
+// list is a list of strings.
+if (!(prefs.railWidth >= 180 && prefs.railWidth <= 400)) prefs.railWidth = 240;
+if (!(prefs.workListWidth >= 260 && prefs.workListWidth <= 640)) prefs.workListWidth = 380;
+if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
+prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
+// Which of the page's desktop notifications ring (my-work-notify.js); the server's own notifier is not governed by this.
+prefs.notify = notifyPrefs(prefs.notify);
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 function applyLayout() {
   const boards = document.getElementById('boards');
   if (!boards) return;
+  // The widths of the sidebar and of the work view's list; the panel's own is set by renderTaskPanel.
+  document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
+  document.body.style.setProperty('--wk-list-w', `${prefs.workListWidth}px`);
   boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
   document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
   document.body.classList.toggle('layout-split', prefs.layout === 'split');
@@ -65,17 +81,15 @@ function applyLayout() {
   // Side by side, both boards are on screen, so both tabs are lit.
   const split = prefs.layout === 'split';
   document.querySelectorAll('.view-tab[data-tab]').forEach(b => {
-    const tab = b.dataset.tab;
-    const on = tab === 'sessions' ? nav.view === 'sessions'
-      : view === 'board' && nav.view !== 'sessions' && (split || tab === prefs.tab);
+    const on = view === 'board' && (split || b.dataset.tab === prefs.tab);
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', String(on));
   });
-  // The layout switches belong to the two boards; the review queue has no tabs.
+  // The layout switches belong to the two boards; 「いまの仕事」 has no tabs.
   const tools = document.getElementById('view-tools');
-  if (tools) tools.hidden = view !== 'board' || nav.view === 'sessions';
+  if (tools) tools.hidden = view !== 'board';
   const tabsRow = document.getElementById('view-tabs-row');
-  if (tabsRow) tabsRow.hidden = view === 'review';
+  if (tabsRow) tabsRow.hidden = view === 'work';
   document.querySelectorAll('[data-layout]').forEach(b => {
     const on = b.dataset.layout === prefs.layout;
     b.classList.toggle('active', on);
@@ -93,15 +107,13 @@ function setBoardArrange(arrange) { prefs.arrange = arrange; applyLayout(); }
 function showBoard(board) {
   // Side by side both are already on screen: choosing one is choosing to look at it alone. From
   // another tab nothing was on screen to choose between, and the layout is left as it was.
-  if (prefs.layout === 'split' && view === 'board' && nav.view !== 'sessions') { prefs.layout = 'tabs'; savePrefs(); }
+  if (prefs.layout === 'split' && view === 'board') { prefs.layout = 'tabs'; savePrefs(); }
   // The address says which tab it is (and a board shown on its own page keeps it).
   go({ view: board === 'agent' ? 'agent' : 'human' });
 }
-function showSessions() { go({ view: 'sessions' }); }
 document.querySelector('.view-tabs').addEventListener('click', e => {
   const tab = e.target.closest('.view-tab[data-tab]');
-  if (!tab) return;
-  if (tab.dataset.tab === 'sessions') showSessions(); else showBoard(tab.dataset.tab);
+  if (tab) showBoard(tab.dataset.tab);
 });
 function jump(board, id) {
   const want = board === 'agent' ? 'agent' : 'human';
@@ -252,6 +264,12 @@ let lastStateJson = '';
 let lastMinute = null;
 let seenGateIds = null;
 
+/* The kinds the page rings for, in words, for the button's tooltip. Single-board mode has no 「いまの仕事」, so only waits. */
+function notifyKindsText() {
+  const on = [prefs.notify.waiting && '確認待ち', multiBoard && prefs.notify.done && '完了', multiBoard && prefs.notify.failed && '失敗'].filter(Boolean);
+  return on.length ? on.join('・') : 'なし';
+}
+
 function updateNotifyButton() {
   const btn = document.getElementById('btn-notify');
   if (!btn || !('Notification' in window)) {
@@ -260,30 +278,117 @@ function updateNotifyButton() {
   }
   if (Notification.permission === 'granted') {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
-    btn.title = '確認依頼と入力待ちのデスクトップ通知が有効です';
+    btn.title = `デスクトップ通知が有効です（${notifyKindsText()}）。クリックで設定`;
   } else if (Notification.permission === 'denied') {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications</span><span>通知を許可</span>';
-    btn.title = '確認依頼が届いたときや、セッションが入力待ちになったときにデスクトップ通知を受け取る';
+    btn.title = `通知を許可すると、確認待ち・完了・失敗のデスクトップ通知を選んで受け取れます（いまは ${notifyKindsText()}）`;
   }
 }
 
-async function toggleNotify() {
+/* The button opens the settings; the dialog asks the browser's permission and keeps the choice of kinds. */
+function toggleNotify() {
+  if (!('Notification' in window)) return;
+  openNotifyDialog();
+}
+
+/* Ask the browser's permission to notify: the dialog's button. */
+async function requestNotifyPermission() {
   if (!('Notification' in window)) return;
   if (Notification.permission === 'default') {
     const perm = await Notification.requestPermission();
     updateNotifyButton();
     if (perm === 'granted') {
       new Notification('adj', {
-        body: '確認依頼が届いたときにデスクトップ通知でお知らせします',
+        body: '通知の設定に合わせて、デスクトップ通知でお知らせします',
         tag: 'adj-notify-init',
       });
     }
   } else if (Notification.permission === 'denied') {
     alert('ブラウザの設定で通知がブロックされています。ブラウザのアドレスバーのサイト設定から通知を許可してください。');
   }
+}
+
+/* The work entry a notification is about, found in the document the page last read; null when there is none (a
+   board served alone has no document), and the notification then says what it always said. */
+function notifyEntryOf(match) {
+  if (!multiBoard || !work.doc) return null;
+  return workEntries(work.doc, key => answeredGates.has(key)).find(match) || null;
+}
+
+/* Open the task a notification is about in 「いまの仕事」. */
+function openNotified(entry, notification) {
+  try { notification?.close(); } catch {}
+  window.focus();
+  const { rows, turns } = workListRows();
+  const r = [...rows, ...turns].find(x => x.id === entry.id);
+  if (r) selectWorkRow(r);
+  else go({ board: entry.board, view: 'work', task: entry.ref, pane: 'detail' });
+}
+
+/* What the page last read of /api/work may be a poll behind /api/boards, so a gate or wait whose task it does not
+   know yet is kept (`notifyPending`) and rung when the next document is in (checkNewEnds, my-work.js); one retry,
+   then it rings in its old wording, so nothing is lost. */
+let notifyPending = [];
+const NOTIFY_PENDING_MS = 15000;
+
+/* Try the queued items again. `fetchedAt` is when the /api/work request that gave the document just read began: an item
+   queued before it had its chance with that document and is rung now, in its old wording if it still has no entry; a
+   younger one is matched against the document and, with no entry, stays queued. Without it (the boards poll, a failed
+   request) only an item that has waited NOTIFY_PENDING_MS is final: /api/work may be slow or failing, and a gate must
+   not wait on it for ever. */
+function flushNotifyPending(fetchedAt = null) {
+  if (!notifyPending.length) return;
+  const now = Date.now();
+  const queue = notifyPending;
+  notifyPending = [];
+  for (const item of queue) ringWaiting(item, notifyPendingFinal(item.at, fetchedAt, now, NOTIFY_PENDING_MS));
+}
+
+/* Ring a gate or a wait (`item`: {gate} or {wait}) the person is to be told of. `final` is the retry. */
+function ringWaiting(item, final) {
+  if (!(window.Notification && Notification.permission === 'granted' && prefs.notify.waiting)) return;
+  const { gate: g, wait: w } = item;
+  // A retry (an item that was queued) is for what is still open: answered or gone meanwhile, it is not rung.
+  if ((final || item.at) && !(g ? seenGateIds?.has(item.ref) : seenWaitKeys?.has(item.ref))) return;
+  const entry = !multiBoard || !work.doc ? null : notifyEntryOf(g
+    ? e => notifyGateMatch(e, g._slug, g.id, g.task)
+    : e => notifyWaitMatch(e, w._slug, w.session, w.agentSessionId));
+  if (entry) {
+    // The row open on screen, and a parked task, are not rung for.
+    if (notifyQuiet(entry, work.open?.id, document.visibilityState === 'visible')) return;
+    const content = g ? notifyContent('gate', entry, { gate: g.title, label: kindOf(g.kind)[0] })
+      : notifyContent('permission', entry, { request: w.request ? requestText({ agentSession: { request: w.request } }) : 'ターミナルで入力を待っています' });
+    const n = new Notification(content.title, { body: content.body, tag: g ? 'gate-' + item.ref : 'wait-' + item.ref });
+    n.onclick = () => openNotified(entry, n);
+    return;
+  }
+  if (multiBoard && !final) { notifyPending.push({ ...item, at: item.at ?? Date.now() }); return; }
+  if (g) {
+    const [label] = kindOf(g.kind);
+    const wtName = baseName(g.worktree);
+    const n = new Notification(`【${label}】${g.title}`, {
+      body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
+      tag: 'gate-' + item.ref,
+    });
+    n.onclick = () => {
+      window.focus();
+      openGateInWork(g);
+    };
+    return;
+  }
+  // The board's own wording (sessions.js), from a session shaped like the ones it reads.
+  const asked = { agentSession: { request: w.request } };
+  const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
+    body: w.request ? requestText(asked) : 'ターミナルで入力を待っています',
+    tag: 'wait-' + item.ref,
+  });
+  n.onclick = () => {
+    window.focus();
+    openWait(w);
+  };
 }
 
 function checkNewGates(gates) {
@@ -294,28 +399,18 @@ function checkNewGates(gates) {
     seenGateIds = currentIds;
     return;
   }
-  if (window.Notification && Notification.permission === 'granted') {
-    for (const g of list) {
-      if (!seenGateIds.has(refOf(g))) {
-        const [label] = kindOf(g.kind);
-        const wtName = baseName(g.worktree);
-        const n = new Notification(`【${label}】${g.title}`, {
-          body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
-          tag: 'gate-' + refOf(g),
-        });
-        n.onclick = () => {
-          window.focus();
-          onBoard(g._slug, () => judgeGate(g.id));
-        };
-      }
-    }
+  for (const g of list) {
+    if (!seenGateIds.has(refOf(g))) ringWaiting({ gate: g, ref: refOf(g) }, false);
   }
   seenGateIds = currentIds;
+  flushNotifyPending();
 }
 
-/* Open the terminal of the session a wait is about: the notification's click, and 要対応's button. */
+/* Open the session a wait is about, in 「いまの仕事」 on its board: the notification's click. A board served alone has no list
+   of work: the session opens in the panel. */
 function openWait(w) {
-  onBoard(w._slug, () => openSessionRef(scopeAll() && w._slug ? `${w._slug}/${w.session}` : w.session));
+  if (multiBoard && w._slug) return go({ board: w._slug, view: 'work', task: SESS_REF + w.session, pane: 'detail' });
+  openSessionRef(w.session);
 }
 
 let seenWaitKeys = null;
@@ -330,23 +425,13 @@ function checkNewWaits(waits) {
     seenWaitKeys = current;
     return;
   }
-  if (window.Notification && Notification.permission === 'granted') {
-    for (const w of list) {
-      // Listed in 要対応 without a ring: the person was at its terminal, or it was up first.
-      if (seenWaitKeys.has(keyOf(w)) || w.quiet) continue;
-      // The board's own wording (sessions.js), from a session shaped like the ones it reads.
-      const asked = { agentSession: { request: w.request } };
-      const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
-        body: w.request ? requestText(asked) : 'ターミナルで入力を待っています',
-        tag: 'wait-' + keyOf(w),
-      });
-      n.onclick = () => {
-        window.focus();
-        openWait(w);
-      };
-    }
+  for (const w of list) {
+    // Not rung for: the person was at its terminal, or it was up first.
+    if (seenWaitKeys.has(keyOf(w)) || w.quiet) continue;
+    ringWaiting({ wait: w, ref: keyOf(w) }, false);
   }
   seenWaitKeys = current;
+  flushNotifyPending();
 }
 
 /* The waits of every board, as /api/boards lists them. */
@@ -384,7 +469,7 @@ async function fetchBoards() {
     // A list that was on its way when a gate was answered still has it: ids are claimed fresh,
     // so a ref answered in this page is never a new gate.
     for (const b of boards) {
-      const gone = (b.gates || []).filter(g => reviewDone.has(`${b.slug}/${g.id}`));
+      const gone = (b.gates || []).filter(g => answeredGates.has(`${b.slug}/${g.id}`));
       if (!gone.length) continue;
       b.gates = b.gates.filter(g => !gone.includes(g));
       b.waiting = Math.max(0, (b.waiting || 0) - gone.length);
@@ -393,7 +478,6 @@ async function fetchBoards() {
     checkNewWaits(everyWait());
     renderBoardRows();
     renderTitle();
-    renderGateCount();
     // The hub panel reads the list for its origin, address and counts.
     redrawHubPanel();
   } catch {
@@ -404,8 +488,8 @@ async function fetchBoards() {
   }
 }
 
-/* The boards 「すべて」 and the review queue read, in the order the sidebar lists them. A hub
-   that is finished has nothing left to show. */
+/* The boards 「すべて」 reads, in the order the sidebar lists them. A hub that is finished has
+   nothing left to show. */
 const readBoards = () => boards.filter(b => !b.finished);
 
 let allBusy = false;
@@ -413,8 +497,8 @@ let allAgain = false;            // a forced round asked for while one was out
 let allRound = false;            // the first full round of this scope has been drawn
 let allSkip = false;
 let allMinute = null;
-/* The boards that answer for their repository on the セッション tab of 「すべて」: its own board,
-   which lists the sessions of its parent-task hubs too, else each parent-task board. */
+/* The boards that answer for their repository in 「すべて」: its own board, which lists its
+   parent-task hubs too, else each parent-task board. */
 function sessionCarriers(listed) {
   const by = new Map();
   for (const b of listed) by.set(b.nwo, [...(by.get(b.nwo) || []), b]);
@@ -425,9 +509,8 @@ function sessionCarriers(listed) {
     .sort((a, b) => a.nwo.localeCompare(b.nwo));
 }
 
-/* 「すべて」 and the review queue: each board's state, one after another, without its sessions.
-   Only the セッション tab of 「すべて」 asks for sessions, and only of one board per repository,
-   since listing them is the dearest part of a poll.
+/* 「すべて」: each board's state, one after another, without its sessions, since listing them is the
+   dearest part of a poll.
    A board whose state is unchanged is not redrawn, and nothing is drawn at all unless one is. */
 async function refreshAllBoards(force) {
   if (allBusy) {
@@ -441,17 +524,15 @@ async function refreshAllBoards(force) {
     if (!boards.length) await fetchBoards();
     if (epoch !== navEpoch) return;
     const listed = readBoards();
-    const carriers = new Set(nav.view === 'sessions' ? sessionCarriers(listed).map(b => b.slug) : []);
-    // The review queue's terminal tab needs the sessions of the one board whose item is shown.
-    const rvSlug = nav.view === 'review' && reviewPane === 'term' ? slugOfRef(focused) : null;
     let changed = force;
     let now = 0;
     for (const b of listed) {
       try {
-        const next = await boardApi(`/b/${b.slug}`, carriers.has(b.slug) ? '/api/state?lines=1'
-          : b.slug === rvSlug ? '/api/state' : '/api/state?sessions=0');
+        const next = await boardApi(`/b/${b.slug}`, '/api/state?sessions=0');
         if (epoch !== navEpoch) return;
-        const { now: at, ...rest } = next;
+        // The rate limits are left out as `now` is: they move on their own, and the view that draws
+        // them redraws with the next real change.
+        const { now: at, rateLimits, ...rest } = next;
         now = Math.max(now, at || 0);
         // As `refresh` compares them, so a minute turning over does not redraw each board.
         const json = JSON.stringify({ ...rest, sessions: minuteSessions(rest.sessions, at, view) });
@@ -464,7 +545,7 @@ async function refreshAllBoards(force) {
       }
     }
     // The person may have moved on while the last board was answering.
-    if (epoch !== navEpoch) return;
+    if (epoch !== navEpoch || !scopeAll()) return;
     const slugs = new Set(listed.map(b => b.slug));
     for (const slug of Object.keys(boardStates)) {
       if (!slugs.has(slug)) { delete boardStates[slug]; changed = true; }
@@ -472,7 +553,7 @@ async function refreshAllBoards(force) {
     const minute = Math.floor(now / 60);
     if (!changed && minute === allMinute) return;
     allMinute = minute;
-    state = mergeStates(listed, now, carriers, rvSlug);
+    state = mergeStates(listed, now);
     allRound = true;
     if (window.__from) return;
     render();
@@ -488,11 +569,11 @@ async function refreshAllBoards(force) {
 }
 
 /* One state out of the boards': tasks and gates tagged with the board they came from, workers
-   once each (a parent-task hub's board lists its repository's worktrees too). The hubs and
-   sessions are the carrier boards' (see sessionCarriers), tagged the same way, since a hub's
-   id is only its own repository's: the repository hub of every repository is `hub`. Sessions
-   are there only while the セッション tab asks for them. The inbox is left empty. */
-function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
+   once each (a parent-task hub's board lists its repository's worktrees too). The hubs are the
+   carrier boards' (see sessionCarriers), tagged the same way, since a hub's id is only its own
+   repository's: the repository hub of every repository is `hub`. There are no sessions in it.
+   The inbox is left empty. */
+function mergeStates(listed, now) {
   const parts = listed.filter(b => boardStates[b.slug]).map(b => ({ slug: b.slug, data: boardStates[b.slug].data }));
   const carried = sessionCarriers(listed).map(b => b.slug).filter(slug => boardStates[slug]);
   const tag = (list, slug) => (list || []).map(x => ({ ...x, _slug: slug, _base: `/b/${slug}` }));
@@ -507,18 +588,15 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
   }
   const first = parts[0]?.data || {};
   const lead = boardStates[carried[0]]?.data || first;
-  const nwoOf = slug => listed.find(b => b.slug === slug)?.nwo || '';
   return {
     repo: '',
     resident: true,
     tasks: parts.flatMap(p => tag(p.data.tasks, p.slug)),
-    gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !reviewDone.has(gateRef(g))),
+    gates: parts.flatMap(p => tag(p.data.gates, p.slug)).filter(g => !answeredGates.has(gateRef(g))),
     waits: parts.flatMap(p => tag(p.data.waits, p.slug)),
+    parents: parts.flatMap(p => tag(p.data.parents, p.slug)),
     workers,
-    // Each repository's carrier board, in the order the tab lists them.
-    carriers: carried.map(slug => ({ slug, nwo: nwoOf(slug) })),
-    sessions: [...carried.filter(slug => carriers.has(slug)), ...(rvSlug && !carriers.has(rvSlug) && boardStates[rvSlug] ? [rvSlug] : [])]
-      .flatMap(slug => tag(boardStates[slug].data.sessions, slug)),
+    sessions: [],
     hubs: carried.flatMap(slug => tag(boardStates[slug].data.hubs, slug)),
     pending: [],
     now,
@@ -527,13 +605,7 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
     ideConfigured: first.ideConfigured,
     stuckAfterMinutes: first.stuckAfterMinutes,
     configPath: first.configPath,
-    // Whether this round asked for the sessions: otherwise the tab's counts are not known.
-    sessionsRead: carried.some(slug => carriers.has(slug)),
-    // Whether it asked at all: asked and not read is a failure, not a wait.
-    sessionsAsked: carriers.size > 0,
-    // The board whose sessions were read for the review view's terminal.
-    reviewSessionsOf: rvSlug && boardStates[rvSlug] ? rvSlug : null,
-    // What the tab's buttons ask of the server is the same for every board of it.
+    // What the buttons ask of the server is the same for every board of it.
     boardTerminal: lead.boardTerminal,
     hubStart: lead.hubStart,
     sessionOpen: lead.sessionOpen,
@@ -545,22 +617,24 @@ function mergeStates(listed, now, carriers = new Set(), rvSlug = null) {
 
 /* The sessions as two polls are compared: a session's last activity as the whole minutes it has
    been idle at `now`, which is as fine as the page shows it. `mode` is the view being drawn: the
-   board and the sessions tab draw the last activity, and others leave it out. The agent's own part
-   is cut to what the view draws, since activity and request change on every tool call: the
-   sessions tab has all of it (`updatedAt` as minutes, `lastEventAt` not drawn), the board only
-   the state and, while it waits on a permission prompt, the request its card shows, and any other
-   view only the state. In board mode the activity is left out on purpose, though the session card
-   and the task panel draw it: it shows with the next real change or the minute redraw. Clamped
+   board draws the last activity, and others leave it out. The agent's own part is cut to what the
+   view draws, since activity and request change on every tool call: the board only the state and,
+   while it waits on a permission prompt, the request its card shows, and any other view only the
+   state. In board mode the activity and the last message are left out on purpose,
+   though the session card and the task panel draw them: they show with the next real change or the
+   minute redraw (a new last message comes with a change of the state or the held state). Clamped
    at 0: tmux's activity can be a second later than the poll's clock, and -1 against 0 between two
    polls would redraw for nothing. */
-function minuteSessions(sessions, now, mode = 'sessions') {
+function minuteSessions(sessions, now, mode) {
   const minutes = secs => Math.max(0, Math.floor((now - secs) / 60));
-  const shows = mode === 'board' || mode === 'sessions';
-  return (sessions || []).map(({ lastActivityAt, agentSession: a, ...s }) => {
+  const shows = mode === 'board';
+  // The diff, the branch's PR and their errors are read in the background and change on their own;
+  // what draws them redraws with the next real change. Sub-agents are compared by how many run,
+  // since each one's tool changes on every call.
+  return (sessions || []).map(({ lastActivityAt, agentSession: a, uncommitted, uncommittedError, branchPr, branchPrError, ...s }) => {
     const agent = !a ? {} : { agentSession: {
-      status: a.status, pending: a.pending, subagents: a.subagents, error: a.error,
-      ...(mode === 'sessions' ? { activity: a.activity, request: a.request }
-        : mode === 'board' && a.status === 'waiting' ? { request: a.request } : {}),
+      status: a.status, pending: a.pending, subagents: a.subagents?.length || 0, error: a.error,
+      ...(mode === 'board' && a.status === 'waiting' ? { request: a.request } : {}),
       ...(shows && a.updatedAt != null ? { updatedAt: minutes(a.updatedAt) } : {}),
     } };
     return !shows || lastActivityAt == null ? { ...s, ...agent } : { ...s, ...agent, lastActivityAt: minutes(lastActivityAt) };
@@ -568,6 +642,12 @@ function minuteSessions(sessions, now, mode = 'sessions') {
 }
 
 async function refresh(force = false) {
+  // The work view's list is its own document; the selected board's state below is what the panel and
+  // the terminal read, and there is none while nothing is selected.
+  if (view === 'work') {
+    refreshWork(force);
+    if (nav.board === 'all' || !nav.board) return;
+  }
   if (scopeAll()) {
     // Every board is read, so this runs half as often.
     if (!force) {
@@ -580,8 +660,8 @@ async function refresh(force = false) {
   const epoch = navEpoch;
   try {
     // The last line of each session's pane is read from tmux, so only what shows it asks: the
-    // sessions tab for every session, the board view for the hub's own.
-    const next = await boardApi(base, view === 'sessions' ? '/api/state?lines=1' : view === 'board' ? '/api/state?lines=hub' : '/api/state');
+    // board view, for the hub's own.
+    const next = await boardApi(base, view === 'board' ? '/api/state?lines=hub' : '/api/state');
     // The person moved to another board while this was on its way.
     if (epoch !== navEpoch) return;
     if (!multiBoard) {
@@ -597,12 +677,12 @@ async function refresh(force = false) {
     // nearly every poll. The views that do not show it leave it out, so a minute turning over
     // does not redraw them (and cut a comment being typed there); a view switch draws its view
     // afresh.
-    const { now, ...rest } = next;
+    const { now, rateLimits, ...rest } = next;
     if (rest.sessions) rest.sessions = minuteSessions(rest.sessions, now, view);
     const nextJson = JSON.stringify(rest);
     const minute = Math.floor((now || 0) / 60);
     const changed = nextJson !== lastStateJson;
-    const clockOnly = !changed && minute !== lastMinute && (view === 'board' || view === 'sessions');
+    const clockOnly = !changed && minute !== lastMinute && (view === 'board' || view === 'work');
     if (!force && !changed && !clockOnly) return;
     lastStateJson = nextJson;
     lastMinute = minute;
@@ -611,7 +691,7 @@ async function refresh(force = false) {
     const was = new Set((state.hubs || []).filter(h => h.state?.present).map(h => h.id));
     for (const h of next.hubs || []) if (h.state?.present && !was.has(h.id)) clearHubStarting(h);
     // Same for a state that was on its way (see fetchBoards).
-    if ((next.gates || []).some(g => reviewDone.has(gateRef(g)))) next.gates = next.gates.filter(g => !reviewDone.has(gateRef(g)));
+    if ((next.gates || []).some(g => answeredGates.has(gateKey(g)))) next.gates = next.gates.filter(g => !answeredGates.has(gateKey(g)));
     state = next;
     if (window.__from) return;
     render();
@@ -634,19 +714,7 @@ function waitingIn(data = state) {
   return humanItems.length + standalone.length;
 }
 
-function renderGateCount() {
-  // The sessions waiting on a prompt or a question are in the queue beside the gates.
-  const mine = multiBoard
-    ? boards.reduce((n, b) => n + (b.gates || []).length + (b.waits || []).length, 0)
-    : (state.gates || []).length + (state.waits || []).length;
-  const gateCount = document.getElementById('gate-count');
-  if (gateCount) {
-    gateCount.textContent = mine;
-    gateCount.classList.toggle('zero', !mine);
-  }
-}
-
-/* The header's three counts: what waits on the person, the gates, and the workers at work. */
+/* The header's counts: what waits on the person, and the workers at work. */
 function renderCounts() {
   const totalHuman = waitingIn();
   const humanBadge = document.getElementById('human-badge');
@@ -654,8 +722,6 @@ function renderCounts() {
     humanBadge.textContent = totalHuman;
     humanBadge.classList.toggle('zero', !totalHuman);
   }
-
-  renderGateCount();
 
   // Count active workers not waiting on human
   const activeWorkers = (state.tasks || []).filter(t => ['dispatched', 'pr'].includes(t.status) && !humanColOf(t)).length;
@@ -666,11 +732,8 @@ function renderCounts() {
 }
 
 /* The parts of the page, in the order `render` draws them and `resetViews` resets them. Each
-   script registers its own parts at its end. The order of the resets matters once: the sessions
-   tab lets go of the address it waits on before the panel's terminal goes, whose going redraws
-   that tab. */
-const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'sessions-tab', 'pending-session',
-  'sessions-view', 'task-panel', 'review', 'layout'];
+   script registers its own parts at its end. */
+const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'layout'];
 const viewsByName = new Map();
 
 /* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets

@@ -19,6 +19,22 @@ fn event(hook: HookEvent, at: i64) -> AgentEvent {
     }
 }
 
+fn stop(message: Option<&str>) -> HookEvent {
+    HookEvent::Stop {
+        message: message.map(str::to_string),
+    }
+}
+
+fn failure(message: Option<&str>) -> HookEvent {
+    HookEvent::StopFailure {
+        message: message.map(str::to_string),
+    }
+}
+
+fn said(message: &str, at: i64) -> AgentEvent {
+    event(stop(Some(message)), at)
+}
+
 fn tool(at: i64, summary: &str) -> AgentEvent {
     AgentEvent {
         summary: Some(summary.to_string()),
@@ -122,8 +138,8 @@ fn row_of(id: &str, pid: Option<u32>, last_event_at: Option<i64>) -> AgentSessio
 fn a_stray_end_of_a_session_with_no_row_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     for hook in [
-        HookEvent::Stop,
-        HookEvent::StopFailure,
+        stop(None),
+        failure(None),
         HookEvent::SessionEnd,
         HookEvent::SubagentStop,
     ] {
@@ -151,7 +167,10 @@ fn session_start_makes_an_idle_row_and_a_prompt_a_running_one() {
     );
 
     let other = tempfile::tempdir().unwrap();
-    record(other.path(), &event(HookEvent::UserPromptSubmit, T0));
+    record(
+        other.path(),
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0),
+    );
     assert_eq!(read(other.path(), "s1").status, Some(AgentStatus::Running));
 }
 
@@ -209,6 +228,26 @@ fn a_tool_call_sets_the_activity_and_the_same_one_is_not_written_again_within_a_
 }
 
 #[test]
+fn a_subagents_tool_call_sets_its_own_activity_and_not_the_parents() {
+    let row = rows(&[
+        tool(T0, "Edit: a"),
+        started("a1", T0 + 1),
+        started("a2", T0 + 1),
+        from_sub("a1", tool(T0 + 2, "Bash: b")),
+    ])
+    .unwrap();
+    assert_eq!(row.activity.as_deref(), Some("Edit: a"));
+    let activity = |id: &str| {
+        row.subagents
+            .iter()
+            .find(|sub| sub.id == id)
+            .and_then(|sub| sub.activity.clone())
+    };
+    assert_eq!(activity("a1").as_deref(), Some("Bash: b"));
+    assert_eq!(activity("a2"), None);
+}
+
+#[test]
 fn updated_at_moves_only_when_the_status_does() {
     let mut row = None;
     step_keep(&mut row, &tool(T0, "Edit: a"));
@@ -217,7 +256,7 @@ fn updated_at_moves_only_when_the_status_does() {
     assert_eq!(at(&row), Some((Some(T0), Some(T0 + 100))));
     step_keep(&mut row, &event(HookEvent::PermissionRequest, T0 + 200));
     assert_eq!(at(&row), Some((Some(T0 + 200), Some(T0 + 200))));
-    step_keep(&mut row, &event(HookEvent::Stop, T0 + 300));
+    step_keep(&mut row, &event(stop(None), T0 + 300));
     assert_eq!(status(&row), Some("done"));
     assert_eq!(at(&row), Some((Some(T0 + 300), Some(T0 + 300))));
     let done = row.as_ref().unwrap();
@@ -227,13 +266,100 @@ fn updated_at_moves_only_when_the_status_does() {
     );
 }
 
+// ── what the agent said at the end of a turn ─────────────────────
+
+fn message_of(row: &Option<AgentSession>) -> (Option<&str>, Option<i64>) {
+    let row = row.as_ref().unwrap();
+    (row.last_message.as_deref(), row.last_message_at)
+}
+
+#[test]
+fn a_stop_records_what_was_said_and_when_and_a_failure_does_too() {
+    let mut row = rows(&[tool(T0, "Edit: a")]);
+    assert_eq!(message_of(&row), (None, None));
+    step_keep(&mut row, &said("All green.\nShip it.", T0 + 10));
+    assert_eq!(status(&row), Some("done"));
+    assert_eq!(
+        message_of(&row),
+        (Some("All green.\nShip it."), Some(T0 + 10))
+    );
+
+    let mut row = rows(&[tool(T0, "Edit: a")]);
+    step_keep(
+        &mut row,
+        &event(failure(Some("API Error: rate limit")), T0 + 10),
+    );
+    assert_eq!(status(&row), Some("failed"));
+    assert_eq!(
+        message_of(&row),
+        (Some("API Error: rate limit"), Some(T0 + 10))
+    );
+}
+
+#[test]
+fn a_message_is_recorded_while_done_is_held_for_sub_agents() {
+    let mut row = rows(&[started("a1", T0), said("Waiting on a helper.", T0 + 5)]);
+    let held = row.clone().unwrap();
+    assert_eq!(held.pending_status, Some(AgentStatus::Done));
+    assert_eq!(
+        message_of(&row),
+        (Some("Waiting on a helper."), Some(T0 + 5))
+    );
+    step_keep(&mut row, &stopped("a1", T0 + 9));
+    assert_eq!(status(&row), Some("done"));
+    assert_eq!(
+        message_of(&row),
+        (Some("Waiting on a helper."), Some(T0 + 5))
+    );
+}
+
+#[test]
+fn a_message_is_kept_until_another_replaces_it() {
+    let mut row = rows(&[tool(T0 - 1, "Edit: a"), said("First.", T0)]);
+    for e in [
+        event(HookEvent::UserPromptSubmit { typed: true }, T0 + 5),
+        event(HookEvent::SessionStart, T0 + 6),
+        tool(T0 + 7, "Edit: a"),
+        event(HookEvent::PermissionRequest, T0 + 8),
+        // A turn that said nothing.
+        event(stop(None), T0 + 9),
+        // A sub-agent's own events are not the session's.
+        from_sub("a1", event(stop(Some("Sub says.")), T0 + 10)),
+        stopped("a1", T0 + 11),
+    ] {
+        step_keep(&mut row, &e);
+        assert_eq!(message_of(&row), (Some("First."), Some(T0)));
+    }
+    step_keep(&mut row, &said("Second.", T0 + 20));
+    assert_eq!(message_of(&row), (Some("Second."), Some(T0 + 20)));
+}
+
+#[test]
+fn the_same_message_again_within_the_minute_is_not_a_write() {
+    let mut row = rows(&[tool(T0 - 1, "Edit: a"), said("Done.", T0)]);
+    assert!(!step_keep(&mut row, &said("Done.", T0 + 10)));
+    assert_eq!(message_of(&row), (Some("Done."), Some(T0)));
+    // Past the minute the heartbeat writes, and the time moves with it.
+    assert!(step_keep(&mut row, &said("Done.", T0 + 70)));
+    assert_eq!(message_of(&row), (Some("Done."), Some(T0 + 70)));
+    // Other words are a change at once.
+    assert!(step_keep(&mut row, &said("Else.", T0 + 71)));
+}
+
+#[test]
+fn a_stray_stop_with_a_message_still_makes_no_row() {
+    let dir = tempfile::tempdir().unwrap();
+    record(dir.path(), &said("Late.", T0));
+    assert!(!agent_sessions_dir(dir.path()).exists());
+}
+
 // ── a turn that ends while sub-agents run ────────────────────────
 
 #[test]
 fn done_is_held_until_the_last_subagent_stops() {
     let mut row = rows(&[started("a1", T0), started("a2", T0 + 1)]);
     assert_eq!(status(&row), Some("running"));
-    step_keep(&mut row, &event(HookEvent::Stop, T0 + 10));
+    step_keep(&mut row, &event(stop(None), T0 + 10));
     let held = row.clone().unwrap();
     assert_eq!(held.status, Some(AgentStatus::Running));
     assert_eq!(held.pending_status, Some(AgentStatus::Done));
@@ -254,7 +380,7 @@ fn a_new_turn_of_the_parent_drops_what_was_held_and_later_stops_leave_it_running
         event(HookEvent::PostToolUseFailure, T0 + 6),
         event(HookEvent::PermissionRequest, T0 + 6),
     ] {
-        let mut row = rows(&[started("a1", T0), event(HookEvent::Stop, T0 + 5), turn]);
+        let mut row = rows(&[started("a1", T0), event(stop(None), T0 + 5), turn]);
         assert_eq!(row.as_ref().unwrap().pending_status, None);
         step_keep(&mut row, &stopped("a1", T0 + 9));
         assert_ne!(status(&row), Some("done"));
@@ -265,8 +391,8 @@ fn a_new_turn_of_the_parent_drops_what_was_held_and_later_stops_leave_it_running
 fn an_event_that_names_a_subagent_but_is_not_its_work_changes_nothing() {
     for hook in [
         HookEvent::SessionStart,
-        HookEvent::UserPromptSubmit,
-        HookEvent::Stop,
+        HookEvent::UserPromptSubmit { typed: true },
+        stop(None),
     ] {
         let mut row = rows(&[tool(T0, "Edit: a")]);
         let before = row.clone();
@@ -310,7 +436,7 @@ fn a_row_is_readable_by_its_owner_only() {
 
 #[test]
 fn a_failure_is_held_the_same_way_and_a_new_prompt_drops_what_was_held() {
-    let mut row = rows(&[started("a1", T0), event(HookEvent::StopFailure, T0 + 5)]);
+    let mut row = rows(&[started("a1", T0), event(failure(None), T0 + 5)]);
     assert_eq!(
         row.as_ref().unwrap().pending_status,
         Some(AgentStatus::Failed)
@@ -318,8 +444,11 @@ fn a_failure_is_held_the_same_way_and_a_new_prompt_drops_what_was_held() {
     step_keep(&mut row, &stopped("a1", T0 + 6));
     assert_eq!(status(&row), Some("failed"));
 
-    let mut row = rows(&[started("a1", T0), event(HookEvent::Stop, T0 + 5)]);
-    step_keep(&mut row, &event(HookEvent::UserPromptSubmit, T0 + 6));
+    let mut row = rows(&[started("a1", T0), event(stop(None), T0 + 5)]);
+    step_keep(
+        &mut row,
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0 + 6),
+    );
     let row = row.unwrap();
     assert_eq!(row.pending_status, None);
     assert_eq!(row.status, Some(AgentStatus::Running));
@@ -438,7 +567,7 @@ fn a_subagents_heartbeat_moves_at_most_once_a_minute() {
 
 #[test]
 fn a_subagent_not_seen_for_ten_minutes_is_dropped_and_what_was_held_goes_through() {
-    let mut row = rows(&[started("a1", T0), event(HookEvent::Stop, T0 + 5)]);
+    let mut row = rows(&[started("a1", T0), event(stop(None), T0 + 5)]);
     assert_eq!(status(&row), Some("running"));
     // Not quite ten minutes: still there.
     step_keep(&mut row, &notification(Some("auth_success"), T0 + 599));
@@ -571,7 +700,10 @@ fn a_row_that_cannot_be_read_is_moved_aside_and_a_new_one_started() {
     let path = agent_session_path(dir.path(), "s1");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "{ not json").unwrap();
-    record(dir.path(), &event(HookEvent::UserPromptSubmit, T0));
+    record(
+        dir.path(),
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0),
+    );
     assert_eq!(
         std::fs::read_to_string(agent_session_broken_path(dir.path(), "s1")).unwrap(),
         "{ not json"
@@ -763,10 +895,10 @@ fn only_session_start_and_stop_sweep_and_never_the_sessions_own_row() {
     put(root, &row_of("gone", Some(999), Some(T0)));
     put(root, &row_of("s1", Some(998), Some(T0)));
     for hook in [
-        HookEvent::UserPromptSubmit,
+        HookEvent::UserPromptSubmit { typed: true },
         HookEvent::PostToolUse,
         HookEvent::PermissionRequest,
-        HookEvent::StopFailure,
+        failure(None),
     ] {
         sweep_with(root, &no_processes(), hook);
         assert!(exists(root, "gone"));
@@ -774,7 +906,7 @@ fn only_session_start_and_stop_sweep_and_never_the_sessions_own_row() {
     // A sub-agent's `Stop` changes nothing in the row, but it is a `Stop`, and that is what
     // triggers the sweep.
     let before = std::fs::read(agent_session_path(root, "s1")).unwrap();
-    record(root, &from_sub("a1", event(HookEvent::Stop, T0)));
+    record(root, &from_sub("a1", event(stop(None), T0)));
     assert!(!exists(root, "gone"));
     assert!(exists(root, "s1"));
     assert_eq!(
@@ -922,7 +1054,10 @@ fn a_status_line_sets_the_figures_and_leaves_the_status_and_updated_at() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     record(root, &event(HookEvent::SessionStart, T0));
-    record(root, &event(HookEvent::UserPromptSubmit, T0 + 1));
+    record(
+        root,
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0 + 1),
+    );
     record(
         root,
         &draw(
@@ -1066,6 +1201,8 @@ fn a_key_this_binary_does_not_know_survives_an_event_and_so_does_an_unknown_stat
         "x-unknown": {"a": [1, 2]},
         "model": "some-model",
         "contextPercent": 12.0,
+        "lastMessage": "It was said.",
+        "lastMessageAt": T0,
         "rateLimits": {"fiveHour": {"usedPercent": 1.5, "resetsAt": 5, "x-win": 1}, "x-lim": 2},
         "subagents": [{
             "id": "a1", "type": "Explore", "startedAt": T0, "lastSeenAt": T0, "x-sub": true
@@ -1086,9 +1223,12 @@ fn a_key_this_binary_does_not_know_survives_an_event_and_so_does_an_unknown_stat
     assert_eq!(written["x-unknown"], raw["x-unknown"]);
     assert_eq!(written["model"], "some-model");
     assert_eq!(written["contextPercent"], raw["contextPercent"]);
+    assert_eq!(written["lastMessage"], raw["lastMessage"]);
+    assert_eq!(written["lastMessageAt"], raw["lastMessageAt"]);
     assert_eq!(written["rateLimits"], raw["rateLimits"]);
     assert_eq!(written["subagents"][0]["x-sub"], true);
     assert_eq!(written["subagents"][0]["lastSeenAt"], T0 + 100);
+    assert_eq!(written["subagents"][0]["activity"], "Bash: b");
     assert_eq!(written["status"], "snoozing");
 
     record(root, &tool(T0 + 200, "Edit: a"));
@@ -1116,4 +1256,57 @@ fn events_that_overlap_are_all_kept() {
     ids.sort();
     assert_eq!(ids, ["a0", "a1", "a2", "a3", "a4", "a5", "a6"]);
     assert_eq!(row.activity.as_deref(), Some("Edit: src/lib.rs"));
+}
+
+// ── when the person last typed ───────────────────────────────────
+
+#[test]
+fn a_typed_prompt_is_noted_and_a_wake_line_is_not() {
+    let prompt = |typed, at| event(HookEvent::UserPromptSubmit { typed }, at);
+    let mut row = rows(&[prompt(false, T0)]);
+    assert_eq!(row.as_ref().unwrap().last_prompt_at, None);
+    assert_eq!(status(&row), Some("running"));
+
+    step_keep(&mut row, &prompt(true, T0 + 5));
+    assert_eq!(row.as_ref().unwrap().last_prompt_at, Some(T0 + 5));
+
+    // The same turn's other events, and a wake line after it, leave the mark where it was.
+    for e in [
+        tool(T0 + 6, "Edit: a"),
+        said("Done.", T0 + 7),
+        prompt(false, T0 + 8),
+        notification(Some("permission_prompt"), T0 + 9),
+    ] {
+        step_keep(&mut row, &e);
+        assert_eq!(row.as_ref().unwrap().last_prompt_at, Some(T0 + 5));
+    }
+
+    step_keep(&mut row, &prompt(true, T0 + 20));
+    assert_eq!(row.as_ref().unwrap().last_prompt_at, Some(T0 + 20));
+}
+
+#[test]
+fn a_typed_prompt_is_a_change_to_write_even_when_the_status_stays() {
+    let mut row = rows(&[tool(T0, "Edit: a")]);
+    assert_eq!(status(&row), Some("running"));
+    assert!(step_keep(
+        &mut row,
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0 + 5)
+    ));
+    assert_eq!(row.unwrap().last_prompt_at, Some(T0 + 5));
+}
+
+#[test]
+fn the_time_the_person_typed_is_kept_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    record(
+        dir.path(),
+        &event(HookEvent::UserPromptSubmit { typed: true }, T0),
+    );
+    record(dir.path(), &said("Done.", T0 + 5));
+    let row = read(dir.path(), "s1");
+    assert_eq!(row.last_prompt_at, Some(T0));
+    assert_eq!(row.status, Some(AgentStatus::Done));
+    let text = std::fs::read_to_string(agent_session_path(dir.path(), "s1")).unwrap();
+    assert!(text.contains("\"lastPromptAt\""), "{text}");
 }

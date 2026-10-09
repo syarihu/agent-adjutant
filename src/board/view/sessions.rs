@@ -223,6 +223,8 @@ struct Poll<'a> {
     worker_agent: String,
     /// The panes whose last line was read this poll.
     screens: HashSet<String>,
+    /// The worktrees whose diff this poll asked for.
+    diffs: HashSet<String>,
 }
 
 impl Poll<'_> {
@@ -310,7 +312,12 @@ impl Poll<'_> {
                 last_event_at: None,
                 activity: None,
                 request: None,
-                subagents: 0,
+                model: None,
+                context_percent: None,
+                last_message: None,
+                last_message_at: None,
+                last_prompt_at: None,
+                subagents: Vec::new(),
                 error: Some(error),
             }),
         }
@@ -330,7 +337,8 @@ impl Poll<'_> {
 }
 
 /// A ledger row as the board carries it: the first line of the activity and the request, cut
-/// short, and the sub-agents as a count.
+/// short, the model and context use as the status line showed them, the last message of the
+/// turn whole, and the sub-agents that run.
 fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentState {
     let first_line = |text: &Option<String>| {
         let line = text.as_deref()?.lines().next()?.trim();
@@ -344,7 +352,29 @@ fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentSta
         last_event_at: row.last_event_at,
         activity: first_line(&row.activity),
         request: first_line(&row.request),
-        subagents: row.subagents.len(),
+        model: row.model.clone().filter(|m| !m.trim().is_empty()),
+        context_percent: row
+            .context_percent
+            .filter(|p| p.is_finite())
+            .map(|p| p.round().clamp(0.0, 100.0) as u8),
+        // The whole text, line breaks and all, not the first line the other two are.
+        last_message: row
+            .last_message
+            .as_deref()
+            .filter(|message| !message.trim().is_empty())
+            .map(|message| super::waiting::cut_chars(message, crate::registry::LAST_MESSAGE_CHARS)),
+        last_message_at: row.last_message_at,
+        last_prompt_at: row.last_prompt_at,
+        subagents: row
+            .subagents
+            .iter()
+            .map(|sub| board::SessionSubagent {
+                id: sub.id.clone(),
+                kind: sub.kind.clone(),
+                started_at: sub.started_at,
+                activity: first_line(&sub.activity),
+            })
+            .collect(),
         error: None,
     }
 }
@@ -388,6 +418,7 @@ pub(super) fn sessions_of(
                 .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
         ),
         screens: HashSet::new(),
+        diffs: HashSet::new(),
     };
     let mut sessions = hub_sessions(&mut poll);
     sessions.extend(worker_sessions(&mut poll, linked_paths, worker_data));
@@ -396,6 +427,11 @@ pub(super) fn sessions_of(
     // before the split.
     if poll.listing.lines == Lines::All && !poll.skipped("worker-main") {
         server.last_lines.keep_only(&poll.screens);
+    }
+    // The same for the diffs, and the reading of what is due starts here, off this thread.
+    if poll.listing.diffs && poll.listing.listed && only.is_none() {
+        server.diffs.keep_only(&poll.diffs);
+        server.diffs.refresh(Instant::now());
     }
     sessions
 }
@@ -456,6 +492,10 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
             attached,
             waiting,
             agent_session,
+            uncommitted: None,
+            uncommitted_error: None,
+            branch_pr: None,
+            branch_pr_error: None,
         });
     }
     sessions
@@ -562,6 +602,18 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
             ps_started: record.as_ref().and_then(|r| r.ps_started.as_deref()),
         },
     );
+    // Asked for on a poll that lists the sessions, and read in the background: what the poll
+    // shows is what an earlier one asked for.
+    if poll.listing.diffs {
+        poll.server.diffs.want(&worktree, status.present);
+        poll.diffs.insert(worktree.clone());
+    }
+    let (uncommitted, uncommitted_error) = poll.server.diffs.look(&worktree);
+    let branch_pr = match (&task, &branch, &poll.server.pr_poll) {
+        (None, Some(branch), Some(pr_poll)) => pr_poll.branch_pr(&repo.nwo, branch),
+        _ => (None, None),
+    };
+    let (branch_pr, branch_pr_error) = branch_pr;
 
     board::Session {
         id,
@@ -588,6 +640,10 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         attached,
         waiting,
         agent_session,
+        uncommitted,
+        uncommitted_error,
+        branch_pr,
+        branch_pr_error,
     }
 }
 
@@ -661,6 +717,10 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
                 attached,
                 waiting,
                 agent_session: None,
+                uncommitted: None,
+                uncommitted_error: None,
+                branch_pr: None,
+                branch_pr_error: None,
             })
         }
         (_, None) => None,
@@ -695,6 +755,8 @@ fn board_sessions_of(
             processes: &processes,
             main_branch,
             lines: Lines::None,
+            diffs: false,
+            listed: complete,
         },
         only,
         |index, path| {
@@ -796,7 +858,7 @@ mod tests {
     use crate::registry::{AgentSession, AgentStatus, Subagent};
 
     #[test]
-    fn a_ledger_row_is_carried_by_its_words_first_lines_and_a_subagent_count() {
+    fn a_ledger_row_is_carried_by_its_words_first_lines_model_and_subagents() {
         let row = AgentSession {
             status: Some(AgentStatus::Other("thinking".to_string())),
             pending_status: Some(AgentStatus::Done),
@@ -804,7 +866,24 @@ mod tests {
             last_event_at: Some(6),
             activity: Some(format!("Bash: {}\nsecond line", "x".repeat(500))),
             request: Some("\n".to_string()),
-            subagents: vec![Subagent::default(), Subagent::default()],
+            model: Some("Opus 5".to_string()),
+            context_percent: Some(42.6),
+            last_message: Some("First line.\nSecond line.".to_string()),
+            last_message_at: Some(7),
+            last_prompt_at: Some(8),
+            subagents: vec![
+                Subagent {
+                    id: "a1".to_string(),
+                    kind: Some("Explore".to_string()),
+                    started_at: Some(3),
+                    activity: Some(format!("Grep: {}\nmore", "y".repeat(500))),
+                    ..Subagent::default()
+                },
+                Subagent {
+                    id: "a2".to_string(),
+                    ..Subagent::default()
+                },
+            ],
             ..AgentSession::default()
         };
         let state = agent_state_of(&row);
@@ -815,7 +894,53 @@ mod tests {
         assert_eq!(activity.chars().count(), AGENT_TEXT_CHARS + 1);
         assert!(activity.ends_with('…') && !activity.contains('\n'));
         assert_eq!(state.request, None);
-        assert_eq!(state.subagents, 2);
+        assert_eq!(state.model.as_deref(), Some("Opus 5"));
+        assert_eq!(state.context_percent, Some(43));
+        assert_eq!(
+            state.last_message.as_deref(),
+            Some("First line.\nSecond line.")
+        );
+        assert_eq!(state.last_message_at, Some(7));
+        assert_eq!(state.last_prompt_at, Some(8));
+        assert_eq!(state.subagents.len(), 2);
+        assert_eq!(state.subagents[0].kind.as_deref(), Some("Explore"));
+        assert_eq!(state.subagents[0].started_at, Some(3));
+        let sub_activity = state.subagents[0].activity.clone().unwrap();
+        assert_eq!(sub_activity.chars().count(), AGENT_TEXT_CHARS + 1);
+        assert_eq!(state.subagents[1].activity, None);
         assert_eq!(state.error, None);
+    }
+
+    #[test]
+    fn a_last_message_is_cut_long_and_a_blank_one_is_none() {
+        let of = |message: String| {
+            agent_state_of(&AgentSession {
+                last_message: Some(message),
+                ..AgentSession::default()
+            })
+            .last_message
+        };
+        let cut = of(format!(
+            "{}\nmore",
+            "z".repeat(crate::registry::LAST_MESSAGE_CHARS)
+        ));
+        let cut = cut.unwrap();
+        assert_eq!(cut.chars().count(), crate::registry::LAST_MESSAGE_CHARS + 1);
+        assert!(cut.ends_with('…'));
+        assert_eq!(of("  \n".to_string()), None);
+    }
+
+    #[test]
+    fn a_context_percent_that_is_not_a_figure_or_is_out_of_range_is_cut_to_one() {
+        let of = |percent: f64| {
+            agent_state_of(&AgentSession {
+                context_percent: Some(percent),
+                ..AgentSession::default()
+            })
+            .context_percent
+        };
+        assert_eq!(of(f64::NAN), None);
+        assert_eq!(of(-5.0), Some(0));
+        assert_eq!(of(180.0), Some(100));
     }
 }

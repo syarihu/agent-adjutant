@@ -25,6 +25,36 @@ const paneOfGate = g => paneOfTab(TAB_OF_KIND[g.kind] || 'history');
    name it: a copy from the history may lack its board, and ids are only unique within one. */
 const liveRecordOf = (task, g) => recordByRef(gateRef(task._slug && !g._slug ? { ...g, _slug: task._slug } : g));
 
+/* ── A gate in the panel ─────────────────────────────────────────────────────────────────────
+   A gate opens in the panel as `gate:<board>/<id>` (`gate:<id>` on a board served alone). One whose
+   task is on this board is that task's panel, on the tab the gate is judged in, with the gate
+   picked (`landGateRef`); one with no task card is judged in a panel of its own. */
+
+/* The open gate a `gate:` subject names, from the state of the board that is shown. */
+function gateOfPanelRef(ref) {
+  if (!isGateRef(ref)) return null;
+  const rest = ref.slice(WORK_GATE_REF.length);
+  const at = rest.indexOf('/');
+  const slug = at > 0 ? rest.slice(0, at) : null;
+  const id = at > 0 ? rest.slice(at + 1) : rest;
+  // The state is one board's: a gate of another board is not in it.
+  if (slug && multiBoard && nav.board && nav.board !== 'all' && slug !== nav.board) return null;
+  return (state.gates || []).find(g => g.id === id && (!g._slug || !slug || g._slug === slug)) || null;
+}
+
+/* A `gate:` subject whose gate has its task on this board becomes that task, with the tab and the
+   gate picked as a link to the gate would have them: returns the task's id and the pane, or null
+   for any other subject. The task is selected here, so that opening it does not forget the pick. */
+function landGateRef(ref) {
+  const g = gateOfPanelRef(ref);
+  const task = g?.task && taskOfGate(g);
+  if (!task) return null;
+  selectedTaskId = task.id;
+  panelPickOf(task.id)[tabOfPane(paneOfGate(g))] = g.id;
+  panelScrolledFor = null;
+  return { id: task.id, pane: paneOfGate(g) };
+}
+
 function markSelectedCards() {
   for (const card of document.querySelectorAll('#boards .card')) {
     card.classList.toggle('selected', card.dataset.id === selectedTaskId);
@@ -50,7 +80,7 @@ function openTaskPanel(id, pane = 'detail') {
   go({ task: id, pane }, { replace: id === nav.task });
 }
 
-/* A link from outside the panel (a gate or record on a card, the review queue, a notification):
+/* A link from outside the panel (a gate or record on a card, a notification):
    the panel on `tab` of the task, with `gateId` shown in it. There is more to read than the
    sidebar fits, so it opens as the dialog; the saved placement is not changed, and the next
    card or the close puts it back (panelPop). */
@@ -68,10 +98,10 @@ function openTask(id, tab = 'overview', gateId = null) {
   const inPanel = tp('task-panel').contains(from);
   if (!(dialogFor !== null && inPanel)) dialogReturn = from && from !== document.body && !inPanel ? from : null;
   selectedTaskId = id;
-  dialogFor = id;
+  // The work view keeps the panel in its right column: nothing there is a dialog.
+  dialogFor = view === 'work' ? null : id;
   markSelectedCards();
-  go({ ...(view === 'review' ? { view: prefs.tab === 'agent' ? 'agent' : 'human' } : {}), task: id, pane: paneOfTab(tab) },
-    { replace: id === nav.task });
+  go({ task: id, pane: paneOfTab(tab) }, { replace: id === nav.task });
   requestAnimationFrame(() => {
     const at = document.activeElement;
     if (selectedTaskId === id && (at === from || at === document.body))
@@ -82,7 +112,7 @@ function openTask(id, tab = 'overview', gateId = null) {
 /* Whether the panel is the dialog now: the placement saved, or a link that wants room. */
 let dialogFor = null;
 let dialogReturn = null;
-const panelPop = () => prefs.panelDialog || (dialogFor !== null && dialogFor === selectedTaskId);
+const panelPop = () => view !== 'work' && (prefs.panelDialog || (dialogFor !== null && dialogFor === selectedTaskId));
 
 /* The panel's state, without the address: for a move the address already made. */
 function hideTaskPanelState() {
@@ -106,7 +136,7 @@ function hideTaskPanelState() {
   disposePanelTerminal();
   markSelectedCards();
   renderTaskPanel();
-  // What opened the dialog may be gone (the review queue left behind for the board): then the
+  // What opened the dialog may be gone (the board it was opened from left behind): then the
   // task's card, if it is on screen and the only one with that id (ids repeat across boards).
   if (back) {
     const shown = el => el?.isConnected && el.getClientRects().length > 0;
@@ -116,7 +146,7 @@ function hideTaskPanelState() {
   }
 }
 
-/* A screen with no panel (the review queue): the address follows it. */
+/* A panel whose subject is gone: the address follows it. */
 function dismissTaskPanel() {
   hideTaskPanelState();
   if (nav.task) setNav({ task: null, pane: 'detail' });
@@ -124,6 +154,8 @@ function dismissTaskPanel() {
 
 function closeTaskPanel() {
   hideTaskPanelState();
+  // The work view's list belongs to no board: closing the selection goes back to it, as the sidebar's entry does.
+  if (view === 'work') return go({ board: 'all', task: null, pane: 'detail' });
   if (nav.task) go({ task: null, pane: 'detail' });
 }
 
@@ -143,10 +175,10 @@ function placePanel(where) {
 /* A session is there to open a terminal on when its worktree has one at all. */
 const hasSession = s => !!s && sessionState(s) !== 'none';
 /* The tab shown: ターミナル only where there is a session, whatever the address says. */
-const paneOf = task => nav.pane === 'term' ? (hasSession(sessionOfTask(task)) ? 'term' : 'detail')
+const paneOf = task => nav.pane === 'term' ? (view !== 'work' && hasSession(sessionOfTask(task)) ? 'term' : 'detail')
   : PANES.includes(nav.pane) ? nav.pane : 'detail';
 /* The same for a session with no task, which is its own subject. */
-const sessPaneOf = s => nav.pane === 'term' && hasSession(s) ? 'term' : 'detail';
+const sessPaneOf = s => nav.pane === 'term' && view !== 'work' && hasSession(s) ? 'term' : 'detail';
 
 /* The sidebar is the icon rail when the window is narrow, and while the panel sits on its left. */
 const narrowRail = matchMedia('(max-width: 1024px)');
@@ -190,28 +222,57 @@ function renderTaskPanel() {
       markSelectedCards();
     }
   }
+  if (isGateRef(selectedTaskId)) {
+    const from = selectedTaskId;
+    const landed = landGateRef(from);
+    if (landed) {
+      if (nav.task === from) setNav({ task: landed.id, pane: landed.pane });
+      markSelectedCards();
+    }
+  }
   const hub = hubOfRef(selectedTaskId);
   const task = selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
+  const parent = view === 'work' ? parentOfRef(selectedTaskId) : null;
+  // A gate with no task card is judged in a panel of its own.
+  const gateOf = !hub && !task && !sess ? gateOfPanelRef(selectedTaskId) : null;
+  // The work view marks the row, and draws the terminal, of what the address names.
+  // The middle terminal is the work view's: one the panel mounted earlier is not kept beside it.
+  if (view === 'work') {
+    if (panelTerm.term) disposePanelTerminal();
+    syncWorkSelection();
+  }
   // A card the board no longer lists, a hub that left its list, or a session that is gone takes
-  // the panel with it.
-  if (selectedTaskId && !task && !hub && !sess) return dismissTaskPanel();
-  const shown = !!(task || hub || sess) && (view === 'board' || view === 'sessions');
+  // the panel with it. In the work view the panel stays and says so: the row was opened from a
+  // list that may know more than the board it is on.
+  // A parent is not gone while the work document that lists it has not been read.
+  const gone = !!selectedTaskId && !task && !hub && !sess && !parent && !gateOf && !(isParentRef(selectedTaskId) && !work.doc);
+  if (gone && view !== 'work') return dismissTaskPanel();
+  // Until the board has answered once, what it lacks is not known to be missing.
+  if (gone && state.now == null) return;
+  const shown = (!!(task || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work');
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop());
   cls.toggle('panel-open', shown);
-  cls.toggle('panel-right', prefs.panelDock === 'right');
+  // The work view keeps the panel in its right column, whichever side it is docked on elsewhere.
+  cls.toggle('panel-right', prefs.panelDock === 'right' || view === 'work');
   cls.toggle('panel-pop', shown && panelPop());
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
   applyRailMode();
-  // The list marks the session the panel is open on.
-  if (view === 'sessions') applySessionSelection();
   markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
-  if (!task && !hub && !sess) return renderHandForm(null);
-  // On a screen with no panel (the review queue) the panel waits, with its terminal, for the board to come back.
+  if (!task && !hub && !sess && !parent && !gateOf && !gone) return renderHandForm(null);
   if (!shown) return;
+  if (gateOf) {
+    renderWorkAway(null);
+    return renderGatePanel(gateOf);
+  }
+  if (parent || gone) {
+    renderWorkAway(null);
+    return renderWorkPanelOnly(parent);
+  }
+  tp('tp-tabs').hidden = false;
 
   const colId = task ? columnOf(task) : null;
   const gate = task ? openGate(task) : null;
@@ -220,7 +281,18 @@ function renderTaskPanel() {
   // The gate the open tab shows, read before the tabs are drawn so the record on screen does not
   // keep its 新着.
   const all = task ? gatesOf(task) : [];
+  if (wantedGate && (nav.board !== wantedGate.board || nav.task !== wantedGate.task)) wantedGate = null;
+  if (task && wantedGate?.task === task.id) {
+    const wanted = all.find(x => x.id === wantedGate.gate);
+    if (wanted) {
+      panelPickOf(task.id)[tabOfPane(paneOfGate(wanted))] = wanted.id;
+      panelScrolledFor = null;
+      wantedGate = null;
+    }
+  }
   const pick = task ? panelPickOf(task.id) : {};
+  // The work view's 離れていた間に, above the summary (my-work.js); a hub has none.
+  renderWorkAway(!hub && (task || sess) ? { task, sess, all } : null);
   const shownGate = task && pane !== 'term' ? gateShownIn(task, tabOfPane(pane), all, pick) : null;
   // Opening a tab reads every record judged in it, not only the one shown: the others are earlier
   // rounds behind the round chips, and a 新着 kept for them stays on the tab and the card. Marked
@@ -262,11 +334,7 @@ function renderTaskPanel() {
   // one is still there when it is shown again, and it is drawn again then.
   if (task && pane === 'term') return renderHandForm(colId === 'backlog' ? task : null);
   if (task) drawTaskPane(task, colId, gate, pane, all, pick, shownGate);
-  else {
-    setPanelPart('links', tp('tp-links'), '');
-    setPanelPart('gate', tp('tp-gate'), sessGateHtml(s));
-    setPanelPart('rest', tp('tp-rest'), hub ? hubDetailHtml(hub, s) : sessDetailHtml(s, pane));
-  }
+  else drawSessionPane(s, hub, pane);
   renderHandForm(colId === 'backlog' ? task : null);
   tp('tp-form').hidden = !!task && pane !== 'detail';
   // Another task, or another tab, starts at the top, not where the last one was scrolled to; a
@@ -306,11 +374,126 @@ function drawTaskPane(task, colId, gate, pane, all, pick, shownGate) {
   rest.querySelectorAll('details').forEach((d, i) => { if (openDetails[i] != null) d.open = openDetails[i]; });
 }
 
+/* #tp-detail of a hub or of a session with no task: the gate it waits on is judged here, above what it is
+   handling. Held, like a task's, while a comment is being typed in the box. */
+function drawSessionPane(s, hub, pane) {
+  const rest = tp('tp-rest');
+  const judge = sessJudgeOf(s, hub);
+  const prefix = `${selectedTaskId}/${pane}/`;
+  if (panelCommentFocused() && panelShown?.startsWith(prefix)) {
+    panelHeld = true;
+    return;
+  }
+  panelHeld = false;
+  const key = prefix + (judge.gate?.id || '');
+  const same = panelShown === key;
+  const commentEl = rest.querySelector('.gate-comment');
+  const comment = commentEl && same ? commentEl.value : '';
+  const openDetails = [...rest.querySelectorAll('details')].map(d => d.open);
+  panelShown = key;
+  setPanelPart('links', tp('tp-links'), '');
+  setPanelPart('gate', tp('tp-gate'), judge.banner);
+  setPanelPart('rest', rest, judge.html + (hub ? hubDetailHtml(hub, s) : sessDetailHtml(s, pane)));
+  if (!same) return;
+  const box = rest.querySelector('.gate-comment');
+  if (box && comment) box.value = comment;
+  rest.querySelectorAll('details').forEach((d, i) => { if (openDetails[i] != null) d.open = openDetails[i]; });
+}
+
+/* The open gates a hub or a session with no task waits on, longest first: the ones the hub opened for a person, or the
+   ones opened from the worker's worktree. Read from the board's state, so only for a session of the board that is shown. */
+function sessGatesOf(s) {
+  return (state.gates || [])
+    .filter(g => g.wait !== false && (s.kind === 'hub' ? !!g.answeredByHub : !g.answeredByHub && !!s.worktree && g.worktree === s.worktree))
+    .sort((a, b) => (stampSecs(a.openedAt) || 0) - (stampSecs(b.openedAt) || 0) || (a.id < b.id ? -1 : 1));
+}
+
+/* What the panel of a hub or of a session with no task says of the gates it waits on: the first gate that has no task card
+   is judged right here (`html`), the others are named under it, and a gate that has one, or that this page does not read,
+   is the banner whose button opens its panel. */
+function sessJudgeOf(s, hub) {
+  const own = hub ? !hubOther(hub) : boardOfSession(s).own;
+  const open = own ? sessGatesOf(s).filter(g => !taskOfGate(g)) : [];
+  const banner = s.waiting && !open.some(g => g.id === s.waiting.id) ? sessGateHtml(s) : '';
+  if (!open.length) return { gate: null, banner, html: '' };
+  const [first, ...more] = open;
+  const others = more.length
+    ? `<div class="m3-filled-card">${secTitle('ほかの確認待ち')}<ul class="sess-side-list">${more.map(g =>
+      `<li><button type="button" class="linkish" data-tp-gate="${esc(gateRef(g))}">${esc(g.title)}</button><span class="who">${esc(kindOf(g.kind)[0])}</span></li>`).join('')}</ul></div>` : '';
+  return { gate: first, banner, html: gateJudgeHtml(first, taskForGate(first)) + others };
+}
+
+/* A gate with no task card, in the panel: its head and the judge, with no tabs. */
+function renderGatePanel(g) {
+  tp('tp-tabs').hidden = true;
+  tp('tp-detail').hidden = false;
+  tp('tp-term').hidden = true;
+  // Another subject's terminal is not kept behind this one.
+  syncPanelTerminal(selectedTaskId, null, 'detail');
+  const rest = tp('tp-rest');
+  const key = `${selectedTaskId}/gate/${g.id}`;
+  if (panelCommentFocused() && panelShown === key) {
+    panelHeld = true;
+    return;
+  }
+  panelHeld = false;
+  const same = panelShown === key;
+  const commentEl = rest.querySelector('.gate-comment');
+  const comment = commentEl && same ? commentEl.value : '';
+  const openDetails = [...rest.querySelectorAll('details')].map(d => d.open);
+  panelShown = key;
+  setPanelPart('head', tp('tp-head'), gatePanelHeadHtml(g));
+  setPanelPart('tabs', tp('tp-tabs'), '');
+  setPanelPart('links', tp('tp-links'), '');
+  setPanelPart('gate', tp('tp-gate'), '');
+  setPanelPart('rest', rest, gateJudgeHtml(g, taskForGate(g)));
+  renderHandForm(null);
+  tp('tp-form').hidden = true;
+  if (same) {
+    const box = rest.querySelector('.gate-comment');
+    if (box && comment) box.value = comment;
+    rest.querySelectorAll('details').forEach((d, i) => { if (openDetails[i] != null) d.open = openDetails[i]; });
+  } else {
+    tp('tp-detail').scrollTop = 0;
+  }
+}
+
+function gatePanelHeadHtml(g) {
+  const [label] = kindOf(g.kind);
+  const b = selectedBoard();
+  const origin = b ? boardName(b) : repoName();
+  return `
+    <div class="tp-head-main">
+      <div class="tp-badges">
+        <span class="tp-key">確認待ち</span>
+        ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
+        <span class="m3-pill pill-warn">${esc(label)}</span>
+      </div>
+      <h2 class="tp-title">${esc(g.title)}</h2>
+    </div>
+    ${panelBtnsHtml('')}`;
+}
+
+/* The clicks of a judge drawn in a panel of a gate, a hub or a session: the buttons that answer, the park button, the IDE and
+   the list of other gates. True when it took the click. */
+function judgeClick(e) {
+  const hit = sel => e.target.closest(sel);
+  let b;
+  if (parkClick(e)) return true;
+  if ((b = hit('[data-gate] [data-act], [data-gate] .pick[data-choice]'))) { decideAct(b); return true; }
+  if ((b = hit('[data-ide]'))) { worktreeAct('ide', b.dataset.ide); return true; }
+  if ((b = hit('[data-focus]'))) { worktreeAct('focus', b.dataset.focus); return true; }
+  if ((b = hit('[data-tp-gate]'))) { goToGate(b.dataset.tpGate); return true; }
+  return false;
+}
+
 function panelHeadHtml(task) {
   const hcol = humanColOf(task);
   const stuck = stuckOf(task);
   const colObj = COLUMNS.find(c => c.id === columnOf(task));
-  const pill = hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています</span>`
+  const park = parkOf(task);
+  const pill = park ? `<span class="m3-pill pill-neutral">置いている — ${esc(parkLabel(park))}</span>`
+    : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています</span>`
     : stuck ? `<span class="m3-pill pill-err">${esc(stuck)}</span>`
     : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
   const b = selectedBoard();
@@ -331,11 +514,13 @@ function panelHeadHtml(task) {
 function panelBtnsHtml(jump) {
   const place = (where, icon, label, on) =>
     `<button type="button" class="tool-btn${on ? ' on' : ''}" data-tp-place="${where}" title="${label}" aria-label="${label}" aria-pressed="${on}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
+  // The work view keeps the panel in its right column.
+  const placing = view === 'work' ? '' : `${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !panelPop())}
+      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !panelPop())}
+      ${place('pop', 'open_in_new', 'ダイアログで開く', panelPop())}`;
   return `<div class="tp-head-btns">
       ${jump}
-      ${place('left', 'left_panel_open', '左のサイドバーに置く', prefs.panelDock === 'left' && !panelPop())}
-      ${place('right', 'right_panel_open', '右のサイドバーに置く', prefs.panelDock === 'right' && !panelPop())}
-      ${place('pop', 'open_in_new', 'ダイアログで開く', panelPop())}
+      ${placing}
       <button type="button" class="tool-btn" data-tp-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
     </div>`;
 }
@@ -349,7 +534,8 @@ function panelTabsHtml(task, gate, s, pane, all = []) {
   const usable = hasSession(s) && !!state.boardTerminal?.available;
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
   // The tab shows a word, so five tabs fit; the reason is its tooltip.
-  const term = panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
+  // The work view has the terminal in the middle, beside the panel.
+  const term = view === 'work' ? '' : panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
     : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
   if (!task) return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '') + term;
   // The dot is on the tab the open gate is judged in; the counts and 新着 come from the gates.
@@ -393,6 +579,7 @@ function panelGateHtml(task, gate, here = false) {
         <span>【${esc(label)}】あなたの判断待ち</span>
         <span class="tp-gate-wait">${esc(minutesLabel(waitingMinutes(task)))}待ち</span>
       </div>
+      ${parkBannerHtml(task)}
       <div style="font-size:12.5px;">${esc(gate.title)}</div>
       ${why ? `<div style="font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;">${esc(why)}</div>` : ''}
       ${reasons.length ? `<div style="font-size:11.5px;">止めた理由: ${esc(reasons.join(' / '))}</div>` : ''}
@@ -470,7 +657,8 @@ function hubTermWhy(h, s) {
   if (!boardTerminalReady(s)) return ['tmux の外', 'tmux の外で動いている hub は、ボードから端末を開けません'];
   return null;
 }
-const hubPaneOf = (h, s) => nav.pane === 'term' && !hubTermWhy(h, s) ? 'term' : 'detail';
+// The work view has the terminal in the middle, so the panel has no such tab there.
+const hubPaneOf = (h, s) => nav.pane === 'term' && view !== 'work' && !hubTermWhy(h, s) ? 'term' : 'detail';
 
 function hubPanelHeadHtml(h, s) {
   const row = hubRowOf(h);
@@ -480,6 +668,7 @@ function hubPanelHeadHtml(h, s) {
     : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
     : s.waiting ? ['入力待ち', 'pill-warn']
     : sessionState(s) === 'permission' ? [permissionLabel(s), 'pill-warn']
+    : sessionState(s) === 'unknown' ? [STATE_LABEL.unknown, STATE_PILL.unknown]
     : ['稼働中', 'pill-good'];
   const origin = row ? boardName(row) : repoName();
   const nwo = row?.nwo || state.repo || '';
@@ -501,6 +690,7 @@ function hubPanelHeadHtml(h, s) {
 
 function hubPanelTabsHtml(h, s, pane) {
   const why = hubTermWhy(h, s);
+  if (view === 'work') return panelTab(pane, 'detail', '詳細', '', '');
   return panelTab(pane, 'detail', '詳細', '', '')
     + panelTab(pane, 'term', 'ターミナル', why ? `<span class="tp-tab-hint">${esc(why[0])}</span>` : s.waiting ? '<span class="tp-wait">入力待ち</span>'
       : sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', why && why[1]);
@@ -508,6 +698,43 @@ function hubPanelTabsHtml(h, s, pane) {
 
 const HUB_LIST_MAX = 5;
 const hubListMore = n => n > 0 ? `<div class="tp-muted">ほか ${n} 件</div>` : '';
+
+/* The worker sessions of the board shown that have no process: a worktree with no session, or one whose session ended. The
+   repository hub's lists the whole board, grouped by the hub each belongs to; a parent-task hub's, its own. */
+function idleWorktreesOf(h) {
+  const repoHub = repoHubId();
+  const groups = new Map();
+  for (const s of state.sessions || []) {
+    if (s.kind !== 'worker') continue;
+    const st = sessionState(s);
+    if (st !== 'none' && st !== 'ended') continue;
+    const owner = hubOfSession(s) || repoHub;
+    if (h.parent && owner !== h.id) continue;
+    groups.set(owner, [...(groups.get(owner) || []), s]);
+  }
+  return [...groups].map(([id, list]) => {
+    const hub = (state.hubs || []).find(x => x.id === id);
+    return { id, label: hub ? hubShortName(hub) : id, repo: !hub?.parent, list: list.sort((a, b) => sessionKey(a) < sessionKey(b) ? -1 : sessionKey(a) > sessionKey(b) ? 1 : 0) };
+  }).sort((a, b) => (b.repo - a.repo) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+}
+
+/* 「動いていない worktree（N）」: each one opens as a session of its own, where it can be resumed, opened in the IDE or cleaned up. */
+function idleWorktreesHtml(h) {
+  // Another board's hub has the sessions of its own board, which this page does not read.
+  if (hubOther(h) && !h.parent) return '';
+  const groups = idleWorktreesOf(h);
+  const n = groups.reduce((sum, g) => sum + g.list.length, 0);
+  if (!n) return '';
+  const many = groups.length > 1;
+  const items = g => `<ul class="sess-side-list">${g.list.map(s => `<li><button type="button" class="linkish" data-tp-worktree="${esc(s.id)}">${esc(sessionKey(s))}</button><span class="who">${esc(s.branch || STATE_LABEL[sessionState(s)])}</span></li>`).join('')}</ul>`;
+  return `<div class="m3-filled-card"><details class="tp-idle"><summary>動いていない worktree（${n}）</summary>${groups.map(g => (many ? `<div class="tp-muted">${esc(g.label)}</div>` : '') + items(g)).join('')}</details></div>`;
+}
+
+/* A worktree of that card, opened as a session: in 「いまの仕事」 where the person is in it. */
+function openIdleWorktree(id) {
+  if (view === 'work') return go({ board: nav.board, view: 'work', task: SESS_REF + id, pane: 'detail' });
+  openTaskPanel(SESS_REF + id, 'detail');
+}
 
 function hubDetailHtml(h, s) {
   const other = hubOther(h);
@@ -521,6 +748,10 @@ function hubDetailHtml(h, s) {
       <div class="tp-gate-actions"><button type="button" class="btn-m3-primary" data-tp-hub="start"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'tmux の新しいウィンドウで adj hub を実行します')}"><span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span><span>hub を起動</span></button></div>
     </div>`;
   }
+
+  // The sessions asked of this hub that it has not started yet.
+  const pend = sessionPendingRows().filter(p => p.hubId === h.id);
+  if (pend.length) html += `<div class="m3-filled-card">${secTitle('起動を依頼中')}${pend.map(pendingRowHtml).join('')}</div>`;
 
   // The page's own board is read from its state; another board's from its row in the list.
   const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -558,12 +789,25 @@ function hubDetailHtml(h, s) {
     const why = restartWhy(s);
     return `<button type="button" class="btn-m3-tonal" data-tp-hub="restart"${why ? ' disabled' : ''} title="${esc(why || '今の会話のまま、止めて起動し直します（adj hub --resume）')}"><span class="material-symbols-outlined" style="font-size:16px;">autorenew</span><span>セッションを再起動…</span></button>`;
   })() : '';
+  html += idleWorktreesHtml(h);
+
+  // Starting a session with no task, or a parent task's hub, asks this page's board: not another one's, nor one this server
+  // does not serve.
+  const away = multiBoard && boards.length > 0 && !!h.slug && !hubRowOf(h) ? 'この hub のボードはこのサーバーにありません' : '';
+  const startOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.sessionStart?.agent ? '起動するエージェントが分かりません' : '');
+  const parentOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.hubStart?.available ? NO_START : '');
+  const addBtn = (act, icon, label, off, title) =>
+    `<button type="button" class="btn-m3-tonal" data-tp-hub="${act}"${off ? ' disabled' : ''} title="${esc(off || title)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
   html += `<div class="m3-filled-card">${secTitle('操作')}
     <div class="tp-gate-actions">
       <button type="button" class="btn-m3-tonal" data-tp-hub="next" title="adj send --kind next (着手を促す)"><span class="material-symbols-outlined" style="font-size:16px;">bolt</span><span>着手を促す</span></button>
       <button type="button" class="btn-m3-tonal" data-tp-hub="sync" title="再同期 (adj refresh)"><span class="material-symbols-outlined" style="font-size:16px;">refresh</span><span>再同期</span></button>
       ${own}
       ${restartBtn}
+    </div>
+    <div class="tp-gate-actions">
+      ${addBtn('add-session', 'terminal', 'タスクなしのセッションを始める…', startOff, 'この hub にタスクなしのセッションを頼みます')}
+      ${h.parent ? '' : addBtn('add-parent-hub', 'account_tree', '親タスクの hub を起動…', parentOff, '親タスクのキーを入れて、その hub を tmux の新しいウィンドウで起動します')}
     </div>
     <button type="button" class="btn-m3-text tp-reset" data-tp-hub="reset"${startWhy ? ' disabled' : ''} title="${esc(startWhy || 'hub をリセット：新しい会話で hub を起動し直します（adj hub --new）')}">hub をリセット…</button>
   </div>`;
@@ -601,7 +845,7 @@ function disposePanelTerminal() { disposeTermSlot(panelTerm); }
 
 /* A slot is one terminal's place: where it mounts (`host`), what to draw again when it ends
    (`redraw`) and which board's path it connects through (`base`). The task panel has one and the
-   review view another, and both keep the socket across a redraw the same way. */
+   work view's middle another, and both keep the socket across a redraw the same way. */
 function syncTermSlot(slot, subject, s, pane) {
   // Another task's (or hub's) socket is not carried over; a fresh one is asked for after
   // 再開 or 再接続. A session that was linked to a task keeps its own: only the subject's name
@@ -616,6 +860,7 @@ function syncTermSlot(slot, subject, s, pane) {
   const handle = mountSessionTerminal(slot.host(), {
     sessionId: s.id,
     base: slot.base(),
+    focus: slot.focus !== false,
     onEnd: code => {
       if (slot.term !== handle) return;
       slot.ended = code;
@@ -674,10 +919,18 @@ tp('task-panel').addEventListener('click', e => {
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
-  if (!task && !hub && !sess) return;
+  if (!task && !hub && !sess) {
+    if (gateOfPanelRef(selectedTaskId)) return gatePanelClick(e);
+    return view === 'work' ? workPanelClick(e) : undefined;
+  }
   const hit = sel => e.target.closest(sel);
   let b;
-  if ((b = hit('[data-pane]'))) { if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true }); return; }
+  if ((b = hit('[data-pane]'))) {
+    // 「ターミナルで答える」 in the work view moves to the middle terminal, and the tab stays.
+    if (view === 'work' && b.dataset.pane === 'term') return focusWorkTerm();
+    if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true });
+    return;
+  }
   if (hit('[data-tp-close]')) {
     return closeTaskPanel();
   }
@@ -690,6 +943,7 @@ tp('task-panel').addEventListener('click', e => {
     if (panelPop()) closeTaskPanel(); else renderTaskPanel();
     return jump('agent', id);
   }
+  if (parkClick(e)) return;
   if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);
   // The decision panel and a gate's choices, which `bindDecide` wires in the other views; not
   // here, since it would bind [data-ide] a second time next to the one below.
@@ -717,6 +971,7 @@ tp('task-panel').addEventListener('click', e => {
     return renderTaskPanel();
   }
   if ((b = hit('[data-focus]'))) return worktreeAct('focus', b.dataset.focus);
+  if ((b = hit('[data-add-child]'))) return openChildForm(b.dataset.addChild, b.dataset.addChildBoard);
   // The button is what is disabled while it asks, not the panel this handler is on.
   if ((b = hit('[data-fetch-issue]'))) return fetchIssue(b.dataset.fetchIssue, { currentTarget: b });
   if ((b = hit('[data-ide]'))) return worktreeAct('ide', b.dataset.ide);
@@ -734,6 +989,13 @@ tp('task-panel').addEventListener('click', e => {
     renderTaskPanel();
   }
 });
+/* A gate with no task card: its head's buttons and its judge. */
+function gatePanelClick(e) {
+  let b;
+  if (e.target.closest('[data-tp-close]')) return closeTaskPanel();
+  if ((b = e.target.closest('[data-tp-place]'))) return placePanel(b.dataset.tpPlace);
+  judgeClick(e);
+}
 /* Another tab of the open task, with `gateId` picked in it when given. */
 function showPanelTab(task, pane, gateId) {
   if (gateId) {
@@ -757,10 +1019,11 @@ function sessPanelClick(e, s) {
       return renderTaskPanel();
     }
     if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
-    if (act === 'goto-board' && s.task) return go({ board: b.dataset.board, view: 'sessions', task: s.task, pane: 'term' });
+    if (act === 'goto-board' && s.task) return go({ board: b.dataset.board, view: 'work', task: s.task, pane: 'detail' });
     return;
   }
   if (hit('[data-tp-sess-gate]') && s.waiting) return goToGate(s.waiting.id, s.waiting.slug);
+  if (judgeClick(e)) return;
   if ((b = hit('[data-sess-act]'))) {
     if (b.disabled) return;
     // A session resumed from here is connected to once its window exists (syncPanelTerminal).
@@ -778,6 +1041,7 @@ function hubPanelClick(e, h) {
   let b;
   const waiting = hubSessionOf(h).waiting;
   if (hit('[data-tp-sess-gate]') && waiting) return goToGate(waiting.id, waiting.slug);
+  if (judgeClick(e)) return;
   if ((b = hit('[data-tp-hub]'))) {
     if (b.disabled) return;
     switch (b.dataset.tpHub) {
@@ -788,9 +1052,13 @@ function hubPanelClick(e, h) {
       case 'close': return openHubStopDialog(h.id, 'close');
       case 'reset': return openHubStopDialog(h.id, 'reset');
       case 'restart': return openHubStopDialog(h.id, 'restart');
+      case 'add-session': return openStartDialog();
+      case 'add-parent-hub': return openHubKeyDialog();
     }
     return;
   }
+  if ((b = hit('[data-pend-act]'))) return pendClick(b);
+  if ((b = hit('[data-tp-worktree]'))) return openIdleWorktree(b.dataset.tpWorktree);
   if ((b = hit('[data-tp-task]'))) return openTaskPanel(b.dataset.tpTask);
   if (hit('[data-tp-board]')) {
     // The hub's board, with the hub still in the panel on the tab it was on; a dialog would cover
@@ -839,6 +1107,13 @@ function setPanelWidth(raw) {
   prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
 }
+// A double click puts the width back to where it started.
+tp('tp-resize').addEventListener('dblclick', () => {
+  if (panelPop()) return;
+  prefs.panelWidth = 520;
+  document.body.style.setProperty('--panel-w', '520px');
+  savePrefs();
+});
 tp('tp-resize').addEventListener('keydown', e => {
   if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || panelPop() || matchMedia('(max-width: 720px)').matches) return;
   e.preventDefault();

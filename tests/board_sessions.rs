@@ -1194,6 +1194,7 @@ fn the_git_route_looks_at_its_own_worktree_and_no_other() {
     // The first request to a board has the server find its checkout, which lists the
     // worktrees once; what is counted below is the route itself.
     resident.get(&sessions_url("/worker-nobody-at-all/nothing"));
+    spy.settle();
     spy.clear();
 
     let (status, body) = resident.get(&sessions_url("/worker-spy-target/git"));
@@ -1300,7 +1301,14 @@ fn a_running_worker_carries_what_its_hooks_last_said() {
             "psStarted": ps_started(running.pid()),
             "updatedAt": 100,
             "lastEventAt": now_secs(),
-            "subagents": [{"id": "a1"}],
+            "model": "Opus 5",
+            "contextPercent": 42.6,
+            "lastMessage": "All green.\nShip it.",
+            "lastMessageAt": 90,
+            "subagents": [
+                {"id": "a1", "type": "Explore", "startedAt": 50, "activity": "Grep: foo\nmore"},
+                {"id": "a2"},
+            ],
         }),
     );
     let resident = Resident::start(&fixture);
@@ -1308,9 +1316,20 @@ fn a_running_worker_carries_what_its_hooks_last_said() {
     let state = state_of(&resident);
     let one = session_of(&state, "worker-one");
     assert_eq!(one["agentSession"]["status"], "waiting", "{one}");
+    assert_eq!(one["agentSession"]["model"], "Opus 5");
+    assert_eq!(one["agentSession"]["contextPercent"], 43);
     assert_eq!(one["agentSession"]["request"], "Bash: rm -rf build");
     assert_eq!(one["agentSession"]["updatedAt"], 100);
-    assert_eq!(one["agentSession"]["subagents"], 1);
+    // Whole, with its line break, unlike the request above.
+    assert_eq!(one["agentSession"]["lastMessage"], "All green.\nShip it.");
+    assert_eq!(one["agentSession"]["lastMessageAt"], 90);
+    assert_eq!(
+        one["agentSession"]["subagents"],
+        serde_json::json!([
+            {"id": "a1", "type": "Explore", "startedAt": 50, "activity": "Grep: foo"},
+            {"id": "a2"},
+        ])
+    );
     // A prompt for permission is not a gate.
     assert!(one.get("waiting").is_none(), "{one}");
 }
@@ -1454,4 +1473,87 @@ fn a_row_where_a_worker_runs_is_not_its_row_unless_its_session_or_process_say_so
     let one = session_of(&state, "worker-one");
     assert_eq!(one["present"], true, "{one}");
     assert!(one.get("agentSession").is_none(), "{one}");
+}
+
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    use std::process::Command;
+    let out = Command::new("git")
+        .hermetic()
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_workers_uncommitted_work_is_read_in_the_background_and_a_hub_has_none() {
+    let fixture = Fixture::new(QUIET);
+    let running = Sleeper::new();
+    let worktree = session_worktree(&fixture, "one", None, None, running.pid());
+    std::fs::write(worktree.join("edited.txt"), "one\ntwo\n").unwrap();
+    git_in(&worktree, &["add", "edited.txt"]);
+    std::fs::write(worktree.join("new.txt"), "untracked\n").unwrap();
+    let resident = Resident::start(&fixture);
+
+    // The first poll asks for it and the thread answers a moment later.
+    let one = wait_until("the diff of worker-one", || {
+        let state = state_of(&resident);
+        let one = session_of(&state, "worker-one").clone();
+        (one.get("uncommitted").is_some(), one)
+    });
+    assert_eq!(
+        one["uncommitted"],
+        serde_json::json!({
+            "files": 1, "untracked": 1, "insertions": 2, "deletions": 0, "binary": 0
+        }),
+        "{one}"
+    );
+    assert!(one.get("uncommittedError").is_none(), "{one}");
+    let state = state_of(&resident);
+    assert!(session_of(&state, "hub").get("uncommitted").is_none());
+}
+
+#[test]
+fn the_rate_limits_of_an_account_come_from_its_newest_session_with_a_figure() {
+    let fixture = Fixture::new(QUIET);
+    let at = now_secs();
+    let row = |id: &str, last: i64, used: Option<f64>| {
+        let mut row = serde_json::json!({
+            "sessionId": id,
+            "agent": "claude",
+            "configDir": "/cfg/a",
+            "lastEventAt": last,
+        });
+        if let Some(used) = used {
+            row["rateLimits"] = serde_json::json!({
+                "fiveHour": {"usedPercent": used, "resetsAt": at + 100},
+                "sevenDay": {"usedPercent": 5.0},
+            });
+        }
+        row
+    };
+    write_ledger_row(&fixture, "old", row("old", at - 500, Some(10.0)));
+    write_ledger_row(&fixture, "new", row("new", at - 100, Some(30.0)));
+    write_ledger_row(&fixture, "bare", row("bare", at - 10, None));
+    let resident = Resident::start(&fixture);
+
+    let state = state_of(&resident);
+    let accounts = state["rateLimits"]["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), 1, "{state}");
+    assert_eq!(accounts[0]["agent"], "claude");
+    assert_eq!(accounts[0]["configDir"], "/cfg/a");
+    assert_eq!(accounts[0]["sessionId"], "new");
+    assert_eq!(accounts[0]["lastEventAt"], at - 100);
+    assert_eq!(accounts[0]["fiveHour"]["usedPercent"], 30.0);
+    assert_eq!(accounts[0]["fiveHour"]["resetsAt"], at + 100);
+    assert_eq!(
+        accounts[0]["sevenDay"],
+        serde_json::json!({"usedPercent": 5.0})
+    );
+    assert!(state["rateLimits"].get("error").is_none());
 }

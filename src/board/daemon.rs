@@ -215,16 +215,18 @@ impl BoundResident {
             terminals: Arc::default(),
             pr_poll: Arc::default(),
             waits: Arc::default(),
+            work_cache: Mutex::default(),
         });
         {
             let resident = Arc::clone(&resident);
             let poll = Arc::clone(&resident.pr_poll);
             std::thread::spawn(move || {
                 poll.run(|| {
+                    let all = addresses(&resident.root);
                     // Only a board with a card on a PR is opened for it: opening one asks git
                     // where the checkout is, which is not worth doing every round for a board
                     // with nothing to look after.
-                    addresses(&resident.root)
+                    let cards = all
                         .iter()
                         .filter(|a| {
                             task::list(&resident.root, &a.slug).iter().any(|t| {
@@ -237,7 +239,41 @@ impl BoundResident {
                         })
                         .filter_map(|a| resident.board(&a.slug))
                         .map(|server| server.ctx.clone())
-                        .collect()
+                        .collect();
+                    // The branches of a repository's sessions are the same whichever of its
+                    // boards is asked, and the address already names the checkout: one board is
+                    // opened for each distinct checkout (the repository's own, else the first
+                    // of its hubs), and a board already open is only looked up.
+                    let mut mains: Vec<&str> = Vec::new();
+                    let mut branches = Vec::new();
+                    for a in all.iter().filter(|a| a.hub.is_none()).chain(all.iter()) {
+                        if mains.contains(&a.main.as_str()) {
+                            continue;
+                        }
+                        if let Some(server) = resident.board(&a.slug) {
+                            mains.push(&a.main);
+                            branches.push(server.ctx.clone());
+                        }
+                    }
+                    // A board is asked for the parents of its tasks' issues only when one of
+                    // them is on an issue of the host that is polled.
+                    let parents = all
+                        .iter()
+                        .filter(|a| {
+                            task::list(&resident.root, &a.slug).iter().any(|t| {
+                                task::issue_to_fetch(t)
+                                    .and_then(task::issue_ref_of)
+                                    .is_some_and(|r| r.host == jobs::HOST)
+                            })
+                        })
+                        .filter_map(|a| resident.board(&a.slug))
+                        .map(|server| server.ctx.clone())
+                        .collect();
+                    jobs::PollBoards {
+                        cards,
+                        branches,
+                        parents,
+                    }
                 });
             });
         }

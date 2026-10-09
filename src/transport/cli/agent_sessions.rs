@@ -40,7 +40,7 @@ fn plain(text: &str) -> String {
 }
 
 /// One row as one line: status, sub-agents, how long in that status, the session, where, and
-/// what it is doing or asking.
+/// what it is doing or asking, or else the first line of what it said last.
 fn line(row: &AgentSession, now: i64) -> String {
     let status = plain(row.status.as_ref().map_or("-", |status| status.as_str()));
     let subagents = match row.subagents.len() {
@@ -64,6 +64,15 @@ fn line(row: &AgentSession, now: i64) -> String {
     }
     .map(|text| plain(&text))
     .unwrap_or_default();
+    // A turn that is over has no tool and asks for nothing: what it said last is the detail.
+    if detail.is_empty()
+        && let Some(first) = row
+            .last_message
+            .as_deref()
+            .and_then(|message| message.lines().find(|line| !line.trim().is_empty()))
+    {
+        detail = plain(first.trim());
+    }
     if let Some(pending) = &row.pending_status {
         detail.push_str(&format!(" ({} held)", plain(pending.as_str())));
     }
@@ -95,5 +104,22 @@ mod tests {
         assert!(text.contains("\\u{1b}[31m\\nred"), "{text}");
         assert!(text.contains("s\\u{7}1"), "{text}");
         assert!(text.contains("/home/user/\\u{1b}]0;title\\u{7}"), "{text}");
+    }
+
+    #[test]
+    fn the_last_message_is_the_detail_only_when_there_is_no_other() {
+        let row = AgentSession {
+            status: Some(AgentStatus::Done),
+            last_message: Some("\nAll done \u{1b}[0m\nsecond".to_string()),
+            ..AgentSession::default()
+        };
+        let text = line(&row, 100);
+        assert!(text.ends_with("All done \\u{1b}[0m"), "{text}");
+        assert!(!text.contains("second"), "{text}");
+        let busy = AgentSession {
+            activity: Some("Bash: ls".to_string()),
+            ..row
+        };
+        assert!(line(&busy, 100).ends_with("Bash: ls"));
     }
 }

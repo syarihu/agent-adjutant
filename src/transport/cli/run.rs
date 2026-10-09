@@ -76,6 +76,8 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
         TaskAction::FetchIssue(args) => super::task_fetch_issue_cmd(args),
         TaskAction::Update(args) => super::task_update(args),
         TaskAction::Brief(args) => super::task_brief(args),
+        TaskAction::Park(args) => super::task_park(args),
+        TaskAction::Unpark(args) => super::task_unpark(args),
     }
 }
 

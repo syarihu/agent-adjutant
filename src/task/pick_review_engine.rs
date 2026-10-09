@@ -135,12 +135,12 @@ pub fn read_cache(path: &Path) -> Usage {
 }
 
 /// The figures of the Claude row under `config_dir` with the newest `lastEventAt` that has at
-/// least one window with a `usedPercent`, if that row is no older than the cache may be.
+/// least one window with a `usedPercent`, however old it is.
 ///
 /// `lastEventAt` also moves for hooks, so it is when the session was last seen alive, not when
 /// the figures were drawn; the figures may be older than the age says. The row is picked by
 /// `lastEventAt` here, whatever order `rows` come in; of equal times the first wins.
-pub fn ledger_usage(rows: &[AgentSession], config_dir: &Path, now: i64) -> Option<LedgerUsage> {
+pub fn newest_usage(rows: &[AgentSession], config_dir: &Path) -> Option<LedgerUsage> {
     let mut best: Option<(&AgentSession, i64)> = None;
     for row in rows {
         let Some(at) = row.last_event_at else {
@@ -162,10 +162,6 @@ pub fn ledger_usage(rows: &[AgentSession], config_dir: &Path, now: i64) -> Optio
         }
     }
     let (row, at) = best?;
-    let age = now - at;
-    if !(0..=STALE_AFTER_SECS).contains(&age) {
-        return None;
-    }
     let limits = row.rate_limits.as_ref()?;
     Some(LedgerUsage {
         session_id: row.session_id.clone(),
@@ -173,6 +169,14 @@ pub fn ledger_usage(rows: &[AgentSession], config_dir: &Path, now: i64) -> Optio
         five_hour: limits.five_hour.clone(),
         seven_day: limits.seven_day.clone(),
     })
+}
+
+/// `newest_usage`, if its row is no older than the cache may be.
+pub fn ledger_usage(rows: &[AgentSession], config_dir: &Path, now: i64) -> Option<LedgerUsage> {
+    let usage = newest_usage(rows, config_dir)?;
+    (0..=STALE_AFTER_SECS)
+        .contains(&(now - usage.last_event_at))
+        .then_some(usage)
 }
 
 /// The trip rules, over figures already known to be fresh. The 5-hour window is judged first; a

@@ -11,7 +11,7 @@ use super::assets::UI_HTML;
 use super::auth::refuse;
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
-use crate::board::view::boards;
+use crate::board::view::{boards, work};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -103,6 +103,35 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
             })
             .unwrap_or_default(),
         ),
+        ("GET", "/api/work") => match work_json(resident) {
+            Some(json) => http::json(out, 200, &json),
+            None => http::json(
+                out,
+                500,
+                &json!({ "error": "could not build the work list" }).to_string(),
+            ),
+        },
         _ => no_such_route(out),
     }
+}
+
+/// How long a built `/api/work` document answers the next requests.
+const WORK_CACHE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// The work document, from the resident's cache while it is fresh. Built outside the lock: it
+/// reads every repository's board, and a request that finds it stale builds its own rather than
+/// holding the others up.
+fn work_json(resident: &Resident) -> Option<String> {
+    if let Ok(cache) = resident.work_cache.lock()
+        && let Some((built, json)) = cache.as_ref()
+        && built.elapsed() < WORK_CACHE
+    {
+        return Some(json.clone());
+    }
+    // A document that cannot be written is an error, not an empty answer to keep.
+    let json = serde_json::to_string(&work(resident)).ok()?;
+    if let Ok(mut cache) = resident.work_cache.lock() {
+        *cache = Some((std::time::Instant::now(), json.clone()));
+    }
+    Some(json)
 }

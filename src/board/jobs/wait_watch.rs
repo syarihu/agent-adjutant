@@ -5,7 +5,8 @@
 //! session ledger on the board's own clock: a row that has said `waiting` for a few seconds is
 //! announced once, through the configured `notification` and through the page's own desktop
 //! notification, unless that session's terminal is open on the board. `/api/state` and
-//! `/api/boards` carry every such wait as `waits`, which the page lists in 要対応. A wait that was
+//! `/api/boards` carry every such wait as `waits`, which the page lists in 「いまの仕事」 on a resident server and
+//! marks on the session's card on a board served alone. A wait that was
 //! not announced (it was already up when the watch started, or its terminal was open) is listed
 //! all the same, marked `quiet`. A session held by a gate has the gate's own notice, so its wait
 //! is not listed while the gate is open; it is looked at again every `HELD_RECHECK_SECS`, and
@@ -494,9 +495,18 @@ mod tests {
                 last_event_at: Some(since),
                 activity: None,
                 request: request.map(str::to_string),
-                subagents: 0,
+                model: None,
+                context_percent: None,
+                last_message: None,
+                last_message_at: None,
+                last_prompt_at: None,
+                subagents: Vec::new(),
                 error: None,
             }),
+            uncommitted: None,
+            uncommitted_error: None,
+            branch_pr: None,
+            branch_pr_error: None,
         }
     }
 

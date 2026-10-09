@@ -13,6 +13,8 @@ use crate::kernel::runner;
 use crate::task;
 
 use super::columns::{HumanCol, waits_on_person};
+use super::parents::{self, ParentGroup, ParentIssue};
+use super::rate_limits::{RateLimitsState, rate_limits_of};
 use super::sessions::sessions_of;
 
 /// The state document `/api/state` sends. Every key the page reads is a field here, and the
@@ -53,11 +55,18 @@ pub struct BoardState {
     /// The agent a session started from the board runs, which is the only one its dialog offers.
     pub session_start: SessionStart,
     pub sessions: Vec<Session>,
+    /// What each account's newest session last drew of its rate limit windows. Read from the
+    /// agent session ledger on every poll, whether or not `sessions` is listed.
+    pub rate_limits: RateLimitsState,
     pub tasks: Vec<TaskCard>,
     /// The tasks of the parent-task hubs of this repository, which only the repository's own
     /// board lists: its workers include theirs, and a card for each says so. Apart from `tasks`
     /// because those are this board's own, which every action on the page assumes.
     pub hub_tasks: Vec<TaskCard>,
+    /// The parent issues of those tasks and what each has of its children. Left out when no
+    /// task has a parent.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<ParentGroup>,
     pub workers: Vec<WorkerRow>,
     /// The slot count `adj work` decides by, counted the same way — a worker still
     /// starting up holds one — so the header and the refusal cannot disagree.
@@ -172,6 +181,10 @@ pub struct TaskCard {
     /// board's own tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_hub: Option<OwnerHub>,
+    /// The issue this task is a child of: the tracker's word when it has one, else the record's
+    /// `parent`. Absent when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_issue: Option<ParentIssue>,
 }
 
 /// The parent-task hub a card on the repository's board belongs to.
@@ -304,7 +317,9 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     // does not grow with the number of worktrees. The `ps` is only run if a record names a pid.
     let processes = crate::registry::ProcessTable::snapshot();
     // The board shows what it can; `adj work` is the one that refuses on a failed listing.
-    let listed = crate::kernel::identity::worktrees(&repo.main).unwrap_or_default();
+    let listed = crate::kernel::identity::worktrees(&repo.main);
+    let listed_ok = listed.is_ok();
+    let listed = listed.unwrap_or_default();
     let (main_branch, linked) = split_main(&repo.main, listed);
     let linked_paths: Vec<String> = linked.iter().map(|w| w.path.clone()).collect();
     // Counted as `adj work` counts, main checkout included, though it is not listed below.
@@ -390,7 +405,29 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
         );
     }
 
-    let hub_tasks = hub_task_cards(&server.ctx.state, repo, &hubs, &workers);
+    let mut hub_tasks = hub_task_cards(&server.ctx.state, repo, &hubs, &workers);
+    let parent_hubs: Vec<String> = hubs
+        .iter()
+        .filter(|h| h.parent)
+        .map(|h| h.slug.clone())
+        .collect();
+    let parents = parents::attach(
+        &mut tasks,
+        &mut hub_tasks,
+        &parents::Inputs {
+            slug: &repo.slug,
+            issue_keys: &settings.issue_keys,
+            linked: &linked,
+            parent_hubs: &parent_hubs,
+            // Not resident: nothing asked the tracker, so the record is all there is.
+            tracker: &|url| {
+                server
+                    .pr_poll
+                    .as_ref()
+                    .and_then(|poll| poll.issue_parent(url))
+            },
+        },
+    );
 
     let sessions = if with_sessions {
         sessions_of(
@@ -402,6 +439,8 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
                 processes: &processes,
                 main_branch,
                 lines,
+                diffs: true,
+                listed: listed_ok,
             },
             None,
             |index, _| workers_data[index].clone(),
@@ -409,6 +448,11 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
     } else {
         Vec::new()
     };
+
+    let rate_limits = rate_limits_of(crate::registry::agent_sessions_with(
+        &server.ctx.state,
+        &processes,
+    ));
 
     let pending: Vec<PendingRow> = crate::mail::pending(&server.ctx.state, &repo.slug)
         .messages
@@ -458,8 +502,10 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
             ),
         },
         sessions,
+        rate_limits,
         tasks,
         hub_tasks,
+        parents,
         workers,
         worker_slots: WorkerSlots {
             busy,
@@ -547,6 +593,12 @@ pub(super) struct Listing<'a> {
     /// Which sessions carry the last line of their pane: reading it runs a command per
     /// session, so only the page that shows it asks.
     pub(super) lines: Lines,
+    /// Whether the worktrees of the workers listed are asked to be read for their diff. Only
+    /// the poll that lists every session does: the others take what is there.
+    pub(super) diffs: bool,
+    /// Whether the worktrees were listed. A listing that failed leaves the linked ones out, which
+    /// is not the same as there being none, so what is held for them is not forgotten.
+    pub(super) listed: bool,
 }
 
 /// The main checkout's branch and the linked worktrees, out of one listing. The branch is
@@ -614,7 +666,7 @@ pub fn with_records(
                 }
             }
             // Written on every card, finished ones too.
-            for key in ["waitsOnPerson", "ownerHub"] {
+            for key in ["waitsOnPerson", "ownerHub", "parentIssue"] {
                 t.extra.remove(key);
             }
             TaskCard {
@@ -623,6 +675,7 @@ pub fn with_records(
                 jules: None,
                 waits_on_person: false,
                 owner_hub: None,
+                parent_issue: None,
             }
         })
         .collect()

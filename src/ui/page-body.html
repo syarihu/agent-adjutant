@@ -19,10 +19,10 @@
   <div class="rail-destinations">
     <div class="rail-global">
       <div class="rail-section-label">全体</div>
-      <button class="rail-item" id="nav-review" title="要対応" data-action="queue">
-        <span class="material-symbols-outlined">mark_chat_unread</span>
-        <span class="rail-label">要対応</span>
-        <span class="rail-badge" id="gate-count">0</span>
+      <button class="rail-item" id="nav-work" title="いまの仕事" data-action="work">
+        <span class="material-symbols-outlined" aria-hidden="true">work_history</span>
+        <span class="rail-label">いまの仕事</span>
+        <span class="rail-badge zero" id="work-new-count" title="新着の数">0</span>
       </button>
     </div>
 
@@ -40,6 +40,7 @@
       </button>
     </div>
   </div>
+  <div class="rail-resize" id="rail-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="サイドバーの幅" aria-valuemin="180" aria-valuemax="400" aria-valuenow="240" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
 </aside>
 
 <!-- The task panel is a child of body, between the sidebar and the page, and is never moved:
@@ -50,6 +51,7 @@
   <header class="tp-head" id="tp-head"></header>
   <div class="m3-segmented-tabs" role="tablist" id="tp-tabs"></div>
   <div class="tp-pane" id="tp-detail" role="tabpanel">
+    <div id="tp-away" hidden></div>
     <div id="tp-links"></div>
     <div id="tp-gate"></div>
     <div id="tp-form"></div>
@@ -85,7 +87,6 @@
       <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
         <button type="button" role="tab" class="view-tab" data-tab="agent" aria-controls="board-view" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
         <button type="button" role="tab" class="view-tab" data-tab="human" aria-controls="board-view" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
-        <button type="button" role="tab" class="view-tab" data-tab="sessions" aria-controls="sessions-view" id="tab-sessions" title="hub と worker のセッション" hidden><span class="material-symbols-outlined" aria-hidden="true">terminal</span><span class="lbl">セッション</span><span class="rail-badge zero" id="sessions-waiting" title="入力待ち">0</span><span class="rail-count zero" id="sessions-count" title="セッション数">0</span></button>
       </nav>
       <div class="view-tools" id="view-tools">
         <div class="m3-segmented-tabs" id="layout-switch">
@@ -99,6 +100,10 @@
       </div>
     </div>
   </header>
+
+  <!-- A notice about what was just done (a session started, a hub restarted), in the flow above whichever view is
+       on, so it is seen whether or not the panel is open. -->
+  <div class="sess-notice" id="sess-notice" hidden></div>
 
   <main>
     <div id="board-view" role="tabpanel">
@@ -131,42 +136,29 @@
         </section>
       </div>
     </div>
-    <!-- Only the parts named below are drawn again; the terminal host and its parents never are, so the
-         socket survives a switch between 判断 and ターミナル. -->
-    <div id="review">
-      <div class="review-inbox-pane rail">
-        <div class="review-inbox-header">
-          <span class="material-symbols-outlined" aria-hidden="true">inbox</span>
-          <span>要対応 (<span id="rv-count">0</span>)</span>
-        </div>
-        <div class="review-inbox-list"></div>
-      </div>
-      <div class="review-detail-pane pane">
-        <div class="rv-head" id="rv-head"></div>
-        <div class="tp-tabs rv-tabs" id="rv-tabs" role="tablist"></div>
-        <div class="rv-judge" id="rv-judge" role="tabpanel"></div>
-        <div class="tp-pane tp-term rv-term" id="rv-term" role="tabpanel" hidden>
-          <div class="tp-term-bar" id="rv-term-bar"></div>
-          <div class="tp-term-host" id="rv-term-host"></div>
-          <div class="tp-term-ph" id="rv-term-ph" hidden></div>
-        </div>
-      </div>
-    </div>
-    <div id="sessions-view" role="tabpanel">
-      <!-- Above the list, so a notice is seen whether or not the panel is open. -->
-      <div class="sess-notice" id="sess-notice" hidden></div>
-      <section class="sess-list" aria-label="セッションの一覧">
-        <div class="pane-head sess-list-head">
-          <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
-          <span class="pane-title">セッション</span>
-          <span class="pane-sub" id="sess-scope"></span>
-          <div class="sess-add-wrap">
-            <button type="button" class="tool-btn" id="sess-add" aria-haspopup="menu" aria-expanded="false" aria-controls="sess-add-menu" title="hub やセッションを追加" aria-label="hub やセッションを追加"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
-            <div class="sess-menu" id="sess-add-menu" role="menu" aria-labelledby="sess-add" hidden></div>
+    <!-- The work under way in every repository: the list, the selected session's terminal, and (the task
+         panel, which is the body's own) what to judge. Nothing here is drawn from the board's state: the
+         list is /api/work, and only the panel and the terminal read the board that was selected. -->
+    <div id="work-view">
+      <section class="wk-list" aria-label="いまの仕事の一覧">
+        <div class="pane-head wk-list-head">
+          <span class="material-symbols-outlined" aria-hidden="true">work_history</span>
+          <span class="pane-title">いまの仕事</span>
+          <div class="m3-segmented-tabs wk-group-switch" role="group" aria-label="まとめ方">
+            <button type="button" class="m3-seg-tab" data-wk-group="parent" aria-pressed="true">親 Issue</button>
+            <button type="button" class="m3-seg-tab" data-wk-group="state" aria-pressed="false">状態</button>
           </div>
         </div>
-        <div class="sess-list-scroll">
-          <div id="sess-groups"></div>
+        <div class="wk-list-scroll"><div id="wk-groups"></div></div>
+        <div class="wk-rate" id="wk-rate"></div>
+        <div class="wk-resize" id="wk-list-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="一覧の幅" aria-valuemin="260" aria-valuemax="640" aria-valuenow="380" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
+      </section>
+      <section class="wk-term" aria-label="選んだ仕事のターミナル">
+        <div class="wk-term-head" id="wk-term-head"></div>
+        <div class="tp-pane tp-term wk-term-pane">
+          <div class="tp-term-bar" id="wk-term-bar"></div>
+          <div class="tp-term-host" id="wk-term-host"></div>
+          <div class="tp-term-ph" id="wk-term-ph"></div>
         </div>
       </section>
     </div>
@@ -293,6 +285,67 @@
       <button type="submit" class="btn-m3-primary" id="handover-submit-btn">
         <span class="material-symbols-outlined" style="font-size:16px;">send</span>
         <span>キューに渡す</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="notify-dialog" aria-labelledby="notify-title">
+  <form method="dialog" id="notify-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">notifications</span>
+        <span id="notify-title">デスクトップ通知</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="notify-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <div class="field">
+        <span id="notify-permission-text"></span>
+        <button type="button" class="btn-m3-text" id="notify-permission-btn" data-action="notify-permission">ブラウザに通知を許可する</button>
+      </div>
+      <fieldset class="field notify-kinds" aria-describedby="notify-help">
+        <legend>いつ通知しますか</legend>
+        <label><input type="checkbox" id="notify-waiting"> 確認待ち（確認依頼が届いたとき、入力や許可を待ち始めたとき）</label>
+        <label class="notify-multi"><input type="checkbox" id="notify-done"> 完了（worker のターンが終わったとき）</label>
+        <label class="notify-multi"><input type="checkbox" id="notify-failed"> 失敗（セッションが失敗したとき）</label>
+        <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。この設定はこのページの通知だけに効きます。サーバーが鳴らす通知（<code>notification</code>）は別で、ここでは変わりません</span>
+      </fieldset>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="notify-dialog">閉じる</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="park-dialog" aria-labelledby="park-title">
+  <form method="dialog" id="park-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">schedule</span>
+        <span id="park-title">置く</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="park-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <fieldset class="field park-reasons" aria-describedby="park-help">
+        <legend>何を待っていますか</legend>
+        <div class="radios" id="park-reasons"></div>
+      </fieldset>
+      <label class="field"><span>ひとこと（「その他」では必須）</span>
+        <input type="text" id="park-text" autocomplete="off" aria-describedby="park-help">
+        <span class="note" id="park-help">置いたタスクは「いまの仕事」の後で見るに入り、新着には数えません。ゲートは開いたままで、いつも通り答えられます</span></label>
+      <p id="park-error" class="dlg-error" role="alert" hidden></p>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="park-dialog">キャンセル</button>
+      <button type="submit" class="btn-m3-primary" id="park-submit">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">schedule</span>
+        <span>置く</span>
       </button>
     </div>
   </form>

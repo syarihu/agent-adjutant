@@ -1,6 +1,6 @@
 /* ── M3 Navigation Rail / Drawer (Left Side) ── */
 #nav-rail {
-  width: 240px;
+  width: var(--rail-w, 240px);
   background: var(--md-sys-color-surface-container-low);
   border-right: 1px solid var(--md-sys-color-outline-variant);
   display: flex;
@@ -354,21 +354,6 @@ main { flex: 1; overflow: hidden; position: relative; }
   justify-content: center;
   position: relative;
 }
-.board-row .mini-badge {
-  display: none;
-  position: absolute;
-  top: -4px;
-  right: -6px;
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: var(--md-shape-corner-full);
-  background: var(--md-sys-color-error);
-  color: var(--md-sys-color-on-error);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 16px;
-  text-align: center;
-}
 .board-row .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .board-row .name { overflow-wrap: anywhere; }
 .board-row .sub {
@@ -470,8 +455,7 @@ main { flex: 1; overflow: hidden; position: relative; }
 
 /* The rail keeps only what a glance needs — repositories as their initials, parent-task hubs
    as their key number, a badge for what waits. `rail-icons` is set (applyRailMode) on a narrow
-   window, while a session's terminal takes the width of the セッション tab, and while the task
-   panel sits on the left. */
+   window, and while the task panel sits on the left. */
 body { --rail-w: 240px; }
 body.rail-icons { --rail-w: 72px; }
 body.rail-icons #nav-rail { width: 72px; align-items: center; padding-left: 8px; padding-right: 8px; }
@@ -492,7 +476,6 @@ body.rail-icons .rail-item .rail-count { position: absolute; top: 0; right: 0; m
 body.rail-icons .board-row { justify-content: center; padding: 4px; }
 body.rail-icons .board-row.child { margin-left: 0; }
 body.rail-icons .board-row .avatar { display: flex; }
-body.rail-icons .board-row .avatar .mini-badge:not(:empty) { display: block; }
 body.rail-icons .board-row.stopped:hover .start-btn,
 body.rail-icons .board-row.stopped:focus-within .start-btn { display: none; }
 body.rail-icons .board-row .hubterm-btn { display: none !important; }

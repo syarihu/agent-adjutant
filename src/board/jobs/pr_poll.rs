@@ -15,13 +15,15 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use super::branch_prs::BranchPrs;
+use super::issue_parents::IssueParents;
 use super::notifications::{self as gh, Notified};
 use crate::registry::Context;
 use crate::task::{self, PrRef, PrTurn, Task};
 
 /// The only host polled. Notifications of another host would need its own `Last-Modified`
 /// and its own login, and a refresh already reads those.
-const HOST: &str = "github.com";
+pub const HOST: &str = "github.com";
 
 /// How long to wait when GitHub has not said, and when no card holds a PR on `HOST`: nothing
 /// is asked then, and the records are looked at again after this.
@@ -37,7 +39,7 @@ const BACKOFF_CAP: u64 = 900;
 const STATE_REREAD: Duration = Duration::from_secs(5 * 60);
 
 /// How long one round may spend waiting on `gh`.
-const ROUND_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const ROUND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What the poll remembers between rounds. Nothing here is kept on a record: it is only what
 /// lets the next round be cheap, and it starts empty when the server does.
@@ -176,6 +178,28 @@ pub struct PollHealth {
 #[derive(Default)]
 pub struct PrPoll {
     state: Mutex<PollState>,
+    /// The pull request of each branch a session with no task works on, asked in the same round.
+    branches: BranchPrs,
+    /// The parent GitHub says each task's issue has, asked in the same round.
+    parents: IssueParents,
+}
+
+/// The boards a round looks after: those with a card on a PR for the cards, and one board of each
+/// repository for the branches of its sessions.
+#[derive(Default)]
+pub struct PollBoards {
+    pub cards: Vec<Context>,
+    pub branches: Vec<Context>,
+    /// The boards with a task on an issue of `HOST`, whose parents the tracker is asked for.
+    pub parents: Vec<Context>,
+}
+
+/// The repositories a round's notifications name, which makes their branches due.
+#[derive(Default)]
+struct Named {
+    repos: HashSet<String>,
+    /// The page was full, so there may be news it did not hold: every repository is named.
+    all: bool,
 }
 
 impl PrPoll {
@@ -190,7 +214,7 @@ impl PrPoll {
 
     /// Poll for as long as the process lives. `boards` is asked each round, so a board the
     /// address book gained since is looked after too.
-    pub fn run(self: Arc<Self>, boards: impl Fn() -> Vec<Context>) {
+    pub fn run(self: Arc<Self>, boards: impl Fn() -> PollBoards) {
         let mut tried: HashSet<PrRef> = HashSet::new();
         loop {
             // A round that panics is a failed round, not the end of the poll: the thread would
@@ -228,8 +252,42 @@ impl PrPoll {
         wait(&state)
     }
 
-    /// One round: ask for news, read what it concerns, apply it. How long to wait after.
-    fn round(&self, boards: &[Context], tried: &mut HashSet<PrRef>) -> Duration {
+    /// The pull request last found for `branch` of the repository `nwo`, for a session that has
+    /// no task, and why the last lookup failed. Read from memory, never from GitHub.
+    pub fn branch_pr(
+        &self,
+        nwo: &str,
+        branch: &str,
+    ) -> (Option<crate::board::SessionPr>, Option<String>) {
+        self.branches.look(nwo, branch)
+    }
+
+    /// The parent the tracker last said the issue at `url` has, if it said one. Read from memory,
+    /// never from GitHub.
+    pub fn issue_parent(&self, url: &str) -> Option<task::TrackerParent> {
+        self.parents.look(url)
+    }
+
+    /// One round: the cards, the branches of the sessions that have none, then the parents of
+    /// the tasks' issues. How long to wait after.
+    fn round(&self, boards: &PollBoards, tried: &mut HashSet<PrRef>) -> Duration {
+        let mut named = Named::default();
+        let pause = self.card_round(&boards.cards, tried, &mut named);
+        // Not skipped when no card holds a PR: a session needs its branch looked up whatever
+        // the cards say.
+        self.branches
+            .round(&boards.branches, HOST, &named.repos, named.all);
+        self.parents.round(&boards.parents, HOST);
+        pause
+    }
+
+    /// One round for the cards: ask for news, read what it concerns, apply it.
+    fn card_round(
+        &self,
+        boards: &[Context],
+        tried: &mut HashSet<PrRef>,
+        named: &mut Named,
+    ) -> Duration {
         let mut cards: Vec<Card> = Vec::new();
         for (board, ctx) in boards.iter().enumerate() {
             let tasks = task::candidates(ctx);
@@ -283,6 +341,9 @@ impl PrPoll {
                 full,
             } => {
                 read.extend(wanted(&refs, prs, check_repos, *full || catch_up));
+                named.repos.extend(prs.iter().map(PrRef::nwo));
+                named.repos.extend(check_repos.iter().cloned());
+                named.all = *full;
                 (*interval, Some(last_modified.clone()))
             }
         };

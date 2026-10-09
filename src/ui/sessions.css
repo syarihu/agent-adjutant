@@ -1,90 +1,24 @@
-/* ── セッション tab: the board's hubs and their sessions in a list; a session opens in the task panel ── */
-#sessions-view { display:none; height:100%; position:relative; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
-.sess-list {
-  grid-column:1; grid-row:2; min-width:0; min-height:0; display:flex; flex-direction:column;
-  background:var(--md-sys-color-surface-container-low);
-}
-#sess-notice { grid-column:1 / -1; grid-row:1; }
-.sess-list-head { padding:10px 18px 8px; color:var(--md-sys-color-primary); border-bottom:1px solid var(--md-sys-color-outline-variant); }
-.sess-list-head .pane-title { color:var(--md-sys-color-on-surface); }
-.sess-list-scroll { flex:1; min-height:0; overflow-y:auto; padding:0 12px 16px; }
-
-/* A hub's header sticks to the top while its sessions scroll under it. */
-.sess-group { margin-top:10px; }
-.sess-head {
-  position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-  padding:8px 10px; border-radius:var(--md-shape-corner-sm);
-  background:var(--md-sys-color-surface-container-high);
-  border:1px solid var(--md-sys-color-outline-variant);
-}
-.sess-head.wait { border-color:var(--md-sys-color-warning); }
-.sess-head.off .sess-head-name { color:var(--md-sys-color-on-surface-variant); }
-.sess-head-ico { flex:none; font-size:18px; color:var(--md-sys-color-on-surface-variant); }
-.sess-head-name { min-width:0; flex:1 1 90px; overflow-wrap:anywhere; font-size:13px; font-weight:800; }
-.sess-head-name .key { font-family:var(--font-mono); font-weight:800; margin-right:8px; color:var(--md-sys-color-primary); }
-.sess-head-count { font-size:11.5px; color:var(--md-sys-color-on-surface-variant); white-space:nowrap; }
-.sess-head-count b { color:var(--md-sys-color-warning); font-weight:800; }
-.sess-head-btn { display:inline-flex; align-items:center; gap:4px; padding:3px 12px; font-size:12px; }
-.sess-head-btn .material-symbols-outlined { font-size:16px; }
-.sess-head-btn:disabled { opacity:.5; cursor:not-allowed; }
-.sess-head-btn.on { background:var(--md-sys-color-secondary-container); color:var(--md-sys-color-on-secondary-container); }
-.sess-body { padding:4px 0 0; }
-.sess-group.child { margin-left:8px; }
-.sess-group.child .sess-body { margin-left:8px; padding-left:14px; border-left:2px solid var(--md-sys-color-outline-variant); }
+/* ── Sessions: a session's actions, the notice above the page, the dialogs, and what a session with no task shows in the panel ── */
 
 .sess-row {
   display:flex; align-items:center; gap:10px; width:100%; min-width:0; text-align:left;
   padding:7px 8px; border:0; border-radius:var(--md-shape-corner-sm); background:transparent;
   color:var(--md-sys-color-on-surface); cursor:pointer; font:inherit;
 }
-button.sess-row:hover { background:var(--md-sys-color-surface-container-high); }
-.sess-row[aria-current="true"] { background:var(--md-sys-color-secondary-container); color:var(--md-sys-color-on-secondary-container); }
+/* The pill of a session's state on a card, and the row of a session asked for and not started yet in a hub's panel. */
 .sess-row-pill { flex:none; width:84px; text-align:center; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sess-row-main { flex:1; display:flex; flex-direction:column; min-width:0; }
-.sess-row-title {
-  overflow-wrap:anywhere; font-size:12.5px; font-weight:600; line-height:1.35;
-}
-.sess-row-last { font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-on-surface-variant); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sess-row-last:empty { display:none; }
-.sess-row-tag { flex:none; max-width:28%; font-family:var(--font-mono); font-size:11px; color:var(--md-sys-color-outline); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sess-row-tag:empty { display:none; }
-.sess-row-open { flex:none; font-size:11.5px; font-weight:700; color:var(--md-sys-color-primary); visibility:hidden; }
-button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-open { visibility:visible; }
-.sess-row.ended { opacity:.6; }
-/* The row of a session asked for and not started yet (below) is drawn with these. */
 .sess-ico { flex:none; font-size:18px; }
 .sess-row-text { display:flex; flex-direction:column; min-width:0; }
 .sess-row-key, .sess-row-sub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sess-row-key { font-size:12.5px; font-weight:600; }
 .sess-row-sub { font-size:10.5px; color:var(--md-sys-color-outline); font-weight:500; }
-.sess-empty { padding:10px 8px; font-size:12px; color:var(--md-sys-color-outline); }
-.sess-orphans { margin-top:8px; border-top:1px solid var(--md-sys-color-outline-variant); padding-top:4px; }
-.sess-orphans summary { display:flex; align-items:center; gap:8px; padding:6px 8px; cursor:pointer; font-size:12px; font-weight:600; color:var(--md-sys-color-on-surface-variant); }
-.sess-orphans summary .material-symbols-outlined { font-size:18px; }
-.sess-row.none .sess-row-title { font-family:var(--font-mono); font-weight:500; }
 
-/* The buttons of a session's actions (sessionButtons), and the menus that hold some. */
-.sess-menu button { font-size:12px; }
+/* The buttons of a session's actions (sessionButtons). */
 .sess-act { display:inline-flex; align-items:center; gap:4px; padding:4px 12px; }
 .sess-act .material-symbols-outlined { font-size:16px; }
 .sess-act:disabled { opacity:.5; cursor:not-allowed; }
-.sess-menu {
-  position:absolute; top:100%; right:0; z-index:20; min-width:200px; padding:6px;
-  display:flex; flex-direction:column; gap:2px; margin-top:4px;
-  background:var(--md-sys-color-surface-container-high); border-radius:var(--md-shape-corner-sm);
-  box-shadow:var(--md-elevation-3);
-}
-.sess-menu[hidden] { display:none; }
-.sess-menu button {
-  display:flex; align-items:center; gap:8px; width:100%; text-align:left; border:0; cursor:pointer;
-  padding:8px 10px; border-radius:var(--md-shape-corner-xs); background:transparent;
-  color:var(--md-sys-color-on-surface); font:inherit; font-size:12.5px;
-}
-.sess-menu button:hover:not(:disabled) { background:var(--md-sys-color-surface-container-highest); }
-.sess-menu button:disabled { opacity:.5; cursor:not-allowed; }
-.sess-menu .material-symbols-outlined { font-size:18px; }
 
-/* In the flow of the page, above the list. */
+/* In the flow of the page, above whichever view is on. */
 .sess-notice {
   flex:none; display:flex; align-items:center; gap:8px; padding:6px 14px; font-size:12px;
   background:var(--md-sys-color-surface-container); color:var(--md-sys-color-on-surface);
@@ -119,13 +53,12 @@ button.sess-row:hover .sess-row-open, button.sess-row:focus-visible .sess-row-op
 .sess-side-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
 .sess-side-list li { display:flex; flex-direction:column; align-items:flex-start; gap:2px; overflow-wrap:anywhere; }
 .sess-side-list .who { color:var(--md-sys-color-on-surface-variant); font-size:12px; }
+/* 動いていない worktree: the card folds away until it is wanted. */
+.tp-idle > summary { cursor:pointer; font-size:12px; font-weight:700; color:var(--md-sys-color-on-surface-variant); }
+.tp-idle[open] > summary { margin-bottom:8px; }
+.tp-idle .tp-muted { margin-top:8px; }
 
-/* The + sits at the right end of the list's header; its menu opens leftwards from there. */
-.sess-add-wrap { position:relative; margin-left:auto; }
-.sess-add-wrap .sess-menu { left:auto; right:0; }
-.sess-add-wrap .tool-btn:disabled { opacity:.5; cursor:not-allowed; }
-
-/* A session asked for and not started yet: a row in its hub's group, not a button. */
+/* A session asked for and not started yet: a row in its hub's panel, not a button. */
 .sess-row.pending { cursor:default; flex-wrap:wrap; }
 .sess-row.pending .sess-ico { color:var(--md-sys-color-primary); }
 .sess-row.pending.stopped .sess-ico, .sess-row.pending.failed .sess-ico { color:var(--md-sys-color-error); }

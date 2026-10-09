@@ -524,6 +524,7 @@ mod tests {
                 untracked: 1,
                 insertions: 10,
                 deletions: 2,
+                binary: 0,
             },
             2,
         );

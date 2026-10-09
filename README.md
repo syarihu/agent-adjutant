@@ -57,7 +57,7 @@ out of a build directory pins that build forever, and `cargo clean` then breaks 
 **Sessions adjutant did not start.** Claude Code hubs and workers adjutant starts get its hooks at
 launch. Antigravity sessions do not report yet ([#520](https://github.com/syarihu/agent-adjutant/issues/520)).
 To have Claude Code sessions you start yourself, or any Codex session, report to
-`adjutant agent-sessions` and the board's セッション tab, add the same hooks to your Claude Code user
+`adjutant agent-sessions` and the board's 「いまの仕事」, add the same hooks to your Claude Code user
 settings or Codex's hooks file:
 
 ```bash
@@ -96,7 +96,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
 | `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
 | `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate limits (from the agent session ledger when the status line relay fills it, else the rate-limit cache) and whether `codex` is on `PATH` — and the line to tell the user |
-| `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, and the last tool it reported; sessions whose process has gone are left out |
+| `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, the last tool it reported, and what it said at the end of its last turn; sessions whose process has gone are left out |
 | `adjutant setup claude\|codex [--remove]` | add adjutant's hooks to your Claude Code user settings or Codex hooks file, so sessions adjutant did not start report to `agent-sessions` too (see [Install](#install)) |
 | `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
 | `adjutant ide --worktree …` | open a worktree in the configured editor |
@@ -104,7 +104,7 @@ procedures' own `Bash` steps (`adj` everywhere, if you prefer):
 | `adjutant notify --message …` | tell the human something happened |
 | `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
 | `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief` | the records that board is a view of (`brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record) |
+| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief\|park\|unpark` | the records that board is a view of (`park --id … --reason pdm\|design\|review\|merge-timing\|other [--text …]`: set a task aside on purpose, because you wait on someone else's answer or on the right time to merge (`--reason other` needs a `--text`; `--text -` reads stdin; a finished task is refused); `unpark --id …`: take it back; `brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one)) |
 | `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
 | `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
 | `adjutant hub-stop` | clear this repo's hub record |
@@ -197,8 +197,8 @@ adj hub --resume --hub ALPHA-233  # a parent task's hub — the identifier is ne
 adj worker --resume               # in a worktree: the worker that was working there
 ```
 
-The board's 「hub をリセット」 (a button on the hub's row, in the menu above the terminal in the
-セッション tab, and the first button of the bar above a hub's terminal in the task panel) does
+The board's 「hub をリセット」 (a button on the hub's row, in the hub's panel, and the first button
+of the bar above a hub's terminal) does
 what `--new` does: after a confirmation it stops the hub if it runs and starts it again on a new
 conversation. The old conversation is not deleted, but it is not resumed either,
 and from then on `adj hub --resume` reaches the new one (with a runner that records no session id
@@ -411,7 +411,12 @@ sending anything.
 question for a few seconds and nobody has its terminal open on the board: the message says which
 session waits and on what (`worker-x is waiting: Bash: make`, or `worker-x is asking: <question>`
 for a question), once per wait. The board page, if it is open with notifications allowed, shows its
-own desktop notification for the same wait, and clicking it opens that session's terminal.
+own desktop notification for the same wait, and clicking it opens the task in 「いまの仕事」 (on the
+resident server's page; a board served alone has no such list, and there it opens the session's
+terminal).
+Which of waiting, done and failed the page notifies for is set in the page's notification dialog (the
+bell button; waiting and failed are on by default) and is kept in the browser; it does not change
+`notification`, which the server rings by itself.
 
 `wake` splits along the line the rest of the config does not: **how** to poke a session is a
 property of the terminal, and **what to say** once poked is a property of the agent. So
@@ -481,9 +486,9 @@ Nothing opens a browser.
 state directory that serves the board of every repository on this machine, each at
 `/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
 boards in place: the sidebar lists a row per repository, with its parent-task hubs under it
-(each row shows whether its hub runs, what waits on you and how many workers are at work),
-and "すべて" reads every board at once. The repository's board also shows its parent-task hubs' tasks as cards marked with the parent key; opening one switches to that hub's board, and without the resident server they are read-only. A parent-task hub's board shows only its own tasks. `/review` is one review queue for every board: the list
-on the left, the item on the right (see below). Each screen has an address that carries the board
+(each row shows whether its hub runs and how many workers are at work; the one count in the sidebar is 新着, on 「いまの仕事」),
+and "すべて" reads every board at once. The repository's board also shows its parent-task hubs' tasks as cards marked with the parent key; opening one switches to that hub's board, and without the resident server they are read-only. A parent-task hub's board shows only its own tasks. 「いまの仕事」 (see below) is one view of the work under way
+for every board, gates and sessions included. Each screen has an address that carries the board
 and the view, so back and forward and a pasted link land on the same screen. It detaches
 (its output goes to `server.log` in the state directory); `--foreground` keeps it in the
 terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
@@ -503,24 +508,91 @@ learns where a repository is from the hubs that start in it and from `adj config
 none of these has seen is added by running `adj server start` inside it. Without a resident
 server, everything is as described above.
 
-**A session's terminal in the board.** On the resident server's boards, the tabs under the
-board's title (エージェント / 人 / セッション) include a セッション tab. It lists the board's hubs,
-each with its workers: a repository's board lists its own hub and then its parent-task hubs
-(indented), a parent-task board only its own hub, and 「すべて」 every repository's. A hub's header
-sticks to the top while its sessions scroll, and shows the hub's state, how many sessions it has and
-how many wait for input, with a 「hub」 button that opens the hub in the task panel's ターミナル tab (see below; or
-「hub を起動」 when it is stopped). A worker's row shows 入力待ち / 稼働 / 停止 (a finished one is dimmed 終了),
-its title and when it last wrote; rows waiting for input come first, and worktrees with no
-session are folded at the bottom of their hub's group. Pressing a row opens that session's tmux
-window beside the list (`?view=sessions&session=<id>`), where you can read it and type to it;
-in 「すべて」 it first switches to the hub's board. The tab asks the server for the sessions only
-while it is on screen, and in 「すべて」 of one board per repository. A worker's row whose task
-is on the board opens that task's panel on its ターミナル tab instead (see below). A terminal is
-offered only for a session that runs in tmux
-(`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
+**A session's terminal in the board.** On the resident server's boards, a session's tmux window is the middle column of
+「いまの仕事」 (below) and the ターミナル tab of a task's or a hub's panel (see "The task panel" below). Each of a
+board's hubs is a row there, marked "hub", and a hub's panel lists its sessions' worktrees that have no process:
+the card 「動いていない worktree（N）」 is folded, holds the worktrees with no session and the sessions that ended
+(the repository hub's card lists the whole board, grouped by the hub each belongs to), and each one opens as a session
+of its own, with 再開, 「IDE で開く」, 「パスをコピー」 and 「片付ける…」. A terminal is offered only for a session
+that runs in tmux (`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
 detaches: the window and the agent in it keep running. The board attaches as a client of its own,
 so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
-that acted last decides.
+that acted last decides. The tabs under a board's title are エージェント and 人; there is no tab for sessions.
+The addresses of the old セッション tab (`?view=sessions[&task=<ref>]`, `&session=<id>`, `#session/<id>`,
+`#sessions`) open 「いまの仕事」 on the same board and task, or the list when they name none, and the terminal
+is in the middle column whichever tab of the panel is on.
+
+**いまの仕事 (the work under way).** Under 全体 in the sidebar, on the resident server only, 「いまの仕事」 is one view of
+the work under way in every repository, in three columns. The list on the left has two groupings: 「親 Issue」
+(the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
+with the tasks that have no parent under 「親なし」; the owner heading is shown even when there is only one owner,
+owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
+「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
+not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
+hub as a row marked "hub". A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
+child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
+folded header says how many rows are in each state. A row carries the state icon, the agent with its model
+and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
+what a permission prompt asks, the tool that is running, and a line such as "設計レビュー · あなたの判定待ち" while
+a gate waits on you. The rate limits are under the list. The middle column is the terminal of the selected
+session (selecting a parent shows the terminal of the hub that runs it), never behind a tab; the right column
+is the task panel on the selected row's board, without its ターミナル tab (「ターミナルで話す」 moves the keyboard to
+the middle terminal), or, for a parent, its overview: how far it is, the stack from the base branch up,
+「次を着手させる」 and 「子タスクを足す」. The address is `/?view=work` with nothing selected and
+`/b/<slug>/?view=work&task=<ref>&pane=<tab>` with a row selected, where `<ref>` is a task id, `hub:<id>`,
+`session:<id>`, `gate:<board>/<id>` (a gate with no task card, below) or `parent:<key>`. The widths of the list, the task panel and the sidebar are dragged from their
+edges (arrow keys too; a double click puts one back) and kept in this browser. The list is
+`GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
+where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
+(see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
+as `{board, session, task?}` (`board` is the slug of the board the row opens on, `task` is
+`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson, gateAnsweredAt?, prTurnAt?, parked?}`; `parked` is `{reason, text?, since}` and absent for a finished task), `hubSessions` are the
+sessions of the parent-task hubs, and `turns` are what waits on you with or without a row: `{board, task?, gates}`
+for each task whose PR is yours or that is parked, and each group of open gates that wait on a person (`gates` are `{id, kind, title?,
+openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt` and `prTurnAt` are UTC stamps (when a
+gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
+when you last typed into it.
+
+**新着 and 後で見る.** 新着 holds what waits on you and that you have not looked at since it began: a gate that
+opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
+session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
+for a task with nothing running, which then has a row of its own. Each row shows what it asks, or else what the agent
+last said. 後で見る holds what you opened and left without finishing, and every parked task (see "Parking a task" below), and each row says what is still open
+(「既読 · 設計レビューが開いたまま」). In 「親 Issue」 the two are bands above the tree (a session's row stays in the
+tree too), and in 「状態」 they are the first two boxes. A row counts as looked at once you leave it (the address
+moves to another row or another view, or the page closes) or act on it, wherever you do: answering its gate on the
+board, through the hub or the CLI, or typing in its session's terminal, even outside the board (the ledger's
+`lastPromptAt`; the sentences adjutant types to wake a session are not counted, but a `wake` / `workerWake` /
+`hubWake` of your own that types other text is, since it cannot be told from you). Opening a task in the board's own
+panel does not count, nor does switching browser tabs. It goes back to 新着 only when something changes what you
+have to do: a gate opens, a permission prompt or question arrives, a worker finishes a turn with no gate open, a
+session fails, the PR turns to yours again, or you take a park off (置くのをやめる, `adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to checks does
+not. Three buttons: `done_all` in the 新着 header marks every new row read, `mark_email_unread` on a 後で見る row
+sends it back to 新着, and `check` clears a finished, failed or PR item (a gate or a permission wait leaves only when it
+is answered). The sidebar badge on 「いまの仕事」 counts the new rows, and is refreshed every 10 seconds while another
+view is open; it is the only count in the sidebar, and on the resident server it is the number in front of the page's
+title (a board served alone puts what waits on you there). The checkbox 「処理したら次へ」 in the 新着 header (on by
+default, kept in the browser) opens the next new row, in the order the list shows them, once you answer or close a gate on
+the row that is open (the first one left when none follows, and none when none is left). The marks are times on the server's clock in this browser's local storage
+(`adj.seenWork.<owner/repo>`), so another browser starts with none and other tabs of this one follow.
+
+**離れていた間に.** Opening a task or a task-less session in 「いまの仕事」 puts a block of that name at the top of its タスクサマリ: what you did last (a gate you answered, a record you sent back, a line you typed, a park), when you left, what happened since, and what it waits on now. "Since" is the later of the time you left the row and the time you last acted on it, so a row you never opened or acted on shows nothing. What counts is a phase moving on, a gate opening (a question in its own words), a permission wait, a turn that finished or failed, and the PR's turn changing; for the PR and the session's status only the latest change is known, so only that one is listed. A gate opened and answered while you were away shows only as your last action. Each row in the list carries `+N`, how many of these there are, which goes when you open the row; the panel of the row you have open does not list what happens during that visit. A parent's overview shows its children's events, each child by its own time, with the child's title, and counts what the children wait on; opening a parent writes no marks.
+
+**Parking a task.** A task you wait on on purpose (the PdM's or the designer's answer, an engineer's review, the right
+time to merge, or something else you say in words) can be parked with a reason: `adj task park --id … --reason
+pdm|design|review|merge-timing|other [--text …]`, or 置く in the task panel's タスクサマリ and next to a gate's
+answers (in the task panel and in a gate's own panel), which opens one dialog for the reason and a text (required for その他).
+A parked task is always in 後で見る, whatever the read marks say, even when nothing else waits on it (a draft PR with no
+worker), and is never in 新着, so the sidebar badge does not count it. The row says 「置いている — PdM の確認待ち」 with
+the text and since when. A parked task's gates stay open and are answered as usual; the gate box and a gate's own panel
+show a 「置いている — …」 line with 置くのをやめる, and its 「いまの仕事」 gate line says it is parked.
+置くのをやめる (or `adj task unpark`) sends the row back to 新着 when it still has something open, and takes it out of
+both sections when nothing is left. A task that is done or cancelled is never parked: parking one is refused, and
+moving a task to done (a merged PR included) clears its park. A GitHub review request does not park anything. The
+page makes the same change with `POST /api/tasks/<id>` and `{"parked": {"reason": "pdm", "text": "…"}}` (`{"parked":
+null}` takes it back), and the hub runs the CLI verbs when you ask it to. The record keeps `parked`
+(`{reason, text?, since}`) and an older binary keeps the key. A park and its un-park that both happen while no tab of
+this browser is open are not seen, so the row does not come back to 新着 on its own.
 
 **The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
 another card shows that one instead. Its header has the task's key, the board it comes from, its
@@ -531,7 +603,10 @@ also with its state, its CI and its review status, or a note that there is no PR
 gate and what can be done about it (one click for a decision that needs no comment, 「判定画面を開く」
 for the rest, which opens the tab the gate is judged in), the phases, the 概要 (the
 problem, the goal, the instructions, the plan with its decision panel, the worktree and branch with
-「IDE」) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
+「IDE」), the details (among them the 親タスク row: the parent with whether it came from GitHub's
+sub-issues or the record, how many of its children are merged, the place in a stack, a note when the
+record names another parent, and 「子タスクを足す」, which opens the new-task form to file and start a
+child of that parent) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
 with the decision panel in place; a dot marks the tab of the open gate. A card carries the same
 two numbers in its header, each opening on GitHub, and
 the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
@@ -551,35 +626,37 @@ The open task and tab are in the address (`task=<id>`, `pane=term`, `review`, `c
 タスクサマリ is the default), so back and forward and a
 pasted link open the same task and tab.
 
-**The review queue.** `/review` (要対応 in the sidebar) lists every gate waiting on you, across
-all boards, and opens the first one on its own. The list is grouped by board in the sidebar's
-order (a repository, then its parent-task hubs), the longest-waiting first, with each group's
-header pinned while the list scrolls. The right side has two tabs. 判断 is one column: the task's
-Issue and PR rows (as at the top of タスクサマリ), what is waiting and why, what the kind of gate needs read (the plan or question, the
-diff and findings, or the verify checks), 経過をすべて見る (the task's panel, as the dialog, on the tab of this gate), and the buttons the
-gate's options name, with the comment box. ターミナル opens the session the gate waits on in place (the
-worker, or the hub for the gates it opens); 「ターミナルで話す」 switches to it, and switching tabs keeps
-the connection. Only the board of the item shown is asked for its sessions, and only while that
-tab is open. After an answer the next waiting item is shown (the checkbox 「処理したら次へ」, saved in the
-browser, turns that off); the answered item stays in the list, dimmed, under 処理済み until the page
-is reloaded, and leaves the counts and the 人 board at once. 前へ / 次へ go through what is still
-waiting. The item is in the address (`/review?item=<board>/<id>`): choosing one in the list or
-with 前へ / 次へ is a step in the history, and the move after an answer replaces the entry, so 戻る does
-not step back through answered items.
+**Judging a gate.** A gate waiting on you is judged in the panel, wherever you meet it: its task's panel, on the tab of
+its kind, when the task is on the board (the gate's chip on a card, 「判定画面を開く」, a row of 「いまの仕事」 and a
+notification all open it there); and, for a gate with no task card (a gate the hub opened to confirm a dispatch, an issue or a
+question, or one whose task is gone), a panel of its own, `task=gate:<board>/<id>` (`gate:<id>` on a board served alone,
+where the gate's chip and 「判定画面を開く」 open it). The same screen is drawn inside the panel of the hub, or of the
+session with no task, that waits on it: one column with the task's Issue and PR rows when there is a task, what is waiting
+and why, what the kind of gate needs read (the plan or question, the diff and findings, or the verify checks), the buttons
+the gate's options name, a comment box, 「ターミナルで話す」 (the middle terminal in 「いまの仕事」) and 「解決済みとして
+閉じる」; when several gates wait, the first is drawn and the others are listed under it. An answered gate leaves the
+counts and the 人 board at once, and is not read again by a poll that was already on its way. There is no list of gates
+other than 「いまの仕事」: its 新着 band holds them, and 「処理したら次へ」 goes through it. `/review` and
+`/review?item=<board>/<id>`, the addresses of the old queue, and `#gate/<id>` open 「いまの仕事」 on the resident server (on
+the gate's row, or its panel, once the list is in); a board served alone opens its エージェント board with the gate's panel
+open. A board served alone has no list of work and so no list of gates: there a gate is judged from its chip on the 人 board
+and from 「判定画面を開く」, and a session waiting on a permission prompt or a question shows only as a mark on its card and as
+a notification.
 
 A hub or worker that has waited 5 seconds on a permission prompt or a question, with no gate holding
-it, is listed there too, as 許可待ち or 質問への回答待ち, and counted in the badges. It is answered in
-its terminal, not here, so its button opens that session's terminal in the task panel. It leaves the
-list once the session stops waiting.
+it, is a 新着 item of its row in 「いまの仕事」, as 許可待ち or 質問への回答待ち. It is answered in its
+terminal, not in a panel, which is the middle column of that row. It leaves 新着 once the session stops waiting.
 
 **A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
 the right of the board's title (for the board being viewed), a terminal icon that appears when you
 hover a board's row in the sidebar (not in the icon rail, which has the title button instead), and
-the 「hub」 button on a hub's header in the セッション tab. It opens on ターミナル, the hub's own
+the hub's row in 「いまの仕事」, where the terminal is the middle column. On a board it opens on ターミナル, the hub's own
 session. 詳細 shows the hub's state, the workers at work, what waits on you, the queue and the
 inbox (the newest few of each, with 「ほか N 件」; a queued task opens its own panel), and holds the
 hub's actions: 着手を促す (start the next queued task if a worker slot is free; it has left the title bar and lives here),
-再同期, 止める (or 閉じる for a finished parent-task hub) and 「hub をリセット…」. A stopped hub's
+再同期, 止める (or 閉じる for a finished parent-task hub), 「hub をリセット…」, 「タスクなしのセッションを始める…」
+and, on the repository's hub, 「親タスクの hub を起動…」 (see "Starting and linking sessions"). A session asked of the hub
+that it has not started yet is a card 「起動を依頼中」 there, and the gates the hub waits on are judged at the top. A stopped hub's
 ターミナル tab is disabled, and 詳細 offers 「hub を起動」; so is the tab of a hub that runs outside
 tmux, whose 詳細 still works. A hub of another board opens in place with its own numbers and a
 「ボードへ」 button. The hub is in the address as `task=hub:<id>`.
@@ -591,9 +668,8 @@ task panel it is also the first button of the bar), open the worktree in your ID
 and clean it up. Cleaning up removes
 the worktree and its local branch (never the remote one) and refuses when work would be lost
 (uncommitted or untracked files, commits no remote has); forcing it means typing the worktree's
-name back. A session that waits on a gate shows a banner with the gate's question and, for a plan,
-a question, a result or a dispatch, the buttons to answer it there; the answer goes to the board
-of the hub that opened the gate. A session that is not running shows a panel over the terminal
+name back. A session that waits on a gate shows the gate, to be answered there (see "Judging a gate"); the
+answer goes to the board of the hub that opened the gate. A session that is not running shows a panel over the terminal
 with what the page last saw of it and a button to resume it, or to start the hub (also on a new conversation, with 「hub をリセット」).
 
 To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
@@ -667,7 +743,7 @@ and the hub sets `done` when it removes the worktree. A card the board shows as 
 a worker that is actually running.
 
 **Where a pull request's card sits.** A card with a `pr` is placed by what GitHub says about
-that PR, and the state is kept on the record (`prStatus`). Whose turn it is is worked out from it on every read and never stored:
+that PR, and the state is kept on the record (`prStatus`). Whose turn it is is worked out from it on every read and never stored (only the time a refresh saw the turn change is, as `prTurnAt`, for the 「いまの仕事」 view):
 
 | The PR is | Whose turn | The card |
 | --- | --- | --- |
@@ -733,7 +809,7 @@ a worker with no task has no card. `POST /api/sessions` asks a hub to start one 
 `{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Every field is
 optional. The hub defaults to this board's own; the name is checked as a task's is, and left
 out it is the first four ASCII words of the instruction, lowercased and joined with `-`, or
-`session-YYYYMMDD-HHMM` (UTC; the セッション tab proposes the same in local time) when there are
+`session-YYYYMMDD-HHMM` (UTC; the start dialog proposes the same in local time) when there are
 none; with no instruction the worker greets the person in its tab and waits (`## Instruction`
 reads `-` in the message); `agent`, when given, has to be the one `agentRunner` starts
 (`state.sessionStart.agent`). The reply adds `hub` (the `hubs[].id` that took it) and `message`
@@ -772,8 +848,8 @@ the gate directories.
 
 - `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
   out when the session is not in tmux or its window is not listed.
-- `lastLine` (only with `GET /api/state?lines=1`, which the セッション tab sends while it is on
-  screen, or `lines=hub`, which the board view sends and which reads the hubs' panes alone): the
+- `lastLine` (only with `GET /api/state?lines=1`, which the page no longer sends, or `lines=hub`, which
+  the board view sends and which reads the hubs' panes alone): the
   last line the session's pane shows above its input box, cut to 200 characters. Read with one
   `tmux capture-pane` per present tmux session, and only when the window has had activity since
   the last read and that was at least 5 seconds ago, so a busy agent does not make the poll dear.
@@ -797,17 +873,83 @@ the gate directories.
 - `agentSession`: what the agent's hooks last said about a running session, from the agent session
   ledger (`adjutant agent-sessions`): `status` (`idle`, `running`, `waiting` on a permission prompt,
   `done`, `failed`, or a newer word passed through), `pending`, `updatedAt`, `lastEventAt`,
-  `activity` and `request` (first line, cut to 200 characters), and `subagents` (a count). Left out
-  for a session that is not running or has no row (no hooks). When the ledger cannot be listed it is
-  `{error}`; `sessionId` is the row's own id. The セッション tab, the hub's entry and the cards show
+  `activity` and `request` (first line, cut to 200 characters), `model` (the status line's display
+  name) and `contextPercent` (0 to 100, rounded) when the status line has said them, and `subagents`:
+  the ones that run, each `{id, type, startedAt, activity}` (`activity` is the tool it last ran, first
+  line, cut to 200 characters; keys it has not said are left out). `lastMessage` and `lastMessageAt`
+  are what the agent said at the end of its last turn (whole, line breaks kept, cut to 1000
+  characters) and when, left out until it has said one. Left out
+  for a session that is not running or has no row (no hooks); a running session with no row shows as
+  状態不明 (state unknown) rather than as working or idle, since the window's activity is not read as a
+  state (a resize redraws it); so does one whose `agentSession` is `{error}` or whose `status` is a word the
+  page does not know. Hooks reach the ledger from a session adjutant started with its settings
+  (restart it from the board to reopen it that way) or one started after `adjutant setup claude` /
+  `adjutant setup codex`. When the ledger cannot be listed it is
+  `{error}`; `sessionId` is the row's own id. 「いまの仕事」, the hub's entry and the cards show
   a session `waiting` on a permission prompt as waiting on a person even with no gate open (許可待ち
   with a `request`, 入力待ち without; 質問への回答待ち when the `request` is an `AskUserQuestion`).
+- `uncommitted` (`files`, `untracked`, `insertions`, `deletions`, `binary`, as in `/git` below) and
+  `uncommittedError`: for a worker only, read by git on a thread of its own, never on the poll. The
+  poll that lists the sessions asks for each worktree and takes what was last read: a worktree whose
+  session runs is read again after 10 seconds, any other after a minute, each git call under a
+  3-second deadline. Left out until the first read; a failed read keeps the last counts and sets
+  `uncommittedError`.
+- `branchPr` (`{number, url, state}`, `state` being `open`, `draft`, `merged` or `closed`): the pull
+  request of the session's branch, for a session with no task (a task's own is on its card).
+  Resident server only, on a repository whose origin is github.com: it is looked up by the
+  poll in the same round as the cards, held in memory and refreshed every 5 minutes (sooner when the
+  card poll's notifications name the repository, which only happens while a card on that board server
+  holds a PR). A pull request from a fork is not the branch's; of
+  several, an open one wins, else the newest. `branchPrError` is set when the last lookup of the
+  branch failed (no login, a rate limit, a repository that could not be read), with the pull
+  request of an earlier lookup left beside it; the poll's own `prPoll.error` is not touched by it.
 - `waits` (on `/api/state` and on each `/api/boards` entry; left out when empty): the sessions that
   have waited on a permission prompt or a question for a few seconds and still do, each
   `{agentSessionId, since, session, kind, name, request, quiet}` (`quiet` only when true). The page
-  lists each in 要対応 and rings its desktop notification from it, once per
-  `(agentSessionId, since)`, unless `quiet` (listed but not announced: its terminal was open, or it
-  was already waiting when the server started). `session` is opened when it is clicked.
+  lists each as a 新着 item of its session's row and rings its desktop notification from it, once per
+  `(agentSessionId, since)`, unless `quiet` (not announced: its terminal was open, or it
+  was already waiting when the server started). `session` is what the notification opens, in 「いまの仕事」, when it is clicked.
+- `parentIssue` (on a task, in `tasks` and `hubTasks`; left out when there is none): the issue the
+  task is a child of, `{key, url, number?, title?, source, hub, recordKey?}`. `hub` is the slug of the
+  hub that owns the task, the same name `parents[].children[].hub` gives it, and `recordKey` is the
+  record's own `parent` as a `key` when it names an issue (absent when there is none, or a key no
+  repository is known for); the page says the record differs when it is present and not `key`. `source` is `tracker` when GitHub says
+  the task's issue is a sub-issue of it, else `record` for the task's own `parent` (a key such as
+  `ALPHA-233` is turned into its issue through `issueKeys`; one that names no repository is shown as
+  written, with no `number`). The tracker's word wins, and the tracker never clears the record's: with
+  no parent there (or none read yet) the record's stands. `key` is `owner/repo#N` (lower case) for an
+  issue on github.com, so two spellings of one issue are one parent. The resident server asks GitHub
+  for the parents of the tasks' issues that are on github.com in the poll's round, holds the answers
+  in memory and reads each again at the first poll round after 10 minutes (after 2 minutes while no
+  read of it has succeeded and the last one failed as a whole, not for that issue alone; a task that
+  is done or cancelled is read once while the server lives); a failed read keeps the last answer the tracker gave, and a parent that
+  was read and found to have none is not the same as one never read, though the record is shown in
+  both. Without the resident server only the record is used. `adjutant task update --parent` fixes a
+  record's value.
+- `parents` (on `/api/state`; left out when no task has a parent): each parent with its children
+  from `tasks` and `hubTasks`, sorted by `key`: `{key, url, number?, title?, children, merged,
+  total, stacked, hub}`. `hub` is the slug of the hub that runs the children: a parent-task hub among the
+  children's, else the repository's own. A child is `{hub, id, title, merged, progress, prTurnAt?, branch?, base?, on?, onHub?}`:
+  `hub` is the slug of the hub that owns it
+  (an id is unique only within one hub), `title` is the task's, `prTurnAt` is when its PR's turn last changed (a UTC stamp), `merged` is whether its PR is merged, `progress` is `merged` (its PR is
+  merged), `done` (the task is done and has no merged PR), `pr` (a PR is set, or the task says `pr`, and it is not merged), `working` (the
+  task was handed to a worker) or `not-started` (anything else, a cancelled task included), `branch` is the branch its work is on and `base` what it is cut
+  from (less one leading `origin/`), and `on` (with `onHub`, the sibling's hub) is the
+  sibling whose branch it is cut from (its `base`, less one leading `origin/`, equal to the
+  sibling's branch: the one its worktree is on, else its PR's head). `stacked` is whether any child
+  has an `on`, and the children then come in stack order, root first, and the rest in queue order.
+  `total` is the number of sub-issues GitHub counts under the parent when a child brought it, else
+  the number of children listed, and never fewer than the children listed; `merged` counts the
+  merged children. With several chains the children come chain by chain, each root followed by what
+  is cut from it (children sharing a base in queue order).
+
+`rateLimits` (on `/api/state`, whether or not sessions are listed) is `{accounts, error?}`: one entry
+for each Claude account (config directory) the ledger has a figure for, `{agent, configDir,
+sessionId, lastEventAt, fiveHour, sevenDay}` with each window `{usedPercent, resetsAt}` (epoch
+seconds; keys not said are left out). It is taken from the account's row with the newest
+`lastEventAt` that has a figure, which is when that session was last heard from and not when the
+figures were drawn, so the page judges how old they may be. `error` is set instead when the ledger
+could not be listed.
 
 `hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
 `name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether
@@ -823,7 +965,7 @@ the ack removes; a marker older than the message belongs to an earlier message o
 is ignored.
 
 On a board other than 「すべて」 the agent board has the hub's entry above its columns: the hub's
-session as a row of the セッション tab shows it (state and last line) and, while `unseen + seen` is
+session as a row of 「いまの仕事」 shows it (state and last line) and, while `unseen + seen` is
 above 0, the counts, the age of the oldest unseen message and a 「hub を起こす」 button.
 `POST /api/hub/wake` is what it sends: the hub's wake line is typed into its tab, with the
 settings as they are now, and no message is written to the inbox. The answer is `{present, woken,
@@ -835,7 +977,7 @@ typed.
 
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
-`deletions` against HEAD; `untracked` counts entries, so a wholly new directory counts once, and
+`deletions` against HEAD, and `binary`, the tracked files whose lines git does not count; `untracked` counts entries, so a wholly new directory counts once, and
 the lines of untracked files are not in `insertions`; the files adjutant itself writes under `.claude/` — `adjutant-*` and
 `task-brief.md` — are not counted), `upstream` (as configured), `unpushed` (`count`, the newest
 20 `commits`, and what they were counted `against`) and `merged` (`base`, `ref`, `merged`, and
@@ -869,8 +1011,8 @@ refused with that reason. The answer is `{resumed, description, hub, hubRunning}
 `POST /api/sessions/<id>/restart` is 「セッションを再起動」 for a worker: it closes the worker's
 window and reopens it with `adjutant worker --resume --worktree <worktree>`, on the same
 conversation, for instance to pick up a new Claude Code version. The board asks first, and warns
-when the restart would cut something off (the session waits on a gate, or wrote output within
-the last minute). Everything `resume` refuses is refused before anything is closed (not
+when the restart would cut something off (the session waits on a gate, wrote output within
+the last minute, or its state is unknown). Everything `resume` refuses is refused before anything is closed (not
 `terminal.preset: "tmux"`, no saved conversation, a resume runner without `{sessionId}`, another
 agent without `agentResumeRunner`, a worker that is still starting), and so is
 `terminal.close` set to `false`, since the old window could not be closed. A worker that is still
@@ -942,44 +1084,43 @@ or `{restarted: false, wasRunning, alreadyRunning, pid}`; a hub stopped but not 
 a 400 that says it was stopped. `state.hubResume` is `{available, reason}`, as `sessionResume`
 is for a worker.
 
-### The sessions tab's sidebar
+### A session in the panel
 
-The セッション tab has a right sidebar for the selected session, shown or hidden as a whole.
-For a worker with a task it shows the task (key and issue link, parent, where the card sits on
-the two boards), the latest five entries of what was asked and answered with a link to the
-full history, the phase timeline with times, the done-when and stop-at settings, the PR link
-and its state from the record, the branch, base and worktree with its git state, the children
-of the same parent (a backlog child is handed over from the sidebar, starting its hub first
-when it is stopped; for a queued child the sidebar can start its hub, or ask a running hub to
-take the head of the queue), the note, and the cached issue body cut to six lines with its refetch. For a
-hub it shows the inbox, the workers it started, a parent-task hub's children and the command it
-runs; for a session with no task or a worktree with no session, what it is and its git state.
-For a running session it also shows what the agent's hooks last said (state, since when, the tool
-or the permission asked for, sub-agents).
-The task, gates and history of a session under a parent-task hub are read from that hub's own
-board. The git state is read when a session is selected, when its phase or branch changes and
-on the refresh button, never on a timer. From 1400px up the choice to show the sidebar is kept
-per browser; below that it starts hidden and floats over the terminal. `state.hubRunner` is the
-hub's command template as configured, sent with its placeholders in place; the sidebar fills in
-only `{name}` and shows the rest as they are. It is shown on the board as configured, so keep
-secrets out of it.
+A session opens in the task panel as the task it belongs to, as the hub, or, with no task, as itself
+(`task=session:<id>`; once it is linked to a task the panel shows the task and the address follows).
+A worker with a task shows the task: its key and Issue link, the parent with where it came from and how
+many of its children are merged, where the card sits on the two boards, the latest five entries of what was asked
+and answered with a link to the full history, the phase timeline with times, the done-when and stop-at settings,
+the PR link and its state from the record, the branch, base and worktree with its git state, the children of
+the same parent (a backlog child is handed over from the panel, starting its hub first when it is stopped), the
+note, and the cached issue body with its refetch. A hub shows the inbox, the queue, the workers it started and the
+buttons of "A hub in the task panel". A session with no task, or a worktree with no session, shows what it is
+and its git state, and the buttons below. For a running session the panel also shows what the agent's hooks last
+said (state, since when, the tool or the permission asked for, sub-agents). The task, gates and history of a
+session under a parent-task hub are read from that hub's own board. The git state is read when a session is
+shown, when its phase or branch changes and on the refresh button, never on a timer. `state.hubRunner` is
+the hub's command template as configured, sent with its placeholders in place; the panel fills in only `{name}` and
+shows the rest as they are. It is shown on the board as configured, so keep secrets out of it.
 
-### Starting and linking from the セッション tab
+### Starting and linking sessions
 
-The `+` at the right end of the list's header (off in 「すべて」) opens a menu: start the
-repository's hub (off while it runs), start a parent task's hub by key, and start a session
-with no task. The start dialog picks the hub (a stopped one is started after the request is
-sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
+A hub's panel (open it from the hub's row in 「いまの仕事」 or the 「hub」 button) has two buttons under 操作, both off
+unless the page is served by the resident server, and off for a hub whose board that server does not serve: 「タスクなしの
+セッションを始める…」 (off too while `state.sessionStart.agent` is empty) and, on the repository's hub only, 「親タスクの hub を
+起動…」, which asks for a parent task's key and starts that hub by key. Starting a stopped repository hub is
+「hub を起動」 in the panel (and 起動 on its row in the sidebar). The start dialog picks the hub (a stopped one is started
+after the request is sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
 from it (a dated one is in local time, where the server's own fallback is UTC) until the name
 field is edited. A name git refuses is marked and cannot be sent; a name already in use is only
 noted, since the hub picks the final one. Only the agent `agentRunner` starts can be chosen,
 and the button is off while no worker slot is free. A refused request keeps the dialog and its
-text open with the reason. Until the hub has started the session the list shows a row for it
-under its hub, derived from the hub's inbox so it survives a reload: waiting, hub stopped (with
-a start button, or why it could not start), or, when the hub took the request and started
-nothing for about 15 seconds, could not start.
+text open with the reason. Until the hub has started the session its panel shows a card 「起動を依頼中」 for it,
+derived from the hub's inbox so it survives a reload: waiting, hub stopped (with a start button, or why it could not
+start), or, when the hub took the request and started nothing for about 15 seconds, could not start (with 閉じる).
+When the session appears it is opened, in 「いまの仕事」 or over the board, if the panel the request was made from is still open.
+A notice above the page (閉じる to dismiss) says what the last action did, in whichever view.
 
-On a session with no task the sidebar offers 「タスクにする…」 (title, body, done-when,
+On a session with no task the panel offers 「タスクにする…」 (title, body, done-when,
 whether to have an issue filed, the current phase) and 「既存のタスクに紐づける…」 (a task
 from any hub's board that is unfinished, not Jules', not a postscript and has no running
 worker, and the phase). The dialog says beforehand when linking moves the session to another
@@ -1004,7 +1145,7 @@ The answer goes back out through that worktree's outbox and pokes the worker, wh
 answer simply waits there for whoever starts one next.
 
 The hub opens gates too: a task handed over with "confirm before starting" becomes a
-`dispatch` gate, and the card sits in 要対応 until someone answers. The hub reads its inbox
+`dispatch` gate, and the card sits in the 人 board's 着手確認 column, and in 新着, until someone answers. The hub reads its inbox
 rather than an outbox, so the answer to a gate the hub opened is delivered there, as a
 `gate` message.
 
@@ -1026,7 +1167,7 @@ is watching.**
 
 A `diff` or `verify` gate can also be kept as a record with `"wait": false`, for a review or
 a check with nothing in it for a person. It is written to `records/` beside `answered/`
-rather than to the open queue, so it is not counted in 要対応, and the command tells the
+rather than to the open queue, so nothing waits on it and it is not 新着, and the command tells the
 worker to go on. A person can still send one back with `changes`: the answer reaches the
 worktree's outbox like any other, and the record stays, with the answer appended to it.
 Both kinds of gate take structured fields beside the prose — `reviewRounds` and `findings`
@@ -1047,7 +1188,7 @@ until the record has been opened. Which records have been opened is kept in the 
 localStorage: it is one reader's state, not the task's. The task panel lists each record with a
 short summary and a button that opens it in its tab of the panel, where it can be sent back
 with a comment — that answer goes to the worktree's outbox. A gate that stopped the worker
-says which rule stopped it, on the card, in the task panel and in the review view. The new-task
+says which rule stopped it, on the card and in the panel. The new-task
 form takes the stop point.
 
 The task panel's tabs are where everything a task's gates left can be read at any time, whether
@@ -1061,8 +1202,8 @@ gates that waited, the records that did not and what people answered; the worker
 kept only as the one it is in now, so it closes the list. A gate waiting on a person is
 answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
 notification all open it there (as the dialog, when the link comes from outside the panel, and
-the placement you saved is left as it was), and a gate with no task on the board opens in the
-review view instead. 要対応 in the sidebar opens the review queue, not a task. The
+the placement you saved is left as it was), and a gate with no task on the board opens in a panel
+of its own (see "Judging a gate"). The
 answered gates come from `GET /api/tasks/<id>/history`, read when the panel opens rather than on
 every poll, since the archive only grows. An address from before the panel had these tabs
 (`#task/<id>/<tab>`) opens the panel on the matching one.

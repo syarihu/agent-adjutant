@@ -15,49 +15,41 @@ document.addEventListener('keydown', e => {
     }
     // Escape in a text field must not close what it is in and drop what was typed.
     if (e.target.matches('textarea,input,select')) return;
-    if ((view === 'board' || view === 'sessions') && selectedTaskId) {
+    if ((view === 'board' || view === 'work') && selectedTaskId) {
       closeTaskPanel();
       return;
     }
   }
-  // The review view has no single-key shortcuts. A bare `c` closed the gate on screen, so a
+  // Judging a gate has no single-key shortcuts. A bare `c` closed the gate on screen, so a
   // Cmd+C to copy from it closed it too; answering stays a click on a button.
 });
 
 function setView(v) {
-  // The review queue reads every board: on a server with several, it is a page of its own.
-  if (v === 'review' && multiBoard && !navApplying && !scopeAll()) return go({ view: 'review' });
   const prev = view;
   view = v;
   const boardView = document.getElementById('board-view');
-  const reviewView = document.getElementById('review');
-  const sessionsView = document.getElementById('sessions-view');
+  const workView = document.getElementById('work-view');
 
   if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
-  if (reviewView) {
-    reviewView.classList.toggle('on', v === 'review');
-    reviewView.style.display = v === 'review' ? 'grid' : 'none';
-  }
-
-  if (sessionsView) sessionsView.style.display = v === 'sessions' ? 'grid' : 'none';
-  if (prev === 'sessions' && v !== 'sessions') leaveSessionsView();
-  // The review view's terminal is not kept behind another view.
-  if (prev === 'review' && v !== 'review') disposeTermSlot(reviewTerm);
+  if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
+  document.body.classList.toggle('view-work', v === 'work');
+  // The middle terminal is not kept behind another view, and the row that was open is left.
+  if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
 
   // Navigation rail active states
-  const navReview = document.getElementById('nav-review');
-  if (navReview) {
-    if (v === 'review') navReview.setAttribute('aria-current', 'page');
-    else navReview.removeAttribute('aria-current');
+  const navWork = document.getElementById('nav-work');
+  if (navWork) {
+    if (v === 'work') navWork.setAttribute('aria-current', 'page');
+    else navWork.removeAttribute('aria-current');
   }
   applyLayout();
 
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
-    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : v === 'review' ? 'review' : v === 'sessions' ? 'sessions' : null;
-    if (want && nav.view !== want) {
+    const want = v === 'board' ? (prefs.tab === 'agent' ? 'agent' : 'human') : 'work';
+    if (nav.view !== want) {
       nav.view = want;
-      if (want !== 'sessions' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
+      if (want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
       history.replaceState(null, '', urlOf());
     }
   }
@@ -66,11 +58,11 @@ function setView(v) {
   const pageTitle = document.getElementById('page-title');
   const pageSub = document.getElementById('page-subtitle');
   if (pageTitle && pageSub) {
-    if (v === 'board' || v === 'sessions') {
+    if (v === 'board') {
       renderTitle();
-    } else if (v === 'review') {
-      pageTitle.textContent = '要対応';
-      pageSub.textContent = '全ボードのあなたの対応待ち。左で選んで、右で答える';
+    } else if (v === 'work') {
+      pageTitle.textContent = 'いまの仕事';
+      pageSub.textContent = '全リポジトリの動いている仕事。左で選び、中央で話し、右で判定する';
     }
   }
 
@@ -79,15 +71,11 @@ function setView(v) {
   const filterChips = document.querySelector('.filter-chip-group');
   if (filterChips) filterChips.style.display = (v === 'board') ? 'flex' : 'none';
 
-  if (v === 'sessions') {
-    renderSessionsTab();
-    renderSessionsView();
+  if (v === 'work') {
+    renderWorkView();
     renderTaskPanel();
-  } else if (v !== 'board') {
-    dismissTaskPanel();
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-    if (!(state.gates || []).some(g => gateRef(g) === focused)) focused = null;
     render();
   }
 }
@@ -123,8 +111,9 @@ function toggleTheme() {
 // entry per line: the_page_wires_no_inline_handlers reads the keys line by line.
 const ACTIONS = {
   'new-task': () => openForm(),
-  queue: () => goToQueue(),
+  work: () => go({ board: 'all', view: 'work', task: null, pane: 'detail' }),
   notify: () => toggleNotify(),
+  'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
   'own-hub': () => openOwnHub(),
   resync: () => refreshAll(),
@@ -158,25 +147,19 @@ async function probeBoards() {
 async function boot() {
   await probeBoards();
   document.body.classList.toggle('single-board', !multiBoard);
-  // Opening #gate/<id> lands straight on that card in the review queue.
-  const deep = location.hash.match(/^#gate\/(.+)$/);
   // And #task/<id>/<tab>, from before the panel had the tabs: the task's panel on that tab.
   const deepTask = location.hash.match(/^#task\/([^/]+)(?:\/(\w+))?$/);
   // A malformed escape in a hand-edited link would throw here, before the polling below starts,
   // and leave a page that never loads: such a link opens the board instead.
   let deepTaskId = null;
   try { deepTaskId = deepTask && decodeURIComponent(deepTask[1]); } catch { deepTaskId = null; }
-  // #session/<id> (or #sessions), from before the address named it: the セッション tab. Whether a
-  // terminal exists is known only once the first poll is in, so the board is shown meanwhile.
-  const deepSession = location.hash.match(/^#sessions?(?:\/(.+))?$/);
-  let deepSessionId = null;
-  try { deepSessionId = deepSession && deepSession[1] ? decodeURIComponent(deepSession[1]) : null; } catch { deepSessionId = null; }
+  // The old addresses of the セッション tab and of 要対応 (#gate/<id>, #session/<id>, /review, view=sessions), which
+  // parseUrl has already sent to where they land (nav-legacy.js); a gate they name is opened once the work
+  // document says where it is.
+  const legacy = legacyNav(location, multiBoard);
   Object.assign(nav, parseUrl(location));
   BASE = multiBoard && nav.board && nav.board !== 'all' ? `/b/${nav.board}` : '';
-  if (deepSession) {
-    nav.view = 'sessions';
-    if (nav.board !== 'all' && deepSessionId) { nav.task = SESS_REF + deepSessionId; nav.pane = 'term'; }
-  }
+  pendingGate = legacy?.pendingGate || null;
   // 「すべて」 has no task panel in its address (parseUrl drops `task` there), so the link opens that
   // board's list as it is.
   const taskLinked = !!deepTaskId && nav.board !== 'all';
@@ -185,10 +168,8 @@ async function boot() {
     nav.task = deepTaskId;
     nav.pane = (tabs => Object.hasOwn(tabs, deepTask[2]) ? tabs[deepTask[2]] : 'detail')({ overview: 'detail', review: 'review', check: 'check', history: 'history' });
   }
-  // A link made before the address named the review queue: carry its gate over.
-  if (deep) { nav.view = 'review'; nav.item = (m => m ? `${m[1]}/${deep[1]}` : deep[1])(/^\/b\/([^/]+)/.exec(location.pathname)); if (multiBoard) nav.board = 'all'; }
   // The address in its own spelling, so a go() to the same screen does not push a twin.
-  history.replaceState(null, '', urlOf() + (deep || deepSession || taskLinked ? '' : location.hash));
+  history.replaceState(null, '', urlOf() + (legacy || taskLinked ? '' : location.hash));
   // The page's sections are shown or hidden by the first `setView`; the address has the say on
   // which view that is, so it is not allowed to rewrite it.
   navApplying = true;
@@ -199,6 +180,8 @@ async function boot() {
   updateNotifyButton();
   // The server holds no clock, so the page carries one: it asks, nothing pushes.
   setInterval(refresh, 2000);
-  setInterval(refreshBoards, 10000);
+  // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
+  refreshWork();
+  setInterval(() => { refreshBoards(); if (view !== 'work') refreshWork(); }, 10000);
 }
 boot();

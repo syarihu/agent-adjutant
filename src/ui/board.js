@@ -95,7 +95,7 @@ async function focusHub(slug = null) {
 }
 
 /* `confirmed` is set by the close dialog: closing stops the worker, so it is asked there first. */
-/* The board a worktree belongs to, for the merged state of 「すべて」 and the review queue. */
+/* The board a worktree belongs to, for the merged state of 「すべて」. */
 const slugOfWorktree = wt => ((state.gates || []).find(g => g.worktree === wt) || (state.tasks || []).find(t => t.worktree === wt))?._slug || null;
 
 async function worktreeAct(action, worktree, confirmed = false, slug = null) {
@@ -119,7 +119,7 @@ async function worktreeAct(action, worktree, confirmed = false, slug = null) {
     await refresh();
   } catch (e) {
     note(`${line} → ${e.message}`, true);
-    if (view === 'sessions') showSessNotice(`${line}: ${e.message}`, true);
+    showSessNotice(`${line}: ${e.message}`, true);
   }
 }
 
@@ -149,7 +149,7 @@ function seenRecords() {
   catch { seenCache = new Set(); }
   return seenCache;
 }
-// Keyed like the review queue names a record, so records of several boards do not share a mark.
+// Keyed by board and id (`gateRef`), so records of several boards do not share a mark.
 const isUnread = r => !seenRecords().has(gateRef(r));
 function markSeen(id) {
   seenCache = null;
@@ -165,7 +165,7 @@ window.addEventListener('storage', e => {
   seenCache = null;
   if (view === 'board') render();
   // The task panel's tabs show the unread mark too; the board's render reaches it already.
-  if (view === 'sessions') renderTaskPanel();
+  if (view === 'work') renderTaskPanel();
 });
 // A record of a merged state carries its board, so answering it reaches the right one.
 const allRecords = () => (state.tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);
@@ -343,7 +343,7 @@ async function act(action, id, choice) {
 }
 
 /* The hub's entry above the agent columns, on a board other than 「すべて」: how its session is
-   (as a row of the sessions tab says it), and, when something that calls for it is waiting in its
+   (as a row of the work list says it), and, when something that calls for it is waiting in its
    inbox, how much is unread and a button that wakes it. The wake button is the page's only one
    for this, so it is drawn from `hubWake` (actions.js) as well as from the state. */
 let hubStripKey = null;
@@ -412,7 +412,7 @@ function renderColumns(force = false) {
   const ab = document.getElementById('board-agent');
   if (!hb && !ab) return;
 
-  // Same rule as redrawReview: a redraw loses the IME composition being typed.
+  // Same rule as the task panel's (panelHeld): a redraw loses the IME composition being typed.
   if (!force && document.activeElement?.matches('textarea[data-reply]')) {
     boardHeld = true;
     return;
@@ -615,38 +615,36 @@ function renderColumns(force = false) {
   });
 }
 
-/* A gate is named by its board and id in the review queue, which reads several boards: two of
-   them can open a gate of one kind in the same second. `slug` is the board it is on; from a
-   board's own page that is the board shown. */
+/* Open the panel of a gate, where the person is: a gate is named by its board and id, since two boards
+   can open a gate of one kind in the same second. `slug` is the board it is on; from a board's own page
+   that is the board shown, and a board served alone has none to name. In the work view the address
+   names it; elsewhere the board is shown first, and the panel opens over it. The panel is the task's
+   when the gate has its task on the board (`landGateRef`), else the gate's own. */
 function goToGate(gateId, slug = null) {
   const on = slug || (multiBoard && nav.board && nav.board !== 'all' ? nav.board : null);
-  const ref = on ? `${on}/${gateId}` : gateId;
-  focused = ref;
-  go({ view: 'review', item: ref }, { replace: view === 'review' });
-  renderReview();
+  const ref = WORK_GATE_REF + (on ? `${on}/${gateId}` : gateId);
+  if (view === 'work') return go({ board: on || nav.board, view: 'work', task: ref, pane: 'detail' }, { replace: nav.task === ref });
+  onBoard(on, () => openTaskPanel(ref));
+}
+
+/* Where a notification about a gate lands: 「いまの仕事」 on its task, on the hub when the hub answers it, else on the gate
+   itself. A board served alone has no such list: the panel of the gate opens on its board. */
+function openGateInWork(g) {
+  const slug = g._slug;
+  if (!multiBoard || !slug) return goToGate(g.id, slug || null);
+  // The row whose entry holds the gate (its task's, the hub's or its own), with the gate shown; else the gate's own panel.
+  if (openGateRow(`${slug}/${g.id}`)) return;
+  go({ board: slug, view: 'work', task: `${WORK_GATE_REF}${slug}/${g.id}`, pane: 'detail' });
 }
 
 /* Where a waiting gate is read and answered: its task's panel, in the tab of its kind, when the
-   task is on the board. A gate with no task — the hub's, or one whose task is gone — has no
-   such panel and opens in the review view. */
+   task is on the board. A gate with no task — the hub's, or one whose task is gone — is judged
+   in a panel of its own (`goToGate`). */
 function judgeGate(gateId) {
   const g = (state.gates || []).find(x => x.id === gateId);
   const owner = g?.task && (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
   if (owner) onBoard(g._slug, () => openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id));
   else goToGate(gateId);
-}
-
-/* The レビュー tab: the review view, one queue across every board. Without an item it picks the
-   first one waiting on its own. */
-function goToQueue() {
-  // Already on the queue: stay on the one being read, and on whatever is typed for it.
-  if (view === 'review') return;
-  // Not the item last read in another view: the queue's first is.
-  focused = null;
-  reviewPane = 'judge';
-  if (multiBoard) return go({ view: 'review' });
-  setView('review');
-  renderReview();
 }
 
 /* The review comments of the task the panel is open on, once a person asked for them.

@@ -1328,7 +1328,7 @@ fn a_session_with_a_row_is_held_by_it_on_any_terminal_and_one_without_is_not() {
     let event = AgentEvent {
         agent: "claude".to_string(),
         session_id: "sid-1".to_string(),
-        hook: HookEvent::UserPromptSubmit,
+        hook: HookEvent::UserPromptSubmit { typed: true },
         agent_id: None,
         agent_type: None,
         cwd: None,

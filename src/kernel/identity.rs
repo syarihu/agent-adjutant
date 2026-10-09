@@ -191,10 +191,17 @@ pub fn host_from_url(url: &str) -> Option<String> {
 
 /// The host origin points at, taken offline like `name_with_owner`.
 pub fn origin_host(main: &str) -> Option<String> {
-    let out = git(&["-C", main, "remote", "get-url", "origin"], None)
-        .ok()
-        .filter(|o| o.status.success())?;
-    host_from_url(String::from_utf8_lossy(&out.stdout).trim())
+    origin_host_read(main).ok().flatten()
+}
+
+/// `origin_host`, telling git not answering (`Err`) from an origin that names no host (`None`):
+/// what is held about a repository must not be dropped for the first.
+pub fn origin_host_read(main: &str) -> Result<Option<String>, String> {
+    let out = git(&["-C", main, "remote", "get-url", "origin"], None)?;
+    if !out.status.success() {
+        return Err("git could not read the origin remote".to_string());
+    }
+    Ok(host_from_url(String::from_utf8_lossy(&out.stdout).trim()))
 }
 
 /// `owner/name` from origin, taken offline so a renamed directory cannot change it.

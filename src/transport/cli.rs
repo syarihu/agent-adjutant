@@ -62,7 +62,8 @@ pub use skill_outbox::{outbox, skill};
 use stdin::{dash_is_stdin, read_body};
 pub use task::{
     add as task_add, brief as task_brief, fetch_issue_cmd as task_fetch_issue_cmd,
-    list as task_list, next_cmd as task_next, refresh_cmd as task_refresh_cmd, show as task_show,
+    list as task_list, next_cmd as task_next, park_cmd as task_park,
+    refresh_cmd as task_refresh_cmd, show as task_show, unpark_cmd as task_unpark,
     update_cmd as task_update,
 };
 pub use tell::tell;

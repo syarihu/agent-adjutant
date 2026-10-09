@@ -7,7 +7,7 @@ use crate::infra::git::{GitOut, git_until};
 // ── what a worktree has not yet let go of ────────────────────────────
 
 /// Files and lines in a worktree that no commit has yet.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Uncommitted {
     /// Tracked files that differ from HEAD, staged or not.
@@ -18,6 +18,10 @@ pub struct Uncommitted {
     pub untracked: usize,
     pub insertions: usize,
     pub deletions: usize,
+    /// Tracked files among `files` that git counts no lines for because it takes them for
+    /// binary: their changes are in neither `insertions` nor `deletions`.
+    #[serde(default)]
+    pub binary: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -116,40 +120,7 @@ pub fn worktree_git_state(
         _ => return Err("git could not read HEAD".to_string()),
     };
 
-    let status = git(&[
-        NO_FSMONITOR,
-        &["status", "--porcelain=v1", "-z"],
-        WORKTREE_ONLY,
-    ]
-    .concat())?;
-    if !status.ok() {
-        return Err(format!("{} is not a git worktree", worktree.display()));
-    }
-    let mut uncommitted = Uncommitted::default();
-    let mut fields = status.stdout.split('\0').filter(|f| !f.is_empty());
-    while let Some(field) = fields.next() {
-        if field.starts_with("??") {
-            uncommitted.untracked += 1;
-            continue;
-        }
-        uncommitted.files += 1;
-        // A rename or copy is followed by the path it came from, a field of its own.
-        if field.starts_with(['R', 'C']) || field.get(1..2).is_some_and(|y| y == "R" || y == "C") {
-            fields.next();
-        }
-    }
-    if head.is_some() {
-        let numstat = git(&[NO_FSMONITOR, &["diff", "--numstat", "HEAD"], WORKTREE_ONLY].concat())?;
-        if !numstat.ok() {
-            return Err("git could not count the changed lines".to_string());
-        }
-        for row in numstat.stdout.lines() {
-            let mut cols = row.split('\t');
-            // `-` stands in for both counts of a binary file.
-            uncommitted.insertions += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
-            uncommitted.deletions += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
-        }
-    }
+    let uncommitted = count_uncommitted(&git, worktree, head.is_some())?;
 
     // Only a branch that has commits can have an upstream. `config` exits 1 for a key that is
     // not there, which is the one answer that means "none"; any other failure, and a git that
@@ -224,6 +195,76 @@ pub fn worktree_git_state(
         unpushed,
         merged,
     }))
+}
+
+/// The files and lines `git` finds that no commit has. `has_head` is whether HEAD names a
+/// commit: before the first one there is nothing to count lines against.
+fn count_uncommitted(
+    git: &impl Fn(&[&str]) -> Result<GitOut, String>,
+    worktree: &Path,
+    has_head: bool,
+) -> Result<Uncommitted, String> {
+    let status = git(&[
+        NO_FSMONITOR,
+        &["status", "--porcelain=v1", "-z"],
+        WORKTREE_ONLY,
+    ]
+    .concat())?;
+    if !status.ok() {
+        return Err(format!("{} is not a git worktree", worktree.display()));
+    }
+    let mut uncommitted = Uncommitted::default();
+    let mut fields = status.stdout.split('\0').filter(|f| !f.is_empty());
+    while let Some(field) = fields.next() {
+        if field.starts_with("??") {
+            uncommitted.untracked += 1;
+            continue;
+        }
+        uncommitted.files += 1;
+        // A rename or copy is followed by the path it came from, a field of its own.
+        if field.starts_with(['R', 'C']) || field.get(1..2).is_some_and(|y| y == "R" || y == "C") {
+            fields.next();
+        }
+    }
+    if has_head {
+        let numstat = git(&[NO_FSMONITOR, &["diff", "--numstat", "HEAD"], WORKTREE_ONLY].concat())?;
+        if !numstat.ok() {
+            return Err("git could not count the changed lines".to_string());
+        }
+        for row in numstat.stdout.lines() {
+            let mut cols = row.split('\t');
+            let (added, removed) = (cols.next(), cols.next());
+            // `-` stands in for both counts of a binary file.
+            if (added, removed) == (Some("-"), Some("-")) {
+                uncommitted.binary += 1;
+                continue;
+            }
+            uncommitted.insertions += added.and_then(|n| n.parse().ok()).unwrap_or(0);
+            uncommitted.deletions += removed.and_then(|n| n.parse().ok()).unwrap_or(0);
+        }
+    }
+    Ok(uncommitted)
+}
+
+/// What `worktree` holds that no commit has, and nothing else of `worktree_git_state`: cheap
+/// enough to ask for every session on a poll. `Ok(None)` when the directory is gone.
+pub fn uncommitted_of(
+    worktree: &Path,
+    deadline: std::time::Instant,
+) -> Result<Option<Uncommitted>, String> {
+    if !worktree.is_dir() {
+        return Ok(None);
+    }
+    let git = |args: &[&str]| git_until(args, worktree, deadline);
+    // Exit 1 is the answer "no": an unborn HEAD has no commit. Any other failure is git not
+    // answering, and is not read as either.
+    let head = git(&["rev-parse", "-q", "--verify", "HEAD"])?;
+    let has_head = match head.code {
+        Some(0) => true,
+        Some(1) if head.stdout.trim().is_empty() => false,
+        _ => return Err("git could not read HEAD".to_string()),
+    };
+    count_uncommitted(&git, worktree, has_head).map(Some)
 }
 
 fn merged_into(

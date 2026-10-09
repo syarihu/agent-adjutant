@@ -43,7 +43,7 @@ pub(crate) enum Commands {
     Phase(PhaseArgs),
     /// Which engine reads the diff in this self-review round: reviewEngine, then Claude's rate limits
     ReviewEngine(ReviewEngineArgs),
-    /// What each agent session's hooks last said: running, waiting, done, sub-agents
+    /// What each agent session's hooks last said: running, waiting, done, sub-agents, its last message
     AgentSessions(AgentSessionsArgs),
     /// Add adjutant's hooks to an agent's user settings, so sessions adjutant did not start report too
     Setup(SetupArgs),
@@ -900,6 +900,10 @@ pub(crate) enum TaskAction {
     /// Write the worker's .claude/task-brief.md from the task record and the config (no --id: a
     /// task-less session's brief)
     Brief(TaskBriefArgs),
+    /// Park a task you are waiting on on purpose (someone else's answer, the right time to merge)
+    Park(TaskParkArgs),
+    /// Take a task's park back
+    Unpark(TaskUnparkArgs),
 }
 
 #[derive(Args)]
@@ -1030,6 +1034,9 @@ pub(crate) struct TaskUpdateArgs {
     /// The branch it is cut from, as `git worktree add` takes it ('' clears it)
     #[arg(long)]
     pub(crate) base: Option<String>,
+    /// The parent task's URL, or a key the hub turns into one ('' clears it)
+    #[arg(long)]
+    pub(crate) parent: Option<String>,
     /// The Jules session implementing it ('' clears it)
     #[arg(long)]
     pub(crate) jules_session: Option<String>,
@@ -1048,6 +1055,36 @@ pub(crate) struct TaskUpdateArgs {
     /// Queue it without putting a request in the hub's inbox — for the hub itself
     #[arg(long)]
     pub(crate) no_hand_over: bool,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskParkArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    /// What it waits on: pdm | design | review | merge-timing | other
+    #[arg(long, value_name = "REASON")]
+    pub(crate) reason: String,
+    /// Said in words (required for other; - reads stdin)
+    #[arg(long)]
+    pub(crate) text: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct TaskUnparkArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
     #[arg(long)]
     pub(crate) json: bool,
 }

@@ -536,6 +536,23 @@ fn waking_a_hub_is_a_template_and_can_be_turned_off() {
 }
 
 #[test]
+fn every_built_in_wake_line_is_recognised_and_a_person_s_prompt_is_not() {
+    for line in [HUB_WAKE_LINE, WORKER_WAKE_LINE] {
+        assert!(is_wake_line(line), "{line}");
+        assert!(is_wake_line(&format!("  {line}\n")), "{line}");
+    }
+    assert!(is_wake_line("The hub sent you something"));
+    for typed in [
+        "Fix the failing test in src/lib.rs",
+        "",
+        "please check the inbox",
+        "I said: The hub sent you something",
+    ] {
+        assert!(!is_wake_line(typed), "{typed}");
+    }
+}
+
+#[test]
 fn each_direction_is_pointed_at_its_own_box() {
     // The message is already in the box. Typing it into the prompt too would put the
     // same text in two places, and only one of them gets acked — so the line is an

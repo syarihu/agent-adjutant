@@ -94,6 +94,46 @@ fn uncommitted_work_is_counted_by_file_line_and_untracked() {
 }
 
 #[test]
+fn a_changed_committed_binary_file_counts_as_binary_and_adds_no_lines() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let _ = &sandbox;
+    let here = tempfile::tempdir().unwrap();
+    let dir = here.path();
+    crate::testing::init_repo(dir, "main");
+    std::fs::write(dir.join("blob.bin"), [0u8, 1, 2, 0]).unwrap();
+    run_git(dir, &["add", "blob.bin"]);
+    run_git(dir, &["commit", "-q", "-m", "add blob"]);
+    std::fs::write(dir.join("blob.bin"), [0u8, 9, 9, 9, 0]).unwrap();
+
+    let uncommitted = state_of(dir, None).uncommitted;
+    assert_eq!(uncommitted.files, 1);
+    assert_eq!(uncommitted.binary, 1);
+    assert_eq!((uncommitted.insertions, uncommitted.deletions), (0, 0));
+}
+
+#[test]
+fn the_uncommitted_look_agrees_with_the_whole_git_state_and_is_none_for_a_gone_directory() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let _ = &sandbox;
+    let here = tempfile::tempdir().unwrap();
+    let dir = here.path();
+    let deadline = || std::time::Instant::now() + std::time::Duration::from_secs(10);
+    crate::testing::init_repo(dir, "main");
+    // Before the first commit, with an untracked file.
+    std::fs::write(dir.join("new.txt"), "x\n").unwrap();
+    assert_eq!(
+        uncommitted_of(dir, deadline()).unwrap(),
+        Some(state_of(dir, None).uncommitted)
+    );
+    commit_file(dir, "a.txt", "one\ntwo\n");
+    std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    let got = uncommitted_of(dir, deadline()).unwrap().unwrap();
+    assert_eq!((got.files, got.untracked, got.insertions), (1, 1, 2));
+    assert_eq!(got, state_of(dir, None).uncommitted);
+    assert_eq!(uncommitted_of(&dir.join("nowhere"), deadline()), Ok(None));
+}
+
+#[test]
 fn with_no_upstream_commits_no_remote_has_are_unpushed() {
     let sandbox = crate::testing::Sandbox::empty();
     let _ = &sandbox;

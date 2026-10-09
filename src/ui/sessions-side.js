@@ -17,7 +17,6 @@ function loadSideBoard(slug, base, force = false) {
     if (sessView.boards[slug] !== entry) return;
     Object.assign(entry, { loading: false, error: e.message === '404' || e.message === 'no such board' ? 'この hub のボードが見つかりません' : e.message });
   }).then(() => {
-    renderSessionsView();
     renderTaskPanel();
   });
 }
@@ -84,24 +83,34 @@ function gitFactsHtml(s) {
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
 }
 
+/* What the agent said at the end of its last turn, as plain text with its line breaks and how
+   long ago it said it; never HTML or markdown. */
+function lastMessageHtml(a) {
+  if (!a.lastMessage) return '';
+  const mins = a.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
+  return `<div class="tp-lastmsg"><span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div>${esc(a.lastMessage)}</div></div>`;
+}
+
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a
-   session that is not running or has no row. The ledger's words are text, escaped where they
+   session that is not running; one with no row gets the note on why its state is not known. The ledger's words are text, escaped where they
    are drawn, and never a class. */
 function agentFactsHtml(s) {
   const a = s?.present ? s.agentSession : null;
-  if (!a) return '';
+  if (!a) return s?.present ? sideNote(unknownWhy(s)) : '';
   if (a.error) return `<div class="tp-muted">${esc(`エージェントの状態を読めません: ${a.error}`)}</div>`;
   const known = agentStateOf(s) && ledgerState(s, state);
   const mins = a.updatedAt != null && state.now != null ? minutesSince(a.updatedAt, state.now) : null;
   const doing = known === 'permission' && a.request ? monoKv('許可を求めている内容', a.request)
     : a.activity && known === 'working' ? monoKv('作業中', a.activity) : '';
   return `<div class="tp-kvs">
+    ${a.model ? kv('モデル', esc(a.model)) : ''}
+    ${a.contextPercent != null ? kv('コンテキスト', esc(`${a.contextPercent}%`)) : ''}
     ${kv('エージェントの状態', esc(known === 'permission' ? permissionLabel(s) : known ? STATE_LABEL[known] : a.status || '—'))}
     ${mins != null ? kv('いつから', esc(agoLabel(mins))) : ''}
     ${doing}
     ${a.pending ? kv('ターン終了（保留）', esc(a.pending)) : ''}
-    ${a.subagents > 0 ? kv('サブエージェント', esc(`${a.subagents} 件`)) : ''}
-  </div>`;
+    ${a.subagents?.length > 0 ? kv('サブエージェント', esc(`${a.subagents.length} 件`)) : ''}
+  </div>${lastMessageHtml(a)}`;
 }
 
 /* ── 詳細 of a session with no task ── */
@@ -133,7 +142,7 @@ function sessDetailHtml(s, pane) {
       ? `タスクにすると親タスク ${hubShortName(b.hub)} の子として、その hub のボードに作られます`
       : 'タスクにするとリポジトリのボードに作られます') +
     `<div class="sess-side-actions">${sideBtn('link-new', 'タスクにする…', off)}${sideBtn('link-existing', '既存のタスクに紐づける…', off)}</div>`;
-  // What the Sessions view's menu held: the worktree's own actions (the bar's are over the terminal).
+  // The worktree's own actions (the bar's are over the terminal).
   const busy = sessBusy.size > 0;
   const acts = sessionButtons(s).menu.map(m => actionButtonHtml(m, { busy })).join('');
   return `<div class="sess-detail">
