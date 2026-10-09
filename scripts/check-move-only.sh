@@ -10,7 +10,8 @@
 # or a `;`), and the two multisets of items must be equal. Each item keeps its tokens in
 # order, so moving a whole item anywhere is fine, while changing or reordering tokens within
 # one is not. Lines, indentation and wrapping do not count, so rustfmt re-wrapping a moved
-# item is fine.
+# item is fine. A string, char or raw-string literal and a comment are each one token, with
+# whitespace runs inside counting as one space; commas are dropped only outside them.
 #
 # A `mod x;` or `use` line takes the outer attributes and the `///` and `//` comments directly
 # above it along (up to a blank line or code), so a declaration moves with its `#[cfg(unix)]`.
@@ -26,8 +27,10 @@
 # Known gaps: only the committed HEAD is read, so a dirty src/ or tests/ is refused; the
 # closing brace of a `mod tests {` is found by its indent, so a differently indented one is
 # missed. Moving items out of a non-test inline `mod x { }` or out of an `impl` block shows
-# as a change: a false failure, never a false pass. Braces inside string or char literals
-# can do the same. `a || { b }` loses its braces too, so adding or removing just those
+# as a change: a false failure, never a false pass. A quote the tokenizer misreads, or one
+# on a line the line stage drops inside a multi-line string, pairs with the next quote and
+# can glue items together up to the end of the file: a false failure, never a false pass.
+# `a || { b }` loses its braces too, so adding or removing just those
 # braces passes, and so does `|| { e }` inside a macro that reads its tokens as text
 # (`stringify!`): closures in macro arguments such as `assert!` are the ones rustfmt
 # collapses, so macros are not skipped. An attribute on a `mod x;` or `use` line is not
@@ -37,8 +40,10 @@
 # outside `"..."`, so a bracket or quote in a raw string or char literal can hold the lines
 # up to the next blank one, and a `mod` or `use` line that ends them drops them. A trailing
 # `// ...` is cut off outside `"..."`, so a lone `"` in a char literal keeps the comment on
-# that line. Lines are read one at a time, so a line inside a multi-line string literal that
-# reads as `mod x;`, `use`, `//!` or `#[cfg(test)]` is dropped like one.
+# that line. Lines are read one at a time, so a line inside a multi-line string literal or
+# block comment that reads as `mod x;`, `use`, `//!` or `#[cfg(test)]` is dropped like one. The
+# `pub` and path rewrites run on the raw text, so they reach into literals and comments too:
+# `"a::b"` changed to `"c::b"` passes. A whitespace-only change inside a literal passes as well.
 #
 # `git diff --color-moved` is not used: it does not mark blocks under 20 alphanumeric
 # characters as moved, needs an option to see re-indented blocks, and does not check that
@@ -220,11 +225,31 @@ if ! perl -0 -e '
     my $text = join "\n", @out;
     $text =~ s{\binclude_(str|bytes)!\(\s*"([^"]*)"\s*(,\s*)?\)}
               {"include_$1!(\"" . resolve($file, $2) . "\")"}ge;
-    $text =~ s/\bpub\s*\(\s*(?:crate|super|self|in\s+[^)]*)\s*\)//g;
+    $text =~ s/\bpub\s*\(\s*(?:crate|super|self|in\s+[^)"]*)\s*\)//g;
     $text =~ s/\bpub\b//g;
     $text =~ s/(?:(?:\$crate|\b[A-Za-z_]\w*)\s*::\s*)+//g;
-    $text =~ s/,//g;
-    return $text =~ /[A-Za-z0-9_]+|\S/g;
+    # A comment, string, char or raw-string literal is one token, so a brace, quote or `;` in
+    # it does not count. A whitespace run inside one counts as one space, so re-indenting a
+    # moved multi-line string still passes, and a `//` comment loses its trailing spaces.
+    # Commas are dropped here, outside literals: on the raw text a comma char literal would
+    # lose its comma and leave two stray quotes. Comments are tokens too: without that, an
+    # apostrophe or a lone `"` in a comment would open a literal. The program sits in bash
+    # single quotes, so the regex spells the apostrophe as \x27.
+    my @t;
+    while ($text =~ m{
+        //[^\n]*
+      | (?<bc>/\*(?:(?&bc)|[^*/]++|\*(?!/)|/(?!\*))*\*/)
+      | [bc]?r(?<h>\#*)".*?"\g{h}
+      | [bc]?"(?:[^"\\]++|\\.)*"
+      | b?\x27(?:[^\x27\\\n\x80-\xff]|[\xc0-\xff][\x80-\xbf]+|\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.))\x27
+      | [A-Za-z0-9_]+
+      | \S
+    }gsx) {
+      (my $tok = $&) =~ s/\s+/ /g;
+      $tok =~ s/ $//;
+      push @t, $tok unless $tok eq ",";
+    }
+    return @t;
   }
 
   # `| … | { e }` -> `| … | e` when the block holds no `;` of its own (one inside `(…)` or
@@ -308,8 +333,9 @@ if ! perl -0 -e '
     next if $n == 0;
     my $side = $n > 0 ? "base" : "head";
     my $files = join ", ", map { "$_ ($where{$t}{$side}{$_})" } sort keys %{ $where{$t}{$side} };
+    my $shown = length $t > 150 ? substr($t, 0, 150) . "..." : $t;
     printf "%s: %d more `%s` than %s, in %s\n",
-      $side eq "base" ? "removed" : "added", abs $n, $t,
+      $side eq "base" ? "removed" : "added", abs $n, $shown,
       $side eq "base" ? "added" : "removed", $files;
   }
   exit 1;
