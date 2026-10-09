@@ -92,11 +92,11 @@ function lastMessageHtml(a) {
 }
 
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a
-   session that is not running or has no row. The ledger's words are text, escaped where they
+   session that is not running; one with no row gets the note on why its state is not known. The ledger's words are text, escaped where they
    are drawn, and never a class. */
 function agentFactsHtml(s) {
   const a = s?.present ? s.agentSession : null;
-  if (!a) return '';
+  if (!a) return s?.present ? sideNote(unknownWhy(s)) : '';
   if (a.error) return `<div class="tp-muted">${esc(`エージェントの状態を読めません: ${a.error}`)}</div>`;
   const known = agentStateOf(s) && ledgerState(s, state);
   const mins = a.updatedAt != null && state.now != null ? minutesSince(a.updatedAt, state.now) : null;

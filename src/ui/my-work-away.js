@@ -140,12 +140,17 @@ function phaseWord(phase) {
   return `${/^[A-Za-z0-9]/.test(label) ? ' ' : ''}${label}${/[A-Za-z0-9]$/.test(label) ? ' ' : ''}中`;
 }
 
+/* The statuses of the agent ledger this page knows: the keys of AGENT_STATES in sessions.js (a test keeps them equal). */
+const WORK_NOW_STATUSES = ['running', 'waiting', 'idle', 'done', 'failed'];
+
 /* What the entry waits on now, first match first: `{ kind, text }`. `now` is the server's seconds. */
 function workNowOf(e, now) {
   const t = e.task;
   const s = e.session;
   const a = s?.present ? s.agentSession : null;
   const live = a && !a.error ? a : null;
+  // Running with nothing usable from its hooks (no row, unreadable, a word this page does not know): not said to be at work.
+  const unknown = !!s?.present && !(live && WORK_NOW_STATUSES.includes(live.status));
   const from = secs => Number.isFinite(secs) && Number.isFinite(now) ? `（${agoLabel(minutesSince(secs, now))}から）` : '';
   const park = parkOf(t);
   if (park) return { kind: 'parked', text: `置いている — ${parkText(park)}${from(awaySecs(park.since))}` };
@@ -155,10 +160,11 @@ function workNowOf(e, now) {
   if (live?.status === 'failed') return { kind: 'failed', text: 'worker がエラーで止まっている' };
   if (t?.waitsOnPerson && WORK_PR_NOW[t.prTurn]) return { kind: 'pr', text: WORK_PR_NOW[t.prTurn] };
   if (live?.status === 'done') return { kind: 'done', text: 'worker は次の指示待ち' };
-  if (live && s.phase) return { kind: 'running', text: `worker が${phaseWord(s.phase)}${from(awaySecs(s.phaseAt))}` };
+  if (live && s.phase && !unknown) return { kind: 'running', text: `worker が${phaseWord(s.phase)}${from(awaySecs(s.phaseAt))}` };
   if (t?.prTurn === 'checks') return { kind: 'checks', text: 'PR は bot・CI 待ち' };
   if (t?.prTurn === 'other-reviewer') return { kind: 'checks', text: 'PR は他の人のレビュー待ち' };
   if (!s?.present) return { kind: 'none', text: 'worker はいません' };
+  if (unknown) return { kind: 'unknown', text: 'worker の状態は不明' };
   return { kind: 'running', text: 'worker が動いている' };
 }
 function workNowText(e, now) {
@@ -185,7 +191,7 @@ function workAwayModel(e, mark, answered, now, until = Infinity) {
 /* How a parent's children are counted by what each waits on, in the order they are said. */
 const WORK_NOW_KINDS = [
   ['gate', '判定待ち'], ['permission', '許可待ち'], ['failed', 'エラー'], ['pr', 'PR の対応待ち'], ['done', '指示待ち'],
-  ['running', '作業中'], ['checks', 'PR は bot・他のレビュー待ち'], ['parked', '置いている'], ['none', 'worker なし'],
+  ['running', '作業中'], ['unknown', '状態不明'], ['checks', 'PR は bot・他のレビュー待ち'], ['parked', '置いている'], ['none', 'worker なし'],
 ];
 
 /* The block of a parent: the children's events, each child by its own `since`, time-sorted with the child's title; what

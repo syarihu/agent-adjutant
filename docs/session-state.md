@@ -468,6 +468,10 @@ is listed so the ledger carries what it will need.
   desktop notification for the ones that are not `quiet`, which opens that session in 「いまの仕事」 when clicked. A board served
   alone has no 「いまの仕事」: it marks the wait on the session's card, counts it in the tab title, and its notification opens
   that session's panel.
+- **No row.** With no row (or one that cannot be read, or has a status word the page does not know) the
+  board shows 状態不明 and does not guess working or idle from tmux's `window_activity`: opening a
+  terminal resizes the window, and the redraw counts as activity. A `running` row still defers to the
+  pane, since an interrupted turn sends no `Stop`.
 - **Waking.** `mail::read_screen` guesses an agent's state from a tmux screen, and works for neither
   iTerm2 nor `Generic`. A row in `waiting` or `running` says not to type now; `idle` or `done` says
   it is safe; a `running` row not heard from in ten minutes is not believed, since an interrupted turn

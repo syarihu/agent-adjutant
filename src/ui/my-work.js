@@ -16,8 +16,8 @@ const WORK_BOXES = [
 ];
 /* The states a session is listed in. A worker that is gone (none, ended) is not work under way: a
    PR whose worker is gone is not here. */
-const WORK_LISTED = ['waiting', 'permission', 'working', 'idle', 'done', 'failed', 'stopped', 'restarting'];
-const WORK_RUNNING = ['working', 'idle', 'restarting'];
+const WORK_LISTED = ['waiting', 'permission', 'working', 'idle', 'unknown', 'done', 'failed', 'stopped', 'restarting'];
+const WORK_RUNNING = ['working', 'idle', 'unknown', 'restarting'];
 /* What a child of a parent is, as the server's `progress` says: the class of its segment and its words. */
 const WORK_PROGRESS = {
   merged: ['merged', 'マージ済み'],
@@ -36,6 +36,7 @@ const WORK_GLYPH = {
   failed: ['error', 'エラー'],
   stopped: ['warning', '停止'],
   idle: ['pause_circle', '待機中（出力なし）'],
+  unknown: ['visibility_off', '状態不明'],
   seen: ['check_circle', '確認済み'],
   parked: ['schedule', '置いている'],
 };

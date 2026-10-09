@@ -668,6 +668,7 @@ function hubPanelHeadHtml(h, s) {
     : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
     : s.waiting ? ['入力待ち', 'pill-warn']
     : sessionState(s) === 'permission' ? [permissionLabel(s), 'pill-warn']
+    : sessionState(s) === 'unknown' ? [STATE_LABEL.unknown, STATE_PILL.unknown]
     : ['稼働中', 'pill-good'];
   const origin = row ? boardName(row) : repoName();
   const nwo = row?.nwo || state.repo || '';

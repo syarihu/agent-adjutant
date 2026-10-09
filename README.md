@@ -527,7 +527,7 @@ the work under way in every repository, in three columns. The list on the left h
 (the default: repository, then parent issue, then task, with the tasks that have no parent under 「親なし」) and
 「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
 not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
-hub as a row marked "hub". A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
+hub as a row marked "hub". A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
 child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
@@ -877,7 +877,12 @@ the gate directories.
   line, cut to 200 characters; keys it has not said are left out). `lastMessage` and `lastMessageAt`
   are what the agent said at the end of its last turn (whole, line breaks kept, cut to 1000
   characters) and when, left out until it has said one. Left out
-  for a session that is not running or has no row (no hooks). When the ledger cannot be listed it is
+  for a session that is not running or has no row (no hooks); a running session with no row shows as
+  状態不明 (state unknown) rather than as working or idle, since the window's activity is not read as a
+  state (a resize redraws it); so does one whose `agentSession` is `{error}` or whose `status` is a word the
+  page does not know. Hooks reach the ledger from a session adjutant started with its settings
+  (restart it from the board to reopen it that way) or one started after `adjutant setup claude` /
+  `adjutant setup codex`. When the ledger cannot be listed it is
   `{error}`; `sessionId` is the row's own id. 「いまの仕事」, the hub's entry and the cards show
   a session `waiting` on a permission prompt as waiting on a person even with no gate open (許可待ち
   with a `request`, 入力待ち without; 質問への回答待ち when the `request` is an `AskUserQuestion`).
@@ -1004,8 +1009,8 @@ refused with that reason. The answer is `{resumed, description, hub, hubRunning}
 `POST /api/sessions/<id>/restart` is 「セッションを再起動」 for a worker: it closes the worker's
 window and reopens it with `adjutant worker --resume --worktree <worktree>`, on the same
 conversation, for instance to pick up a new Claude Code version. The board asks first, and warns
-when the restart would cut something off (the session waits on a gate, or wrote output within
-the last minute). Everything `resume` refuses is refused before anything is closed (not
+when the restart would cut something off (the session waits on a gate, wrote output within
+the last minute, or its state is unknown). Everything `resume` refuses is refused before anything is closed (not
 `terminal.preset: "tmux"`, no saved conversation, a resume runner without `{sessionId}`, another
 agent without `agentResumeRunner`, a worker that is still starting), and so is
 `terminal.close` set to `false`, since the old window could not be closed. A worker that is still

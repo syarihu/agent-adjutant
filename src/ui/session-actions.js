@@ -176,7 +176,9 @@ function restartWarnings(s) {
   if (s.waiting) {
     out.push(`確認待ち（${kindOf(s.waiting.kind)[0]}${s.waiting.title ? `: ${s.waiting.title}` : ''}）があります。gate は残り再起動後も答えられますが、待っている途中の処理は中断されます。`);
   }
-  if (s.present && sessionActivity(s) === 'working') {
+  if (s.present && restingState(s) === 'unknown') {
+    out.push(`状態が分からないため、作業の途中かもしれません${s.phase ? `（フェーズ: ${s.phase}）` : ''}。実行中のコマンドや書きかけの返答は中断されます。`);
+  } else if (s.present && sessionActivity(s) === 'working') {
     out.push(`直近 1 分以内に出力があり、作業の途中かもしれません${s.phase ? `（フェーズ: ${s.phase}）` : ''}。実行中のコマンドや書きかけの返答は中断されます。`);
   }
   return out;

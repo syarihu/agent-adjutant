@@ -2,8 +2,9 @@
    the task panel, as a task does (task-panel.js), in 「いまの仕事」 or over a board. Mostly pure (it reads `state` and
    returns). What can be done to a session is in session-actions.js. */
 
-/* A worker whose tmux window has been quiet this long reads as idle (seconds; window_activity
-   is the only clock there is, so this is a guess at what "quiet" means). */
+/* A `running` row whose tmux window has been quiet this long reads as idle (seconds; window_activity
+   is the only clock there is, so this is a guess at what "quiet" means). Only a row that says
+   running is read this way: with no row the window's activity says nothing, since a resize redraws it. */
 const IDLE_AFTER_SECS = 60;
 /* The phases at which a worker that is gone has finished rather than stopped (see stuckOf). */
 const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
@@ -26,20 +27,21 @@ const requestText = s => {
   const question = request.slice(QUESTION_PREFIX.length).trim();
   return question ? `質問しています: ${question}` : '質問しています';
 };
-const STATE_ORDER = { waiting: 0, permission: 1, stopped: 2, restarting: 2, failed: 2, idle: 3, done: 3, working: 4, ended: 5, none: 6 };
+const STATE_ORDER = { waiting: 0, permission: 1, stopped: 2, restarting: 2, failed: 2, idle: 3, done: 3, unknown: 3, working: 4, ended: 5, none: 6 };
 const STATE_LABEL = {
-  waiting: '確認待ち', permission: '入力待ち', done: '待機中', failed: 'エラー（API）', stopped: '停止', idle: '待機中（出力なし）', working: '作業中', ended: '終了', none: 'セッションなし',
+  waiting: '確認待ち', permission: '入力待ち', done: '待機中', failed: 'エラー（API）', stopped: '停止', idle: '待機中（出力なし）', unknown: '状態不明', working: '作業中', ended: '終了', none: 'セッションなし',
   pending: '起動を依頼中…', restarting: '再起動しています…',
 };
 const STATE_ICON = {
-  waiting: 'help', permission: 'front_hand', done: 'hourglass_empty', failed: 'error', stopped: 'error', idle: 'hourglass_empty', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
+  waiting: 'help', permission: 'front_hand', done: 'hourglass_empty', failed: 'error', stopped: 'error', idle: 'hourglass_empty', unknown: 'visibility_off', working: 'play_circle', ended: 'check_circle', none: 'remove_circle_outline', pending: 'hourglass_top', restarting: 'autorenew',
 };
 const STATE_PILL = {
-  waiting: 'pill-warn', permission: 'pill-warn', done: 'pill-neutral', failed: 'pill-err', stopped: 'pill-err', idle: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
+  waiting: 'pill-warn', permission: 'pill-warn', done: 'pill-neutral', failed: 'pill-err', stopped: 'pill-err', idle: 'pill-neutral', unknown: 'pill-neutral', working: 'pill-good', ended: 'pill-blue', none: 'pill-neutral', restarting: 'pill-neutral',
 };
 /* A row's state in the few words it has room for. A quiet window is running too: it only has
-   the neutral pill (STATE_PILL), so it is not taken for one that is writing. */
-const ROW_LABEL = { waiting: '入力待ち', permission: '入力待ち', done: '待機', failed: 'エラー', stopped: '停止', idle: '稼働', working: '稼働', ended: '終了', restarting: '再起動' };
+   the neutral pill (STATE_PILL), so it is not taken for one that is writing. A session whose
+   state is not known is not called running at all. */
+const ROW_LABEL = { waiting: '入力待ち', permission: '入力待ち', done: '待機', failed: 'エラー', stopped: '停止', idle: '稼働', unknown: '不明', working: '稼働', ended: '終了', restarting: '再起動' };
 
 const hubOfSession = s => s.kind === 'hub' ? s.id : s.hub;
 
@@ -62,21 +64,36 @@ function sessionActivity(s, data = state) {
     ? 'idle' : 'working';
 }
 
+/* The agent ledger's statuses this page knows, as its states (my-work-away.js keeps the same words). */
+const AGENT_STATES = { running: 'working', waiting: 'permission', idle: 'done', done: 'done', failed: 'failed' };
+
 /* What the agent's hooks say, as a state of this page, or null when there is no row, the ledger
    could not be read, or the status is one this page does not know. */
 function agentStateOf(s) {
   const a = s.agentSession;
   if (!s.present || !a || a.error) return null;
-  const states = { running: 'working', waiting: 'permission', idle: 'done', done: 'done', failed: 'failed' };
-  return Object.hasOwn(states, a.status) ? states[a.status] : null;
+  return Object.hasOwn(AGENT_STATES, a.status) ? AGENT_STATES[a.status] : null;
 }
 
 /* The state of a session that runs: the ledger's, except `running`, which defers to the pane. No
    hook fires when a turn is interrupted with Esc, so a row can stay `running` long after the agent
-   stopped; the pane going quiet is what tells (on tmux). */
+   stopped; the pane going quiet is what tells (on tmux). With no usable row it is `unknown`, not
+   a guess from the pane: opening a terminal resizes it, and the redraw counts as activity. */
 function ledgerState(s, data) {
   const st = agentStateOf(s);
-  return st && st !== 'working' ? st : sessionActivity(s, data);
+  if (!st) return 'unknown';
+  return st === 'working' ? sessionActivity(s, data) : st;
+}
+
+/* Why a running session's state is not known, as plain text, or empty when it is. Three causes,
+   told apart: no row (the agent's hooks never reached the ledger), a ledger that could not be
+   read, and a status word this page does not know. */
+function unknownWhy(s) {
+  if (!s?.present || agentStateOf(s)) return '';
+  const a = s.agentSession;
+  if (!a) return 'エージェントのフックから何も届いていないため、作業中か入力待ちか分かりません。adjutant が起動した Claude Code は「セッションを再起動」で、それ以外は `adjutant setup claude` / `adjutant setup codex` のあとに起動し直すとフックが届きます。';
+  if (a.error) return 'エージェントの状態を読めません';
+  return `エージェントの報告: ${a.status}`;
 }
 
 /* What the agent's hooks say beyond its state, as plain text (escaped where it is drawn), or
@@ -84,7 +101,7 @@ function ledgerState(s, data) {
 function agentText(s, data = state) {
   const a = s.agentSession;
   if (!s.present || !a) return '';
-  if (a.error) return 'エージェントの状態を読めません';
+  if (a.error) return unknownWhy(s);
   const parts = [];
   if (agentStateOf(s) === 'permission' && a.request) parts.push(requestText(s));
   // What the row says it is: a `running` the pane has gone quiet on is not doing the tool.
@@ -95,7 +112,7 @@ function agentText(s, data = state) {
   return parts.join(' · ');
 }
 
-/* waiting / permission / stopped / idle / done / failed / working / ended, or none for a worktree that has no session. The
+/* waiting / permission / stopped / idle / done / failed / working / unknown / ended, or none for a worktree that has no session. The
    record says a worker is gone but not why, so a worker that is gone at a phase where its work
    is done reads as ended, as its card does. */
 function sessionState(s, data = state) {
@@ -225,7 +242,8 @@ function sessionTip(s, st, data = state) {
   const sub = st ? [STATE_LABEL[st], s.present ? lastOutputText(s, data) : null].filter(Boolean).join(' · ') : '';
   // The ledger's own word, as it was written: only here and in the panel, and never as a class.
   const said = s.present && s.agentSession?.status ? `エージェントの報告: ${s.agentSession.status}` : '';
-  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub, agentText(s, data), said].filter(Boolean).join('\n');
+  const noRow = s.present && !s.agentSession ? unknownWhy(s) : '';
+  return [title, where, s.title && s.title !== title && s.kind !== 'hub' ? s.title : '', sub, agentText(s, data), said, noRow].filter(Boolean).join('\n');
 }
 
 /* What a row says under its title: what it asks permission for, else the last line the session

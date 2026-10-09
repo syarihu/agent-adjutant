@@ -131,7 +131,7 @@ button.wk-head-main:hover { background: var(--md-sys-color-surface-container-hig
 .wk-glyph.done { color: var(--md-sys-color-success); font-variation-settings: 'FILL' 1; }
 .wk-glyph.seen { color: var(--md-sys-color-success); opacity: .45; }
 .wk-glyph.failed { color: var(--md-sys-color-error); }
-.wk-glyph.stopped, .wk-glyph.idle { color: var(--md-sys-color-on-surface-variant); }
+.wk-glyph.stopped, .wk-glyph.idle, .wk-glyph.unknown { color: var(--md-sys-color-on-surface-variant); }
 @keyframes wk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .wk-glyph.working, .wk-glyph.restarting { animation: none; } }
 

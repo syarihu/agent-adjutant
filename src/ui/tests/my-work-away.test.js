@@ -176,6 +176,9 @@ test('now says the first thing the task waits on', () => {
   assert.equal(now(session('w1', { agentSession: agent('failed', T0) })), 'worker がエラーで止まっている');
   assert.equal(now(session('w1', { agentSession: agent('done', T0) }), task('1', { waitsOnPerson: true, prTurn: 'merge' })), 'マージできます');
   assert.equal(now(session('w1', { agentSession: agent('done', T0) })), 'worker は次の指示待ち');
+  assert.equal(now(session('w1')), 'worker の状態は不明');
+  assert.equal(now(session('w1', { agentSession: { error: 'boom' } })), 'worker の状態は不明');
+  assert.equal(now(session('w1', { phase: 'implement', agentSession: agent('brand-new', T0) })), 'worker の状態は不明');
   assert.equal(now(session('w1', { phase: 'implement', phaseAt: NOW - 120, agentSession: agent('running', T0) })), 'worker が実装中（2分前から）');
   assert.equal(now(session('w1', { present: false }), task('1', { prTurn: 'checks' })), 'PR は bot・CI 待ち');
   assert.equal(now(session('w1', { phase: 'pr', phaseAt: NOW, agentSession: agent('running', T0) }), task('1', { prTurn: 'other-reviewer' })), 'worker が PR 中（たった今から）');
@@ -199,7 +202,7 @@ test('a parent merges its children, each by its own mark, with the child titles'
     { title: 'F', entry: null, mark: undefined, mergedAt: T0 + 120 },
   ], NOW);
   assert.deepEqual(plain(m.events.map(x => [x.title, x.kind, x.at])), [['A', 'phase', T0 + 100], ['E', 'pr', T0 + 120], ['B', 'gate', T0 + 150]]);
-  assert.equal(m.now, '判定待ち 1 · 作業中 2 · 置いている 1');
+  assert.equal(m.now, '判定待ち 1 · 状態不明 2 · 置いている 1');
   assert.equal(workParentAway([{ title: 'D', entry: d, mark: undefined }], NOW), null);
 });
 
