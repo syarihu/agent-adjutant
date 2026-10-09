@@ -88,7 +88,7 @@ function gitFactsHtml(s) {
 function lastMessageHtml(a) {
   if (!a.lastMessage) return '';
   const mins = a.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
-  return `<div class="tp-lastmsg"><span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div>${esc(a.lastMessage)}</div></div>`;
+  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div>${esc(a.lastMessage)}</div></div>`;
 }
 
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a

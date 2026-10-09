@@ -65,6 +65,16 @@
 </section>
 <div id="tp-scrim" hidden></div>
 
+<!-- 「拡大」: one card of the task panel, alone (card-dialog.js). -->
+<dialog id="card-dialog" class="card-dialog" aria-labelledby="card-dialog-title">
+  <div class="card-dialog-head">
+    <div><div class="card-dialog-sub" id="card-dialog-sub"></div><h2 id="card-dialog-title"></h2></div>
+    <button type="button" class="m3-icon-button" data-card-dialog-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+  </div>
+  <p class="card-dialog-gone" role="status"></p>
+  <div class="card-dialog-body" role="region" tabindex="0" aria-label="拡大した内容"><div class="card-dialog-content"></div></div>
+</dialog>
+
 <div id="app-main">
   <header class="top-app-bar">
     <div class="page-title-area">

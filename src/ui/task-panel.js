@@ -618,7 +618,7 @@ function panelRestHtml(task, colId, pane, all, pick) {
   h += overviewTab(task, all, pick, { panel: true, handForm: colId === 'backlog' });
   // The overview's 問題 is the request itself unless the plan wrote one; then the request is here.
   if (task.body && gateShownIn(task, 'overview', all, pick)?.problem) {
-    h += `<div class="m3-filled-card">${secTitle('依頼内容・プロンプト')}<p class="tp-text">${esc(task.body)}</p></div>`;
+    h += `<div class="m3-filled-card"${expandAttrs('request')}>${expandBtnHtml('依頼内容・プロンプト')}${secTitle('依頼内容・プロンプト')}<p class="tp-text">${esc(task.body)}</p></div>`;
   }
 
   // Newest first: the one the worker left last is the one that describes where it is now.

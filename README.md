@@ -627,7 +627,7 @@ read by the resident server's PR poll and by the PR refresh (「PR確認」, `ad
 never by the page, so they are as new as the last read. ターミナル is the task's
 session in the built-in terminal, with a bar for resuming, closing or opening it in your own
 terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
-no session. A card's body opens タスクサマリ; its 「ターミナル」 button, and 「ターミナルで答える」 on a
+no session. Cards that hold report text (報告, 計画, 指摘, 差分, …) have a 「拡大」 button that opens that card alone in a large dialog, with room for code blocks and tables; when the card belongs to a gate, the gate's answer controls come with it, and a sent answer, Escape or × closes the dialog and returns focus to the panel (a failed answer keeps it open with the draft); the button is not shown while the board's panel is itself open as the large dialog. A card's body opens タスクサマリ; its 「ターミナル」 button, and 「ターミナルで答える」 on a
 question, open ターミナル. The panel sits on the right (the default) or the left of the page, or
 opens as a large dialog (↗, 「ダイアログで開く」). The dialog is a remembered mode: while it is on,
 every panel opens as a dialog, and ×, Escape or a click outside close the panel without leaving

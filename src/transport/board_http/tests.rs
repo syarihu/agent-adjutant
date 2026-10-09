@@ -1387,3 +1387,15 @@ fn the_panel_head_does_not_show_the_task_record_id() {
     assert!(!head.contains("tp-key"));
     assert!(!head.contains("task.id"));
 }
+
+#[test]
+fn the_card_dialog_is_in_the_page_after_what_it_calls() {
+    // 「拡大」 (card-dialog.js) calls what decide.js and task-panel.js define, and is wired by
+    // the panel's own answer path, not by `bindDecide`.
+    let at = |s: &str| UI_HTML.find(s).unwrap_or_else(|| panic!("missing: {s}"));
+    assert!(UI_HTML.contains("id=\"card-dialog\""));
+    assert!(UI_HTML.contains("data-card-dialog-close"));
+    assert!(at("function decideAct") < at("function openCardDialog"));
+    assert!(at("const tp = id =>") < at("function openCardDialog"));
+    assert!(!include_str!("../../ui/card-dialog.js").contains("bindDecide("));
+}
