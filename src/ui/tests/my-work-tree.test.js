@@ -13,13 +13,24 @@ const cut = re => {
   return m[0];
 };
 // STATE_ORDER and stampSecs live in other files of the page; a stub is enough for the ordering the rows here need.
+const actions = fs.readFileSync(path.join(__dirname, '..', 'actions.js'), 'utf8');
+const cutActions = re => {
+  const m = actions.match(re);
+  assert.ok(m, `not found: ${re}`);
+  return m[0];
+};
 const ctx = vm.createContext({
+  boards: [],
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
   sessionState: s => s.waiting ? 'waiting' : s.state, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:',
   workRepos: () => [], esc: x => String(x), workGlyphHtml: st => `<g ${st}>`,
 });
 vm.runInContext([
+  cutActions(/^const hubWake = [^\n]*;/m),
+  cutActions(/^const HUB_WAKE_TITLE = [^\n]*;/m),
+  cutActions(/^function hubWakeBlocked[\s\S]*?^}/m),
+  cutActions(/^function hubWakeWhy[\s\S]*?^}/m),
   cut(/^const WORK_BOXES = [\s\S]*?^\];/m),
   cut(/^const WORK_RUNNING = [^\n]*;/m),
   cut(/^const workBoxOf = [^\n]*;/m),
@@ -39,6 +50,7 @@ vm.runInContext([
   cut(/^function workTreeByParent[\s\S]*?^}/m),
   cut(/^function workHeadHtml[\s\S]*?^}/m),
   cut(/^function workSummaryHtml[\s\S]*?^}/m),
+  cut(/^function workHubWakeHtml[\s\S]*?^}/m),
   cut(/^function workHubChipsHtml[\s\S]*?^}/m),
   cut(/^function workBoxRepoGroups[\s\S]*?^}/m),
   cut(/^function workTreeByState[\s\S]*?^}/m),
@@ -478,4 +490,76 @@ test('listed repositories: the keep given to the view keeps an idle repository w
   const byRepo = new Map([[lrB, [lchip(lrB, false)]]]);
   const v = run('workListedView([b], rows, [], byRepo, b)', { b: lrB, rows: [idle], byRepo });
   assert.deepStrictEqual([v.rows.length, v.chips.length, v.repos.length], [1, 1, 1]);
+});
+
+/* ── the wake button beside a hub's chip ── */
+const wakeChip = (hub = {}, extra = {}) => ({ ...chip('own', false), hub: { id: 'own', parent: false, key: 'own', slug: 'b-own', unseen: 2, state: { present: true }, ...hub }, wakeBase: '/b/b-own', ...extra });
+const chipHtml = c => run('workHubChipsHtml([c], "acme/a", true)', { c });
+
+test('wake: no button when nothing is unseen or the count is missing', () => {
+  for (const unseen of [0, undefined]) assert.ok(!chipHtml(wakeChip({ unseen })).includes('data-wk-wake'));
+});
+
+test('wake: an enabled button is the chip\'s sibling with the count, never inside the chip', () => {
+  const html = chipHtml(wakeChip());
+  assert.match(html, /<button type="button" class="wk-hub-wake" data-wk-wake="b-own\/hub:own" aria-label="hub を起こす（受信箱の未確認 2 件）"/);
+  assert.ok(!/<button type="button" class="wk-hub-wake"[^>]* disabled/.test(html));
+  const chipPart = html.slice(html.indexOf('<button type="button" class="wk-hub"'), html.indexOf('</button>') + 9);
+  assert.ok(!chipPart.includes('data-wk-wake') && !chipPart.includes('notifications_active'));
+  assert.ok(html.indexOf('data-wk-wake') > html.indexOf('</button>'));
+});
+
+test('wake: disabled with the reason when the hub is stopped, its board is not here, or a wake is on its way', () => {
+  const off = c => { const m = chipHtml(c).match(/<button type="button" class="wk-hub-wake"[^>]*>/)[0]; return [/ disabled/.test(m), m.match(/title="([^"]*)"/)[1]]; };
+  assert.deepStrictEqual(off(wakeChip({ state: { present: false } })), [true, 'hub が止まっています']);
+  assert.deepStrictEqual(off(wakeChip({}, { wakeBase: null })), [true, 'この hub のボードはこのサーバーにありません']);
+  run('hubWake.busy["b-own"] = true', {});
+  // The label names the button whatever the reason; the reason is the title.
+  assert.ok(chipHtml(wakeChip({ state: { present: false } })).includes('aria-label="hub を起こす（受信箱の未確認 2 件）"'));
+  try {
+    assert.deepStrictEqual(off(wakeChip()), [true, '起こしています']);
+  } finally {
+    run('delete hubWake.busy["b-own"]', {});
+  }
+});
+
+test('wake: the reason it did not wake is escaped, in a live region, and gone once nothing is unseen', () => {
+  const plainEsc = ctx.esc;
+  ctx.esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  run('hubWake.why["b-own"] = "入力しませんでした: <b>x</b>"', {});
+  try {
+    assert.ok(chipHtml(wakeChip()).includes('<span class="hub-wake-why wk-hub-why" role="status">入力しませんでした: &lt;b&gt;x&lt;/b&gt;</span>'));
+    assert.ok(chipHtml(wakeChip({ unseen: 0 })).indexOf('hub-wake-why') < 0);
+    assert.strictEqual(run('hubWake.why["b-own"]', {}), undefined);
+  } finally {
+    ctx.esc = plainEsc;
+    run('delete hubWake.why["b-own"]', {});
+  }
+});
+
+test('wake: a hub with no unseen messages forgets its reason', () => {
+  run('hubWake.why["b-own"] = "入力しませんでした"', {});
+  assert.strictEqual(run('hubWakeWhy(h)', { h: { slug: 'b-own', unseen: 1 } }), '入力しませんでした');
+  assert.strictEqual(run('hubWakeWhy(h)', { h: { slug: 'b-own', unseen: 0 } }), '');
+  assert.strictEqual(run('hubWake.why["b-own"]', {}), undefined);
+});
+
+test('wake: a chip carries the base of its hub\'s board only when this server has it', () => {
+  const repo = { nwo: 'acme/w', hubs: [hubInfo('own', false)], rows: [hubRow('own', 'done')], hubSessions: [] };
+  run('boards = [{ slug: "b-own" }]', {});
+  try {
+    assert.strictEqual(chipsOf(repo)[0].wakeBase, '/b/b-own');
+    run('boards = [{ slug: "other" }]', {});
+    assert.strictEqual(chipsOf(repo)[0].wakeBase, null);
+  } finally {
+    run('boards = []', {});
+  }
+});
+
+test('wake: a repository heading and a parent heading both show the button of their hub', () => {
+  const repoNode = { key: 'repo:acme/w', kind: 'repo', nwo: 'acme/w', label: 'acme/w', rows: [], items: [], hubs: [wakeChip()] };
+  assert.ok(run('workHeadHtml(node, false)', { node: repoNode }).includes('data-wk-wake="b-own/hub:own"'));
+  // The parent heading takes the same chips through `workHubChipsHtml`.
+  const p1 = wakeChip({ id: 'p1', parent: true, key: '#2', slug: 'b-p1' }, { key: 'b-p1/hub:p1', wakeBase: '/b/b-p1' });
+  assert.ok(run('workHubChipsHtml([c], "t")', { c: p1 }).includes('data-wk-wake="b-p1/hub:p1"'));
 });

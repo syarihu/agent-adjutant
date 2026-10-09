@@ -1340,6 +1340,18 @@ fn the_page_has_the_hubs_entry_and_its_wake_button() {
 }
 
 #[test]
+fn the_wake_button_is_in_the_hub_panel_and_beside_the_chip_in_the_work_view() {
+    for piece in [
+        "data-tp-hub=\"wake\"",
+        "data-wk-wake=",
+        "function hubWakeBlocked",
+        "function redrawHubWake",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+}
+
+#[test]
 fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_320px() {
     assert!(UI_HTML.contains("<span class=\"card-gh-chips\">${issue}${pr}</span>"));
     assert!(UI_HTML.contains("PR #${esc(prNumber)}"));

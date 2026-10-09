@@ -91,6 +91,19 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-hub.working { color: var(--md-sys-color-primary); border-color: color-mix(in srgb, var(--md-sys-color-primary) 45%, transparent); }
 .wk-hub.off { color: var(--md-sys-color-outline); }
 .wk-hub-word { font-weight: 600; }
+/* The wake button of a hub that has unseen messages: a sibling of its chip, and the reason it did not wake under both. */
+.wk-hub-wake {
+  display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface); font: inherit; font-size: 11px; font-weight: 700; line-height: 1.5;
+}
+.wk-hub-wake .material-symbols-outlined { font-size: 14px; }
+.wk-hub-wake:hover:not(:disabled) { background: var(--wk-hover); }
+.wk-hub-wake:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.wk-hub-wake:disabled { opacity: .5; cursor: default; }
+.wk-hub-why { flex-basis: 100%; text-align: end; }
+/* Empty, it takes no line: the live region stays in the markup so that its text is announced. */
+.wk-hub-why:empty { flex-basis: 0; }
 /* Waiting on the person: the warning tone while it is new, a quiet one once it was read. */
 .wk-hub-wait { display: inline-flex; align-items: center; gap: 1px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); color: var(--md-sys-color-on-surface-variant); }
 .wk-hub-wait.new { border-color: transparent; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }

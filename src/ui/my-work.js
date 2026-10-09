@@ -476,8 +476,10 @@ function workRepoHubChips(repo, now, judged) {
     const live = j?.live || [];
     if (h.parent && st === 'ended' && !live.length) continue;
     const board = workBoardOf(repo, r.board);
+    // The wake goes to the hub's own board, so only a hub whose board this server has can be woken from here.
+    const wakeBase = boards.some(b => b.slug === h.slug) ? `/b/${h.slug}` : null;
     chips.push({ id, key: `${board}/${ref}`, board, ref, repo, nwo: repo.nwo, hub: h, s, st, data, task: null, isHub: true, turn: false,
-      live, cls: j?.cls || null, waits: live.length, word: workHubWord(st) });
+      live, cls: j?.cls || null, waits: live.length, word: workHubWord(st), wakeBase });
   }
   const own = c => c.hub.parent ? 1 : 0;
   const key = c => c.hub.key ?? '';
@@ -740,6 +742,17 @@ function workSummaryHtml(rows, hubWaits = 0) {
     .map(([st, n]) => `<span>${workGlyphHtml(st)}${n}</span>`).join('')}${hub}</span>`;
 }
 
+/* The wake button beside a hub's chip while it has unseen messages, with the reason a press typed nothing. It is the chip's sibling,
+   never inside it, and follows the rules of the board's own (`hubWakeBlocked`). */
+function workHubWakeHtml(c) {
+  const unseen = c.hub.unseen || 0;
+  const why = hubWakeWhy(c.hub);
+  if (!unseen) return '';
+  const off = hubWakeBlocked(c.hub, c.wakeBase);
+  const label = `hub を起こす（受信箱の未確認 ${unseen} 件）`;
+  return `<button type="button" class="wk-hub-wake" data-wk-wake="${esc(c.key)}"${off ? ' disabled' : ''} aria-label="${esc(label)}" title="${esc(off || label)}"><span class="material-symbols-outlined" aria-hidden="true">notifications_active</span>${unseen}</button><span class="hub-wake-why wk-hub-why" role="status">${esc(why)}</span>`;
+}
+
 /* The hubs on a heading, each a button of its own beside the heading's main button (never inside it). It says the hub, what it
    is doing, and, when it waits on the person, how many things; pressing it opens the hub (a stopped one offers 「hub を起動」
    there). A hub of a parent task is named by its key where the heading is not that parent's. */
@@ -752,7 +765,8 @@ function workHubChipsHtml(chips, where, named) {
     const name = named && c.hub.parent && c.hub.key ? `hub ${c.hub.key}` : 'hub';
     const tip = `${where ? `${where} の ` : ''}${name}: ${c.word}${c.waits ? `。あなたを待っているもの ${c.waits} 件` : ''}`;
     const wait = c.waits ? `<span class="wk-hub-wait${c.cls === 'new' ? ' new' : ''}" role="img" aria-label="${esc(`あなたを待っているもの ${c.waits} 件`)}" title="${esc(`あなたを待っているもの ${c.waits} 件`)}"><span class="material-symbols-outlined" aria-hidden="true">front_hand</span>${c.waits}</span>` : '';
-    return `<button type="button" class="wk-hub${c.st === 'working' || c.st === 'restarting' ? ' working' : off ? ' off' : ''}" data-wk-hub="${esc(c.key)}" aria-label="${esc(`${tip}。開く`)}" title="${esc(`${tip}${startable ? '。開くと hub を起動できます' : ''}`)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><span>${esc(name)}</span><span class="wk-hub-word">${esc(c.word)}</span>${wait}</button>`;
+    const chip = `<button type="button" class="wk-hub${c.st === 'working' || c.st === 'restarting' ? ' working' : off ? ' off' : ''}" data-wk-hub="${esc(c.key)}" aria-label="${esc(`${tip}。開く`)}" title="${esc(`${tip}${startable ? '。開くと hub を起動できます' : ''}`)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><span>${esc(name)}</span><span class="wk-hub-word">${esc(c.word)}</span>${wait}</button>`;
+    return chip + workHubWakeHtml(c);
   }).join('')}</span>`;
 }
 
@@ -820,6 +834,7 @@ const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.d
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
+  : el?.dataset?.wkWake != null ? `[data-wk-wake="${CSS.escape(el.dataset.wkWake)}"]`
   : el?.dataset?.wkHub != null ? `[data-wk-hub="${CSS.escape(el.dataset.wkHub)}"]`
     : el?.dataset?.wkParent != null ? `[data-wk-parent="${CSS.escape(el.dataset.wkParent)}"]` : null;
 
@@ -1139,6 +1154,10 @@ wk('work-view').addEventListener('click', e => {
     if (at >= 0) prefs.workFolded.splice(at, 1); else prefs.workFolded.push(b.dataset.wkFold);
     savePrefs();
     return renderWorkList();
+  }
+  if ((b = e.target.closest('[data-wk-wake]'))) {
+    const c = work.hubsByKey.get(b.dataset.wkWake);
+    return c && !b.disabled && wakeHub(c.hub, c.wakeBase);
   }
   if ((b = e.target.closest('[data-wk-hub]'))) {
     const c = work.hubsByKey.get(b.dataset.wkHub);

@@ -985,6 +985,12 @@ is not running, `present` is false and there is no `why`). The button is enabled
 `unseen` is above 0 and the hub runs, and the page shows the reason next to it when nothing was
 typed.
 
+The same button is at the end of the 受信箱 card of the hub's panel while the inbox holds unseen or
+seen messages (off at 0 unseen, as on the board's entry), and beside a hub's chip on the headings of
+「いまの仕事」 only while that hub has unseen messages. It follows the same rules and shows the
+reason beside it in the same way; it is also off, with the reason, when this server does
+not have the hub's board (the wake goes to that board).
+
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
 `deletions` against HEAD, and `binary`, the tracked files whose lines git does not count; `untracked` counts entries, so a wholly new directory counts once, and

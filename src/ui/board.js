@@ -344,8 +344,8 @@ async function act(action, id, choice) {
 
 /* The hub's entry above the agent columns, on a board other than 「すべて」: how its session is
    (as a row of the work list says it), and, when something that calls for it is waiting in its
-   inbox, how much is unread and a button that wakes it. The wake button is the page's only one
-   for this, so it is drawn from `hubWake` (actions.js) as well as from the state. */
+   inbox, how much is unread and a button that wakes it. The button is drawn from `hubWake` (actions.js) as well as from the
+   state, as are the hub panel's and the one beside a hub's chip in 「いまの仕事」. */
 let hubStripKey = null;
 function renderHubStrip() {
   const strip = document.getElementById('hub-strip');
@@ -386,7 +386,7 @@ function renderHubStrip() {
   const last = sessionLastText(s, state);
   const unseen = h.unseen || 0;
   const seen = h.seen || 0;
-  if (!unseen) delete hubWake.why[h.slug];
+  const wakeWhy = hubWakeWhy(h);
   const main = `<button type="button" class="hub-strip-main" data-action="own-hub" title="hub のターミナルを開く">
     <span class="m3-pill sess-row-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>
     <span class="hub-strip-name">hub · ${esc(label.text)}</span>
@@ -395,13 +395,12 @@ function renderHubStrip() {
   if (unseen + seen > 0) {
     const oldest = unseen && h.oldestUnseenAt ? stampSecs(h.oldestUnseenAt) : null;
     const age = oldest != null && state.now != null ? ` · 最古の未確認 ${agoLabel(minutesSince(oldest, state.now))}` : '';
-    const present = !!h.state?.present;
-    const blocked = !unseen ? '未確認のメッセージはありません' : !present ? 'hub が止まっています' : hubWake.busy[h.slug] ? '起こしています' : '';
+    const blocked = hubWakeBlocked(h, BASE);
     inbox = `<span class="hub-strip-counts">受信箱 未確認 ${unseen} · 確認済み・未処理 ${seen}${esc(age)}</span>
       <button type="button" class="btn-m3-text hub-strip-subjects" data-action="hub-strip-open">件名を見る</button>
-      <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub"${blocked ? ' disabled' : ''} title="${esc(blocked || 'hub の端末に確認の合図を入力します（メッセージは追加しません）')}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
+      <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub"${blocked ? ' disabled' : ''} title="${esc(blocked || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
   }
-  say(inbox ? hubWake.why[h.slug] || '' : '');
+  say(inbox ? wakeWhy : '');
   put(main, inbox);
 }
 

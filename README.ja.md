@@ -372,6 +372,8 @@ worker は普通タスクから始まり、ボードはタスクと worker を w
 
 「すべて」以外のボードでは、エージェントのボードの列の上に hub の欄が出ます。1行目は hub のセッション（「いまの仕事」の行と同じ状態と最後の1行）です。`unseen + seen` が 0 を超えるあいだは、2行目に件数、最も古い未確認の経過時間、「hub を起こす」ボタンが出ます。ボタンが送るのが `POST /api/hub/wake` で、いまの設定で hub のタブに起こす行を入力し、受信箱にはメッセージを書きません。返り値は `{present, woken, screen, why?}` で、`woken` は入力したかどうか、`screen` はエージェントの画面が理由で入力しなかったかどうか、`why` は動いている hub に入力しなかったときだけ付く、その理由です（hub が動いていなければ `present` が false で、`why` は付きません）。ボタンが押せるのは `unseen` が 0 を超え、hub が動いているあいだだけで、入力しなかったときは理由をボタンの隣に出します。
 
+同じボタンは、hub のパネルの「受信箱」の末尾（未確認か確認済みのメッセージがあるあいだ。未確認が 0 のときはボードの欄と同じく「未確認のメッセージはありません」で押せません）と、「いまの仕事」の見出しにある hub のチップの隣（未確認のメッセージがあるあいだだけ）にも出ます。押せる条件も、入力しなかったときの理由の出し方も同じです。加えて、その hub のボードがこのサーバーにないときは、理由を添えて押せません（起こす操作はその hub 自身のボードに送るためです）。
+
 `GET /api/sessions/<id>/git` は、ポーリングではなく尋ねられたときだけ、そのセッションの worktree を調べます。`branch`（detached なら null）、`head`、`uncommitted`（HEAD との差の `files`、`untracked`、`insertions`、`deletions`、行数を数えない追跡ファイルの数 `binary`。`untracked` はファイル数ではなくエントリ数で、まるごと新しいディレクトリは1件と数え、未追跡ファイルの行数は `insertions` に入りません。`.claude/` の下に adjutant 自身が書くファイル（`adjutant-*` と `task-brief.md`）は数えません）、`upstream`（設定のとおり）、`unpushed`（`count`、新しい順に20件の `commits`、何と比べたかを示す `against`）、`merged`（`base`、`ref`、`merged`、判定できないときは `reason`）を返します。未 push のコミットは、upstream がそのブランチ自身の対応先（同じブランチ名）のときだけ upstream と比べ、そうでないとき、また upstream が無いときは全リモート（`HEAD --not --remotes`）と比べます。`origin/main` から作った worktree は upstream が `origin/main` になり、それと比べると、マージ後は何も数えられなくなるためです。base はタスクに指定があればそれ、無ければリモートの既定ブランチ（`origin/HEAD`、次に `main`、`master`。リモート追跡ブランチを先に、ローカルを後に）です。fetch はしないので、`unpushed` と `merged` は最後に fetch した時点のものです。squash や rebase でマージした場合、base に残るコミットが worktree のものと別なので、マージ済みとは判定されません。全体で10秒の期限があり、worktree が無ければ断ります。未知のセッション id は `link` と同じく 400 です。
 
 ### セッションへの操作

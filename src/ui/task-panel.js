@@ -649,6 +649,10 @@ const hubOther = h => { const own = pageHub(); return !!own && own.id !== h.id; 
 const hubRowOf = h => (multiBoard ? boards.find(b => b.slug === h.slug) : null) || null;
 /* Where the hub's own requests go: its board's route when it is not the page's. */
 const hubBaseOf = h => multiBoard && hubOther(h) ? `/b/${h.slug}` : BASE;
+/* Why this server cannot ask the hub's board, or '': a hub of a board it does not serve. */
+const hubAway = h => multiBoard && boards.length > 0 && !!h.slug && !hubRowOf(h) ? 'この hub のボードはこのサーバーにありません' : '';
+/* Where the hub's wake goes: its own board's route, null when this server does not have that board. */
+const hubPanelWakeBase = h => hubAway(h) ? null : hubBaseOf(h);
 
 /* Why the hub's terminal cannot be opened, as [the tab's hint, its tooltip]; null when it can. */
 function hubTermWhy(h, s) {
@@ -775,11 +779,15 @@ function hubDetailHtml(h, s) {
   // The hub reports the newest first and `inboxCount` is the whole of it. What is still to be read
   // comes first, oldest first, so the message the board's entry names the age of is in view.
   const unread = m => m.counted && !m.seen;
+  const wakeOff = hubWakeBlocked(h, hubPanelWakeBase(h));
+  const wakeWhy = hubWakeWhy(h);
+  const wake = (h.unseen || 0) + (h.seen || 0) > 0
+    ? `<div class="tp-hub-wake"><button type="button" class="btn-m3-tonal" data-tp-hub="wake"${wakeOff ? ' disabled' : ''} title="${esc(wakeOff || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button><span class="hub-wake-why" role="status">${esc(wakeWhy)}</span></div>` : '';
   const listed = h.inbox || [];
   const inbox = [...listed.filter(unread).reverse(), ...listed.filter(m => !unread(m))].slice(0, HUB_LIST_MAX);
   html += `<div class="m3-filled-card">${secTitle('受信箱')}${inbox.length
     ? `<ul class="sess-side-list">${inbox.map(m => `<li><div>${unread(m) ? '<span class="m3-pill pill-warn">未確認</span> ' : ''}${esc(m.subject || m.name)}</div><div class="who">${esc([m.kind, m.from, m.at ? when(m.at) : ''].filter(Boolean).join(' ・ '))}</div></li>`).join('')}</ul>${hubListMore((h.inboxCount || 0) - inbox.length)}`
-    : '<div class="tp-muted">受信箱は空です</div>'}</div>`;
+    : '<div class="tp-muted">受信箱は空です</div>'}${wake}</div>`;
 
   // A stopped hub's start is the banner's.
   const act = hubActionOf(s);
@@ -793,7 +801,7 @@ function hubDetailHtml(h, s) {
 
   // Starting a session with no task, or a parent task's hub, asks this page's board: not another one's, nor one this server
   // does not serve.
-  const away = multiBoard && boards.length > 0 && !!h.slug && !hubRowOf(h) ? 'この hub のボードはこのサーバーにありません' : '';
+  const away = hubAway(h);
   const startOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.sessionStart?.agent ? '起動するエージェントが分かりません' : '');
   const parentOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.hubStart?.available ? NO_START : '');
   const addBtn = (act, icon, label, off, title) =>
@@ -1052,6 +1060,7 @@ function hubPanelClick(e, h) {
       case 'close': return openHubStopDialog(h.id, 'close');
       case 'reset': return openHubStopDialog(h.id, 'reset');
       case 'restart': return openHubStopDialog(h.id, 'restart');
+      case 'wake': return wakeHub(h, hubPanelWakeBase(h));
       case 'add-session': return openStartDialog();
       case 'add-parent-hub': return openHubKeyDialog();
     }
