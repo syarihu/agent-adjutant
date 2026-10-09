@@ -301,7 +301,6 @@ window.addEventListener('storage', e => {
 });
 
 const workBoxOf = row => row.cls || (WORK_RUNNING.includes(row.st) ? 'running' : 'other');
-const workOwnerOf = nwo => (nwo || '').split('/')[0] || nwo;
 const workOwnerName = nwo => { const i = (nwo || '').indexOf('/'); return i > 0 ? nwo.slice(0, i) : ''; };
 
 /* The repository nodes under one owner node each, owners in name order. Owners are grouped without regard to case, as
@@ -318,6 +317,24 @@ function workOwnerGroups(repoNodes) {
   }
   const rank = g => g.key === 'owner:' ? 1 : 0;
   return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/* The rows of one 「状態」 box under a heading per repository, `owner/name` in name order with case ignored: by owner as
+   the tree orders its owners, then by name. The rows come in sorted and keep that order. The key is apart from the
+   tree's (`repo:`, `owner:`), so a fold is kept per box. */
+function workBoxRepoGroups(boxId, rows, place) {
+  const groups = new Map();
+  for (const row of rows) {
+    const nwo = row.nwo || '';
+    const key = `brepo:${boxId}/${nwo.toLowerCase()}`;
+    if (!groups.has(key)) groups.set(key, { key, kind: 'brepo', label: nwo, rows: [], items: [] });
+    const g = groups.get(key);
+    g.rows.push(row);
+    g.items.push({ row, place });
+  }
+  const order = g => { const nwo = g.label.toLowerCase(), i = nwo.indexOf('/'); return i > 0 ? [nwo.slice(0, i), nwo.slice(i + 1)] : [nwo, '']; };
+  const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+  return [...groups.values()].sort((a, b) => { const [ao, an] = order(a), [bo, bn] = order(b); return cmp(ao, bo) || cmp(an, bn); });
 }
 
 /* A row's place among the others in its group: what waits on the person first, the longest waiting first. */
@@ -363,17 +380,15 @@ function workTreeByParent(rows, bands = []) {
   return [...bands, ...workOwnerGroups(repoNodes)];
 }
 
-/* The list as boxes of one state each, in order, and inside each box by organisation. A box with nothing in it is not drawn.
-   The rows of 新着 and 後で見る have their actions beside them, as in the bands. */
+/* The list as boxes of one state each, in order, and inside each box by repository (`owner/name`, in name order, case
+   ignored). A box with nothing in it is not drawn. The rows of 新着 and 後で見る have their actions beside them, as in the bands. */
 function workTreeByState(rows) {
   const tree = [];
   for (const box of WORK_BOXES) {
     const mine = rows.filter(r => workBoxOf(r) === box.id);
     if (!mine.length) continue;
-    const owners = new Map();
-    for (const r of mine.sort(workRowOrder)) owners.set(workOwnerOf(r.nwo), [...(owners.get(workOwnerOf(r.nwo)) || []), r]);
     const place = box.id === 'new' || box.id === 'later' ? box.id : 'box';
-    const items = [...owners].map(([owner, list]) => ({ key: `org:${box.id}/${owner}`, kind: 'org', label: owner, rows: list, items: list.map(row => ({ row, place })) }));
+    const items = workBoxRepoGroups(box.id, mine.sort(workRowOrder), place);
     tree.push({ key: `box:${box.id}`, kind: 'box', label: box.label, readAll: box.id === 'new', rows: mine, items });
   }
   return tree;

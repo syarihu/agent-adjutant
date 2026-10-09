@@ -527,8 +527,9 @@ the work under way in every repository, in three columns. The list on the left h
 (the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
 with the tasks that have no parent under 「親なし」; the owner heading is shown even when there is only one owner,
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
-「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by organisation; empty boxes are
-not drawn). Only work under way is listed: a worker session with a task or without one, and each repository's
+「状態」 (the boxes 新着, 後で見る, 実行中, そのほか in that order, and inside each box by repository, headed by its
+full `owner/name`, in name order with case ignored; empty boxes are not drawn). Only work under way is listed: a
+worker session with a task or without one, and each repository's
 hub as a row marked "hub". A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
 child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, and a
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
