@@ -2,6 +2,7 @@
 
 use super::store::{boards_dir, record_path, server_record_path};
 use super::*;
+use serde_json::Map;
 
 pub(crate) fn served(root: &Path, repo: &crate::kernel::identity::RepoInfo) -> Option<Served> {
     let resident = live_resident(root).map(|(_, port)| port);
@@ -70,15 +71,30 @@ pub(crate) fn record(root: &Path, slug: &str, port: u16) -> Result<bool, String>
 }
 
 /// Tell the resident server where `repo` is, so that it can serve its board. Skipped when the
-/// entry is already what it would write, and a failure is not one for the caller: the address
-/// is only ever a convenience for a server that may not be running.
+/// entry already says what it would write, and a failure is not one for the caller: the
+/// address is only ever a convenience for a server that may not be running. The three keys are
+/// put into what is there, so a key a newer version added to the entry survives (rule 10).
 pub fn note_board(root: &Path, repo: &crate::kernel::identity::RepoInfo) {
-    let entry = json!({ "main": repo.main, "nwo": repo.nwo, "hub": repo.hub });
     let path = boards_dir(root).join(format!("{}.json", repo.slug));
-    if crate::infra::fs::read_json(&path).as_ref() == Some(&entry) {
+    let mut entry = match crate::infra::fs::read_json(&path) {
+        Some(Value::Object(fields)) => fields,
+        _ => Map::new(),
+    };
+    let wanted = [
+        ("main", json!(repo.main)),
+        ("nwo", json!(repo.nwo)),
+        ("hub", json!(repo.hub)),
+    ];
+    if wanted
+        .iter()
+        .all(|(key, value)| entry.get(*key) == Some(value))
+    {
         return;
     }
-    let _ = crate::infra::fs::write_json(&path, &entry);
+    for (key, value) in wanted {
+        entry.insert(key.to_string(), value);
+    }
+    let _ = crate::infra::fs::write_json(&path, &Value::Object(entry));
 }
 
 /// Take `slug` out of the address book, so a closed hub is not offered a board any more.

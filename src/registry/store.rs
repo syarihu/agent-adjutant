@@ -89,6 +89,18 @@ pub(super) fn read_session(path: &Path) -> Option<SavedSession> {
         title: text("title"),
         task: text("task"),
         saved_at: text("savedAt"),
+        other: record
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| {
+                !matches!(
+                    key.as_str(),
+                    "sessionId" | "hub" | "nwo" | "hubName" | "title" | "task" | "savedAt"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
     })
 }
 

@@ -70,12 +70,12 @@ pub fn register_launch(launch: &Launch) -> Result<Registered, String> {
             // worker would count for the old hub once it has ended and its record is gone.
             let slug_of = |hub: Option<&str>| identity::slug_for(&ctx.repo.nwo, hub);
             if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
-                && let Err(e) = registry::save_worker_session(
+                && let Err(e) = registry::rewrite_worker_session(
                     worktree,
+                    saved,
                     title,
                     ctx.repo.hub.as_deref(),
                     task,
-                    &saved.session_id,
                 )
             {
                 session = Some(SessionNote::StillUnderOldHub(e));

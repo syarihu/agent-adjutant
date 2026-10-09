@@ -162,12 +162,15 @@ fixtures.
 10. Records shared across versions. `adj server restart` leaves running hubs and workers on the old
     binary, so old and new binaries share the state dir. Paths, key names, lock names, the
     `.acking-` prefix and inbox file names stay as they are. Records keep keys they do not know
-    (`Task.extra`, `Gate.extra`, `WorkerRecord.other`, `HubRecord.other`). A new key must be optional to the new binary (`serde(default)` or `Option`), because records
+    (`Task.extra`, `Gate.extra`, `WorkerRecord.other`, `HubRecord.other`, `SavedSession.other`),
+    and so does the board address book entry. A new key must be optional to the new binary (`serde(default)` or `Option`), because records
     the old one wrote lack it; the new binary never requires a key the old one does not write. Checked by the unit tests
     `a_key_this_binary_does_not_know_survives_a_load_and_save` (`task`),
     `a_key_this_binary_does_not_know_survives_a_load_save_and_archive` (`gate`) and
-    `a_worker_record_rewrite_keeps_unknown_keys_and_unreadable_phases` and
-    `an_unknown_key_in_a_hub_record_is_kept_and_the_file_left_alone` (`registry`); the rest is by
+    `a_worker_record_rewrite_keeps_unknown_keys_and_unreadable_phases`,
+    `an_unknown_key_in_a_hub_record_is_kept_and_the_file_left_alone`,
+    `a_saved_session_rewrite_keeps_unknown_keys` and
+    `a_board_address_keeps_keys_it_does_not_write` (`registry`); the rest is by
     review ([review-checklist.md](review-checklist.md)).
 
 ## How the board gets its handler

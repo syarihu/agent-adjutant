@@ -45,12 +45,12 @@ pub fn relink_worker(
     let saved_path = worker_session_path(worktree);
     let previous = std::fs::read_to_string(&saved_path).ok();
     if let Some(saved) = worker_session(worktree) {
-        save_worker_session(
+        rewrite_worker_session(
             worktree,
+            &saved,
             saved.title.as_deref().unwrap_or_default(),
             hub,
             Some(task),
-            &saved.session_id,
         )?;
     }
     if let Err(e) = write_worker_record(worktree, &record) {

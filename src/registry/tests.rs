@@ -1152,6 +1152,47 @@ fn a_worker_record_rewrite_keeps_unknown_keys_and_unreadable_phases() {
 }
 
 #[test]
+fn a_saved_session_rewrite_keeps_unknown_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    write_json(
+        &worker_record_path(worktree),
+        &json!({"pid": 4242, "title": "t", "hub": "ALPHA-1", "task": "task-1"}),
+    )
+    .unwrap();
+    write_json(
+        &worker_session_path(worktree),
+        &json!({
+            "sessionId": "sid-1",
+            "title": "t",
+            "hub": "ALPHA-1",
+            "task": 5,
+            "savedAt": "2026-01-01T00:00:00Z",
+            "x-unknown": {"a": [1]},
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        worker_session(worktree).unwrap().other["x-unknown"],
+        json!({"a": [1]})
+    );
+
+    relink_worker(worktree, None, "task-2", None).unwrap();
+    let after = read_json(&worker_session_path(worktree)).unwrap();
+    assert_eq!(after["x-unknown"], json!({"a": [1]}));
+    assert_eq!(after["sessionId"], "sid-1");
+    assert_eq!(after["title"], "t");
+    assert_eq!(after["task"], "task-2");
+    assert!(after.get("hub").is_none());
+
+    let saved = worker_session(worktree).unwrap();
+    rewrite_worker_session(worktree, &saved, "t", Some("B"), Some("task-2")).unwrap();
+    let after = read_json(&worker_session_path(worktree)).unwrap();
+    assert_eq!(after["x-unknown"], json!({"a": [1]}));
+    assert_eq!(after["hub"], "B");
+}
+
+#[test]
 fn a_worker_record_key_of_the_wrong_type_reads_as_absent_and_the_rest_still_reads() {
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path();
@@ -1721,6 +1762,37 @@ fn forgetting_a_board_removes_only_that_slug() {
     assert!(boards_dir(&root).join("acme-widget-b.json").exists());
     // Nothing to forget is not an error.
     forget_board(&root, "acme-widget-a").unwrap();
+}
+
+#[test]
+fn a_board_address_keeps_keys_it_does_not_write() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    let checkout = tempfile::tempdir().unwrap();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: checkout.path().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let path = boards_dir(&root).join("acme-widget.json");
+    std::fs::create_dir_all(boards_dir(&root)).unwrap();
+
+    let same = json!({"main": repo.main, "nwo": "acme/widget", "hub": null, "x-unknown": 1});
+    std::fs::write(&path, same.to_string()).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    note_board(&root, &repo);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    let moved = json!({"main": "/elsewhere", "nwo": "acme/widget", "hub": null, "x-unknown": 1});
+    std::fs::write(&path, moved.to_string()).unwrap();
+    note_board(&root, &repo);
+    let after = read_json(&path).unwrap();
+    assert_eq!(after["main"], repo.main);
+    assert_eq!(after["x-unknown"], 1);
 }
 
 #[test]
