@@ -471,6 +471,11 @@ pub struct Task {
     /// read when the task was created. The first successful read replaces it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub title_pending: bool,
+    /// The request is the person's words only: the hub has not yet read it and written its
+    /// reading here. Cleared by `adj task update --read`. Until then `next` holds the task, so
+    /// nothing starts from the defaults the record carries in the meantime.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_reading: bool,
     /// The pull request as the last refresh read it; see `PrStatus`. Written only by a
     /// refresh, never taken from a caller's JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -576,6 +581,9 @@ pub struct NewTask {
     pub worktree: Option<String>,
     pub auto_start: bool,
     pub status: Status,
+    /// The body is all the person said; see `Task::needs_reading`. `create` forces
+    /// `autoStart` off and does not read the issue for it: the hub reads the request.
+    pub needs_reading: bool,
 }
 
 impl Default for NewTask {
@@ -595,6 +603,7 @@ impl Default for NewTask {
             worktree: None,
             auto_start: true,
             status: Status::Backlog,
+            needs_reading: false,
         }
     }
 }
@@ -650,6 +659,7 @@ impl NewTask {
             worktree: read::<Option<String>>(fields, "worktree")?.flatten(),
             auto_start: read(fields, "autoStart")?.unwrap_or(defaults.auto_start),
             status: read(fields, "status")?.unwrap_or(defaults.status),
+            needs_reading: read(fields, "needsReading")?.unwrap_or(defaults.needs_reading),
         })
     }
 }
@@ -665,6 +675,17 @@ pub struct TaskPatch {
     /// being turned away for a slot afterwards does not put the same question to them again.
     pub auto_start: Option<bool>,
     pub executor: Option<Executor>,
+    /// What the hub decided the request is, for a record that came with the person's words
+    /// only. Set from the command line; the board never sends these six.
+    pub kind: Option<Kind>,
+    pub done_when: Option<DoneWhen>,
+    pub stop_at: Option<StopAt>,
+    pub issue_url: Option<Option<String>>,
+    pub worktree_name: Option<Option<String>>,
+    /// Set only: trimmed, a blank one is refused, and there is no clearing it.
+    pub title: Option<String>,
+    /// The hub has read the request and written its reading: clears `needsReading`.
+    pub read: bool,
     pub worktree: Option<Option<String>>,
     pub issue: Option<Option<String>>,
     pub pr: Option<Option<String>>,
@@ -728,6 +749,13 @@ impl TaskPatch {
                     Executor::parse(&s).ok_or(format!("no such executor: {s} (worker or jules)"))
                 })
                 .transpose()?,
+            kind: None,
+            done_when: None,
+            stop_at: None,
+            issue_url: None,
+            worktree_name: None,
+            title: None,
+            read: false,
             worktree: text_field(input, "worktree")?,
             issue: text_field(input, "issue")?,
             pr: text_field(input, "pr")?,
@@ -768,11 +796,53 @@ impl TaskPatch {
         if let Some(Some(parent)) = &self.parent {
             super::create::check_parent(parent)?;
         }
+        // The three below are written as the hub read them out of free text, and are quoted on
+        // a command line or made into a path and a branch afterwards.
+        if let Some(Some(name)) = &self.worktree_name {
+            super::create::check_worktree_name(name)?;
+        }
+        if let Some(Some(url)) = &self.issue_url {
+            super::create::check_url(url, "an issue")?;
+        }
+        // The base is not checked here: `--base` and the board's PATCH took any value before.
+        // `update` holds it to `check_base` when `read` is applied, on the stored value.
+        if self
+            .title
+            .as_deref()
+            .is_some_and(|t| one_line_title(t).is_none())
+        {
+            return Err("a title cannot be blank".to_string());
+        }
         if let Some(Some(park)) = &self.parked {
             check_park(&park.reason, park.text.as_deref())?;
         }
         Ok(())
     }
+}
+
+/// A title as `adj task update --title` keeps it: the first non-blank line, trimmed, cut to the
+/// length an issue's title is. `None` when there is nothing in it.
+pub fn one_line_title(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+    Some(line.chars().take(ISSUE_TITLE_CAP).collect())
+}
+
+/// Whether a record the hub has read can be started: what names its worktree is there. Mirrors
+/// what the board's old form demanded (an issue for `start`, an issue or a worktree name for the
+/// rest), since `create` itself asks for neither.
+pub fn check_startable(task: &Task) -> Result<(), String> {
+    let has = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.trim().is_empty());
+    let ok = match task.kind {
+        Kind::Start => has(&task.issue_url),
+        _ => has(&task.issue_url) || has(&task.worktree_name),
+    };
+    if ok {
+        return Ok(());
+    }
+    Err(match task.kind {
+        Kind::Start => "a task that starts an issue needs --issue-url".to_string(),
+        _ => "a task with no issue needs --worktree-name (or --issue-url)".to_string(),
+    })
 }
 
 /// `20260922T041233Z-login-retry`. The stamp comes from the caller so this stays a leaf —
@@ -818,6 +888,11 @@ pub fn is_plain_id(id: &str) -> bool {
 pub fn render_request(task: &Task) -> String {
     let mut out = String::new();
     out.push_str(&format!("## task          {}\n", task.id));
+    // The lines below are then defaults the record carries, not answers: the hub reads the
+    // body and asks the person on a gate before anything starts.
+    if task.needs_reading {
+        out.push_str("## Read first    yes (only the body is the person's; the lines below are defaults, not answers)\n");
+    }
     out.push_str(&format!(
         "## Kind          {}\n",
         match task.kind {

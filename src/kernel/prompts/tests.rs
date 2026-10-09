@@ -2724,6 +2724,60 @@ fn the_note_a_failed_start_leaves_is_the_one_the_queue_skips() {
     }
 }
 
+/// The board's form sends the person's words only. The hub has to read them, write the reading
+/// to the record and confirm on a gate before anything starts; the gate's answers have to
+/// reach the same route, and the request must no longer be taken as answered by a form.
+#[test]
+fn a_request_from_the_form_is_read_and_confirmed_before_anything_starts() {
+    let hub = find("adj-hub").unwrap().raw_content;
+    let dashboard = flow(&step(
+        hub,
+        "### A request from the dashboard (`kind: request`)",
+    ));
+    for needle in [
+        "## Read first",
+        "Nothing is started, filed or created before the gate below is answered",
+        "adj task update --id {task_id}",
+        "--read",
+        "--take-title",
+        "adj task update --id {task_id} --title -",
+    ] {
+        assert!(dashboard.contains(needle), "missing {needle}: {dashboard}");
+    }
+    // Every value that goes inside quotes is tested before a command is built.
+    for needle in [
+        "the same characters `adj` refuses",
+        "lowercase `[a-z0-9-]`",
+        "is the second check, not the first",
+        "take the kind, parent, issue URL, base",
+        "no open `dispatch` gate for the task",
+        "Make each choice id encode the value it stands for",
+        "adj task update --id {task_id} --read --auto-start true",
+    ] {
+        assert!(dashboard.contains(needle), "missing {needle}: {dashboard}");
+    }
+    let answers = flow(&between(
+        hub,
+        "### The answer to a gate the hub opened (`kind: gate`)",
+        "#### The answer to a plan for Jules",
+    ));
+    assert!(answers.contains("**`choice`**"), "{answers}");
+    assert!(
+        answers.contains("instead of starting directly"),
+        "{answers}"
+    );
+    assert!(
+        answers.contains("adj task update --id {task_id} --read --auto-start true"),
+        "{answers}"
+    );
+    assert!(answers.contains("Reading a request"), "{answers}");
+    let table = hub
+        .lines()
+        .find(|l| l.trim_start().starts_with("| `request` |"))
+        .unwrap();
+    assert!(!table.contains("from Step 2"), "{table}");
+}
+
 /// A free slot is filled from `adj task next`, not by re-deriving its rule from a listing.
 #[test]
 fn a_free_slot_is_filled_from_adj_task_next() {

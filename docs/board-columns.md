@@ -402,8 +402,9 @@ the person asked the hub to do, the other what the work is.
   it never asks, and passes nothing otherwise, since an investigation already reads as one from
   `kind` or `doneWhen` and anything else is an implementation. A wrong guess is fixed with `adj
   task update --work`. The board's
-  new-task form and its link dialog gain a 作業 picker (実装 / 調査 / 設計 and the configured
-  types), defaulting to 調査 when 種類 is 調査だけ. A task that already exists is changed with `adj
+  link dialog gains a 作業 picker (実装 / 調査 / 設計 and the configured types). The new-task form has
+  none: it is one text box, and the hub infers `work` in the same step that reads the request and
+  writes it with `adj task update --work` once #578 adds that flag. A task that already exists is changed with `adj
   task update --work`. The worker never sets it.
 - `doneWhen` keeps its meaning (where the work stops) and its 調査のみ pill. `work` shows as a
   pill of its own only when it is not `implement` and does not repeat that pill (`investigate`
@@ -578,8 +579,8 @@ string, set by `adj task add --work` and changed by `adj task update --work`, re
 by one check in `task`. An absent one reads as `investigate` when `kind` is `investigate` or
 `doneWhen` is `report-only`, and `implement` otherwise. Add `work` to the facts and show it as a
 pill when it is not `implement` and does not repeat the 調査のみ pill (`investigate` with
-`report-only`). Give the board's new-task form and link
-dialog a 作業 picker, and have every `adj task add` in the hub procedure pass `--work design` when
+`report-only`). Give the board's link
+dialog a 作業 picker (the new-task form has none: the hub infers it from the request), and have every `adj task add` in the hub procedure pass `--work design` when
 the request asks for a design.
 Update both READMEs and the help.
 ```

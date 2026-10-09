@@ -243,7 +243,7 @@ pub(super) fn relay_findings(server: &Server, id: &str, body: &[u8]) -> Result<V
 
 /// The board's 「再取得」: read the task's issue again, on a click and never on a poll.
 pub(super) fn fetch_issue(server: &Server, id: &str) -> Result<Value, String> {
-    let task = crate::task::fetch_issue(&server.ctx, id)?;
+    let task = crate::task::fetch_issue(&server.ctx, id, false)?;
     Ok(json!({ "task": task }))
 }
 

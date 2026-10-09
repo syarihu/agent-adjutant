@@ -281,6 +281,7 @@ fn a_task(id: &str, status: task::Status) -> task::Task {
         gate_answered_at: None,
         issue_snapshot: None,
         title_pending: false,
+        needs_reading: false,
         pr_status: None,
         pr_turn_at: None,
         parked: None,

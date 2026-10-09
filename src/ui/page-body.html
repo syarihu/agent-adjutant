@@ -195,60 +195,12 @@
       </button>
     </div>
     <div class="body">
-      <fieldset>
-        <legend>種類</legend>
-        <div class="radios">
-          <label><input type="radio" name="kind" value="start" checked>Issue に着手</label>
-          <label><input type="radio" name="kind" value="file-and-start">起票して着手</label>
-          <label><input type="radio" name="kind" value="investigate">調査だけ</label>
-        </div>
-      </fieldset>
       <label class="field" id="f-board" hidden><span>作り先</span>
         <select name="board"></select></label>
-      <label class="field"><span>内容</span>
-        <textarea name="body" required placeholder="AI に指示するプロンプト・タスクの内容を入力(Issue URL を入れるなら空でもよい)"></textarea></label>
-      <label class="field" id="f-issue"><span>Issue URL</span>
-        <input type="text" name="issueUrl" placeholder="https://github.com/owner/repo/issues/233"></label>
-      <details class="more">
-        <summary>詳細(省略可)</summary>
-        <div class="grid">
-          <label class="field"><span>タイトル</span>
-            <input type="text" name="title" placeholder="省略時は内容の1行目"></label>
-          <label class="field"><span>完了条件</span>
-            <select name="doneWhen">
-              <option value="report-only">調査のみ(報告して終わり)</option>
-              <option value="verify">動作確認まで</option>
-              <option value="pr" selected>PR 作成まで</option>
-              <option value="review">レビュー対応まで</option>
-            </select></label>
-          <label class="field"><span>止める所</span>
-            <select name="stopAt">
-              <option value="plan" selected>計画の承認だけ待つ</option>
-              <option value="diff">計画と差分レビューを待つ</option>
-              <option value="all">計画・差分・動作確認を待つ</option>
-            </select></label>
-          <label class="field"><span>実装</span>
-            <select name="executor">
-              <option value="worker" selected>worker が実装する</option>
-              <option value="jules">計画の承認後に Jules へ渡す</option>
-            </select></label>
-          <label class="field"><span>分岐元</span>
-            <input type="text" name="base" placeholder="既定 (baseBranch)"></label>
-          <label class="field"><span>親タスク(URL)</span>
-            <input type="text" name="parent" placeholder="https://…/issues/200">
-            <span class="note">キーではなく URL を指定</span></label>
-          <label class="field" id="f-wtname"><span>worktree 名</span>
-            <input type="text" name="worktreeName" placeholder="login-retry">
-            <span class="note">Issue が無いときは必須</span></label>
-        </div>
-        <fieldset style="padding-top:12px">
-          <legend>着手</legend>
-          <div class="radios">
-            <label><input type="radio" name="autoStart" value="true" checked>確認なしで着手</label>
-            <label><input type="radio" name="autoStart" value="false">着手前に確認したい</label>
-          </div>
-        </fieldset>
-      </details>
+      <p id="f-parent" class="dlg-note" hidden></p>
+      <label class="field"><span>やってほしいこと</span>
+        <textarea name="body" required placeholder="やってほしいことを自分の言葉で。Issue の URL・番号・キー(WID-123 など)、分岐元のブランチ、親の Issue を書けば hub が読み取ります"></textarea></label>
+      <p class="dlg-note">hub が読んで、着手前にボードで確認します</p>
     </div>
     <div class="foot">
       <button type="button" class="btn-m3-text" data-dialog-close="form">やめる</button>

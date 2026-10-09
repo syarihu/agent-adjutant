@@ -9,7 +9,10 @@ use crate::registry::Context;
 /// `gh` runs with no lock held, since it can take seconds; the record is read again under the
 /// lock and written only if it still points at the issue that was read, the way `refresh`
 /// treats a merged PR. On failure the record is left as it was, an earlier snapshot included.
-pub fn fetch_issue(ctx: &Context, id: &str) -> Result<Task, String> {
+///
+/// `take_title` makes the issue's title the task's even when the record has a title of its
+/// own: the hub asks for it when the person only gave the issue in words.
+pub fn fetch_issue(ctx: &Context, id: &str, take_title: bool) -> Result<Task, String> {
     let before = get(&ctx.state, &ctx.repo.slug, id)?;
     let url = issue_to_fetch(&before)
         .ok_or("no GitHub issue to read")?
@@ -21,7 +24,7 @@ pub fn fetch_issue(ctx: &Context, id: &str) -> Result<Task, String> {
         return Err("the task's issue changed while it was being read".to_string());
     }
     // A title made from the URL gives way to the issue's own on the first read.
-    if now.title_pending && !snapshot.title.is_empty() {
+    if (now.title_pending || take_title) && !snapshot.title.is_empty() {
         now.title = snapshot.title.clone();
         now.title_pending = false;
     }

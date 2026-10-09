@@ -776,9 +776,13 @@ function handedNote(handed) {
   return handed.woken ? ' / hub を起動/通知しました' : ' / hub は稼働中。次回の受信箱確認時に処理されます';
 }
 
+/* The parent a child form was opened for (子タスクを足す): a fact the page already holds, sent with
+   the request instead of being left for the hub to read out of the text. */
+let formParent = null;
 function openForm() {
   if (noBoard() && !boards.some(b => !b.finished)) return note('新しいタスク', true, '作り先のボードがありません');
-  // 「すべて」 has no board of its own to create the task in: ask which.
+  // 「すべて」 has no board of its own to create the task in: ask which. A request lands in one hub's
+  // inbox and each hub turns away other repositories, so nothing else could route it.
   const field = document.getElementById('f-board');
   if (field) {
     field.hidden = !noBoard();
@@ -787,74 +791,48 @@ function openForm() {
         .map(b => `<option value="${esc(b.slug)}">${esc(b.hub ? `${repoNameOf(b)} › ${boardName(b)}` : repoNameOf(b))}</option>`).join('');
     }
   }
+  formParent = null;
+  document.getElementById('f-parent').hidden = true;
   document.getElementById('form').showModal();
-  syncForm();
 }
-/* The new-task form for a child of the parent at `parentUrl`: a task that is filed first and then
-   started, with the parent filled in, and the details open so that it can be seen. `slug` is the board
-   the parent's task is on, which 「すべて」 would otherwise ask about. */
+/* The new-task form for a child of the parent at `parentUrl`, shown read-only and sent with the
+   request. `slug` is the board the parent's task is on, which 「すべて」 would otherwise ask about. */
 function openChildForm(parentUrl, slug) {
   openForm();
   const form = document.getElementById('form');
   if (!form.open) return;
   // An entry left from an earlier time would be sent with this child.
   form.querySelector('form').reset();
-  const kind = form.querySelector('input[name=kind][value=file-and-start]');
-  if (kind) kind.checked = true;
-  form.querySelector('input[name=parent]').value = parentUrl;
-  form.querySelector('details.more').open = true;
+  formParent = parentUrl;
+  const shown = document.getElementById('f-parent');
+  shown.textContent = `親タスク: ${parentUrl}`;
+  shown.hidden = false;
   const board = form.querySelector('#f-board select');
   if (slug && board && [...board.options].some(o => o.value === slug)) board.value = slug;
-  syncForm();
-}
-function syncForm() {
-  const kind = document.querySelector('input[name=kind]:checked').value;
-  document.getElementById('f-issue').classList.toggle('hidden', kind !== 'start');
-  document.getElementById('f-wtname').classList.toggle('hidden', kind === 'start');
-  // An Issue URL alone is enough to hand an issue over: the server reads its title and body.
-  const issueUrl = document.querySelector('#f-issue input[name=issueUrl]').value.trim();
-  const isIssue = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/issues\/\d+\/?(?:[?#].*)?$/.test(issueUrl);
-  document.querySelector('textarea[name=body]').required = !(kind === 'start' && isIssue);
 }
 
 async function submitForm(e) {
   const f = new FormData(e.target);
   const status = e.submitter?.value || 'backlog';
-  const titleText = (f.get('title') || '').trim();
   const bodyText = (f.get('body') || '').trim();
-  const body = {
-    body: bodyText,
-    kind: f.get('kind'),
-    doneWhen: f.get('doneWhen'),
-    stopAt: f.get('stopAt'),
-    executor: f.get('executor') || 'worker',
-    autoStart: f.get('autoStart') === 'true',
-    status,
-  };
-  if (titleText) body.title = titleText;
-  for (const key of ['issueUrl', 'base', 'parent', 'worktreeName']) {
-    const value = (f.get(key) || '').trim();
-    if (value) body[key] = value;
-  }
-  const line = `adj task add` + (titleText ? ` --title '${titleText}'` : '') + ` --kind ${body.kind}` +
-    (body.stopAt && body.stopAt !== 'plan' ? ` --stop-at ${body.stopAt}` : '') +
-    (body.executor === 'jules' ? ' --executor jules' : '') + (status === 'queued' ? ' --queue' : '');
+  // Only the person's words: the hub reads what is in them and confirms on a gate before it starts.
+  const body = { body: bodyText, status, needsReading: true };
+  if (formParent) body.parent = formParent;
+  const line = 'adj task add --needs-reading --body -' + (status === 'queued' ? ' --queue' : '');
   if (noBoard() && !f.get('board')) return note('adj task add', true, '作り先のボードを選んでください');
   try {
     const into = noBoard() ? `/b/${f.get('board')}` : BASE;
     const data = await boardApi(into, '/api/tasks', { method:'POST', body: JSON.stringify(body) });
-    note(line, false, (status === 'queued' ? '記録して受信箱へ' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed) +
-      (data.task?.titlePending ? '。Issue を読めませんでした。タイトルは着手時に取得します' : ''));
+    note(line, false, (status === 'queued' ? '記録して受信箱へ。hub が読んで、着手前にボードで確認します' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));
     e.target.reset();
-    syncForm();
+    formParent = null;
+    document.getElementById('f-parent').hidden = true;
     await refresh(true);
   } catch (err) {
     note(`${line} → ${err.message}`, true);
   }
 }
 document.querySelector('#form form').addEventListener('submit', submitForm);
-for (const r of document.querySelectorAll('#form input[name=kind]')) r.addEventListener('change', syncForm);
-for (const ev of ['input', 'change']) document.querySelector('#f-issue input[name=issueUrl]').addEventListener(ev, syncForm);
 
 /* ── Parking a task: setting it aside on purpose, with the reason ── */
 

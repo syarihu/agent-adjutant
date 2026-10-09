@@ -79,8 +79,10 @@ pub(crate) enum Commands {
     },
     /// Tasks handed to this repository's hub
     Task {
+        // Boxed: `task update` has the most options of any command, and unboxed it sets the
+        // size of every `Commands` value.
         #[command(subcommand)]
-        action: TaskAction,
+        action: Box<TaskAction>,
     },
     /// Gates: what an agent has put up for a person to look at
     Gate {
@@ -944,6 +946,10 @@ pub(crate) struct TaskAddArgs {
     /// Have the hub confirm before it starts
     #[arg(long)]
     pub(crate) ask_first: bool,
+    /// The body is all the person said: the hub reads it, fills in the rest and asks on a gate
+    /// before anything starts (what the board's form sends)
+    #[arg(long)]
+    pub(crate) needs_reading: bool,
     /// Hand it to the hub now, rather than leaving it in the backlog
     #[arg(long)]
     pub(crate) queue: bool,
@@ -1009,6 +1015,9 @@ pub(crate) struct TaskFetchIssueArgs {
     pub(crate) hub: Option<String>,
     #[arg(long)]
     pub(crate) id: String,
+    /// Make the issue's title the task's title, not only when the task has none yet
+    #[arg(long)]
+    pub(crate) take_title: bool,
     #[arg(long)]
     pub(crate) json: bool,
 }
@@ -1043,6 +1052,27 @@ pub(crate) struct TaskUpdateArgs {
     /// Who implements once the plan is approved: worker | jules
     #[arg(long)]
     pub(crate) executor: Option<String>,
+    /// What the task is: start | file-and-start | investigate
+    #[arg(long)]
+    pub(crate) kind: Option<String>,
+    /// What counts as done: report-only | verify | pr | review
+    #[arg(long)]
+    pub(crate) done_when: Option<String>,
+    /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify)
+    #[arg(long)]
+    pub(crate) stop_at: Option<String>,
+    /// The issue the task works on, as a URL ('' clears it)
+    #[arg(long)]
+    pub(crate) issue_url: Option<String>,
+    /// The name its worktree and branch take, for a task with no issue to name them ('' clears it)
+    #[arg(long)]
+    pub(crate) worktree_name: Option<String>,
+    /// The card's title (- reads stdin; it cannot be blank)
+    #[arg(long)]
+    pub(crate) title: Option<String>,
+    /// The person confirmed the hub's reading on the gate; refused unless the record can start
+    #[arg(long)]
+    pub(crate) read: bool,
     /// Why it could not be taken, when that is the answer ('' clears it, - reads stdin)
     #[arg(long)]
     pub(crate) note: Option<String>,
