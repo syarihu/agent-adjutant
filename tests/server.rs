@@ -82,8 +82,9 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         tab("agent") < tab("human") && tab("human") < tab("sessions"),
         "the view tabs are not ordered agent, human, sessions"
     );
-    // 要対応 opens the queue, not the first gate's task.
-    assert!(page.contains("id=\"nav-review\" title=\"要対応\" data-action=\"queue\""));
+    // 要対応 is not in the sidebar: the sidebar has 「いまの仕事」 and the boards.
+    assert!(!page.contains("id=\"nav-review\""));
+    assert!(page.contains("id=\"nav-work\""));
     // 着手を促す is the hub panel's, not the title bar's.
     assert!(!page.contains("id=\"btn-nudge\""));
 

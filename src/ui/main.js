@@ -139,7 +139,6 @@ function toggleTheme() {
 // entry per line: the_page_wires_no_inline_handlers reads the keys line by line.
 const ACTIONS = {
   'new-task': () => openForm(),
-  queue: () => goToQueue(),
   work: () => go({ board: 'all', view: 'work', task: null, pane: 'detail' }),
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),

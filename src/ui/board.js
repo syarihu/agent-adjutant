@@ -647,19 +647,6 @@ function judgeGate(gateId) {
   else goToGate(gateId);
 }
 
-/* The レビュー tab: the review view, one queue across every board. Without an item it picks the
-   first one waiting on its own. */
-function goToQueue() {
-  // Already on the queue: stay on the one being read, and on whatever is typed for it.
-  if (view === 'review') return;
-  // Not the item last read in another view: the queue's first is.
-  focused = null;
-  reviewPane = 'judge';
-  if (multiBoard) return go({ view: 'review' });
-  setView('review');
-  renderReview();
-}
-
 /* The review comments of the task the panel is open on, once a person asked for them.
    Kept here rather than in /api/state: listing them is a round trip to GitHub, done when
    somebody wants to choose, and the choice has to survive the panel being redrawn. */
