@@ -4,14 +4,14 @@
    `node --test`. Loaded after my-work-seen.js (the entries) and before my-work.js, which rings. */
 
 /* The kinds the person can choose, and what each is called in a notification's first line. */
-const NOTIFY_STATE_WORD = { gate: '確認待ち', permission: '入力待ち', done: '完了', failed: '失敗' };
+const NOTIFY_STATE_WORD = { gate: '確認待ち', permission: '入力待ち', done: '完了', failed: '失敗', review: 'レビュー依頼' };
 const NOTIFY_BODY_LINES = 3;
 const NOTIFY_BODY_CHARS = 200;
 
 /* What the browser's storage held, read as the settings: a kind that is not a boolean is the default. The defaults
    are in the function, not in constants: core.js reads the prefs while it loads, before this file's constants exist. */
 function notifyPrefs(raw) {
-  const defaults = { waiting: true, done: false, failed: true };
+  const defaults = { waiting: true, done: false, failed: true, review: true };
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const out = {};
   for (const k of Object.keys(defaults)) out[k] = typeof src[k] === 'boolean' ? src[k] : defaults[k];
@@ -127,4 +127,20 @@ function notifyContent(kind, entry, { gate = '', request = '', label = '' } = {}
     : kind === 'permission' ? request
       : notifyTrimMessage(notifyLastMessage(s?.agentSession));
   return { title, body: rest ? `${head}\n${rest}` : head };
+}
+
+/* The notification for the review requests a sync brought in (`arrived`: ids; `records`: the sync's records). One PR is
+   titled with its own title; several say how many. An id with no record (it was gone again by the time the sync ended)
+   still counts. Null when nothing arrived. */
+function notifyReviewContent(arrived, records) {
+  const ids = Array.isArray(arrived) ? arrived : [];
+  if (!ids.length) return null;
+  const byId = new Map((records || []).map(r => [r.id, r]));
+  const recs = ids.map(id => byId.get(id)).filter(Boolean);
+  if (ids.length === 1 && recs.length === 1) {
+    const r = recs[0];
+    const head = [NOTIFY_STATE_WORD.review, (r.repo || '').split('/').pop(), `#${r.number}`, r.author ? `@${r.author}` : ''].filter(Boolean).join(' · ');
+    return { title: r.title || '', body: head };
+  }
+  return { title: `${NOTIFY_STATE_WORD.review} ${ids.length} 件`, body: recs.slice(0, NOTIFY_BODY_LINES).map(r => r.title || '').join('\n') };
 }

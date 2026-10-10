@@ -10,11 +10,11 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js', 'my-work-no
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage } = ctx;
+const { notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
-const DEFAULTS = { waiting: true, done: false, failed: true };
-const ALL = { waiting: true, done: true, failed: true };
+const DEFAULTS = { waiting: true, done: false, failed: true, review: true };
+const ALL = { waiting: true, done: true, failed: true, review: true };
 const entry = (id, items, extra = {}) => ({ id, nwo: 'acme/widget', board: 'acme-widget', ref: id, task: { id, title: `Task ${id}` }, session: null, isHub: false, gates: [], items, ...extra });
 const done = since => ({ kind: 'done', since });
 const failed = since => ({ kind: 'failed', since });
@@ -29,12 +29,18 @@ test('the page rings waits and gates only with permission and the waiting toggle
   assert.strictEqual(notifyPageRings('granted', undefined), false);
 });
 
-test('the settings default to waiting and failed, and garbage is the default', () => {
+test('the settings default to waiting, failed and review, and garbage is the default', () => {
   assert.deepStrictEqual(plain(notifyPrefs(undefined)), DEFAULTS);
   assert.deepStrictEqual(plain(notifyPrefs('x')), DEFAULTS);
   assert.deepStrictEqual(plain(notifyPrefs([true])), DEFAULTS);
   assert.deepStrictEqual(plain(notifyPrefs({ waiting: 'no', done: 1, failed: null })), DEFAULTS);
-  assert.deepStrictEqual(plain(notifyPrefs({ waiting: false, done: true, failed: false })), { waiting: false, done: true, failed: false });
+  assert.deepStrictEqual(plain(notifyPrefs({ waiting: false, done: true, failed: false, review: false })), { waiting: false, done: true, failed: false, review: false });
+  assert.deepStrictEqual(plain(notifyPrefs({ waiting: false, done: true, failed: false, review: 'x' })), { waiting: false, done: true, failed: false, review: true });
+});
+
+test('settings saved before review existed get review on, and keep their other choices', () => {
+  assert.deepStrictEqual(plain(notifyPrefs({ waiting: true, done: false, failed: true })), DEFAULTS);
+  assert.strictEqual(notifyPrefs({ waiting: false, done: true, failed: false }).review, true);
 });
 
 test('the first document rings nothing, and what it holds is learned', () => {
@@ -196,4 +202,26 @@ test('a queued item is final once the document was fetched after it was queued, 
   assert.equal(notifyPendingFinal(2000, null, 3000, MAX), false);
   assert.equal(notifyPendingFinal(2000, null, 17000, MAX), true);
   assert.equal(notifyPendingFinal(2000, 1000, 17000, MAX), true);
+});
+
+const reviewRec = (n, extra = {}) => ({ id: `acme/widget#${n}`, repo: 'Acme/Widget', number: n, title: `Fix ${n}`, author: 'octo', ...extra });
+
+test('nothing arrived is no notification', () => {
+  assert.strictEqual(notifyReviewContent([], [reviewRec(1)]), null);
+  assert.strictEqual(notifyReviewContent(undefined, []), null);
+});
+
+test('one request is titled with the PR title and says repository, number and author', () => {
+  assert.deepStrictEqual(plain(notifyReviewContent(['acme/widget#7'], [reviewRec(7), reviewRec(8)])),
+    { title: 'Fix 7', body: 'レビュー依頼 · Widget · #7 · @octo' });
+  assert.equal(notifyReviewContent(['acme/widget#7'], [reviewRec(7, { author: null })]).body, 'レビュー依頼 · Widget · #7');
+});
+
+test('several requests say how many, with up to three titles, and an id with no record still counts', () => {
+  const recs = [1, 2, 3, 4].map(n => reviewRec(n));
+  const ids = recs.map(r => r.id);
+  assert.deepStrictEqual(plain(notifyReviewContent(ids.slice(0, 3), recs)), { title: 'レビュー依頼 3 件', body: 'Fix 1\nFix 2\nFix 3' });
+  assert.equal(notifyReviewContent(ids, recs).body, 'Fix 1\nFix 2\nFix 3');
+  assert.equal(notifyReviewContent(['acme/widget#1', 'acme/widget#99'], recs).title, 'レビュー依頼 2 件');
+  assert.equal(notifyReviewContent(['acme/widget#99'], recs).title, 'レビュー依頼 1 件');
 });

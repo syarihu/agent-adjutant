@@ -252,13 +252,19 @@ function workBands(rows) {
 /* How many rows are new. */
 const workNewCount = () => work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
 
-/* The sidebar's count: how many rows are new, whichever view is on. It is the tab's too. */
+/* What the sidebar's tab and the page title count: the new rows of both lists, whichever view is on. */
+const workBadgeCount = () => workNewCount() + othersNewCount();
+
+/* The sidebar's count and the two halves of the switch's: how many rows are new in each list, whichever view is on. */
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
-  const n = workNewCount();
-  el.textContent = n;
-  el.classList.toggle('zero', !n);
+  const counts = [[el, workNewCount() + othersNewCount()], [wk('wk-tab-count-task'), workNewCount()], [wk('wk-tab-count-others'), othersNewCount()]];
+  for (const [box, n] of counts) {
+    if (!box) continue;
+    box.textContent = n;
+    box.classList.toggle('zero', !n);
+  }
   renderDocTitle();
 }
 
@@ -296,8 +302,8 @@ function workTrack() {
 window.addEventListener('pagehide', workLeave);
 // Another tab of this browser marked something: the list and the count follow.
 window.addEventListener('storage', e => {
-  if (e.key != null && !e.key.startsWith(WORK_SEEN_PREFIX)) return;
-  if (view === 'work') renderWorkList();
+  if (e.key != null && !e.key.startsWith(WORK_SEEN_PREFIX) && e.key !== OTHERS_SEEN_KEY) return;
+  if (view === 'work') { renderWorkList(); renderOthersList(); }
   renderWorkBadge();
 });
 
@@ -961,7 +967,7 @@ function drawWorkList() {
   const tree = byState ? workTreeByState(listed, chips) : workTreeByParent(listed, workBands([...listed, ...chips]), chipsByRepo, repos);
   work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
-  for (const b of wk('wk-list').querySelectorAll('[data-wk-group]')) b.setAttribute('aria-pressed', String(b.dataset.wkGroup === prefs.workGroup));
+  renderWorkGroupMenu();
   const cells = new Map();
   const rowsByKey = new Map();
   // A poll that failed after one that worked, and a repository none of whose boards could be read: said above
@@ -1136,7 +1142,9 @@ function syncWorkSelection() {
 
 function renderWorkView() {
   if (view !== 'work') return;
+  renderWorkTabs();
   renderWorkList();
+  renderOthersList();
   renderWorkRate();
   syncWorkSelection();
 }
@@ -1213,6 +1221,62 @@ function workTrackParks() {
   }
 }
 
+/* The switch between the two lists: which is pressed, which is shown, and what belongs to one only (the menu of the
+   groupings is the tasks'; the dot is the other's). */
+function renderWorkTabs() {
+  const others = prefs.workTab === 'others';
+  for (const b of wk('wk-list').querySelectorAll('[data-wk-tab]')) b.setAttribute('aria-pressed', String(b.dataset.wkTab === prefs.workTab));
+  wk('wk-task-scroll').hidden = others;
+  wk('ov-scroll').hidden = !others;
+  wk('wk-group-menu-btn').hidden = others;
+  if (others) closeWorkGroupMenu();
+  renderWorkGroupMenu();
+  renderOthersStaleDot();
+}
+
+/* ── the menu of the groupings: the icon shows the one in use ── */
+
+const WORK_GROUP_WORD = { parent: ['account_tree', '親 Issue'], state: ['view_agenda', '状態'] };
+const workGroupMenuItems = () => [...wk('wk-group-menu').querySelectorAll('[role="menuitemradio"]')];
+
+function renderWorkGroupMenu() {
+  const [icon, word] = WORK_GROUP_WORD[prefs.workGroup];
+  const btn = wk('wk-group-menu-btn');
+  btn.querySelector('.material-symbols-outlined').textContent = icon;
+  btn.setAttribute('aria-label', `まとめ方: ${word}`);
+  btn.title = `まとめ方: ${word}`;
+  for (const b of workGroupMenuItems()) b.setAttribute('aria-checked', String(b.dataset.wkGroup === prefs.workGroup));
+}
+
+function openWorkGroupMenu() {
+  wk('wk-group-menu').hidden = false;
+  wk('wk-group-menu-btn').setAttribute('aria-expanded', 'true');
+  (workGroupMenuItems().find(b => b.getAttribute('aria-checked') === 'true') || workGroupMenuItems()[0]).focus();
+}
+
+/* Shut. `refocus` gives the keyboard back to the button, for when the menu was used from the keyboard or chosen from. */
+function closeWorkGroupMenu(refocus = false) {
+  const menu = wk('wk-group-menu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  wk('wk-group-menu-btn').setAttribute('aria-expanded', 'false');
+  if (refocus) wk('wk-group-menu-btn').focus();
+}
+
+wk('wk-group-menu-btn').addEventListener('click', () => { if (wk('wk-group-menu').hidden) openWorkGroupMenu(); else closeWorkGroupMenu(true); });
+wk('wk-group-menu').addEventListener('keydown', e => {
+  const items = workGroupMenuItems();
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeWorkGroupMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1) + items.length) % items.length].focus();
+  } else if (e.key === 'Tab') closeWorkGroupMenu();
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#wk-group-menu, #wk-group-menu-btn')) closeWorkGroupMenu();
+});
+
 wk('wk-list').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
@@ -1236,7 +1300,15 @@ wk('wk-list').addEventListener('click', e => {
     const r = work.rowsByKey.get(b.dataset.wk);
     return r && selectWorkRow(r);
   }
+  if ((b = e.target.closest('[data-wk-tab]'))) {
+    if (prefs.workTab === b.dataset.wkTab) return;
+    prefs.workTab = b.dataset.wkTab;
+    savePrefs();
+    renderWorkTabs();
+    return renderOthersList();
+  }
   if ((b = e.target.closest('[data-wk-group]'))) {
+    closeWorkGroupMenu(true);
     if (prefs.workGroup === b.dataset.wkGroup) return;
     prefs.workGroup = b.dataset.wkGroup;
     savePrefs();

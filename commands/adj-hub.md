@@ -1142,8 +1142,9 @@ key as it is). Plus:
 
 ```bash
 gh pr list -R <codeRepo> --author @me --state open --json number,title,url,isDraft,statusCheckRollup
-gh pr list -R <codeRepo> --search "review-requested:@me" --json number,title,url
 ```
+
+The PRs others asked you to review are not collected here: they are on the board (see "Open PRs you were asked to review").
 
 ### Step 3: Display
 
@@ -1174,7 +1175,7 @@ machine rows that come with the agent's report, and use it in "2. Claim it".
   #n | title | draft/open | CI
 
 [Review Requested]
-  #n | title
+  on the board: 「いまの仕事」 → 「AI 下読み」 (see "Open PRs you were asked to review")
 ```
 
 ---
@@ -2651,11 +2652,13 @@ sets of conventions.
 
 ## Open PRs you were asked to review
 
-```bash
-gh pr list -R <codeRepo> --search "review-requested:@me" --json number,title,url
-```
+They are on the board, not in this terminal: 「いまの仕事」 → 「AI 下読み」, on the resident server. Do not run
+`gh pr list` for them. The list is read from GitHub by 「同期」 on that page (nothing reads it by itself), and shows
+each PR's state, size and new requests.
 
-Show them, let the user pick one or all, `open <url>`.
+Tell the user to open it. Its address is the resident server's `?view=work` page: take `board.url`, replace the
+`/b/<slug>/` path with `/`, and add `view=work` to the query (keep `token`). When `board.resident` is `false`, the list
+is not there: say it needs the resident server (`adj server`), and do not fall back to `gh pr list`.
 
 ---
 

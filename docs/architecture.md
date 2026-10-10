@@ -198,7 +198,7 @@ repository (the repository's own board, which lists its parent-task hubs' sessio
 else each parent-task board), joins each worker session to its task, and lists a session once
 however many carriers name it. It also lists what waits on the person with no row of its own (`turns`:
 the open gates of each carrier, and the tasks whose PR is the person's), which the page merges with the
-rows to tell what is new from what was read (`src/ui/my-work-seen.js`). The resident keeps the serialized document for 1500 ms
+rows to tell what is new from what was read (`src/ui/my-work-seen.js`; the read marks are the page's own, in the browser's local storage under `adj.seenWork.<owner/repo>`, and the list of PRs others asked you to review keeps its own under `adj.seenOthers`). The resident keeps the serialized document for 1500 ms
 (`Resident::work_cache`), so several open pages polling every couple of seconds read the boards once
 between them. A board served on its own answers it with 404.
 
@@ -421,3 +421,23 @@ request newer than your review that went away, is `done` as `withdrawn`; an appr
 while `ai.status` is `queued` or `running`, `ai-ready` when it is `ready`.
 
 Like every record here, unknown keys (also inside `events` and `ai`) are kept on a save.
+
+### The page
+
+「いまの仕事」 has a second list, 「AI 下読み」 (`src/ui/my-work-others.js` is the pure half, `my-work-others-view.js` draws it),
+chosen by the switch in its heading row, and only on the resident server. It reads `GET /api/others` with the other polls
+(every 2 s while 「いまの仕事」 is open, every 10 s elsewhere) and calls `POST /api/others/sync` only when the person presses 「同期」. A read
+that fails keeps the list and the count as they were.
+
+- **Stale.** The list is stale when `lastSync.at` is more than 30 minutes before the server's time (the document's `now` plus the time since it was read):
+  a banner, the sync time in the warning colour and a dot on the switch, until the next sync. A list never synced is not stale.
+- **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
+  time the person acted on it (`ai.startedAt`). A record in `waiting-on-author` or `done` is never new. The marks are
+  `{ "<record id>": { read } }`, in server seconds, in the browser's local storage under `adj.seenOthers`. The sidebar's badge and the page
+  title count the new rows of both lists, whatever the repository chips narrow the list to.
+- **Notification.** The tab whose sync answered 200 with a non-empty `arrived` rings 「レビュー依頼」 once, with the tag `adj-review-<lastSync.at>`:
+  the PR's title for one, 「レビュー依頼 N 件」 for several. A push alone is not in `arrived`, so it does not ring. It is a choice in the page's
+  notification dialog, on by default.
+- **Optional fields that later issues add.** The page reads them when they are there: `hub` (`{state, slug, sessionId, running, max, startable}`)
+  in the document, `ai.counts` (`{attention, check, drafts}`) on a record, and what puts a record out of review. Without `hub` the page
+  shows the code-review hub as stopped: AI 下読み is unavailable while the sync and the list work.

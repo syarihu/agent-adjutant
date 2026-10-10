@@ -419,8 +419,8 @@ such list, and there it opens the session's terminal). With no such page open, `
 A wait the page was left to is looked at again if the page closes or sleeps while the session still
 waits, and rings `notification` then, so a late reminder is possible but silence is not.
 `send` and `tell` are not affected: they ring `notification` as before.
-Which of waiting, done and failed the page notifies for is set in the page's notification dialog (the
-bell button; waiting and failed are on by default) and is kept in the browser; turning waiting off
+Which of waiting, done, failed and review requests the page notifies for is set in the page's notification dialog (the
+bell button; waiting, failed and review requests are on by default) and is kept in the browser; turning waiting off
 hands waits and gates back to `notification` within about 90 seconds. While a notifying page is open,
 waits it keeps quiet (a parked task, the row open in a visible tab) do not ring `notification` either.
 
@@ -529,7 +529,7 @@ The addresses of the old セッション tab (`?view=sessions[&task=<ref>]`, `&s
 is in the middle column whichever tab of the panel is on.
 
 **いまの仕事 (the work under way).** The 「いまの仕事」 tab of the sidebar's switch (`?view=work`), on the resident server only, is one view of
-the work under way in every repository, in three columns: the list in the sidebar, the terminal in the middle and the task panel on the right. The list has two groupings: 「親 Issue」
+the work under way in every repository, in three columns: the list in the sidebar, the terminal in the middle and the task panel on the right. The heading row of the list is a switch between 「タスク」 (the list described here) and 「AI 下読み」 (below), each half with its own count of new rows. The tasks have two groupings, chosen in a menu behind the icon at the end of that row (the icon shows the one in use, and the menu is there only on 「タスク」): 「親 Issue」
 (the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
 with the tasks that have no parent in the group of the repository's hub, which comes first, above the parent issues; the owner heading is shown even when there is only one owner,
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
@@ -579,6 +579,14 @@ SHA, diff size with the files, CI, reviewers, your last review and the commits p
 (`requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done`). A record done for a day is removed by the next
 sync. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
 
+**AI 下読み.** The other half of the switch lists those records, one group per repository (marked when adj has no board for it), the oldest request
+first and the done ones last, with 「同期」 and the time of the last sync, and a chip per repository to narrow the list. A row has the PR's title, number, author,
+`+additions -deletions`, files, a size (S below 200 changed lines, M below 1000, L above), the time since the request and a line for its state. Selecting a row opens the PR on GitHub.
+A row is new when a request, a re-request, a finished read-through or a push is later than when you pressed 既読 on it (or started its AI 下読み); a PR waiting on its author, or done, never is.
+When the last sync is more than 30 minutes old the list says so, with 「いま同期する」, and the half of the switch gets a dot. A sync that brings in a request or a re-request rings a desktop notification once
+(「レビュー依頼 N 件」 for several); a push alone does not. The code-review hub's row says whether AI 下読み is available; while it is not, the sync and the list work. The read marks are in this browser (`adj.seenOthers`).
+The hub's own procedure no longer lists these PRs in its terminal: it points at this list.
+
 **新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
 session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
@@ -598,7 +606,7 @@ new again only when something changes what you have to do: a gate opens, a permi
 worker finishes a turn with no gate open, a session fails, the PR turns to yours again, or you take a park off (置くのをやめる,
 `adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to
 checks does not. Two buttons: `done` on a new row marks it read, and `done_all` in the 新着 header marks every new row
-read. The badge on the sidebar's 「いまの仕事」 tab counts the new rows, and is refreshed every 10 seconds while another
+read. The badge on the sidebar's 「いまの仕事」 tab counts the new rows of both lists, and is refreshed every 10 seconds while another
 view is open; it is the only count in the sidebar, and on the resident server it is the number in front of the page's
 title (a board served alone puts what waits on you there). The checkbox 「処理したら次へ」 in the 新着 header (on by
 default, kept in the browser) opens the next new row, in the order the list shows them, once you answer or close a gate on

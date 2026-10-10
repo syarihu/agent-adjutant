@@ -300,10 +300,10 @@ function markHubButtons() {
   if (btn) btn.classList.toggle('on', !!selectedTaskId && selectedTaskId === HUB_REF + ownHubId());
 }
 
-/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, on
+/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, both lists of it, on
    a board served alone what waits on the person on it. */
 function renderDocTitle() {
-  const sum = multiBoard ? workNewCount() : waitingIn() + (state.waits || []).length;
+  const sum = multiBoard ? workBadgeCount() : waitingIn() + (state.waits || []).length;
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
 }
 
@@ -869,7 +869,7 @@ async function setPark(task, base, parked) {
 }
 
 /* The notification settings: the browser's permission, and which kinds of the page's notifications ring. */
-const NOTIFY_BOXES = { waiting: 'notify-waiting', done: 'notify-done', failed: 'notify-failed' };
+const NOTIFY_BOXES = { waiting: 'notify-waiting', done: 'notify-done', failed: 'notify-failed', review: 'notify-review' };
 function drawNotifyDialog() {
   const perm = Notification.permission;
   parkEl('notify-permission-text').textContent = perm === 'granted' ? 'ブラウザの通知は許可されています'

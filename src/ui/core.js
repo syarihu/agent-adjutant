@@ -44,7 +44,7 @@ const PREF_KEY = 'adj-board-split';
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row.
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  railWidth:300, workGroup:'parent', workFolded:[] },
+  railWidth:300, workGroup:'parent', workFolded:[], workTab:'task', othersRepo:'' },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -61,6 +61,9 @@ if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 prefs.railWidth = Math.min(560, Math.max(260, Number(prefs.railWidth) || 300));
 delete prefs.workListWidth;
 if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
+// Which list 「いまの仕事」 shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
+if (prefs.workTab !== 'others') prefs.workTab = 'task';
+prefs.othersRepo = typeof prefs.othersRepo === 'string' ? prefs.othersRepo.toLowerCase() : '';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
 // rings waits and gates itself and the server's `notification` stays silent for them; see pageRings.
@@ -259,7 +262,7 @@ async function boardApi(base, path, options = {}) {
     headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status });
   return data;
 }
 
@@ -271,7 +274,7 @@ let seenGateIds = null;
 
 /* The kinds the page rings for, in words, for the button's tooltip. Single-board mode has no 「いまの仕事」, so only waits. */
 function notifyKindsText() {
-  const on = [prefs.notify.waiting && '確認待ち', multiBoard && prefs.notify.done && '完了', multiBoard && prefs.notify.failed && '失敗'].filter(Boolean);
+  const on = [prefs.notify.waiting && '確認待ち', multiBoard && prefs.notify.done && '完了', multiBoard && prefs.notify.failed && '失敗', multiBoard && prefs.notify.review && 'レビュー依頼'].filter(Boolean);
   return on.length ? on.join('・') : 'なし';
 }
 
@@ -289,7 +292,7 @@ function updateNotifyButton() {
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
     btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications</span><span>通知を許可</span>';
-    btn.title = `通知を許可すると、確認待ち・完了・失敗のデスクトップ通知を選んで受け取れます（いまは ${notifyKindsText()}）`;
+    btn.title = `通知を許可すると、確認待ち・完了・失敗・レビュー依頼のデスクトップ通知を選んで受け取れます（いまは ${notifyKindsText()}）`;
   }
 }
 
@@ -652,6 +655,7 @@ async function refresh(force = false) {
   // the terminal read, and there is none while nothing is selected.
   if (view === 'work') {
     refreshWork(force);
+    refreshOthers(force);
     if (nav.board === 'all' || !nav.board) return;
   }
   if (scopeAll()) {

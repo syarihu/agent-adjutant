@@ -182,6 +182,7 @@ async function boot() {
   setInterval(refresh, 2000);
   // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
   refreshWork();
-  setInterval(() => { refreshBoards(); if (view !== 'work') refreshWork(); }, 10000);
+  refreshOthers();
+  setInterval(() => { refreshBoards(); if (view !== 'work') { refreshWork(); refreshOthers(); } }, 10000);
 }
 boot();
