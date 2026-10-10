@@ -63,12 +63,12 @@ pub(crate) fn sync_with(root: &Path, scope: &Scope, now: i64, gh: Gh) -> Result<
     let stamp = utc_stamp(now);
     let whole = |why: String| failed_as_a_whole(root, &stamp, why);
 
-    let me = github::viewer(gh, deadline).map_err(&whole)?;
+    let me = github::viewer(gh, deadline).map_err(whole)?;
     // With no owner there is nothing to search: no `--owner` would search all of GitHub.
     let (hits, truncated) = if scope.owners.is_empty() {
         (Vec::new(), false)
     } else {
-        github::search(gh, &scope.owners, deadline).map_err(&whole)?
+        github::search(gh, &scope.owners, deadline).map_err(whole)?
     };
 
     // The hits, and every record that is not done: GitHub stops listing you as a reviewer once
