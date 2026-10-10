@@ -204,16 +204,18 @@ function panelRefOf(id) {
   return t ? t.id : id;
 }
 
-/* A session, in the panel: on a resident server in 「いまの仕事」, on the board its hub belongs to, on its task when it has one and
-   as the hub or as itself otherwise; a board served alone has no list of work, and the panel opens over its board. In 「すべて」
-   a session is another board's, told apart by the board it was read from. */
+/* A session, in the panel over the board it is pressed on: its task when it has one, else the hub or itself, as a task's card
+   opens it, and the board stays. Called while 「いまの仕事」 is showing on a resident server, it opens there instead, on the
+   board its hub belongs to, as that view has no board of its own to open the panel over. In 「すべて」 a session is another board's, told
+   apart by the board it was read from. */
 function openSessionRef(ref) {
   const s = (state.sessions || []).find(x => sessionRef(x) === ref);
   if (!s) return;
   const owned = taskOfSession(s);
   const subject = s.kind === 'hub' ? HUB_REF + s.id : owned ? owned.id : SESS_REF + s.id;
-  if (!multiBoard) return openTaskPanel(subject, hasSession(s) ? 'term' : 'detail');
-  go({ board: s._slug || boardOfSession(s).slug || nav.board, view: 'work', task: subject, pane: 'detail' }, { replace: subject === nav.task });
+  if (multiBoard && view === 'work')
+    return go({ board: s._slug || boardOfSession(s).slug || nav.board, view: 'work', task: subject, pane: 'detail' }, { replace: subject === nav.task });
+  openTaskPanel(subject, hasSession(s) ? 'term' : 'detail');
 }
 
 /* A worker's task title when the server did not give one. The task of another board is not in
