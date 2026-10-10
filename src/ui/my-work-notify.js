@@ -94,9 +94,9 @@ function notifyEndEvents(entries, state, { prefs, openId, visible, okRepos }) {
   return { events, seen, learned };
 }
 
-/* What the agent said, cut to a few lines and a few characters so a notification stays one. */
+/* What the agent said, without its Markdown markers, cut to a few lines and a few characters so a notification stays one. */
 function notifyTrimMessage(text) {
-  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = mdPlain(text || '').split('\n').map(l => l.trim()).filter(Boolean);
   let out = lines.slice(0, NOTIFY_BODY_LINES).join('\n');
   let cut = lines.length > NOTIFY_BODY_LINES;
   if (out.length > NOTIFY_BODY_CHARS) { out = out.slice(0, NOTIFY_BODY_CHARS); cut = true; }

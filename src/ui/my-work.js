@@ -716,9 +716,10 @@ const workInboxHtml = h => [
 /* How many things happened since the person left the task (#556): nothing is drawn for none. */
 const workAwayChip = n => n > 0 ? `<span class="wk-away" aria-label="離れていた間に ${n} 件" title="離れていた間に ${n} 件">+${n}</span>` : '';
 
-/* The first line of what the agent said at the end of its turn, cut to one line by the stylesheet. */
+/* The first line of what the agent said at the end of its turn, cut to one line by the stylesheet; its Markdown markers
+   are dropped, as this is one line of plain text. */
 const workSaidHtml = message => {
-  const line = String(message).split('\n').map(x => x.trim()).find(Boolean);
+  const line = mdPlain(String(message)).split('\n').map(x => x.trim()).find(Boolean);
   return line ? `<span class="wk-line msg">${esc(line)}</span>` : '';
 };
 

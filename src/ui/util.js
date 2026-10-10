@@ -226,6 +226,33 @@ function md(src) {
   return html;
 }
 
+/* What md() would draw, as plain text for places that show one line: the markers it reads are dropped, lines that only
+   frame something (fences, table separators, rules) become blank. Not HTML: escape where drawn. */
+function mdPlain(src) {
+  let inCode = false;
+  return String(src ?? '').split('\n').map(raw => {
+    if (/^```/.test(raw)) { inCode = !inCode; return ''; }
+    if (inCode) return raw;
+    const t = raw.trim();
+    if (/^(\*\*\*|---|___)$/.test(t)) return '';
+    let line = raw;
+    if (t.startsWith('|') && t.endsWith('|')) {
+      const cells = t.slice(1, -1).split('|').map(c => c.trim());
+      if (cells.every(c => /^:?-+:?$/.test(c))) return '';
+      line = cells.join(' · ');
+    } else {
+      line = line.replace(/^#{1,4}\s+/, '').replace(/^>\s*/, '').replace(/^(\s*)[-*+]\s+/, '$1');
+    }
+    // Code spans are set aside, not split off, so a marker around one (**`x`**) still pairs up, and what is inside
+    // them is kept as written.
+    const codes = [];
+    return line.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`)
+      .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/~~([^~]+)~~/g, '$1')
+      .replace(/\[([^\]]+)\]\(https?:\/\/[^\s)]+\)/g, '$1')
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]);
+  }).join('\n');
+}
+
 /* `20260922T041233Z` in the reader's own time: 9/22 13:12. */
 function when(stamp) {
   const secs = stampSecs(stamp);
