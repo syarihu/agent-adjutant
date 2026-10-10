@@ -384,6 +384,17 @@ test('the dialog of a task fills the width: a grid of cards two to a row, an ind
   assert.match(grid, /440px/);
   assert.match(grid, /calc\(\(100% - 16px\) \/ 2\)/);
   assert.match(rules('.cd-wide'), /grid-column:\s*1\s*\/\s*-1/);
+  // An answered gate is one block: a bar and a tinted heading, its parts in a grid of their own, wider apart than the panels.
+  const parts = rules('.cd-gate-parts');
+  assert.match(parts, /440px/);
+  assert.match(parts, /calc\(\(100% - 16px\) \/ 2\)/);
+  assert.match(rules('.cd-gate-parts > .cd-wide'), /grid-column:\s*1\s*\/\s*-1/);
+  const gap = sel => Number(/\bgap:\s*(\d+)px/.exec(rules(sel))?.[1]);
+  assert.ok(gap('[data-cd-group="answered"] > .cd-grid') > gap('.cd-gate-parts'));
+  assert.match(rules('.cd-gate'), /border-left:\s*4px solid var\(--md-sys-color-primary\)/);
+  assert.match(rules('.cd-gate-head'), /surface-container-highest/);
+  const gateRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(x => /\.cd-gate|\.cd-part/.test(x[1])).map(x => x[2]).join(' ');
+  assert.doesNotMatch(gateRules, /#[0-9a-f]{3,8}\b/i);
   assert.match(rules('.card-dialog-index'), /(?:flex:\s*0 0 232px|width:\s*232px)/);
   assert.match(rules('.card-dialog-index'), /overflow:\s*auto/);
   const media = css.match(/@media \(max-width: 720px\) \{([\s\S]*?\})\s*\}/);

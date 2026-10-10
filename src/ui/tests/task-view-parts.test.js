@@ -67,7 +67,7 @@ load([
     'reviewTab', 'checkTab'].map(n => fn(tvSrc, n)),
   cut(decSrc, /^const OUTCOME = [^\n]*\n/m),
   ...['cardDialogWaiting'].map(n => cst(dlgSrc, n)),
-  ...['cardDialogTaskGroups', 'cardDialogResolveTarget', 'cardDialogDockGate', 'cardDialogTaskHtml', 'cardDialogDockHtml', 'cardDialogActiveGroup']
+  ...['cardDialogAnsweredHeadHtml', 'cardDialogTaskGroups', 'cardDialogResolveTarget', 'cardDialogDockGate', 'cardDialogTaskHtml', 'cardDialogDockHtml', 'cardDialogActiveGroup']
     .map(n => cut(dlgSrc, new RegExp(`^function ${n}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm'))),
   ...['gateWaitHeadHtml', 'gateJudgeHtml', 'reviewPanels', 'roundsCardHtml', 'findingsCardHtml',
     'checkPanels', 'commandsCardHtml', 'manualCardHtml'].map(n => fn(decSrc, n)),
@@ -314,6 +314,32 @@ test('the plan shown in the plan group keeps its 決定事項 there and not agai
   assert.ok(cardOf(gs, 'plan:decided').html.includes('chose A'));
   assert.ok(!cardOf(gs, 'gate:p-9').html.includes('chose A'));
   assert.ok(cardOf(gs, 'gate:p-8').html.includes('older choice'));
+});
+
+test('an answered gate is one wide block with its own heading, its parts in a grid', () => {
+  const p = dgate('p-1', 'plan', '2026-10-01T00:00:00Z', { ...plan, id: 'p-1', title: '<img src=x>', openedAt: '2026-10-01T00:00:00Z' });
+  const d = dgate('d-1', 'diff', '2026-10-02T00:00:00Z', { ...diffGate, id: 'd-1', openedAt: '2026-10-02T00:00:00Z', decision: 'changes', comment: '<b>x</b>', answeredAt: 'a' });
+  const latest = dgate('d-2', 'diff', '2026-10-03T00:00:00Z', { id: 'd-2', decision: 'approve' });
+  const gs = groupsOf([p, d, latest]);
+  const pc = cardOf(gs, 'gate:p-1'), dc = cardOf(gs, 'gate:d-1');
+  assert.ok(pc.wide && dc.wide);
+  for (const c of [pc, dc]) {
+    assert.ok(c.html.startsWith('<div class="cd-gate"><div class="cd-gate-head">'));
+    assert.ok(c.html.includes('cd-gate-title'));
+    assert.ok(!c.html.includes('<status>'), 'the panel-style head is not in this path');
+  }
+  assert.ok(dc.html.includes('【diff】Diff'));
+  assert.ok(dc.html.includes('差し戻した') && dc.html.includes('cd-badge cd-bad') && dc.html.includes('ago(a)に回答'));
+  assert.ok(dc.html.includes('&lt;b&gt;x&lt;/b&gt;') && dc.html.includes('止めた理由: r1'));
+  assert.ok(!pc.html.includes('<img'));
+  assert.ok(pc.html.includes('&lt;img src=x&gt;') && pc.html.includes('承認した') && !pc.html.includes('cd-badge cd-bad'));
+  assert.ok(/<div class="cd-part"><div class="panel" data-expand="facts"/.test(dc.html));
+  assert.ok(pc.html.includes('<div class="cd-part cd-wide"><choices p-1 false></div>'));
+  assert.ok(/<div class="cd-part cd-wide"><div class="panel" data-expand="rounds"/.test(dc.html));
+  assert.ok(/<div class="cd-part cd-wide"><div class="panel" data-expand="findings"/.test(dc.html));
+  const bare = cardOf(gs, 'gate:d-2');
+  for (const cls of ['cd-gate-when', 'cd-gate-answer', 'cd-gate-why', 'cd-gate-parts']) assert.ok(!bare.html.includes(cls), cls);
+  wait([]);
 });
 
 test('in the dialog the wait head leaves out the focus it carries and the plan head leaves out the chips', () => {

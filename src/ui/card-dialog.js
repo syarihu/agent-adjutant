@@ -377,6 +377,20 @@ const cardDialogTask = () => selectedTaskId && !isHubRef(selectedTaskId) ? taskB
 /* The waiting gates of the task, oldest first, with their open time as `gatesOf` orders them. */
 const cardDialogWaiting = all => all.filter(g => g.wait !== false && isWaiting(g));
 
+/* The heading of an answered gate's block: what it was, how and when it was answered, and the answer. */
+function cardDialogAnsweredHeadHtml(g) {
+  const bad = ['changes', 'reject'].includes(g.decision);
+  const picked = g.choice ? (g.choices || []).find(c => c.id === g.choice) : null;
+  const answer = [picked ? `選んだ案: ${picked.label}` : '', g.comment || ''].filter(Boolean).join(' — ');
+  const why = stopWhy(g);
+  return `<div class="cd-gate-head"><div class="cd-gate-title-row">` +
+    `<h4 class="cd-gate-title">${esc(`【${kindOf(g.kind)[0]}】${g.title}`)}</h4>` +
+    `<span class="cd-badge${bad ? ' cd-bad' : ''}">${esc(DECISION[g.decision] || '回答済み')}</span>` +
+    (g.answeredAt ? `<span class="cd-gate-when" title="${esc(when(g.answeredAt))}">${esc(ago(g.answeredAt))}に回答</span>` : '') +
+    `</div>` + (answer ? `<p class="cd-gate-answer">${esc(answer)}</p>` : '') +
+    (why.length ? `<p class="cd-gate-why${stopBad(g) ? ' cd-bad' : ''}">止めた理由: ${esc(why.join(' / '))}</p>` : '') + `</div>`;
+}
+
 /* What the dialog holds, as groups of cards, in the order they are read: what waits, the review, the diff, the
    plan, what was answered, 経過, 詳細. A group or card with nothing to say is left out, and so are the panel's 記録 list
    and 工程. The choices of every waiting gate can be picked here.
@@ -451,13 +465,19 @@ function cardDialogTaskGroups(task, all) {
     card('plan:decided', '決定事項', plan ? decidedHtml(plan) : '', { expand: at('decided', plan) }),
   ];
 
-  // 5. the gates answered: one card for each
+  // 5. the gates answered: one wide block for each, a heading over its parts
   const answered = all.filter(g => !isWaiting(g) && g.wait !== false).map(g => {
-    const html = gateHeadHtml(g, [g]) + framesHtml(g) + reportCardHtml(g) + choicesHtml(g, false) +
-      (g.kind === 'verify' ? checkPanels(g) + runHtml(g) : g.kind === 'diff' && g !== gR ? reviewPanels(g) : '') +
+    const part = (html, wide = false) => html ? `<div class="cd-part${wide ? ' cd-wide' : ''}">${html}</div>` : '';
+    const parts = [
+      part(factsCardHtml(g)), part(focusCardHtml(g)), part(unsureCardHtml(g)), part(reportCardHtml(g)),
+      part(choicesHtml(g, false), true),
+      ...(g.kind === 'verify' ? [part(commandsCardHtml(g), true), part(manualCardHtml(g)), part(runHtml(g))]
+        : g.kind === 'diff' && g !== gR ? [part(roundsCardHtml(g), true), part(findingsCardHtml(g), true)] : []),
       // The plan shown in the plan group has its 決定事項 there.
-      (g === plan ? '' : decidedHtml(g));
-    return card(`gate:${gateRef(g)}`, `【${kindOf(g.kind)[0]}】${g.title}`, html, { badge: DECISION[g.decision] || '回答済み', expand: [null, gateRef(g)], gate: gateRef(g) });
+      part(g === plan ? '' : decidedHtml(g)),
+    ].join('');
+    const html = `<div class="cd-gate">${cardDialogAnsweredHeadHtml(g)}${parts ? `<div class="cd-gate-parts">${parts}</div>` : ''}</div>`;
+    return card(`gate:${gateRef(g)}`, `【${kindOf(g.kind)[0]}】${g.title}`, html, { badge: DECISION[g.decision] || '回答済み', wide: true, expand: [null, gateRef(g)], gate: gateRef(g) });
   });
 
   // 7. the agent's last words, and the rest of what is known of the task
