@@ -244,9 +244,9 @@ function mdPlain(src) {
       line = line.replace(/^#{1,4}\s+/, '').replace(/^>\s*/, '').replace(/^(\s*)[-*+]\s+/, '$1');
     }
     // Code spans are set aside, not split off, so a marker around one (**`x`**) still pairs up, and what is inside
-    // them is kept as written.
+    // them is kept as written. A NUL already in the message is dropped so it cannot pass for a placeholder.
     const codes = [];
-    return line.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`)
+    return line.replace(/\u0000/g, '').replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`)
       .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/~~([^~]+)~~/g, '$1')
       .replace(/\[([^\]]+)\]\(https?:\/\/[^\s)]+\)/g, '$1')
       .replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]);

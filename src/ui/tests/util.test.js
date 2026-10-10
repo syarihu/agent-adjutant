@@ -50,4 +50,5 @@ test('mdPlain leaves what md does not read', () => {
   assert.strictEqual(mdPlain('1. first'), '1. first');
   assert.strictEqual(mdPlain(undefined), '');
   assert.strictEqual(mdPlain('`**kept**`'), '**kept**');
+  assert.strictEqual(mdPlain('a \u00000\u0000 b \u00009\u0000 `x`'), 'a 0 b 9 x');
 });
