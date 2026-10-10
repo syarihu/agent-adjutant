@@ -22,6 +22,41 @@ pub fn utc_stamp(epoch_secs: i64) -> String {
     )
 }
 
+/// An adj stamp out of the time GitHub writes, `YYYY-MM-DDTHH:MM:SSZ` (a fractional second
+/// allowed), so every time a record holds is one format and compares as a string. Any other
+/// shape, an offset other than `Z` included, is `None`: guessing a zone would be wrong for
+/// somebody.
+pub fn stamp_from_iso(iso: &str) -> Option<String> {
+    let b = iso.as_bytes();
+    // The shape of `YYYY-MM-DDTHH:MM:SS`, digit or the one character that stands there.
+    const SHAPE: &[u8; 19] = b"dddd-dd-ddTdd:dd:dd";
+    if b.len() < 20
+        || !b[..19].iter().zip(SHAPE).all(|(&c, &want)| match want {
+            b'd' => c.is_ascii_digit(),
+            want => c == want,
+        })
+    {
+        return None;
+    }
+    let rest = &iso[19..];
+    let zone = match rest.strip_prefix('.') {
+        Some(fraction) => fraction
+            .strip_suffix('Z')
+            .filter(|f| !f.is_empty() && f.bytes().all(|c| c.is_ascii_digit())),
+        None => (rest == "Z").then_some(rest),
+    };
+    zone?;
+    Some(format!(
+        "{}{}{}T{}{}{}Z",
+        &iso[0..4],
+        &iso[5..7],
+        &iso[8..10],
+        &iso[11..13],
+        &iso[14..16],
+        &iso[17..19]
+    ))
+}
+
 /// Howard Hinnant's days-from-civil, inverted. Shifting the era to start in March makes the
 /// leap day the last day of the year, which is what removes the month-length special cases.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
