@@ -571,6 +571,14 @@ openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt`
 gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
 when you last typed into it.
 
+The PRs that asked for your review are kept apart from tasks, one record each, in the repositories of the
+owners adj has a board for. `POST /api/others/sync` (the resident only) reads them from GitHub: the open PRs that
+ask for you directly, and every record not yet done, by number. It runs only when asked, never at start or on a timer.
+`GET /api/others` returns `{now, lastSync, records}`; each record carries the PR's title, author, branches, head
+SHA, diff size with the files, CI, reviewers, your last review and the commits pushed since, and a derived `state`
+(`requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done`). A record done for a day is removed by the next
+sync. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
+
 **新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
 session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
@@ -1412,13 +1420,14 @@ mail       inbox, outbox, delivery and wake, reading an agent's screen
 task       task records, their operations and the GitHub reads behind them
 gate       gate records and their operations
 jules      Jules sessions: starting one, following it, relaying review comments
+others     PRs other people asked you to review: their records, the sync that reads them, the state derived from them
 lifecycle  starting, stopping, resuming, closing, focusing and linking hubs and workers
 board      the daemon, the resident server, the read model, the background jobs, and the page's session and hub actions
 transport  cli, mcp and board_http: read input, call an operation, word the result
 ```
 
 The list is bottom first: a module may use the ones above it, never one below it; `lib.rs` and
-`main.rs` are the crate roots over all ten. `scripts/check-layering.sh` enforces the arrows, and CI
+`main.rs` are the crate roots over all eleven. `scripts/check-layering.sh` enforces the arrows, and CI
 runs it. As long as it passes, splitting into a Cargo workspace later stays a mechanical move.
 
 [docs/architecture.md](docs/architecture.md) has the details: a picture of the layers, what each

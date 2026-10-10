@@ -12,7 +12,8 @@ use super::assets::UI_HTML;
 use super::auth::{page_rings, refuse};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
-use crate::board::view::{boards, work};
+use crate::board::view::{boards, others, work};
+use crate::others::SyncError;
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -117,6 +118,28 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
                 500,
                 &json!({ "error": "could not build the work list" }).to_string(),
             ),
+        },
+        ("GET", "/api/others") => http::json(
+            out,
+            200,
+            &serde_json::to_string(&others(&resident.root)).unwrap_or_default(),
+        ),
+        // Run on this connection's own thread, as the resident gives each one: a sync takes up
+        // to its 30 seconds without holding any other request up.
+        ("POST", "/api/others/sync") => match crate::others::sync(&resident.root) {
+            Ok(synced) => http::json(
+                out,
+                200,
+                &serde_json::to_string(&synced).unwrap_or_default(),
+            ),
+            Err(SyncError::Busy) => http::json(
+                out,
+                409,
+                &json!({ "error": "a sync is already running", "busy": true }).to_string(),
+            ),
+            Err(SyncError::Failed(why)) => {
+                http::json(out, 400, &json!({ "error": why }).to_string())
+            }
         },
         _ => no_such_route(out),
     }

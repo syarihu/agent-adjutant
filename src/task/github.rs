@@ -349,7 +349,7 @@ fn read_chunk(host: &str, refs: &[&PrRef], deadline: Instant) -> (Vec<Answer>, O
 /// names no alias. Those pass, and the round counts as a failed read. A typed error that names
 /// an alias (`NOT_FOUND`, `FORBIDDEN`, `INSUFFICIENT_SCOPES`, ...) is that card's own business:
 /// it will not go away by asking again, so it must not hold up the others.
-pub(super) fn unread_error(answer: &Value) -> Option<String> {
+pub fn unread_error(answer: &Value) -> Option<String> {
     answer
         .get("errors")?
         .as_array()?
@@ -372,7 +372,7 @@ pub(super) fn unread_error(answer: &Value) -> Option<String> {
 }
 
 /// The message of the first error in a GraphQL answer.
-pub(super) fn first_error(stdout: &str) -> Option<String> {
+pub fn first_error(stdout: &str) -> Option<String> {
     serde_json::from_str::<Value>(stdout)
         .ok()?
         .pointer("/errors/0/message")?
@@ -496,7 +496,7 @@ fn parse_pr(pr: &Value) -> Answer {
 
 /// The checks of a commit, counted. A run is a pass, a failure, or not finished; a status
 /// context says the same in its own words.
-fn checks(rollup: &Value) -> CheckCounts {
+pub fn checks(rollup: &Value) -> CheckCounts {
     let mut ci = CheckCounts::default();
     let counted = |key: &str, run: bool, ci: &mut CheckCounts| {
         let list = rollup

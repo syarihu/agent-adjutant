@@ -3,7 +3,7 @@
 How the crate is put together, for people and agents changing the code. The crate is one library
 (`src/lib.rs`, library name `adjutant`) and two thin binaries, `adjutant` (`src/main.rs`) and `adj`
 (`src/bin/adj.rs`). Both call `adjutant::run`, which is `transport::cli::run`. Below the roots are
-ten modules in a fixed rank. What `adj` does for a user is in the [README](../README.md); this page
+eleven modules in a fixed rank. What `adj` does for a user is in the [README](../README.md); this page
 is about where code goes.
 
 ## The layers
@@ -17,14 +17,15 @@ layer; any module's tests may name it.
 ```mermaid
 flowchart TB
     roots["lib.rs / main.rs (crate roots)"]
-    subgraph transport_box["10 transport"]
+    subgraph transport_box["11 transport"]
         cli["cli"]
         mcp["mcp"]
         board_http["board_http"]
         wording["wording"]
     end
-    board["9 board"]
-    lifecycle["8 lifecycle"]
+    board["10 board"]
+    lifecycle["9 lifecycle"]
+    others["8 others"]
     jules["7 jules"]
     gate["6 gate"]
     task["5 task"]
@@ -42,7 +43,8 @@ flowchart TB
     board_http --> wording
     transport_box --> board
     board --> lifecycle
-    lifecycle --> jules
+    lifecycle --> others
+    others --> jules
     jules --> gate
     gate --> task
     task --> mail
@@ -94,6 +96,11 @@ fixtures.
 - `jules`: Jules sessions (`start`, `follow`, `findings`, `relay`, ...). It has no `store`: the
   session id and what was relayed are fields of the task record, and the private `api` client takes
   the store's place.
+- `others`: the PRs other people asked you to review: one record per PR, the sync that reads them
+  from GitHub (`sync`), and the state derived from each record (`model::derive`). It reads and
+  writes by state root, not by `Context`: the records belong to the person, not to a hub. It has a
+  private `store.rs` and a `github.rs` of its own, and uses `task`'s PR reference and check
+  counting. Its records are described under [PRs others asked you to review](#prs-others-asked-you-to-review).
 - `lifecycle`: `lifecycle::hub` and `lifecycle::worker`: start, resume, focus, stop and close
   hubs and workers; plan and exec a launch, claim slots, register launches and link workers to
   tasks. It returns values such as
@@ -174,7 +181,7 @@ fixtures.
 
 ## How the board gets its handler
 
-`board` is rank 9 and cannot name `transport`, yet its accept loop runs `board_http` code. The
+`board` is rank 10 and cannot name `transport`, yet its accept loop runs `board_http` code. The
 transport passes the handler in. `cli/serve.rs` passes `board_http::handle` for `adj serve`,
 `mcp.rs` passes it as `board_connection` to `board::serve_for_hub` for a hub's own board, and
 `cli/server.rs` passes `board_http::handle_resident` to the resident. The resident strips
@@ -183,7 +190,9 @@ answers the same routes except the ones `Route::resident_only` lists (a session'
 open and clean-up; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
-resident also serves the page at `/`, `GET /api/boards` and `GET /api/work`. The last is the work
+resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others` and
+`POST /api/others/sync`. The last two are in [PRs others asked you to review](#prs-others-asked-you-to-review);
+the sync runs on the connection's own thread, as the resident gives each connection one. `GET /api/work` is the work
 under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
 repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,
 else each parent-task board), joins each worker session to its task, and lists a session once
@@ -326,6 +335,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `agent-hooks/claude-<digest>.json` | the hook settings passed with `--settings`, one per `adj` binary | lifecycle (`write_agent_hooks.rs`) |
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
+| `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review, and how the last sync went | others (`store.rs`) |
 | `gates/<slug>/`, `records/` and `answered/` under it, each gate with an `<id>.lock` | open gates, gates kept as a record (`wait: false`), answered gates | gate (`store.rs`) |
 | `cleanup-<pid>-<time>-<n>/` | files set aside only when the first `git worktree remove` refuses; removed once the worktree is gone or the files are put back, and left only if they could not be | board (`session/clean_up.rs`) |
 | `dashboard-token`, `server.lock`, `server.log` | the resident's token, lock and log | board (`token.rs`, `daemon.rs`) |
@@ -343,3 +353,71 @@ still be running; see rule 10 before changing any.
 
 [#246](https://github.com/syarihu/agent-adjutant/issues/246) has the history: what this replaced
 and the order it was done in.
+
+## PRs others asked you to review
+
+`others` keeps one record per open PR that asked for **your** review (a request to a team of yours
+does not count), in the repositories of the owners adj has a board for. The records and the sync are
+the contract for the pages and workers that read them; the names below are the JSON keys.
+
+- `GET /api/others` answers `{now, lastSync, records}`. `now` is epoch seconds. `lastSync` is `null`
+  before the first sync. `records` are sorted by `repo` (case-insensitive), then `requestedAt`
+  (none last), then `number`.
+- `POST /api/others/sync` runs the sync, only when asked: nothing reads GitHub at start, on a timer
+  or on `GET`. It answers 200 `{lastSync, arrived, removed, records}`, 409
+  `{"error": "a sync is already running", "busy": true}` when a sync is already running in the same
+  process (answered at once) or `others/sync.lock` is held elsewhere (answered after asking again for
+  up to about 2 s, since a forked child can briefly hold a copy of a lock that was just released), and 400
+  `{"error": <why>}` when it could not be done at all (`gh` missing or not logged in, the search
+  failing, the deadline passing before the search answered); then only `lastSync.error` and
+  `lastSync.errorAt` are written. A PR that could not be read is not a failure of the sync: it is in
+  `lastSync.failed`, `lastSync.complete` is `false`, and its record stays as it was. `arrived` lists
+  the ids whose request or re-request is new; `removed`, the ids taken away for having been done for
+  a day. Neither route exists on a board served alone.
+- One sync is one `gh api user`, one `gh search prs --review-requested=@me --state=open --limit 100`
+  with an `--owner` per owner of an address book entry on github.com (no owner, no search), and one
+  GraphQL query per 10 PRs (4 at a time) for every search hit and every record not in `done`,
+  by number, plus pages of files for a PR of more than 100 files whose head moved. The whole pass
+  has one 30 s deadline.
+
+Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings. A record
+(`others/<owner>~<repo>~<number>.json`, owner and repo in lower case) has these keys:
+
+| Key | Meaning |
+|---|---|
+| `id` | `owner/repo#N`, lower case; the key, never changes |
+| `repo`, `number`, `url` | the repository as GitHub spells it (`Owner/Repo`), the PR number and its URL |
+| `registered` | `owner/repo` is in the address book as of the last sync; a PR of an owner's other repository is recorded with `false` |
+| `title`, `author`, `base`, `head`, `headSha`, `draft` | what GitHub says; `author` is `null` for a deleted account; `title` is cut to 256 characters |
+| `prState` | `open`, `merged` or `closed` |
+| `additions`, `deletions`, `changedFiles` | the PR's totals |
+| `files` | `[{path, additions, deletions, change}]`; `change` is `added`, `deleted`, `modified`, `renamed`, `copied` or `changed` |
+| `filesComplete` | `false` when `files` holds fewer than `changedFiles` (over the pages read) |
+| `ci` | `{pass, fail, pending}` counts of the head commit's checks |
+| `reviewers` | `[{login, team, state, at}]`: who was asked and who reviewed; `team` is true for a team (`login` is `org/slug`); `state` is `approved`, `changes-requested`, `commented` or `requested`; `at` is the review's time, `null` for a request |
+| `myReview` | `{state, submittedAt, commit}`: your last submitted review and the commit it was made on, or `null` |
+| `commitsSinceReview` | commits on the head since `myReview.commit`; `0` when it is the head; `null` when unknown (no review, or the commit is no longer among the last 100) |
+| `requested` | you are a requested reviewer right now |
+| `requestedAt` | time of the latest request that named you |
+| `rerequest` | the current request came after a review of yours |
+| `state` | derived, one of `requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done` |
+| `doneReason` | only while `state` is `done`: `approved`, `merged`, `closed` or `withdrawn` |
+| `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later |
+| `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review (when it is later than the review, else the sync's time) when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
+| `ai` | the AI read-through, written by whoever runs it: `{status, sha, startedAt, finishedAt}` with `status` `queued`, `running`, `ready` or `failed`; absent until one ran |
+| `firstSeenAt`, `readAt` | the first sync that recorded it, and the last that read it |
+
+`lastSync` is `{at, complete, owners, truncated, failed, error, errorAt}`. `at` is the last sync
+whose search succeeded (`null` before the first); `owners` are the owners searched; `truncated`
+says the search returned its 100 and there may be more; `failed` is `[{id, why}]`.
+
+`state` is never read from disk: it is derived from the facts on every load and save
+(`others::derive`), so a writer sets only a fact. A merged or closed PR is `done`. While you are
+requested, it is `pushed` when the head moved since your review and `requested` otherwise (a first
+request, or a re-request with nothing pushed). When you are not requested: no review of yours, or a
+request newer than your review that went away, is `done` as `withdrawn`; an approving last review is
+`done` as `approved`; otherwise `pushed` when the head moved since your review and
+`waiting-on-author` when it did not. The read-through moves only a `requested` record: `ai-reading`
+while `ai.status` is `queued` or `running`, `ai-ready` when it is `ready`.
+
+Like every record here, unknown keys (also inside `events` and `ai`) are kept on a save.
