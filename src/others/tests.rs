@@ -965,3 +965,30 @@ fn stored_files_are_not_kept_when_the_totals_changed_under_the_same_head() {
     set(&mut big, "/additions", json!(11));
     assert!(super::sync::files_of(root.path(), &never, &pr(7), &parse(&big), past).is_some());
 }
+
+/// The cause of a flake that showed up once in fifteen runs of the whole suite: a child that
+/// forks and takes a while to exec (the pty tests start such children) holds a copy of the
+/// sync lock's file, and `flock` belongs to the open file, not to the descriptor, so a sync
+/// that has ended can still look held. Reproduced here with a `pre_exec` that waits.
+#[test]
+fn a_sync_that_ended_is_not_taken_for_a_running_one_while_a_fork_holds_its_lock_file() {
+    use std::os::unix::process::CommandExt;
+    let root = tempfile::tempdir().unwrap();
+    let held = store::try_lock_sync(root.path()).unwrap().unwrap();
+    let forker = std::thread::spawn(|| {
+        let mut command = std::process::Command::new("true");
+        unsafe {
+            command.pre_exec(|| {
+                libc::usleep(120_000);
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        child.wait().unwrap();
+    });
+    // Let the fork happen while the lock is still open, then end the "sync".
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    drop(held);
+    assert!(store::try_lock_sync(root.path()).unwrap().is_some());
+    forker.join().unwrap();
+}

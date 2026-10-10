@@ -104,10 +104,65 @@ pub(super) fn lock(root: &Path, stem: &str) -> Result<std::fs::File, String> {
     crate::infra::fs::lock(&dir(root).join(format!("{stem}.lock")))
 }
 
-/// The lock a sync holds from start to end; `None` when another one holds it.
-pub(super) fn try_lock_sync(root: &Path) -> Result<Option<std::fs::File>, String> {
-    crate::infra::fs::try_lock(&dir(root).join("sync.lock"))
+/// The state roots a sync of this process is running on. A sync of this process is the one a
+/// second click can meet, and it is answered at once from here.
+static RUNNING: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// The lock of a running sync: the file lock, and the root's place among `RUNNING`.
+pub(super) struct SyncLock {
+    _file: std::fs::File,
+    root: PathBuf,
 }
+
+impl Drop for SyncLock {
+    fn drop(&mut self) {
+        forget(&self.root);
+    }
+}
+
+fn forget(root: &Path) {
+    let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+    running.retain(|r| r != root);
+}
+
+/// The lock a sync holds from start to end; `None` when another one holds it.
+///
+/// A sync of this process is found in `RUNNING` and refused at once. A file lock held with none
+/// of ours running is asked again for a while before it is believed: a process that forks and
+/// takes time to exec (a pty's child between `fork` and `exec`) holds a copy of every open file
+/// until it execs, and `flock` belongs to the open file, not to the descriptor, so the lock of a
+/// sync that has just ended can look held to the next one.
+pub(super) fn try_lock_sync(root: &Path) -> Result<Option<SyncLock>, String> {
+    {
+        let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        if running.iter().any(|r| r == root) {
+            return Ok(None);
+        }
+        running.push(root.to_path_buf());
+    }
+    let path = dir(root).join("sync.lock");
+    for attempt in 0..LOCK_ASKS {
+        match crate::infra::fs::try_lock(&path) {
+            Ok(Some(file)) => {
+                return Ok(Some(SyncLock {
+                    _file: file,
+                    root: root.to_path_buf(),
+                }));
+            }
+            Ok(None) if attempt + 1 < LOCK_ASKS => std::thread::sleep(LOCK_WAIT),
+            Ok(None) => break,
+            Err(e) => {
+                forget(root);
+                return Err(e);
+            }
+        }
+    }
+    forget(root);
+    Ok(None)
+}
+
+const LOCK_ASKS: u32 = 100;
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(20);
 
 pub(super) fn read_last_sync(root: &Path) -> Option<LastSync> {
     serde_json::from_str(&std::fs::read_to_string(dir(root).join("sync.json")).ok()?).ok()
