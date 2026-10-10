@@ -50,6 +50,9 @@ pub(super) struct Facts {
     pub reviewers: Vec<Reviewer>,
     pub my_review: Option<MyReview>,
     pub commits_since_review: Option<u32>,
+    /// When the first commit after your reviewed one was committed; `None` when there is none
+    /// or the reviewed commit is not among the last 100.
+    pub first_push_at: Option<String>,
     pub requested: bool,
     pub requested_at: Option<String>,
 }
@@ -419,6 +422,20 @@ fn parse_pr(pr: &Value, me: &str) -> Result<Facts, String> {
         let at = oids.iter().position(|oid| *oid == m.commit)?;
         u32::try_from(oids.len() - 1 - at).ok()
     });
+    let first_push_at = my_review
+        .as_ref()
+        .filter(|m| m.commit != head_sha)
+        .and_then(|m| {
+            let commits: Vec<&Value> = nodes(pr, "commits").collect();
+            let at = commits.iter().position(|c| {
+                c.pointer("/commit/oid").and_then(Value::as_str) == Some(m.commit.as_str())
+            })?;
+            let date = commits
+                .get(at + 1)?
+                .pointer("/commit/committedDate")?
+                .as_str()?;
+            stamp_from_iso(date)
+        });
 
     let ci = nodes(pr, "lastCommit")
         .next()
@@ -451,6 +468,7 @@ fn parse_pr(pr: &Value, me: &str) -> Result<Facts, String> {
         reviewers,
         my_review,
         commits_since_review,
+        first_push_at,
         requested,
         requested_at,
     })

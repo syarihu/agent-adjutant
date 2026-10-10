@@ -401,7 +401,7 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `state` | derived, one of `requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done` |
 | `doneReason` | only while `state` is `done`: `approved`, `merged`, `closed` or `withdrawn` |
 | `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later |
-| `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the time of the sync that saw a head you had not reviewed, and moves with each later push |
+| `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
 | `ai` | the AI read-through, written by whoever runs it: `{status, sha, startedAt, finishedAt}` with `status` `queued`, `running`, `ready` or `failed`; absent until one ran |
 | `firstSeenAt`, `readAt` | the first sync that recorded it, and the last that read it |
 

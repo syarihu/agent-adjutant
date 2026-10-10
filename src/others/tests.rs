@@ -813,3 +813,100 @@ fn a_pr_with_more_files_than_a_page_reads_the_rest_once_per_head() {
     sync_with(root.path(), &acme(), NOW + 60, &refuse).unwrap();
     assert_eq!(record_of(root.path(), 7).unwrap().files.len(), 3);
 }
+
+/// A PR you reviewed on `c1`, with the head on `c3`: asked again, so a new record is made for it.
+fn pushed_since_review() -> Value {
+    let mut pr7 = open_pr("c3");
+    with_commits(&mut pr7, &["c1", "c2", "c3"]);
+    set(
+        &mut pr7,
+        "/commits/nodes/1/commit/committedDate",
+        json!("2026-10-04T00:00:00Z"),
+    );
+    with_my_review(&mut pr7, &up("commented"), "2026-10-02T00:00:00Z", "c1");
+    pr7
+}
+
+#[test]
+fn a_push_already_there_at_the_first_sync_is_dated_by_its_first_commit() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(&[7]).with(7, pushed_since_review());
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(r.events.pushed.as_deref(), Some("20261004T000000Z"));
+    // Seen again with the same head: the time stays.
+    sync_at(root.path(), &acme(), NOW + 60, &fake).unwrap();
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(r.events.pushed.as_deref(), Some("20261004T000000Z"));
+}
+
+#[test]
+fn a_push_whose_reviewed_commit_is_out_of_the_list_is_dated_now() {
+    let root = tempfile::tempdir().unwrap();
+    let mut pr7 = pushed_since_review();
+    with_my_review(&mut pr7, &up("commented"), "2026-10-02T00:00:00Z", "gone");
+    let fake = Fake::new(&[7]).with(7, pr7);
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    assert_eq!(
+        record_of(root.path(), 7).unwrap().events.pushed,
+        Some(utc_stamp(NOW))
+    );
+}
+
+#[test]
+fn a_head_you_reviewed_has_no_push() {
+    let root = tempfile::tempdir().unwrap();
+    let mut r = record(7);
+    r.events.pushed = Some("20261004T000000Z".to_string());
+    store::save(root.path(), &mut r).unwrap();
+    let mut pr7 = open_pr("c3");
+    with_my_review(&mut pr7, &up("commented"), "2026-10-05T00:00:00Z", "c3");
+    let fake = Fake::new(&[7]).with(7, pr7);
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    assert_eq!(record_of(root.path(), 7).unwrap().events.pushed, None);
+}
+
+fn big_pr(number: u64) -> Value {
+    let mut big = open_pr("h1");
+    set(&mut big, "/number", json!(number));
+    set(&mut big, "/changedFiles", json!(300));
+    set(
+        &mut big,
+        "/files/pageInfo",
+        json!({"hasNextPage": true, "endCursor": "c1"}),
+    );
+    big
+}
+
+#[test]
+fn running_out_of_time_on_file_pages_does_not_fail_a_pr_that_was_read() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(&[7, 8]).with(7, big_pr(7)).with(8, big_pr(8));
+    // Every page of files fails the way a deadline does.
+    let gh = |args: &[&str], deadline: Instant| -> Result<GhRun, String> {
+        if args.iter().any(|a| a.starts_with("after=")) {
+            return Err("gh did not answer in time".to_string());
+        }
+        fake.run(args, deadline)
+    };
+    let synced = sync_with(root.path(), &acme(), NOW, &gh).unwrap();
+    assert!(synced.last_sync.failed.is_empty());
+    assert!(synced.last_sync.complete);
+    for n in [7, 8] {
+        let r = record_of(root.path(), n).unwrap();
+        assert_eq!(r.files.len(), 2);
+        assert!(!r.files_complete);
+    }
+}
+
+#[test]
+fn no_file_page_is_asked_for_once_the_deadline_has_passed() {
+    let root = tempfile::tempdir().unwrap();
+    let facts = super::github::parse_details(&super::github::tests::data(&[big_pr(7)]), 1, "me")
+        .remove(0)
+        .unwrap();
+    let gh =
+        |_: &[&str], _: Instant| -> Result<GhRun, String> { panic!("asked after the deadline") };
+    let files = super::sync::files_of(root.path(), &gh, &pr(7), &facts, Instant::now());
+    assert_eq!(files.map(|f| f.len()), Some(2));
+}

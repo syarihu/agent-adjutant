@@ -142,7 +142,7 @@ fn failed_as_a_whole(root: &Path, stamp: &str, why: String) -> SyncError {
 /// The files of a PR whose first page was not all of them: `None` when the stored ones are
 /// still the right ones (the head has not moved and they were complete), else the first page
 /// with whatever more pages could be read.
-fn files_of(
+pub(super) fn files_of(
     root: &Path,
     gh: Gh,
     pr: &PrRef,
@@ -243,6 +243,7 @@ fn apply(
     next.reviewers = facts.reviewers;
     next.my_review = facts.my_review;
     next.commits_since_review = facts.commits_since_review;
+    let first_push_at = facts.first_push_at;
     next.requested = facts.requested;
     next.requested_at = facts.requested_at;
     next.read_at = stamp.clone();
@@ -279,12 +280,17 @@ fn apply(
         }
     }
     // Every later push is news again, so the time moves with each head seen: the time of the
-    // sync that saw it, as GitHub gives no push time that a rebase does not move.
-    if let (Some(p), Some(m)) = (&prev, &next.my_review)
-        && next.head_sha != p.head_sha
-        && next.head_sha != m.commit
-    {
-        next.events.pushed = Some(stamp.clone());
+    // sync that saw it, as GitHub gives no push time that a rebase does not move. A push that was
+    // already there when the record was first made (or never got a time) takes the commit date of
+    // the first commit after your review, else now; a head you reviewed has no push to show.
+    if let Some(m) = &next.my_review {
+        if next.head_sha == m.commit {
+            next.events.pushed = None;
+        } else if prev.as_ref().is_some_and(|p| p.head_sha != next.head_sha) {
+            next.events.pushed = Some(stamp.clone());
+        } else if next.events.pushed.is_none() {
+            next.events.pushed = Some(first_push_at.unwrap_or_else(|| stamp.clone()));
+        }
     }
 
     next.done_at = (derive(&next).0 == State::Done).then(|| {
