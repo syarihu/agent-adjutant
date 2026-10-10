@@ -910,3 +910,58 @@ fn no_file_page_is_asked_for_once_the_deadline_has_passed() {
     let files = super::sync::files_of(root.path(), &gh, &pr(7), &facts, Instant::now());
     assert_eq!(files.map(|f| f.len()), Some(2));
 }
+
+#[test]
+fn a_commit_dated_before_your_review_does_not_date_the_push() {
+    let root = tempfile::tempdir().unwrap();
+    let mut pr7 = pushed_since_review();
+    // Committed before the review of 2026-10-02, pushed after it.
+    set(
+        &mut pr7,
+        "/commits/nodes/1/commit/committedDate",
+        json!("2026-10-01T00:00:00Z"),
+    );
+    let fake = Fake::new(&[7]).with(7, pr7);
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    assert_eq!(
+        record_of(root.path(), 7).unwrap().events.pushed,
+        Some(utc_stamp(NOW))
+    );
+}
+
+#[test]
+fn stored_files_are_not_kept_when_the_totals_changed_under_the_same_head() {
+    let root = tempfile::tempdir().unwrap();
+    let mut big = big_pr(7);
+    set(&mut big, "/changedFiles", json!(2));
+    set(
+        &mut big,
+        "/files/pageInfo",
+        json!({"hasNextPage": true, "endCursor": "c1"}),
+    );
+    let mut r = record(7);
+    r.files_complete = true;
+    r.changed_files = 2;
+    r.additions = 10;
+    r.deletions = 2;
+    store::save(root.path(), &mut r).unwrap();
+    let parse = |pr: &Value| {
+        super::github::parse_details(
+            &super::github::tests::data(std::slice::from_ref(pr)),
+            1,
+            "me",
+        )
+        .remove(0)
+        .unwrap()
+    };
+    let past = Instant::now();
+    let never = |_: &[&str], _: Instant| -> Result<GhRun, String> { panic!("asked") };
+    // Same totals, same head: the stored files stand.
+    assert_eq!(
+        super::sync::files_of(root.path(), &never, &pr(7), &parse(&big), past),
+        None
+    );
+    // The base moved: one more addition, same head. The list is taken afresh.
+    set(&mut big, "/additions", json!(11));
+    assert!(super::sync::files_of(root.path(), &never, &pr(7), &parse(&big), past).is_some());
+}

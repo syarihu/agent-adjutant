@@ -156,6 +156,9 @@ pub(super) fn files_of(
     if let Ok(Some(prev)) = store::load(root, pr)
         && prev.files_complete
         && prev.head_sha == facts.head_sha
+        // A change of base can change the list without moving the head.
+        && (prev.changed_files, prev.additions, prev.deletions)
+            == (facts.changed_files, facts.additions, facts.deletions)
     {
         return None;
     }
@@ -289,7 +292,13 @@ fn apply(
         } else if prev.as_ref().is_some_and(|p| p.head_sha != next.head_sha) {
             next.events.pushed = Some(stamp.clone());
         } else if next.events.pushed.is_none() {
-            next.events.pushed = Some(first_push_at.unwrap_or_else(|| stamp.clone()));
+            // A commit can be dated before the review it came after (committed, reviewed, then
+            // pushed), so a date not after the review is no better than now.
+            next.events.pushed = Some(
+                first_push_at
+                    .filter(|at| at.as_str() > m.submitted_at.as_str())
+                    .unwrap_or_else(|| stamp.clone()),
+            );
         }
     }
 
