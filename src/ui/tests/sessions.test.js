@@ -108,3 +108,55 @@ test('the away summary knows the same ledger statuses as the page', () => {
   assert.ok(m, 'WORK_NOW_STATUSES not found');
   assert.deepStrictEqual(plain(vm.runInNewContext(m[1])).sort(), plain(Object.keys(table('AGENT_STATES'))).sort());
 });
+
+// openSessionRef reads the page's globals when called; set the ones the scripts above do not define, then put them back.
+const openWith = (over, ref = 'w1') => {
+  const keys = ['multiBoard', 'view', 'nav', 'go', 'openTaskPanel', 'taskOfSession', 'hasSession', 'HUB_REF', 'SESS_REF', 'state'];
+  const saved = Object.fromEntries(keys.map(k => [k, ctx[k]]));
+  const calls = { go: [], panel: [] };
+  Object.assign(ctx, {
+    multiBoard: true, view: 'board', nav: { board: 'a', task: null }, HUB_REF: 'hub:', SESS_REF: 'session:',
+    go: (patch, opts) => calls.go.push([patch, opts]),
+    openTaskPanel: (id, pane) => calls.panel.push([id, pane]),
+    taskOfSession: () => null, hasSession: () => true,
+    state: { hubs: [{ id: 'hub', slug: 'a' }, { id: 'other', slug: 'b' }], sessions: [session()] },
+  }, over);
+  try {
+    ctx.openSessionRef(ref);
+  } finally {
+    for (const k of keys) if (saved[k] === undefined) delete ctx[k]; else ctx[k] = saved[k];
+  }
+  return calls;
+};
+
+test('on a board of a resident server a session opens in that board\'s panel, on its terminal', () => {
+  const c = openWith({});
+  assert.deepStrictEqual(c.panel, [['session:w1', 'term']]);
+  assert.strictEqual(c.go.length, 0);
+});
+
+test('a session whose hub is another board\'s still opens in the panel it is pressed on', () => {
+  const c = openWith({ state: { hubs: [{ id: 'hub', slug: 'b' }], sessions: [session()] } });
+  assert.deepStrictEqual(c.panel, [['session:w1', 'term']]);
+  assert.strictEqual(c.go.length, 0);
+});
+
+test('in 「いまの仕事」 a session opens there, on the board of its hub', () => {
+  const c = openWith({ view: 'work', state: { hubs: [{ id: 'hub', slug: 'b' }], sessions: [session()] } });
+  assert.strictEqual(c.panel.length, 0);
+  assert.strictEqual(c.go.length, 1);
+  assert.deepStrictEqual(plain(c.go[0][0]), { board: 'b', view: 'work', task: 'session:w1', pane: 'detail' });
+});
+
+test('a board served alone opens the panel, on the terminal only when the session has one', () => {
+  assert.deepStrictEqual(openWith({ multiBoard: false }).panel, [['session:w1', 'term']]);
+  const c = openWith({ multiBoard: false, hasSession: () => false });
+  assert.deepStrictEqual(c.panel, [['session:w1', 'detail']]);
+  assert.strictEqual(c.go.length, 0);
+});
+
+test('a session that owns a task opens that task\'s panel', () => {
+  const c = openWith({ taskOfSession: () => ({ id: 'T-1' }) });
+  assert.deepStrictEqual(c.panel, [['T-1', 'term']]);
+  assert.strictEqual(c.go.length, 0);
+});
