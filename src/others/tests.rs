@@ -1007,9 +1007,10 @@ fn a_file_lock_held_elsewhere_is_busy_after_the_retries() {
             .is_none()
     );
     // The refusal gave back the place it took, so the lock is there to take once it is let go.
+    // Asked for longer: a child another test forks can hold a copy of the lock file until it execs.
     drop(held);
     assert!(
-        store::try_lock_sync_asking(root.path(), 5, wait)
+        store::try_lock_sync_asking(root.path(), 500, std::time::Duration::from_millis(10))
             .unwrap()
             .is_some()
     );

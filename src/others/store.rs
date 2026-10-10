@@ -117,6 +117,8 @@ pub(super) struct SyncLock {
 
 impl Drop for SyncLock {
     fn drop(&mut self) {
+        // The file first, so a root missing from `RUNNING` is never still held by this sync.
+        self._file.take();
         let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         running.retain(|r| r != &self.root);
     }
