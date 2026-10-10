@@ -1,4 +1,4 @@
-/* 「拡大」: one card of the task panel in a large dialog (src/ui/card-dialog.js). */
+/* 「拡大」: the whole task under an index, or one card of the panel, in a large dialog (src/ui/card-dialog.js). */
 #card-dialog {
   width: calc(100vw - 48px);
   height: calc(100vh - 48px);
@@ -22,8 +22,76 @@
 .card-dialog-gone { margin: 0; padding: 8px 24px; font-size: 12.5px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
 /* Always rendered, so setting its text is announced; empty, it takes no room (display: none would not be announced). */
 .card-dialog-gone:empty { padding: 0; }
-.card-dialog-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.card-dialog-content { max-width: 1080px; margin: 0 auto; padding: 20px 28px 32px; display: flex; flex-direction: column; gap: 16px; }
+.card-dialog-update { margin: 0; padding: 8px 24px; font-size: 12.5px; display: flex; align-items: center; gap: 12px; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.card-dialog-update:empty { padding: 0; }
+.card-dialog-update button { flex: none; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 999px; padding: 1px 12px; cursor: pointer; }
+.card-dialog-update button:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+.card-dialog-update button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.card-dialog-main { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr); grid-template-areas: "index body dock"; }
+.card-dialog-body { grid-area: body; min-width: 0; min-height: 0; overflow: auto; }
+.card-dialog-content { padding: 20px 28px 32px; display: flex; flex-direction: column; gap: 16px; }
+/* One card alone reads in a column of its own; a task fills the width. */
+.card-dialog-content[data-mode="card"] { width: min(100%, 1080px); margin: 0 auto; box-sizing: border-box; }
+.card-dialog-content[data-mode="task"] { gap: 28px; }
+
+/* The index: groups, and the cards in them, as buttons; it scrolls by itself. */
+.card-dialog-index { grid-area: index; width: 232px; box-sizing: border-box; overflow: auto; padding: 16px 8px 24px 16px; border-right: 1px solid var(--md-sys-color-outline-variant); font-size: 12.5px; }
+.card-dialog-index[hidden] { display: none; }
+.card-dialog-index ol { list-style: none; margin: 0; padding: 0; }
+.card-dialog-index ol ol { margin: 2px 0 8px 10px; }
+.card-dialog-index button { display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 5px 8px; border-radius: 8px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
+.card-dialog-index button > span:first-child { margin-right: auto; }
+.card-dialog-index > ol > li > button { font-weight: 700; color: var(--md-sys-color-on-surface); }
+.card-dialog-index button:hover { background: var(--md-sys-color-surface-container-high); }
+.card-dialog-index button[aria-current="location"] { background: var(--md-sys-color-secondary-container, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface); }
+.card-dialog-index button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.cd-badge { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface-variant); }
+/* 「更新」: a part that changed since it was drawn, until it has been seen (card-dialog.js). */
+.cd-badge.cd-upd { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.cd-dock-switch .cd-upd { margin-right: 6px; }
+/* In a card it sits on the top edge, out of the flow, beside the card's own buttons. */
+.cd-card > .cd-upd { position: absolute; top: -9px; left: 12px; z-index: 1; }
+
+/* The cards: two to a row when each can keep 440px, else one. */
+.cd-group { display: flex; flex-direction: column; gap: 12px; }
+.cd-group-title { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
+.cd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(440px, calc((100% - 16px) / 2))), 1fr)); gap: 16px; align-items: start; }
+.cd-card { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.cd-card > * { margin: 0; }
+.cd-wide { grid-column: 1 / -1; }
+.cd-group:focus-visible, .cd-card:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 4px; border-radius: 8px; }
+.cd-card.cd-updated { position: relative; outline: 2px solid var(--md-sys-color-primary); outline-offset: 6px; border-radius: 8px; }
+/* The mark must not hide that the card has focus. */
+.cd-card.cd-updated:focus-visible { outline: 3px double var(--md-sys-color-primary); outline-offset: 5px; }
+.cd-flash { animation: cd-flash 1.4s ease-out; }
+@keyframes cd-flash { from { outline: 3px solid var(--md-sys-color-primary); outline-offset: 4px; } to { outline: 3px solid transparent; outline-offset: 4px; } }
+@media (prefers-reduced-motion: reduce) {
+  .cd-flash { animation: none; outline: 3px solid var(--md-sys-color-primary); outline-offset: 4px; }
+}
+/* The answer column: one dock for the gate that is shown, a switch between the waiting gates over it. Below 1160px
+   (the index, the column, a 440px card with its padding, and the dialog's margin) it is a band under the content. */
+.card-dialog-dock { grid-area: dock; width: 380px; box-sizing: border-box; overflow: auto; padding: 16px; border-left: 1px solid var(--md-sys-color-outline-variant); display: flex; flex-direction: column; gap: 12px; }
+.card-dialog-dock[hidden], .cd-dock[hidden] { display: none; }
+.cd-dock { display: flex; flex-direction: column; gap: 8px; }
+.cd-dock-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cd-dock-label { margin: 0; font-size: 12px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.cd-dock-switch { display: flex; flex-wrap: wrap; gap: 4px; }
+.cd-dock-switch button { max-width: 100%; border: 1px solid var(--md-sys-color-outline-variant); background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 4px 10px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-dock-switch button:hover { background: var(--md-sys-color-surface-container-high); }
+.cd-dock-switch button[aria-pressed="true"] { background: var(--md-sys-color-secondary-container, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface); }
+.cd-dock-switch button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.card-dialog-dock .decision-dock { position: static; box-shadow: none; padding: 16px; }
+.card-dialog-dock .gate-comment { min-height: 180px; }
+/* decideHtml puts `margin-left: auto` on it inline. */
+.card-dialog-dock .decide .close { margin-left: 0 !important; }
+@media (max-width: 1160px) {
+  .card-dialog-main { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "index body" "dock dock"; }
+  .card-dialog-dock { width: auto; max-height: 40vh; border-left: 0; border-top: 1px solid var(--md-sys-color-outline-variant); }
+  .card-dialog-dock .gate-comment { min-height: 80px; }
+}
+@media (max-width: 720px) {
+  .card-dialog-index { display: none; }
+}
 /* The markdown body of a card is a `.body`, which the generic dialog rule would turn into a padded,
    scrolling flex column of its own. */
 #card-dialog .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }

@@ -66,6 +66,8 @@ function withDiff(record, task, base = baseOf(task), data = state) {
   return kept?.diff != null ? { ...record, diff: kept.diff } : record;
 }
 const diffPending = g => !!g.diffSize && g.diff == null;
+/* What the timeline says until the answered gates have been read. */
+const HISTORY_LOADING = `<div class="source">回答済みのものを読み込んでいる…</div>`;
 const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読み込み中…</div></div>`;
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
@@ -156,11 +158,44 @@ function gateHeadHtml(g, all) {
 
 /* The three frames, for a gate read in the task panel. */
 function framesHtml(g) {
-  let h = '';
-  if (g.facts?.length) h += `<div class="panel"${expandAttrs('facts', g)}>${expandBtnHtml('事実')}<h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-  if (g.focus) h += `<div class="panel"${expandAttrs('focus', g)}>${expandBtnHtml('確認してほしい点')}<h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>確認してほしい点</span></h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
-  if (g.unsure) h += `<div class="panel"${expandAttrs('unsure', g)}>${expandBtnHtml('迷っていること')}<h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
-  return h;
+  return factsCardHtml(g) + focusCardHtml(g) + unsureCardHtml(g);
+}
+
+function factsCardHtml(g) {
+  if (!g.facts?.length) return '';
+  return `<div class="panel"${expandAttrs('facts', g)}>${expandBtnHtml('事実')}<h3><span class="material-symbols-outlined" style="font-size:18px;">info</span><span>事実</span></h3><ul>${g.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+}
+
+function focusCardHtml(g) {
+  if (!g.focus) return '';
+  return `<div class="panel"${expandAttrs('focus', g)}>${expandBtnHtml('確認してほしい点')}<h3><span class="material-symbols-outlined" style="font-size:18px;">visibility</span><span>確認してほしい点</span></h3><div class="body frame-focus">${md(g.focus)}</div></div>`;
+}
+
+function unsureCardHtml(g) {
+  if (!g.unsure) return '';
+  return `<div class="panel"${expandAttrs('unsure', g)}>${expandBtnHtml('迷っていること')}<h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
+}
+
+/* The worker's report on a gate. */
+function reportCardHtml(g) {
+  if (!g.body) return '';
+  return `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+}
+
+/* The files a diff touches, a row each. */
+function filesTableHtml(g) {
+  const files = filesOf(g.diff);
+  if (!files.length) return '';
+  return `<div class="panel"><h3>ファイル ${files.length}件</h3><div class="body"><table>` +
+    `<tr><th>ファイル</th><th>追加</th><th>削除</th></tr>` +
+    files.map(f => `<tr><td><code>${esc(f.path)}</code></td><td style="color:var(--good)">+${f.add}</td><td style="color:var(--critical)">−${f.del}</td></tr>`).join('') +
+    `</table></div></div>`;
+}
+
+/* The diff itself, or the note that it is on its way. */
+function diffCardHtml(g) {
+  if (g.diff) return `<div class="panel"${expandAttrs('diff', g)}>${expandBtnHtml('差分')}<h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
+  return diffPending(g) ? DIFF_LOADING : '';
 }
 
 /* The part of a tab a person acts on, when the gate shown can still take an answer: a gate
@@ -369,83 +404,103 @@ function parentRowHtml(task) {
   return h;
 }
 
-/* `opts.panel` is the task panel's: its top already shows the Issue and the PR, and `opts.handForm`
-   is set when its hand-over form shows the 申し送り, so neither is said twice. */
-function overviewTab(task, all, pick, opts = {}) {
-  const plans = all.filter(g => g.kind === 'plan');
-  const plan = gateShownIn(task, 'overview', all, pick);
-  let h = '';
-
-  // Where each came from: the plan's own words when the worker wrote them, otherwise the
-  // request as it was handed over.
+/* Where the problem and the goal came from: the plan's own words when the worker wrote them,
+   otherwise the request as it was handed over. */
+function planSourceOf(task, plan) {
   const issue = httpUrl(task.issueUrl);
   const source = issue
     ? `Issue <a href="${esc(issue)}" target="_blank" rel="noopener noreferrer">${esc(issue)}</a>`
     : task.issueUrl ? `Issue ${esc(task.issueUrl)}` : '依頼文';
-  const fromPlan = plan && `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの`;
+  return { source, fromPlan: plan && `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの` };
+}
+
+function problemCardHtml(task, plan) {
+  const { source, fromPlan } = planSourceOf(task, plan);
   const hasProblem = !!(plan?.problem || task.body);
-  h += `<div class="panel"${hasProblem ? expandAttrs('problem', plan?.problem ? plan : null) : ''}>${hasProblem ? expandBtnHtml('問題') : ''}<h3>問題</h3>`;
+  let h = `<div class="panel"${hasProblem ? expandAttrs('problem', plan?.problem ? plan : null) : ''}>${hasProblem ? expandBtnHtml('問題') : ''}<h3>問題</h3>`;
   if (plan?.problem) h += `<div class="body">${md(plan.problem)}</div><div class="source">出典: ${fromPlan}</div>`;
   else if (task.body) h += `<div class="body">${md(task.body)}</div><div class="source">出典: 渡したときの依頼文（計画に problem がまだ無い）</div>`;
   else h += `<div style="color:var(--muted)">まだ書かれていない${task.issueUrl ? ` — ${source}` : ''}</div>`;
-  h += `</div>`;
-  // What the issue itself said when the task started, kept on the record. Rendered by md()
-  // like the request: it is text from a tracker, not markup.
+  return h + `</div>`;
+}
+
+/* What the issue itself said when the task started, kept on the record. Rendered by md()
+   like the request: it is text from a tracker, not markup. */
+function issueBodyCardHtml(task) {
   const snap = task.issueSnapshot;
-  if (snap) {
-    const snapLink = httpUrl(snap.url);
-    h += `<div class="panel"${snap.body ? expandAttrs('issue') : ''}>${snap.body ? expandBtnHtml('Issue の本文') : ''}<h3>Issue の本文</h3><div><b>${esc(snap.title)}</b></div>` +
-      (snap.body ? `<div class="body">${md(snap.body)}</div>` : `<div style="color:var(--muted)">本文なし</div>`) +
-      (snap.truncated ? `<div class="source">先頭のみ保存 — 続きは ${snapLink ? `<a href="${esc(snapLink)}" target="_blank" rel="noopener noreferrer">Issue</a>` : 'Issue'} で</div>` : '') +
-      `<div class="source">出典: Issue #${esc(issueNumberOf(snap.url))} を ${esc(when(snap.fetchedAt))}（${esc(ago(snap.fetchedAt))}）に取得 ` +
-      `<button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">再取得</button></div></div>`;
-  }
-  h += `<div class="panel"${plan?.goal ? expandAttrs('goal', plan) : ''}>${plan?.goal ? expandBtnHtml('ゴール') : ''}<h3>ゴール</h3>`;
-  if (plan?.goal) h += `<div class="body">${md(plan.goal)}</div><div class="source">出典: ${fromPlan}</div>`;
+  if (!snap) return '';
+  const snapLink = httpUrl(snap.url);
+  return `<div class="panel"${snap.body ? expandAttrs('issue') : ''}>${snap.body ? expandBtnHtml('Issue の本文') : ''}<h3>Issue の本文</h3><div><b>${esc(snap.title)}</b></div>` +
+    (snap.body ? `<div class="body">${md(snap.body)}</div>` : `<div style="color:var(--muted)">本文なし</div>`) +
+    (snap.truncated ? `<div class="source">先頭のみ保存 — 続きは ${snapLink ? `<a href="${esc(snapLink)}" target="_blank" rel="noopener noreferrer">Issue</a>` : 'Issue'} で</div>` : '') +
+    `<div class="source">出典: Issue #${esc(issueNumberOf(snap.url))} を ${esc(when(snap.fetchedAt))}（${esc(ago(snap.fetchedAt))}）に取得 ` +
+    `<button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">再取得</button></div></div>`;
+}
+
+function goalCardHtml(task, plan) {
+  let h = `<div class="panel"${plan?.goal ? expandAttrs('goal', plan) : ''}>${plan?.goal ? expandBtnHtml('ゴール') : ''}<h3>ゴール</h3>`;
+  if (plan?.goal) h += `<div class="body">${md(plan.goal)}</div><div class="source">出典: ${planSourceOf(task, plan).fromPlan}</div>`;
   else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
-  h += `</div>`;
+  return h + `</div>`;
+}
 
-  if (task.instruction && !opts.handForm) {
-    h += `<div class="panel" style="border-left: 3px solid var(--md-sys-color-primary, #6750A4);">` +
-      `<h3>エージェントへの申し送り（指示）</h3>` +
-      `<div class="body" style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;">${esc(task.instruction)}</div>` +
-      `<div class="source">キュー投入時の指示</div></div>`;
+function instructionCardHtml(task) {
+  if (!task.instruction) return '';
+  return `<div class="panel" style="border-left: 3px solid var(--md-sys-color-primary, #6750A4);">` +
+    `<h3>エージェントへの申し送り（指示）</h3>` +
+    `<div class="body" style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;">${esc(task.instruction)}</div>` +
+    `<div class="source">キュー投入時の指示</div></div>`;
+}
+
+/* The plan itself: its title, who approved it, the other plans to pick from. `plan` is null
+   when none has come out yet. */
+function planHeadCardHtml(plan, plans, opts = {}) {
+  let h = `<div class="panel"${plan ? expandAttrs('plan', plan) : ''}>${plan ? expandBtnHtml('計画') : ''}<h3>計画</h3>`;
+  if (!plan) return h + `<div style="color:var(--muted)">計画はまだ出ていない</div></div>`;
+  // Who approved it: a plan gate is answered only by a person, on the board or with
+  // `adj gate answer`; the gate does not record which one.
+  const approved = ['approve', 'choice'].includes(plan.decision);
+  h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(plan.title)}</b></div>` +
+    `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">hourglass_empty</span><span>${ago(plan.openedAt)}から承認待ち</span></span>`
+      : approved ? `<span class="state good" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-success);">check_circle</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
+        (plan.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(plan.comment)}</span>` : '')
+      : gateStatusHtml(plan)}</div>`;
+  // `opts.chips` false leaves out the row that picks another plan, for a page that cannot pick; `opts.focus` false
+  // the focus, for a page that has it as a card of its own.
+  if (plans.length > 1 && opts.chips !== false) {
+    h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
+      `<span style="color:var(--muted);font-size:12px">計画 ${plans.length}件:</span>` +
+      plans.map((x, i) => `<button type="button" class="chip${x.id === plan.id ? ' good' : ''}" data-pick="${esc(x.id)}">` +
+        `${i + 1}. ${esc(when(x.openedAt))}${isWaiting(x) ? ' 待ち' : x.decision ? ` ${esc(DECISION[x.decision] || x.decision)}` : ''}</button>`).join('') + `</div>`;
   }
+  if (plan.focus && opts.focus !== false) h += `<div class="body frame-focus" style="margin-top:10px">${md(plan.focus)}</div>`;
+  return h + `</div>`;
+}
 
-  h += `<div class="panel"${plan ? expandAttrs('plan', plan) : ''}>${plan ? expandBtnHtml('計画') : ''}<h3>計画</h3>`;
-  if (!plan) {
-    h += `<div style="color:var(--muted)">計画はまだ出ていない</div></div>`;
-  } else {
-    // Who approved it: a plan gate is answered only by a person, on the board or with
-    // `adj gate answer`; the gate does not record which one.
-    const approved = ['approve', 'choice'].includes(plan.decision);
-    h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(plan.title)}</b></div>` +
-      `<div style="margin-top:4px">${isWaiting(plan) ? `<span class="state warn" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-warning);">hourglass_empty</span><span>${ago(plan.openedAt)}から承認待ち</span></span>`
-        : approved ? `<span class="state good" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:var(--md-sys-color-success);">check_circle</span><span title="${esc(when(plan.answeredAt))}">${esc(when(plan.answeredAt))}（${ago(plan.answeredAt)}）に人が${esc(DECISION[plan.decision])}</span></span>` +
-          (plan.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(plan.comment)}</span>` : '')
-        : gateStatusHtml(plan)}</div>`;
-    if (plans.length > 1) {
-      h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
-        `<span style="color:var(--muted);font-size:12px">計画 ${plans.length}件:</span>` +
-        plans.map((x, i) => `<button type="button" class="chip${x.id === plan.id ? ' good' : ''}" data-pick="${esc(x.id)}">` +
-          `${i + 1}. ${esc(when(x.openedAt))}${isWaiting(x) ? ' 待ち' : x.decision ? ` ${esc(DECISION[x.decision] || x.decision)}` : ''}</button>`).join('') + `</div>`;
-    }
-    if (plan.focus) h += `<div class="body frame-focus" style="margin-top:10px">${md(plan.focus)}</div>`;
-    h += `</div>`;
-    if (plan.facts?.length) h += `<div class="panel"${expandAttrs('facts', plan)}>${expandBtnHtml('事実')}<h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-    if (plan.body) h += `<div class="panel"${expandAttrs('report', plan)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(plan.body)}</div></div>`;
-    h += choicesHtml(plan, isWaiting(plan));
-    if (plan.unsure) h += `<div class="panel"${expandAttrs('unsure', plan)}>${expandBtnHtml('迷っていること')}<h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
-    if (plan.decided) h += `<div class="panel"${expandAttrs('decided', plan)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
-    h += actHtml(plan);
-  }
+/* What the plan gate carried beside its head, ending in the part a person acts on. */
+function planGateCardsHtml(plan) {
+  if (!plan) return '';
+  let h = '';
+  if (plan.facts?.length) h += `<div class="panel"${expandAttrs('facts', plan)}>${expandBtnHtml('事実')}<h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  h += reportCardHtml(plan);
+  h += choicesHtml(plan, isWaiting(plan));
+  if (plan.unsure) h += `<div class="panel"${expandAttrs('unsure', plan)}>${expandBtnHtml('迷っていること')}<h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
+  if (plan.decided) h += `<div class="panel"${expandAttrs('decided', plan)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
+  return h + actHtml(plan);
+}
 
+/* The 詳細 list. `opts.panel` is the task panel's: its top already shows the Issue and the PR,
+   and `opts.handForm` is set when its hand-over form shows the 申し送り, so neither is said
+   twice. `opts.refs` keeps the Issue and PR rows anyway, and `opts.park` shows the 置いている
+   row (the panel's by default), for the dialog that has neither at its top. */
+function detailsKvHtml(task, opts = {}) {
   const rows = [
     ['タスクID', `<span class="mono2">${esc(task.id)}</span>`],
     ['完了条件', esc(DONE_WHEN[task.doneWhen] || task.doneWhen || '—')],
     ['止める所', esc(STOP_AT[task.stopAt || 'plan'] || task.stopAt)],
     ['着手設定', task.autoStart ? '確認なしで着手' : '着手前に確認が必要'],
   ];
+  const refRows = !opts.panel || opts.refs;
   if (task.instruction && !opts.handForm) rows.push(['申し送り', `<span style="white-space:pre-wrap">${esc(task.instruction)}</span>`]);
   const link = u => httpUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(u)}</a>` : esc(u);
   const issueRef = task.issueUrl || task.issue;
@@ -453,10 +508,10 @@ function overviewTab(task, all, pick, opts = {}) {
     const fetchButton = !task.issueSnapshot && isGithubIssue(issueRef)
       ? ` <button type="button" class="iconbtn" data-fetch-issue="${esc(task.id)}">本文を取得</button>` : '';
     // The panel's top has the link; the button to read the body stays.
-    if (!opts.panel) rows.push(['Issue', link(issueRef) + fetchButton]);
+    if (refRows) rows.push(['Issue', link(issueRef) + fetchButton]);
     else if (fetchButton) rows.push(['Issue', fetchButton.trim()]);
   }
-  if (task.pr && !opts.panel) rows.push(['PR', link(task.pr)]);
+  if (task.pr && refRows) rows.push(['PR', link(task.pr)]);
   if (task.executor === 'jules') {
     rows.push(['実装', task.jules?.url ? `Jules ${esc(julesText(task.jules))} — ${link(task.jules.url)}`
       : task.julesSession ? `Jules ${task.jules ? esc(julesText(task.jules)) : ''}（session <span class="mono2">${esc(task.julesSession)}</span>）`
@@ -464,7 +519,7 @@ function overviewTab(task, all, pick, opts = {}) {
   }
   const parentHtml = parentRowHtml(task);
   if (parentHtml) rows.push(['親タスク', parentHtml]);
-  if (opts.panel && !['done', 'cancelled'].includes(task.status)) {
+  if ((opts.park ?? opts.panel) && !['done', 'cancelled'].includes(task.status)) {
     const park = parkOf(task);
     const since = park && stampSecs(park.since) != null ? ` · ${esc(ago(park.since))}から` : '';
     rows.push(['置いている', park
@@ -476,8 +531,16 @@ function overviewTab(task, all, pick, opts = {}) {
   if (task.worktree) rows.push(['worktree', `<span class="mono2">${esc(task.worktree)}</span> <button type="button" class="iconbtn" title="${ideTitle()}" data-ide="${esc(task.worktree)}">IDE で開く</button>`]);
   rows.push(['作成', `${esc(when(task.createdAt))}（${ago(task.createdAt)}）`]);
   if (task.note) rows.push(['ノート', `<span style="white-space:pre-wrap">${esc(task.note)}</span>`]);
-  h += `<div class="panel"><h3>詳細</h3><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
-  return h;
+  return `<div class="panel"><h3>詳細</h3><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
+}
+
+/* `opts` is what `detailsKvHtml` takes: the task panel's `panel` and `handForm`. */
+function overviewTab(task, all, pick, opts = {}) {
+  const plans = all.filter(g => g.kind === 'plan');
+  const plan = gateShownIn(task, 'overview', all, pick);
+  return problemCardHtml(task, plan) + issueBodyCardHtml(task) + goalCardHtml(task, plan) +
+    (opts.handForm ? '' : instructionCardHtml(task)) +
+    planHeadCardHtml(plan, plans) + planGateCardsHtml(plan) + detailsKvHtml(task, opts);
 }
 
 function reviewTab(task, all, pick) {
@@ -488,17 +551,9 @@ function reviewTab(task, all, pick) {
   // send-back stays at the end, after what it would be sent back about.
   const waiting = isWaiting(g);
   let h = gateHeadHtml(g, all) + framesHtml(g) + (waiting ? actHtml(g) : '') + reviewPanels(g);
-  if (g.body) h += `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
-  const files = filesOf(g.diff);
-  if (files.length) {
-    h += `<div class="panel"><h3>ファイル ${files.length}件</h3><div class="body"><table>` +
-      `<tr><th>ファイル</th><th>追加</th><th>削除</th></tr>` +
-      files.map(f => `<tr><td><code>${esc(f.path)}</code></td><td style="color:var(--good)">+${f.add}</td><td style="color:var(--critical)">−${f.del}</td></tr>`).join('') +
-      `</table></div></div>`;
-  }
+  h += reportCardHtml(g) + filesTableHtml(g);
   if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
-  if (g.diff) h += `<div class="panel"${expandAttrs('diff', g)}>${expandBtnHtml('差分')}<h3>差分</h3><div class="diff">${renderDiff(g.diff)}</div></div>`;
-  else if (diffPending(g)) h += DIFF_LOADING;
+  h += diffCardHtml(g);
   return h + (waiting ? '' : actHtml(g));
 }
 
@@ -512,8 +567,7 @@ function checkTab(task, all, pick) {
       <span class="mono2">${esc(g.worktree)}</span>
       <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
   }
-  h += framesHtml(g) + checkPanels(g);
-  if (g.body) h += `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
+  h += framesHtml(g) + checkPanels(g) + reportCardHtml(g);
   if (g.run) h += `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   return h + actHtml(g);
@@ -580,7 +634,7 @@ function timelineHtml(task, all, data = state, base = baseOf(task)) {
       `${mins != null ? `（${minutesLabel(mins)}前から）` : ''}</div></div></li>`;
   }
   h += `</ol>`;
-  if (!histories[historyKey(task, base)]?.loaded) h += `<div class="source">回答済みのものを読み込んでいる…</div>`;
+  if (!histories[historyKey(task, base)]?.loaded) h += HISTORY_LOADING;
   return h;
 }
 

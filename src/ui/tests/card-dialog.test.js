@@ -105,8 +105,8 @@ test('the panel cards of a gate carry the attributes the dialog finds them by', 
     manualChecked: () => new Set(), md: esc, kindOf: () => ['x'],
   });
   vm.runInContext([
-    cut(decSrc, /^function reviewPanels\(g\) \{[\s\S]*?\n\}/m),
-    cut(decSrc, /^function checkPanels\(g\) \{[\s\S]*?\n\}/m),
+    ...['reviewPanels', 'roundsCardHtml', 'findingsCardHtml', 'checkPanels', 'commandsCardHtml', 'manualCardHtml']
+      .map(n => cut(decSrc, new RegExp(`^function ${n}\\(g\\) \\{[\\s\\S]*?\\n\\}`, 'm'))),
     cut(decSrc, /^function choicesHtml\(g, pickable\) \{[\s\S]*?\n\}/m),
   ].join('\n'), c2);
   const g = { id: 'g1', reviewRounds: [{ engine: 'e' }], findings: [{ outcome: 'open', severity: 'must', text: 't' }],
@@ -153,6 +153,7 @@ function syncWorld({ source, controls = [], subject = 's1', hidden = false, pane
   const dlg = {
     open: true, closed: false, close() { this.open = false; this.closed = true; },
     querySelector: sel => sel === '.card-dialog-gone' ? goneEl : sel === '.card-dialog-body' ? body : null,
+    querySelectorAll: sel => content.querySelectorAll(sel),
   };
   const c = vm.createContext({
     selectedTaskId: subject, nav: { pane }, tp: () => ({ hidden }),
@@ -164,6 +165,7 @@ function syncWorld({ source, controls = [], subject = 's1', hidden = false, pane
   vm.runInContext([
     cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};\nconst CARD_DIALOG_GONE = [^\n]*;\nconst CARD_DIALOG_GATE_GONE = [^\n]*;/m),
     cut(dlgSrc, /^function cardDialogStrip\(text\) \{[\s\S]*?\n\}/m),
+    cut(dlgSrc, /^function cardDialogStripEl\(el\) \{[\s\S]*?\n\}/m),
     cut(dlgSrc, /^function cardDialogNotice\(text\) \{[\s\S]*?\n\}/m),
     cut(dlgSrc, /^function cardDialogSync\([^)]*\) \{[\s\S]*?\n\}/m),
     `Object.assign(cardDialog, { subject: 's1', pane: 'detail', section: 'report', gate: 'g', expectControls: ${expect}, sig: 'old' });`,
@@ -230,7 +232,7 @@ function openWorld(sources) {
   const card = { dataset: { expand: 'report', expandGate: 'g' } };
   const c = vm.createContext({
     note: (...a) => notes.push(a), cardDialogEl: () => dlg, selectedTaskId: 's1', nav: { pane: 'detail' },
-    cardDialogSource: () => sources, cardDialogSync() {}, cardDialogContent: () => ({}),
+    cardDialogSource: () => sources, cardDialogSync() {}, cardDialogContent: () => ({}), cardDialogTask: () => null,
   });
   vm.runInContext([
     cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m),
@@ -297,6 +299,16 @@ test('controls that appear after the opening are stripped too when they vanish',
   assert.strictEqual(w.gates[0].attrs['data-gate'], undefined);
 });
 
+test('a press on the column\'s own buttons holds a redraw like one on a gate button', () => {
+  const sel = cut(dlgSrc, /^const CARD_DIALOG_BUTTON = '[^\n]*';/m);
+  const c = vm.createContext({});
+  vm.runInContext(sel, c);
+  const list = vm.runInContext('CARD_DIALOG_BUTTON', c);
+  assert.ok(list.includes('[data-gate] button') && list.includes('.card-dialog-dock button'));
+  assert.ok(!dlgSrc.includes("closest?.('[data-gate] button')"), 'both handlers use the one selector');
+  assert.strictEqual(dlgSrc.match(/CARD_DIALOG_BUTTON\)/g).length, 2);
+});
+
 test('a press on a gate button defers the flush of a held redraw until the click is handled', () => {
   const timers = [];
   const synced = [];
@@ -360,4 +372,51 @@ test('a second click while an answer is on its way returns at once and leaves `a
   assert.strictEqual(vm.runInContext('cardDialog.answering', c), true);
   release(true); await first;
   assert.strictEqual(vm.runInContext('cardDialog.answering', c), false);
+});
+
+test('the dialog of a task fills the width: a grid of cards two to a row, an index that goes at 720px', () => {
+  const raw = read('card-dialog.css');
+  const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = sel => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(x => x[1].trim() === sel).map(x => x[2]).join(' ');
+  assert.doesNotMatch(css, /max-width:\s*1080px/);
+  const grid = rules('.cd-grid');
+  assert.match(grid, /grid-template-columns:[^;]*minmax\(/);
+  assert.match(grid, /440px/);
+  assert.match(grid, /calc\(\(100% - 16px\) \/ 2\)/);
+  assert.match(rules('.cd-wide'), /grid-column:\s*1\s*\/\s*-1/);
+  assert.match(rules('.card-dialog-index'), /(?:flex:\s*0 0 232px|width:\s*232px)/);
+  assert.match(rules('.card-dialog-index'), /overflow:\s*auto/);
+  const media = css.match(/@media \(max-width: 720px\) \{([\s\S]*?\})\s*\}/);
+  assert.ok(media);
+  assert.match(media[1], /\.card-dialog-index\s*\{\s*display:\s*none/);
+  // The size and the open rules of the dialog itself are as before.
+  assert.match(rules('#card-dialog'), /width:\s*calc\(100vw - 48px\)/);
+  assert.match(rules('#card-dialog'), /height:\s*calc\(100dvh - 48px\)/);
+  assert.match(rules('#card-dialog[open]'), /display:\s*flex/);
+  // The answer column is a column of its own, 380px wide, that scrolls by itself; below 1160px it is a band under the content.
+  assert.match(rules('.card-dialog-dock'), /width:\s*380px/);
+  assert.match(rules('.card-dialog-dock'), /overflow:\s*auto/);
+  assert.match(rules('.card-dialog-main'), /grid-template-areas:\s*"index body dock"/);
+  const narrow = css.match(/@media \(max-width: 1160px\) \{([\s\S]*?\})\s*\}/);
+  assert.ok(narrow);
+  assert.match(narrow[1], /grid-template-areas:\s*"index body" "dock dock"/);
+  assert.match(narrow[1], /\.card-dialog-dock\s*\{[^}]*max-height:\s*40vh/);
+  assert.doesNotMatch(css, /--cd-dock-h/);
+  assert.doesNotMatch(rules('.cd-dock'), /position:\s*sticky/);
+  assert.match(raw, /prefers-reduced-motion/);
+});
+
+test('the head of a task has a button for the whole task, in the panel head and with an accessible name', () => {
+  const head = cut(read('task-panel.js'), /^function panelHeadHtml\(task\) \{[\s\S]*?\n\}/m);
+  assert.match(head, /data-expand-task/);
+  assert.match(head, /aria-label="タスク全体を拡大して読む"/);
+  assert.match(head, /<span class="material-symbols-outlined" aria-hidden="true">open_in_full<\/span>/);
+  assert.ok(!head.includes('task.id'));
+  const markup = read('page-body.html');
+  assert.match(markup, /<nav class="card-dialog-index" aria-label="目次"/);
+  assert.match(markup, /<aside class="card-dialog-dock" aria-label="判定" hidden><\/aside>/);
+  // A group is named, and the clean-up of the drawn cards keeps aria-label (it strips only what points at ids).
+  const src = read('card-dialog.js');
+  assert.match(src, /class="cd-group" data-cd-group="[^"]*" aria-label="\$\{esc\(g\.label\)\}"/);
+  assert.doesNotMatch(cut(src, /^function cardDialogFill\([\s\S]*?\n\}/m), /removeAttribute\('aria-label'\)/);
 });
