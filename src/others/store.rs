@@ -108,21 +108,18 @@ pub(super) fn lock(root: &Path, stem: &str) -> Result<std::fs::File, String> {
 /// second click can meet, and it is answered at once from here.
 static RUNNING: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
 
-/// The lock of a running sync: the file lock, and the root's place among `RUNNING`.
+/// The lock of a running sync: its root's place among `RUNNING`, and the file lock once taken.
+/// The place is given back by `Drop`, so every way out of `try_lock_sync` gives it back.
 pub(super) struct SyncLock {
-    _file: std::fs::File,
     root: PathBuf,
+    _file: Option<std::fs::File>,
 }
 
 impl Drop for SyncLock {
     fn drop(&mut self) {
-        forget(&self.root);
+        let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        running.retain(|r| r != &self.root);
     }
-}
-
-fn forget(root: &Path) {
-    let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-    running.retain(|r| r != root);
 }
 
 /// The lock a sync holds from start to end; `None` when another one holds it.
@@ -133,31 +130,36 @@ fn forget(root: &Path) {
 /// until it execs, and `flock` belongs to the open file, not to the descriptor, so the lock of a
 /// sync that has just ended can look held to the next one.
 pub(super) fn try_lock_sync(root: &Path) -> Result<Option<SyncLock>, String> {
-    {
+    try_lock_sync_asking(root, LOCK_ASKS, LOCK_WAIT)
+}
+
+pub(super) fn try_lock_sync_asking(
+    root: &Path,
+    asks: u32,
+    wait: std::time::Duration,
+) -> Result<Option<SyncLock>, String> {
+    let mut lock = {
         let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         if running.iter().any(|r| r == root) {
             return Ok(None);
         }
         running.push(root.to_path_buf());
-    }
+        // From here the guard owns the place, whatever way this function is left.
+        SyncLock {
+            root: root.to_path_buf(),
+            _file: None,
+        }
+    };
     let path = dir(root).join("sync.lock");
-    for attempt in 0..LOCK_ASKS {
-        match crate::infra::fs::try_lock(&path) {
-            Ok(Some(file)) => {
-                return Ok(Some(SyncLock {
-                    _file: file,
-                    root: root.to_path_buf(),
-                }));
-            }
-            Ok(None) if attempt + 1 < LOCK_ASKS => std::thread::sleep(LOCK_WAIT),
-            Ok(None) => break,
-            Err(e) => {
-                forget(root);
-                return Err(e);
-            }
+    for attempt in 0..asks {
+        if let Some(file) = crate::infra::fs::try_lock(&path)? {
+            lock._file = Some(file);
+            return Ok(Some(lock));
+        }
+        if attempt + 1 < asks {
+            std::thread::sleep(wait);
         }
     }
-    forget(root);
     Ok(None)
 }
 

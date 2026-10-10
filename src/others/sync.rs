@@ -284,14 +284,20 @@ fn apply(
     }
     // Every later push is news again, so the time moves with each head seen: the time of the
     // sync that saw it, as GitHub gives no push time that a rebase does not move. A push that was
-    // already there when the record was first made (or never got a time) takes the commit date of
+    // already there when the record was first made (or never got a time, or only one from before
+    // your latest review) takes the commit date of
     // the first commit after your review, else now; a head you reviewed has no push to show.
     if let Some(m) = &next.my_review {
         if next.head_sha == m.commit {
             next.events.pushed = None;
         } else if prev.as_ref().is_some_and(|p| p.head_sha != next.head_sha) {
             next.events.pushed = Some(stamp.clone());
-        } else if next.events.pushed.is_none() {
+        } else if next
+            .events
+            .pushed
+            .as_deref()
+            .is_none_or(|at| at <= m.submitted_at.as_str())
+        {
             // A commit can be dated before the review it came after (committed, reviewed, then
             // pushed), so a date not after the review is no better than now.
             next.events.pushed = Some(

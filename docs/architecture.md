@@ -365,7 +365,9 @@ the contract for the pages and workers that read them; the names below are the J
   (none last), then `number`.
 - `POST /api/others/sync` runs the sync, only when asked: nothing reads GitHub at start, on a timer
   or on `GET`. It answers 200 `{lastSync, arrived, removed, records}`, 409
-  `{"error": "a sync is already running", "busy": true}` when `others/sync.lock` is held, and 400
+  `{"error": "a sync is already running", "busy": true}` when a sync is already running in the same
+  process (answered at once) or `others/sync.lock` is held elsewhere (answered after asking again for
+  up to about 2 s, since a forked child can briefly hold a copy of a lock that was just released), and 400
   `{"error": <why>}` when it could not be done at all (`gh` missing or not logged in, the search
   failing, the deadline passing before the search answered); then only `lastSync.error` and
   `lastSync.errorAt` are written. A PR that could not be read is not a failure of the sync: it is in

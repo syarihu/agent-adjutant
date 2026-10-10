@@ -992,3 +992,44 @@ fn a_sync_that_ended_is_not_taken_for_a_running_one_while_a_fork_holds_its_lock_
     assert!(store::try_lock_sync(root.path()).unwrap().is_some());
     forker.join().unwrap();
 }
+
+#[test]
+fn a_file_lock_held_elsewhere_is_busy_after_the_retries() {
+    let root = tempfile::tempdir().unwrap();
+    // Held through another open file, as a second process would hold it: none of ours is running.
+    let held = crate::infra::fs::try_lock(&root.path().join("others/sync.lock"))
+        .unwrap()
+        .unwrap();
+    let wait = std::time::Duration::from_millis(1);
+    assert!(
+        store::try_lock_sync_asking(root.path(), 5, wait)
+            .unwrap()
+            .is_none()
+    );
+    // The refusal gave back the place it took, so the lock is there to take once it is let go.
+    drop(held);
+    assert!(
+        store::try_lock_sync_asking(root.path(), 5, wait)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn a_newer_review_at_an_old_commit_does_not_keep_an_older_push_stamp() {
+    let root = tempfile::tempdir().unwrap();
+    // Pushed (c2) after a review on c1; the push was seen and stamped.
+    let fake = Fake::new(&[7]).with(7, pushed_since_review());
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    assert_eq!(
+        record_of(root.path(), 7).unwrap().events.pushed.as_deref(),
+        Some("20261004T000000Z")
+    );
+    // Reviewed again, still on c1 and later than that stamp, with the head unmoved.
+    let mut again = pushed_since_review();
+    with_my_review(&mut again, &up("commented"), "2026-10-08T00:00:00Z", "c1");
+    fake.put(7, again);
+    sync_at(root.path(), &acme(), NOW + 60, &fake).unwrap();
+    let pushed = record_of(root.path(), 7).unwrap().events.pushed;
+    assert_eq!(pushed, Some(utc_stamp(NOW + 60)));
+}
