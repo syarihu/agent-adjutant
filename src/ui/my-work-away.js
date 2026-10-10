@@ -46,9 +46,9 @@ function workAwaySince(mark, actedAt) {
   return Math.max(left, Number.isFinite(actedAt) ? actedAt : -Infinity);
 }
 
-/* The first line of what the agent said, cut short. */
+/* The first line of what the agent said, without its Markdown markers, cut short. */
 function awayFirstLine(message) {
-  const line = String(message || '').split('\n').map(x => x.trim()).find(Boolean) || '';
+  const line = mdPlain(message || '').split('\n').map(x => x.trim()).find(Boolean) || '';
   return line.length > 100 ? `${line.slice(0, 100)}…` : line;
 }
 

@@ -115,6 +115,7 @@ test('a long last message is cut to a few lines and characters with an ellipsis'
   assert.equal(long.length, 201);
   assert.ok(long.endsWith('…'));
   assert.equal(notifyTrimMessage(undefined), '');
+  assert.equal(notifyTrimMessage('# Done\n- **a**\n- `b`'), 'Done\na\nb');
 });
 
 test('an entry that leaves the document for a round and comes back does not ring again', () => {

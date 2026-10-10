@@ -75,6 +75,14 @@ test('a turn that ended is skipped while a gate is open, and says what the agent
   assert.equal(workAwayText(workAwayEvents(stale, T0)[0]), 'worker が手を止めた');
 });
 
+test('a done event reads the agent\'s message without its Markdown markers, and skips lines that only frame', () => {
+  const said = message => workAwayText({ kind: 'done', at: T0, message });
+  assert.equal(said('## 完了\n**PR** を出した'), 'worker が手を止めた — 『完了』');
+  assert.equal(said('```\n```\n| a | b |\n|---|---|\n本文'), 'worker が手を止めた — 『a · b』');
+  assert.equal(said('---\n\n- `x` を直した'), 'worker が手を止めた — 『x を直した』');
+  assert.equal(said('```\n```'), 'worker が手を止めた');
+});
+
 test('a permission wait is stamped by when the status changed, not by later activity', () => {
   const e = entryOf(session('w1', { agentSession: agent('waiting', T0 + 30, { request: 'Bash: make', lastEventAt: T0 + 900 }) }), task('1'));
   assert.deepEqual(workAwayEvents(e, T0 + 20).map(workAwayText), ['許可を求めた — Bash: make']);

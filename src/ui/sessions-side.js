@@ -83,12 +83,12 @@ function gitFactsHtml(s) {
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
 }
 
-/* What the agent said at the end of its last turn, as plain text with its line breaks and how
-   long ago it said it; never HTML or markdown. */
+/* What the agent said at the end of its last turn and how long ago it said it. The message is the agent's own words,
+   Markdown and all: md() escapes it before it parses, so none of it is ever HTML. */
 function lastMessageHtml(a) {
   if (!a.lastMessage) return '';
   const mins = a.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
-  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div>${esc(a.lastMessage)}</div></div>`;
+  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div class="body">${md(a.lastMessage)}</div></div>`;
 }
 
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a
