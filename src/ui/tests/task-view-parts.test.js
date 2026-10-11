@@ -337,6 +337,12 @@ test('an answered gate is one wide block with its own heading, its parts in a gr
   assert.ok(pc.html.includes('<div class="cd-part cd-wide"><choices p-1 false></div>'));
   assert.ok(/<div class="cd-part cd-wide"><div class="panel" data-expand="rounds"/.test(dc.html));
   assert.ok(/<div class="cd-part cd-wide"><div class="panel" data-expand="findings"/.test(dc.html));
+  assert.ok(dc.html.includes(call('filesTableHtml', { ...diffGate, id: 'd-1' })) && dc.html.includes(`<div class="cd-part cd-wide">${call('filesTableHtml', { ...diffGate, id: 'd-1' })}</div>`));
+  assert.ok(dc.html.includes(`<div class="cd-part cd-wide">${call('diffCardHtml', { ...diffGate, id: 'd-1' })}</div>`));
+  assert.ok(!cardOf(gs, 'gate:d-2').html.includes('data-expand="diff"'));
+  // A recorded choice with no matching option is still shown, escaped.
+  const orphan = groupsOf([dgate('c-1', 'question', '2026-10-01T00:00:00Z', { decision: 'choice', choice: '<z>', choices: [{ id: 'a', label: 'A' }] })]);
+  assert.ok(cardOf(orphan, 'gate:c-1').html.includes('選んだ案: &lt;z&gt;'));
   const bare = cardOf(gs, 'gate:d-2');
   for (const cls of ['cd-gate-when', 'cd-gate-answer', 'cd-gate-why', 'cd-gate-parts']) assert.ok(!bare.html.includes(cls), cls);
   wait([]);

@@ -381,7 +381,7 @@ const cardDialogWaiting = all => all.filter(g => g.wait !== false && isWaiting(g
 function cardDialogAnsweredHeadHtml(g) {
   const bad = ['changes', 'reject'].includes(g.decision);
   const picked = g.choice ? (g.choices || []).find(c => c.id === g.choice) : null;
-  const answer = [picked ? `選んだ案: ${picked.label}` : '', g.comment || ''].filter(Boolean).join(' — ');
+  const answer = [g.choice ? `選んだ案: ${picked ? picked.label : g.choice}` : '', g.comment || ''].filter(Boolean).join(' — ');
   const why = stopWhy(g);
   return `<div class="cd-gate-head"><div class="cd-gate-title-row">` +
     `<h4 class="cd-gate-title">${esc(`【${kindOf(g.kind)[0]}】${g.title}`)}</h4>` +
@@ -472,7 +472,7 @@ function cardDialogTaskGroups(task, all) {
       part(factsCardHtml(g)), part(focusCardHtml(g)), part(unsureCardHtml(g)), part(reportCardHtml(g)),
       part(choicesHtml(g, false), true),
       ...(g.kind === 'verify' ? [part(commandsCardHtml(g), true), part(manualCardHtml(g)), part(runHtml(g))]
-        : g.kind === 'diff' && g !== gR ? [part(roundsCardHtml(g), true), part(findingsCardHtml(g), true)] : []),
+        : g.kind === 'diff' && g !== gR ? [part(roundsCardHtml(g), true), part(findingsCardHtml(g), true), part(filesTableHtml(g), true), part(diffCardHtml(g), true)] : []),
       // The plan shown in the plan group has its 決定事項 there.
       part(g === plan ? '' : decidedHtml(g)),
     ].join('');
