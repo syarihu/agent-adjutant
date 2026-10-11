@@ -62,6 +62,7 @@ fn the_trust_dialog_is_read_with_its_directory_and_where_the_pointer_is() {
         trust_dialog(Agent::Claude, &claude),
         Some(TrustDialog {
             dir: "/home/user/project".to_string(),
+            spellings: vec!["/home/user/project".to_string()],
             yes_pointed: false
         })
     );
@@ -70,6 +71,7 @@ fn the_trust_dialog_is_read_with_its_directory_and_where_the_pointer_is() {
         trust_dialog(Agent::Agy, &agy),
         Some(TrustDialog {
             dir: "/home/user/project".to_string(),
+            spellings: vec!["/home/user/project".to_string()],
             yes_pointed: true
         })
     );
@@ -129,6 +131,24 @@ fn a_question_wrapped_over_two_lines_is_still_the_dialog() {
         "Is this a project you cre\n ated or one you trust",
     );
     assert!(trust_dialog(Agent::Claude, &parse_pane_screen(&text)).is_some());
+}
+
+#[test]
+fn a_wrapped_path_stands_for_every_way_its_breaks_can_be_read() {
+    let text = fixture("claude-menu").replace("/home/user/project", "/x/a\n b\n c");
+    let dialog = trust_dialog(Agent::Claude, &parse_pane_screen(&text)).unwrap();
+    assert_eq!(dialog.dir, "/x/abc");
+    let mut spellings = dialog.spellings;
+    spellings.sort();
+    assert_eq!(spellings, ["/x/a b c", "/x/a bc", "/x/ab c", "/x/abc"]);
+}
+
+#[test]
+fn a_path_over_more_than_four_rows_is_not_read() {
+    let four = fixture("claude-menu").replace("/home/user/project", "/a\n b\n c\n d");
+    assert!(trust_dialog(Agent::Claude, &parse_pane_screen(&four)).is_some());
+    let five = fixture("claude-menu").replace("/home/user/project", "/a\n b\n c\n d\n e");
+    assert_eq!(trust_dialog(Agent::Claude, &parse_pane_screen(&five)), None);
 }
 
 #[test]

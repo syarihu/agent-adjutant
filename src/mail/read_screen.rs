@@ -371,11 +371,19 @@ pub fn last_output_line(agent: Agent, screen: &PaneScreen) -> Option<String> {
     })
 }
 
+/// The most rows a dialog's directory is read over: each break doubles what it can stand for.
+const MAX_PATH_ROWS: usize = 4;
+
 /// The question an agent asks, before it does anything, about the directory it was started in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustDialog {
-    /// The directory the dialog names, as it is drawn (a home directory may be written `~/`).
+    /// The directory the dialog names, as it is drawn (a home directory may be written `~/`),
+    /// a wrapped path joined without a separator: for telling a person which directory it was.
     pub dir: String,
+    /// Every directory the drawn rows can stand for, which is all that may be compared. A path
+    /// the agent's layout wrapped has lost what was at the break: a space, or nothing inside a
+    /// word. So each break is read both ways, and a one-row path has the one spelling.
+    pub spellings: Vec<String>,
     /// Whether the pointer is already on "Yes, I trust this folder" (agy's starts there,
     /// Claude Code's starts on "No, exit").
     pub yes_pointed: bool,
@@ -404,23 +412,35 @@ pub fn trust_dialog(agent: Agent, screen: &PaneScreen) -> Option<TrustDialog> {
         .iter()
         .position(|l| l.trim() == "Accessing workspace:")?;
     // A long path is wrapped by the agent's own layout, which `capture-pane -J` cannot join, so
-    // the dir is the run of lines up to the next blank one, put back together without a
-    // separator.
-    let dir: String = plain[at + 1..]
+    // the path is the run of rows up to the next blank one. More rows than `MAX_PATH_ROWS` is
+    // not read: it cannot be told which directory that is.
+    let rows: Vec<&str> = plain[at + 1..]
         .iter()
         .map(|l| l.trim())
         .skip_while(|l| l.is_empty())
         .take_while(|l| !l.is_empty())
         .collect();
-    if dir.is_empty() {
+    if rows.is_empty() || rows.len() > MAX_PATH_ROWS {
         return None;
+    }
+    let dir = rows.concat();
+    let mut spellings = vec![rows[0].to_string()];
+    for row in &rows[1..] {
+        spellings = spellings
+            .iter()
+            .flat_map(|s| [format!("{s}{row}"), format!("{s} {row}")])
+            .collect();
     }
     let yes_pointed = plain.iter().any(|l| {
         let line = l.trim();
         (line.starts_with('❯') || line.starts_with('>'))
             && line.contains("Yes, I trust this folder")
     });
-    Some(TrustDialog { dir, yes_pointed })
+    Some(TrustDialog {
+        dir,
+        spellings,
+        yes_pointed,
+    })
 }
 
 /// What the agent's screen says it is doing. `Generic` is `Idle` without looking: nothing is

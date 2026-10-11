@@ -138,7 +138,7 @@ pub(crate) fn settle_reader_with(
                         "the reader's agent still asks whether to trust its workspace after it was answered".to_string(),
                     );
                 }
-            } else if !is_own(&dialog.dir, &own) {
+            } else if !is_own(&dialog.spellings, &own) {
                 return Err(format!(
                     "the reader's agent asks to trust {}, which is not its own workspace; it was not answered",
                     dialog.dir
@@ -211,24 +211,23 @@ fn own_dirs(own_dir: &Path) -> Vec<String> {
     own
 }
 
-/// Whether `dir`, as a dialog draws it, is one of `own`: whole, never a prefix, so a directory
-/// that merely contains or starts like the reader's is not it.
-fn is_own(dir: &str, own: &[String]) -> bool {
-    // A path wrapped at a space has lost it, so whitespace is not compared at all.
-    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
-    let written_out = dir
-        .strip_prefix("~/")
-        .zip(std::env::var("HOME").ok().filter(|h| !h.is_empty()))
-        .map(|(rest, home)| format!("{}/{rest}", home.trim_end_matches('/')));
-    let dir = squeeze(dir);
-    let dir = dir.trim_end_matches('/');
-    own.iter().any(|o| {
-        let o = squeeze(o);
-        let o = o.trim_end_matches('/');
-        o == dir
-            || written_out
-                .as_deref()
-                .is_some_and(|w| squeeze(w).trim_end_matches('/') == o)
+/// Whether the dialog is about the reader's directory: one of the `spellings` its rows can stand
+/// for (a `~/` written out) is exactly one of `own`, never a prefix, and with no whitespace
+/// ignored, so `/x/ab` is not `/x/a b`.
+fn is_own(spellings: &[String], own: &[String]) -> bool {
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty());
+    spellings.iter().any(|spelling| {
+        let written_out = spelling
+            .strip_prefix("~/")
+            .zip(home.as_deref())
+            .map(|(rest, home)| format!("{}/{rest}", home.trim_end_matches('/')));
+        own.iter().any(|o| {
+            let o = o.trim_end_matches('/');
+            spelling.trim_end_matches('/') == o
+                || written_out
+                    .as_deref()
+                    .is_some_and(|w| w.trim_end_matches('/') == o)
+        })
     })
 }
 
@@ -420,11 +419,33 @@ mod tests {
         // SAFETY of the comparison: only the string rule is under test, with HOME as it is.
         if let Ok(home) = std::env::var("HOME") {
             let own = vec![format!("{}/x", home.trim_end_matches('/'))];
-            assert!(is_own("~/x", &own));
-            assert!(!is_own("~/x/y", &own));
+            assert!(is_own(&one("~/x"), &own));
+            assert!(!is_own(&one("~/x/y"), &own));
         }
-        assert!(is_own("/Users/a/state/review/o~r~1/", &own));
-        assert!(!is_own("/Users/a/state/review", &own));
+        assert!(is_own(&one("/Users/a/state/review/o~r~1/"), &own));
+        assert!(!is_own(&one("/Users/a/state/review"), &own));
+    }
+
+    fn one(dir: &str) -> Vec<String> {
+        vec![dir.to_string()]
+    }
+
+    #[test]
+    fn whitespace_is_not_ignored_in_the_comparison() {
+        let own = vec!["/x/a b".to_string()];
+        assert!(!is_own(&one("/x/ab"), &own));
+        assert!(is_own(&one("/x/a b"), &own));
+    }
+
+    #[test]
+    fn a_wrapped_path_matches_through_the_spelling_that_is_own() {
+        let own = vec!["/x/a b".to_string()];
+        let text = include_str!("../../fixtures/panes/claude-menu.txt")
+            .replace("/home/user/project", "/x/a\n b");
+        let dialog = trust_dialog(Agent::Claude, &parse_pane_screen(&text)).unwrap();
+        assert!(is_own(&dialog.spellings, &own));
+        let other = vec!["/x/a  b".to_string()];
+        assert!(!is_own(&dialog.spellings, &other));
     }
 
     #[test]
