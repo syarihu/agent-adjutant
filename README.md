@@ -324,6 +324,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *the built-in `focus`, `close` and `wake` reach a session through the terminal it was started in (recorded when it registered), so changing `preset` does not strand sessions started before; sessions with no such record, or one started by a `spawn` template outside tmux, follow the current `preset`* |
 | `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
 | `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `reviewerRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}` |
+| | | *starts the read-only reader of a PR (「AI 下読み」). The default holds it to reading: `--allowedTools` only adds to what your own Claude settings and MCP servers already allow, so `--setting-sources ''` and `--strict-mcp-config` drop those two (the reader has no settings file and no MCP server, and uses `adj skill` and `adj review say` from the command line), and under `dontAsk` anything off the list is denied, not asked. It has no `gh`. A `reviewerRunner` of your own has to keep both flags, or the reader gets whatever your settings give it. The one file it may write is named as `Edit(...)` because Claude's file rules match `Edit(path)` only, and an `Edit` rule covers Write too. `adj` has to be on PATH for the patterns to match. Another agent is held to reading by the `adj-reviewer` procedure alone* |
 | `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
 | `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
 | | | *`{settings}` becomes `--settings <file>`, the file holding adjutant's hooks for the session. It is added after `claude` when a template does not name it, unless the template passes its own `--settings`; do not quote it. A binary older than this does not know it, so write it by hand only once every binary sharing the config does* |
@@ -574,7 +576,7 @@ when you last typed into it.
 The PRs that asked for your review are kept apart from tasks, one record each, in the repositories of the
 owners adj has a board for. `POST /api/others/sync` (the resident only) reads them from GitHub: the open PRs that
 ask for you directly, and every record not yet done, by number. It runs only when asked, never at start or on a timer.
-`GET /api/others` returns `{now, lastSync, records}`; each record carries the PR's title, author, branches, head
+`GET /api/others` returns `{now, lastSync, records, hub}`; each record carries the PR's title, author, branches, head
 SHA, diff size with the files, CI, reviewers, your last review and the commits pushed since, and a derived `state`
 (`requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done`). A record done for a day is removed by the next
 sync. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
@@ -586,6 +588,19 @@ A row is new when a request, a re-request, a finished read-through or a push is 
 When the last sync is more than 30 minutes old the list says so, with 「いま同期する」, and the half of the switch gets a dot. A sync that brings in a request or a re-request rings a desktop notification once
 (「レビュー依頼 N 件」 for several); a push alone does not. The code-review hub's row says whether AI 下読み is available; while it is not, the sync and the list work. The read marks are in this browser (`adj.seenOthers`).
 The hub's own procedure no longer lists these PRs in its terminal: it points at this list.
+
+**The code-review hub and the reader.** 「AI 下読み」 is made by a hub that belongs to no repository: `adj hub --review` (the same as
+`--hub @review`; it conflicts with `--repo`) starts it from any directory, in `<state>/review`, and 「hub を起動」 on its row
+(`POST /api/others/hub/start`, `terminal.preset: "tmux"` only) does the same. It is not in 「ボード」. A read-through is asked for
+with the row's button (`POST /api/others/ai` with `{"id": "owner/repo#N"}`; 409 `hub-stopped` while the hub is down, so nothing is
+queued) or `adj review request --pr <URL|owner/repo#N>`. Never by a sync. At most 3 readers run at once and the rest wait in the
+order asked. Each reader is a window of its own, in an empty directory, with no checkout and no `gh`: `adj review context --pr <id> --out .`
+writes the diff, the body, the commit messages and the review comments next to it (read-only requests, no mutation), and the reader hands in one
+JSON file with `adj review submit --pr <id> --file read-through.json`, checked against the schema before anything is stored (a reader that cannot finish says so with `adj review fail --pr <id> --why <text>`, which frees its place and lets the PR be asked again, and speaks to the hub only with `adj review say` (it can reach no other hub); a read stuck in `running` for 30 minutes is replaced by a new request). It
+cannot push, comment or review. That is enforced for Claude by the default `reviewerRunner`; for another agent it is the `adj-reviewer`
+procedure's rule, so set a `reviewerRunner` that restricts it. `GET /api/others/read?id=<owner/repo#N>` answers the stored read-through. When the PR gets a new head, the read-through is kept and shown as made at the old one
+(「下読みし直す」), and nothing is read again by itself. The schema and the queue rules are in
+[docs/architecture.md](docs/architecture.md#the-read-through).
 
 **新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a

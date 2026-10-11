@@ -316,7 +316,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 }
 .ov-act .material-symbols-outlined { font-size: 15px; }
 .ov-act:hover:not(:disabled) { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
-.ov-act:disabled { opacity: .5; cursor: default; }
+.ov-act:disabled, .ov-act[aria-disabled="true"] { opacity: .5; cursor: default; }
 .wk-glyph.ov-requested { color: var(--md-sys-color-warning); }
 .wk-glyph.ov-reading { color: var(--md-sys-color-primary); animation: wk-spin 1.1s linear infinite; }
 .wk-glyph.ov-ready { color: var(--md-sys-color-success); }

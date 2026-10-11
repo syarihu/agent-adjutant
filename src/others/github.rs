@@ -72,7 +72,7 @@ pub(super) struct Hit {
 /// Why a PR was not read when the deadline came first.
 pub(super) const OUT_OF_TIME: &str = "not read: the sync ran out of time";
 
-fn answer(run: GhRun) -> Result<String, String> {
+pub(super) fn answer(run: GhRun) -> Result<String, String> {
     if run.ok {
         return Ok(run.stdout);
     }

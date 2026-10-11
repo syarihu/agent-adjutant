@@ -1796,6 +1796,35 @@ fn a_board_address_keeps_keys_it_does_not_write() {
 }
 
 #[test]
+fn the_review_hub_is_never_noted_on_the_board_list() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    let repo = crate::kernel::identity::review_hub_at(&root);
+    note_board(&root, &repo);
+    // What `seed_boards` does with the cwd a `hubs/review.json` records.
+    let again =
+        crate::kernel::identity::resolve_in(Some(Path::new(&repo.main)), None, repo.hub.as_deref())
+            .unwrap();
+    assert!(again.is_review());
+    note_board(&root, &again);
+    assert!(
+        !boards_dir(&root).exists() || std::fs::read_dir(boards_dir(&root)).unwrap().count() == 0
+    );
+}
+
+#[test]
+fn the_review_context_reads_the_state_root_it_was_given() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let root = sandbox.state();
+    let ctx = review_context(&root).unwrap();
+    assert_eq!(ctx.state, root);
+    assert!(ctx.repo.is_review());
+    // The same through `context_of`, which must not take the state dir against its own child.
+    let via = context_of(crate::kernel::identity::review_hub_at(&root)).unwrap();
+    assert_eq!(via.state, root);
+}
+
+#[test]
 fn the_dashboards_record_is_written_whole() {
     let sandbox = crate::testing::Sandbox::empty();
     assert_eq!(record(&sandbox.state(), "acme-widget", 4321), Ok(true));
@@ -1890,5 +1919,49 @@ fn a_hub_status_exposes_where_it_was_started() {
     assert_eq!(
         hub_status(&root, "acme-widget", &name).terminal,
         Some(terminal)
+    );
+}
+
+#[test]
+fn the_review_hubs_agent_is_given_the_absolute_state_dir_whatever_the_variable_says() {
+    let sandbox = Sandbox::empty();
+    // A relative one, as a person types it in a terminal; the hub then moves into `<state>/review`.
+    let _relative = crate::testing::EnvVar::set(&sandbox, "ADJUTANT_STATE_DIR", "rel-state");
+    let review = context(None, Some("@review")).unwrap();
+    assert!(review.state.is_absolute());
+    let env = agent_env(&review);
+    let given: Vec<&(String, String)> = env
+        .iter()
+        .filter(|(k, _)| k == "ADJUTANT_STATE_DIR")
+        .collect();
+    assert_eq!(given.len(), 1, "{env:?}");
+    assert_eq!(given[0].1, review.state.to_string_lossy());
+    assert!(std::path::Path::new(&given[0].1).is_absolute());
+    // The same through `review_context`, which the readers are started from.
+    let root = sandbox.state();
+    let ctx = review_context(&root).unwrap();
+    assert!(agent_env(&ctx).contains(&(
+        "ADJUTANT_STATE_DIR".to_string(),
+        root.to_string_lossy().to_string()
+    )));
+}
+
+#[test]
+fn a_repository_hubs_agent_is_given_no_state_dir_of_its_own() {
+    let sandbox = Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: sandbox.state().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = context_of(repo).unwrap();
+    assert!(
+        agent_env(&ctx)
+            .iter()
+            .all(|(k, _)| k != "ADJUTANT_STATE_DIR")
     );
 }

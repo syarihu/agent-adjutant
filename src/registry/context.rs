@@ -67,6 +67,16 @@ pub(crate) fn agent_env(ctx: &Context) -> Vec<(String, String)> {
     if let Some(hub) = &ctx.repo.hub {
         env.push((crate::infra::env::HUB_ENV.to_string(), hub.clone()));
     }
+    // The code-review hub starts in `<state>/review`, so a relative `ADJUTANT_STATE_DIR` would
+    // name another directory from there. Its agent, and the readers it starts, are given the
+    // absolute one this context reads.
+    if ctx.repo.is_review() {
+        env.retain(|(key, _)| key != crate::infra::env::STATE_DIR_ENV);
+        env.push((
+            crate::infra::env::STATE_DIR_ENV.to_string(),
+            ctx.state.to_string_lossy().to_string(),
+        ));
+    }
     env
 }
 
@@ -109,8 +119,22 @@ pub fn hook_state_root(cwd: Option<&Path>) -> PathBuf {
 }
 
 pub fn context_of(repo: RepoInfo) -> Result<Context, String> {
-    let state = state_root(Some(Path::new(&repo.main)));
+    // The code-review hub's directory is inside the state directory, not the other way round:
+    // a relative `ADJUTANT_STATE_DIR` must not be taken against it again.
+    let state = match repo.is_review() {
+        true => Path::new(&repo.main)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| state_root(None)),
+        false => state_root(Some(Path::new(&repo.main))),
+    };
     context_at(repo, state)
+}
+
+/// The context of the code-review hub over the state directory `root`: what the resident, its
+/// jobs and `adj review` read the hub's settings from, wherever they were started.
+pub fn review_context(root: &Path) -> Result<Context, String> {
+    context_at(identity::review_hub_at(root), root.to_path_buf())
 }
 
 /// The context of `repo` over the state directory `state`, for a caller that already holds the

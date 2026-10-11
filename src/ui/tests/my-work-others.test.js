@@ -12,7 +12,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js']) {
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersStaleMinutes, othersGroups, othersRepoChips,
-  othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel } = ctx;
+  othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -135,6 +135,59 @@ test('the time since the request is the words of the list, and nothing without o
   assert.equal(othersRequestedLabel(rec(1, { requestedAt: null }), T0), '');
 });
 
+test('the AI 下読み of a record: what it says and the one button it offers, for every status', () => {
+  const view = (extra, state = 'requested', records) => plain(othersAiView(rec(1, { state, ...extra }), records));
+  assert.deepStrictEqual(view({}), { kind: 'none', text: '', action: 'AI 下読み' });
+  assert.equal(view({}, 'pushed').action, 'AI 下読み');
+  // A PR waiting on its author, or done, is offered nothing.
+  assert.equal(view({}, 'waiting-on-author').action, null);
+  assert.equal(view({}, 'done').action, null);
+  assert.deepStrictEqual(view({ ai: { status: 'running' } }, 'ai-reading'), { kind: 'running', text: 'AI 下読み中', action: null });
+  assert.deepStrictEqual(view({ ai: { status: 'queued' } }, 'ai-reading'), { kind: 'queued', text: 'AI 下読みの順番待ち', action: null });
+  assert.deepStrictEqual(
+    view({ ai: { status: 'ready', counts: { attention: 2, check: 0, drafts: 3 } } }, 'ai-ready'),
+    { kind: 'done', text: '下読み済み · 要注意 2 · 確認 0 · 下書き 3', action: null });
+  assert.deepStrictEqual(
+    view({ ai: { status: 'ready', stale: true, sha: '0123456789abcdef' } }, 'ai-ready'),
+    { kind: 'stale', text: '下読み済み（前の push 時点 0123456）', action: '下読みし直す' });
+  assert.deepStrictEqual(
+    view({ ai: { status: 'failed', error: 'the reader exited' } }),
+    { kind: 'failed', text: 'AI 下読みに失敗しました: the reader exited', action: 'もう一度 AI 下読み' });
+  assert.equal(view({ ai: { status: 'failed' } }).text, 'AI 下読みに失敗しました');
+  // A status from a newer server says and offers nothing.
+  assert.deepStrictEqual(view({ ai: { status: 'brand-new' } }), { kind: 'none', text: '', action: null });
+});
+
+test('a read running for more than 30 minutes is a hung reader and offers the button again', () => {
+  const launched = T0;
+  const running = rec(1, { state: 'ai-reading', ai: { status: 'running', launchedAt: stamp(launched) } });
+  const view = now => plain(othersAiView(running, [running], now));
+  assert.deepStrictEqual(view(launched + 1800), { kind: 'running', text: 'AI 下読み中', action: null });
+  assert.deepStrictEqual(view(launched + 1801), { kind: 'hung', text: 'AI 下読み中（30 分以上たっています）', action: 'もう一度 AI 下読み' });
+  // Without a clock, or a launch time, nothing is known to be old.
+  assert.equal(plain(othersAiView(running, [running])).kind, 'running');
+  assert.equal(plain(othersAiView(rec(2, { state: 'ai-reading', ai: { status: 'running' } }), [], T0 + 99999)).kind, 'running');
+  // The row says it too.
+  assert.equal(plain(othersStateLine(running, [running], launched + 1801)).text, 'AI 下読み中（30 分以上たっています）');
+});
+
+test('a queued read says its place, by when it was asked and then by id', () => {
+  const q = (n, at) => rec(n, { state: 'ai-reading', ai: { status: 'queued', startedAt: at } });
+  const records = [q(3, '20261001T000200Z'), q(1, '20261001T000300Z'), q(2, '20261001T000200Z'), rec(9, { ai: { status: 'running' } })];
+  const text = r => othersAiView(r, records).text;
+  assert.equal(text(records[2]), 'AI 下読みの順番待ち（1 番目）');
+  assert.equal(text(records[0]), 'AI 下読みの順番待ち（2 番目）');
+  assert.equal(text(records[1]), 'AI 下読みの順番待ち（3 番目）');
+  assert.equal(plain(othersStateLine(records[1], records)).text, 'AI 下読みの順番待ち（3 番目）');
+});
+
+test('the AI 下読み shows beside the state of a PR that is pushed or requested, and the state line keeps the rest', () => {
+  const pushed = rec(1, { state: 'pushed', commitsSinceReview: 2, ai: { status: 'ready', stale: true, sha: 'abcdef012' } });
+  assert.equal(plain(othersStateLine(pushed)).text, '前回のレビューから +2 コミット · 下読み済み（前の push 時点 abcdef0）');
+  const failed = rec(2, { ai: { status: 'failed', error: 'boom' } });
+  assert.equal(plain(othersStateLine(failed)).text, 'あなたのレビュー待ち · AI 下読みに失敗しました: boom');
+});
+
 test('the hub row: absent and stopped say AI 下読み is unavailable, and running counts the records', () => {
   const records = [rec(1, { ai: { status: 'running' } }), rec(2, { ai: { status: 'queued' } }), rec(3, { ai: { status: 'running' } }), rec(4)];
   const absent = plain(othersHubView(undefined, records));
@@ -147,12 +200,35 @@ test('the hub row: absent and stopped say AI 下読み is unavailable, and runni
   assert.deepStrictEqual([up.state, up.why, up.max], ['working', '', 3]);
 });
 
+test('the hub row takes its numbers from the document, and a hub that is up has no reason to give', () => {
+  const records = [rec(1, { ai: { status: 'running' } })];
+  const running = plain(othersHubView({ state: 'running', slug: 'review', running: 2, queued: 1, max: 3, startable: false }, records));
+  assert.deepStrictEqual(running, { state: 'running', running: 2, queued: 1, max: 3, startable: false, canRead: true, why: '' });
+  const stopped = plain(othersHubView({ state: 'stopped', running: 0, queued: 4, max: 3, startable: true }, records));
+  assert.deepStrictEqual([stopped.state, stopped.running, stopped.queued, stopped.startable], ['stopped', 0, 4, true]);
+  assert.match(stopped.why, /hub が止まっています/);
+  // A hub that is up but cannot open a reader (the terminal is not tmux) cannot be asked, and says why.
+  const noReader = plain(othersHubView({ state: 'running', canRead: false }, records));
+  assert.deepStrictEqual([noReader.state, noReader.canRead], ['running', false]);
+  assert.match(noReader.why, /tmux/);
+  assert.equal(plain(othersHubView({ state: 'stopped', canRead: true }, records)).canRead, false);
+  assert.equal(plain(othersHubView({ state: 'running', canRead: true }, records)).why, '');
+  // An older server says nothing of it, and a running hub is taken to be able.
+  assert.equal(plain(othersHubView({ state: 'running' }, records)).canRead, true);
+  // A hub that is up cannot be started again.
+  assert.equal(plain(othersHubView({ state: 'running', startable: true }, records)).startable, false);
+});
+
 test('the signature changes with what is drawn and with the minute, and not with the seconds', () => {
   const doc = { now: T0 + 10, lastSync: { at: stamp(T0) }, records: [rec(1)] };
   const sig = othersSig(doc, T0 + 10);
   assert.equal(othersSig(doc, T0 + 20), sig);
   assert.notEqual(othersSig(doc, T0 + 70), sig);
   assert.notEqual(othersSig({ ...doc, records: [rec(1, { title: 'other' })] }, T0 + 10), sig);
+  // A read-through that went stale, and the hub coming up, redraw.
+  const read = stale => ({ ...doc, records: [rec(1, { ai: { status: 'ready', sha: 'a', stale } })] });
+  assert.notEqual(othersSig(read(true), T0 + 10), othersSig(read(false), T0 + 10));
+  assert.notEqual(othersSig({ ...doc, hub: { state: 'running' } }, T0 + 10), othersSig({ ...doc, hub: { state: 'stopped' } }, T0 + 10));
   // The stale flag is part of it, so the banner appears on time.
   assert.notEqual(othersSig(doc, T0 + 1801), othersSig(doc, T0 + 1799));
 });

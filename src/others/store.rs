@@ -5,13 +5,15 @@
 //! <state>/others/<owner>~<repo>~<number>.lock   its write lock
 //! <state>/others/sync.json                      how the last sync went
 //! <state>/others/sync.lock                      held for the whole of a sync
+//! <state>/others/reads/<owner>~<repo>~<number>.json   the PR's latest read-through
+//! <state>/others/review.lock                    held while readers are counted and claimed
 //! ```
 
 use std::path::{Path, PathBuf};
 
 use crate::task::PrRef;
 
-use super::model::{LastSync, Record, derive};
+use super::model::{LastSync, Record, derive, is_stale};
 
 pub(super) fn dir(root: &Path) -> PathBuf {
     root.join("others")
@@ -28,7 +30,7 @@ pub(super) fn id_of(r: &PrRef) -> String {
 }
 
 /// The stem of a record, from its key: the one name both are made from.
-fn stem_of_id(id: &str) -> String {
+pub(super) fn stem_of_id(id: &str) -> String {
     id.replace(['/', '#'], "~")
 }
 
@@ -39,10 +41,20 @@ fn path_of(root: &Path, stem: &str) -> PathBuf {
 /// What is derived is never read back from disk: the state follows the facts, so a writer that
 /// sets only a fact (the read-through's result) needs no second write to move the state.
 fn derived(mut record: Record) -> Record {
-    let (state, reason) = derive(&record);
+    derive_in_place(&mut record);
+    record
+}
+
+/// Set what is derived: the state, why it is done, and whether the read-through is of an
+/// older head.
+fn derive_in_place(record: &mut Record) {
+    let (state, reason) = derive(record);
     record.state = state;
     record.done_reason = reason;
-    record
+    let stale = is_stale(record);
+    if let Some(ai) = record.ai.as_mut() {
+        ai.stale = stale;
+    }
 }
 
 /// The record of `r`: `None` when there is none, and an error when there is one that cannot be
@@ -86,15 +98,28 @@ pub(super) fn list(root: &Path) -> Vec<Record> {
 
 /// Write `record` whole, with its state derived from the facts it holds.
 pub(super) fn save(root: &Path, record: &mut Record) -> Result<(), String> {
-    let (state, reason) = derive(record);
-    record.state = state;
-    record.done_reason = reason;
+    derive_in_place(record);
     crate::infra::fs::write_json(&path_of(root, &stem_of_id(&record.id)), record)
 }
 
 /// Remove a record's file. The lock file beside it stays: unlinking a lock file while another
 /// process holds it open hands the next two callers two different locks.
+///
+/// What was made for the record goes with it, the read-through and the reader's scratch
+/// directory: a PR that is reopened later must not be served the read of an earlier time.
 pub(super) fn remove(root: &Path, stem: &str) -> Result<(), String> {
+    let scratch = super::reader_dir::review_home(root).join(stem);
+    // The record last: one that could not be fully removed stays listed, and a later sync tries again.
+    crate::infra::fs::remove_if_present(&read_path(root, stem))?;
+    match std::fs::remove_dir_all(&scratch) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "cannot remove the reader's directory of {stem}: {e}"
+            ));
+        }
+    }
     crate::infra::fs::remove_if_present(&path_of(root, stem))
 }
 
@@ -102,6 +127,65 @@ pub(super) fn remove(root: &Path, stem: &str) -> Result<(), String> {
 /// a save are one step, and the sync and whoever writes the read-through must not undo each other.
 pub(super) fn lock(root: &Path, stem: &str) -> Result<std::fs::File, String> {
     crate::infra::fs::lock(&dir(root).join(format!("{stem}.lock")))
+}
+
+/// Where the read-throughs are: one file per PR, in a directory of their own so that `list`
+/// does not try to read one as a record.
+fn reads_dir(root: &Path) -> PathBuf {
+    dir(root).join("reads")
+}
+
+fn read_path(root: &Path, stem: &str) -> PathBuf {
+    reads_dir(root).join(format!("{stem}.json"))
+}
+
+/// The text of a PR's stored read-through: `None` when there is none, an error when there is
+/// one that cannot be read.
+pub(super) fn load_read(root: &Path, stem: &str) -> Result<Option<String>, String> {
+    let path = read_path(root, stem);
+    match crate::infra::fs::record_exists(&path) {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    }
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// Replace a PR's stored read-through whole.
+pub(super) fn write_read(
+    root: &Path,
+    stem: &str,
+    read: &impl serde::Serialize,
+) -> Result<(), String> {
+    crate::infra::fs::write_json(&read_path(root, stem), read)
+}
+
+/// Put back what `load_read` gave before a change: its text as it was, or no file when there
+/// was none.
+pub(super) fn restore_read(root: &Path, stem: &str, previous: Option<&str>) -> Result<(), String> {
+    let path = read_path(root, stem);
+    let Some(text) = previous else {
+        return crate::infra::fs::remove_if_present(&path);
+    };
+    write_text(&path, text)
+}
+
+/// Replace the file at `path` with `text` in one step, as `write_json` does for a value.
+pub(super) fn write_text(path: &Path, text: &str) -> Result<(), String> {
+    let staged = crate::infra::fs::stage(crate::infra::fs::parent_dir(path)?, text)?;
+    std::fs::rename(&staged, path).map_err(|e| {
+        let _ = std::fs::remove_file(&staged);
+        format!("cannot write {}: {e}", path.display())
+    })
+}
+
+/// Hold the lock that readers are counted and claimed under, until the handle is dropped: the
+/// count spans records that each have a lock of their own, so it has one more. Taken before a
+/// record's lock, never after.
+pub(super) fn review_lock(root: &Path) -> Result<std::fs::File, String> {
+    crate::infra::fs::lock(&dir(root).join("review.lock"))
 }
 
 /// The state roots a sync of this process is running on. A sync of this process is the one a

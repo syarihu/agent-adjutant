@@ -203,6 +203,7 @@ fn apply(
             base: String::new(),
             head: String::new(),
             head_sha: String::new(),
+            head_seen_at: None,
             draft: false,
             pr_state: PrOpenState::Open,
             additions: 0,
@@ -232,6 +233,10 @@ fn apply(
     next.author = facts.author;
     next.base = facts.base;
     next.head = facts.head;
+    // The time the sync saw this head, which a read-through made in between is compared with.
+    if prev.as_ref().is_none_or(|p| p.head_sha != facts.head_sha) {
+        next.head_seen_at = Some(stamp.clone());
+    }
     next.head_sha = facts.head_sha;
     next.draft = facts.draft;
     next.pr_state = facts.pr_state;

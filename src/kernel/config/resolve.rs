@@ -354,6 +354,7 @@ fn resolve_settings(
         worker_wake: Wake::resolve(merged("wake"), merged("workerWake")),
         agent_runner: pick_str("agentRunner"),
         hub_runner: pick_str("hubRunner"),
+        reviewer_runner: pick_str("reviewerRunner"),
         agent_resume_runner: pick_str("agentResumeRunner"),
         hub_resume_runner: pick_str("hubResumeRunner"),
         agent_env: agent_env(pick("agentEnv"), warnings),

@@ -205,7 +205,7 @@ pub(super) fn start_parent_hub(server: &Server, body: &[u8]) -> Result<Value, St
 }
 
 /// How a hub is to be started, from the `start` a request names: `auto` when it names none.
-fn hub_start_of(input: &Value) -> Result<HubStart, String> {
+pub(super) fn hub_start_of(input: &Value) -> Result<HubStart, String> {
     match input.get("start").and_then(Value::as_str).unwrap_or("auto") {
         "auto" => Ok(HubStart::Auto),
         "resume" => Ok(HubStart::Resume),

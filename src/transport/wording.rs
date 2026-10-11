@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
+use crate::lifecycle::review::AskError;
 use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
 use crate::registry::Context;
 use crate::task::{self, Checked, PrState};
@@ -102,4 +103,25 @@ pub fn skill_text(name: &str, arguments: &str, agent: Option<&str>) -> Result<St
     })
     .map(|r| r.text)
     .map_err(|e| e.to_string())
+}
+
+/// Why asking for a read-through was refused, as the CLI and the board both say it.
+pub fn review_refusal(why: &AskError) -> String {
+    match why {
+        AskError::HubStopped => {
+            "the code-review hub is not running: start it with `adj hub --review`, or from its row on the board".to_string()
+        }
+        AskError::NotStartable => {
+            "a reader can only be opened with terminal.preset \"tmux\"".to_string()
+        }
+        AskError::NoRecord => "no such pull request on the list: run 「同期」 on the board first".to_string(),
+        AskError::Done => "that pull request is done".to_string(),
+        AskError::Failed(why) => why.clone(),
+    }
+}
+
+/// What the queue of readers could not do after a request, a hand-in or a failure was taken, as
+/// the CLI and the board both say it.
+pub fn queue_warning(why: &str) -> String {
+    format!("the queue of readers could not be worked: {why}")
 }

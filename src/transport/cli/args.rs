@@ -33,7 +33,7 @@ pub(crate) enum Commands {
     Worker(WorkerArgs),
     /// Leave a message for the worker in a worktree (body from --body or stdin)
     Tell(TellArgs),
-    /// Print one of the procedures: adj-hub | adj-worker | adj-report
+    /// Print one of the procedures: adj-hub | adj-worker | adj-report | adj-review-hub | adj-reviewer
     Skill(SkillArgs),
     /// What the hub has left for the worker in this worktree
     Outbox(OutboxArgs),
@@ -94,6 +94,12 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: JulesAction,
     },
+    /// The code-review hub's readers: ask for a read of a PR, collect what a reader reads, hand
+    /// a read-through in
+    Review {
+        #[command(subcommand)]
+        action: ReviewAction,
+    },
     /// Remove the MCP server registration
     UninstallMcp(UninstallMcpArgs),
     /// Tmux backend helpers: pane inspection, window spawning, wake, close, and focus
@@ -101,6 +107,85 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: TmuxAction,
     },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ReviewAction {
+    /// Ask for a read-through of a PR (AI 下読み); it waits for a place when three are running
+    Request(ReviewPrArgs),
+    /// Write what a reader reads of a PR into a directory: the diff, the body, the review comments
+    Context(ReviewContextArgs),
+    /// Hand in the read-through a reader wrote, checked against the schema in `adj-reviewer`
+    Submit(ReviewSubmitArgs),
+    /// Tell the code-review hub something from a reader (a report, or a question for the person)
+    Say(ReviewSayArgs),
+    /// Say that a reader cannot finish: its read is failed, so its place is freed and the PR can be asked again
+    Fail(ReviewFailArgs),
+    /// What a reader's window runs: record this process, then become the reader's agent
+    #[command(hide = true)]
+    Run(ReviewRunArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewPrArgs {
+    /// The pull request: its URL, or `owner/repo#N`
+    #[arg(long)]
+    pub(crate) pr: String,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewContextArgs {
+    /// The pull request: its URL, or `owner/repo#N`
+    #[arg(long)]
+    pub(crate) pr: String,
+    /// Where to write the files: this PR's own reader directory, `<state>/review/<owner>~<repo>~<number>`,
+    /// and no other (default: the current directory, which is it for a reader)
+    #[arg(long)]
+    pub(crate) out: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewSubmitArgs {
+    /// The pull request: its URL, or `owner/repo#N`
+    #[arg(long)]
+    pub(crate) pr: String,
+    /// The read-through, as a JSON file
+    #[arg(long)]
+    pub(crate) file: String,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewSayArgs {
+    /// The pull request this reader is reading: its URL, or `owner/repo#N`
+    #[arg(long)]
+    pub(crate) pr: String,
+    /// What kind of message it is
+    #[arg(long, value_parser = ["report", "question"], default_value = "report")]
+    pub(crate) kind: String,
+    /// One line stating it
+    #[arg(long)]
+    pub(crate) subject: String,
+    /// The text (`-` reads it from stdin)
+    #[arg(long)]
+    pub(crate) body: String,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewFailArgs {
+    /// The pull request: its URL, or `owner/repo#N`
+    #[arg(long)]
+    pub(crate) pr: String,
+    /// Why the read could not be made, in a line
+    #[arg(long)]
+    pub(crate) why: String,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewRunArgs {
+    #[arg(long)]
+    pub(crate) pr: String,
+    #[arg(long)]
+    pub(crate) session: String,
 }
 
 #[derive(Args)]
@@ -417,6 +502,9 @@ pub(crate) struct HubArgs {
     /// worktree's own record is not read here)
     #[arg(long)]
     pub(crate) hub: Option<String>,
+    /// The code-review hub, which belongs to no repository (the same as `--hub @review`)
+    #[arg(long, conflicts_with_all = ["repo", "hub"])]
+    pub(crate) review: bool,
     /// Open a tab and start it there, instead of becoming it in this one
     #[arg(long)]
     pub(crate) tab: bool,
@@ -439,6 +527,14 @@ pub(crate) struct HubArgs {
 }
 
 impl HubArgs {
+    /// The hub identifier this was asked for: `@review` for `--review`, else `--hub`.
+    pub(crate) fn hub_id(&self) -> Option<&str> {
+        match self.review {
+            true => Some(crate::kernel::identity::REVIEW_HUB_ID),
+            false => self.hub.as_deref(),
+        }
+    }
+
     pub(crate) fn start(&self) -> HubStart {
         match (self.resume, self.new) {
             (true, _) => HubStart::Resume,

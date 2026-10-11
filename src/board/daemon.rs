@@ -278,6 +278,10 @@ impl BoundResident {
             });
         }
         {
+            let root = resident.root.clone();
+            std::thread::spawn(move || jobs::review_queue::run(root));
+        }
+        {
             let resident = Arc::clone(&resident);
             std::thread::spawn(move || {
                 jobs::sweep_gates::run(|| {

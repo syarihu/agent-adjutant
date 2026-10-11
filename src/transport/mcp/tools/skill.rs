@@ -5,11 +5,11 @@ use serde_json::{Value, json};
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_skill",
-        "description": "The full text of one of adjutant's procedures: adj-hub (running the hub), adj-worker (taking a task from brief to handover), adj-report (handing a bug you found to the hub). Same text the MCP prompts serve; use this tool when prompts are not available to you.",
+        "description": "The full text of one of adjutant's procedures: adj-hub (running the hub), adj-worker (taking a task from brief to handover), adj-report (handing a bug you found to the hub), adj-review-hub (the code-review hub), adj-reviewer (reading one pull request, read-only). Same text the MCP prompts serve; use this tool when prompts are not available to you.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": { "type": "string", "enum": ["adj-hub", "adj-worker", "adj-report"] },
+                "name": { "type": "string", "enum": ["adj-hub", "adj-worker", "adj-report", "adj-review-hub", "adj-reviewer"] },
                 "arguments": { "type": "string", "description": "Free text substituted into the procedure where it asks for it." },
                 "agent": { "type": "string", "enum": ["claude", "claude-code", "agy", "antigravity", "generic", "codex"], "description": "Target agent format: claude (claude-code) | agy (antigravity) | generic (codex). Defaults to auto-detect." },
                 "worktree": { "type": "string", "description": "Path to the worktree or repository root. Defaults to the server's working directory." },

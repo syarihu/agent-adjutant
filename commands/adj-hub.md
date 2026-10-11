@@ -2656,6 +2656,8 @@ They are on the board, not in this terminal: 「いまの仕事」 → 「AI 下
 `gh pr list` for them. The list is read from GitHub by 「同期」 on that page (nothing reads it by itself), and shows
 each PR's state, size and new requests.
 
+AI 下読み runs on the code-review hub (`adj hub --review`, a hub of its own that belongs to no repository), not on this hub; do not try to read these PRs from here.
+
 Tell the user to open it. Its address is the resident server's `?view=work` page: take `board.url`, replace the
 `/b/<slug>/` path with `/`, and add `view=work` to the query (keep `token`). When `board.resident` is `false`, the list
 is not there: say it needs the resident server (`adj server`), and do not fall back to `gh pr list`.

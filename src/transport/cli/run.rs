@@ -2,7 +2,9 @@
 
 use clap::Parser;
 
-use super::args::{Cli, Commands, GateAction, JulesAction, ServerAction, TaskAction, TmuxAction};
+use super::args::{
+    Cli, Commands, GateAction, JulesAction, ReviewAction, ServerAction, TaskAction, TmuxAction,
+};
 use super::outbox;
 use crate::transport::cli;
 
@@ -29,6 +31,7 @@ pub fn run() -> ! {
         Commands::Gate { action } => run_gate(action).map(|_| 0),
         Commands::Task { action } => run_task(action).map(|_| 0),
         Commands::Jules { action } => run_jules(action).map(|_| 0),
+        Commands::Review { action } => run_review(action).map(|_| 0),
         Commands::Skill(args) => super::skill(args).map(|_| 0),
         Commands::Outbox(args) => outbox(args).map(|_| 0),
         // Exit 1 when the hub is not running, so a shell can branch on it without parsing
@@ -88,6 +91,18 @@ fn run_jules(action: &JulesAction) -> Result<(), String> {
         JulesAction::Show(args) => super::jules_show(args),
         JulesAction::Findings(args) => super::jules_findings_cmd(args),
         JulesAction::Relay(args) => super::jules_relay_cmd(args),
+    }
+}
+
+/// The `adj review` verbs, split out for the same reason `run_task` is.
+fn run_review(action: &ReviewAction) -> Result<(), String> {
+    match action {
+        ReviewAction::Request(args) => super::review_request(args),
+        ReviewAction::Context(args) => super::review_context(args),
+        ReviewAction::Submit(args) => super::review_submit(args),
+        ReviewAction::Say(args) => super::review_say(args),
+        ReviewAction::Fail(args) => super::review_fail(args),
+        ReviewAction::Run(args) => super::review_run(args),
     }
 }
 

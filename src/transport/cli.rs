@@ -24,6 +24,7 @@ mod hook;
 mod hub;
 mod ide_title_notify;
 mod jules;
+mod review;
 mod review_engine;
 mod run;
 mod serve;
@@ -52,6 +53,9 @@ pub use ide_title_notify::{notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
     findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
     start as jules_start,
+};
+pub use review::{
+    review_context, review_fail, review_request, review_run, review_say, review_submit,
 };
 pub use review_engine::run as review_engine;
 pub use run::run;

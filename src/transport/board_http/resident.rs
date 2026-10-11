@@ -12,8 +12,11 @@ use super::assets::UI_HTML;
 use super::auth::{page_rings, refuse};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
+use crate::board::review::RequestRefused;
 use crate::board::view::{boards, others, work};
-use crate::others::SyncError;
+use crate::lifecycle::hub::TabOutcome;
+use crate::lifecycle::review::AskError;
+use crate::others::{Requested, SyncError};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -141,7 +144,95 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
                 http::json(out, 400, &json!({ "error": why }).to_string())
             }
         },
+        ("POST", "/api/others/ai") => ask_for_read(resident, req, out),
+        ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
+        ("GET", "/api/others/read") => stored_read(resident, req, out),
         _ => no_such_route(out),
+    }
+}
+
+/// `POST /api/others/ai`: queue a read-through of a PR, and start the readers next in line.
+fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let Some(id) = input.get("id").and_then(serde_json::Value::as_str) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "an id is required" }).to_string(),
+        );
+    };
+    match crate::board::review::request(&resident.root, id) {
+        Ok(asked) => {
+            let (Requested::Queued(record) | Requested::Already(record)) = asked.requested;
+            // `warning` is set when the queue could not be worked after the request was taken.
+            http::json(
+                out,
+                200,
+                &json!({ "record": record, "warning": asked.queue_error.as_deref().map(crate::transport::wording::queue_warning) }).to_string(),
+            )
+        }
+        Err(RequestRefused::BadId) => http::json(
+            out,
+            400,
+            &json!({ "error": format!("not a pull request: {id}") }).to_string(),
+        ),
+        Err(RequestRefused::Refused(why)) => {
+            let (status, because) = match &why {
+                AskError::HubStopped => (409, Some("hub-stopped")),
+                AskError::NotStartable => (409, Some("not-startable")),
+                AskError::NoRecord => (404, None),
+                AskError::Done => (400, None),
+                AskError::Failed(_) => (500, None),
+            };
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::review_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// `POST /api/others/hub/start`: open the code-review hub in a new window.
+fn start_review_hub(
+    resident: &Resident,
+    req: &Request,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let how = match super::handlers::hub_start_of(&input) {
+        Ok(how) => how,
+        Err(e) => return http::json(out, 400, &json!({ "error": e }).to_string()),
+    };
+    match crate::board::review::start(&resident.root, how) {
+        Ok(TabOutcome::Opened(done)) => http::json(
+            out,
+            200,
+            &json!({ "started": true, "description": done.description }).to_string(),
+        ),
+        Ok(TabOutcome::AlreadyRunning(status)) => http::json(
+            out,
+            200,
+            &json!({ "started": false, "running": true, "pid": status.pid }).to_string(),
+        ),
+        Err(e) => http::json(out, 400, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/read?id=`: the read-through kept for a PR, as it was handed in.
+fn stored_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::read_through(&resident.root, &pr) {
+        Ok(Some(read)) => http::json(out, 200, &read.to_string()),
+        Ok(None) => http::json(out, 404, &json!({ "error": "no read-through" }).to_string()),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
 }
 

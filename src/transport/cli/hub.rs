@@ -2,8 +2,8 @@ use super::args::{HubArgs, HubCloseArgs, HubStopArgs};
 use super::*;
 use crate::lifecycle::Hooks;
 use crate::lifecycle::hub::{
-    AutoResume, Claimed, HubRequest, Planned, Skip, TabOutcome, claim_launch, exec_launch,
-    hub_in_tab, plan_launch,
+    AutoResume, Claimed, HubRequest, Planned, Skip, TabOutcome, claim_launch, ensure_home,
+    exec_launch, hub_in_tab, plan_launch,
 };
 
 // ── hub (the launcher) ─────────────────────────────────────────
@@ -41,7 +41,7 @@ pub(super) fn print_performed(done: &terminal::Performed, dry_run: bool) {
 /// tabs claims the record.
 pub fn hub(args: &HubArgs) -> Result<(), String> {
     let repo_arg = args.repo.as_deref();
-    let hub_arg = args.hub.as_deref();
+    let hub_arg = args.hub_id();
     let (extra, tab, start) = (args.extra(), args.tab, args.start());
     let (dashboard, dry_run) = (args.dashboard(), args.dry_run);
     // `context_as`, not `context`: this command is run from anywhere in the repository,
@@ -54,12 +54,26 @@ pub fn hub(args: &HubArgs) -> Result<(), String> {
             ctx.repo.nwo
         );
     }
+    // The code-review hub's home is a directory adj makes; a repository's hub has its checkout.
+    // A dry run makes nothing: where the home is not there yet it prints the line and stays put.
+    if !dry_run {
+        ensure_home(&ctx)?;
+    }
+    let absent = dry_run && !std::path::Path::new(&ctx.repo.main).is_dir();
     // The directory move comes first: the hub runs in the main checkout.
     // `ctx.state` is taken against the main checkout, so the hub's own records are the
-    // same wherever this was typed. Nothing has been written at this point, so a failure here
+    // same wherever this was typed. No record has been written at this point, so a failure here
     // has nothing to undo.
-    std::env::set_current_dir(&ctx.repo.main)
-        .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
+    if !absent {
+        std::env::set_current_dir(&ctx.repo.main)
+            .map_err(|e| format!("cannot change directory to {}: {e}", ctx.repo.main))?;
+    } else if tab {
+        // A tab cannot be planned in a directory that is not there.
+        return Err(format!(
+            "dry run: {} is not made yet (a real start makes it)",
+            ctx.repo.main
+        ));
+    }
 
     // Before planning, because the auto-resume decision belongs to the `adj hub` in the new
     // tab, and `hub_in_tab` makes the presence check itself before opening anything: one hub

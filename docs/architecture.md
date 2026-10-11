@@ -59,8 +59,9 @@ is one example. The solid chain shows the order, not who calls whom: `lifecycle`
 `jules` or `gate`, for instance. Inside `transport` the arrows drawn are the only ones that exist:
 `mcp` never names `cli`, and `board_http` names only `wording` (convention, no check).
 
-`board` has four public submodules: `board::hub` and `board::session` (what a person runs from the
-page), `board::view` (the read model) and `board::jobs` (background work). The rest of `board`
+`board` has five public submodules: `board::hub` and `board::session` (what a person runs from the
+page), `board::review` (asking for a read of a PR and starting the code-review hub), `board::view`
+(the read model) and `board::jobs` (background work). The rest of `board`
 (`daemon`, `resident`, `server`, `dedicated`, `token`, `url`, `last_lines`, `model`) is private and
 re-exported from `src/board.rs`.
 
@@ -101,9 +102,14 @@ fixtures.
   writes by state root, not by `Context`: the records belong to the person, not to a hub. It has a
   private `store.rs` and a `github.rs` of its own, and uses `task`'s PR reference and check
   counting. Its records are described under [PRs others asked you to review](#prs-others-asked-you-to-review).
+  It also holds the read-through of each PR (`read_through`: the schema types and `validate`, and the
+  operations `request_read`, `claim_reads`, `note_reader`, `fail_read`, `reap_reads`, `submit_read`,
+  `read_context` and `read_through`): the queue of readers is its records, and it starts no process.
 - `lifecycle`: `lifecycle::hub` and `lifecycle::worker`: start, resume, focus, stop and close
   hubs and workers; plan and exec a launch, claim slots, register launches and link workers to
-  tasks. It returns values such as
+  tasks. `lifecycle::review` starts the readers of the code-review hub: `request`, `dispatch` (reap
+  the dead, claim the next in line, open a window for each, outside every lock), `launch_reader`,
+  `run_reader` (what a reader's window runs) and `submit`. It returns values such as
   `HubStart` and `TabOutcome` and prints nothing, and it changes other modules' records only
   through their operations.
 - `board`: the resident daemon and server, a hub's or `adj serve`'s own board (`dedicated`), the read model, the
@@ -190,8 +196,9 @@ answers the same routes except the ones `Route::resident_only` lists (a session'
 open and clean-up; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
-resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others` and
-`POST /api/others/sync`. The last two are in [PRs others asked you to review](#prs-others-asked-you-to-review);
+resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
+`POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/hub/start` and
+`GET /api/others/read`. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
 the sync runs on the connection's own thread, as the resident gives each connection one. `GET /api/work` is the work
 under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
 repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,
@@ -336,6 +343,9 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
 | `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review, and how the last sync went | others (`store.rs`) |
+| `others/reads/<owner>~<repo>~<number>.json`, `others/review.lock` | the latest read-through of a PR; the lock held while readers are counted and claimed | others (`store.rs`) |
+| `review/`, `review/<owner>~<repo>~<number>/` | the code-review hub's home (its working directory, no checkout), and one scratch directory per reader, made when it starts | lifecycle (`hub/ensure_home.rs`, `review/launch_reader.rs`) |
+| `hubs/review.json`, `sessions/review.json`, `inbox/review/` | the code-review hub's record, saved session and inbox: the slug is `review`, with no digest, and the address is `ADJUTANT_HUB=@review` | registry, mail (as for any hub) |
 | `gates/<slug>/`, `records/` and `answered/` under it, each gate with an `<id>.lock` | open gates, gates kept as a record (`wait: false`), answered gates | gate (`store.rs`) |
 | `cleanup-<pid>-<time>-<n>/` | files set aside only when the first `git worktree remove` refuses; removed once the worktree is gone or the files are put back, and left only if they could not be | board (`session/clean_up.rs`) |
 | `dashboard-token`, `server.lock`, `server.log` | the resident's token, lock and log | board (`token.rs`, `daemon.rs`) |
@@ -360,7 +370,7 @@ and the order it was done in.
 does not count), in the repositories of the owners adj has a board for. The records and the sync are
 the contract for the pages and workers that read them; the names below are the JSON keys.
 
-- `GET /api/others` answers `{now, lastSync, records}`. `now` is epoch seconds. `lastSync` is `null`
+- `GET /api/others` answers `{now, lastSync, records, hub}`. `now` is epoch seconds. `lastSync` is `null`
   before the first sync. `records` are sorted by `repo` (case-insensitive), then `requestedAt`
   (none last), then `number`.
 - `POST /api/others/sync` runs the sync, only when asked: nothing reads GitHub at start, on a timer
@@ -389,6 +399,7 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `repo`, `number`, `url` | the repository as GitHub spells it (`Owner/Repo`), the PR number and its URL |
 | `registered` | `owner/repo` is in the address book as of the last sync; a PR of an owner's other repository is recorded with `false` |
 | `title`, `author`, `base`, `head`, `headSha`, `draft` | what GitHub says; `author` is `null` for a deleted account; `title` is cut to 256 characters |
+| `headSeenAt` | time of the sync that set `headSha` or changed it; absent on a record from before it. What `ai.stale` is judged against |
 | `prState` | `open`, `merged` or `closed` |
 | `additions`, `deletions`, `changedFiles` | the PR's totals |
 | `files` | `[{path, additions, deletions, change}]`; `change` is `added`, `deleted`, `modified`, `renamed`, `copied` or `changed` |
@@ -404,7 +415,7 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `doneReason` | only while `state` is `done`: `approved`, `merged`, `closed` or `withdrawn` |
 | `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later |
 | `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review (when it is later than the review, else the sync's time) when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
-| `ai` | the AI read-through, written by whoever runs it: `{status, sha, startedAt, finishedAt}` with `status` `queued`, `running`, `ready` or `failed`; absent until one ran |
+| `ai` | the AI read-through: `{status, sha, startedAt, finishedAt, launchedAt, readFrom, sessionId, pid, psStarted, terminal, error, counts, stale}`; absent until one was asked for. `status` is `queued`, `running`, `ready` or `failed`. `startedAt` is when the person asked, which is the place in the queue; `launchedAt` is when the reader was started; `sessionId` is the reader whose hand-in is taken; `sha` and `counts` (`{attention, check, drafts}`) are those of the stored read-through and are kept when a re-read is asked for; `error` is why the last read failed, as one line of at most 300 characters. `readFrom` is when the stored read-through's material was taken at the latest: the `launchedAt` of the reader that handed it in, or the hand-in time when no reader was launched. `stale` is derived on every load and save and never trusted from disk: it is true when `sha` is not `headSha` and the sync saw that head (`headSeenAt`) at or after `readFrom`, or when either is missing. The hand-in time is not used, since a reader that read A, a push of B stored by a sync, and then a hand-in of A is stale. A reader reads the PR's live head, which can be newer than the last sync's, so a read of a head the sync has not seen yet is not stale, and the sync that brings it makes `sha` and `headSha` equal |
 | `firstSeenAt`, `readAt` | the first sync that recorded it, and the last that read it |
 
 `lastSync` is `{at, complete, owners, truncated, failed, error, errorAt}`. `at` is the last sync
@@ -418,7 +429,8 @@ request, or a re-request with nothing pushed). When you are not requested: no re
 request newer than your review that went away, is `done` as `withdrawn`; an approving last review is
 `done` as `approved`; otherwise `pushed` when the head moved since your review and
 `waiting-on-author` when it did not. The read-through moves only a `requested` record: `ai-reading`
-while `ai.status` is `queued` or `running`, `ai-ready` when it is `ready`.
+while `ai.status` is `queued` or `running`, `ai-ready` when it is `ready` (also when it is stale). On a
+`pushed` record `ai` is shown beside the state and does not replace it.
 
 Like every record here, unknown keys (also inside `events` and `ai`) are kept on a save.
 
@@ -438,6 +450,100 @@ that fails keeps the list and the count as they were.
 - **Notification.** The tab whose sync answered 200 with a non-empty `arrived` rings 「レビュー依頼」 once, with the tag `adj-review-<lastSync.at>`:
   the PR's title for one, 「レビュー依頼 N 件」 for several. A push alone is not in `arrived`, so it does not ring. It is a choice in the page's
   notification dialog, on by default.
-- **Optional fields that later issues add.** The page reads them when they are there: `hub` (`{state, slug, sessionId, running, max, startable}`)
-  in the document, `ai.counts` (`{attention, check, drafts}`) on a record, and what puts a record out of review. Without `hub` the page
-  shows the code-review hub as stopped: AI 下読み is unavailable while the sync and the list work.
+- **AI 下読み.** A row offers 「AI 下読み」 on a `requested` or `pushed` PR with no read, 「下読みし直す」 when the read is stale (shown
+  as `下読み済み（前の push 時点 <sha7>）`) and 「もう一度 AI 下読み」 after a failure. A queued read says its place, `（N 番目）`, by
+  `startedAt` and then `id`. The buttons work only while `hub.canRead` is true; otherwise they are disabled and the hub's `why`
+  (stopped, or not tmux) is their title. Each send is guarded per PR and followed by a read of the list; a refusal is shown in the page's log.
+- **The code-review hub's row.** `hub` is `{state, slug, sessionId, running, queued, max, startable, canRead}`: `state` is `running` or
+  `stopped`, `running` and `queued` count the records by `ai.status`, `max` is 3, `startable` is true when it is stopped and
+  `terminal.preset` is `tmux`, and `canRead` is true when it is running and `terminal.preset` is `tmux` (a reader cannot be opened
+  otherwise, and a request answers 409 `not-startable`). 「hub を起動」 is `POST /api/others/hub/start`. An older server sends no `hub`, and the page then shows
+  it as stopped. What puts a record out of review is a later issue's.
+
+### The read-through
+
+The code-review hub (`adj hub --review`) belongs to no repository. Its hub identifier is the reserved `@review` (an `@` cannot be in a
+repository name or a tracker key), its slug is `review` (every other slug ends in a 16-digit hex digest, so none can equal it) and its
+name is `adjutant-review`. `identity::resolve_in` answers it before it asks git, so `ADJUTANT_HUB=@review` reaches `adj send` and the
+MCP tools from any directory. It is not in 「ボード」: `registry::note_board` skips it. Its working directory is `<state>/review`,
+which `lifecycle::hub::ensure_home` makes.
+
+A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>"}`, or `adj review request --pr <url|id>`), never by a
+sync. The answers: 200 `{record, warning}` when it is queued or already queued or running (`warning` is `null`, or says that the queue could not be worked after the request was taken; the request stands and the job tries again, and `adj review request|submit|fail` print it on stderr); 409 `{error, why}` with `why` `hub-stopped` or
+`not-startable` (nothing is written); 404 for a PR with no record; 400 for a bad id or a done PR. Readers start only while the hub is
+up. `others::claim_reads` runs under `others/review.lock`: it first fails a queued read whose PR is done (`the PR is no longer open`), then counts the `running` records, and marks as `running` the first
+`MAX_READING` (3) minus those of the `queued`, ordered by `(ai.startedAt, id)`, each under its record's lock. `lifecycle::review::dispatch`
+then opens a window for each claim, outside every lock; one that cannot be opened is `failed`. It is called by a request, by
+`adj review submit` and `adj review fail` (a place is free) and every 3 s by a job of the resident, which also fails a reader whose recorded process is gone
+(`others::reap_reads`; one that cannot be told apart from a live one is left, and one that has recorded nothing is waited for 90 s). A
+re-read starts a fresh session; the previous reader, if still alive, is left running. A reader that cannot finish says so with
+`adj review fail --pr <id> --why <text>` (taken only from the session the record names), then tells the hub with `adj review say --pr <id> --kind report|question --subject <s> --body <b>`. `say` is hard-wired to the code-review hub: it has no `--repo`, `--hub`, `--from` or `--wake`, and records the PR and the reader's session in what it sends. The reader has no `adj send`, which can address any hub. `adj review fail` makes the read `failed`, which frees its place
+and lets the PR be asked again. A read that is `running` with a `launchedAt` more than 30 minutes old (`HUNG_READER_SECS`) is not "already
+running" to a new request: it is queued afresh and the old reader is superseded. The reaper still fails a reader whose process is gone,
+also while the hub is down; only starting a reader needs the hub.
+
+The reader is read-only. It has no checkout and no `gh`: `adj review context --pr <id> --out <dir>` (`<dir>` must be this PR's own `<state>/review/<stem>/`, and with `ADJUTANT_REVIEW_SESSION` set the record must name that session) makes every GitHub read (read-only requests, no mutation; `gh pr view` is a GraphQL query) and
+writes `pr.json`, `diff.patch`, `review-comments.json` and `reviews.json` into `<dir>`; for a PR
+you reviewed that has moved it also writes `my-last-review.json` and `since-review.patch`. The default `reviewerRunner` allows only
+`Read(./**)`, `Grep(./**)`, `Glob(./**)` (its own directory, not the machine), `Edit(./read-through.json)`, `adj review context`, `adj review submit`, `adj review fail`, `adj review say` and `adj skill` under
+`--permission-mode dontAsk`, with `--setting-sources ''` and `--strict-mcp-config`: the allowlist only adds to the person's own Claude settings and MCP
+servers, so those two are dropped (our own `--settings` hooks file still applies), and the reader uses the `adj` command, not MCP tools. A `reviewerRunner` of
+your own has to keep both flags. For another agent the procedure `adj-reviewer` is the only restraint.
+
+`adj review context` first removes `diff.patch`, `my-last-review.json` and `since-review.patch` from `<dir>`, so what an earlier read left
+cannot be taken for this one's, and a fresh reader session starts with no `read-through.json` in its directory. A diff that cannot be fetched
+is a note in the summary (`notes`), not a failure; so is a list of files or commits that may be cut (100 or more returned, or fewer files than the
+record's `changedFiles`). The reader is told to say in `points` or `unwritten` what it could not see, and not to guess. Reading never writes the
+record: the sync alone moves `headSha`. The text of a PR and of its comments is data, never instructions, for the reader and for the hub it reports to.
+The record's removal (a sync, a day after it is done) also removes its `others/reads/<stem>.json` and `<state>/review/<stem>/`.
+
+`adj review submit --pr <id> --file <json>` takes the file as the reader's hand-in. It refuses before any write a file over 2 MiB, one that
+does not parse, one with a key the schema does not have, one that fails `validate` (every problem is printed, one per line), a PR with no
+record or that nobody asked a read of, a `sinceReview` whose `commit` is not the record's `myReview.commit` (or one for a PR with no `myReview`), `sinceReview: null` when the record has a `myReview` on another commit than `sha` (a re-review), with a session and a `pr.json` in the reader's directory, a `sha` that is not its `headRefOid`; and, when `my-last-review.json` is there, a `commentId` that is not in it, a comment of it that has no `in_reply_to_id` and no entry in `sinceReview.comments`, or one with two entries (checked only when the file exists), and, when `ADJUTANT_REVIEW_SESSION` is set, a session that is not the record's `ai.sessionId` (a
+superseded reader). It then writes `others/reads/<stem>.json`, and sets `ai.sha`, `ai.finishedAt`, `ai.counts`, `events.aiReady`, clears
+`ai.error`, and sets `ai.status` to `ready` unless it is `queued` (a re-read keeps its place). If the record cannot be saved the previous
+file is put back. `GET /api/others/read?id=<owner/repo#N>` answers the stored file: 200, 404 `{"error": "no read-through"}`, or 400.
+
+The stored file is `{id, madeAt, session, ...the input}`; a key this binary does not know is kept. The input is one object, and an unknown
+key is refused. Levels are `attention`, `check`, `info`; categories `logic`, `ui`, `doc`, `test`, `resource`; annotation kinds `tr`, `ex`;
+draft sides `right`, `left`; comment statuses `addressed`, `replied`, `untouched`.
+
+```jsonc
+{
+  "version": 1,                       // required, must be 1
+  "sha": "<40 lowercase hex>",        // required: the head SHA the reader read
+  "three": {                          // required; each non-blank, one line, at most 300 characters
+    "purpose": "…", "approach": "…", "impact": "…", "essence": "…"
+  },
+  "points": [                         // most dangerous first (attention, then check, then info); at most 200
+    { "level": "attention|check|info", "path": "src/a.rs", "line": 42 /* optional, from 1 */,
+      "title": "…", "why": "…" }
+  ],
+  "order": [                          // reading order; at most 1000
+    { "path": "…", "category": "logic|ui|doc|test|resource", "note": "…", "skippable": false }
+  ],
+  "deleted": [                        // exactly one of reason and question is non-null
+    { "path": "…", "reason": "…" | null, "question": "…" | null }
+  ],
+  "decisions": [ { "decision": "…", "gains": "…", "costs": "…" } ],
+  "tests": { "covered": ["…"], "notCovered": ["…"] },
+  "unwritten": ["question for the author"],
+  "annotations": [                    // at most 2000
+    { "path": "…", "anchor": "substring of one diff line", "nth": 1 /* optional */,
+      "kind": "tr|ex", "text": "…" }
+  ],
+  "drafts": [
+    { "path": "…", "line": 42, "startLine": 40 /* optional, not after line */,
+      "side": "right|left" /* default right */, "body": "…" }
+  ],
+  "overall": { "body": "…" } | null,   // text only: the body of the pending review; adj never says a verdict
+  "sinceReview": null | {
+    "commit": "<commit of your last review>",
+    "comments": [ { "commentId": 123, "path": "…", "line": 10 /* optional */,
+                    "status": "addressed|replied|untouched", "note": "…" } ],
+    "newChanges": [ { "path": "…", "note": "…" } ]
+  }
+}
+```
+
+Only `version`, `sha` and `three` are required; the lists default to empty. A path is relative to the repository.

@@ -92,6 +92,11 @@ pub struct Settings {
     /// Command template that starts the hub itself. `None` = built-in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hub_runner: Option<String>,
+    /// Command template that starts the reader of a PR for the code-review hub. `None` =
+    /// built-in, which holds the reader to reading. Another agent is held to it by the
+    /// procedure only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewer_runner: Option<String>,
     /// Command template that reopens a worker's session (`adj worker --resume`). `None` =
     /// built-in.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -199,6 +204,7 @@ impl Default for Settings {
             agent_runner: None,
             agent_env: Vec::new(),
             hub_runner: None,
+            reviewer_runner: None,
             agent_resume_runner: None,
             hub_resume_runner: None,
             ide: None,

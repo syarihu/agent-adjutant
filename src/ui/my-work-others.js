@@ -28,6 +28,8 @@ function othersStateOf(rec) {
 const OTHERS_STALE_SECS = 1800;
 /* Additions plus deletions: below the first bound is S, below the second M, and the rest L. */
 const OTHERS_SIZE = [[200, 'S'], [1000, 'M']];
+/* How long a reader may stay running, in seconds, before a new request takes its read over (the server's HUNG_READER_SECS). */
+const OTHERS_HUNG_SECS = 1800;
 /* How many AI 下読み the code-review hub runs at once, when the hub does not say. */
 const OTHERS_AI_MAX = 3;
 /* Where this browser keeps its read marks: record id to { read }, in server seconds. */
@@ -145,23 +147,67 @@ function othersRepoChips(records) {
 
 const OTHERS_DONE_WORD = { approved: '承認しました', merged: 'マージされました', closed: '閉じられました', withdrawn: '依頼が取り下げられました' };
 
-/* The line a row says about its state: `{cls, text}`, `cls` 'dim' for what asks nothing of the person. */
-function othersStateLine(rec) {
+/* Where a queued read stands: its 1-based place among the records waiting, by when it was asked, then id. 0 when `records`
+   does not hold it (then no number is said). */
+function othersQueuePlace(rec, records) {
+  const queued = (records || []).filter(r => r.ai?.status === 'queued')
+    .sort((a, b) => String(a.ai.startedAt || '') < String(b.ai.startedAt || '') ? -1 : String(a.ai.startedAt || '') > String(b.ai.startedAt || '') ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return queued.findIndex(r => r.id === rec?.id) + 1;
+}
+
+/* What the AI 下読み of a record says, and the one button it offers: `{kind, text, action}`. `kind` is none, queued, running,
+   done, stale or failed; `action` is the label of the button (or null), and the button is offered only on a PR that waits on
+   the person. A read running for longer than 30 minutes (`nowSecs` says when it is) is a reader that has hung: it is offered
+   the same button, since asking again takes it over. A status this page does not know says nothing and offers nothing. */
+function othersAiView(rec, records, nowSecs) {
+  const ai = rec?.ai;
+  const live = ['requested', 'ai-ready', 'pushed'].includes(rec?.state);
+  if (!ai) return { kind: 'none', text: '', action: live && rec.state !== 'ai-ready' ? 'AI 下読み' : null };
+  switch (ai.status) {
+    case 'queued': {
+      const place = othersQueuePlace(rec, records);
+      return { kind: 'queued', text: place ? `AI 下読みの順番待ち（${place} 番目）` : 'AI 下読みの順番待ち', action: null };
+    }
+    case 'running': {
+      const launched = stampSecs(ai.launchedAt);
+      if (Number.isFinite(nowSecs) && launched != null && nowSecs - launched > OTHERS_HUNG_SECS) {
+        return { kind: 'hung', text: 'AI 下読み中（30 分以上たっています）', action: live || rec.state === 'ai-reading' ? 'もう一度 AI 下読み' : null };
+      }
+      return { kind: 'running', text: 'AI 下読み中', action: null };
+    }
+    case 'ready': {
+      if (ai.stale) {
+        const sha = ai.sha ? String(ai.sha).slice(0, 7) : '';
+        return { kind: 'stale', text: `下読み済み（前の push 時点${sha ? ` ${sha}` : ''}）`, action: live ? '下読みし直す' : null };
+      }
+      const c = ai.counts;
+      const parts = [['要注意', c?.attention], ['確認', c?.check], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
+      return { kind: 'done', text: ['下読み済み', ...parts].join(' · '), action: null };
+    }
+    case 'failed':
+      return { kind: 'failed', text: `AI 下読みに失敗しました${ai.error ? `: ${ai.error}` : ''}`, action: live ? 'もう一度 AI 下読み' : null };
+    default:
+      return { kind: 'none', text: '', action: null };
+  }
+}
+
+/* The line a row says about its state: `{cls, text}`, `cls` 'dim' for what asks nothing of the person. `records` gives a
+   queued read its place. */
+function othersStateLine(rec, records, nowSecs) {
+  const ai = othersAiView(rec, records, nowSecs);
+  const withAi = text => ai.text ? `${text} · ${ai.text}` : text;
   const rerequest = rec?.rerequest ? 'レビューを頼み直されました' : '';
   switch (rec?.state) {
     case 'requested':
-      return { cls: '', text: `あなたのレビュー待ち${rerequest ? ` · ${rerequest}` : ''}` };
+      return { cls: '', text: withAi(`あなたのレビュー待ち${rerequest ? ` · ${rerequest}` : ''}`) };
     case 'ai-reading':
-      return { cls: '', text: rec.ai?.status === 'queued' ? 'AI 下読みの順番待ち' : 'AI 下読み中' };
-    case 'ai-ready': {
-      const c = rec.ai?.counts;
-      const parts = [['要注意', c?.attention], ['確認', c?.check], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
-      return { cls: '', text: ['下読み済み', ...parts].join(' · ') };
-    }
+      return { cls: '', text: ai.text || 'AI 下読み中' };
+    case 'ai-ready':
+      return { cls: '', text: ai.text || '下読み済み' };
     case 'pushed': {
       const n = rec.commitsSinceReview;
       const text = Number.isFinite(n) ? `前回のレビューから +${n} コミット` : '前回のレビューのあとに push されました';
-      return { cls: '', text: rerequest ? `${text} · ${rerequest}` : text };
+      return { cls: '', text: withAi(rerequest ? `${text} · ${rerequest}` : text) };
     }
     case 'waiting-on-author': {
       const changes = rec.myReview?.state === 'changes-requested';
@@ -181,23 +227,32 @@ function othersOutOfReview(rec) {
   return null;
 }
 
-/* The code-review hub's row: `hub` is the optional `hub` of the document, absent until the hub exists. An absent or stopped hub
-   is stopped, and says that AI 下読み is unavailable while sync and the list still work. `running` is counted from the
-   records, not asked of the hub. */
+/* The code-review hub's row: `hub` is the `hub` of the document (absent from an older server). An absent or stopped hub is
+   stopped, and says that AI 下読み is unavailable while sync and the list still work. `running`, `queued`, `max` and `startable`
+   are the hub's; when it does not say how many are running, they are counted from the records. `canRead` is whether a read can
+   be asked for now: the hub is running and a reader can be opened (the server says; an older one that does not is taken to
+   mean that a running hub can). When it cannot, `why` says what is missing, and is the title of the buttons. */
 function othersHubView(hub, records) {
-  const running = (records || []).filter(r => r.ai?.status === 'running').length;
+  const counted = status => (records || []).filter(r => r.ai?.status === status).length;
   const max = Number.isFinite(hub?.max) && hub.max > 0 ? hub.max : OTHERS_AI_MAX;
   const stopped = !hub || !hub.state || hub.state === 'stopped';
+  const canRead = !stopped && (typeof hub.canRead === 'boolean' ? hub.canRead : true);
   const why = !hub ? 'コードレビュー hub はまだありません。AI 下読みは使えません（同期と一覧はそのまま使えます）'
-    : stopped ? 'hub が止まっています。AI 下読みは使えません（同期と一覧はそのまま使えます）' : '';
-  return { state: stopped ? 'stopped' : String(hub.state), running, max, startable: !!hub?.startable, why };
+    : stopped ? 'hub が止まっています。AI 下読みは使えません（同期と一覧はそのまま使えます）'
+    : !canRead ? 'このターミナルでは読み手を開けません。AI 下読みには terminal.preset の tmux が必要です（同期と一覧はそのまま使えます）' : '';
+  return {
+    state: stopped ? 'stopped' : String(hub.state),
+    running: Number.isFinite(hub?.running) ? hub.running : counted('running'),
+    queued: Number.isFinite(hub?.queued) ? hub.queued : counted('queued'),
+    max, startable: stopped && !!hub?.startable, canRead, why,
+  };
 }
 
 /* What a redraw of the list depends on, from the document: the fields the rows show, the last sync, the hub, and the minute
    (times are shown to the minute), so a poll that changes none of them draws nothing. */
 function othersSig(doc, nowEst) {
   const recs = (doc?.records || []).map(r => [r.id, r.title, r.author, r.repo, r.registered, r.state, r.doneReason, r.rerequest, r.additions, r.deletions,
-    r.changedFiles, r.requestedAt, r.commitsSinceReview, r.myReview?.state, r.events, r.ai, r.url]);
+    r.changedFiles, r.requestedAt, r.commitsSinceReview, r.myReview?.state, r.events, r.ai, r.ai?.stale, r.url]);
   const ls = doc?.lastSync;
   return JSON.stringify([recs, ls ? [ls.at, ls.complete, ls.truncated, (ls.failed || []).length, ls.error, ls.errorAt] : null, doc?.hub ?? null,
     Math.floor(nowEst / 60), othersStale(ls, nowEst)]);

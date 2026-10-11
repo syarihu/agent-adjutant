@@ -24,6 +24,10 @@ pub struct Record {
     pub base: String,
     pub head: String,
     pub head_sha: String,
+    /// Stamp of the sync that set `head_sha` or changed it. A read-through made after it, of a
+    /// head the sync has not seen yet, is not stale for that reason; see `is_stale`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_seen_at: Option<String>,
     #[serde(default)]
     pub draft: bool,
     pub pr_state: PrOpenState,
@@ -67,7 +71,8 @@ pub struct Record {
     pub done_at: Option<String>,
     #[serde(default)]
     pub events: Events,
-    /// The AI read-through. This module only reads it.
+    /// The AI read-through: where it stands, and the numbers the row shows. The read-through
+    /// itself is in `others/reads/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiRead>,
     pub first_seen_at: String,
@@ -178,6 +183,9 @@ pub struct Events {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// How many readers run at once; the rest wait their turn as `queued`.
+pub const MAX_READING: usize = 3;
+
 /// The AI read-through of a PR. `status` is text, not an enum, so a status a later binary adds
 /// does not make this one drop the record: `queued`, `running`, `ready` or `failed`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,12 +195,51 @@ pub struct AiRead {
     /// The head SHA the read-through was made at.
     #[serde(default)]
     pub sha: Option<String>,
+    /// When the person asked (the latest request), which is also the place in the queue.
     #[serde(default)]
     pub started_at: Option<String>,
     #[serde(default)]
     pub finished_at: Option<String>,
+    /// When the reader was started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launched_at: Option<String>,
+    /// When the stored read-through's material was taken, at the latest: the launch of the reader
+    /// that handed it in, or the time of a hand-in with no reader. What `stale` is judged against,
+    /// not the hand-in time, which comes after the reader read the head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_from: Option<String>,
+    /// The session the current reader runs as. A read-through is accepted from this one only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ps_started: Option<String>,
+    /// Where the reader's window is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<crate::infra::terminal::SessionTerminal>,
+    /// Why the last read failed; set with `failed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// What the stored read-through holds, for the row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<AiCounts>,
+    /// Derived: the read-through was made at another head than the PR has now. Read from disk
+    /// only so the key is not caught by `extra`; every load and save overwrites it.
+    #[serde(default)]
+    pub stale: bool,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The counts of a read-through that the row shows, taken when it was handed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiCounts {
+    /// Points of level `attention`.
+    pub attention: u32,
+    /// Points of level `check`.
+    pub check: u32,
+    pub drafts: u32,
 }
 
 /// `others/sync.json`: how the last sync went.
@@ -226,6 +273,30 @@ pub struct LastSync {
 pub struct SyncFailure {
     pub id: String,
     pub why: String,
+}
+
+/// Whether the read-through was made at a head the PR no longer has. Pure, like `derive`.
+///
+/// `sha` is the head the reader read, which is the PR's live head and can be newer than the
+/// `head_sha` the last sync saw. So a read is stale only when the sync saw its head at or after
+/// the time the reader took its material (`head_seen_at` not before `read_from`), or when either
+/// time is missing (a record from before the stamps): then the heads that differ are all there is
+/// to go on. The hand-in time is not used: a reader that read A, a push of B that a sync stored,
+/// and then a hand-in of A, is stale. The next sync that brings the newer head makes the two equal.
+pub fn is_stale(r: &Record) -> bool {
+    let Some(ai) = r.ai.as_ref() else {
+        return false;
+    };
+    let Some(sha) = ai.sha.as_deref() else {
+        return false;
+    };
+    if sha == r.head_sha {
+        return false;
+    }
+    match (r.head_seen_at.as_deref(), ai.read_from.as_deref()) {
+        (Some(seen), Some(from)) => seen >= from,
+        _ => true,
+    }
 }
 
 /// The state of a record and, when done, why. Pure: it reads the facts and no clock, so the

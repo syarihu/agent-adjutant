@@ -14,6 +14,8 @@ const others = {
   syncing: false,     // a sync this page started is out
   syncError: null,    // why the last sync this page started could not be done
   sig: '',            // what the list was last drawn from
+  asking: new Set(),  // ids whose AI 下読み this page asked for and the answer is not back
+  starting: false,    // the code-review hub's start this page asked for is out
 };
 
 /* The server's clock now, as far as this page can tell: the document's `now` and the time since it was read. */
@@ -129,6 +131,42 @@ async function syncOthers() {
   if (busyElsewhere) setTimeout(() => refreshOthers(true), 2000);
 }
 
+/* ── AI 下読み and the code-review hub ── */
+
+/* Ask for a read-through of one PR. One request per PR at a time; the answer is read back either way, since a refusal (the hub
+   stopped, the PR done) is also something the list now shows. */
+async function othersRequestAi(id) {
+  if (!multiBoard || others.asking.has(id)) return;
+  others.asking.add(id);
+  renderOthersList(true);
+  try {
+    const res = await boardApi('', '/api/others/ai', { method: 'POST', body: JSON.stringify({ id }) });
+    // The request stands; this is what the queue could not do after it.
+    if (res?.warning) note('adj review request', true, res.warning);
+  } catch (e) {
+    note('adj review request', true, e.message);
+  } finally {
+    others.asking.delete(id);
+  }
+  await refreshOthers(true);
+}
+
+/* Start the code-review hub in a new window. */
+async function othersStartHub() {
+  if (!multiBoard || others.starting) return;
+  others.starting = true;
+  renderOthersList(true);
+  try {
+    const res = await boardApi('', '/api/others/hub/start', { method: 'POST', body: JSON.stringify({}) });
+    if (res.started === false) note('adj hub --review', false, 'すでに動いています');
+  } catch (e) {
+    note('adj hub --review', true, e.message);
+  } finally {
+    others.starting = false;
+  }
+  await refreshOthers(true);
+}
+
 /* ── the list ── */
 
 const OTHERS_SYNC_WHY = 'AI 下読みはまだ始められません';
@@ -139,8 +177,8 @@ const othersGlyphHtml = rec => {
   return `<span class="material-symbols-outlined wk-glyph ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon}</span>`;
 };
 
-function othersRowHtml(rec, isNew, hubView, nowEst) {
-  const line = othersStateLine(rec);
+function othersRowHtml(rec, isNew, hubView, nowEst, records) {
+  const line = othersStateLine(rec, records, nowEst);
   const when_ = othersRequestedLabel(rec, nowEst);
   const author = rec.author ? `@${esc(rec.author)}` : '（削除されたアカウント）';
   const meta = [
@@ -152,9 +190,13 @@ function othersRowHtml(rec, isNew, hubView, nowEst) {
     when_ ? `<span title="${esc(when(rec.requestedAt))}">${esc(when_)}</span>` : '',
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
   const split = othersOutOfReview(rec);
+  const ai = othersAiView(rec, records, nowEst);
+  const asking = others.asking.has(rec.id);
+  // Disabled for good while a read cannot be asked for (the hub is down, or no reader can be opened), with why as the title; while a request is out it only ignores the click.
+  const aiButton = ai.action && !split
+    ? `<button type="button" class="ov-act" data-ov-ai="${esc(rec.id)}"${hubView.canRead ? '' : ` disabled title="${esc(hubView.why || OTHERS_SYNC_WHY)}"`}${asking ? ' aria-disabled="true"' : ''}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span>${esc(asking ? '依頼中…' : ai.action)}</button>` : '';
   const acts = [
-    rec.state === 'requested' && !split
-      ? `<button type="button" class="ov-act" data-ov-ai="${esc(rec.id)}" disabled title="${esc(hubView.why || OTHERS_SYNC_WHY)}"><span class="material-symbols-outlined" aria-hidden="true">menu_book</span>AI 下読み</button>` : '',
+    aiButton,
     split ? `<button type="button" class="ov-act" data-ov-split="${esc(rec.id)}"><span class="material-symbols-outlined" aria-hidden="true">call_split</span>分割案</button>` : '',
     isNew ? `<button type="button" class="wk-act" data-ov-read="${esc(rec.id)}" aria-label="既読にする" title="既読にする"><span class="material-symbols-outlined" aria-hidden="true">done</span></button>` : '',
   ].filter(Boolean).join('');
@@ -175,9 +217,9 @@ function othersHubHtml(hubView) {
   return `<div class="wk-row ov-hub${stopped ? ' dim' : ''}" data-ov-hub>
     <span class="material-symbols-outlined wk-glyph ${stopped ? 'ov-dim' : 'ov-ready'}" aria-hidden="true">smart_toy</span><span class="wk-main">
       <span class="wk-title"><span class="wk-tag">hub</span>コードレビュー</span>
-      <span class="wk-meta"><span>AI 下読み ${hubView.running} / ${hubView.max}</span><span>${esc(stopped ? '止まっています' : hubView.state)}</span></span>
+      <span class="wk-meta"><span>AI 下読み ${hubView.running} / ${hubView.max}${hubView.queued ? ` · 順番待ち ${hubView.queued}` : ''}</span><span>${esc(stopped ? '止まっています' : hubView.state === 'running' ? '動いています' : hubView.state)}</span></span>
       ${hubView.why ? `<span class="wk-line">${esc(hubView.why)}</span>` : ''}
-    </span>${hubView.startable ? '<span class="wk-acts"><button type="button" class="ov-act" data-ov-hub-start>hub を起動</button></span>' : ''}
+    </span>${hubView.startable ? `<span class="wk-acts"><button type="button" class="ov-act" data-ov-hub-start${others.starting ? ' aria-disabled="true"' : ''}>${others.starting ? '起動中…' : 'hub を起動'}</button></span>` : ''}
   </div>`;
 }
 
@@ -234,7 +276,7 @@ function othersListHtml() {
   } else {
     body = othersGroups(records, repo).map(g => `<section class="wk-group" aria-label="${esc(g.label)}">
       <div class="wk-head repo"><span class="wk-head-main"><span class="wk-head-name">${esc(g.label)}${g.unregistered ? ' <span class="ov-unreg" title="adj に登録していないリポジトリです（同じオーナーなので依頼だけ出ます）">未登録</span>' : ''}</span></span><span class="wk-count">${g.rows.length}</span></div>
-      <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst)).join('')}</div>
+      <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, records)).join('')}</div>
     </section>`).join('');
   }
   return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}</div>${alerts}${staleHtml}${othersHubHtml(hubView)}${body}`;
@@ -249,6 +291,7 @@ function othersHeldSel(el) {
   if (d.ov != null) return [rowOf(d.ov)];
   if (d.ovRead != null) return [q('ov-read', d.ovRead), rowOf(d.ovRead)];
   if (d.ovAi != null) return [q('ov-ai', d.ovAi), rowOf(d.ovAi)];
+  if (d.ovHubStart != null) return ['[data-ov-hub-start]', '[data-ov-hub]'];
   if (d.ovSplit != null) return [q('ov-split', d.ovSplit), rowOf(d.ovSplit)];
   if (d.ovRepo != null) return [q('ov-repo', d.ovRepo)];
   if (d.ovSync != null) return [el.closest('.ov-stale') ? '.ov-stale [data-ov-sync]' : '.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
@@ -258,7 +301,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || prefs.workTab !== 'others') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], others.starting]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');
@@ -285,8 +328,10 @@ wk('ov-groups').addEventListener('click', e => {
     if (others.doc) othersWriteMarks([[b.dataset.ovRead, { read: others.doc.now }]]);
     return;
   }
-  // The buttons of a later issue (AI 下読み, 分割案, the hub's start) are drawn disabled or not at all until it lands.
-  if (e.target.closest('[data-ov-ai], [data-ov-split], [data-ov-hub-start], [data-ov-hub]')) return;
+  if ((b = e.target.closest('[data-ov-ai]'))) return b.disabled ? undefined : othersRequestAi(b.dataset.ovAi);
+  if (e.target.closest('[data-ov-hub-start]')) return othersStartHub();
+  // 分割案 is a later issue's, and the hub's row opens nothing.
+  if (e.target.closest('[data-ov-split], [data-ov-hub]')) return;
   if ((b = e.target.closest('.ov-row[data-ov]'))) {
     const rec = othersById(b.dataset.ov);
     if (rec) othersSelect(rec);

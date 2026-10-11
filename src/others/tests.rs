@@ -14,10 +14,10 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 // Somewhere in the middle of October 2026, as seconds.
-const NOW: i64 = 1_791_600_000;
+pub(super) const NOW: i64 = 1_791_600_000;
 const DAY: i64 = 86_400;
 
-fn pr(number: u64) -> crate::task::PrRef {
+pub(super) fn pr(number: u64) -> crate::task::PrRef {
     pr_ref(
         &format!("https://github.com/acme/widget/pull/{number}"),
         None,
@@ -26,7 +26,7 @@ fn pr(number: u64) -> crate::task::PrRef {
 }
 
 /// A record as the sync would have written it for a PR asked of you and not yet reviewed.
-fn record(number: u64) -> Record {
+pub(super) fn record(number: u64) -> Record {
     Record {
         id: format!("acme/widget#{number}"),
         repo: "acme/widget".to_string(),
@@ -38,6 +38,7 @@ fn record(number: u64) -> Record {
         base: "main".to_string(),
         head: "feature".to_string(),
         head_sha: "h1".to_string(),
+        head_seen_at: None,
         draft: false,
         pr_state: PrOpenState::Open,
         additions: 10,
@@ -77,6 +78,15 @@ fn ai(status: &str) -> Option<AiRead> {
         sha: None,
         started_at: None,
         finished_at: None,
+        launched_at: None,
+        read_from: None,
+        session_id: None,
+        pid: None,
+        ps_started: None,
+        terminal: None,
+        error: None,
+        counts: None,
+        stale: false,
         extra: Default::default(),
     })
 }
@@ -635,6 +645,35 @@ fn a_record_done_for_a_day_is_removed_and_a_younger_one_is_kept() {
 }
 
 #[test]
+fn a_record_removed_after_a_day_takes_its_read_through_and_reader_directory_with_it() {
+    let root = tempfile::tempdir().unwrap();
+    for (number, done_at) in [
+        (1, utc_stamp(NOW - DAY - 1)),
+        (2, utc_stamp(NOW - DAY + 60)),
+    ] {
+        let mut r = record(number);
+        r.pr_state = PrOpenState::Merged;
+        r.done_at = Some(done_at);
+        store::save(root.path(), &mut r).unwrap();
+        store::write_read(root.path(), &store::stem(&pr(number)), &json!({"id": "x"})).unwrap();
+        let scratch = root.path().join(format!("review/acme~widget~{number}"));
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(scratch.join("read-through.json"), "{}").unwrap();
+    }
+    let synced = sync_at(root.path(), &acme(), NOW, &Fake::new(&[])).unwrap();
+    assert_eq!(synced.removed, vec!["acme/widget#1"]);
+    assert!(!root.path().join("others/reads/acme~widget~1.json").exists());
+    assert!(!root.path().join("review/acme~widget~1").exists());
+    // The one that is kept keeps both.
+    assert!(root.path().join("others/reads/acme~widget~2.json").exists());
+    assert!(
+        root.path()
+            .join("review/acme~widget~2/read-through.json")
+            .exists()
+    );
+}
+
+#[test]
 fn a_record_that_just_became_done_is_stamped_and_kept() {
     let root = tempfile::tempdir().unwrap();
     let fake = Fake::new(&[7]).with(7, open_pr("h1"));
@@ -699,6 +738,66 @@ fn what_the_read_through_wrote_survives_a_sync() {
     assert_eq!(r.events.ai_ready.as_deref(), Some("20261001T010101Z"));
     assert_eq!(r.extra["fromTheFuture"], json!(1));
     assert_eq!(r.state, State::AiReady);
+}
+
+#[test]
+fn a_sync_with_a_new_head_keeps_the_read_through_and_marks_it_stale_without_asking_again() {
+    let root = tempfile::tempdir().unwrap();
+    let mut r = record(7);
+    let mut made = ai("ready").unwrap();
+    made.sha = Some("h1".to_string());
+    r.ai = Some(made);
+    store::save(root.path(), &mut r).unwrap();
+    assert!(!record_of(root.path(), 7).unwrap().ai.unwrap().stale);
+
+    let fake = Fake::new(&[7]).with(7, open_pr("h2"));
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    let r = record_of(root.path(), 7).unwrap();
+    let ai = r.ai.unwrap();
+    assert_eq!(r.head_sha, "h2");
+    assert_eq!(
+        (ai.status.as_str(), ai.sha.as_deref()),
+        ("ready", Some("h1"))
+    );
+    assert!(ai.stale);
+}
+
+#[test]
+fn the_sync_stamps_the_head_it_sees_only_when_it_changes_and_a_read_in_between_stays_fresh() {
+    let root = tempfile::tempdir().unwrap();
+    // The sync sees A.
+    let fake = Fake::new(&[7]).with(7, open_pr("hA"));
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(r.head_seen_at, Some(utc_stamp(NOW)));
+    // The same head again does not move the stamp.
+    sync_at(root.path(), &acme(), NOW + 30, &fake).unwrap();
+    assert_eq!(
+        record_of(root.path(), 7).unwrap().head_seen_at,
+        Some(utc_stamp(NOW))
+    );
+
+    // A reader reads C, which was pushed after B and C since that sync: the record still holds A.
+    let mut r = record_of(root.path(), 7).unwrap();
+    let mut made = ai("ready").unwrap();
+    made.sha = Some("hC".to_string());
+    made.read_from = Some(utc_stamp(NOW + 50));
+    made.finished_at = Some(utc_stamp(NOW + 60));
+    r.ai = Some(made);
+    store::save(root.path(), &mut r).unwrap();
+    assert!(!record_of(root.path(), 7).unwrap().ai.unwrap().stale);
+
+    // The next sync brings C: equal, fresh, with the stamp moved.
+    let fake = Fake::new(&[7]).with(7, open_pr("hC"));
+    sync_at(root.path(), &acme(), NOW + 120, &fake).unwrap();
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(r.head_seen_at, Some(utc_stamp(NOW + 120)));
+    assert!(!r.ai.unwrap().stale);
+
+    // And a later push, D, makes the read stale.
+    let fake = Fake::new(&[7]).with(7, open_pr("hD"));
+    sync_at(root.path(), &acme(), NOW + 180, &fake).unwrap();
+    assert!(record_of(root.path(), 7).unwrap().ai.unwrap().stale);
 }
 
 #[test]
