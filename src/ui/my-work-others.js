@@ -51,10 +51,10 @@ function othersItems(rec) {
   return out;
 }
 
-/* When the person last acted on the record other than by pressing 既読: they started its AI 下読み. -Infinity when never.
-   (A later issue adds the time they put drafts into a pending review; it is read here.) */
+/* When the person last acted on the record other than by pressing 既読: they started its AI 下読み, or put drafts into a pending
+   review (`pendingReviewAt`). -Infinity when never. */
 function othersActedAt(rec) {
-  const times = [stampSecs(rec?.ai?.startedAt)];
+  const times = [stampSecs(rec?.ai?.startedAt), stampSecs(rec?.pendingReviewAt)];
   return Math.max(-Infinity, ...times.filter(x => Number.isFinite(x)));
 }
 

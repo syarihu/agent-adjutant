@@ -58,6 +58,7 @@ pub(super) fn record(number: u64) -> Record {
         done_at: None,
         events: Events::default(),
         ai: None,
+        pending_review_at: None,
         first_seen_at: "20261001T000001Z".to_string(),
         read_at: "20261001T000001Z".to_string(),
         extra: Default::default(),

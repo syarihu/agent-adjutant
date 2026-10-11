@@ -223,6 +223,7 @@ fn apply(
             done_at: None,
             events: Events::default(),
             ai: None,
+            pending_review_at: None,
             first_seen_at: stamp.clone(),
             read_at: stamp.clone(),
             extra: Default::default(),

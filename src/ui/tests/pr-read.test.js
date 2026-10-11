@@ -17,7 +17,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 const plain = x => JSON.parse(JSON.stringify(x));
 const run = expr => vm.runInContext(expr, ctx);
 const { prPaneOf, prTabsHtml, prDetailHtml, prBeforeRead, prSeedDrafts, prNewReaderDrafts, prDraftFromPoint, prDraftLocation, prCopyAllText,
-  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml } = ctx;
+  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml, prPendable } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const A = 'a'.repeat(40);
@@ -183,6 +183,65 @@ test('the drafts: a box each with its place as its name, the suggestion as text,
   assert.ok(html.includes('保存できませんでした: boom 入力はこのページに残っています'));
   assert.ok(prDraftsHtml({ drafts: [], overall: null }, read(), {}).includes('下書きはまだありません'));
   assert.ok(!prDraftsHtml(doc, null, { notice: 0 }).includes('data-pr-take-new'));
+});
+
+test('what can be put into the pending review: a draft with a file and a body that is not in yet, and an overall comment that is new', () => {
+  const doc = { drafts: [
+    { key: 'a', path: 'a.rs', line: 1, body: 'one' }, { key: 'b', path: 'b.rs', body: 'file' },
+    { key: 'c', path: 'c.rs', line: 2, body: '  ' }, { key: 'd', body: 'whole PR' },
+    { key: 'e', path: 'e.rs', line: 3, body: 'sent', sentAt: '20261011T000000Z' }], overall: { body: 'all' } };
+  assert.deepStrictEqual(plain(prPendable(doc)), { drafts: 2, overall: true });
+  assert.deepStrictEqual(plain(prPendable({ ...doc, pending: { overall: 'all' } })), { drafts: 2, overall: false });
+  assert.deepStrictEqual(plain(prPendable({ drafts: [], overall: { body: ' ' } })), { drafts: 0, overall: false });
+  // What the server stored is normalized: the same text with a trailing newline or CRLF is the same comment.
+  assert.deepStrictEqual(plain(prPendable({ drafts: [], overall: { body: 'LGTM\n' }, pending: { overall: 'LGTM' } })), { drafts: 0, overall: false });
+  assert.deepStrictEqual(plain(prPendable({ drafts: [], overall: { body: 'a\r\nb  \n' }, pending: { overall: 'a\nb' } })), { drafts: 0, overall: false });
+  assert.deepStrictEqual(plain(prPendable({ drafts: [], overall: { body: '\r\n \n' } })), { drafts: 0, overall: false });
+  assert.deepStrictEqual(plain(prPendable(null)), { drafts: 0, overall: false });
+});
+
+test('the pending review button counts what is not in yet, is disabled with nothing to send, and says who sees it', () => {
+  const doc = { drafts: [{ key: 'a', path: 'a.rs', line: 1, body: 'one' }, { key: 'b', path: 'b.rs', line: 2, body: 'two' }], overall: { body: '' } };
+  const pend = { prUrl: 'https://github.com/acme/widget/pull/12' };
+  const html = prDraftsHtml(doc, read(), { pend });
+  assert.ok(/<button type="button" class="btn-m3-filled" data-pr-pend>2 件を pending review に積む<\/button>/.test(html), html);
+  assert.ok(html.includes('pending review はあなたにしか見えません。判定を選んで送信するのは GitHub です。'));
+  assert.ok(html.includes('href="https://github.com/acme/widget/pull/12/files" target="_blank" rel="noopener noreferrer">GitHub で仕上げる</a>'));
+  // Once a review is noted, the link is to it.
+  const noted = prDraftsHtml({ ...doc, pending: { url: 'https://github.com/acme/widget/pull/12#pullrequestreview-9' } }, read(), { pend });
+  assert.ok(noted.includes('href="https://github.com/acme/widget/pull/12#pullrequestreview-9" target="_blank"') && !noted.includes('/files'));
+  assert.ok(prDraftsHtml({ ...doc, pending: { url: 'javascript:alert(1)' } }, read(), { pend }).includes('pull/12/files'));
+  assert.ok(prDraftsHtml({ drafts: [], overall: { body: 'only this' } }, read(), { pend }).includes('全体のコメントを pending review に積む'));
+  const none = prDraftsHtml({ drafts: [], overall: { body: '' } }, read(), { pend });
+  assert.ok(/data-pr-pend disabled title="[^"]+"/.test(none), none);
+  assert.ok(none.includes('<div class="pr-pend-note">積めるものがありません。</div>') && !html.includes('積めるものがありません'));
+  // No link for an address that is not http(s); the button is busy while it sends.
+  assert.ok(!prDraftsHtml(doc, read(), { pend: { prUrl: 'javascript:alert(1)' } }).includes('GitHub で仕上げる'));
+  const busy = prDraftsHtml(doc, read(), { pend: { ...pend, sending: true } });
+  // Everything that could be typed into or changed is locked while it sends: the redraw after it would drop it.
+  assert.ok(/class="pr-overall"[^>]* readonly>/.test(busy) && /data-pr-discard="a" disabled/.test(busy));
+  assert.ok(!/class="pr-overall"[^>]* readonly>/.test(html) && !/data-pr-discard="a" disabled/.test(html));
+  assert.ok(busy.includes('data-pr-pend disabled aria-busy="true"') && busy.includes('積んでいます…') && busy.includes(' readonly>'));
+});
+
+test('the result line says the overall comment went in too, and why one that was refused did not (it has no box)', () => {
+  const doc = { drafts: [], overall: { body: 'o' } };
+  const none = prDraftsHtml(doc, read(), { pend: { result: { sent: 0, failed: [], skipped: [], overall: 'set' } } });
+  assert.ok(none.includes('0 件を積みました／全体のコメントも積みました'));
+  const refused = prDraftsHtml(doc, read(), { pend: { result: { sent: 1, failed: [{ key: 'overall', why: '<i>no</i>' }], skipped: [], overall: 'none' } } });
+  assert.ok(refused.includes('全体のコメントは積めませんでした: &lt;i&gt;no&lt;/i&gt;') && !refused.includes('全体のコメントも積みました'));
+});
+
+test('a draft that is in the pending review is read-only with a chip and keeps its copy button; one that was refused says why, as text', () => {
+  const doc = { drafts: [{ key: 's1', source: 'person', path: 'a.rs', line: 1, body: 'in', sentAt: '20261011T000000Z' },
+    { key: 'f1', source: 'person', path: 'b.rs', line: 2, body: 'out' }], overall: { body: '' } };
+  const result = { sent: 1, failed: [{ key: 'f1', why: '<b>Line</b> must be part of the diff' }], skipped: [{ key: 'x', why: 'w' }] };
+  const html = prDraftsHtml(doc, read(), { pend: { result, prUrl: rec().url } });
+  const [sent, failed] = html.split('data-pr-draft="').slice(1);
+  assert.ok(sent.includes('積みました</span>') && sent.includes('data-pr-copy="s1"') && /readonly>/.test(sent) && !sent.includes('積めませんでした'));
+  assert.ok(!failed.includes('readonly') && !failed.includes('pr-chip-sent'));
+  assert.ok(failed.includes('積めませんでした: &lt;b&gt;Line&lt;/b&gt; must be part of the diff') && !failed.includes('<b>Line'));
+  assert.ok(html.includes('role="status">1 件を積みました／1 件は積めませんでした／1 件は対象外でした</div>'));
 });
 
 test('the dialog\'s groups: since, top, points, order, more, diff; before a read only the first two', () => {

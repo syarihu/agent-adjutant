@@ -54,6 +54,16 @@ test('starting the AI 下読み reads the row, and the read-through finishing ma
   assert.equal(othersActedAt(rec(2)), -Infinity);
 });
 
+test('putting drafts into a pending review is acting on the row: it leaves 新着 until something newer happens', () => {
+  const base = rec(1, { state: 'ai-ready', events: { requested: stamp(T0), rerequested: null, aiReady: stamp(T0 + 60), pushed: null }, ai: { status: 'ready', startedAt: stamp(T0 + 10), finishedAt: stamp(T0 + 60) } });
+  assert.equal(othersSeenClass(base, {}), 'new');
+  const pushed = { ...base, pendingReviewAt: stamp(T0 + 100) };
+  assert.equal(othersActedAt(pushed), T0 + 100);
+  assert.equal(othersSeenClass(pushed, {}), null);
+  // A push of the PR after it is news again.
+  assert.equal(othersSeenClass({ ...pushed, state: 'pushed', events: { ...base.events, pushed: stamp(T0 + 200) } }, {}), 'new');
+});
+
 test('a waiting-on-author or done record is never new, and the new ids ignore any filter', () => {
   const rows = [rec(1), rec(2, { state: 'waiting-on-author' }), rec(3, { state: 'done' }), rec(4, { repo: 'Other/Repo', id: 'other/repo#4' })];
   assert.deepStrictEqual(plain(othersNewIds(rows, {})), ['acme/widget#1', 'other/repo#4']);

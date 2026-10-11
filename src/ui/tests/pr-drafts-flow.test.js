@@ -10,23 +10,29 @@ const cut = re => { const m = src.match(re); assert.ok(m, `not found: ${re}`); r
 const fn = name => cut(new RegExp(`^(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm'));
 
 function world({ stored = null } = {}) {
-  const w = { notes: [], redrawn: 0, posts: [], gets: 0, stored, gate: null, selected: 'pr:acme/widget#1' };
+  const w = { notes: [], redrawn: 0, posts: [], gets: 0, stored, gate: null, selected: 'pr:acme/widget#1', order: [], pends: [], refreshed: 0, pendGate: null, pendFail: null, pendRes: { sent: [], failed: [], skipped: [] } };
   const c = vm.createContext({
     structuredClone, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console,
     get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_SAVE_MS: 800,
     note: (...a) => { w.notes.push(a); }, prRedrawNow: () => { w.redrawn++; },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => ({ id: 'acme/widget#1' }), prReadOf: () => c.read,
     prNextKey: (doc, prefix) => { let n = 1; while (doc.drafts.some(d => d.key === `${prefix}${n}`)) n++; return `${prefix}${n}`; },
-    tp: () => null, cardDialogEl: () => null, renderTaskPanel() {},
+    refreshOthers: async () => { w.refreshed++; }, tp: () => null, cardDialogEl: () => null, renderTaskPanel() {},
     prSeedDrafts: read => ({ version: 1, fromSha: read?.sha ?? null, drafts: (read?.drafts || []).map((d, i) => ({ key: `r${i + 1}`, source: 'reader', ...d })), overall: { body: '' } }),
     boardApi: async (base, url, o) => {
+      if (url === '/api/others/pending') {
+        w.order.push('pend'); w.pends.push(JSON.parse(o.body));
+        if (w.pendGate) await w.pendGate.promise;
+        if (w.pendFail) throw new Error(w.pendFail);
+        return w.pendRes;
+      }
       if (!o) { w.gets++; if (!w.stored) throw Object.assign(new Error('no drafts'), { status: 404 }); return w.stored; }
-      w.posts.push(JSON.parse(o.body));
+      w.posts.push(JSON.parse(o.body)); w.order.push('save');
       if (w.gate) await w.gate.promise;
       return {};
     },
   });
-  vm.runInContext(['prView', 'prDraftsEntry', 'prDocOfStored', 'prEnsureDrafts', 'prEditDrafts', 'prScheduleSave', 'prSave', 'prShowSave', 'prSaveState', 'prInput'].map(n => {
+  vm.runInContext(['prView', 'prDraftsEntry', 'prDocOfStored', 'prEnsureDrafts', 'prEditDrafts', 'prScheduleSave', 'prSave', 'prShowSave', 'prSaveState', 'prInput', 'prPend'].map(n => {
     return n === 'prView' ? `const prView = { drafts: new Map() };` : n === 'prSaveState' ? cut(/^const prSaveState = [^\n]*;/m) : fn(n);
   }).concat([cut(/^const PR_DRAFT_KEYS = [^\n]*;/m), fn('prSaveBody'), cut(/^const prDoc = [^\n]*;/m)]).join('\n'), c);
   const run = e => vm.runInContext(e, c);
@@ -199,4 +205,156 @@ test('an input in a dialog about another subject is ignored', async () => {
   run('prInput(input)');
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), false);
   assert.strictEqual(w.notes.length, 0);
+});
+
+/* ── putting the drafts into the pending review ── */
+
+const withSent = { id: 'acme/widget#1', savedAt: '20261011T000000Z', version: 1, fromSha: read.sha,
+  drafts: [{ key: 'r1', source: 'reader', path: 'a.rs', line: 1, side: 'right', body: 'seed', sentAt: '20261011T000100Z' }],
+  overall: { body: '' }, pending: { reviewId: 'PRR_1', url: 'https://github.com/acme/widget/pull/1#pullrequestreview-1', at: '20261011T000100Z' } };
+
+test('a push saves what is unsaved first, and the reader\'s drafts become the file before it', async () => {
+  const { w, c, run } = world();
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  await run(`prPend('acme/widget#1', read)`);
+  // No file yet: the seed was saved as it stood, then pushed.
+  assert.deepStrictEqual(w.order, ['save', 'pend']);
+  assert.strictEqual(w.posts[0].drafts.drafts[0].body, 'seed');
+  assert.deepStrictEqual(w.pends, [{ id: 'acme/widget#1' }]);
+
+  const b = world();
+  b.run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  b.c.read = read;
+  b.run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'typed'; })`);
+  await b.run(`prPend('acme/widget#1', read)`);
+  assert.deepStrictEqual(b.w.order, ['save', 'pend']);
+  assert.strictEqual(b.w.posts[0].drafts.drafts[0].body, 'typed');
+});
+
+test('a push waits for the save that is already in flight', async () => {
+  const { w, c, run } = world();
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  let release; w.gate = { promise: new Promise(r => { release = r; }) };
+  run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'one'; })`);
+  run(`prSave('acme/widget#1')`);
+  await tick();
+  const pend = run(`prPend('acme/widget#1', read)`);
+  await tick();
+  assert.deepStrictEqual(w.pends, []);
+  w.gate = null; release();
+  await pend;
+  assert.deepStrictEqual(w.order, ['save', 'pend']);
+});
+
+test('a push that cannot save first does not push, and keeps the drafts', async () => {
+  const { w, c, run } = world();
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  c.boardApi = async (b, url) => { if (url === '/api/others/pending') w.order.push('pend'); throw new Error('boom'); };
+  run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'keep'; })`);
+  await run(`prPend('acme/widget#1', read)`);
+  assert.deepStrictEqual(w.order, []);
+  assert.ok(w.notes.at(-1)[2].includes('boom'));
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').pending`), false);
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].body`), 'keep');
+});
+
+test('a second click while a push is in flight does not send again, and the drafts cannot be edited meanwhile', async () => {
+  const { w, c, run } = world({ stored: withSent });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  let release; w.pendGate = { promise: new Promise(r => { release = r; }) };
+  const first = run(`prPend('acme/widget#1', read)`);
+  await tick();
+  await run(`prPend('acme/widget#1', read)`);
+  assert.strictEqual(w.pends.length, 1);
+  assert.strictEqual(run(`prEditDrafts('acme/widget#1', read, d => { d.overall = { body: 'x' }; })`), false);
+  w.pendGate = null; release();
+  await first;
+  assert.strictEqual(w.pends.length, 1);
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').pending`), false);
+});
+
+test('a push that went through takes the server\'s document, with the marks, and reads the records again', async () => {
+  const stored = { ...withSent, drafts: [{ ...withSent.drafts[0], sentAt: undefined }], pending: undefined };
+  const { w, c, run } = world({ stored });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  w.pendRes = { drafts: withSent, sent: ['r1'], failed: [{ key: 'r2', why: 'Line must be part of the diff' }], skipped: [], overall: 'none', warning: null };
+  await run(`prPend('acme/widget#1', read)`);
+  const e = JSON.parse(JSON.stringify(run(`prDraftsEntry('acme/widget#1')`)));
+  assert.strictEqual(e.doc.drafts[0].sentAt, '20261011T000100Z');
+  assert.strictEqual(e.doc.pending.reviewId, 'PRR_1');
+  assert.strictEqual(e.doc.id, undefined);
+  assert.strictEqual(e.dirty, false);
+  assert.deepStrictEqual(e.pendResult, { sent: 1, failed: [{ key: 'r2', why: 'Line must be part of the diff' }], skipped: [], overall: 'none' });
+  assert.strictEqual(w.refreshed, 1);
+});
+
+test('a push that failed keeps the document and says why', async () => {
+  const { w, c, run } = world({ stored: { ...withSent, drafts: [{ ...withSent.drafts[0], sentAt: undefined }] } });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  w.pendFail = 'GitHub did not take the drafts: nope';
+  await run(`prPend('acme/widget#1', read)`);
+  assert.deepStrictEqual(w.notes.at(-1), ['pending review', true, 'GitHub did not take the drafts: nope']);
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].sentAt`), undefined);
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').pendResult`), null);
+  assert.strictEqual(w.refreshed, 0);
+});
+
+test('a save sends the marks back, and typing into a draft that was sent changes nothing', async () => {
+  const { w, c, run } = world({ stored: withSent });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  run(`prEditDrafts('acme/widget#1', read, d => { d.overall = { body: 'o' }; })`);
+  await run(`prSave('acme/widget#1')`);
+  assert.strictEqual(w.posts[0].drafts.drafts[0].sentAt, '20261011T000100Z');
+  assert.strictEqual(w.posts[0].drafts.pending, undefined);
+
+  const box = { value: 'edited anyway', dataset: { prBody: 'r1' }, matches: sel => sel.includes('.pr-draft-body') };
+  c.input = { target: box };
+  run('prInput(input)');
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].body`), 'seed');
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), false);
+});
+
+test('when adj could not write its file after GitHub took the drafts, they are marked here and are not sent again', async () => {
+  const stored = { ...withSent, drafts: [{ ...withSent.drafts[0], sentAt: undefined }, { key: 'r2', source: 'person', path: 'b.rs', line: 2, side: 'right', body: 'refused' }], pending: undefined };
+  const { w, c, run } = world({ stored });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  w.pendRes = { drafts: null, sent: ['r1'], failed: [{ key: 'r2', why: 'no' }], skipped: [], overall: 'none', warning: 'cannot write' };
+  await run(`prPend('acme/widget#1', read)`);
+  const docs = JSON.parse(JSON.stringify(run(`prDoc('acme/widget#1', read).drafts`)));
+  assert.match(docs[0].sentAt, /^\d{8}T\d{6}Z$/);
+  assert.strictEqual(docs[1].sentAt, undefined);
+  assert.ok(w.notes.some(n => n[2].includes('cannot write')));
+  // Saved with the mark, so the file learns it too.
+  await run(`prSave('acme/widget#1')`);
+  assert.strictEqual(w.posts.at(-1).drafts.drafts[0].sentAt, docs[0].sentAt);
+});
+
+test('an error of the records being read again does not turn a push that went through into a failure', async () => {
+  const { w, c, run } = world({ stored: { ...withSent, drafts: [{ ...withSent.drafts[0], sentAt: undefined }] } });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  c.refreshOthers = async () => { throw new Error('records'); };
+  w.pendRes = { drafts: withSent, sent: ['r1'], failed: [], skipped: [], overall: 'none', warning: null };
+  await run(`prPend('acme/widget#1', read)`);
+  assert.deepStrictEqual(w.notes, []);
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].sentAt`), '20261011T000100Z');
+});
+
+test('what the last push said about refused drafts goes when the drafts are edited', async () => {
+  const { w, c, run } = world({ stored: { ...withSent, drafts: [{ ...withSent.drafts[0], sentAt: undefined }] } });
+  run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c.read = read;
+  w.pendRes = { drafts: withSent, sent: [], failed: [{ key: 'r1', why: 'no' }], skipped: [], overall: 'none', warning: null };
+  await run(`prPend('acme/widget#1', read)`);
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').pendResult.failed.length`), 1);
+  run(`prEditDrafts('acme/widget#1', read, d => { d.overall = { body: 'x' }; })`);
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').pendResult`), null);
 });

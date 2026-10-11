@@ -16,6 +16,7 @@ mod list;
 mod model;
 mod note_reader;
 mod pr_of;
+mod push_pending;
 mod read_context;
 mod read_through;
 mod read_through_get;
@@ -38,6 +39,7 @@ pub use list::*;
 pub use model::*;
 pub use note_reader::*;
 pub use pr_of::*;
+pub use push_pending::*;
 pub use read_context::*;
 pub use read_through_get::*;
 pub use reader_dir::*;
@@ -49,6 +51,8 @@ pub use submit_read::*;
 pub use sync::*;
 pub use take_over_read::*;
 
+#[cfg(test)]
+mod pending_tests;
 #[cfg(test)]
 mod review_tests;
 #[cfg(test)]

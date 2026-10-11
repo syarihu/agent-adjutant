@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::task::PrRef;
 
-use super::drafts::{DraftsInput, StoredDrafts, validate};
+use super::drafts::{DraftItem, DraftsInput, StoredDrafts, validate};
 use super::store;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,24 @@ pub enum SaveDraftsError {
     NoRecord,
     /// The record or the file could not be read or written, and why.
     Failed(String),
+}
+
+/// A draft the page sent without `sentAt` keeps the one stored for it while it is the draft that
+/// was sent, in its body and in the place it is on: a save already on its way, or another tab, must not take a draft back out of the
+/// pending review (and have it sent twice). Edited or moved since, it is a new
+/// comment and goes unmarked.
+fn keep_sent_marks(input: &mut DraftsInput, was: &DraftsInput) {
+    for d in input.drafts.iter_mut().filter(|d| d.sent_at.is_none()) {
+        if let Some(sent) = was.drafts.iter().find(|w| {
+            w.sent_at.is_some()
+                && DraftItem {
+                    sent_at: None,
+                    ..(*w).clone()
+                } == *d
+        }) {
+            d.sent_at.clone_from(&sent.sent_at);
+        }
+    }
 }
 
 /// Replace the drafts of `pr` with `input` (the object the page keeps, without `id` and
@@ -60,17 +78,24 @@ pub fn save_drafts(
     {
         return Err(SaveDraftsError::NoRecord);
     }
-    let mut stored = StoredDrafts::of(&store::id_of(pr), saved_at, &input);
     // A page that predates a key does not send it: what an earlier save holds under a key this
     // input has no place for stays (rule 10). A file that cannot be read is an error, not an
     // empty one, so nothing is dropped unseen.
-    if let Some(text) = store::load_drafts(root, &stem).map_err(SaveDraftsError::Failed)? {
-        let old: StoredDrafts = serde_json::from_str(&text).map_err(|e| {
+    let old = match store::load_drafts(root, &stem).map_err(SaveDraftsError::Failed)? {
+        Some(text) => Some(serde_json::from_str::<StoredDrafts>(&text).map_err(|e| {
             SaveDraftsError::Failed(format!(
                 "cannot read the drafts of {}: {e}",
                 store::id_of(pr)
             ))
-        })?;
+        })?),
+        None => None,
+    };
+    let mut input = input;
+    if let Some(Ok(was)) = old.as_ref().map(StoredDrafts::input) {
+        keep_sent_marks(&mut input, &was);
+    }
+    let mut stored = StoredDrafts::of(&store::id_of(pr), saved_at, &input);
+    if let Some(old) = old {
         for (key, value) in old.rest {
             stored.rest.entry(key).or_insert(value);
         }

@@ -116,10 +116,11 @@ function prEnsureRead(rec) {
 
 /* What the page holds of one PR's drafts. `doc` is the file's document (null while there is no file: the reader's drafts then
    stand in, `prSeedDrafts`); `loaded` is that the file has been asked for (editing waits for it, or a save could replace what
-   is stored); `dirty` that `doc` has something the server does not; `rev` counts edits, so that a save knows whether more came. */
+   is stored); `dirty` that `doc` has something the server does not; `rev` counts edits, so that a save knows whether more came;
+   `inflight` is the promise of the save on its way; `pending` that a push into the pending review is on its way, `pendResult` how the last one went. */
 function prDraftsEntry(id) {
   let e = prView.drafts.get(id);
-  if (!e) prView.drafts.set(id, e = { doc: null, saved: false, loaded: false, loading: false, error: null, dirty: false, saving: false, saveError: null, timer: 0, rev: 0 });
+  if (!e) prView.drafts.set(id, e = { doc: null, saved: false, loaded: false, loading: false, error: null, dirty: false, saving: false, saveError: null, timer: 0, rev: 0, inflight: null, pending: false, pendResult: null });
   return e;
 }
 /* The stored document without what the server adds. */
@@ -141,7 +142,7 @@ function prEnsureDrafts(id) {
   });
 }
 /* What a save sends: only the keys this page knows. The server refuses others, and keeps the ones it has stored itself. */
-const PR_DRAFT_KEYS = ['key', 'source', 'path', 'line', 'startLine', 'side', 'body'];
+const PR_DRAFT_KEYS = ['key', 'source', 'path', 'line', 'startLine', 'side', 'body', 'sentAt'];
 function prSaveBody(doc) {
   return {
     version: doc.version ?? 1, fromSha: doc.fromSha ?? null,
@@ -152,16 +153,19 @@ function prSaveBody(doc) {
 /* The document the page shows: the file's, or the reader's drafts until the first edit makes the file. */
 const prDoc = (id, read) => prDraftsEntry(id).doc || prSeedDrafts(read);
 
-/* Change the drafts of `id`: `fn` edits a copy, which is kept and saved. False when they cannot be edited yet. Redrawing is the
-   caller's (typing must not redraw the box being typed in). */
+/* Change the drafts of `id`: `fn` edits a copy, which is kept and saved. False when they cannot be edited yet, or while they are
+   being put into the pending review (what is sent is what was saved). Redrawing is the caller's (typing must not redraw the box
+   being typed in). */
 function prEditDrafts(id, read, fn) {
   const e = prDraftsEntry(id);
-  if (!e.loaded) return false;
+  if (!e.loaded || e.pending) return false;
   const doc = structuredClone(prDoc(id, read));
   fn(doc);
   e.doc = doc;
   e.dirty = true;
   e.rev++;
+  // What the last push said (a draft it refused) is about the drafts as they were.
+  e.pendResult = null;
   prScheduleSave(id);
   prShowSave(id);
   return true;
@@ -183,6 +187,8 @@ async function prSave(id) {
   e.saving = true;
   e.saveError = null;
   const rev = e.rev;
+  let done;
+  e.inflight = new Promise(r => { done = r; });
   prShowSave(id);
   try {
     await boardApi('', '/api/others/drafts', { method: 'POST', body: JSON.stringify({ id, drafts: prSaveBody(e.doc) }) });
@@ -193,6 +199,7 @@ async function prSave(id) {
     e.saveError = ps.length ? `${err.message} (${ps.slice(0, 3).join(' / ')}${ps.length > 3 ? ` / 他 ${ps.length - 3} 件` : ''})` : err.message;
   } finally {
     e.saving = false;
+    done();
   }
   prShowSave(id);
   // Edited while it was on its way, and that save went through.
@@ -228,7 +235,7 @@ function prDraftsBodyHtml(rec, read, place) {
   const doc = prDoc(rec.id, read);
   // After a re-read the person's drafts stay; the reader's new ones are offered.
   const notice = e.saved && read && doc.fromSha !== read.sha ? prNewReaderDrafts(doc, read).length : 0;
-  return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e) });
+  return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e), pend: { sending: e.pending, result: e.pendResult, prUrl: rec.url } });
 }
 
 /* What a draft box being focused holds the redraw for. */
@@ -265,6 +272,7 @@ function renderPrPanel() {
     prView.shownFor = id;
     const e = prDraftsEntry(id);
     if (!e.dirty && !e.saving) { e.loaded = false; e.error = null; }
+    if (!e.pending) e.pendResult = null;
     // The list the link came from shows, for this visit: the tab the person saved is not changed (prPrefsToSave).
     if (prefs.workTab !== 'others') { prView.tabWas = prefs.workTab; prefs.workTab = 'others'; renderWorkTabs(); renderOthersList(); }
     panelScrolledFor = null;
@@ -343,6 +351,48 @@ async function prCopy(text) {
   }
 }
 
+/* Put the stored drafts into the person's pending review on GitHub. The server sends what is stored, so what is held here is saved
+   first (and the reader's drafts, which are not a file until the first edit, are made the file). One push in flight per PR: a
+   second click does nothing. A failed one keeps the drafts as they are and says so; a successful one takes the server's document, in
+   which what was put in carries its `sentAt`. adj never submits the review: the person does, on GitHub. */
+async function prPend(id, read) {
+  const e = prDraftsEntry(id);
+  if (e.pending || !e.loaded) return;
+  if (!e.doc) prEditDrafts(id, read, () => {});
+  e.pending = true;
+  e.pendResult = null;
+  prRedrawNow();
+  try {
+    // Saves in flight and edits since: until nothing is unsaved, or one fails.
+    for (let n = 0; n < 20 && (e.dirty || e.saving); n++) {
+      if (e.saving) await e.inflight; else await prSave(id);
+      if (e.saveError != null) throw new Error(`下書きを保存できなかったので、積んでいません: ${e.saveError}`);
+    }
+    if (e.dirty || e.saving) throw new Error('下書きの保存が終わらなかったので、積んでいません');
+    const res = await boardApi('', '/api/others/pending', { method: 'POST', body: JSON.stringify({ id }) });
+    if (res.drafts) { e.doc = prDocOfStored(res.drafts); e.saved = true; e.dirty = false; }
+    else {
+      // GitHub has them but adj could not write its own file: the drafts are marked here, so that a second click does not send them
+      // again, and the next save (which carries `sentAt`) writes the marks.
+      const doc = structuredClone(prDoc(id, read));
+      const at = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
+      for (const d of doc.drafts) if ((res.sent || []).includes(d.key)) d.sentAt = at;
+      if (res.overall && res.overall !== 'none') doc.pending = { ...(doc.pending || {}), overall: doc.overall?.body ?? '' };
+      e.doc = doc; e.dirty = true; e.rev++;
+      prScheduleSave(id);
+    }
+    e.pendResult = { sent: (res.sent || []).length, failed: res.failed || [], skipped: res.skipped || [], overall: res.overall || 'none' };
+    if (res.warning) note('pending review', true, `GitHub には積みましたが、adj の記録に書けませんでした: ${res.warning}`);
+    // The row left 新着: the records are read again (the same as after asking for a read). The push has gone through whatever this does.
+    try { await refreshOthers(true); } catch {}
+  } catch (err) {
+    note('pending review', true, err.message);
+  } finally {
+    e.pending = false;
+    if (selectedTaskId === PR_REF + id) prRedrawNow();
+  }
+}
+
 /* The click of a button that belongs to a PR, in the panel or in 「拡大」. True when it was one. */
 function prAct(e, { inDialog = false } = {}) {
   const hit = sel => e.target.closest(sel);
@@ -356,7 +406,10 @@ function prAct(e, { inDialog = false } = {}) {
   const doc = () => prDoc(id, read);
   const boxSel = key => `[data-pr-body="${CSS.escape(key)}"]`;
   // The panel shows what an edit changed; the dialog's column is redrawn by the same call, which follows the panel.
-  const edited = (fn, sel = null) => { if (prEditDrafts(id, read, fn)) prRedrawNow(sel && { sel, inDialog }); };
+  const edited = (fn, sel = null) => {
+    if (prEditDrafts(id, read, fn)) prRedrawNow(sel && { sel, inDialog });
+    else if (prDraftsEntry(id).pending) note('下書き', true, 'pending review に積んでいるあいだは、下書きを変えられません');
+  };
   let b;
   if ((b = hit('[data-pr-ai], [data-pr-reread]'))) {
     if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id);
@@ -381,6 +434,10 @@ function prAct(e, { inDialog = false } = {}) {
     if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
     const key = prNextKey(doc(), 'p');
     edited(d => { d.drafts.push(prDraftFromPoint(point, d)); }, boxSel(key));
+    return true;
+  }
+  if ((b = hit('[data-pr-pend]'))) {
+    if (!b.disabled) prPend(id, read);
     return true;
   }
   if ((b = hit('[data-pr-copy]'))) {
@@ -441,6 +498,8 @@ function prInput(e) {
   if (!rec) return;
   const read = prReadOf(rec) || null;
   const value = t.value;
+  // What is in the pending review is not edited here.
+  if (!t.matches('.pr-overall') && prDoc(id, read).drafts.find(x => x.key === t.dataset.prBody)?.sentAt) return;
   let readded = null;
   prEditDrafts(id, read, doc => {
     if (t.matches('.pr-overall')) doc.overall = { ...(doc.overall || {}), body: value };

@@ -198,7 +198,7 @@ those with 404 unless the server is the resident. The terminal is never a live r
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
 `POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/hub/start`,
-`GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts` and `POST /api/others/drafts`. It also answers the WebSocket
+`GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts`, `POST /api/others/drafts` and `POST /api/others/pending`. It also answers the WebSocket
 handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the
 PR's record (`ai.terminal` and `ai.pid`, by `board::review::reader_window`), never from the request, and it
 shares the terminal code and the cap of 8 open terminals with a board's. A PR with no reader window, or whose
@@ -422,6 +422,7 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later |
 | `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review (when it is later than the review, else the sync's time) when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
 | `ai` | the AI read-through: `{status, sha, startedAt, finishedAt, launchedAt, readFrom, sessionId, pid, psStarted, terminal, error, counts, stale}`; absent until one was asked for. `status` is `queued`, `running`, `ready` or `failed`. `startedAt` is when the person asked, which is the place in the queue; `launchedAt` is when the reader was started; `sessionId` is the reader whose hand-in is taken; `sha` and `counts` (`{attention, check, drafts}`) are those of the stored read-through and are kept when a re-read is asked for; `error` is why the last read failed, as one line of at most 300 characters. `readFrom` is when the stored read-through's material was taken at the latest: the `launchedAt` of the reader that handed it in, or the hand-in time when no reader was launched. `stale` is derived on every load and save and never trusted from disk: it is true when `sha` is not `headSha` and the sync saw that head (`headSeenAt`) at or after `readFrom`, or when either is missing. The hand-in time is not used, since a reader that read A, a push of B stored by a sync, and then a hand-in of A is stale. A reader reads the PR's live head, which can be newer than the last sync's, so a read of a head the sync has not seen yet is not stale, and the sync that brings it makes `sha` and `headSha` equal |
+| `pendingReviewAt` | time adj last put drafts into your pending review on GitHub (`POST /api/others/pending`); absent until then. Acting on the row, like starting a read: the page reads it with `ai.startedAt` to take the row off 新着. Not an event |
 | `firstSeenAt`, `readAt` | the first sync that recorded it, and the last that read it |
 
 `lastSync` is `{at, complete, owners, truncated, failed, error, errorAt}`. `at` is the last sync
@@ -605,14 +606,57 @@ and 500 for a file that cannot be read. `POST` answers 200 with the stored file,
       "line": 42,                   // optional, from 1, needs path (absent with a path = a comment on the file)
       "startLine": 40,              // optional, from 1, needs line, not after it
       "side": "right|left",         // default right
-      "body": "…" }                 // at most 20000 characters; may be blank while being written
+      "body": "…",                  // at most 20000 characters; may be blank while being written
+      "sentAt": "20261011T102000Z" } // optional: when adj put it into the pending review (adj's stamp, or the page's when adj could not write the file)
   ],
-  "overall": { "body": "…" } | null // at most 20000 characters
+  "overall": { "body": "…" } | null, // at most 20000 characters
+  "pending": {                      // added by adj once drafts were put into a pending review; the page does not send it
+    "reviewId": "PRR_…", "url": "…", // GitHub's node id of the review and its address
+    "at": "20261011T102000Z",       // the last push into it
+    "overall": "…"                  // the overall comment already in its body (not sent twice)
+  }
 }
 ```
 
-The input is `drafts` without `id` and `savedAt`, and refuses unknown keys, so a GET's answer sent back as it is
-is a 400. The stored file keeps keys this binary does not know (rule 10): a save carries over the top-level keys of the existing file that are not `id`, `savedAt` or one of the input's own keys (an unreadable existing file fails the save), so a page that does not send them does not drop them. A read-through's `drafts` and `overall` are held to the same limits as the drafts file (count, path, body, and 512 KiB of JSON together, which leaves half of the 1 MiB request limit for the keys the page adds when it seeds them), so what the page seeds from a read-through can always be saved. Only top-level unknown keys are kept across a save; keys inside a draft item or `overall` are not, so a later change that needs per-draft state must extend the schema. Until the first save the page shows the
+The input is `drafts` without `id`, `savedAt` and `pending`, and refuses unknown keys, so a GET's answer sent back as it is
+is a 400. The stored file keeps keys this binary does not know (rule 10): a save carries over the top-level keys of the existing file that are not `id`, `savedAt` or one of the input's own keys (an unreadable existing file fails the save), so a page that does not send them does not drop them. A read-through's `drafts` and `overall` are held to the same limits as the drafts file (count, path, body, and 512 KiB of JSON together, which leaves half of the 1 MiB request limit for the keys the page adds when it seeds them), so what the page seeds from a read-through can always be saved. Only top-level unknown keys are kept across a save (`pending` is one of them); keys inside a draft item or `overall` are not, so a later change that needs per-draft state must extend the schema (as `sentAt` did). A save that sends a draft without `sentAt` keeps the one stored for the same draft (the same in everything but `sentAt`: key, place and body), so a save already on its way when drafts were put into the review cannot take them back out. Until the first save the page shows the
 read-through's `drafts` as if they were the file; after a re-read it never replaces the person's drafts, and
 offers to add the new reader drafts (`fromSha` records which read-through they came from). The record's
 removal removes the file.
+
+#### Putting the drafts into a pending review
+
+「N 件を pending review に積む」, under the drafts in the 下書き tab and in the right column of 「拡大」, hands the stored
+drafts to GitHub (`others::push_pending`, `POST /api/others/pending`, body `{"id": "<owner/repo#N>"}`; there is no CLI verb).
+It creates a review on the PR with no event, so GitHub keeps it pending: only you see it, and you finish it on GitHub. **adj never
+submits a review and never approves or requests changes**: no query it sends contains `submitPullRequestReview` or an `event`.
+Everything goes through GraphQL with `gh api graphql --input -`, the query and the variables as JSON on stdin, so nothing the person
+wrote is an argument or part of a query's text.
+
+- The operation sends what is **stored**; the page saves first (it waits for a save in flight, and makes the reader's drafts the file
+  when there is none yet) and does not send if that save fails.
+- If you already have a pending review on the PR it is added to; the review is made only when there is none (and if making it
+  races with another one, that one is found and added to). The review is made at the commit of the stored read-through when there is
+  one, so the lines are those of the diff that was read; GitHub refusing that commit (after a force-push) makes it at the head. A review
+  that GitHub does not answer as `PENDING` is never written to.
+- The review is pinned to the stored read-through's `sha`, so drafts written against a diff of an older read may land on other lines or
+  come back as not added. The same goes for adding to a pending review the person started on an older commit: its threads are placed
+  against that commit.
+- Each draft with a `path`, a body that is not blank and no `sentAt` becomes a thread: `LINE` with `line` and `side` (`startLine`
+  and `startSide` only when `startLine` is before `line`), or `FILE` when there is no line. Drafts go 20 to a request. A draft GitHub
+  refuses (a line that is not in the diff, for one) is reported in `failed` and stays unsent; the others are still added. A request
+  that comes back with no data, or does not finish, marks none of its drafts as sent and says they may have arrived.
+- The overall comment becomes the review's body, or is added after it (`existing + "\n\n" + overall`) when the body is not empty, and is not sent
+  again while it is the one recorded in `pending.overall`. Drafts that have no path or are blank are reported in `skipped`; they are never
+  folded into the body.
+- When GitHub took something, the drafts file and the record are written under the record's lock: each sent draft gets `sentAt` (when
+  the draft is still the same in everything but `sentAt`), `pending` is set, and the record's `pendingReviewAt` is set, which takes the row off 新着.
+  A write that fails then is a `warning` in the answer, not an error. When GitHub took nothing, nothing is written.
+  A sent draft stays in the list, read-only, with 「積みました」 and its copy button; copying stays available for every draft.
+- One push runs per PR at a time (a second answers 409). A pending review pinned to an older commit still gets the threads; the ones
+  GitHub cannot place come back as `failed`.
+
+`POST /api/others/pending` answers 200 `{reviewUrl, created, sent: [key], skipped: [{key, why}], failed: [{key, why}], overall:
+"none"|"set"|"appended", drafts, record, warning}`; 400 for a bad id, a PR that is merged or closed, drafts that break the contract
+(`problems`), or nothing left to send (`{"error", "nothing": true}`); 404 for a PR adj has no record of or one with no drafts; 409 while a push
+of it runs; 502 when GitHub took none of it; 500 for a file that cannot be read or written.

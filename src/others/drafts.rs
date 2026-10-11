@@ -71,6 +71,11 @@ pub struct DraftItem {
     /// May be blank while the person is still writing it.
     #[serde(default)]
     pub body: String,
+    /// Stamp of when adj put this draft into the person's pending review on GitHub: adj's own, or
+    /// the page's when adj could not write the file (the next save carries it). A page otherwise
+    /// sends it back as it read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,6 +111,75 @@ impl StoredDrafts {
             rest,
         }
     }
+}
+
+/// The keys of `DraftsInput`: what `StoredDrafts::input` reads out of the rest of the file.
+const INPUT_KEYS: [&str; 4] = ["version", "fromSha", "drafts", "overall"];
+
+/// What adj has put into the person's pending review on GitHub: the top-level `pending` of the
+/// drafts file. Keys this binary does not know are kept (rule 10).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingNote {
+    /// GitHub's node id of the pending review.
+    pub review_id: String,
+    /// Where the review is on GitHub.
+    pub url: String,
+    /// Stamp of the last push into it.
+    pub at: String,
+    /// The overall comment that is already in the review's body, so that it is not sent twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overall: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl StoredDrafts {
+    /// The drafts and the overall comment as a checked input would hold them; the keys the
+    /// server adds (and any a newer binary added) are left out. An error when they cannot be
+    /// read, which is not the same as there being none.
+    pub fn input(&self) -> Result<DraftsInput, String> {
+        let map: serde_json::Map<String, serde_json::Value> = self
+            .rest
+            .iter()
+            .filter(|(k, _)| INPUT_KEYS.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        serde_json::from_value(serde_json::Value::Object(map))
+            .map_err(|e| format!("cannot read the drafts of {}: {e}", self.id))
+    }
+
+    /// Put `input` in place of the drafts and the overall comment, leaving every other key.
+    pub fn set_input(&mut self, input: &DraftsInput) {
+        if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(input) {
+            self.rest.extend(map);
+        }
+    }
+
+    /// What was put into the pending review; `None` when nothing was.
+    pub fn pending(&self) -> Result<Option<PendingNote>, String> {
+        match self.rest.get("pending") {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => serde_json::from_value(v.clone())
+                .map(Some)
+                .map_err(|e| format!("cannot read the pending review note of {}: {e}", self.id)),
+        }
+    }
+
+    pub fn set_pending(&mut self, note: &PendingNote) {
+        if let Ok(v) = serde_json::to_value(note) {
+            self.rest.insert("pending".to_string(), v);
+        }
+    }
+}
+
+/// An adj stamp, `YYYYMMDDTHHMMSSZ`.
+fn is_stamp(text: &str) -> bool {
+    let b = text.as_bytes();
+    b.len() == 16
+        && b[8] == b'T'
+        && b[15] == b'Z'
+        && b[..8].iter().chain(&b[9..15]).all(u8::is_ascii_digit)
 }
 
 /// The size `MAX_DRAFTS_BYTES` is held to: `drafts` and `overall` serialised compactly, as
@@ -180,6 +254,11 @@ pub fn validate(input: &DraftsInput) -> Vec<String> {
         if d.body.chars().count() > MAX_DRAFT_CHARS {
             problems.push(format!(
                 "{at}: body must be at most {MAX_DRAFT_CHARS} characters"
+            ));
+        }
+        if d.sent_at.as_deref().is_some_and(|at| !is_stamp(at)) {
+            problems.push(format!(
+                "{at}: sentAt must be a stamp like 20261001T000000Z, or left out"
             ));
         }
     }

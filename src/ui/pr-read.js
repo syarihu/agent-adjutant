@@ -328,23 +328,61 @@ function prCopyAllText(doc) {
   return parts.join('\n\n');
 }
 
+/* What 「pending review に積む」 would put in: the drafts with a file and something written that are not in the review yet, and
+   whether the overall comment is new (it is not when it is the one already in the review). The server decides the same way. */
+/* A comment as the server compares it: line ends as \n, no trailing space (GitHub may trim it, and what is stored is that). */
+const prNormComment = t => String(t ?? '').replace(/\r\n/g, '\n').trimEnd();
+function prPendable(doc) {
+  const drafts = (doc?.drafts || []).filter(d => d.path && String(d.body || '').trim() && !d.sentAt).length;
+  const body = prNormComment(doc?.overall?.body);
+  const overall = body !== '' && prNormComment(doc?.pending?.overall) !== body;
+  return { drafts, overall };
+}
+
+/* The button, what a pending review is, and how the last push went: the slot under the drafts. `pend`: `sending`, `result`
+   ({ sent, failed: [{ key, why }], skipped: [{ key, why }] } of the last push), `prUrl`. */
+function prPendHtml(doc, pend = {}) {
+  const n = prPendable(doc);
+  const empty = !n.drafts && !n.overall;
+  const label = n.drafts ? `${n.drafts} 件を pending review に積む` : n.overall ? '全体のコメントを pending review に積む' : 'pending review に積む';
+  const title = empty ? '積めるものがありません。ファイルのある下書きに、書き込みがあると積めます' : '';
+  const button = `<button type="button" class="btn-m3-filled" data-pr-pend${empty || pend.sending ? ' disabled' : ''}${pend.sending ? ' aria-busy="true"' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(pend.sending ? '積んでいます…' : label)}</button>`;
+  const url = httpUrl(pend.prUrl);
+  // The review itself when it is known, else the PR's files, where a pending review can be finished.
+  const href = httpUrl(doc?.pending?.url) || (url ? `${url}/files` : null);
+  const link = href ? ` <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">GitHub で仕上げる</a>` : '';
+  const why = empty && !pend.sending ? '<div class="pr-pend-note">積めるものがありません。</div>' : '';
+  const note = `${why}<div class="pr-pend-note">pending review はあなたにしか見えません。判定を選んで送信するのは GitHub です。${link}</div>`;
+  const r = pend.result;
+  const out = r ? [`${r.sent || 0} 件を積みました`, r.failed?.length ? `${r.failed.length} 件は積めませんでした` : '', r.skipped?.length ? `${r.skipped.length} 件は対象外でした` : ''].filter(Boolean).join('／') : '';
+  const done = [out, r && r.overall && r.overall !== 'none' ? '全体のコメントも積みました' : ''].filter(Boolean).join('／');
+  // A refused overall comment has no box of its own to say why under.
+  const refused = r?.failed?.find(f => f.key === 'overall');
+  const status = done || refused ? `<div class="pr-pend-result" role="status">${esc(done)}</div>${refused ? `<div class="pr-why" role="note">全体のコメントは積めませんでした: ${esc(refused.why)}</div>` : ''}` : '';
+  return `<div class="pr-pend">${button}${note}${status}</div>`;
+}
+
 const PR_SAVE_TEXT = { saved: '保存しました', saving: '保存しています…' };
 /* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('panel' or 'dock': only the class of the
-   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }). */
+   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `pend` (`prPendHtml`'s). */
 function prDraftsHtml(doc, read, opts = {}) {
   const drafts = doc?.drafts || [];
+  const failed = new Map((opts.pend?.result?.failed || []).map(f => [f.key, f.why]));
   const items = drafts.map(d => {
     const loc = prDraftLocation(d);
+    // What is in the pending review is read-only here (edit it on GitHub), and so is everything while a push is on its way.
+    const locked = !!d.sentAt || !!opts.pend?.sending;
+    const why = !d.sentAt && failed.has(d.key) ? `<div class="pr-why" role="note">積めませんでした: ${esc(failed.get(d.key))}</div>` : '';
     return `<div class="pr-draft" data-pr-draft="${esc(d.key)}">
-      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}">捨てる</button></span></div>
-      <textarea class="pr-draft-body" data-pr-body="${esc(d.key)}" aria-label="${esc(`${loc} への下書き`)}" spellcheck="false">
-${esc(d.body)}</textarea>
+      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}${d.sentAt ? '<span class="pr-chip pr-chip-sent" title="pending review に積んだ下書きです">積みました</span>' : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${opts.pend?.sending ? ' disabled' : ''}>捨てる</button></span></div>
+      <textarea class="pr-draft-body" data-pr-body="${esc(d.key)}" aria-label="${esc(`${loc} への下書き`)}" spellcheck="false"${locked ? ' readonly' : ''}>
+${esc(d.body)}</textarea>${why}
     </div>`;
   });
   const suggestion = read?.overall?.suggestion
     ? `<div class="pr-suggestion">AI の判定の目安: <b>${esc(read.overall.suggestion)}</b>（文字だけ。判定を選んで送るのは GitHub です）</div>` : '';
   const notice = opts.notice > 0
-    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep>このままにする</button></div>` : '';
+    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new${opts.pend?.sending ? ' disabled' : ''}>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep${opts.pend?.sending ? ' disabled' : ''}>このままにする</button></div>` : '';
   const save = opts.save?.status === 'error'
     ? `保存できませんでした: ${opts.save.error || ''} 入力はこのページに残っています`
     : PR_SAVE_TEXT[opts.save?.status] || '';
@@ -353,10 +391,10 @@ ${esc(d.body)}</textarea>
     ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。見るポイントの「下書きに」から足せます。</div>'}
     <label class="pr-overall-label">全体のコメント
       ${suggestion}
-      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false">
+      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${opts.pend?.sending ? ' readonly' : ''}>
 ${esc(doc?.overall?.body || '')}</textarea>
     </label>
-    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot></div></div>
+    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot>${opts.pend ? prPendHtml(doc, opts.pend) : ''}</div></div>
     <div class="pr-save${opts.save?.status === 'error' ? ' err' : ''}" role="status" data-pr-save>${esc(save)}</div>
   </div>`;
 }

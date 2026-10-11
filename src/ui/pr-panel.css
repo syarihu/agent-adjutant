@@ -46,6 +46,14 @@
 .pr-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px; border-radius: var(--md-shape-corner-xs); font-size: 12px; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .pr-draft-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .pr-draft-acts [data-pr-pending-slot]:empty { display: none; }
+.pr-draft-acts [data-pr-pending-slot] { flex-basis: 100%; }
+.pr-pend { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.pr-pend-note, .pr-pend-result, .pr-why { font-size: 11.5px; overflow-wrap: anywhere; }
+.pr-pend-note { color: var(--md-sys-color-on-surface-variant); }
+.pr-pend-note a { color: var(--md-sys-color-primary); }
+.pr-why { color: var(--md-sys-color-error); }
+.pr-chip-sent { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.pr-draft-body[readonly] { opacity: .75; }
 .pr-save { min-height: 1.2em; font-size: 11.5px; color: var(--md-sys-color-outline); overflow-wrap: anywhere; }
 .pr-save.err { color: var(--md-sys-color-error); }
 .pr-ai[aria-disabled="true"] { opacity: .6; cursor: progress; }

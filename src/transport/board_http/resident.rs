@@ -16,7 +16,7 @@ use crate::board::review::RequestRefused;
 use crate::board::view::{boards, others, work};
 use crate::lifecycle::hub::TabOutcome;
 use crate::lifecycle::review::AskError;
-use crate::others::{Requested, SaveDraftsError, SyncError};
+use crate::others::{PushError, Requested, SaveDraftsError, SyncError};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -165,6 +165,7 @@ pub(super) fn route_resident(
         ("GET", "/api/others/diff") => stored_diff(resident, req, out),
         ("GET", "/api/others/drafts") => stored_drafts(resident, req, out),
         ("POST", "/api/others/drafts") => save_drafts(resident, req, out),
+        ("POST", "/api/others/pending") => push_pending(resident, req, out),
         _ => no_such_route(out),
     }
 }
@@ -333,6 +334,54 @@ fn save_drafts(resident: &Resident, req: &Request, out: &mut impl Write) -> std:
         ),
         Err(SaveDraftsError::Failed(e)) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
+}
+
+/// `POST /api/others/pending`: put the stored drafts of `{"id": ...}` into the person's pending
+/// review on GitHub. The stored drafts are what is sent, so the page saves first. adj never submits
+/// the review; the person does, on GitHub.
+fn push_pending(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let Some(pr) = body
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::others::pr_of)
+    else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    let (status, answer) = match crate::others::push_pending(&resident.root, &pr) {
+        Ok(pushed) => (
+            200,
+            serde_json::to_value(&pushed).unwrap_or_else(|e| json!({ "error": e.to_string() })),
+        ),
+        Err(PushError::NoRecord) => (404, json!({ "error": "no such pull request" })),
+        Err(PushError::NoDrafts) => (404, json!({ "error": "there are no drafts to send" })),
+        Err(PushError::Closed) => (
+            400,
+            json!({ "error": "the pull request is merged or closed" }),
+        ),
+        Err(PushError::Nothing) => (
+            400,
+            json!({ "error": "there is nothing new to send", "nothing": true }),
+        ),
+        Err(PushError::Busy) => (
+            409,
+            json!({ "error": "the drafts of this pull request are being sent" }),
+        ),
+        Err(PushError::Invalid(problems)) => (
+            400,
+            json!({ "error": "the drafts are not valid", "problems": problems }),
+        ),
+        Err(PushError::GitHub(why)) => (
+            502,
+            json!({ "error": format!("GitHub did not take the drafts: {why}") }),
+        ),
+        Err(PushError::Failed(e)) => (500, json!({ "error": e })),
+    };
+    http::json(out, status, &answer.to_string())
 }
 
 /// How long a built `/api/work` document answers the next requests.

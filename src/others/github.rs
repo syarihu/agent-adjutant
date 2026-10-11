@@ -28,6 +28,11 @@ pub(super) const SEARCH_LIMIT: usize = 100;
 /// Runs `gh` with these arguments and gives up at the deadline.
 pub(super) type Gh<'a> = &'a (dyn Fn(&[&str], Instant) -> Result<GhRun, String> + Sync);
 
+/// `Gh`, with a body for `gh`'s stdin when given: what a mutation travels in, so that nothing the
+/// person wrote is ever an argument.
+pub(super) type GhIn<'a> =
+    &'a (dyn Fn(&[&str], Option<&[u8]>, Instant) -> Result<GhRun, String> + Sync);
+
 /// What a PR looks like on GitHub right now: everything a record takes from GitHub. The times
 /// are adj stamps already.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,6 +96,45 @@ pub(super) fn viewer(gh: Gh, deadline: Instant) -> Result<String, String> {
         return Err("gh answered no login".to_string());
     }
     Ok(login.to_string())
+}
+
+/// Ask GitHub's GraphQL endpoint `query`, with `variables`. The body goes on stdin, so no value of
+/// a record is spliced into the text or the arguments. Answers the parsed reply whatever `gh`'s exit
+/// status was: GraphQL answers a request that did some of its work with data and errors together,
+/// and `gh` exits 1. `Err` only when there is no JSON reply at all.
+pub(super) fn graphql(
+    gh: GhIn,
+    query: &str,
+    variables: &Value,
+    deadline: Instant,
+) -> Result<Value, String> {
+    let body = serde_json::json!({ "query": query, "variables": variables }).to_string();
+    let run = gh(
+        &[
+            "api",
+            "graphql",
+            "-H",
+            "Content-Type: application/json",
+            "--input",
+            "-",
+        ],
+        Some(body.as_bytes()),
+        deadline,
+    )?;
+    match serde_json::from_str::<Value>(&run.stdout) {
+        // An auth or HTTP failure is `{"message": "Bad credentials", ...}` with no `errors`.
+        Ok(reply)
+            if reply.is_object()
+                && reply.get("data").is_none()
+                && reply.get("errors").is_none()
+                && reply.get("message").is_some_and(Value::is_string) =>
+        {
+            Err(reply["message"].as_str().unwrap_or_default().to_string())
+        }
+        Ok(reply) if reply.is_object() => Ok(reply),
+        _ if !run.stderr.is_empty() => Err(run.stderr),
+        _ => Err(format!("gh answered {:?}", run.stdout.trim())),
+    }
 }
 
 /// The open PRs that asked for your review, among the repositories of `owners`, and whether the

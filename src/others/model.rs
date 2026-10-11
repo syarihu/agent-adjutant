@@ -75,6 +75,10 @@ pub struct Record {
     /// itself is in `others/reads/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiRead>,
+    /// Stamp of the last time adj put drafts into your pending review on GitHub: acting on the
+    /// row, so the page takes it off 新着 like starting a read. Not an event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_review_at: Option<String>,
     pub first_seen_at: String,
     /// Stamp of the last sync that read this PR.
     pub read_at: String,

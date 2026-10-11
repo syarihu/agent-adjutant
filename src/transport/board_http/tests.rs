@@ -1628,6 +1628,58 @@ mod others_drafts {
         assert!(String::from_utf8(out).unwrap().starts_with("HTTP/1.1 400"));
     }
 
+    /// `POST /api/others/pending` with `body`. Only refusals are asked for here: an answer that
+    /// would reach GitHub would run the real `gh`.
+    fn push(resident: &Resident, body: &Value) -> (u16, Value) {
+        let mut req = request("POST", "/api/others/pending", &[]);
+        req.body = body.to_string().into_bytes();
+        let mut out = Vec::new();
+        route_resident(resident, &req, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let status = text.split(' ').nth(1).unwrap().parse().unwrap();
+        let body = text.split_once("\r\n\r\n").unwrap().1;
+        (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn putting_drafts_into_a_pending_review_is_refused_before_any_call_to_github() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        // No id, a bad id.
+        assert_eq!(push(&r, &json!({})).0, 400);
+        assert_eq!(push(&r, &json!({"id": "nope"})).0, 400);
+        // A PR adj has no record of.
+        assert_eq!(push(&r, &json!({"id": "acme/widget#7"})).0, 404);
+
+        put_record(root.path());
+        // A record with no drafts.
+        let (status, body) = push(&r, &json!({"id": "acme/widget#7"}));
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (404, Some("there are no drafts to send"))
+        );
+
+        // Drafts with nothing that can be sent: a comment on no file, and a blank overall comment.
+        let saved = json!({
+            "version": 1, "fromSha": null,
+            "drafts": [{"key": "p1", "source": "person", "side": "right", "body": "on the PR"}],
+            "overall": {"body": "  "}
+        });
+        assert_eq!(
+            ask(
+                &r,
+                "POST",
+                None,
+                Some(&json!({"id": "acme/widget#7", "drafts": saved}))
+            )
+            .0,
+            200
+        );
+        let (status, body) = push(&r, &json!({"id": "acme/widget#7"}));
+        assert_eq!(status, 400);
+        assert_eq!(body["nothing"], true, "{body}");
+    }
+
     /// Send a handshake to `upgrade_resident` over a real socket and say what came back.
     fn upgrade(resident: &Resident, path: &str, id: Option<&str>) -> Vec<u8> {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
