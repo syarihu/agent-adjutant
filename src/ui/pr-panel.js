@@ -227,7 +227,7 @@ function prDraftsBodyHtml(rec, read, place) {
 }
 
 /* What a draft box being focused holds the redraw for. */
-const prBoxFocused = root => !!document.activeElement?.matches?.('.pr-draft-body, .pr-overall') && !!root?.contains(document.activeElement);
+const prBoxFocused = root => !!document.activeElement?.matches?.(PR_BOX_SEL) && !!root?.contains(document.activeElement);
 
 /* ── the panel ── */
 
@@ -269,7 +269,7 @@ function renderPrPanel() {
   if (!rec) {
     setPanelPart('head', tp('tp-head'), `<div class="tp-head-main"><h2 class="tp-title">この PR</h2></div>${panelBtnsHtml('')}`);
     setPanelPart('tabs', tp('tp-tabs'), '');
-    const text = others.doc ? 'この PR は、いまの一覧にありません' : others.error ? `読み込めませんでした: ${others.error}` : '読み込み中…';
+    const text = prMissingText(others.doc, others.error);
     setPanelPart('rest', tp('tp-rest'), `<div class="m3-filled-card"><div class="tp-muted" role="status">${esc(text)}</div></div>`);
     return;
   }
@@ -424,7 +424,7 @@ function prPanelClick(e) {
 // Typing into a draft changes the document and schedules a save; nothing is drawn, so the box keeps its caret and its composition.
 function prInput(e) {
   const t = e.target;
-  if (!t.matches?.('.pr-draft-body, .pr-overall') || !isPrRef(selectedTaskId)) return;
+  if (!t.matches?.(PR_BOX_SEL) || !isPrRef(selectedTaskId)) return;
   if (t.closest?.('#card-dialog') && cardDialog.subject !== selectedTaskId) return;
   const id = prIdOfRef(selectedTaskId);
   const rec = othersById(id);
@@ -451,7 +451,7 @@ function prInput(e) {
 }
 // Leaving a box saves at once, and lets a redraw that waited for it be made.
 function prFocusOut(e, root, held, again) {
-  if (!e.target.matches?.('.pr-draft-body, .pr-overall') || !isPrRef(selectedTaskId)) return;
+  if (!e.target.matches?.(PR_BOX_SEL) || !isPrRef(selectedTaskId)) return;
   prScheduleSave(prIdOfRef(selectedTaskId), true);
   prHeldFlush(root, e.relatedTarget, held, again);
 }
@@ -460,8 +460,6 @@ tp('task-panel').addEventListener('focusout', e => prFocusOut(e, tp('task-panel'
 
 /* ── the middle: the reader's terminal ── */
 
-/* The reader's window can be attached to when its record says it is in a tmux window. */
-const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && rec.ai.terminal?.backend === 'tmux' && !!rec.ai.terminal.window;
 
 /* The middle for a PR. It uses the work view's terminal slot, but not `syncTermSlot`, which needs a session of a board: the
    socket is the reader's (`/api/others/terminal`), resolved on the server from the record. The slot is kept while the record
@@ -495,7 +493,7 @@ function renderPrTerm(rec) {
   // Over a terminal that has ended, so the screen of a dead window is not taken for a live one.
   ph.hidden = !!workTerm.term && workTerm.ended == null;
   const hubView = othersHubView(others.doc?.hub, othersRecords());
-  const text = !rec ? `<div class="tp-muted">${esc(others.doc ? 'この PR は、いまの一覧にありません' : others.error ? `読み込めませんでした: ${others.error}` : '読み込み中…')}</div>`
+  const text = !rec ? `<div class="tp-muted">${esc(prMissingText(others.doc, others.error))}</div>`
     : workTerm.term && workTerm.ended == null ? ''
     : workTerm.term ? prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), { ended: workTerm.ended, asking: others.asking.has(rec.id) })
     : prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), { asking: others.asking.has(rec.id) });

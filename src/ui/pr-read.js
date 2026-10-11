@@ -25,6 +25,13 @@ const prReadKey = rec => `${rec?.ai?.sha || ''}|${rec?.ai?.finishedAt || ''}`;
 /* Whether there is a read-through to show, or one on its way from the server: `read` is undefined while it is being fetched. */
 const prHasRead = (rec, read) => !!read || (read === undefined && !!rec?.ai?.sha);
 
+/* The reader's window can be attached to when its record says it is in a tmux window (the middle mounts it, and says so when it cannot). */
+const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && rec.ai.terminal?.backend === 'tmux' && !!rec.ai.terminal.window;
+/* The boxes the person types a draft in. */
+const PR_BOX_SEL = '.pr-draft-body, .pr-overall';
+/* What the panel and the middle say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
+const prMissingText = (doc, error) => doc ? 'この PR は、いまの一覧にありません' : error ? `読み込めませんでした: ${error}` : '読み込み中…';
+
 /* The tab that is shown: 下読み unless the one named can be used (下書き and 差分 need a read-through; 差分 also needs the
    annotated diff, which says so through `diffOn`). */
 function prPaneOf(pane, hasRead, diffOn = false) {
@@ -254,7 +261,7 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
       + '<div class="tp-muted">AI 下読みすると、読むだけの worker がこの PR を先に読みます。そのあと、ここでその worker に差分のことを聞けます。</div>'
       + prAiButtonHtml(ai, hubView, opts.asking);
   }
-  const mountable = ['running', 'ready'].includes(rec?.ai?.status) && rec.ai.terminal?.backend === 'tmux' && !!rec.ai.terminal.window;
+  const mountable = prReaderOpen(rec);
   const note = mountable ? '接続しています…'
     : ['done', 'stale'].includes(ai.kind) ? '下読みは右のパネルにあります。worker の画面は開けません。'
     : ai.kind === 'running' || ai.kind === 'hung' ? 'worker の画面は開けません（tmux のウィンドウが記録されていません）。' : '';

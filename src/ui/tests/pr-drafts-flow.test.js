@@ -12,7 +12,7 @@ const fn = name => cut(new RegExp(`^(?:async )?function ${name}\\([^)]*\\) \\{[\
 function world({ stored = null } = {}) {
   const w = { notes: [], redrawn: 0, posts: [], gets: 0, stored, gate: null, selected: 'pr:acme/widget#1' };
   const c = vm.createContext({
-    structuredClone, CSS: { escape: x => x }, JSON, Promise, clearTimeout, setTimeout: () => 1, console,
+    structuredClone, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console,
     get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_SAVE_MS: 800,
     note: (...a) => { w.notes.push(a); }, prRedrawNow: () => { w.redrawn++; },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => ({ id: 'acme/widget#1' }), prReadOf: () => c.read,
