@@ -197,8 +197,12 @@ open and clean-up; starting a parent hub; the hub actions; the terminal; assets)
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
-`POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/hub/start` and
-`GET /api/others/read`. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
+`POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/hub/start`,
+`GET /api/others/read`, `GET /api/others/drafts` and `POST /api/others/drafts`. It also answers the WebSocket
+handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the
+PR's record (`ai.terminal` and `ai.pid`, by `board::review::reader_window`), never from the request, and it
+shares the terminal code and the cap of 8 open terminals with a board's. A PR with no reader window, or whose
+reader's process is gone, is closed with 4404. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
 the sync runs on the connection's own thread, as the resident gives each connection one. `GET /api/work` is the work
 under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
 repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,
@@ -343,6 +347,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
 | `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review, and how the last sync went | others (`store.rs`) |
+| `others/drafts/<owner>~<repo>~<number>.json` | the person's draft review comments of a PR, saved whole by the page | others (`store.rs`) |
 | `others/reads/<owner>~<repo>~<number>.json`, `others/review.lock` | the latest read-through of a PR; the lock held while readers are counted and claimed | others (`store.rs`) |
 | `review/`, `review/<owner>~<repo>~<number>/` | the code-review hub's home (its working directory, no checkout), and one scratch directory per reader, made when it starts | lifecycle (`hub/ensure_home.rs`, `review/launch_reader.rs`) |
 | `hubs/review.json`, `sessions/review.json`, `inbox/review/` | the code-review hub's record, saved session and inbox: the slug is `review`, with no digest, and the address is `ADJUTANT_HUB=@review` | registry, mail (as for any hub) |
@@ -441,6 +446,10 @@ chosen by the switch in its heading row, and only on the resident server. It rea
 (every 2 s while 「いまの仕事」 is open, every 10 s elsewhere) and calls `POST /api/others/sync` only when the person presses 「同期」. A read
 that fails keeps the list and the count as they were.
 
+Selecting a row opens the PR in the task panel, as a task opens: the address is `/?view=work&task=pr:<id>` (`<id>` is `owner/repo#N`,
+escaped) with `pane=detail` (下読み, the default), `diff` or `drafts`, on board `all`. The reader's terminal is in the middle and 「拡大」 uses
+the task dialog's structure (index, one scroll, the drafts in the right column). `src/ui/pr-read.js` is the pure half; `pr-panel.js` and `pr-dialog.js` draw it.
+
 - **Stale.** The list is stale when `lastSync.at` is more than 30 minutes before the server's time (the document's `now` plus the time since it was read):
   a banner, the sync time in the warning colour and a dot on the switch, until the next sync. A list never synced is not stale.
 - **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
@@ -531,11 +540,16 @@ draft sides `right`, `left`; comment statuses `addressed`, `replied`, `untouched
     { "path": "…", "anchor": "substring of one diff line", "nth": 1 /* optional */,
       "kind": "tr|ex", "text": "…" }
   ],
-  "drafts": [
+  "drafts": [                         // at most 300; path at most 1024 characters, body at most 20000;
+                                      // drafts and overall together at most 512 KiB of JSON (`MAX_DRAFTS_BYTES`)
     { "path": "…", "line": 42, "startLine": 40 /* optional, not after line */,
       "side": "right|left" /* default right */, "body": "…" }
   ],
-  "overall": { "body": "…" } | null,   // text only: the body of the pending review; adj never says a verdict
+  "overall": {                        // text only: adj never submits a review, and never chooses a verdict
+    "body": "…",                      // the body of the pending review
+    "suggestion": "…"                 // optional, one line (no control characters), at most 300 characters: the verdict the diff seems to call
+                                      // for, in words. Shown to the person, never sent anywhere
+  } | null,
   "sinceReview": null | {
     "commit": "<commit of your last review>",
     "comments": [ { "commentId": 123, "path": "…", "line": 10 /* optional */,
@@ -546,3 +560,40 @@ draft sides `right`, `left`; comment statuses `addressed`, `replied`, `untouched
 ```
 
 Only `version`, `sha` and `three` are required; the lists default to empty. A path is relative to the repository.
+
+### Draft comments
+
+The comments the person is writing on a PR are kept by adj, in a file of their own, so that they survive a
+reload, another browser, and a re-read: `submit_read` replaces the read-through whole, and a draft kept in it
+would die with it. The page saves the whole set (`POST /api/others/drafts`, body `{"id": "<owner/repo#N>",
+"drafts": {…}}`) and reads it with `GET /api/others/drafts?id=`. Last write wins between tabs.
+
+`GET` answers 200 with the stored file, 404 `{"error": "no drafts"}` when none was saved yet, 400 for a bad id
+and 500 for a file that cannot be read. `POST` answers 200 with the stored file, 400 `{"error", "problems": […]}`
+(every problem, one line each, and nothing written) for a body that is not valid, an id that names no PR or a
+`drafts` that is not an object, and 404 for a PR adj has no record of. A done record may still be saved.
+
+```jsonc
+{
+  "id": "owner/repo#12",            // added by the server
+  "savedAt": "20261011T101500Z",    // added by the server
+  "version": 1,                     // absent in the input is 1
+  "fromSha": "<40 hex>" | null,     // the read-through the reader's drafts were last taken from
+  "drafts": [                       // at most 300
+    { "key": "r1",                  // 1..64 of [A-Za-z0-9_-], unique in the list
+      "source": "reader|person",    // reader = from the read-through; person = typed, or made from a point
+      "path": "src/a.rs",           // optional (absent = a comment on the whole PR); relative, at most 1024 characters
+      "line": 42,                   // optional, from 1, needs path (absent with a path = a comment on the file)
+      "startLine": 40,              // optional, from 1, needs line, not after it
+      "side": "right|left",         // default right
+      "body": "…" }                 // at most 20000 characters; may be blank while being written
+  ],
+  "overall": { "body": "…" } | null // at most 20000 characters
+}
+```
+
+The input is `drafts` without `id` and `savedAt`, and refuses unknown keys, so a GET's answer sent back as it is
+is a 400. The stored file keeps keys this binary does not know (rule 10): a save carries over the top-level keys of the existing file that are not `id`, `savedAt` or one of the input's own keys (an unreadable existing file fails the save), so a page that does not send them does not drop them. A read-through's `drafts` and `overall` are held to the same limits as the drafts file (count, path, body, and 512 KiB of JSON together, which leaves half of the 1 MiB request limit for the keys the page adds when it seeds them), so what the page seeds from a read-through can always be saved. Only top-level unknown keys are kept across a save; keys inside a draft item or `overall` are not, so a later change that needs per-draft state must extend the schema. Until the first save the page shows the
+read-through's `drafts` as if they were the file; after a re-read it never replaces the person's drafts, and
+offers to add the new reader drafts (`fromSha` records which read-through they came from). The record's
+removal removes the file.

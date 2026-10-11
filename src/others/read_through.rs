@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::drafts::{MAX_DRAFT_CHARS, MAX_DRAFTS, MAX_DRAFTS_BYTES, MAX_PATH_CHARS, json_bytes};
+
 /// The file a read-through is handed in as can be no bigger than this.
 pub const MAX_READ_BYTES: usize = 2 * 1024 * 1024;
 const MAX_POINTS: usize = 200;
@@ -182,6 +184,11 @@ pub struct Draft {
 pub struct Overall {
     /// Becomes the body of the pending review. adj never chooses a verdict: that is the person's.
     pub body: String,
+    /// The verdict the diff seems to call for, in words, one line. Shown to the person as text
+    /// and never sent: kept apart from `body`, which is what gets posted. Optional, so a
+    /// read-through made before it existed stays valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -365,9 +372,29 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
         required(&mut problems, &at, "text", &a.text);
     }
 
+    // The page seeds its drafts from these and saves them as the person's; what the drafts file
+    // could never store, field by field or as a whole request, must not be accepted here, or the
+    // person could never save them. The seeded form adds a key and a source to each draft, which
+    // the headroom under the request limit (see `MAX_DRAFTS_BYTES`) is there for.
+    if json_bytes(&read.drafts, &read.overall) > MAX_DRAFTS_BYTES {
+        problems.push(format!(
+            "drafts and overall together must be at most {MAX_DRAFTS_BYTES} bytes of JSON"
+        ));
+    }
+    too_many(&mut problems, "drafts", read.drafts.len(), MAX_DRAFTS);
     for (i, d) in read.drafts.iter().enumerate() {
         let at = format!("drafts[{i}]");
         path_problem(&mut problems, &at, &d.path);
+        if d.path.chars().count() > MAX_PATH_CHARS {
+            problems.push(format!(
+                "{at}: path must be at most {MAX_PATH_CHARS} characters"
+            ));
+        }
+        if d.body.chars().count() > MAX_DRAFT_CHARS {
+            problems.push(format!(
+                "{at}: body must be at most {MAX_DRAFT_CHARS} characters"
+            ));
+        }
         line_problem(&mut problems, &at, "line", Some(d.line));
         line_problem(&mut problems, &at, "startLine", d.start_line);
         if d.start_line.is_some_and(|start| start > d.line) {
@@ -378,6 +405,25 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
 
     if let Some(overall) = &read.overall {
         required(&mut problems, "overall", "body", &overall.body);
+        if overall.body.chars().count() > MAX_DRAFT_CHARS {
+            problems.push(format!(
+                "overall: body must be at most {MAX_DRAFT_CHARS} characters"
+            ));
+        }
+        if let Some(suggestion) = &overall.suggestion {
+            if blank(suggestion) {
+                problems.push("overall: suggestion must not be blank (leave it out)".to_string());
+            } else if suggestion
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{85}'))
+            {
+                problems.push("overall: suggestion must be one line".to_string());
+            } else if suggestion.chars().count() > MAX_THREE_CHARS {
+                problems.push(format!(
+                    "overall: suggestion must be at most {MAX_THREE_CHARS} characters"
+                ));
+            }
+        }
     }
 
     if let Some(since) = &read.since_review {
@@ -408,7 +454,7 @@ fn blank(text: &str) -> bool {
     text.trim().is_empty()
 }
 
-fn is_sha(text: &str) -> bool {
+pub(super) fn is_sha(text: &str) -> bool {
     text.len() == 40 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 

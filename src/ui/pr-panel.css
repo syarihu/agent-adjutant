@@ -1,0 +1,58 @@
+/* A PR waiting on your review, in the task panel and in 「拡大」 (src/ui/pr-panel.js, pr-dialog.js, pr-read.js). Colours are the
+   page's tokens only, so the dark theme follows without a rule of its own. */
+.pr-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pr-sec > .tp-sec-title { margin-bottom: 0; }
+.pr-sec .tp-line { margin-bottom: 0; }
+.pr-list, .pr-points, .pr-order { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+.pr-order { list-style: decimal inside; }
+.pr-order > li { display: list-item; overflow-wrap: anywhere; }
+.pr-order > li.pr-skip { color: var(--md-sys-color-on-surface-variant); }
+.pr-list > li { overflow-wrap: anywhere; }
+.pr-sub { font-size: 11.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
+.pr-note { margin-top: 2px; font-size: 12px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.pr-loc { font-family: var(--font-mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.pr-cat { font-size: 11px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
+.pr-chip { display: inline-block; font-size: 10.5px; font-weight: 800; padding: 0 7px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
+.pr-since-addressed { background: var(--md-sys-color-success-container, var(--md-sys-color-surface-container-highest)); color: var(--md-sys-color-on-success-container, var(--md-sys-color-on-surface)); }
+.pr-since-untouched { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.pr-three-row { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.pr-three-label { flex: none; font-size: 11px; font-weight: 800; color: var(--md-sys-color-outline); min-width: 3.4em; }
+.pr-essence { margin: 4px 0 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.pr-dec { font-weight: 700; font-size: 12.5px; overflow-wrap: anywhere; }
+.pr-foot-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* 見るポイント: the level is a word as well as a colour on the left edge. */
+.pr-point { border-left: 3px solid var(--md-sys-color-outline-variant); padding: 2px 0 2px 10px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pr-point.pr-lv-attention { border-left-color: var(--md-sys-color-error); }
+.pr-point.pr-lv-check { border-left-color: var(--md-sys-color-warning); }
+.pr-point-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pr-level { font-size: 10.5px; font-weight: 800; padding: 0 7px; border-radius: 8px; background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
+.pr-lv-attention .pr-level { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.pr-lv-check .pr-level { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.pr-point-title { font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
+.pr-point-why { font-size: 12.5px; line-height: 1.55; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.pr-point-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.pr-act { padding: 2px 8px; font-size: 11.5px; }
+
+/* 下書き */
+.pr-drafts { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pr-draft { display: flex; flex-direction: column; gap: 4px; }
+.pr-draft-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pr-draft-btns { margin-left: auto; display: flex; gap: 2px; }
+.pr-draft-body, .pr-overall { width: 100%; box-sizing: border-box; min-height: 96px; resize: vertical; border-radius: var(--md-shape-corner-xs); border: 1px solid var(--md-sys-color-outline-variant); padding: 8px 10px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); font: inherit; font-size: 12.5px; line-height: 1.5; }
+.pr-draft-body:focus-visible, .pr-overall:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.pr-overall-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
+.pr-suggestion { font-size: 12px; font-weight: 400; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
+.pr-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px; border-radius: var(--md-shape-corner-xs); font-size: 12px; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.pr-draft-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pr-draft-acts [data-pr-pending-slot]:empty { display: none; }
+.pr-save { min-height: 1.2em; font-size: 11.5px; color: var(--md-sys-color-outline); overflow-wrap: anywhere; }
+.pr-save.err { color: var(--md-sys-color-error); }
+.pr-ai[aria-disabled="true"] { opacity: .6; cursor: progress; }
+
+/* 「拡大」 */
+.card-dialog-content[data-mode="review"] { gap: 28px; }
+.card-dialog-dock .pr-draft-body, .card-dialog-dock .pr-overall { min-height: 140px; }
+@media (max-width: 1160px) {
+  .card-dialog-dock .pr-draft-body, .card-dialog-dock .pr-overall { min-height: 80px; }
+}

@@ -4,7 +4,7 @@ use serde_json::json;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
-use crate::infra::clock::now_secs;
+use crate::infra::clock::{now_secs, utc_stamp};
 use crate::infra::http::{self, Request};
 use crate::infra::ws;
 
@@ -16,7 +16,7 @@ use crate::board::review::RequestRefused;
 use crate::board::view::{boards, others, work};
 use crate::lifecycle::hub::TabOutcome;
 use crate::lifecycle::review::AskError;
-use crate::others::{Requested, SyncError};
+use crate::others::{Requested, SaveDraftsError, SyncError};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -52,15 +52,26 @@ pub fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::R
     route_resident(resident, &req, &mut stream)
 }
 
-/// A WebSocket handshake: there is exactly one thing it may ask for, the terminal of a session
-/// on a board this server serves. Anything else is a 404, and so is that on a board a hub or a
-/// dedicated `adj serve` serves, which never reach here.
-fn upgrade_resident(
+/// A WebSocket handshake: it may ask for the terminal of a session on a board this server serves,
+/// or for the terminal of a PR's reader. Anything else is a 404, and so is that on a board a hub
+/// or a dedicated `adj serve` serves, which never reach here.
+pub(super) fn upgrade_resident(
     resident: &Resident,
     req: &Request,
     mut stream: TcpStream,
     reader: BufReader<TcpStream>,
 ) -> std::io::Result<()> {
+    if req.path == "/api/others/terminal" {
+        // Resolved from the record of the PR, so the page names a PR and nothing more.
+        let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+            return http::json(
+                &mut stream,
+                400,
+                &json!({ "error": "a pull request id is required" }).to_string(),
+            );
+        };
+        return super::terminal::serve_reader(resident, &pr, req, stream, reader);
+    }
     let found = split_board_path(&req.path).and_then(|(slug, rest)| {
         let inner = Request {
             path: rest.to_string(),
@@ -81,7 +92,11 @@ fn upgrade_resident(
     }
 }
 
-fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+pub(super) fn route_resident(
+    resident: &Resident,
+    req: &Request,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
     if let Some((slug, rest)) = split_board_path(&req.path) {
         let Some(server) = resident.board(slug) else {
             return http::json(out, 404, &json!({ "error": "no such board" }).to_string());
@@ -147,6 +162,8 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
         ("POST", "/api/others/ai") => ask_for_read(resident, req, out),
         ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
         ("GET", "/api/others/read") => stored_read(resident, req, out),
+        ("GET", "/api/others/drafts") => stored_drafts(resident, req, out),
+        ("POST", "/api/others/drafts") => save_drafts(resident, req, out),
         _ => no_such_route(out),
     }
 }
@@ -234,6 +251,70 @@ fn stored_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std:
         Ok(Some(read)) => http::json(out, 200, &read.to_string()),
         Ok(None) => http::json(out, 404, &json!({ "error": "no read-through" }).to_string()),
         Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/drafts?id=`: the drafts kept for a PR.
+fn stored_drafts(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::drafts(&resident.root, &pr) {
+        Ok(Some(drafts)) => http::json(out, 200, &drafts.to_string()),
+        Ok(None) => http::json(out, 404, &json!({ "error": "no drafts" }).to_string()),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `POST /api/others/drafts`: replace the drafts of a PR with `{"id": ..., "drafts": {...}}`.
+/// Only the inner object is the input, so that what a GET answers (with its `id` and `savedAt`)
+/// cannot be sent back as it is.
+fn save_drafts(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let body: serde_json::Value = match serde_json::from_slice(&req.body) {
+        Ok(body) => body,
+        Err(e) => {
+            return http::json(
+                out,
+                400,
+                &json!({ "error": format!("cannot read the request: {e}") }).to_string(),
+            );
+        }
+    };
+    let Some(pr) = body
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::others::pr_of)
+    else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    let Some(drafts) = body.get("drafts").filter(|d| d.is_object()) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "drafts must be an object" }).to_string(),
+        );
+    };
+    match crate::others::save_drafts(&resident.root, &pr, drafts, &utc_stamp(now_secs())) {
+        Ok(stored) => http::json(out, 200, &stored.to_string()),
+        Err(SaveDraftsError::Invalid(problems)) => http::json(
+            out,
+            400,
+            &json!({ "error": "the drafts are not valid", "problems": problems }).to_string(),
+        ),
+        Err(SaveDraftsError::NoRecord) => http::json(
+            out,
+            404,
+            &json!({ "error": "no such pull request" }).to_string(),
+        ),
+        Err(SaveDraftsError::Failed(e)) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
 }
 

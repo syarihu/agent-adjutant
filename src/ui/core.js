@@ -37,6 +37,12 @@ const PARENT_REF = 'parent:';
 const isParentRef = id => typeof id === 'string' && id.startsWith(PARENT_REF);
 const parentKeyOfRef = id => id.slice(PARENT_REF.length);
 const parentOfRef = id => isParentRef(id) ? workParentOf(parentKeyOfRef(id)) : null;
+/* A PR waiting on your review opens in the work view as `pr:<owner/repo#N>` (its record's id), on board `all`: it belongs to
+   no board. The panel's tabs are 下読み (`detail`), 差分 (`diff`) and 下書き (`drafts`) (pr-panel.js). */
+const PR_REF = 'pr:';
+const isPrRef = id => typeof id === 'string' && id.startsWith(PR_REF);
+const prIdOfRef = id => id.slice(PR_REF.length);
+const PR_PANES = ['detail', 'diff', 'drafts'];
 
 const PREF_KEY = 'adj-board-split';
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
@@ -68,7 +74,8 @@ prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k =
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
 // rings waits and gates itself and the server's `notification` stays silent for them; see pageRings.
 prefs.notify = notifyPrefs(prefs.notify);
-const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
+// `prPrefsToSave` (pr-panel.js) keeps the tab a PR link switched to out of what is saved.
+const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(typeof prPrefsToSave === 'function' ? prPrefsToSave() : prefs)); } catch {} };
 
 function applyLayout() {
   const boards = document.getElementById('boards');
@@ -262,7 +269,7 @@ async function boardApi(base, path, options = {}) {
     headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status, problems: Array.isArray(data.problems) ? data.problems : null });
   return data;
 }
 

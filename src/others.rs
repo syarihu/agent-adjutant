@@ -7,6 +7,8 @@
 //! paths under `others/` or takes the locks there.
 
 mod claim_reads;
+mod drafts;
+mod drafts_get;
 mod fail_read;
 mod github;
 mod list;
@@ -18,7 +20,9 @@ mod read_through;
 mod read_through_get;
 mod reader_dir;
 mod reap_reads;
+mod record_get;
 mod request_read;
+mod save_drafts;
 mod scope;
 mod store;
 mod submit_read;
@@ -26,6 +30,7 @@ mod sync;
 mod take_over_read;
 
 pub use claim_reads::*;
+pub use drafts_get::*;
 pub use fail_read::*;
 pub use list::*;
 pub use model::*;
@@ -35,7 +40,9 @@ pub use read_context::*;
 pub use read_through_get::*;
 pub use reader_dir::*;
 pub use reap_reads::*;
+pub use record_get::*;
 pub use request_read::*;
+pub use save_drafts::*;
 pub use submit_read::*;
 pub use sync::*;
 pub use take_over_read::*;

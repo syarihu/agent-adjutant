@@ -48,7 +48,7 @@ function setView(v) {
     const want = v === 'board' ? (prefs.tab === 'human' ? 'human' : 'agent') : 'work';
     if (nav.view !== want) {
       nav.view = want;
-      if (want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
+      if (want !== 'work' && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
       history.replaceState(null, '', urlOf());
     }
   }

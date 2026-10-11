@@ -27,6 +27,8 @@ const CARD_DIALOG_NONE_LEFT = '判断待ちはもうありません';
 const cardDialogDrafts = new Map(); // gate ref -> a comment typed in the dialog, kept past a close: the panel has a box for one gate only
 const cardDialogEl = () => document.getElementById('card-dialog');
 const cardDialogDockEl = () => cardDialogEl().querySelector('.card-dialog-dock');
+/* A whole task and a whole PR (pr-dialog.js) are read under the index; a single card is not. */
+const cardDialogIndexed = () => cardDialog.mode === 'task' || cardDialog.mode === 'review';
 
 /* What a card says about itself, drawn into the panel's markup by task-view.js and decide.js. */
 const expandAttrs = (section, g = null) =>
@@ -92,6 +94,7 @@ function cardDialogNotice(text) {
    first fill, before the dialog is open. */
 function cardDialogSync(force = false, initial = false) {
   if (cardDialog.mode === 'task') return cardDialogTaskSync(force, initial);
+  if (cardDialog.mode === 'review') return prDialogSync(force, initial);
   const dlg = cardDialogEl();
   if (!dlg.open && !initial) return;
   // An answer on its way drops the gate from the panel before it is known to have gone: the dialog waits
@@ -186,8 +189,9 @@ function cardDialogShell(mode, title, sub) {
   const content = dlg.querySelector('.card-dialog-content');
   content.replaceChildren();
   content.dataset.mode = mode;
+  dock.setAttribute('aria-label', mode === 'review' ? '下書き' : '判定');
   const index = dlg.querySelector('.card-dialog-index');
-  index.hidden = mode !== 'task';
+  index.hidden = mode === 'card';
   index.replaceChildren();
 }
 function closeCardDialog() {
@@ -345,6 +349,7 @@ document.addEventListener('contextmenu', cardDialogPressEnd, true);
 cardDialogEl().addEventListener('click', cardDialogPressEnd);
 cardDialogEl().addEventListener('pointercancel', cardDialogPressEnd);
 cardDialogEl().addEventListener('close', () => {
+  if (cardDialog.mode === 'review') prDialogClosed();
   cardDialog.observer?.disconnect();
   // What was typed goes back to the box of the same gate in the panel, and to no other.
   cardDialogEl().querySelectorAll('[data-gate]').forEach(el => {
@@ -630,7 +635,7 @@ function cardDialogFollowDock(groupKey) {
   cardDialogSetDock(ref);
 }
 function cardDialogSpy() {
-  if (cardDialog.mode !== 'task') return;
+  if (!cardDialogIndexed()) return;
   const dlg = cardDialogEl();
   const body = dlg.querySelector('.card-dialog-body');
   const sections = [...cardDialogContent().querySelectorAll('[data-cd-group]')];
@@ -661,7 +666,7 @@ cardDialogEl().querySelector('.card-dialog-body').addEventListener('keydown', e 
   if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) cardDialogUserMoved();
 });
 cardDialogEl().querySelector('.card-dialog-body').addEventListener('scroll', e => {
-  if (cardDialog.mode !== 'task') return;
+  if (!cardDialogIndexed()) return;
   // Away from where a jump left it: the person has scrolled, however they did it.
   if (cardDialog.pinned && Math.abs(e.currentTarget.scrollTop - cardDialog.pinnedAt) > 8) cardDialog.pinned = null;
   if (cardDialog.spy) return;
@@ -837,7 +842,7 @@ function cardDialogBadge(btn, on, first) {
 /* A card is seen when it is wholly in the body, or enough of it is apart from the edges where it is only coming in. Once seen its
    mark goes after a moment, so that it is seen to go. */
 function cardDialogSeeUpdated() {
-  if (cardDialog.mode !== 'task' || !cardDialog.updated.size || document.hidden || !cardDialogEl().open) return;
+  if (!cardDialogIndexed() || !cardDialog.updated.size || document.hidden || !cardDialogEl().open) return;
   const body = cardDialogEl().querySelector('.card-dialog-body');
   const view = body.getBoundingClientRect();
   const edge = Math.min(60, body.clientHeight / 4);
@@ -940,7 +945,7 @@ function cardDialogResetUpdates() {
 
 /* The panel drew again: the dialog of a task follows. */
 function cardDialogFollow() {
-  if (cardDialog.mode !== 'task' || !cardDialogEl().open) return;
+  if (!cardDialogIndexed() || !cardDialogEl().open) return;
   cardDialogSync();
 }
 

@@ -1458,3 +1458,216 @@ fn the_card_dialog_is_in_the_page_after_what_it_calls() {
     let render = &render[..render.find("\n}\n").unwrap()];
     assert!(render.contains("renderTaskPanelNow()") && render.contains("cardDialogFollow"));
 }
+
+// ── the drafts of a PR, and the terminal of its reader ──────────────
+
+mod others_drafts {
+    use super::super::resident::{route_resident, upgrade_resident};
+    use super::*;
+    use crate::board::Resident;
+    use serde_json::{Value, json};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    fn resident(root: &std::path::Path) -> Resident {
+        Resident {
+            root: root.to_path_buf(),
+            token: TOKEN.to_string(),
+            port: PORT,
+            boards: Default::default(),
+            tmux: None,
+            terminals: Default::default(),
+            pr_poll: Default::default(),
+            waits: Default::default(),
+            work_cache: Default::default(),
+        }
+    }
+
+    fn put_record(root: &std::path::Path) {
+        let record = json!({
+            "id": "acme/widget#7", "repo": "Acme/Widget", "number": 7,
+            "url": "https://github.com/acme/widget/pull/7",
+            "registered": true, "title": "t", "base": "main", "head": "f", "headSha": "h1",
+            "prState": "open", "additions": 1, "deletions": 1, "changedFiles": 1,
+            "requested": true, "requestedAt": "20261001T000000Z",
+            "firstSeenAt": "20261001T000000Z", "readAt": "20261001T000000Z"
+        });
+        let dir = root.join("others");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("acme~widget~7.json"), record.to_string()).unwrap();
+    }
+
+    /// The status and JSON body of the answer to one request.
+    fn ask(
+        resident: &Resident,
+        method: &str,
+        id: Option<&str>,
+        body: Option<&Value>,
+    ) -> (u16, Value) {
+        let mut req = request(method, "/api/others/drafts", &[]);
+        if let Some(id) = id {
+            req.query = vec![("id".to_string(), id.to_string())];
+        }
+        if let Some(body) = body {
+            req.body = body.to_string().into_bytes();
+        }
+        let mut out = Vec::new();
+        route_resident(resident, &req, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let status = text.split(' ').nth(1).unwrap().parse().unwrap();
+        let body = text.split_once("\r\n\r\n").unwrap().1;
+        (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    }
+
+    fn drafts() -> Value {
+        json!({
+            "version": 1, "fromSha": null,
+            "drafts": [{"key": "r1", "source": "reader", "path": "src/a.rs", "line": 4,
+                        "side": "right", "body": "why not a match?"}],
+            "overall": {"body": "looks fine"}
+        })
+    }
+
+    #[test]
+    fn drafts_are_read_back_as_saved_and_404_before_the_first_save() {
+        let root = tempfile::tempdir().unwrap();
+        put_record(root.path());
+        let r = resident(root.path());
+        let (status, body) = ask(&r, "GET", Some("acme/widget#7"), None);
+        assert_eq!((status, body["error"].as_str()), (404, Some("no drafts")));
+
+        let (status, saved) = ask(
+            &r,
+            "POST",
+            None,
+            Some(&json!({"id": "acme/widget#7", "drafts": drafts()})),
+        );
+        assert_eq!(status, 200, "{saved}");
+        assert_eq!(saved["id"], "acme/widget#7");
+        assert!(saved["savedAt"].is_string());
+        assert_eq!(saved["drafts"][0]["body"], "why not a match?");
+
+        let (status, read) = ask(&r, "GET", Some("acme/widget#7"), None);
+        assert_eq!((status, &read), (200, &saved));
+    }
+
+    #[test]
+    fn a_get_for_a_bad_id_is_400() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        for id in [None, Some("widget#7"), Some("not a pr")] {
+            assert_eq!(ask(&r, "GET", id, None).0, 400, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn a_save_that_is_not_valid_is_400_with_every_problem() {
+        let root = tempfile::tempdir().unwrap();
+        put_record(root.path());
+        let r = resident(root.path());
+        let mut bad = drafts();
+        bad["drafts"][0]["line"] = json!(0);
+        bad["drafts"][0]["key"] = json!("a b");
+        let (status, body) = ask(
+            &r,
+            "POST",
+            None,
+            Some(&json!({"id": "acme/widget#7", "drafts": bad})),
+        );
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], "the drafts are not valid");
+        assert_eq!(body["problems"].as_array().unwrap().len(), 2, "{body}");
+        // Nothing was written.
+        assert_eq!(ask(&r, "GET", Some("acme/widget#7"), None).0, 404);
+    }
+
+    #[test]
+    fn what_a_get_answered_is_not_accepted_back_as_the_drafts() {
+        let root = tempfile::tempdir().unwrap();
+        put_record(root.path());
+        let r = resident(root.path());
+        let post = |drafts: &Value| {
+            ask(
+                &r,
+                "POST",
+                None,
+                Some(&json!({"id": "acme/widget#7", "drafts": drafts})),
+            )
+        };
+        let (_, saved) = post(&drafts());
+        // `id` and `savedAt` are the server's, so echoing them is an unknown key.
+        let (status, body) = post(&saved);
+        assert_eq!(status, 400);
+        assert!(
+            body["problems"][0]
+                .as_str()
+                .unwrap()
+                .contains("unknown field")
+        );
+    }
+
+    #[test]
+    fn a_save_needs_an_id_an_object_and_a_record() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        let cases = [
+            (json!({"drafts": drafts()}), 400),
+            (json!({"id": "nope", "drafts": drafts()}), 400),
+            (json!({"id": "acme/widget#7"}), 400),
+            (json!({"id": "acme/widget#7", "drafts": []}), 400),
+            // A PR adj has no record of.
+            (json!({"id": "acme/widget#7", "drafts": drafts()}), 404),
+        ];
+        for (body, want) in cases {
+            assert_eq!(ask(&r, "POST", None, Some(&body)).0, want, "{body}");
+        }
+        let mut req = request("POST", "/api/others/drafts", &[]);
+        req.body = b"not json".to_vec();
+        let mut out = Vec::new();
+        route_resident(&r, &req, &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().starts_with("HTTP/1.1 400"));
+    }
+
+    /// Send a handshake to `upgrade_resident` over a real socket and say what came back.
+    fn upgrade(resident: &Resident, path: &str, id: Option<&str>) -> Vec<u8> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let mut req = request("GET", path, &upgrade_headers(None));
+        if let Some(id) = id {
+            req.query = vec![("id".to_string(), id.to_string())];
+        }
+        let reader = std::io::BufReader::new(server.try_clone().unwrap());
+        upgrade_resident(resident, &req, server, reader).unwrap();
+        client.flush().unwrap();
+        let mut got = Vec::new();
+        client.read_to_end(&mut got).unwrap();
+        got
+    }
+
+    #[test]
+    fn the_reader_terminal_route_refuses_a_bad_id_before_the_handshake() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        for id in [None, Some("not a pr")] {
+            let got = String::from_utf8(upgrade(&r, "/api/others/terminal", id)).unwrap();
+            assert!(got.starts_with("HTTP/1.1 400"), "{id:?}: {got}");
+        }
+    }
+
+    #[test]
+    fn the_reader_terminal_route_says_why_there_is_no_window_as_a_close_code() {
+        let root = tempfile::tempdir().unwrap();
+        put_record(root.path());
+        let mut r = resident(root.path());
+        r.tmux = Some((3, 4));
+        // A record that nobody asked a read of has no reader: the handshake is accepted, and the
+        // socket then closes with 4404 and the reason.
+        let got = upgrade(&r, "/api/others/terminal", Some("acme/widget#7"));
+        let at = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let frame = &got[at..];
+        assert_eq!(frame[0], 0x88);
+        assert_eq!(&frame[2..4], &4404u16.to_be_bytes());
+        assert_eq!(&frame[4..], b"no reader window for this pull request");
+    }
+}

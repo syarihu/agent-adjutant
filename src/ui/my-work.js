@@ -1084,6 +1084,8 @@ function workTermHeadHtml(sel, free = null) {
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
   if (view !== 'work') return;
+  // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
+  if (isPrRef(nav.task)) return renderPrTerm(othersById(prIdOfRef(nav.task)));
   const sel = workSelected();
   // A worktree with no process (the hub's 「動いていない worktree」) is no row of the list, but the board lists it.
   const free = !sel && isSessRef(nav.task) ? sessOfRef(nav.task) : null;
@@ -1137,6 +1139,8 @@ function focusWorkTerm() {
 function syncWorkSelection() {
   workTrack();
   markWorkSelection();
+  // The row of 「AI 下読み」 that the address names is marked by its own list (a draw that changes nothing is skipped).
+  renderOthersList();
   renderWorkTerm();
 }
 
@@ -1301,7 +1305,9 @@ wk('wk-list').addEventListener('click', e => {
     return r && selectWorkRow(r);
   }
   if ((b = e.target.closest('[data-wk-tab]'))) {
-    if (prefs.workTab === b.dataset.wkTab) return;
+    // Choosing 「AI 下読み」 on purpose ends what a PR link made of the tab, even when it is the one showing.
+    const chosen = b.dataset.wkTab === 'others' && prKeepTab();
+    if (prefs.workTab === b.dataset.wkTab && !chosen) return;
     prefs.workTab = b.dataset.wkTab;
     savePrefs();
     renderWorkTabs();

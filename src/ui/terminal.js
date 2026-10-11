@@ -34,8 +34,8 @@ function terminalEndText(code, reason) {
 }
 
 /* `base` is the board's path; a view across boards, where `BASE` is empty, names the board of
-   the session. */
-function mountSessionTerminal(container, { sessionId, onEnd, base = BASE, focus = true } = {}) {
+   the session. `path` is the socket's path when it is not a board session's (a PR's reader: it may carry a query). */
+function mountSessionTerminal(container, { sessionId, path = null, onEnd, base = BASE, focus = true } = {}) {
   container.classList.add('adj-terminal');
   let term = null;
   let fit = null;
@@ -78,7 +78,8 @@ function mountSessionTerminal(container, { sessionId, onEnd, base = BASE, focus 
 
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const query = `token=${encodeURIComponent(TOKEN)}&cols=${term.cols}&rows=${term.rows}`;
-    ws = new WebSocket(`${scheme}//${location.host}${base}/api/sessions/${encodeURIComponent(sessionId)}/terminal?${query}`);
+    const socket = path || `${base}/api/sessions/${encodeURIComponent(sessionId)}/terminal`;
+    ws = new WebSocket(`${scheme}//${location.host}${socket}${socket.includes('?') ? '&' : '?'}${query}`);
     ws.binaryType = 'arraybuffer';
     const open = () => ws && ws.readyState === WebSocket.OPEN;
     // A resize while connecting was not sent; the size now is what the PTY should have.
@@ -104,6 +105,12 @@ function mountSessionTerminal(container, { sessionId, onEnd, base = BASE, focus 
 
   return {
     focus() { term?.focus(); },
+    // Keys typed for the person, with no Enter: they finish the sentence. False when the socket is not open.
+    type(text) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(encoder.encode(text));
+      return true;
+    },
     fit: scheduleFit,
     // The last lines on screen, for a panel to show once the pane behind them is gone. Read
     // before `dispose`, which takes the buffer with it.

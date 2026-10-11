@@ -76,12 +76,13 @@ async function refreshOthers(force = false) {
   renderWorkBadge();
   renderOthersStaleDot();
   if (view === 'work') renderOthersList(force);
+  // The PR that is open follows its record, and one named by the address is opened once the records are here.
+  prFollow();
 }
 
-/* Open the PR. Where #237 puts the review, it replaces this; selecting a row does not read it. */
+/* Open the PR in the panel and the middle, as a task opens (pr-panel.js); selecting a row does not read it. */
 function othersSelect(rec) {
-  const url = httpUrl(rec?.url);
-  if (url) window.open(url, '_blank', 'noopener');
+  prOpen(rec);
 }
 
 /* ── sync ── */
@@ -90,6 +91,7 @@ function othersSelect(rec) {
 function openReviewNotified(notification) {
   try { notification?.close(); } catch {}
   window.focus();
+  prKeepTab();
   prefs.workTab = 'others';
   savePrefs();
   go({ board: 'all', view: 'work', task: null, pane: 'detail' });
@@ -139,6 +141,7 @@ async function othersRequestAi(id) {
   if (!multiBoard || others.asking.has(id)) return;
   others.asking.add(id);
   renderOthersList(true);
+  prRedraw();
   try {
     const res = await boardApi('', '/api/others/ai', { method: 'POST', body: JSON.stringify({ id }) });
     // The request stands; this is what the queue could not do after it.
@@ -147,6 +150,7 @@ async function othersRequestAi(id) {
     note('adj review request', true, e.message);
   } finally {
     others.asking.delete(id);
+    prRedraw();
   }
   await refreshOthers(true);
 }
@@ -201,8 +205,9 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
     isNew ? `<button type="button" class="wk-act" data-ov-read="${esc(rec.id)}" aria-label="既読にする" title="既読にする"><span class="material-symbols-outlined" aria-hidden="true">done</span></button>` : '',
   ].filter(Boolean).join('');
   const dim = othersStateOf(rec)[2] === 'ov-dim' ? ' dim' : '';
+  const selected = nav.task === PR_REF + rec.id;
   return `<div class="wk-band-row ov-row-wrap" data-ov-cell="${esc(rec.id)}">
-    <button type="button" class="wk-row ov-row${dim}${isNew ? ' new' : ''}" data-ov="${esc(rec.id)}" title="GitHub で開く（新しいタブ）">
+    <button type="button" class="wk-row ov-row${dim}${isNew ? ' new' : ''}${selected ? ' selected' : ''}" data-ov="${esc(rec.id)}"${selected ? ' aria-current="true"' : ''} title="開く">
       ${othersGlyphHtml(rec)}<span class="wk-main">
         <span class="wk-title">${isNew ? '<span class="ov-new">新着</span>' : ''}${esc(rec.title)}</span>
         <span class="wk-meta">${meta}</span>
@@ -301,7 +306,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || prefs.workTab !== 'others') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], others.starting]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], others.starting, nav.task]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');

@@ -7,10 +7,13 @@
 //! group of the original (see `terminal::board_attach_prepare_script`).
 //!
 //! What the page names is a session id from the board's own state; the socket and the window
-//! come from the record, never from the request.
+//! come from the record, never from the request. The same goes for the terminal of a PR's
+//! reader (`serve_reader`), where the page names a PR and the window is the one its record
+//! says the reader runs in.
 
-use crate::board::Server;
+use crate::board::{Resident, Server};
 use crate::infra::http::Request;
+use crate::task::PrRef;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
@@ -27,12 +30,23 @@ const CLOSE_NO_SESSION: u16 = 4404;
 const CLOSE_TMUX_FAILED: u16 = 4500;
 
 #[cfg(unix)]
-pub(super) use imp::serve;
+pub(super) use imp::{serve, serve_reader};
 
 #[cfg(not(unix))]
 pub(super) fn serve(
     _server: &Server,
     _id: &str,
+    _req: &Request,
+    mut stream: TcpStream,
+    _reader: BufReader<TcpStream>,
+) -> std::io::Result<()> {
+    crate::infra::http::json(&mut stream, 404, r#"{"error":"no such route"}"#)
+}
+
+#[cfg(not(unix))]
+pub(super) fn serve_reader(
+    _resident: &Resident,
+    _pr: &PrRef,
     _req: &Request,
     mut stream: TcpStream,
     _reader: BufReader<TcpStream>,
@@ -93,9 +107,96 @@ mod imp {
         stream.flush()
     }
 
+    /// What a terminal needs of whoever serves it: the tmux it may use, and the counts that are
+    /// shared over every board. A board's server and the resident (for a reader's terminal) both
+    /// hold these, so one route's code serves both.
+    pub(in crate::transport::board_http) struct Host<'a> {
+        tmux: Option<(u32, u32)>,
+        terminals: &'a Arc<AtomicUsize>,
+        waits: &'a Arc<crate::board::jobs::WaitWatch>,
+    }
+
+    impl<'a> Host<'a> {
+        fn of_server(server: &'a Server) -> Host<'a> {
+            Host {
+                tmux: server.tmux,
+                terminals: &server.terminals,
+                waits: &server.waits,
+            }
+        }
+
+        fn of_resident(resident: &'a Resident) -> Host<'a> {
+            Host {
+                tmux: resident.tmux,
+                terminals: &resident.terminals,
+                waits: &resident.waits,
+            }
+        }
+    }
+
+    /// Where a terminal is opened: the tmux socket (none for the default server) and the window.
+    type Target = (Option<String>, String);
+
+    /// The terminal of a session on `server`'s board.
     pub(in crate::transport::board_http) fn serve(
         server: &Server,
         id: &str,
+        req: &Request,
+        stream: TcpStream,
+        reader: BufReader<TcpStream>,
+    ) -> std::io::Result<()> {
+        serve_on(
+            &Host::of_server(server),
+            || {
+                let settings = settings_now(server);
+                board_session(server, &settings, id)
+                    .and_then(|session| target_of(&session))
+                    .ok_or((
+                        CLOSE_NO_SESSION,
+                        "no such tmux session on this board".to_string(),
+                    ))
+            },
+            req,
+            stream,
+            reader,
+        )
+    }
+
+    /// The terminal of the reader of `pr`, from the window its record names.
+    pub(in crate::transport::board_http) fn serve_reader(
+        resident: &Resident,
+        pr: &PrRef,
+        req: &Request,
+        stream: TcpStream,
+        reader: BufReader<TcpStream>,
+    ) -> std::io::Result<()> {
+        use crate::board::review::NoReaderWindow;
+        serve_on(
+            &Host::of_resident(resident),
+            || {
+                crate::board::review::reader_window(&resident.root, pr).map_err(|why| {
+                    let words = match why {
+                        NoReaderWindow::NoRecord => "no such pull request".to_string(),
+                        NoReaderWindow::NoReader => {
+                            "no reader window for this pull request".to_string()
+                        }
+                        NoReaderWindow::Gone => "the reader has ended".to_string(),
+                        NoReaderWindow::Unreadable(e) => e,
+                    };
+                    (CLOSE_NO_SESSION, words)
+                })
+            },
+            req,
+            stream,
+            reader,
+        )
+    }
+
+    /// Accept the handshake, and relay the terminal of whatever `resolve` names. `resolve` runs
+    /// after the handshake, so that a refusal reaches the page as a close code it can read.
+    fn serve_on(
+        host: &Host<'_>,
+        resolve: impl FnOnce() -> Result<Target, (u16, String)>,
         req: &Request,
         mut stream: TcpStream,
         reader: BufReader<TcpStream>,
@@ -110,7 +211,7 @@ mod imp {
                 );
             }
         };
-        let Some(_slot) = Slot::take(&server.terminals) else {
+        let Some(_slot) = Slot::take(host.terminals) else {
             return crate::infra::http::json(
                 &mut stream,
                 503,
@@ -126,7 +227,7 @@ mod imp {
         let wire: Wire = Arc::new(Mutex::new(stream));
 
         let (cols, rows) = (size_param(req, "cols", 80), size_param(req, "rows", 24));
-        match open(server, id, cols, rows) {
+        match open(host, resolve, cols, rows) {
             Ok(terminal) => relay(terminal, wire, reader),
             Err((code, why)) => {
                 let _ = send(&wire, &ws::encode_close(code, &why));
@@ -198,23 +299,33 @@ mod imp {
         }
     }
 
-    /// Resolve `id` to a live tmux window and attach to it, or say why not as a close code.
-    fn open(server: &Server, id: &str, cols: u16, rows: u16) -> Result<Attached, (u16, String)> {
+    /// Resolve the target to a live tmux window and attach to it, or say why not as a close code.
+    fn open(
+        host: &Host<'_>,
+        resolve: impl FnOnce() -> Result<Target, (u16, String)>,
+        cols: u16,
+        rows: u16,
+    ) -> Result<Attached, (u16, String)> {
         // The same rule the page is shown (`boardTerminal.available`): no usable tmux, no terminal.
-        let version = server.tmux.ok_or((
+        let version = host.tmux.ok_or((
             CLOSE_NO_SESSION,
             "tmux 3.1 or later is not available".to_string(),
         ))?;
-        let settings = settings_now(server);
-        let (socket, window) = board_session(server, &settings, id)
-            .and_then(|session| target_of(&session))
-            .ok_or((
-                CLOSE_NO_SESSION,
-                "no such tmux session on this board".to_string(),
-            ))?;
-        let socket = socket.as_deref();
+        let (socket, window) = resolve()?;
+        open_target(host, version, socket.as_deref(), window, cols, rows)
+    }
+
+    /// Attach to `window` on `socket`, through a session of its own in the window's group.
+    fn open_target(
+        host: &Host<'_>,
+        version: (u32, u32),
+        socket: Option<&str>,
+        window: String,
+        cols: u16,
+        rows: u16,
+    ) -> Result<Attached, (u16, String)> {
         // From here the person is looking at the window: a prompt it shows is not announced.
-        let open = Arc::clone(&server.waits).terminal_open(&target_key(socket, &window));
+        let open = Arc::clone(host.waits).terminal_open(&target_key(socket, &window));
 
         // Before anything is made: a window that is gone must not start a server or leave a
         // session behind.

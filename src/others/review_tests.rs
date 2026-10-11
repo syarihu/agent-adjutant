@@ -457,6 +457,57 @@ fn a_file_that_breaks_the_contract_is_refused_whole_and_leaves_nothing() {
             Box::new(|v| v["overall"]["verdict"] = json!("approve")),
         ),
         (
+            "a blank suggestion",
+            Box::new(|v| v["overall"]["suggestion"] = json!("  ")),
+        ),
+        (
+            "a two-line suggestion",
+            Box::new(|v| v["overall"]["suggestion"] = json!("a\nb")),
+        ),
+        (
+            "a 301-character suggestion",
+            Box::new(|v| v["overall"]["suggestion"] = json!("x".repeat(301))),
+        ),
+        (
+            "a suggestion with a tab",
+            Box::new(|v| v["overall"]["suggestion"] = json!("a\tb")),
+        ),
+        (
+            "a suggestion with a line separator",
+            Box::new(|v| v["overall"]["suggestion"] = json!("a\u{2028}b")),
+        ),
+        (
+            "a suggestion with a next-line",
+            Box::new(|v| v["overall"]["suggestion"] = json!("a\u{85}b")),
+        ),
+        (
+            "301 drafts",
+            Box::new(|v| {
+                v["drafts"] = json!(vec![json!({"path": "a", "line": 1, "body": "b"}); 301])
+            }),
+        ),
+        (
+            "a draft body the drafts file cannot hold",
+            Box::new(|v| v["drafts"][0]["body"] = json!("x".repeat(20_001))),
+        ),
+        (
+            "a draft path the drafts file cannot hold",
+            Box::new(|v| v["drafts"][0]["path"] = json!("p".repeat(1025))),
+        ),
+        (
+            "an overall body the drafts file cannot hold",
+            Box::new(|v| v["overall"]["body"] = json!("x".repeat(20_001))),
+        ),
+        (
+            "drafts that are too big together",
+            Box::new(|v| {
+                v["drafts"] = json!(vec![
+                    json!({"path": "a", "line": 1, "body": "x".repeat(20_000)});
+                    30
+                ])
+            }),
+        ),
+        (
             "points out of order",
             Box::new(|v| v["points"].as_array_mut().unwrap().reverse()),
         ),
@@ -570,6 +621,24 @@ fn a_valid_file_is_stored_and_the_record_is_ready() {
     moved.head_sha = "later".to_string();
     store::save(root.path(), &mut moved).unwrap();
     assert!(load(root.path(), 1).ai.unwrap().stale);
+}
+
+#[test]
+fn an_overall_suggestion_is_optional_and_kept_beside_the_body() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    // 300 characters is the limit, and counted as characters, not bytes.
+    let mut v = valid();
+    v["overall"]["suggestion"] = json!("丸".repeat(300));
+    submit(root.path(), 1, &v, None).unwrap();
+    let stored = read_through(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(stored["overall"]["body"], "ok");
+    assert_eq!(stored["overall"]["suggestion"], "丸".repeat(300));
+    // Without it nothing is stored under the key: a read-through from before it stays as it was.
+    put(root.path(), running(2, "sid-b"));
+    submit(root.path(), 2, &valid(), None).unwrap();
+    let stored = read_through(root.path(), &pr(2)).unwrap().unwrap();
+    assert_eq!(stored["overall"], json!({"body": "ok"}));
 }
 
 #[test]
@@ -1610,4 +1679,274 @@ fn the_reason_a_read_failed_is_kept_as_one_short_line() {
         load(root.path(), 2).ai.unwrap().error.as_deref(),
         Some("could not read")
     );
+}
+
+// ── the person's drafts ──────────────────────────────────────────────
+
+const STAMP: &str = "20261011T101500Z";
+
+fn drafts_input() -> Value {
+    json!({
+        "version": 1,
+        "fromSha": SHA,
+        "drafts": [
+            {"key": "r1", "source": "reader", "path": "src/a.rs", "line": 4, "body": "b1"},
+            {"key": "p1", "source": "person", "path": "src/a.rs", "body": "a file"},
+            {"key": "p2", "source": "person", "body": ""}
+        ],
+        "overall": {"body": "fine"}
+    })
+}
+
+fn save(root: &Path, number: u64, input: &Value) -> Result<Value, SaveDraftsError> {
+    save_drafts(root, &pr(number), input, STAMP)
+}
+
+fn no_drafts_written(root: &Path) {
+    assert!(!root.join("others/drafts").exists());
+    assert!(!root.join("others/acme~widget~1.lock").exists());
+}
+
+#[test]
+fn drafts_that_break_the_contract_are_refused_whole_and_leave_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let cases: Vec<(&str, Change)> = vec![
+        ("an unknown key", Box::new(|v| v["extra"] = json!(1))),
+        (
+            "an unknown key in a draft",
+            Box::new(|v| v["drafts"][0]["note"] = json!("x")),
+        ),
+        (
+            "the server's own keys",
+            Box::new(|v| v["id"] = json!("acme/widget#1")),
+        ),
+        (
+            "savedAt",
+            Box::new(|v| v["savedAt"] = json!("20261011T101500Z")),
+        ),
+        ("a wrong version", Box::new(|v| v["version"] = json!(2))),
+        ("a short fromSha", Box::new(|v| v["fromSha"] = json!("abc"))),
+        (
+            "a bad source",
+            Box::new(|v| v["drafts"][0]["source"] = json!("ai")),
+        ),
+        (
+            "a bad key",
+            Box::new(|v| v["drafts"][0]["key"] = json!("a b")),
+        ),
+        (
+            "an empty key",
+            Box::new(|v| v["drafts"][0]["key"] = json!("")),
+        ),
+        (
+            "a long key",
+            Box::new(|v| v["drafts"][0]["key"] = json!("k".repeat(65))),
+        ),
+        (
+            "a repeated key",
+            Box::new(|v| v["drafts"][1]["key"] = json!("r1")),
+        ),
+        (
+            "a line without a path",
+            Box::new(|v| v["drafts"][2]["line"] = json!(3)),
+        ),
+        (
+            "a startLine without a line",
+            Box::new(|v| v["drafts"][1]["startLine"] = json!(1)),
+        ),
+        (
+            "a startLine after its line",
+            Box::new(|v| v["drafts"][0]["startLine"] = json!(9)),
+        ),
+        ("line 0", Box::new(|v| v["drafts"][0]["line"] = json!(0))),
+        (
+            "an absolute path",
+            Box::new(|v| v["drafts"][0]["path"] = json!("/src/a.rs")),
+        ),
+        (
+            "a blank path",
+            Box::new(|v| v["drafts"][0]["path"] = json!(" ")),
+        ),
+        (
+            "a long path",
+            Box::new(|v| v["drafts"][0]["path"] = json!("p".repeat(1025))),
+        ),
+        (
+            "a bad side",
+            Box::new(|v| v["drafts"][0]["side"] = json!("RIGHT")),
+        ),
+        (
+            "an over-long body",
+            Box::new(|v| v["drafts"][0]["body"] = json!("x".repeat(20_001))),
+        ),
+        (
+            "an over-long overall",
+            Box::new(|v| v["overall"]["body"] = json!("x".repeat(20_001))),
+        ),
+        (
+            "301 drafts",
+            Box::new(|v| {
+                v["drafts"] = json!(
+                    (0..301)
+                        .map(|i| json!({"key": format!("k{i}"), "source": "person", "body": ""}))
+                        .collect::<Vec<_>>()
+                )
+            }),
+        ),
+        (
+            "too big together",
+            Box::new(|v| {
+                v["drafts"] = json!(
+                    (0..30)
+                        .map(|i| json!({"key": format!("k{i}"), "source": "person",
+                                        "body": "x".repeat(20_000)}))
+                        .collect::<Vec<_>>()
+                )
+            }),
+        ),
+        ("not an object", Box::new(|v| *v = json!([]))),
+    ];
+    for (what, change) in &cases {
+        let mut v = drafts_input();
+        change(&mut v);
+        let err = save(root.path(), 1, &v).unwrap_err();
+        assert!(
+            matches!(err, SaveDraftsError::Invalid(ref p) if !p.is_empty()),
+            "{what}: {err:?}"
+        );
+        no_drafts_written(root.path());
+    }
+}
+
+#[test]
+fn every_problem_with_the_drafts_is_reported_in_one_answer() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let mut v = drafts_input();
+    v["drafts"][0]["line"] = json!(0);
+    v["drafts"][1]["key"] = json!("r1");
+    v["overall"]["body"] = json!("x".repeat(20_001));
+    let Err(SaveDraftsError::Invalid(problems)) = save(root.path(), 1, &v) else {
+        panic!("accepted");
+    };
+    assert_eq!(problems.len(), 3, "{problems:?}");
+}
+
+#[test]
+fn drafts_of_a_pr_with_no_record_are_refused() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(
+        save(root.path(), 1, &drafts_input()),
+        Err(SaveDraftsError::NoRecord)
+    );
+    no_drafts_written(root.path());
+}
+
+#[test]
+fn drafts_are_saved_whole_and_read_back_with_the_servers_keys() {
+    let root = tempfile::tempdir().unwrap();
+    // A done record may still be saved.
+    let mut done = record(1);
+    done.pr_state = PrOpenState::Merged;
+    put(root.path(), done);
+    assert_eq!(drafts(root.path(), &pr(1)).unwrap(), None);
+    let saved = save(root.path(), 1, &drafts_input()).unwrap();
+    assert_eq!(saved["id"], "acme/widget#1");
+    assert_eq!(saved["savedAt"], STAMP);
+    assert_eq!(saved["fromSha"], SHA);
+    assert_eq!(saved["drafts"][0]["side"], "right");
+    assert_eq!(saved["drafts"][2]["body"], "");
+    assert_eq!(saved["overall"], json!({"body": "fine"}));
+    assert_eq!(drafts(root.path(), &pr(1)).unwrap(), Some(saved));
+    // A save replaces the file, and the absent version is 1.
+    let saved = save(root.path(), 1, &json!({"drafts": []})).unwrap();
+    assert_eq!(
+        (saved["version"].clone(), saved["drafts"].clone()),
+        (json!(1), json!([]))
+    );
+    assert_eq!(saved["overall"], Value::Null);
+    assert_eq!(drafts(root.path(), &pr(1)).unwrap(), Some(saved));
+}
+
+#[test]
+fn a_key_a_newer_binary_added_to_the_drafts_survives_a_read() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let path = root.path().join("others/drafts/acme~widget~1.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        json!({"id": "acme/widget#1", "savedAt": STAMP, "version": 1, "drafts": [],
+               "pending": {"reviewId": 77}})
+        .to_string(),
+    )
+    .unwrap();
+    let read = drafts(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(read["pending"], json!({"reviewId": 77}));
+}
+
+#[test]
+fn drafts_that_cannot_be_read_are_an_error_and_not_none() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let path = root.path().join("others/drafts/acme~widget~1.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{not json").unwrap();
+    assert!(drafts(root.path(), &pr(1)).is_err());
+}
+
+#[test]
+fn a_removed_record_takes_its_drafts_with_it_and_leaves_the_others() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    put(root.path(), record(2));
+    save(root.path(), 1, &drafts_input()).unwrap();
+    save(root.path(), 2, &drafts_input()).unwrap();
+    store::remove(root.path(), &store::stem(&pr(1))).unwrap();
+    assert_eq!(drafts(root.path(), &pr(1)).unwrap(), None);
+    assert!(drafts(root.path(), &pr(2)).unwrap().is_some());
+    // The directory of drafts is not a record to the list.
+    assert_eq!(list(root.path()).len(), 1);
+}
+
+#[test]
+fn one_record_is_read_apart_from_one_that_is_missing_or_broken() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(super::record(root.path(), &pr(1)), Ok(None));
+    put(root.path(), record(1));
+    assert_eq!(
+        super::record(root.path(), &pr(1)).unwrap().unwrap().number,
+        1
+    );
+    std::fs::write(root.path().join("others/acme~widget~1.json"), "{not json").unwrap();
+    assert!(super::record(root.path(), &pr(1)).is_err());
+}
+
+#[test]
+fn a_key_an_older_page_does_not_send_survives_a_save() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let path = root.path().join("others/drafts/acme~widget~1.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        json!({"id": "acme/widget#1", "savedAt": "old", "version": 1, "drafts": [],
+               "pending": {"reviewId": 77}})
+        .to_string(),
+    )
+    .unwrap();
+    let saved = save(root.path(), 1, &drafts_input()).unwrap();
+    assert_eq!(saved["pending"], json!({"reviewId": 77}));
+    assert_eq!(saved["savedAt"], STAMP);
+    assert_eq!(saved["drafts"].as_array().unwrap().len(), 3);
+    let read = drafts(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(read["pending"], json!({"reviewId": 77}));
+    // A file that cannot be read fails the save and is left as it is.
+    std::fs::write(&path, "{not json").unwrap();
+    assert!(matches!(
+        save(root.path(), 1, &drafts_input()),
+        Err(SaveDraftsError::Failed(_))
+    ));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json");
 }

@@ -115,10 +115,10 @@ One JSON object. Keys are exact; an unknown key is refused.
 | `unwritten` | what the body does not explain, as questions for the author |
 | `annotations` | for the annotated diff: `path`, `anchor` (a substring of exactly one diff line, no line break; not a line number), optional `nth` (which match of the anchor in that file, from 1), `kind` (`tr`: a translation of a comment in the code; `ex`: background the comments do not give), `text` |
 | `drafts` | draft review comments: `path`, `line`, optional `startLine` (not after `line`), `side` (`right` or `left`, default `right`), `body` |
-| `overall` | `{ "body": "..." }`, or `null`. The body of the pending review, in text: nothing is submitted to GitHub, and you never say approve or request changes: that is the person's |
+| `overall` | `{ "body": "..." }`, or `null`. The body of the pending review, in text: you never submit, approve or request changes (that is the person's), and `body` stays a comment. `suggestion` is optional, one line (at most 300 characters), and the one place to say in words which verdict the diff seems to call for, e.g. 「変更を依頼するのが妥当そう: 丸めの境界にテストがない」. It is shown to the person as text only and never sent |
 | `sinceReview` | `null` for a PR the person has not reviewed. **Required for a re-review** (`myReview` in `pr.json` is not `null` and its commit is not the head): `commit` (exactly `myReview.commit` of `pr.json`; any other is refused), `comments` (one entry per comment of that review, one entry for every comment of `my-last-review.json` that is not a reply (no `in_reply_to_id`), no more than one each, each `commentId` taken from that file; replies are context for judging a comment, not entries of their own: `path`, optional `line`, `status` of `addressed`, `replied` or `untouched`, `note`), and `newChanges` (changes since the review that answer no comment: `path`, `note`) |
 
-Limits: at most 200 `points`, 1000 `order` entries and 2000 `annotations`; the file is at most 2 MiB.
+Limits: at most 200 `points`, 1000 `order` entries and 2000 `annotations`; the file is at most 2 MiB. `drafts`: at most 300, each `path` at most 1024 characters and each `body` at most 20000; `overall.body` at most 20000 characters; `drafts` and `overall` together at most 512 KiB of JSON. `overall.suggestion`: one line (no line break or control character), not blank, at most 300 characters.
 Empty lists are fine. A list item with a blank required text is refused.
 
 For `sinceReview.comments`, judge each comment of the last review against `since-review.patch`:

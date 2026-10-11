@@ -6,6 +6,7 @@
 //! <state>/others/sync.json                      how the last sync went
 //! <state>/others/sync.lock                      held for the whole of a sync
 //! <state>/others/reads/<owner>~<repo>~<number>.json   the PR's latest read-through
+//! <state>/others/drafts/<owner>~<repo>~<number>.json  the person's draft review comments
 //! <state>/others/review.lock                    held while readers are counted and claimed
 //! ```
 
@@ -105,12 +106,13 @@ pub(super) fn save(root: &Path, record: &mut Record) -> Result<(), String> {
 /// Remove a record's file. The lock file beside it stays: unlinking a lock file while another
 /// process holds it open hands the next two callers two different locks.
 ///
-/// What was made for the record goes with it, the read-through and the reader's scratch
-/// directory: a PR that is reopened later must not be served the read of an earlier time.
+/// What was made for the record goes with it, the read-through, the drafts and the reader's
+/// scratch directory: a PR that is reopened later must not be served the read of an earlier time.
 pub(super) fn remove(root: &Path, stem: &str) -> Result<(), String> {
     let scratch = super::reader_dir::review_home(root).join(stem);
     // The record last: one that could not be fully removed stays listed, and a later sync tries again.
     crate::infra::fs::remove_if_present(&read_path(root, stem))?;
+    crate::infra::fs::remove_if_present(&drafts_path(root, stem))?;
     match std::fs::remove_dir_all(&scratch) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -151,6 +153,39 @@ pub(super) fn load_read(root: &Path, stem: &str) -> Result<Option<String>, Strin
     std::fs::read_to_string(&path)
         .map(Some)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// Where the person's draft comments are: a directory of their own, for the same reason as
+/// `reads`.
+fn drafts_dir(root: &Path) -> PathBuf {
+    dir(root).join("drafts")
+}
+
+fn drafts_path(root: &Path, stem: &str) -> PathBuf {
+    drafts_dir(root).join(format!("{stem}.json"))
+}
+
+/// The text of a PR's stored drafts: `None` when there are none, an error when there is a file
+/// that cannot be read.
+pub(super) fn load_drafts(root: &Path, stem: &str) -> Result<Option<String>, String> {
+    let path = drafts_path(root, stem);
+    match crate::infra::fs::record_exists(&path) {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    }
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// Replace a PR's stored drafts whole.
+pub(super) fn write_drafts(
+    root: &Path,
+    stem: &str,
+    drafts: &impl serde::Serialize,
+) -> Result<(), String> {
+    crate::infra::fs::write_json(&drafts_path(root, stem), drafts)
 }
 
 /// Replace a PR's stored read-through whole.

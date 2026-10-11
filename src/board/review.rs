@@ -10,6 +10,10 @@ use crate::lifecycle::review::{self, AskError, Asked};
 use crate::others::pr_of;
 use crate::registry;
 
+mod reader_window;
+
+pub use reader_window::*;
+
 /// Why a read was not asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestRefused {
