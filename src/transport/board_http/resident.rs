@@ -162,6 +162,7 @@ pub(super) fn route_resident(
         ("POST", "/api/others/ai") => ask_for_read(resident, req, out),
         ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
         ("GET", "/api/others/read") => stored_read(resident, req, out),
+        ("GET", "/api/others/diff") => stored_diff(resident, req, out),
         ("GET", "/api/others/drafts") => stored_drafts(resident, req, out),
         ("POST", "/api/others/drafts") => save_drafts(resident, req, out),
         _ => no_such_route(out),
@@ -250,6 +251,22 @@ fn stored_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std:
     match crate::others::read_through(&resident.root, &pr) {
         Ok(Some(read)) => http::json(out, 200, &read.to_string()),
         Ok(None) => http::json(out, 404, &json!({ "error": "no read-through" }).to_string()),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/diff?id=`: the diff the stored read-through was made from.
+fn stored_diff(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::stored_diff(&resident.root, &pr) {
+        Ok(Some(diff)) => http::json(out, 200, &diff.to_string()),
+        Ok(None) => http::json(out, 404, &json!({ "error": "no diff" }).to_string()),
         Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
 }

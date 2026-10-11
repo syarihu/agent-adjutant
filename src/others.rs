@@ -7,6 +7,7 @@
 //! paths under `others/` or takes the locks there.
 
 mod claim_reads;
+mod diff_get;
 mod drafts;
 mod drafts_get;
 mod fail_read;
@@ -30,6 +31,7 @@ mod sync;
 mod take_over_read;
 
 pub use claim_reads::*;
+pub use diff_get::*;
 pub use drafts_get::*;
 pub use fail_read::*;
 pub use list::*;

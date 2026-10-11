@@ -699,3 +699,52 @@ fn a_start_of_the_hub_that_fails_is_a_server_error_and_bad_input_is_a_bad_reques
     );
     assert_eq!(code, 400);
 }
+
+#[test]
+fn the_diff_of_a_read_through_is_kept_at_hand_in_and_served() {
+    let fixture = Fixture::new(QUIET);
+    register(&fixture);
+    let (path, _, _) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    with_read(&fixture, &resident, "running");
+
+    let (code, text) = get_with_query(&resident, "/api/others/diff", "id=acme/widget%237");
+    assert_eq!(code, 404, "{text}");
+    assert_eq!(body(&text)["error"], "no diff");
+    let (code, _) = get_with_query(&resident, "/api/others/diff", "id=nonsense");
+    assert_eq!(code, 400);
+
+    // What `adj review context` leaves for the reader: the head it read and the diff.
+    let material = fixture.state.join("review/acme~widget~7");
+    std::fs::create_dir_all(&material).unwrap();
+    std::fs::write(
+        material.join("pr.json"),
+        json!({"headRefOid": HEAD}).to_string(),
+    )
+    .unwrap();
+    let patch = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n";
+    std::fs::write(material.join("diff.patch"), patch).unwrap();
+    let file = fixture.repo.join("read-through.json");
+    std::fs::write(&file, read_through().to_string()).unwrap();
+    let out = fixture.cmd(&[
+        "review",
+        "submit",
+        "--pr",
+        "acme/widget#7",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let (code, text) = get_with_query(&resident, "/api/others/diff", "id=acme/widget%237");
+    assert_eq!(code, 200, "{text}");
+    let stored = body(&text);
+    assert_eq!(stored["id"], "acme/widget#7");
+    assert_eq!(stored["sha"], HEAD);
+    assert_eq!(stored["bytes"], patch.len());
+    assert_eq!(stored["diff"], patch);
+}

@@ -5,8 +5,11 @@
    holds what the page keeps for it: the stored read-through of the selected PR, the drafts the person is writing and their
    saving, and the terminal. Loaded after my-work-others-view.js, whose records (`others`) it reads. */
 
-/* What a later issue (the annotated diff) sets: `{ tabHtml(rec, read), dialogFileHtml(rec, read, path), goto(path, line, { inDialog }), onShown?() }`.
-   While it is null the 差分 tab is disabled and 「差分で見る」 is not drawn. */
+/* What pr-diff-view.js sets (the annotated diff): `tabHtml(rec, read)` the 差分 tab; `dialogFileHtml(rec, read, path)`,
+   `dialogPaths(rec, read)`, `dialogHeadHtml(rec, read)` and `dialogLabel(rec, path)` the cards of 「拡大」 (keys `diff:<path>` and
+   `diff-bar`); `goto(path, line, { inDialog, opener })`; `onShown()` and `onLeft()`
+   for the panel's tab (left by another tab, another item or a close); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { inDialog })`
+   for a click of the diff's own buttons. While it is null the 差分 tab is disabled and 「差分で見る」 is not drawn. */
 const PR_HOOKS = { diff: null };
 /* The drafts are saved a moment after the last key. */
 const PR_SAVE_MS = 800;
@@ -57,6 +60,8 @@ function prRestoreFocus(root, keep, inDialog) {
 /* The panel is on something else (or closed): the next PR it shows, even this one again, is a new selection. */
 function prLeft() {
   prView.shownFor = null;
+  // The 差分 tab was left too: its reading place is kept, and what comes of the panel's own reset of the scroll is not it.
+  PR_HOOKS.diff?.onLeft?.();
 }
 /* A deliberate choice of 「AI 下読み」 ends the override a link made of the saved tab; true when there was one. */
 function prKeepTab() {
@@ -300,7 +305,7 @@ function renderPrPanel() {
       panelScrolledFor = key;
       tp('tp-detail').scrollTop = 0;
     } else tp('tp-detail').scrollTop = scroll;
-    if (pane === 'diff') PR_HOOKS.diff?.onShown?.();
+    if (pane === 'diff') PR_HOOKS.diff?.onShown?.(); else PR_HOOKS.diff?.onLeft?.();
   }
 }
 
@@ -403,10 +408,15 @@ function prAct(e, { inDialog = false } = {}) {
   }
   if ((b = hit('[data-pr-goto-diff]'))) {
     const point = read?.points?.[Number(b.dataset.prGotoDiff)];
-    if (point) PR_HOOKS.diff?.goto(point.path, point.line, { inDialog });
+    if (point) PR_HOOKS.diff?.goto(point.path, point.line, { inDialog, opener: b });
     return true;
   }
-  return false;
+  if ((b = hit('[data-pr-goto-file], [data-pr-goto-deleted]'))) {
+    const item = b.dataset.prGotoFile != null ? read?.order?.[Number(b.dataset.prGotoFile)] : read?.deleted?.[Number(b.dataset.prGotoDeleted)];
+    if (item) PR_HOOKS.diff?.goto(item.path, null, { inDialog, opener: b });
+    return true;
+  }
+  return PR_HOOKS.diff?.act?.(e, { inDialog }) || false;
 }
 
 /* The panel's own clicks: its tabs, 「拡大」, close, and what PRs share with the dialog. */

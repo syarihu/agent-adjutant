@@ -48,7 +48,8 @@ function world() {
     cut(read('task-view.js'), /^const HISTORY_LOADING = [^\n]*;/m), cut(read('task-view.js'), /^const DIFF_LOADING = [^\n]*;/m),
     ...['cardDialogChanged', 'cardDialogTaskHtml'].map(n => fnSrc(dlgSrc, n)),
     cut(read('pr-panel.js'), /^const prBoxFocused = [^\n]*;/m),
-    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'),
+    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
+    cut(read('pr-dialog.js'), /^const prDialogDrawn = [^\n]*;/m),
     cut(read('pr-dialog.js'), /^const PR_DIALOG_GONE = [^\n]*;\nconst PR_DIALOG_NO_READ = [^\n]*;/m),
     "cardDialog.mode = 'review'; cardDialog.subject = 'pr:acme/widget#12';",
   ].join('\n'), c);
@@ -130,4 +131,146 @@ test('a read-through that arrives after the dialog was opened is the first fill 
   w.read = readThrough('Another purpose');
   sync();
   assert.strictEqual(w.shown.length, 1);
+});
+
+/* The annotated diff's cards (pr-diff-view.js sets the hook; a stand-in is used here). */
+const DIFF_LOADING_TEXT = '<div class="panel"><div class="empty-state">差分を読み込み中…</div></div>';
+function withDiff(w, c, state) {
+  state.loading = false;
+  state.paths = [];
+  state.drawn = 0;
+  state.target = 0;
+  state.order = [];
+  c.PR_HOOKS.diff = {
+    dialogPaths: () => state.paths,
+    dialogHeadHtml: () => (state.loading ? DIFF_LOADING_TEXT : '<div>bar</div>'),
+    dialogFileHtml: (r, rd, p) => `<section>${p}</section>`,
+    dialogLabel: (r, p) => ({ label: p.split('/').pop(), title: p }),
+    onDrawn: () => { state.drawn++; state.order.push('drawn'); },
+    applyTarget: () => { state.target++; state.order.push('target'); },
+  };
+}
+
+test('the diff arriving in an open dialog is its first fill, not a change; its cards come from the hook, with titles on the index', () => {
+  const { w, c, sync, state } = world();
+  const d = {};
+  withDiff(w, c, d);
+  d.loading = true;
+  sync(true, true);
+  assert.strictEqual(state('JSON.stringify(cardDialog.groups.map(g => g.key))'), '["top","diff"]');
+  d.loading = false;
+  d.paths = ['src/a/mod.rs', 'docs/x.md'];
+  sync();
+  assert.deepStrictEqual(w.shown, []);
+  assert.strictEqual(state('cardDialog.updated.size'), 0);
+  assert.strictEqual(state('JSON.stringify(cardDialog.groups.find(g => g.key === "diff").cards.map(c => [c.key, c.label, c.title]))'),
+    JSON.stringify([['diff-bar', '差分の概要', ''], ['diff:src/a/mod.rs', 'mod.rs', 'src/a/mod.rs'], ['diff:docs/x.md', 'x.md', 'docs/x.md']]));
+  // The index button of a file carries the whole path as its title.
+  const html = state('cardDialogTaskHtml(cardDialog.groups).index');
+  assert.ok(html.includes('data-cd-go-card="diff:src/a/mod.rs" title="src/a/mod.rs"'), html);
+});
+
+test('onDrawn runs right after the content is replaced, and the target is applied after the position is back', () => {
+  const { w, c, sync } = world();
+  const d = {};
+  withDiff(w, c, d);
+  sync(true, true);
+  d.order.length = 0;
+  w.read = readThrough('Another purpose');
+  sync();
+  assert.deepStrictEqual(d.order, ['drawn', 'target']);
+  // Nothing changed: nothing is drawn, and nothing is looked at.
+  d.order.length = 0;
+  sync();
+  assert.deepStrictEqual(d.order, []);
+});
+
+test('a change of the drafts column alone does not replace the content, however many files the diff has', () => {
+  const { w, c, col, sync } = world();
+  const d = {};
+  withDiff(w, c, d);
+  d.paths = ['a.rs', 'b.rs'];
+  sync(true, true);
+  const draws = w.contentDraws;
+  const drawn = d.drawn;
+  w.dock = 'DOCK v2';
+  sync();
+  assert.strictEqual(col.innerHTML, 'DOCK v2');
+  assert.strictEqual(w.contentDraws, draws);
+  assert.strictEqual(d.drawn, drawn);
+});
+
+/* A stand-in for the dialog's content: groups as sections, each with a title and cards, that can be replaced one by one. */
+function fakeContent(groups, make = (g, c) => ({ key: c.key, html: c.html })) {
+  const sections = groups.map(g => {
+    const cards = g.cards.map(c => make(g, c));
+    const section = { key: g.key, title: { html: g.label, replaceWith(n) { section.title = n; } }, cards,
+      querySelector: () => section.title, querySelectorAll: () => [...section.cards] };
+    cards.forEach(card => { card.replaceWith = n => { section.cards[section.cards.indexOf(card)] = n; }; });
+    return section;
+  });
+  return sections;
+}
+const cardsOf = html => [{ key: 'top:facts', html: html.facts }, { key: 'diff:a.rs', html: '<section>a</section>' }];
+const groupsOf = facts => [{ key: 'top', label: '要点', cards: [cardsOf({ facts })[0]] }, { key: 'diff', label: '差分', cards: [cardsOf({ facts })[1]] }];
+
+test('only the cards whose markup changed are replaced: a filled diff file keeps its node when a time label changes', () => {
+  const { c, state } = world();
+  let whole = 0;
+  const content = { children: [], replaceChildren(f) { whole++; this.children = f; } };
+  const draw = facts => {
+    const groups = groupsOf(facts);
+    const frag = fakeContent(groups);
+    frag.children = frag;
+    c.prDialogPatch(content, frag, groups);
+  };
+  draw('5分前');
+  assert.strictEqual(whole, 1);
+  content.children = fakeContent(groupsOf('5分前'));
+  const diffNode = content.children[1].cards[0];
+  diffNode.filled = true;
+  const factsNode = content.children[0].cards[0];
+  draw('6分前');
+  assert.strictEqual(whole, 1, 'not replaced as a whole');
+  assert.notStrictEqual(content.children[0].cards[0], factsNode, 'the card with the time is new');
+  assert.strictEqual(content.children[0].cards[0].html, '6分前');
+  assert.strictEqual(content.children[1].cards[0], diffNode, 'the diff file is the same node');
+  assert.strictEqual(diffNode.filled, true);
+  // Another set of cards is a whole new content.
+  const more = [...groupsOf('6分前'), { key: 'more', label: 'x', cards: [{ key: 'more:a', html: 'a' }] }];
+  const frag = fakeContent(more);
+  frag.children = frag;
+  c.prDialogPatch(content, frag, more);
+  assert.strictEqual(whole, 2);
+  // A new dialog starts from nothing.
+  state("prDialogDrawn.order = ''");
+  draw('6分前');
+  assert.strictEqual(whole, 3);
+});
+
+test('a re-read arriving while the diff loads marks the changed cards of the read, and the diff arriving after is not marked', () => {
+  const { w, c, sync, state } = world();
+  const d = {};
+  withDiff(w, c, d);
+  sync(true, true);
+  // The read-through is replaced (a re-read) and its diff is on its way again.
+  d.loading = true;
+  w.read = readThrough('Another purpose');
+  sync();
+  assert.strictEqual(w.shown.length, 1);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.shown[0].cards)), ['top:three']);
+  // The diff comes: its cards are the diff's own, not news.
+  d.loading = false;
+  d.paths = ['a.rs'];
+  sync();
+  assert.strictEqual(w.shown.length, 1);
+  assert.strictEqual(state('JSON.stringify([...cardDialog.updated])'), '["top:three"]');
+});
+
+test('a scroll by hand also ends the wait of the diff\'s own link', () => {
+  const calls = [];
+  const c = vm.createContext({ cardDialog: { target: 'x', pinned: 'y' }, PR_HOOKS: { diff: { onMoved: () => calls.push('moved') } } });
+  vm.runInContext(cut(dlgSrc, /^const cardDialogUserMoved = [^\n]*/m) + '\ncardDialogUserMoved();', c);
+  assert.deepStrictEqual(calls, ['moved']);
+  assert.strictEqual(c.cardDialog.target, null);
 });

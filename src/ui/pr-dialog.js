@@ -15,6 +15,44 @@ function prFocusSel(el) {
   return `[data-${attr}="${CSS.escape(el.dataset[key])}"]`;
 }
 
+/* The diff's cards are not marked as changed: they come and go with the read-through and with the diff's own loading, and what
+   they say is the diff itself, not news about the PR. The other cards keep their marks. */
+function prDialogWithoutDiff(changes, groups) {
+  const own = k => k === 'diff-bar' || k.startsWith('diff:');
+  changes.cards = changes.cards.filter(k => !own(k));
+  changes.groups = new Set(groups.filter(g => g.cards.some(c => changes.cards.includes(c.key))).map(g => g.key));
+  changes.firstKey = changes.cards[0] ?? null;
+  return changes;
+}
+
+/* What the content was last drawn from: the cards in order, and each card's markup. A draw that has the same cards in the same
+   places touches only the cards whose markup changed (`prDialogPatch`). */
+const prDialogDrawn = { order: '', html: new Map() };
+
+/* Put `frag` (the content as nodes) into `content`. A card is the person's to select and scroll in, so when only some cards
+   changed (a relative time in 要点 changes every minute) only those are replaced, and the others, with the diff files drawn in
+   them, stay as they are. Different cards or places, or a first draw, replace the whole content. */
+function prDialogPatch(content, frag, groups) {
+  const order = groups.map(g => `${g.key}[${g.cards.map(c => c.key).join('|')}]`).join('\n');
+  const html = new Map(groups.flatMap(g => g.cards.map(c => [c.key, c.html])));
+  const was = prDialogDrawn.html;
+  const kept = content.children;
+  const same = prDialogDrawn.order === order && !!kept && kept.length === groups.length && !!frag.children && frag.children.length === groups.length;
+  prDialogDrawn.order = order;
+  prDialogDrawn.html = html;
+  if (!same) return content.replaceChildren(frag);
+  groups.forEach((g, i) => {
+    const old = kept[i];
+    const fresh = frag.children[i];
+    const title = old.querySelector('.cd-group-title');
+    const newTitle = fresh.querySelector('.cd-group-title');
+    if (title && newTitle && title.innerHTML !== newTitle.innerHTML) title.replaceWith(newTitle);
+    const oldCards = old.querySelectorAll('[data-cd-card]');
+    const newCards = fresh.querySelectorAll('[data-cd-card]');
+    g.cards.forEach((c, j) => { if (was.get(c.key) !== c.html) oldCards[j].replaceWith(newCards[j]); });
+  });
+}
+
 function openPrDialog(btn) {
   const dlg = cardDialogEl();
   const rec = prSelected();
@@ -25,6 +63,7 @@ function openPrDialog(btn) {
     target: null, targetAt: 0, pinned: null, dock: null, dockSig: '', groups: [], gateIds: {}, active: null,
     answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
   });
+  prDialogDrawn.order = '';
   cardDialogShell('review', rec.title, prSubText(rec));
   prDialogSync(true, true);
   dlg.showModal();
@@ -61,9 +100,13 @@ function prDialogSync(force = false, initial = false) {
   const nowSecs = othersNowEst();
   const read = prReadOf(rec);
   const asking = others.asking.has(id);
+  const hook = PR_HOOKS.diff;
   const groups = prDialogGroups(rec, read, records, hubView, nowSecs, {
-    diff: !!PR_HOOKS.diff, asking,
-    diffFileHtml: PR_HOOKS.diff ? path => PR_HOOKS.diff.dialogFileHtml(rec, read, path) : null,
+    diff: !!hook, asking,
+    diffFileHtml: hook ? path => hook.dialogFileHtml(rec, read, path) : null,
+    diffPaths: hook && read ? hook.dialogPaths(rec, read) : null,
+    diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,
+    diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
   });
   const html = cardDialogTaskHtml(groups);
   const col = cardDialogDockEl();
@@ -84,7 +127,7 @@ function prDialogSync(force = false, initial = false) {
     cardDialog.sig = sig;
     // A read-through still on its way: what it brings in is the first fill of its cards, not a change of them.
     const loading = read === undefined;
-    if (!initial && !loading) changes = cardDialogChanged(cardDialog.cardSigs, groups);
+    if (!initial && !loading) changes = prDialogWithoutDiff(cardDialogChanged(cardDialog.cardSigs, groups), groups);
     cardDialog.cardSigs = loading ? new Map() : cardDialogCardSigs(groups);
     const keys = new Set(cardDialog.cardSigs.keys());
     cardDialog.updated = new Set([...cardDialog.updated].filter(k => keys.has(k)));
@@ -112,7 +155,9 @@ function prDialogSync(force = false, initial = false) {
 
   if (!contentSame) {
     dlg.querySelector('.card-dialog-index').innerHTML = html.index;
-    content.replaceChildren(cardDialogFill(html.content, groups, () => null));
+    prDialogPatch(content, cardDialogFill(html.content, groups, () => null), groups);
+    // The files that were drawn are drawn again, here, so that the position kept below is measured on the same page.
+    hook?.onDrawn?.();
   }
   if (!dockSame && !typing) {
     cardDialog.dockSig = dockHtml;
@@ -138,6 +183,7 @@ function prDialogSync(force = false, initial = false) {
   if (dlg.open) {
     if (changes?.cards.length) cardDialogShowUpdate(changes);
     else if (!contentSame) cardDialogPruneUpdate();
+    hook?.applyTarget?.();
     cardDialogSpy();
   }
 }

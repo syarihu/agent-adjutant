@@ -203,6 +203,31 @@ test('the dialog\'s groups: since, top, points, order, more, diff; before a read
   assert.deepStrictEqual(plain(prDialogGroups(rec({ ai: null, state: 'requested' }), null, [], hub, T0)[0].cards.map(c => c.key)), ['top:facts', 'top:ai']);
 });
 
+test('with the annotated diff on: 読む順 paths are buttons, and the diff group takes the hook\'s head, paths and labels', () => {
+  const r = read();
+  const off = prDetailHtml(rec(), r, [rec()], hub, T0, {});
+  assert.ok(!off.includes('data-pr-goto-file'));
+  const on = prDetailHtml(rec(), r, [rec()], hub, T0, { diff: true });
+  assert.ok(on.includes('<button type="button" class="pr-loc-btn" data-pr-goto-file="0"') && on.includes('data-pr-goto-file="1"'));
+  assert.ok(on.includes('data-pr-goto-deleted="0"') && on.includes('data-pr-goto-deleted="1"'));
+  // The index into the reader's lists, which is what the click reads the path from.
+  assert.ok(on.indexOf('data-pr-goto-file="0"') < on.indexOf('src/b.rs') && on.indexOf('src/b.rs') < on.indexOf('data-pr-goto-file="1"'));
+  const bad = prDetailHtml(rec(), read({ order: [{ path: '"><script>x</script>', category: 'logic', note: '', skippable: false }] }), [rec()], hub, T0, { diff: true });
+  assert.ok(!bad.includes('<script>'));
+  // The group: the head card first, the paths given (not the record's), their labels and titles.
+  const groups = prDialogGroups(rec(), r, [rec()], hub, T0, {
+    diff: true, diffHeadHtml: '<div>HEAD</div>', diffPaths: ['z/one.rs', 'y/two.rs'], diffFileHtml: p => `<i>${p}</i>`,
+    diffLabel: p => ({ label: p.split('/').pop(), title: p }),
+  });
+  const diff = groups.find(g => g.key === 'diff');
+  assert.deepStrictEqual(plain(diff.cards.map(c => [c.key, c.label, c.title, c.html])), [
+    ['diff-bar', '差分の概要', '', '<div>HEAD</div>'], ['diff:z/one.rs', 'one.rs', 'z/one.rs', '<i>z/one.rs</i>'], ['diff:y/two.rs', 'two.rs', 'y/two.rs', '<i>y/two.rs</i>']]);
+  assert.strictEqual(diff.badge, '2');
+  // No paths yet (the diff is loading): the head card alone is the group.
+  const loading = prDialogGroups(rec(), r, [rec()], hub, T0, { diff: true, diffHeadHtml: '<div>L</div>', diffPaths: [], diffFileHtml: () => '' }).find(g => g.key === 'diff');
+  assert.deepStrictEqual(plain(loading.cards.map(c => c.key)), ['diff-bar']);
+});
+
 test('when to read the read-through again: its head or its finish time changed', () => {
   assert.strictEqual(run(`prReadKey(${JSON.stringify(rec())})`), `${A}|20261001T000000Z`);
   assert.strictEqual(run('prReadKey({})'), '|');

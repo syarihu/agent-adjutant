@@ -7,6 +7,7 @@
 //! <state>/others/sync.lock                      held for the whole of a sync
 //! <state>/others/reads/<owner>~<repo>~<number>.json   the PR's latest read-through
 //! <state>/others/drafts/<owner>~<repo>~<number>.json  the person's draft review comments
+//! <state>/others/diffs/<owner>~<repo>~<number>.json   the diff the stored read-through was made from
 //! <state>/others/review.lock                    held while readers are counted and claimed
 //! ```
 
@@ -106,12 +107,13 @@ pub(super) fn save(root: &Path, record: &mut Record) -> Result<(), String> {
 /// Remove a record's file. The lock file beside it stays: unlinking a lock file while another
 /// process holds it open hands the next two callers two different locks.
 ///
-/// What was made for the record goes with it, the read-through, the drafts and the reader's
-/// scratch directory: a PR that is reopened later must not be served the read of an earlier time.
+/// What was made for the record goes with it, the read-through, its diff, the drafts and the
+/// reader's scratch directory: a PR that is reopened later must not be served the read of an earlier time.
 pub(super) fn remove(root: &Path, stem: &str) -> Result<(), String> {
     let scratch = super::reader_dir::review_home(root).join(stem);
     // The record last: one that could not be fully removed stays listed, and a later sync tries again.
     crate::infra::fs::remove_if_present(&read_path(root, stem))?;
+    remove_diff(root, stem)?;
     crate::infra::fs::remove_if_present(&drafts_path(root, stem))?;
     match std::fs::remove_dir_all(&scratch) {
         Ok(()) => {}
@@ -153,6 +155,53 @@ pub(super) fn load_read(root: &Path, stem: &str) -> Result<Option<String>, Strin
     std::fs::read_to_string(&path)
         .map(Some)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// Where the diffs of the read-throughs are: a directory of their own, for the same reason as
+/// `reads`.
+fn diffs_dir(root: &Path) -> PathBuf {
+    dir(root).join("diffs")
+}
+
+fn diff_path(root: &Path, stem: &str) -> PathBuf {
+    diffs_dir(root).join(format!("{stem}.json"))
+}
+
+/// The text of a PR's stored diff: `None` when there is none, an error when there is one that
+/// cannot be read.
+pub(super) fn load_diff(root: &Path, stem: &str) -> Result<Option<String>, String> {
+    let path = diff_path(root, stem);
+    match crate::infra::fs::record_exists(&path) {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    }
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// Replace a PR's stored diff whole.
+pub(super) fn write_diff(
+    root: &Path,
+    stem: &str,
+    diff: &impl serde::Serialize,
+) -> Result<(), String> {
+    crate::infra::fs::write_json(&diff_path(root, stem), diff)
+}
+
+/// Remove a PR's stored diff; none stored is not an error.
+pub(super) fn remove_diff(root: &Path, stem: &str) -> Result<(), String> {
+    crate::infra::fs::remove_if_present(&diff_path(root, stem))
+}
+
+/// Put back what `load_diff` gave before a change: its text as it was, or no file when there
+/// was none.
+pub(super) fn restore_diff(root: &Path, stem: &str, previous: Option<&str>) -> Result<(), String> {
+    let Some(text) = previous else {
+        return remove_diff(root, stem);
+    };
+    write_text(&diff_path(root, stem), text)
 }
 
 /// Where the person's draft comments are: a directory of their own, for the same reason as

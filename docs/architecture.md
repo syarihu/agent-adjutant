@@ -198,7 +198,7 @@ those with 404 unless the server is the resident. The terminal is never a live r
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
 `POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/hub/start`,
-`GET /api/others/read`, `GET /api/others/drafts` and `POST /api/others/drafts`. It also answers the WebSocket
+`GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts` and `POST /api/others/drafts`. It also answers the WebSocket
 handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the
 PR's record (`ai.terminal` and `ai.pid`, by `board::review::reader_window`), never from the request, and it
 shares the terminal code and the cap of 8 open terminals with a board's. A PR with no reader window, or whose
@@ -347,6 +347,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
 | `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review, and how the last sync went | others (`store.rs`) |
+| `others/diffs/<owner>~<repo>~<number>.json` | the diff the stored read-through was made from, kept at hand-in | others (`store.rs`) |
 | `others/drafts/<owner>~<repo>~<number>.json` | the person's draft review comments of a PR, saved whole by the page | others (`store.rs`) |
 | `others/reads/<owner>~<repo>~<number>.json`, `others/review.lock` | the latest read-through of a PR; the lock held while readers are counted and claimed | others (`store.rs`) |
 | `review/`, `review/<owner>~<repo>~<number>/` | the code-review hub's home (its working directory, no checkout), and one scratch directory per reader, made when it starts | lifecycle (`hub/ensure_home.rs`, `review/launch_reader.rs`) |
@@ -450,6 +451,11 @@ Selecting a row opens the PR in the task panel, as a task opens: the address is 
 escaped) with `pane=detail` (下読み, the default), `diff` or `drafts`, on board `all`. The reader's terminal is in the middle and 「拡大」 uses
 the task dialog's structure (index, one scroll, the drafts in the right column). `src/ui/pr-read.js` is the pure half; `pr-panel.js` and `pr-dialog.js` draw it.
 
+The 差分 tab and the 差分 group of 「拡大」 show the stored diff (`GET /api/others/diff`) with the reader's annotations under their lines.
+`src/ui/pr-diff.js` is the pure half (parsing, the category of a path, anchoring, markup) and `pr-diff-view.js` the page's: it sets
+`PR_HOOKS.diff`. The tabs (仕様・ロジック, UI, ドキュメント, テスト, リソース) come from the path alone, and a link to a file switches to its tab
+first. A diff over 2000 rows is drawn file by file as each comes near the screen, and a file of more than 1500 rows starts closed behind a button. The cards keep the keys `diff:<path>` and `diff-bar`.
+
 - **Stale.** The list is stale when `lastSync.at` is more than 30 minutes before the server's time (the document's `now` plus the time since it was read):
   a banner, the sync time in the warning colour and a dot on the switch, until the next sync. A list never synced is not stale.
 - **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
@@ -503,7 +509,7 @@ cannot be taken for this one's, and a fresh reader session starts with no `read-
 is a note in the summary (`notes`), not a failure; so is a list of files or commits that may be cut (100 or more returned, or fewer files than the
 record's `changedFiles`). The reader is told to say in `points` or `unwritten` what it could not see, and not to guess. Reading never writes the
 record: the sync alone moves `headSha`. The text of a PR and of its comments is data, never instructions, for the reader and for the hub it reports to.
-The record's removal (a sync, a day after it is done) also removes its `others/reads/<stem>.json` and `<state>/review/<stem>/`.
+The record's removal (a sync, a day after it is done) also removes its `others/reads/<stem>.json`, `others/diffs/<stem>.json` and `<state>/review/<stem>/`.
 
 `adj review submit --pr <id> --file <json>` takes the file as the reader's hand-in. It refuses before any write a file over 2 MiB, one that
 does not parse, one with a key the schema does not have, one that fails `validate` (every problem is printed, one per line), a PR with no
@@ -511,6 +517,19 @@ record or that nobody asked a read of, a `sinceReview` whose `commit` is not the
 superseded reader). It then writes `others/reads/<stem>.json`, and sets `ai.sha`, `ai.finishedAt`, `ai.counts`, `events.aiReady`, clears
 `ai.error`, and sets `ai.status` to `ready` unless it is `queued` (a re-read keeps its place). If the record cannot be saved the previous
 file is put back. `GET /api/others/read?id=<owner/repo#N>` answers the stored file: 200, 404 `{"error": "no read-through"}`, or 400.
+
+The same hand-in keeps the diff the annotations were anchored to, in `others/diffs/<stem>.json` as `{sha, savedAt, bytes, diff}`: the
+reader's `diff.patch` is copied there, because the scratch file is removed and fetched again at the live head by every re-read, so it cannot
+be served later. It is kept only when `pr.json` is there and its `headRefOid` is the read-through's `sha` and `diff.patch` is there; in every
+other case (a hand-in by a person whose `pr.json` is of another head, no `pr.json`, no `diff.patch`, which is how the material looks when
+GitHub would not give the diff) an earlier diff is removed, so a diff of another head is never served. A `diff.patch` that is there and cannot be
+read refuses the hand-in before any write. An empty `diff.patch` is stored as `diff: ""` (a PR with no changes, not a missing diff), and one over
+8 MiB (`MAX_DIFF_BYTES`) as `diff: null` with its `bytes`. The diff, the read-through and the record are one step: a record that cannot be
+saved puts back the previous read-through and the previous diff. `GET /api/others/diff?id=<owner/repo#N>` answers `{id, sha, bytes, diff}` with
+200 (`diff` is the text, `""` or `null`), 404 `{"error": "no diff"}` when none is kept or its `sha` is not the stored read-through's, 400 for a
+bad id and 500 for a file that cannot be read. A read-through from before diffs were kept has none. The reader's `pr.json` and `diff.patch` are two
+separate `gh` calls, so a push between them stores a diff of the newer head under the older `sha`: the annotations still match the diff the reader
+read, and only the page's note that the diff is of an older head can be wrong.
 
 The stored file is `{id, madeAt, session, ...the input}`; a key this binary does not know is kept. The input is one object, and an unknown
 key is refused. Levels are `attention`, `check`, `info`; categories `logic`, `ui`, `doc`, `test`, `resource`; annotation kinds `tr`, `ex`;
@@ -566,7 +585,7 @@ Only `version`, `sha` and `three` are required; the lists default to empty. A pa
 The comments the person is writing on a PR are kept by adj, in a file of their own, so that they survive a
 reload, another browser, and a re-read: `submit_read` replaces the read-through whole, and a draft kept in it
 would die with it. The page saves the whole set (`POST /api/others/drafts`, body `{"id": "<owner/repo#N>",
-"drafts": {…}}`) and reads it with `GET /api/others/drafts?id=`. Last write wins between tabs.
+"drafts": {…}}`) and reads it with `GET /api/others/drafts?id=`. Last write wins between tabs. A draft started from a line of the diff is `source: "person"` and may have an empty body.
 
 `GET` answers 200 with the stored file, 404 `{"error": "no drafts"}` when none was saved yet, 400 for a bad id
 and 500 for a file that cannot be read. `POST` answers 200 with the stored file, 400 `{"error", "problems": […]}`

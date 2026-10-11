@@ -1950,3 +1950,220 @@ fn a_key_an_older_page_does_not_send_survives_a_save() {
     ));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json");
 }
+
+// ── the diff kept with a read-through ────────────────────────────────
+
+const PATCH: &str =
+    "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n";
+
+/// The reader's material for PR `number`: a `pr.json` of `head`, and a `diff.patch` when given.
+fn material(root: &Path, number: u64, head: &str, patch: Option<&[u8]>) {
+    let dir = reader_dir(root, &pr(number));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pr.json"), json!({"headRefOid": head}).to_string()).unwrap();
+    if let Some(patch) = patch {
+        std::fs::write(dir.join("diff.patch"), patch).unwrap();
+    }
+}
+
+fn diff_text(root: &Path, number: u64) -> Option<String> {
+    store::load_diff(root, &store::stem(&pr(number))).unwrap()
+}
+
+#[test]
+fn a_diff_is_kept_when_pr_json_says_the_head_that_was_read() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, Some(PATCH.as_bytes()));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let diff = stored_diff(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(diff["id"], "acme/widget#1");
+    assert_eq!(diff["sha"], SHA);
+    assert_eq!(diff["bytes"], PATCH.len());
+    assert_eq!(diff["diff"], PATCH);
+}
+
+#[test]
+fn an_empty_diff_is_an_answer_and_not_a_missing_one() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, Some(b""));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let diff = stored_diff(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(
+        (diff["bytes"].clone(), diff["diff"].clone()),
+        (json!(0), json!(""))
+    );
+}
+
+#[test]
+fn a_diff_over_the_cap_keeps_its_size_and_no_text() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    let big = vec![b'x'; MAX_DIFF_BYTES + 1];
+    material(root.path(), 1, SHA, Some(&big));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let diff = stored_diff(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(diff["bytes"], MAX_DIFF_BYTES + 1);
+    assert_eq!(diff["diff"], Value::Null);
+    // Exactly at the cap is kept.
+    let at = vec![b'x'; MAX_DIFF_BYTES];
+    material(root.path(), 1, SHA, Some(&at));
+    put(root.path(), running(1, "sid-a"));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let diff = stored_diff(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(diff["diff"].as_str().map(str::len), Some(MAX_DIFF_BYTES));
+}
+
+#[test]
+fn no_diff_is_kept_and_an_old_one_goes_when_the_head_is_not_known_to_be_the_one_read() {
+    let root = tempfile::tempdir().unwrap();
+    let other = "f".repeat(40);
+    // A diff of an earlier hand-in is there for each case.
+    let earlier = |number: u64| {
+        put(root.path(), running(number, "sid-a"));
+        material(root.path(), number, SHA, Some(PATCH.as_bytes()));
+        submit(root.path(), number, &valid(), Some("sid-a")).unwrap();
+        assert!(diff_text(root.path(), number).is_some());
+        put(root.path(), running(number, "sid-a"));
+    };
+    // A person's hand-in whose pr.json is of another head.
+    earlier(1);
+    material(root.path(), 1, &other, Some(PATCH.as_bytes()));
+    submit(root.path(), 1, &valid(), None).unwrap();
+    assert_eq!(diff_text(root.path(), 1), None);
+    assert_eq!(stored_diff(root.path(), &pr(1)).unwrap(), None);
+    // No pr.json at all.
+    earlier(2);
+    std::fs::remove_file(reader_dir(root.path(), &pr(2)).join("pr.json")).unwrap();
+    submit(root.path(), 2, &valid(), Some("sid-a")).unwrap();
+    assert_eq!(diff_text(root.path(), 2), None);
+    // No diff.patch: GitHub would not give it.
+    earlier(3);
+    std::fs::remove_file(reader_dir(root.path(), &pr(3)).join("diff.patch")).unwrap();
+    submit(root.path(), 3, &valid(), Some("sid-a")).unwrap();
+    assert_eq!(diff_text(root.path(), 3), None);
+    assert_eq!(stored_diff(root.path(), &pr(3)).unwrap(), None);
+}
+
+#[test]
+fn a_diff_patch_that_cannot_be_read_refuses_the_hand_in_and_writes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, None);
+    // A directory where the file should be: it is there, and cannot be read.
+    std::fs::create_dir(reader_dir(root.path(), &pr(1)).join("diff.patch")).unwrap();
+    let err = submit(root.path(), 1, &valid(), Some("sid-a")).unwrap_err();
+    assert!(matches!(err, SubmitError::Failed(_)), "{err:?}");
+    nothing_changed(root.path(), 1);
+    assert_eq!(diff_text(root.path(), 1), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_diff_patch_that_is_a_link_refuses_the_hand_in_like_one_that_cannot_be_read() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, None);
+    let dir = reader_dir(root.path(), &pr(1));
+    let elsewhere = root.path().join("elsewhere.patch");
+    std::fs::write(&elsewhere, PATCH).unwrap();
+    // To a file that is there, and to one that is not.
+    for target in [elsewhere.clone(), root.path().join("nothing")] {
+        let _ = std::fs::remove_file(dir.join("diff.patch"));
+        std::os::unix::fs::symlink(&target, dir.join("diff.patch")).unwrap();
+        let err = submit(root.path(), 1, &valid(), Some("sid-a")).unwrap_err();
+        assert!(matches!(err, SubmitError::Failed(_)), "{err:?}");
+        nothing_changed(root.path(), 1);
+        assert_eq!(diff_text(root.path(), 1), None);
+    }
+}
+
+#[test]
+fn a_diff_that_is_not_utf8_is_kept_with_its_size() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, Some(b"+caf\xe9\n"));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let diff = stored_diff(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(diff["bytes"], 6);
+    assert_eq!(diff["diff"], "+caf\u{fffd}\n");
+}
+
+#[test]
+fn a_record_that_cannot_be_saved_puts_back_the_previous_read_and_diff() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, Some(PATCH.as_bytes()));
+    let failing = |_: &mut Record| Err("disk full".to_string());
+    // With nothing before: nothing is left.
+    let err = submit_read_with(
+        root.path(),
+        &pr(1),
+        &valid().to_string(),
+        Some("sid-a"),
+        NOW,
+        &failing,
+    )
+    .unwrap_err();
+    assert_eq!(err, SubmitError::Failed("disk full".to_string()));
+    nothing_changed(root.path(), 1);
+    assert_eq!(diff_text(root.path(), 1), None);
+
+    // With a read and diff before: both come back as they were, though the new hand-in has none.
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let (read_before, diff_before) = (
+        store::load_read(root.path(), &store::stem(&pr(1))).unwrap(),
+        diff_text(root.path(), 1),
+    );
+    assert!(read_before.is_some() && diff_before.is_some());
+    std::fs::remove_file(reader_dir(root.path(), &pr(1)).join("diff.patch")).unwrap();
+    let mut other = valid();
+    other["three"]["essence"] = json!("another");
+    let err = submit_read_with(
+        root.path(),
+        &pr(1),
+        &other.to_string(),
+        Some("sid-a"),
+        NOW + 9,
+        &failing,
+    )
+    .unwrap_err();
+    assert!(matches!(err, SubmitError::Failed(_)));
+    assert_eq!(
+        store::load_read(root.path(), &store::stem(&pr(1))).unwrap(),
+        read_before
+    );
+    assert_eq!(diff_text(root.path(), 1), diff_before);
+}
+
+#[test]
+fn a_diff_of_another_head_than_the_read_is_not_served() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, Some(PATCH.as_bytes()));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    let path = root.path().join("others/diffs/acme~widget~1.json");
+    let mut stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    stored["sha"] = json!("f".repeat(40));
+    std::fs::write(&path, stored.to_string()).unwrap();
+    assert_eq!(stored_diff(root.path(), &pr(1)).unwrap(), None);
+    // A file that cannot be read is an error, not "no diff".
+    std::fs::write(&path, "{not json").unwrap();
+    assert!(stored_diff(root.path(), &pr(1)).is_err());
+}
+
+#[test]
+fn a_removed_record_takes_its_diff_with_it_and_a_list_does_not_read_diffs_as_records() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    material(root.path(), 1, SHA, Some(PATCH.as_bytes()));
+    submit(root.path(), 1, &valid(), Some("sid-a")).unwrap();
+    assert!(diff_text(root.path(), 1).is_some());
+    let listed = store::list(root.path());
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, "acme/widget#1");
+    store::remove(root.path(), &store::stem(&pr(1))).unwrap();
+    assert_eq!(diff_text(root.path(), 1), None);
+    assert!(store::list(root.path()).is_empty());
+}

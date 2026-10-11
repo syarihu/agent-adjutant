@@ -13,7 +13,7 @@ const PR_REVIEW_STATE = { approved: '承認', 'changes-requested': '変更を依
 const PR_SINCE_STATUS = { addressed: '対応済み', replied: '返信だけ', untouched: '手つかず' };
 /* The state pill's colour, by the class the list's glyph is coloured with (othersStateOf). */
 const PR_STATE_PILL = { 'ov-requested': 'pill-warn', 'ov-reading': 'pill-blue', 'ov-ready': 'pill-good', 'ov-pushed': 'pill-purple', 'ov-dim': 'pill-neutral' };
-/* The placeholder of a file's card in 「拡大」 until the annotated diff (a later issue) draws the diff itself. */
+/* The placeholder of a file's card in 「拡大」 where there is no annotated diff hook (a fallback: the page sets one). */
 const PR_DIFF_PLACEHOLDER = 'この PR の差分はまだここに表示できません。GitHub で開いて読んでください。';
 const PR_NO_READ_WHY = 'AI 下読みのあとに使えます';
 const PR_NO_DIFF_WHY = '差分はまだ表示できません';
@@ -152,16 +152,18 @@ function prPoints(read, opts = {}) {
   return { key: 'points:list', label: '見るポイント', badge: String(points.length), html: `<ul class="pr-points">${items.join('')}</ul>` };
 }
 
-/* 読む順, then the files deleted whole. */
-function prOrder(read, rec) {
+/* 読む順, then the files deleted whole. With `opts.diff` a path is a button that goes to that file of the diff. */
+function prOrder(read, rec, opts = {}) {
   const order = read?.order || [];
   const deleted = read?.deleted || [];
   if (!order.length && !deleted.length) return null;
-  const items = order.map(o => {
+  const loc = (path, attr, i) => opts.diff
+    ? `<button type="button" class="pr-loc-btn" ${attr}="${i}" title="差分で見る"><code class="pr-loc">${esc(path)}</code></button>` : `<code class="pr-loc">${esc(path)}</code>`;
+  const items = order.map((o, i) => {
     const stat = prFileStatText(prFileStat(rec, o.path));
-    return `<li class="${o.skippable ? 'pr-skip' : ''}"><code class="pr-loc">${esc(o.path)}</code> <span class="pr-cat">${esc(PR_CATEGORY[o.category] || o.category)}</span>${stat ? ` <span class="tp-muted">${esc(stat)}</span>` : ''}${o.skippable ? ' <span class="pr-chip pr-skippable">飛ばしてよい</span>' : ''}${o.note ? `<div class="pr-note">${esc(o.note)}</div>` : ''}</li>`;
+    return `<li class="${o.skippable ? 'pr-skip' : ''}">${loc(o.path, 'data-pr-goto-file', i)} <span class="pr-cat">${esc(PR_CATEGORY[o.category] || o.category)}</span>${stat ? ` <span class="tp-muted">${esc(stat)}</span>` : ''}${o.skippable ? ' <span class="pr-chip pr-skippable">飛ばしてよい</span>' : ''}${o.note ? `<div class="pr-note">${esc(o.note)}</div>` : ''}</li>`;
   });
-  const gone = deleted.map(d => prLi(`<code class="pr-loc">${esc(d.path)}</code> 丸ごと削除 — ${d.reason ? `理由: ${esc(d.reason)}` : `作者への質問: ${esc(d.question)}`}`));
+  const gone = deleted.map((d, i) => prLi(`${loc(d.path, 'data-pr-goto-deleted', i)} 丸ごと削除 — ${d.reason ? `理由: ${esc(d.reason)}` : `作者への質問: ${esc(d.question)}`}`));
   return { key: 'order:list', label: '読む順', badge: String(order.length || ''),
     html: (items.length ? `<ol class="pr-order">${items.join('')}</ol>` : '') + (gone.length ? `<ul class="pr-list pr-deleted">${gone.join('')}</ul>` : '') };
 }
@@ -224,7 +226,7 @@ function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
     !hasRead && read !== undefined && !othersOutOfReview(rec) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking) : null,
     prThree(read),
     prPoints(read, { diff: opts.diff }),
-    prOrder(read, rec),
+    prOrder(read, rec, { diff: opts.diff }),
     prDecisions(read),
     prTests(read),
     prUnwritten(read),
@@ -363,8 +365,9 @@ ${esc(doc?.overall?.body || '')}</textarea>
 
 /* The groups of the dialog, in the issue's order, for `cardDialogTaskHtml`: 前回のレビューから, 要点, 見るポイント, 読む順,
    設計判断・テスト・書かれていないこと, 差分. A group with no card is left out; before a read-through only the first two
-   can be there. `opts.diffFileHtml(path)` is the annotated diff's card for a file, once there is one. The footer joins 要点,
-   where 「下読みし直す」 can be found. */
+   can be there. The annotated diff's cards (`opts`): `diffFileHtml(path)` for a file, `diffPaths` the files in the order to show
+   (the reader's order, then the record's files, until there are any), `diffHeadHtml` a first card (key `diff-bar`), and
+   `diffLabel(path)` the index's `{ label, title }` of a file. The footer joins 要点, where 「下読みし直す」 can be found. */
 function prDialogGroups(rec, read, records, hubView, nowSecs, opts = {}) {
   const secs = prSections(rec, read, records, hubView, nowSecs, opts);
   const of = key => secs.find(s => s.key === key);
@@ -378,14 +381,20 @@ function prDialogGroups(rec, read, records, hubView, nowSecs, opts = {}) {
     group('more', '設計判断・テスト・書かれていないこと', [card(of('more:decisions')), card(of('more:tests')), card(of('more:unwritten'))]),
   ];
   if (read) {
-    const paths = [];
-    for (const p of [...(read.order || []).map(o => o.path), ...(rec?.files || []).map(f => f.path)]) if (p && !paths.includes(p)) paths.push(p);
-    groups.push(group('diff', '差分', paths.map(path => {
+    let paths = opts.diffPaths;
+    if (!paths) {
+      paths = [];
+      for (const p of [...(read.order || []).map(o => o.path), ...(rec?.files || []).map(f => f.path)]) if (p && !paths.includes(p)) paths.push(p);
+    }
+    const cards = paths.map(path => {
       const stat = prFileStatText(prFileStat(rec, path));
       const html = opts.diffFileHtml ? opts.diffFileHtml(path)
         : `<div class="m3-filled-card pr-sec" data-pr-sec="${esc(`diff:${path}`)}">${secTitle(esc(`${path}${stat ? `（${stat}）` : ''}`))}<div class="tp-muted">${esc(PR_DIFF_PLACEHOLDER)}</div></div>`;
-      return { key: `diff:${path}`, label: baseName(path) || path, badge: '', wide: true, html, expand: null };
-    }), paths.length ? String(paths.length) : ''));
+      const named = opts.diffLabel ? opts.diffLabel(path) : null;
+      return { key: `diff:${path}`, label: named?.label || baseName(path) || path, title: named?.title || '', badge: '', wide: true, html, expand: null };
+    });
+    if (opts.diffHeadHtml) cards.unshift({ key: 'diff-bar', label: '差分の概要', title: '', badge: '', wide: true, html: opts.diffHeadHtml, expand: null });
+    groups.push(group('diff', '差分', cards, paths.length ? String(paths.length) : ''));
   }
   return groups.filter(g => g.cards.length);
 }

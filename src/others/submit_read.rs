@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::infra::clock::utc_stamp;
 use crate::task::PrRef;
 
+use super::diff_get::{MAX_DIFF_BYTES, StoredDiff};
 use super::model::{AiCounts, Record};
 use super::read_through::{Level, MAX_READ_BYTES, ReadThrough, Stored, validate};
 use super::store;
@@ -37,9 +38,9 @@ pub enum SubmitError {
 /// because a re-read is waiting in the queue; only a person handing a file in by hand says
 /// none, and is not held to it.
 ///
-/// Everything that can refuse does so before the first write. The file is then written first and
-/// the record second, and a record that cannot be saved takes the file back, so the two are
-/// never half changed.
+/// Everything that can refuse does so before the first write. The diff and the file are then
+/// written first and the record second, and a record that cannot be saved takes both back, so
+/// they are never half changed.
 pub fn submit_read(
     root: &Path,
     pr: &PrRef,
@@ -175,9 +176,26 @@ pub(crate) fn submit_read_with(
         drafts: read.drafts.len() as u32,
         extra: Default::default(),
     };
+    // Read before the first write, so that an unreadable `diff.patch` refuses the hand-in whole.
+    let diff = reader_diff(root, pr, &read.sha, &stamp).map_err(SubmitError::Failed)?;
     let previous = store::load_read(root, &stem).map_err(SubmitError::Failed)?;
-    store::write_read(root, &stem, &Stored::of(&record.id, &stamp, session, &read))
-        .map_err(SubmitError::Failed)?;
+    let previous_diff = store::load_diff(root, &stem).map_err(SubmitError::Failed)?;
+    // The diff goes with the read-through or not at all: one of another head is never left to be
+    // served beside this read.
+    match &diff {
+        Some(diff) => store::write_diff(root, &stem, diff),
+        None => store::remove_diff(root, &stem),
+    }
+    .map_err(SubmitError::Failed)?;
+    if let Err(e) = store::write_read(root, &stem, &Stored::of(&record.id, &stamp, session, &read))
+    {
+        return Err(SubmitError::Failed(
+            match store::restore_diff(root, &stem, previous_diff.as_deref()) {
+                Ok(()) => e,
+                Err(undo) => format!("{e} (and the diff could not be put back: {undo})"),
+            },
+        ));
+    }
 
     if let Some(ai) = record.ai.as_mut() {
         ai.sha = Some(read.sha.clone());
@@ -193,12 +211,15 @@ pub(crate) fn submit_read_with(
     }
     record.events.ai_ready = Some(stamp);
     if let Err(e) = save(&mut record) {
-        return Err(SubmitError::Failed(
-            match store::restore_read(root, &stem, previous.as_deref()) {
-                Ok(()) => e,
-                Err(undo) => format!("{e} (and the read-through could not be put back: {undo})"),
-            },
-        ));
+        // Newest first.
+        let mut message = e;
+        if let Err(undo) = store::restore_read(root, &stem, previous.as_deref()) {
+            message = format!("{message} (and the read-through could not be put back: {undo})");
+        }
+        if let Err(undo) = store::restore_diff(root, &stem, previous_diff.as_deref()) {
+            message = format!("{message} (and the diff could not be put back: {undo})");
+        }
+        return Err(SubmitError::Failed(message));
     }
     Ok(Submitted { record })
 }
@@ -235,6 +256,50 @@ fn pr_json_head(root: &Path, pr: &PrRef) -> Option<String> {
     let text = std::fs::read_to_string(super::reader_dir(root, pr).join("pr.json")).ok()?;
     let view: serde_json::Value = serde_json::from_str(&text).ok()?;
     view.get("headRefOid")?.as_str().map(str::to_string)
+}
+
+/// The diff to keep with the read-through of head `sha`: the reader's `diff.patch`, when
+/// `pr.json` says the reader read that head. `None` when the diff is not known to be of `sha`
+/// (no `pr.json`, or another head: a hand-in by a person with no session is let through that way)
+/// or when `diff.patch` is not there, which is how the material looks when GitHub would not give
+/// the diff. A `diff.patch` that is there and cannot be read is an error, not an absence, and an
+/// empty one is an answer: a PR with no changes.
+fn reader_diff(
+    root: &Path,
+    pr: &PrRef,
+    sha: &str,
+    stamp: &str,
+) -> Result<Option<StoredDiff>, String> {
+    if pr_json_head(root, pr).as_deref() != Some(sha) {
+        return Ok(None);
+    }
+    let path = super::reader_dir(root, pr).join("diff.patch");
+    // Not followed: `metadata` and `read` follow a link, so a link would be a way to put another file's text in the diff.
+    let meta = match std::fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    if !meta.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let size = meta.len();
+    // Over the cap only the size is kept, so the file is not read at all.
+    let diff = if size > MAX_DIFF_BYTES as u64 {
+        None
+    } else {
+        // A diff can carry bytes that are not UTF-8 (a file of another encoding): they are shown
+        // as the replacement character rather than refusing the hand-in.
+        let bytes =
+            std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    };
+    Ok(Some(StoredDiff {
+        sha: sha.to_string(),
+        saved_at: stamp.to_string(),
+        bytes: size,
+        diff,
+    }))
 }
 
 fn check_asked(record: Option<Record>) -> Result<Record, SubmitError> {

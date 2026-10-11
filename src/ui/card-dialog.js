@@ -503,7 +503,7 @@ function cardDialogDockGate(all, ref) {
 
 /* The index and the content, as markup. Every label and key is escaped; a key is only ever an attribute value. */
 function cardDialogTaskHtml(groups) {
-  const entry = (g, c) => `<li><button type="button" data-cd-go-group="${esc(g.key)}"${c ? ` data-cd-go-card="${esc(c.key)}"` : ''}>` +
+  const entry = (g, c) => `<li><button type="button" data-cd-go-group="${esc(g.key)}"${c ? ` data-cd-go-card="${esc(c.key)}"` : ''}${c?.title ? ` title="${esc(c.title)}"` : ''}>` +
     `<span>${esc((c || g).label)}</span>${(c || g).badge ? `<span class="cd-badge">${esc((c || g).badge)}</span>` : ''}</button>`;
   const index = `<ol>` + groups.map(g => entry(g) + `<ol>${g.cards.map(c => entry(g, c) + '</li>').join('')}</ol></li>`).join('') + `</ol>`;
   const content = groups.map(g => `<section class="cd-group" data-cd-group="${esc(g.key)}" aria-label="${esc(g.label)}" tabindex="-1">` +
@@ -659,7 +659,8 @@ function cardDialogSpy() {
   cardDialogSeeUpdated();
 }
 // A scroll by hand ends the wait for a target; the dialog's own scrolling does not come through these.
-const cardDialogUserMoved = () => { cardDialog.target = null; cardDialog.pinned = null; };
+// A PR's link to a line of its diff waits the same way, and is let go with them (`onMoved`).
+const cardDialogUserMoved = () => { cardDialog.target = null; cardDialog.pinned = null; if (typeof PR_HOOKS !== 'undefined') PR_HOOKS.diff?.onMoved?.(); };
 // A press on the body can be the scrollbar.
 for (const type of ['wheel', 'touchstart', 'pointerdown']) cardDialogEl().querySelector('.card-dialog-body').addEventListener(type, cardDialogUserMoved, { passive: true });
 cardDialogEl().querySelector('.card-dialog-body').addEventListener('keydown', e => {
