@@ -365,9 +365,9 @@ fn hunk_counts(line: &str) -> Option<(u64, u64)> {
     Some((count(old)?, count(new)?))
 }
 
-/// `out` made absolute, when it is the reader directory of this very PR, `<state>/review/<stem>/`
-/// and no other: a reader names where to write, and it must not be able to overwrite another
-/// reader's material. Compared after symlinks are followed on the part that exists, so a state
+/// `out` made absolute, when it is the reader directory of this very PR,
+/// `<state>/review/<owner>+<repo>+<number>/` (the stem with `+` for `~`) and no other: a reader
+/// names where to write, and it must not be able to overwrite another reader's material. Compared after symlinks are followed on the part that exists, so a state
 /// directory under a link and a working directory that names the real path agree.
 fn own_dir(root: &Path, pr: &PrRef, out: &Path) -> Result<PathBuf, String> {
     let own = reader_dir(root, pr);

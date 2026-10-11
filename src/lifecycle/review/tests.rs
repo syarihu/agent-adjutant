@@ -287,7 +287,7 @@ fn the_reader_window_runs_review_run_in_its_own_directory() {
         id: "acme/widget#7".to_string(),
         url: "https://github.com/acme/widget/pull/7".to_string(),
         stem: "acme~widget~7".to_string(),
-        dir: Path::new(&ctx.repo.main).join("acme~widget~7"),
+        dir: Path::new(&ctx.repo.main).join("acme+widget+7"),
         session_id: "sid-x".to_string(),
     };
     let seen = RefCell::new(None);
@@ -309,7 +309,7 @@ fn the_reader_window_runs_review_run_in_its_own_directory() {
     })
     .unwrap();
     let (cwd, title, command) = seen.borrow().clone().unwrap();
-    assert_eq!(cwd, format!("{}/acme~widget~7", ctx.repo.main));
+    assert_eq!(cwd, format!("{}/acme+widget+7", ctx.repo.main));
     assert!(Path::new(&cwd).is_dir());
     assert_eq!(title, "adj-read widget#7");
     assert!(
@@ -376,10 +376,10 @@ fn a_fresh_reader_starts_with_no_read_through_left_by_an_earlier_one() {
         id: "acme/widget#7".to_string(),
         url: "https://github.com/acme/widget/pull/7".to_string(),
         stem: "acme~widget~7".to_string(),
-        dir: Path::new(&ctx.repo.main).join("acme~widget~7"),
+        dir: Path::new(&ctx.repo.main).join("acme+widget+7"),
         session_id: "sid-new".to_string(),
     };
-    let scratch = Path::new(&ctx.repo.main).join(&claim.stem);
+    let scratch = claim.dir.clone();
     std::fs::create_dir_all(&scratch).unwrap();
     std::fs::write(scratch.join("read-through.json"), "{\"old\": true}").unwrap();
     std::fs::write(scratch.join("pr.json"), "{}").unwrap();

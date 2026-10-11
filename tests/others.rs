@@ -438,7 +438,7 @@ fn a_read_asked_for_with_the_hub_up_is_started_in_a_window_of_its_own() {
     assert!(logged.contains("new-window"), "{logged}");
     assert!(logged.contains("review run --pr"), "{logged}");
     assert!(logged.contains("acme/widget#7"), "{logged}");
-    assert!(fixture.state.join("review/acme~widget~7").is_dir());
+    assert!(fixture.state.join("review/acme+widget+7").is_dir());
 
     // Asked again while it is being read, nothing more starts.
     let before = tmux.logged();
@@ -509,7 +509,7 @@ fn a_split_asked_for_with_the_hub_up_is_queued_in_split_mode_and_started() {
     assert!(logged.contains("new-window"), "{logged}");
     assert!(logged.contains("review run --pr"), "{logged}");
     assert!(logged.contains("acme/widget#7"), "{logged}");
-    assert!(fixture.state.join("review/acme~widget~7").is_dir());
+    assert!(fixture.state.join("review/acme+widget+7").is_dir());
 
     // The record keeps what was asked for, which is what the reader's window reads its task from.
     let record = &body(&resident.get("/api/others").1)["records"][1];
@@ -809,7 +809,7 @@ fn the_diff_of_a_read_through_is_kept_at_hand_in_and_served() {
     assert_eq!(code, 400);
 
     // What `adj review context` leaves for the reader: the head it read and the diff.
-    let material = fixture.state.join("review/acme~widget~7");
+    let material = fixture.state.join("review/acme+widget+7");
     std::fs::create_dir_all(&material).unwrap();
     std::fs::write(
         material.join("pr.json"),

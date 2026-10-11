@@ -658,19 +658,19 @@ fn a_record_removed_after_a_day_takes_its_read_through_and_reader_directory_with
         r.done_at = Some(done_at);
         store::save(root.path(), &mut r).unwrap();
         store::write_read(root.path(), &store::stem(&pr(number)), &json!({"id": "x"})).unwrap();
-        let scratch = root.path().join(format!("review/acme~widget~{number}"));
+        let scratch = root.path().join(format!("review/acme+widget+{number}"));
         std::fs::create_dir_all(&scratch).unwrap();
         std::fs::write(scratch.join("read-through.json"), "{}").unwrap();
     }
     let synced = sync_at(root.path(), &acme(), NOW, &Fake::new(&[])).unwrap();
     assert_eq!(synced.removed, vec!["acme/widget#1"]);
     assert!(!root.path().join("others/reads/acme~widget~1.json").exists());
-    assert!(!root.path().join("review/acme~widget~1").exists());
+    assert!(!root.path().join("review/acme+widget+1").exists());
     // The one that is kept keeps both.
     assert!(root.path().join("others/reads/acme~widget~2.json").exists());
     assert!(
         root.path()
-            .join("review/acme~widget~2/read-through.json")
+            .join("review/acme+widget+2/read-through.json")
             .exists()
     );
 }

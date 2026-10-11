@@ -88,6 +88,11 @@ pub const DEFAULT_HUB_RESUME_RUNNER: &str =
 /// Claude Code and agy ask whether to trust the directory they start in, and nobody answers in a
 /// reader's window: `run_reader` starts a watcher that answers it for the reader's own directory
 /// and fails the read at any other prompt. A runner of any other agent has no watcher.
+///
+/// `--setting-sources ''` also drops the person's `"tui": "fullscreen"`, which would leave Claude
+/// Code's inline UI, where the board's terminal sends the mouse wheel as arrow keys that scroll
+/// the input history. So `run_reader` sets `CLAUDE_CODE_NO_FLICKER=1` for a Claude reader unless
+/// `agentEnv` already sets it.
 pub const DEFAULT_REVIEWER_RUNNER: &str = "claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}";
 
 /// What the code-review hub is told on startup, in the shape of `HUB_STARTUP_PROMPT`.

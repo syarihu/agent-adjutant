@@ -144,7 +144,7 @@ pub(crate) struct ReviewContextArgs {
     /// The pull request: its URL, or `owner/repo#N`
     #[arg(long)]
     pub(crate) pr: String,
-    /// Where to write the files: this PR's own reader directory, `<state>/review/<owner>~<repo>~<number>`,
+    /// Where to write the files: this PR's own reader directory, `<state>/review/<owner>+<repo>+<number>`,
     /// and no other (default: the current directory, which is it for a reader)
     #[arg(long)]
     pub(crate) out: Option<String>,

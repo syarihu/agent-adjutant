@@ -918,7 +918,7 @@ fn reviewed_record(commit: &str) -> Record {
 fn the_material_is_written_with_get_requests_only() {
     let root = tempfile::tempdir().unwrap();
     put(root.path(), reviewed_record("abc1234"));
-    let out = root.path().join("review/acme~widget~1");
+    let out = reader_dir(root.path(), &pr(1));
     let gh = Gh::new();
     let summary = context(root.path(), &gh, &out).unwrap();
     assert_eq!(summary.head_sha, SHA);
@@ -1267,9 +1267,12 @@ fn a_removed_record_takes_its_read_through_and_reader_directory_with_it() {
     let root = tempfile::tempdir().unwrap();
     put(root.path(), running(1, "sid-a"));
     store::write_read(root.path(), &store::stem(&pr(1)), &json!({"id": "x"})).unwrap();
-    let scratch = root.path().join("review/acme~widget~1");
-    std::fs::create_dir_all(&scratch).unwrap();
-    std::fs::write(scratch.join("read-through.json"), "{}").unwrap();
+    let scratch = reader_dir(root.path(), &pr(1));
+    let earlier = root.path().join("review/acme~widget~1");
+    for dir in [&scratch, &earlier] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("read-through.json"), "{}").unwrap();
+    }
     store::remove(root.path(), &store::stem(&pr(1))).unwrap();
     assert!(store::load(root.path(), &pr(1)).unwrap().is_none());
     assert!(
@@ -1278,6 +1281,7 @@ fn a_removed_record_takes_its_read_through_and_reader_directory_with_it() {
             .is_none()
     );
     assert!(!scratch.exists());
+    assert!(!earlier.exists());
     // Nothing to remove is not an error.
     store::remove(root.path(), &store::stem(&pr(1))).unwrap();
 }
@@ -1485,8 +1489,17 @@ fn the_reader_directory_has_one_name() {
     assert_eq!(pr_id(&pr(7)), "acme/widget#7");
     assert_eq!(
         reader_dir(root, &pr(7)),
-        std::path::Path::new("/state/review/acme~widget~7")
+        std::path::Path::new("/state/review/acme+widget+7")
     );
+    // Claude Code takes `~<digit>` in a path for a short name, so no part of it has one.
+    let dir = reader_dir(root, &pr(7));
+    for part in dir.components() {
+        let part = part.as_os_str().to_string_lossy();
+        assert!(
+            !part.contains('~'),
+            "{part} would be taken for a Windows short name"
+        );
+    }
     // A claim carries the same directory, and a removal takes that one.
     let tmp = tempfile::tempdir().unwrap();
     put(tmp.path(), asked(7, "queued", 0));

@@ -17,7 +17,7 @@ pub struct Claim {
     pub url: String,
     /// The file stem of the record.
     pub stem: String,
-    /// The reader's own directory, `<state>/review/<stem>/`.
+    /// The reader's own directory, `<state>/review/<owner>+<repo>+<number>/` (the stem with `+` for `~`).
     pub dir: std::path::PathBuf,
     /// The session the reader runs as; a read-through is accepted from this one only.
     pub session_id: String,

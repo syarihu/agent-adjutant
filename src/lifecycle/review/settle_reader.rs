@@ -285,7 +285,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
-    const OWN: &str = "/state/review/o~r~1";
+    const OWN: &str = "/state/review/o+r+1";
 
     fn claude_menu(pointed: bool, dir: &str) -> PaneScreen {
         let text =
@@ -363,8 +363,8 @@ mod tests {
     fn another_directory_is_named_and_nothing_is_sent() {
         for dir in [
             "/home/user/project",
-            "/state/review/o~r~1/sub",
-            "/state/review/o~r~10",
+            "/state/review/o+r+1/sub",
+            "/state/review/o+r+10",
         ] {
             let (out, sent) = run(Agent::Claude, vec![claude_menu(false, dir)]);
             let why = out.unwrap_err();
@@ -415,14 +415,14 @@ mod tests {
 
     #[test]
     fn a_home_relative_directory_is_the_same_directory_written_short() {
-        let own = vec!["/Users/a/state/review/o~r~1".to_string()];
+        let own = vec!["/Users/a/state/review/o+r+1".to_string()];
         // SAFETY of the comparison: only the string rule is under test, with HOME as it is.
         if let Ok(home) = std::env::var("HOME") {
             let own = vec![format!("{}/x", home.trim_end_matches('/'))];
             assert!(is_own(&one("~/x"), &own));
             assert!(!is_own(&one("~/x/y"), &own));
         }
-        assert!(is_own(&one("/Users/a/state/review/o~r~1/"), &own));
+        assert!(is_own(&one("/Users/a/state/review/o+r+1/"), &own));
         assert!(!is_own(&one("/Users/a/state/review"), &own));
     }
 
@@ -545,9 +545,9 @@ mod tests {
     fn a_wrapped_path_naming_another_directory_is_not_answered() {
         let (out, sent) = run(
             Agent::Claude,
-            vec![wrapped_menu("/state/review/o~r~2", 10, false)],
+            vec![wrapped_menu("/state/review/o+r+2", 10, false)],
         );
-        assert!(out.unwrap_err().contains("/state/review/o~r~2"));
+        assert!(out.unwrap_err().contains("/state/review/o+r+2"));
         assert!(sent.is_empty());
     }
 

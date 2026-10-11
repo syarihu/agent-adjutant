@@ -110,18 +110,25 @@ pub(super) fn save(root: &Path, record: &mut Record) -> Result<(), String> {
 /// What was made for the record goes with it, the read-through, its diff, the drafts and the
 /// reader's scratch directory: a PR that is reopened later must not be served the read of an earlier time.
 pub(super) fn remove(root: &Path, stem: &str) -> Result<(), String> {
-    let scratch = super::reader_dir::review_home(root).join(stem);
+    let home = super::reader_dir::review_home(root);
+    // The `~` spelling is what an earlier version named it, which must not be left behind.
+    let scratches = [
+        home.join(super::reader_dir::reader_dir_name(stem)),
+        home.join(stem),
+    ];
     // The record last: one that could not be fully removed stays listed, and a later sync tries again.
     crate::infra::fs::remove_if_present(&read_path(root, stem))?;
     remove_diff(root, stem)?;
     crate::infra::fs::remove_if_present(&drafts_path(root, stem))?;
-    match std::fs::remove_dir_all(&scratch) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            return Err(format!(
-                "cannot remove the reader's directory of {stem}: {e}"
-            ));
+    for scratch in &scratches {
+        match std::fs::remove_dir_all(scratch) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!(
+                    "cannot remove the reader's directory of {stem}: {e}"
+                ));
+            }
         }
     }
     crate::infra::fs::remove_if_present(&path_of(root, stem))

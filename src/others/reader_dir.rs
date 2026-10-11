@@ -24,7 +24,16 @@ pub fn pr_id(pr: &PrRef) -> String {
     store::id_of(pr)
 }
 
-/// The directory a PR's reader works in: `<state>/review/<stem>/`, never a checkout.
+/// The name of a reader's directory for the file stem `stem`: the stem with `+` where it has `~`.
+/// Claude Code takes a name ending in `~<digit>` for a Windows 8.3 short name and asks about every
+/// file under it, which a reader that may not ask cannot work with. GitHub allows no `+` in an
+/// owner or repository name, so the name still maps back to one PR.
+pub fn reader_dir_name(stem: &str) -> String {
+    stem.replace('~', "+")
+}
+
+/// The directory a PR's reader works in: `<state>/review/<name>/` (see `reader_dir_name`), never
+/// a checkout.
 pub fn reader_dir(root: &Path, pr: &PrRef) -> PathBuf {
-    review_home(root).join(reader_stem(pr))
+    review_home(root).join(reader_dir_name(&reader_stem(pr)))
 }
